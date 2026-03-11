@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ShuddhoSuggestion",
+  "type": "object",
+  "required": [
+    "id",
+    "category",
+    "subtype",
+    "span_start",
+    "span_end",
+    "original_text",
+    "replacement_options",
+    "confidence",
+    "explanation_bn",
+    "explanation_en",
+    "source",
+    "severity",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["correctness", "spelling", "grammar", "punctuation", "clarity", "style"]
+    },
+    "subtype": {
+      "type": "string"
+    },
+    "span_start": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "span_end": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "original_text": {
+      "type": "string"
+    },
+    "replacement_options": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "explanation_bn": {
+      "type": "string"
+    },
+    "explanation_en": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["rule", "spell", "model", "hybrid"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "accepted", "dismissed"]
+    }
+  }
+}
+

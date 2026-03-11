@@ -1,0 +1,18 @@
+{
+  "name": "corrector-base",
+  "seed": 42,
+  "max_length": 256,
+  "batch_size": 12,
+  "epochs": 12,
+  "learning_rate": 0.0003,
+  "model": {
+    "vocab_size": 4000,
+    "hidden_size": 128,
+    "pad_token_id": 0
+  },
+  "data": {
+    "train_path": "data/datasets/synthetic/corrector_train.jsonl",
+    "validation_path": "data/datasets/synthetic/corrector_valid.jsonl"
+  }
+}
+

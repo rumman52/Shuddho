@@ -1,0 +1,15 @@
+{
+  "name": "shuddho",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web-editor",
+    "apps/chrome-extension"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web-editor",
+    "build:web": "npm run build --workspace apps/web-editor",
+    "build:extension": "npm run build --workspace apps/chrome-extension"
+  }
+}
+

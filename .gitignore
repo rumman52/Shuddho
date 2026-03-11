@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage/
+*.db
+*.sqlite3
+*.pyc
+apps/chrome-extension/dist/
+apps/chrome-extension/apps/
+apps/web-editor/dist/
+data/corpus/cleaned/*.txt

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shuddho</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        background: #f3efe5;
+        color: #1f2a37;
+      }
+      main {
+        width: 280px;
+        padding: 16px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+      p {
+        margin: 0 0 8px;
+        color: #5b6470;
+      }
+      code {
+        display: block;
+        padding: 8px;
+        background: white;
+        border-radius: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Shuddho</h1>
+      <p>The content script watches textarea and contenteditable fields and sends debounced analyze requests to the local backend.</p>
+      <code id="status">Checking backend…</code>
+    </main>
+    <script type="module" src="./src/popup.js"></script>
+  </body>
+  </html>
+

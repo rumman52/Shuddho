@@ -1,0 +1,3 @@
+{"text":"আমি  বাংলা লিখি  ।।","expected_subtypes":["duplicate_punctuation","space_before_punctuation"]}
+{"text":"বাংলা বাংলা ভাষা সুন্দর।","expected_subtypes":["repeated_word"]}
+{"text":"শুদ্ধ বাংলা ব্যকরণ ঠিক করা দরকার।","expected_subtypes":["safe_exact_typo"]}

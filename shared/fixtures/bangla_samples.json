@@ -1,0 +1,14 @@
+[
+  {
+    "id": "editor-sample",
+    "text": "আমি  বাংলা লিখি  ।। বাংলা বাংলা ভাষা খুব সুন্দর !!"
+  },
+  {
+    "id": "mixed-sample",
+    "text": "Bangla editor এ  spelling আর grammar check করা দরকার , তাই না ?"
+  },
+  {
+    "id": "typo-sample",
+    "text": "শুদ্ধ বাংলা ব্যকরণ আর বংলা বানানভুল ঠিক করা দরকার।"
+  }
+]

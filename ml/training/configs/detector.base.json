@@ -1,0 +1,20 @@
+{
+  "name": "detector-base",
+  "seed": 42,
+  "max_length": 256,
+  "batch_size": 16,
+  "epochs": 10,
+  "learning_rate": 0.0003,
+  "model": {
+    "vocab_size": 4000,
+    "hidden_size": 128,
+    "num_heads": 4,
+    "num_layers": 2,
+    "num_labels": 4
+  },
+  "data": {
+    "train_path": "data/datasets/synthetic/detector_train.jsonl",
+    "validation_path": "data/datasets/synthetic/detector_valid.jsonl"
+  }
+}
+

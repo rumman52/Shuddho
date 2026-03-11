@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shuddho"
+version = "0.1.0"
+description = "Bangla AI writing assistant MVP scaffold"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0,<1.0.0",
+  "pydantic>=2.8.0,<3.0.0",
+  "uvicorn>=0.30.0,<1.0.0",
+  "pytest>=8.2.0,<9.0.0",
+  "torch>=2.4.0,<3.0.0",
+  "sentencepiece>=0.2.0,<1.0.0"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+

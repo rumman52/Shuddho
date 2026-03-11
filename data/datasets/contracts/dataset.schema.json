@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ShuddhoDatasetRecord",
+  "type": "object",
+  "properties": {
+    "input_text": { "type": "string" },
+    "token_labels": {
+      "type": "array",
+      "items": { "type": "integer" }
+    },
+    "source_text": { "type": "string" },
+    "target_text": { "type": "string" },
+    "text": { "type": "string" },
+    "expected_subtypes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
+
