@@ -10,12 +10,19 @@ from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from shared.schemas.python_models import AnalyzeRequest, AnalyzeResponse, FeedbackRecord, FeedbackRequest, HealthResponse
 
+ALLOWED_ORIGINS = [
+    "https://shuddho-web-editor.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000"
+]
+
 app = FastAPI(title="Shuddho API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"]
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"]
 )
 
 normalizer = BanglaNormalizer()
@@ -28,6 +35,11 @@ feedback_store = FeedbackStore()
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"message": "Shuddho API is running"}
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
