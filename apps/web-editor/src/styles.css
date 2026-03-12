@@ -139,19 +139,42 @@ button {
   outline: none;
 }
 
+.editor-stage {
+  position: relative;
+}
+
 .issue-mark {
-  border-bottom: 3px solid var(--danger);
-  padding-bottom: 1px;
+  border-radius: 0.45rem;
+  background: transparent;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--danger);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.24em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 140ms ease, text-decoration-color 140ms ease;
 }
 
 .issue-mark--low {
-  border-bottom-style: dotted;
+  text-decoration-color: #c9871a;
+}
+
+.issue-mark--high {
+  text-decoration-color: #8e2339;
+}
+
+.issue-mark:hover,
+.issue-mark[data-issue-active="true"] {
+  background: var(--danger-soft);
 }
 
 .suggestion-card {
   position: fixed;
   z-index: 20;
-  width: 300px;
+  width: min(320px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
   padding: 1rem;
   border-radius: 20px;
   background: white;
@@ -159,10 +182,8 @@ button {
   box-shadow: 0 18px 48px rgba(31, 42, 55, 0.18);
 }
 
-.suggestion-card h3,
-.suggestion-card p,
-.suggestion-card__meta {
-  margin: 0 0 0.75rem;
+.suggestion-card > * + * {
+  margin-top: 0.85rem;
 }
 
 .suggestion-card__meta {
@@ -170,13 +191,47 @@ button {
   justify-content: space-between;
   color: var(--muted);
   font-size: 0.85rem;
+  margin: 0;
+}
+
+.suggestion-card__original {
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: var(--accent-soft);
+}
+
+.suggestion-card__label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.suggestion-card__original strong {
+  display: block;
+  font-size: 1.1rem;
+}
+
+.suggestion-card__explanation {
+  margin: 0;
+  color: var(--ink);
 }
 
 .suggestion-card__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-bottom: 0.75rem;
+}
+
+.suggestion-card__option {
+  padding: 0.65rem 0.9rem;
+}
+
+.suggestion-card__empty {
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .suggestion-list {

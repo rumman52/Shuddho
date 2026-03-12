@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
 import type { AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
-import { SuggestionCard } from "./components/SuggestionCard";
+import { SuggestionCard, type SuggestionCardAnchor } from "./components/SuggestionCard";
 import { IssueMark } from "./lib/editorExtensions";
 import { analyzeText, sendFeedback } from "./lib/api";
 import { applyIssueMarks, replaceSuggestion } from "./lib/highlight";
 
-const INITIAL_TEXT = sampleFixtures[0]?.text ?? "আমি  বাংলা লিখি  ।। বাংলা বাংলা ভাষা খুব সুন্দর !!";
+const INITIAL_TEXT = sampleFixtures[0]?.text ?? "à¦†à¦®à¦¿  à¦¬à¦¾à¦‚à¦²à¦¾ à¦²à¦¿à¦–à¦¿  à¥¤à¥¤ à¦¬à¦¾à¦‚à¦²à¦¾ à¦¬à¦¾à¦‚à¦²à¦¾ à¦­à¦¾à¦·à¦¾ à¦–à§à¦¬ à¦¸à§à¦¨à§à¦¦à¦° !!";
+const ANALYSIS_DEBOUNCE_MS = 550;
+const HOVER_HIDE_DELAY_MS = 160;
+const POST_ACCEPT_ANALYSIS_DELAY_MS = 80;
 
 export default function App() {
   const [analysis, setAnalysis] = useState<AnalyzeResponse>({
@@ -16,10 +19,14 @@ export default function App() {
     normalized_text: INITIAL_TEXT,
     suggestions: []
   });
-  const [selectedSuggestionId, setSelectedSuggestionId] = useState<string | null>(null);
-  const [cardPosition, setCardPosition] = useState<{ left: number; top: number } | null>(null);
+  const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
+  const [cardAnchorRect, setCardAnchorRect] = useState<SuggestionCardAnchor | null>(null);
   const [status, setStatus] = useState("Waiting for input");
-  const timerRef = useRef<number | null>(null);
+  const analysisTimerRef = useRef<number | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
+  const latestAnalysisRequestRef = useRef(0);
+  const activeAnchorElementRef = useRef<HTMLElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
 
   const editor = useEditor({
     extensions: [StarterKit.configure({ heading: false, bulletList: false, orderedList: false }), IssueMark],
@@ -34,20 +41,6 @@ export default function App() {
           return true;
         }
         return false;
-      },
-      handleClick: (_view, _position, event) => {
-        const target = event.target as HTMLElement | null;
-        const issueElement = target?.closest<HTMLElement>("[data-issue-id]");
-        if (!issueElement) {
-          setSelectedSuggestionId(null);
-          return false;
-        }
-        setSelectedSuggestionId(issueElement.dataset.issueId ?? null);
-        setCardPosition({
-          left: event.clientX + 12,
-          top: event.clientY + 12
-        });
-        return false;
       }
     },
     onUpdate: ({ editor: currentEditor }) => {
@@ -56,18 +49,14 @@ export default function App() {
         ...previous,
         text
       }));
-      if (timerRef.current) {
-        window.clearTimeout(timerRef.current);
-      }
-      timerRef.current = window.setTimeout(() => {
-        void runAnalysis(text);
-      }, 550);
+      closeSuggestionCard();
+      scheduleAnalysis(text, ANALYSIS_DEBOUNCE_MS);
     }
   });
 
-  const selectedSuggestion = useMemo(
-    () => analysis.suggestions.find((suggestion) => suggestion.id === selectedSuggestionId) ?? null,
-    [analysis.suggestions, selectedSuggestionId]
+  const activeSuggestion = useMemo(
+    () => analysis.suggestions.find((suggestion) => suggestion.id === activeSuggestionId) ?? null,
+    [analysis.suggestions, activeSuggestionId]
   );
 
   useEffect(() => {
@@ -84,9 +73,67 @@ export default function App() {
     applyIssueMarks(editor, analysis.suggestions);
   }, [analysis.suggestions, editor]);
 
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const issueElements = editor.view.dom.querySelectorAll<HTMLElement>("[data-issue-id]");
+    issueElements.forEach((element) => {
+      if (element.dataset.issueId === activeSuggestionId) {
+        element.dataset.issueActive = "true";
+      } else {
+        delete element.dataset.issueActive;
+      }
+    });
+  }, [activeSuggestionId, analysis.suggestions, editor]);
+
+  useEffect(() => {
+    if (!activeSuggestionId) {
+      return;
+    }
+    if (analysis.suggestions.some((suggestion) => suggestion.id === activeSuggestionId)) {
+      return;
+    }
+    closeSuggestionCard();
+  }, [analysis.suggestions, activeSuggestionId]);
+
+  useEffect(() => {
+    if (!activeSuggestionId) {
+      return;
+    }
+
+    const syncCardAnchor = () => {
+      const anchorElement = getActiveAnchorElement(activeSuggestionId);
+      if (!anchorElement) {
+        closeSuggestionCard();
+        return;
+      }
+      setCardAnchorRect(toCardAnchor(anchorElement));
+    };
+
+    syncCardAnchor();
+    window.addEventListener("resize", syncCardAnchor);
+    window.addEventListener("scroll", syncCardAnchor, true);
+    return () => {
+      window.removeEventListener("resize", syncCardAnchor);
+      window.removeEventListener("scroll", syncCardAnchor, true);
+    };
+  }, [activeSuggestionId, editor]);
+
+  useEffect(() => {
+    return () => {
+      clearAnalysisTimer();
+      clearHideTimer();
+    };
+  }, []);
+
   async function runAnalysis(text: string) {
+    const requestId = ++latestAnalysisRequestRef.current;
+
     if (!text.trim()) {
       setAnalysis({ text, normalized_text: text, suggestions: [] });
+      closeSuggestionCard();
       setStatus("Empty input");
       return;
     }
@@ -94,49 +141,193 @@ export default function App() {
     setStatus("Analyzing...");
     try {
       const response = await analyzeText({ text });
+      if (requestId !== latestAnalysisRequestRef.current) {
+        return;
+      }
       setAnalysis(response);
       setStatus(`${response.suggestions.length} suggestion(s)`);
     } catch (error) {
+      if (requestId !== latestAnalysisRequestRef.current) {
+        return;
+      }
       setStatus(error instanceof Error ? error.message : "Analyze request failed");
     }
   }
 
   async function handleAccept(replacement: string) {
-    if (!editor || !selectedSuggestion) {
+    if (!editor || !activeSuggestion) {
       return;
     }
 
-    const applied = replaceSuggestion(editor, selectedSuggestion, replacement);
-    await sendFeedback({
-      suggestion_id: selectedSuggestion.id,
-      action: "accepted",
-      text: analysis.text,
-      replacement
-    });
-    setSelectedSuggestionId(null);
-    setCardPosition(null);
-    setStatus(applied ? "Suggestion accepted" : "Suggestion no longer matched current text");
-    window.setTimeout(() => {
-      void runAnalysis(editor.getText());
-    }, 20);
+    const suggestion = activeSuggestion;
+    const feedbackText = analysis.text;
+    const applied = replaceSuggestion(editor, suggestion, replacement);
+
+    closeSuggestionCard();
+    if (!applied) {
+      setStatus("Suggestion no longer matched current text");
+      scheduleAnalysis(editor.getText(), POST_ACCEPT_ANALYSIS_DELAY_MS);
+      return;
+    }
+
+    setStatus("Suggestion accepted");
+    scheduleAnalysis(editor.getText(), POST_ACCEPT_ANALYSIS_DELAY_MS);
+
+    try {
+      await sendFeedback({
+        suggestion_id: suggestion.id,
+        action: "accepted",
+        text: feedbackText,
+        replacement
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
+    }
   }
 
   async function handleDismiss() {
-    if (!selectedSuggestion) {
+    if (!activeSuggestion) {
       return;
     }
-    await sendFeedback({
-      suggestion_id: selectedSuggestion.id,
-      action: "dismissed",
-      text: analysis.text
-    });
+
+    const suggestion = activeSuggestion;
+    const feedbackText = analysis.text;
+
     setAnalysis((previous) => ({
       ...previous,
-      suggestions: previous.suggestions.filter((suggestion) => suggestion.id !== selectedSuggestion.id)
+      suggestions: previous.suggestions.filter((item) => item.id !== suggestion.id)
     }));
-    setSelectedSuggestionId(null);
-    setCardPosition(null);
+    closeSuggestionCard();
     setStatus("Suggestion dismissed");
+
+    try {
+      await sendFeedback({
+        suggestion_id: suggestion.id,
+        action: "dismissed",
+        text: feedbackText
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
+    }
+  }
+
+  function handleEditorMouseOver(event: ReactMouseEvent<HTMLDivElement>) {
+    const issueElement = findIssueElement(event.target);
+    const suggestionId = issueElement?.dataset.issueId;
+    if (!issueElement || !suggestionId) {
+      return;
+    }
+
+    clearHideTimer();
+    if (activeSuggestionId === suggestionId && activeAnchorElementRef.current === issueElement) {
+      return;
+    }
+    openSuggestionCard(suggestionId, issueElement);
+  }
+
+  function handleEditorMouseOut(event: ReactMouseEvent<HTMLDivElement>) {
+    const issueElement = findIssueElement(event.target);
+    if (!issueElement) {
+      return;
+    }
+
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (relatedTarget && cardRef.current?.contains(relatedTarget)) {
+      return;
+    }
+
+    if (findIssueElement(event.relatedTarget)) {
+      return;
+    }
+
+    scheduleHideCard();
+  }
+
+  function handleEditorClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const issueElement = findIssueElement(event.target);
+    const suggestionId = issueElement?.dataset.issueId;
+
+    if (!issueElement || !suggestionId) {
+      closeSuggestionCard();
+      return;
+    }
+
+    openSuggestionCard(suggestionId, issueElement);
+  }
+
+  function handleCardMouseEnter() {
+    clearHideTimer();
+  }
+
+  function handleCardMouseLeave(event: ReactMouseEvent<HTMLDivElement>) {
+    if (findIssueElement(event.relatedTarget)) {
+      return;
+    }
+    scheduleHideCard();
+  }
+
+  function openSuggestionCard(suggestionId: string, anchorElement: HTMLElement) {
+    clearHideTimer();
+    activeAnchorElementRef.current = anchorElement;
+    setActiveSuggestionId(suggestionId);
+    setCardAnchorRect(toCardAnchor(anchorElement));
+  }
+
+  function closeSuggestionCard() {
+    clearHideTimer();
+    activeAnchorElementRef.current = null;
+    setActiveSuggestionId(null);
+    setCardAnchorRect(null);
+  }
+
+  function scheduleHideCard() {
+    clearHideTimer();
+    hideTimerRef.current = window.setTimeout(() => {
+      activeAnchorElementRef.current = null;
+      setActiveSuggestionId(null);
+      setCardAnchorRect(null);
+      hideTimerRef.current = null;
+    }, HOVER_HIDE_DELAY_MS);
+  }
+
+  function clearHideTimer() {
+    if (hideTimerRef.current === null) {
+      return;
+    }
+    window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = null;
+  }
+
+  function scheduleAnalysis(text: string, delayMs: number) {
+    clearAnalysisTimer();
+    analysisTimerRef.current = window.setTimeout(() => {
+      void runAnalysis(text);
+    }, delayMs);
+  }
+
+  function clearAnalysisTimer() {
+    if (analysisTimerRef.current === null) {
+      return;
+    }
+    window.clearTimeout(analysisTimerRef.current);
+    analysisTimerRef.current = null;
+  }
+
+  function getActiveAnchorElement(suggestionId: string): HTMLElement | null {
+    if (activeAnchorElementRef.current?.isConnected) {
+      return activeAnchorElementRef.current;
+    }
+    if (!editor) {
+      return null;
+    }
+
+    const nextAnchor =
+      Array.from(editor.view.dom.querySelectorAll<HTMLElement>("[data-issue-id]")).find(
+        (element) => element.dataset.issueId === suggestionId
+      ) ?? null;
+
+    activeAnchorElementRef.current = nextAnchor;
+    return nextAnchor;
   }
 
   return (
@@ -159,19 +350,24 @@ export default function App() {
         <div className="panel-header">
           <div>
             <h2>Web editor</h2>
-            <p>Single-paragraph Tiptap editor for the first MVP slice.</p>
+            <p>Hover highlighted text to inspect suggestions without leaving the editor flow.</p>
           </div>
-          <button className="analyze-button" onClick={() => editor && void runAnalysis(editor.getText())}>
+          <button type="button" className="analyze-button" onClick={() => editor && void runAnalysis(editor.getText())}>
             Analyze now
           </button>
         </div>
-        <EditorContent editor={editor} />
-        {selectedSuggestion ? (
+        <div className="editor-stage" onMouseOver={handleEditorMouseOver} onMouseOut={handleEditorMouseOut} onClick={handleEditorClick}>
+          <EditorContent editor={editor} />
+        </div>
+        {activeSuggestion ? (
           <SuggestionCard
-            suggestion={selectedSuggestion}
-            position={cardPosition}
+            ref={cardRef}
+            suggestion={activeSuggestion}
+            anchorRect={cardAnchorRect}
             onAccept={handleAccept}
             onDismiss={handleDismiss}
+            onMouseEnter={handleCardMouseEnter}
+            onMouseLeave={handleCardMouseLeave}
           />
         ) : null}
       </section>
@@ -180,7 +376,7 @@ export default function App() {
         <div className="panel-header">
           <div>
             <h2>Open suggestions</h2>
-            <p>Click highlighted text or use this list.</p>
+            <p>Hover highlighted text or use this list to reopen a suggestion card.</p>
           </div>
           <span>{analysis.normalized_text}</span>
         </div>
@@ -188,11 +384,9 @@ export default function App() {
           {analysis.suggestions.map((suggestion: Suggestion) => (
             <button
               key={suggestion.id}
+              type="button"
               className="suggestion-list__item"
-              onClick={() => {
-                setSelectedSuggestionId(suggestion.id);
-                setCardPosition({ left: window.innerWidth - 340, top: 190 });
-              }}
+              onClick={(event) => openSuggestionCard(suggestion.id, event.currentTarget)}
             >
               <strong>{suggestion.original_text}</strong>
               <span>{suggestion.explanation_en}</span>
@@ -205,3 +399,29 @@ export default function App() {
   );
 }
 
+function findIssueElement(target: EventTarget | null): HTMLElement | null {
+  const element = getElementFromTarget(target);
+  return element?.closest<HTMLElement>("[data-issue-id]") ?? null;
+}
+
+function getElementFromTarget(target: EventTarget | null): HTMLElement | null {
+  if (target instanceof HTMLElement) {
+    return target;
+  }
+  if (target instanceof Text) {
+    return target.parentElement;
+  }
+  return null;
+}
+
+function toCardAnchor(element: HTMLElement): SuggestionCardAnchor {
+  const rect = element.getBoundingClientRect();
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height
+  };
+}
