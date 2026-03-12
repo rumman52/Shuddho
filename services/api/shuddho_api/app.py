@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -26,7 +28,9 @@ app.add_middleware(
 )
 
 normalizer = BanglaNormalizer()
-spell_engine = SpellEngine()
+spell_engine = SpellEngine(
+    runtime_csv_path=Path(__file__).resolve().parents[3] / "data" / "imports" / "lexicon" / "words_clean.csv"
+)
 rule_engine = RuleEngine()
 suggestion_manager = SuggestionManager()
 feedback_store = FeedbackStore()

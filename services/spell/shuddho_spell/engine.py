@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,17 +11,13 @@ from shared.utils.text import stable_id
 from .runtime_lexicon import load_runtime_lexicon
 
 
-USE_SQLITE_LEXICON_ENV = "SHUDDHO_USE_SQLITE_LEXICON"
-USE_SQLITE_CORRECTION_MAP_ENV = "SHUDDHO_USE_SQLITE_CORRECTION_MAP"
-TRUE_VALUES = {"1", "true", "yes", "on"}
-FALSE_VALUES = {"0", "false", "no", "off"}
 DIRECT_MAP_EXPLANATION_BN = "এই শব্দটির মানক রূপ অভিধানে ভিন্নভাবে সংরক্ষিত আছে।"
-DIRECT_MAP_EXPLANATION_EN = "This form maps to a normalized canonical spelling in the lexicon."
-UNKNOWN_WORD_EXPLANATION_BN = "এই শব্দটি অভিধানে নেই। কাছাকাছি কিছু বিকল্প দেখানো হয়েছে।"
-UNKNOWN_WORD_EXPLANATION_EN = "This word is not in the local lexicon. Nearby alternatives are suggested."
+DIRECT_MAP_EXPLANATION_EN = "This form maps to a normalized canonical spelling in the main lexicon."
+UNKNOWN_WORD_EXPLANATION_BN = "এই শব্দটির জন্য যথেষ্ট নির্ভরযোগ্য বিকল্প পাওয়া যায়নি।"
+UNKNOWN_WORD_EXPLANATION_EN = "No sufficiently reliable alternative was found for this word."
 DIRECT_MAP_CONFIDENCE = 0.99
-MIN_GENERIC_CANDIDATE_SCORE = 0.9
-MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.92
+MIN_GENERIC_CANDIDATE_SCORE = 0.94
+MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.95
 MAX_GENERIC_REPLACEMENTS = 1
 
 
@@ -35,34 +30,22 @@ class SpellCandidate:
 class SpellEngine:
     def __init__(
         self,
-        lexicon_path: Path | None = None,
-        lexicon_db_path: Path | None = None,
+        runtime_csv_path: Path | None = None,
         *,
-        use_sqlite_lexicon: bool | None = None,
-        use_sqlite_correction_map: bool | None = None,
+        fallback_seed_path: Path | None = None,
     ) -> None:
+        default_csv_path = Path(__file__).resolve().parents[3] / "data" / "imports" / "lexicon" / "words_clean.csv"
         default_seed_path = Path(__file__).resolve().parents[1] / "data" / "seed_lexicon.txt"
-        default_db_path = Path(__file__).resolve().parents[3] / "data" / "shuddho_lexicon.db"
         runtime_lexicon = load_runtime_lexicon(
-            seed_path=lexicon_path or default_seed_path,
-            database_path=lexicon_db_path or default_db_path,
-            use_sqlite_lexicon=_resolve_bool_setting(
-                use_sqlite_lexicon,
-                USE_SQLITE_LEXICON_ENV,
-                default=False,
-            ),
-            use_sqlite_correction_map=_resolve_bool_setting(
-                use_sqlite_correction_map,
-                USE_SQLITE_CORRECTION_MAP_ENV,
-                default=True,
-            ),
+            runtime_csv_path or default_csv_path,
+            fallback_seed_path=fallback_seed_path or default_seed_path,
         )
 
         self.lexicon_source = runtime_lexicon.source
         self.lexicon = set(runtime_lexicon.accepted_words)
         self.correction_map = runtime_lexicon.correction_map
         self.frequency_rank = {word: rank for rank, word in enumerate(runtime_lexicon.candidate_words)}
-        self._candidate_index, self._length_index = self._build_candidate_indexes(runtime_lexicon.candidate_words)
+        self._candidate_index = self._build_candidate_index(runtime_lexicon.candidate_words)
 
     def analyze(self, text: str, personal_dictionary: list[str] | None = None) -> list[Suggestion]:
         personal = set(personal_dictionary or [])
@@ -75,17 +58,17 @@ class SpellEngine:
             if len(token) < 3:
                 continue
 
-            mapped_candidate = self.correction_map.get(token)
             candidates = self.generate_candidates(token)
             if not candidates:
                 continue
 
-            if mapped_candidate:
-                top_candidates = [mapped_candidate]
+            is_direct_map = token in self.correction_map
+            if is_direct_map:
+                top_candidates = [candidates[0].word]
                 confidence = DIRECT_MAP_CONFIDENCE
             else:
                 top_candidates = [candidate.word for candidate in candidates[:MAX_GENERIC_REPLACEMENTS]]
-                confidence = min(max(candidates[0].score, 0.0), 0.96)
+                confidence = min(max(candidates[0].score, 0.0), 0.97)
                 if confidence < MIN_GENERIC_SUGGESTION_CONFIDENCE:
                     continue
 
@@ -99,8 +82,8 @@ class SpellEngine:
                     original_text=token,
                     replacement_options=top_candidates,
                     confidence=round(confidence, 2),
-                    explanation_bn=DIRECT_MAP_EXPLANATION_BN if mapped_candidate else UNKNOWN_WORD_EXPLANATION_BN,
-                    explanation_en=DIRECT_MAP_EXPLANATION_EN if mapped_candidate else UNKNOWN_WORD_EXPLANATION_EN,
+                    explanation_bn=DIRECT_MAP_EXPLANATION_BN if is_direct_map else UNKNOWN_WORD_EXPLANATION_BN,
+                    explanation_en=DIRECT_MAP_EXPLANATION_EN if is_direct_map else UNKNOWN_WORD_EXPLANATION_EN,
                     source=SuggestionSource.SPELL,
                     severity=SuggestionSeverity.MEDIUM,
                 )
@@ -116,66 +99,47 @@ class SpellEngine:
         ranked: list[SpellCandidate] = []
         seen_candidates: set[str] = set()
 
-        for word in self._iter_candidate_pool(token):
-            if word in seen_candidates:
+        for candidate in self._iter_candidate_pool(token):
+            if candidate in seen_candidates:
                 continue
-            seen_candidates.add(word)
+            seen_candidates.add(candidate)
 
-            distance = levenshtein_distance(token, word)
-            if distance > 1:
+            distance = levenshtein_distance(token, candidate)
+            if distance > 2:
                 continue
-            if not is_safe_generic_candidate(token, word, distance):
+            if not is_safe_generic_candidate(token, candidate, distance):
                 continue
-            score = self._score_candidate(token, word, distance)
+
+            score = self._score_candidate(token, candidate, distance)
             if score >= MIN_GENERIC_CANDIDATE_SCORE:
-                ranked.append(SpellCandidate(word=word, score=score))
+                ranked.append(SpellCandidate(word=candidate, score=score))
 
         ranked.sort(key=lambda candidate: candidate.score, reverse=True)
         return ranked
 
     def _score_candidate(self, token: str, candidate: str, distance: int) -> float:
         rank = self.frequency_rank.get(candidate, 999)
-        score = 1.0 - (distance * 0.2) - (abs(len(token) - len(candidate)) * 0.04)
+        score = 1.0 - (distance * 0.28) - (abs(len(token) - len(candidate)) * 0.08)
         if token[:1] == candidate[:1]:
-            score += 0.08
+            score += 0.1
         if token[-1:] == candidate[-1:]:
-            score += 0.06
+            score += 0.08
         score += common_confusion_bonus(token, candidate)
-        score += max(0.0, 0.08 - (rank * 0.002))
+        score += _bigram_overlap_score(token, candidate) * 0.1
+        score += max(0.0, 0.02 - (rank * 0.0001))
         return round(score, 4)
 
-    def _build_candidate_indexes(
-        self,
-        ordered_words: tuple[str, ...],
-    ) -> tuple[dict[tuple[str, int], tuple[str, ...]], dict[int, tuple[str, ...]]]:
+    def _build_candidate_index(self, candidate_words: tuple[str, ...]) -> dict[tuple[str, int], tuple[str, ...]]:
         indexed_words: dict[tuple[str, int], list[str]] = {}
-        length_index: dict[int, list[str]] = {}
-
-        for word in ordered_words:
+        for word in candidate_words:
             indexed_words.setdefault((word[:1], len(word)), []).append(word)
-            length_index.setdefault(len(word), []).append(word)
-
-        return (
-            {key: tuple(words) for key, words in indexed_words.items()},
-            {key: tuple(words) for key, words in length_index.items()},
-        )
+        return {key: tuple(words) for key, words in indexed_words.items()}
 
     def _iter_candidate_pool(self, token: str) -> Iterator[str]:
         token_length = len(token)
-        yielded_from_initial_bucket = False
-
         for first_character in candidate_initial_chars(token):
-            for candidate_length in range(max(1, token_length - 1), token_length + 2):
-                bucket = self._candidate_index.get((first_character, candidate_length), ())
-                if bucket:
-                    yielded_from_initial_bucket = True
-                yield from bucket
-
-        if yielded_from_initial_bucket:
-            return
-
-        for candidate_length in range(max(1, token_length - 1), token_length + 2):
-            yield from self._length_index.get(candidate_length, ())
+            for candidate_length in range(max(1, token_length - 2), token_length + 3):
+                yield from self._candidate_index.get((first_character, candidate_length), ())
 
 
 def common_confusion_bonus(source: str, target: str) -> float:
@@ -227,13 +191,19 @@ def candidate_initial_chars(token: str) -> tuple[str, ...]:
 
 
 def is_safe_generic_candidate(token: str, candidate: str, distance: int) -> bool:
-    if distance != 1:
+    if distance <= 0:
         return False
-    if len(token) <= 4 and token[-1:] != candidate[-1:]:
+    if token[-1:] != candidate[-1:]:
         return False
-    if _bigram_overlap_score(token, candidate) < 0.5:
+
+    overlap = _bigram_overlap_score(token, candidate)
+    if distance == 1:
+        return overlap >= 0.5
+    if min(len(token), len(candidate)) < 6:
         return False
-    return True
+    if token[-1:] != candidate[-1:]:
+        return False
+    return overlap >= 0.75
 
 
 def _bigram_overlap_score(source: str, target: str) -> float:
@@ -257,22 +227,6 @@ def _build_reverse_confusions() -> dict[str, tuple[str, ...]]:
             if source_character not in reverse_confusions[target_character]:
                 reverse_confusions[target_character].append(source_character)
     return {key: tuple(values) for key, values in reverse_confusions.items()}
-
-
-def _resolve_bool_setting(explicit_value: bool | None, env_name: str, *, default: bool) -> bool:
-    if explicit_value is not None:
-        return explicit_value
-
-    raw_value = os.getenv(env_name)
-    if raw_value is None:
-        return default
-
-    normalized = raw_value.strip().lower()
-    if normalized in TRUE_VALUES:
-        return True
-    if normalized in FALSE_VALUES:
-        return False
-    return default
 
 
 REVERSE_BANGLA_CONFUSIONS = _build_reverse_confusions()

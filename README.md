@@ -93,34 +93,25 @@ This rebuilds `data/shuddho_lexicon.db` through a temporary file and replaces it
 
 The feedback database remains separate in `data/shuddho_feedback.db`.
 
-At runtime, the spell engine now defaults to the conservative seed lexicon in `services/spell/data/seed_lexicon.txt`.
+At runtime, the spell engine now uses `data/imports/lexicon/words_clean.csv` as its main source of truth and loads it once at backend startup.
 
-- default accepted dictionary: seed lexicon, plus canonical targets from safe sqlite `word -> normalized_word` correction pairs when `data/shuddho_lexicon.db` is present
-- default fuzzy candidate pool: the same safe runtime lexicon source as acceptance checks
-- direct correction suggestions use active, trusted `words_clean.word -> normalized_word` mappings when those fields differ
-- generic fuzzy suggestions stay conservative: they use stricter short-word filtering and prefer no suggestion over weak matches
-- `words_review_flagged` stays review-only and is not loaded into the active spell lexicon
-- `cleaning_summary.txt` remains report metadata only through `import_reports`
+- runtime accepted words: canonical `normalized_word` values from active, trusted rows where `word != normalized_word`
+- runtime direct correction map: active, trusted `word -> normalized_word` pairs from `words_clean.csv`
+- runtime candidate pool: the same curated canonical target set loaded from `words_clean.csv`
+- `words_review_flagged.csv` stays review-only and is never loaded into the active spell runtime
+- `cleaning_summary.txt` remains report metadata only and is never loaded into the active spell runtime
+- sqlite import remains offline tooling only; the backend runtime does not depend on `data/shuddho_lexicon.db`
+- generic fuzzy suggestions are conservative and precision-first; if there is no strong candidate, no suggestion is returned
 
-To opt into the full sqlite accepted lexicon at runtime, set:
+If `data/imports/lexicon/words_clean.csv` is missing, the spell engine falls back to `services/spell/data/seed_lexicon.txt` as a legacy development fallback only.
 
-```bash
-SHUDDHO_USE_SQLITE_LEXICON=true
-```
-
-If you want to disable sqlite direct correction mappings as well, set:
-
-```bash
-SHUDDHO_USE_SQLITE_CORRECTION_MAP=false
-```
-
-You can still refresh the seed file from the imported clean lexicon for a static snapshot or fallback runtime:
+You can still refresh the legacy seed file from the imported clean lexicon for offline tooling:
 
 ```bash
 python scripts/import_lexicon_to_sqlite.py --export-seed-lexicon
 ```
 
-After re-importing `data/shuddho_lexicon.db`, restart the FastAPI backend so the in-memory spell engine reloads the latest configuration and correction map.
+After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backend so the in-memory spell engine reloads the latest runtime lexicon.
 
 ## API
 
