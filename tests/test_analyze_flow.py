@@ -91,3 +91,22 @@ def test_analyze_flow_surfaces_sqlite_direct_map_suggestion_in_safe_default_mode
     assert len(merged) == 1
     assert merged[0].original_text == "অইউরোপীয়"
     assert merged[0].replacement_options == ["অইউরোপীয়"]
+
+
+def test_analyze_flow_does_not_emit_random_valid_word_suggestion(tmp_path: Path) -> None:
+    lexicon_path = tmp_path / "seed_lexicon.txt"
+    lexicon_path.write_text("# test seed lexicon\nআমি\nভাল\nখাচ্ছি\n", encoding="utf-8")
+
+    text = "আমি ভাত খাচ্ছি"
+    normalizer = BanglaNormalizer()
+    spell = SpellEngine(
+        lexicon_path=lexicon_path,
+        use_sqlite_lexicon=False,
+        use_sqlite_correction_map=False,
+    )
+    manager = SuggestionManager()
+
+    normalized = normalizer.normalize(text)
+    merged = manager.merge(text, normalized, spell.analyze(normalized.text), [])
+
+    assert merged == []

@@ -2,6 +2,26 @@ import sqlite3
 from pathlib import Path
 
 from services.spell.shuddho_spell.engine import SpellEngine
+from services.spell.shuddho_spell.runtime_lexicon import load_runtime_lexicon
+
+
+def test_runtime_lexicon_default_candidate_pool_matches_safe_runtime_source(tmp_path: Path) -> None:
+    lexicon_path = tmp_path / "seed_lexicon.txt"
+    lexicon_path.write_text("# test seed lexicon\nআমি\nভাল\nখাচ্ছি\n", encoding="utf-8")
+    database_path = tmp_path / "shuddho_lexicon.db"
+    _create_runtime_lexicon_fixture(database_path)
+
+    runtime_lexicon = load_runtime_lexicon(
+        lexicon_path,
+        database_path,
+        use_sqlite_lexicon=False,
+        use_sqlite_correction_map=True,
+    )
+
+    assert runtime_lexicon.source == "seed+sqlite_corrections"
+    assert runtime_lexicon.accepted_words == runtime_lexicon.candidate_words
+    assert "অইউরোপীয়" in runtime_lexicon.candidate_words
+    assert "শরদ" not in runtime_lexicon.candidate_words
 
 
 def test_spell_engine_flags_unknown_bangla_word(tmp_path: Path) -> None:
@@ -55,7 +75,21 @@ def test_spell_engine_ignores_known_words(tmp_path: Path) -> None:
     assert engine.analyze("আমি বাংলা লিখি") == []
 
 
-def test_spell_engine_defaults_to_seed_and_uses_sqlite_direct_maps_safely(tmp_path: Path) -> None:
+def test_spell_engine_avoids_random_short_word_suggestion_for_valid_sentence(tmp_path: Path) -> None:
+    lexicon_path = tmp_path / "seed_lexicon.txt"
+    lexicon_path.write_text("# test seed lexicon\nআমি\nভাল\nখাচ্ছি\n", encoding="utf-8")
+
+    engine = SpellEngine(
+        lexicon_path=lexicon_path,
+        use_sqlite_lexicon=False,
+        use_sqlite_correction_map=False,
+    )
+
+    suggestions = engine.analyze("আমি ভাত খাচ্ছি")
+    assert suggestions == []
+
+
+def test_spell_engine_defaults_to_safe_direct_map_and_filters_noisy_sqlite_words(tmp_path: Path) -> None:
     lexicon_path = tmp_path / "seed_lexicon.txt"
     lexicon_path.write_text(
         "\n".join(
@@ -89,22 +123,11 @@ def test_spell_engine_defaults_to_seed_and_uses_sqlite_direct_maps_safely(tmp_pa
     assert engine.analyze("শবদ") == []
 
 
-def test_spell_engine_can_opt_into_sqlite_accepted_words_without_using_sqlite_fuzzy_candidates(
+def test_spell_engine_can_opt_into_sqlite_mode_without_reintroducing_bad_short_word_guesses(
     tmp_path: Path,
 ) -> None:
     lexicon_path = tmp_path / "seed_lexicon.txt"
-    lexicon_path.write_text(
-        "\n".join(
-            [
-                "# test seed lexicon",
-                "আমি",
-                "বাংলা",
-                "লিখি",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    lexicon_path.write_text("# test seed lexicon\nআমি\nবাংলা\nলিখি\n", encoding="utf-8")
     database_path = tmp_path / "shuddho_lexicon.db"
     _create_runtime_lexicon_fixture(database_path)
 

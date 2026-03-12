@@ -96,8 +96,9 @@ The feedback database remains separate in `data/shuddho_feedback.db`.
 At runtime, the spell engine now defaults to the conservative seed lexicon in `services/spell/data/seed_lexicon.txt`.
 
 - default accepted dictionary: seed lexicon, plus canonical targets from safe sqlite `word -> normalized_word` correction pairs when `data/shuddho_lexicon.db` is present
-- default fuzzy candidate pool: seed lexicon only
+- default fuzzy candidate pool: the same safe runtime lexicon source as acceptance checks
 - direct correction suggestions use active, trusted `words_clean.word -> normalized_word` mappings when those fields differ
+- generic fuzzy suggestions stay conservative: they use stricter short-word filtering and prefer no suggestion over weak matches
 - `words_review_flagged` stays review-only and is not loaded into the active spell lexicon
 - `cleaning_summary.txt` remains report metadata only through `import_reports`
 

@@ -48,7 +48,7 @@ def load_runtime_lexicon(
 
     return RuntimeLexicon(
         accepted_words=tuple(accepted_words),
-        candidate_words=seed_words,
+        candidate_words=tuple(accepted_words),
         correction_map=correction_map,
         source=source,
     )

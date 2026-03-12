@@ -21,9 +21,9 @@ DIRECT_MAP_EXPLANATION_EN = "This form maps to a normalized canonical spelling i
 UNKNOWN_WORD_EXPLANATION_BN = "এই শব্দটি অভিধানে নেই। কাছাকাছি কিছু বিকল্প দেখানো হয়েছে।"
 UNKNOWN_WORD_EXPLANATION_EN = "This word is not in the local lexicon. Nearby alternatives are suggested."
 DIRECT_MAP_CONFIDENCE = 0.99
-MIN_GENERIC_CANDIDATE_SCORE = 0.82
-MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.88
-MAX_GENERIC_REPLACEMENTS = 2
+MIN_GENERIC_CANDIDATE_SCORE = 0.9
+MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.92
+MAX_GENERIC_REPLACEMENTS = 1
 
 
 @dataclass(frozen=True)
@@ -124,6 +124,8 @@ class SpellEngine:
             distance = levenshtein_distance(token, word)
             if distance > 1:
                 continue
+            if not is_safe_generic_candidate(token, word, distance):
+                continue
             score = self._score_candidate(token, word, distance)
             if score >= MIN_GENERIC_CANDIDATE_SCORE:
                 ranked.append(SpellCandidate(word=word, score=score))
@@ -222,6 +224,29 @@ def candidate_initial_chars(token: str) -> tuple[str, ...]:
         seen_characters.add(character)
         ordered_characters.append(character)
     return tuple(ordered_characters)
+
+
+def is_safe_generic_candidate(token: str, candidate: str, distance: int) -> bool:
+    if distance != 1:
+        return False
+    if len(token) <= 4 and token[-1:] != candidate[-1:]:
+        return False
+    if _bigram_overlap_score(token, candidate) < 0.5:
+        return False
+    return True
+
+
+def _bigram_overlap_score(source: str, target: str) -> float:
+    if len(source) < 2 or len(target) < 2:
+        return 0.0
+
+    source_bigrams = {source[index : index + 2] for index in range(len(source) - 1)}
+    target_bigrams = {target[index : index + 2] for index in range(len(target) - 1)}
+    if not source_bigrams or not target_bigrams:
+        return 0.0
+
+    overlap = len(source_bigrams & target_bigrams)
+    return overlap / max(len(source_bigrams), len(target_bigrams))
 
 
 def _build_reverse_confusions() -> dict[str, tuple[str, ...]]:
