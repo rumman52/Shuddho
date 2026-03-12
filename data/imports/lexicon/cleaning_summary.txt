@@ -1,0 +1,27 @@
+Raw tokens: 439603
+Clean unique rows exported: 436166
+Duplicates removed: 3435
+Hard rejected: 2
+Flagged for review: 163284
+
+Sample cleaned words:
+অই
+অইউরোপীয়
+অইগেছে
+অইগেল
+অইচি
+অইচে
+অইছি
+অইছিল
+অইছিলাম
+অইছে
+অইছেই
+অইজাইত
+অইজিব
+অইট
+অইটা
+অইত
+অইতনায়
+অইতাছে
+অইতাম
+অইতে

@@ -71,6 +71,34 @@ npm run build:extension
 
 Then load `apps/chrome-extension/dist` as an unpacked extension in Chrome.
 
+### Lexicon import
+
+The lexicon import assets live in `data/imports/lexicon/`:
+
+- `words_clean.csv` for accepted lexicon rows
+- `words_review_flagged.csv` for review-only rows
+- `cleaning_summary.txt` for import metadata and reporting
+
+Run the importer from the repo root:
+
+```bash
+python scripts/import_lexicon_to_sqlite.py
+```
+
+This rebuilds `data/shuddho_lexicon.db` through a temporary file and replaces it only after a successful import. The importer creates these tables:
+
+- `words_clean`
+- `words_review_flagged`
+- `import_reports`
+
+The feedback database remains separate in `data/shuddho_feedback.db`.
+
+The current spell engine still reads `services/spell/data/seed_lexicon.txt` at runtime. If you want to refresh that file from the imported clean lexicon without changing runtime behavior, run:
+
+```bash
+python scripts/import_lexicon_to_sqlite.py --export-seed-lexicon
+```
+
 ## API
 
 ### `GET /health`
@@ -132,6 +160,7 @@ Sample response:
 
 ```bash
 pytest
+pytest tests/test_lexicon_import.py
 python -m ml.evaluation.precision_eval
 ```
 
