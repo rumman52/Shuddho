@@ -1,4 +1,13 @@
-import { forwardRef, useLayoutEffect, useRef, useState, type ForwardedRef, type MouseEventHandler } from "react";
+import {
+  forwardRef,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEventHandler,
+  type ForwardedRef,
+  type MouseEventHandler,
+  type PointerEventHandler
+} from "react";
 import type { Suggestion } from "@shared/schemas/contracts";
 
 export interface SuggestionCardAnchor {
@@ -13,10 +22,14 @@ export interface SuggestionCardAnchor {
 interface SuggestionCardProps {
   suggestion: Suggestion;
   anchorRect: SuggestionCardAnchor | null;
+  mode: "preview" | "pinned";
   onAccept: (replacement: string) => void;
   onDismiss: () => void;
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
+  onFocusCapture: FocusEventHandler<HTMLDivElement>;
+  onBlurCapture: FocusEventHandler<HTMLDivElement>;
+  onPointerDownCapture: PointerEventHandler<HTMLDivElement>;
 }
 
 const CARD_OFFSET = 12;
@@ -25,7 +38,18 @@ const FALLBACK_WIDTH = 320;
 const FALLBACK_HEIGHT = 220;
 
 export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(function SuggestionCard(
-  { suggestion, anchorRect, onAccept, onDismiss, onMouseEnter, onMouseLeave },
+  {
+    suggestion,
+    anchorRect,
+    mode,
+    onAccept,
+    onDismiss,
+    onMouseEnter,
+    onMouseLeave,
+    onFocusCapture,
+    onBlurCapture,
+    onPointerDownCapture
+  },
   forwardedRef
 ) {
   const localRef = useRef<HTMLDivElement | null>(null);
@@ -58,6 +82,10 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
     <div
       ref={mergeRefs(forwardedRef, localRef)}
       className="suggestion-card"
+      role="dialog"
+      aria-modal="false"
+      data-popup-mode={mode}
+      tabIndex={-1}
       style={{
         left: resolvedPosition.left,
         top: resolvedPosition.top,
@@ -65,10 +93,16 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
       }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onFocusCapture={onFocusCapture}
+      onBlurCapture={onBlurCapture}
+      onPointerDownCapture={onPointerDownCapture}
     >
       <div className="suggestion-card__meta">
         <span>{suggestion.category}</span>
-        <span>{Math.round(suggestion.confidence * 100)}%</span>
+        <div className="suggestion-card__badges">
+          <span>{Math.round(suggestion.confidence * 100)}%</span>
+          <span className="suggestion-card__mode">{mode === "pinned" ? "Pinned" : "Preview"}</span>
+        </div>
       </div>
       <div className="suggestion-card__original">
         <span className="suggestion-card__label">Original</span>
@@ -77,8 +111,15 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
       <p className="suggestion-card__explanation">{explanation}</p>
       <div className="suggestion-card__actions">
         {suggestion.replacement_options.length > 0 ? (
-          suggestion.replacement_options.map((option) => (
-            <button key={option} type="button" className="suggestion-card__option" onClick={() => onAccept(option)}>
+          suggestion.replacement_options.map((option, index) => (
+            <button
+              key={option}
+              type="button"
+              className={`suggestion-card__option ${
+                index === 0 ? "suggestion-card__option--primary" : "suggestion-card__option--secondary"
+              }`}
+              onClick={() => onAccept(option)}
+            >
               {option}
             </button>
           ))

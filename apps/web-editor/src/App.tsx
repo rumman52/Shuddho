@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
@@ -10,7 +10,7 @@ import { applyIssueMarks, replaceSuggestion } from "./lib/highlight";
 
 const INITIAL_TEXT = sampleFixtures[0]?.text ?? "à¦†à¦®à¦¿  à¦¬à¦¾à¦‚à¦²à¦¾ à¦²à¦¿à¦–à¦¿  à¥¤à¥¤ à¦¬à¦¾à¦‚à¦²à¦¾ à¦¬à¦¾à¦‚à¦²à¦¾ à¦­à¦¾à¦·à¦¾ à¦–à§à¦¬ à¦¸à§à¦¨à§à¦¦à¦° !!";
 const ANALYSIS_DEBOUNCE_MS = 550;
-const HOVER_HIDE_DELAY_MS = 160;
+const HOVER_HIDE_DELAY_MS = 180;
 const POST_ACCEPT_ANALYSIS_DELAY_MS = 80;
 
 export default function App() {
@@ -19,14 +19,23 @@ export default function App() {
     normalized_text: INITIAL_TEXT,
     suggestions: []
   });
-  const [activeSuggestionId, setActiveSuggestionId] = useState<string | null>(null);
+  const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
+  const [activeIssueId, setActiveIssueId] = useState<string | null>(null);
+  const [isPopupPinned, setIsPopupPinned] = useState(false);
   const [cardAnchorRect, setCardAnchorRect] = useState<SuggestionCardAnchor | null>(null);
   const [status, setStatus] = useState("Waiting for input");
   const analysisTimerRef = useRef<number | null>(null);
-  const hideTimerRef = useRef<number | null>(null);
+  const hoverCloseTimerRef = useRef<number | null>(null);
   const latestAnalysisRequestRef = useRef(0);
-  const activeAnchorElementRef = useRef<HTMLElement | null>(null);
+  const hoveredIssueIdRef = useRef<string | null>(null);
+  const activeIssueIdRef = useRef<string | null>(null);
+  const isPopupPinnedRef = useRef(false);
+  const isPopupHoveredRef = useRef(false);
+  const isPopupFocusedRef = useRef(false);
+  const popupAnchorElementRef = useRef<HTMLElement | null>(null);
+  const editorStageRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const lastVisibleSuggestionRef = useRef<Suggestion | null>(null);
 
   const editor = useEditor({
     extensions: [StarterKit.configure({ heading: false, bulletList: false, orderedList: false }), IssueMark],
@@ -49,15 +58,44 @@ export default function App() {
         ...previous,
         text
       }));
-      closeSuggestionCard();
+
+      if (isPopupPinnedRef.current) {
+        syncPinnedPopupAnchor(currentEditor.view.dom);
+      } else {
+        clearHoverPreview();
+      }
+
       scheduleAnalysis(text, ANALYSIS_DEBOUNCE_MS);
     }
   });
 
-  const activeSuggestion = useMemo(
-    () => analysis.suggestions.find((suggestion) => suggestion.id === activeSuggestionId) ?? null,
-    [analysis.suggestions, activeSuggestionId]
+  const visibleIssueId = isPopupPinned ? activeIssueId : hoveredIssueId;
+  const visibleSuggestion = useMemo(
+    () => analysis.suggestions.find((suggestion) => suggestion.id === visibleIssueId) ?? null,
+    [analysis.suggestions, visibleIssueId]
   );
+
+  useEffect(() => {
+    hoveredIssueIdRef.current = hoveredIssueId;
+  }, [hoveredIssueId]);
+
+  useEffect(() => {
+    activeIssueIdRef.current = activeIssueId;
+  }, [activeIssueId]);
+
+  useEffect(() => {
+    isPopupPinnedRef.current = isPopupPinned;
+  }, [isPopupPinned]);
+
+  useEffect(() => {
+    if (visibleSuggestion) {
+      lastVisibleSuggestionRef.current = visibleSuggestion;
+      return;
+    }
+    if (!visibleIssueId) {
+      lastVisibleSuggestionRef.current = null;
+    }
+  }, [visibleSuggestion, visibleIssueId]);
 
   useEffect(() => {
     if (!editor) {
@@ -80,51 +118,106 @@ export default function App() {
 
     const issueElements = editor.view.dom.querySelectorAll<HTMLElement>("[data-issue-id]");
     issueElements.forEach((element) => {
-      if (element.dataset.issueId === activeSuggestionId) {
+      if (element.dataset.issueId === visibleIssueId) {
         element.dataset.issueActive = "true";
       } else {
         delete element.dataset.issueActive;
       }
     });
-  }, [activeSuggestionId, analysis.suggestions, editor]);
+  }, [editor, visibleIssueId, analysis.suggestions]);
 
   useEffect(() => {
-    if (!activeSuggestionId) {
+    if (!visibleIssueId) {
       return;
     }
-    if (analysis.suggestions.some((suggestion) => suggestion.id === activeSuggestionId)) {
+
+    const exactSuggestion = analysis.suggestions.find((suggestion) => suggestion.id === visibleIssueId);
+    if (exactSuggestion) {
       return;
     }
-    closeSuggestionCard();
-  }, [analysis.suggestions, activeSuggestionId]);
+
+    const matchedSuggestion = matchSuggestion(lastVisibleSuggestionRef.current, analysis.suggestions);
+    if (!matchedSuggestion) {
+      if (isPopupPinnedRef.current) {
+        closePopup();
+      } else {
+        clearHoverPreview();
+      }
+      return;
+    }
+
+    popupAnchorElementRef.current = null;
+    if (isPopupPinnedRef.current) {
+      if (activeIssueIdRef.current !== matchedSuggestion.id) {
+        setActiveIssueId(matchedSuggestion.id);
+      }
+      if (hoveredIssueIdRef.current !== matchedSuggestion.id) {
+        setHoveredIssueId(matchedSuggestion.id);
+      }
+      return;
+    }
+
+    if (hoveredIssueIdRef.current !== matchedSuggestion.id) {
+      setHoveredIssueId(matchedSuggestion.id);
+    }
+  }, [analysis.suggestions, visibleIssueId]);
 
   useEffect(() => {
-    if (!activeSuggestionId) {
+    if (!visibleIssueId) {
       return;
     }
 
-    const syncCardAnchor = () => {
-      const anchorElement = getActiveAnchorElement(activeSuggestionId);
+    const syncPopupAnchor = () => {
+      const anchorElement = resolveAnchorElement(visibleIssueId);
       if (!anchorElement) {
-        closeSuggestionCard();
+        if (!isPopupPinnedRef.current) {
+          clearHoverPreview();
+        }
         return;
       }
       setCardAnchorRect(toCardAnchor(anchorElement));
     };
 
-    syncCardAnchor();
-    window.addEventListener("resize", syncCardAnchor);
-    window.addEventListener("scroll", syncCardAnchor, true);
+    syncPopupAnchor();
+    window.addEventListener("resize", syncPopupAnchor);
+    window.addEventListener("scroll", syncPopupAnchor, true);
     return () => {
-      window.removeEventListener("resize", syncCardAnchor);
-      window.removeEventListener("scroll", syncCardAnchor, true);
+      window.removeEventListener("resize", syncPopupAnchor);
+      window.removeEventListener("scroll", syncPopupAnchor, true);
     };
-  }, [activeSuggestionId, editor]);
+  }, [editor, visibleIssueId]);
+
+  useEffect(() => {
+    if (!isPopupPinned) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && (cardRef.current?.contains(target) || editorStageRef.current?.contains(target))) {
+        return;
+      }
+      closePopup();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closePopup();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isPopupPinned]);
 
   useEffect(() => {
     return () => {
       clearAnalysisTimer();
-      clearHideTimer();
+      clearHoverCloseTimer();
     };
   }, []);
 
@@ -133,7 +226,7 @@ export default function App() {
 
     if (!text.trim()) {
       setAnalysis({ text, normalized_text: text, suggestions: [] });
-      closeSuggestionCard();
+      closePopup();
       setStatus("Empty input");
       return;
     }
@@ -155,15 +248,15 @@ export default function App() {
   }
 
   async function handleAccept(replacement: string) {
-    if (!editor || !activeSuggestion) {
+    if (!editor || !visibleSuggestion) {
       return;
     }
 
-    const suggestion = activeSuggestion;
+    const suggestion = visibleSuggestion;
     const feedbackText = analysis.text;
     const applied = replaceSuggestion(editor, suggestion, replacement);
 
-    closeSuggestionCard();
+    closePopup();
     if (!applied) {
       setStatus("Suggestion no longer matched current text");
       scheduleAnalysis(editor.getText(), POST_ACCEPT_ANALYSIS_DELAY_MS);
@@ -186,18 +279,18 @@ export default function App() {
   }
 
   async function handleDismiss() {
-    if (!activeSuggestion) {
+    if (!visibleSuggestion) {
       return;
     }
 
-    const suggestion = activeSuggestion;
+    const suggestion = visibleSuggestion;
     const feedbackText = analysis.text;
 
     setAnalysis((previous) => ({
       ...previous,
       suggestions: previous.suggestions.filter((item) => item.id !== suggestion.id)
     }));
-    closeSuggestionCard();
+    closePopup();
     setStatus("Suggestion dismissed");
 
     try {
@@ -212,20 +305,28 @@ export default function App() {
   }
 
   function handleEditorMouseOver(event: ReactMouseEvent<HTMLDivElement>) {
+    if (isPopupPinnedRef.current) {
+      return;
+    }
+
     const issueElement = findIssueElement(event.target);
     const suggestionId = issueElement?.dataset.issueId;
     if (!issueElement || !suggestionId) {
       return;
     }
 
-    clearHideTimer();
-    if (activeSuggestionId === suggestionId && activeAnchorElementRef.current === issueElement) {
+    clearHoverCloseTimer();
+    if (hoveredIssueIdRef.current === suggestionId && popupAnchorElementRef.current === issueElement) {
       return;
     }
-    openSuggestionCard(suggestionId, issueElement);
+    showHoverPreview(suggestionId, issueElement);
   }
 
   function handleEditorMouseOut(event: ReactMouseEvent<HTMLDivElement>) {
+    if (isPopupPinnedRef.current) {
+      return;
+    }
+
     const issueElement = findIssueElement(event.target);
     if (!issueElement) {
       return;
@@ -240,62 +341,138 @@ export default function App() {
       return;
     }
 
-    scheduleHideCard();
+    scheduleHoverClose();
   }
 
   function handleEditorClick(event: ReactMouseEvent<HTMLDivElement>) {
     const issueElement = findIssueElement(event.target);
     const suggestionId = issueElement?.dataset.issueId;
 
-    if (!issueElement || !suggestionId) {
-      closeSuggestionCard();
+    if (issueElement && suggestionId) {
+      pinIssue(suggestionId, issueElement);
       return;
     }
 
-    openSuggestionCard(suggestionId, issueElement);
+    if (!isPopupPinnedRef.current) {
+      clearHoverPreview();
+    }
   }
 
-  function handleCardMouseEnter() {
-    clearHideTimer();
+  function handlePopupMouseEnter() {
+    isPopupHoveredRef.current = true;
+    clearHoverCloseTimer();
   }
 
-  function handleCardMouseLeave(event: ReactMouseEvent<HTMLDivElement>) {
-    if (findIssueElement(event.relatedTarget)) {
+  function handlePopupMouseLeave(event: ReactMouseEvent<HTMLDivElement>) {
+    isPopupHoveredRef.current = false;
+    if (isPopupPinnedRef.current || findIssueElement(event.relatedTarget)) {
       return;
     }
-    scheduleHideCard();
+    scheduleHoverClose();
   }
 
-  function openSuggestionCard(suggestionId: string, anchorElement: HTMLElement) {
-    clearHideTimer();
-    activeAnchorElementRef.current = anchorElement;
-    setActiveSuggestionId(suggestionId);
+  function handlePopupFocusCapture() {
+    isPopupFocusedRef.current = true;
+    clearHoverCloseTimer();
+    if (!isPopupPinnedRef.current) {
+      pinVisibleIssue();
+    }
+  }
+
+  function handlePopupBlurCapture(event: ReactFocusEvent<HTMLDivElement>) {
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (relatedTarget && cardRef.current?.contains(relatedTarget)) {
+      return;
+    }
+    isPopupFocusedRef.current = false;
+    if (!isPopupPinnedRef.current) {
+      scheduleHoverClose();
+    }
+  }
+
+  function handlePopupPointerDownCapture() {
+    if (!isPopupPinnedRef.current) {
+      pinVisibleIssue();
+    }
+  }
+
+  function showHoverPreview(suggestionId: string, anchorElement: HTMLElement) {
+    if (isPopupPinnedRef.current) {
+      return;
+    }
+    clearHoverCloseTimer();
+    popupAnchorElementRef.current = anchorElement;
+    setHoveredIssueId(suggestionId);
     setCardAnchorRect(toCardAnchor(anchorElement));
   }
 
-  function closeSuggestionCard() {
-    clearHideTimer();
-    activeAnchorElementRef.current = null;
-    setActiveSuggestionId(null);
+  function pinIssue(suggestionId: string, anchorElement: HTMLElement) {
+    clearHoverCloseTimer();
+    popupAnchorElementRef.current = anchorElement;
+    setHoveredIssueId(suggestionId);
+    setActiveIssueId(suggestionId);
+    setIsPopupPinned(true);
+    setCardAnchorRect(toCardAnchor(anchorElement));
+  }
+
+  function pinVisibleIssue() {
+    const suggestionId = hoveredIssueIdRef.current ?? activeIssueIdRef.current;
+    if (!suggestionId) {
+      return;
+    }
+
+    const anchorElement = resolveAnchorElement(suggestionId);
+    if (!anchorElement) {
+      return;
+    }
+
+    pinIssue(suggestionId, anchorElement);
+  }
+
+  function clearHoverPreview() {
+    if (isPopupPinnedRef.current) {
+      return;
+    }
+    clearHoverCloseTimer();
+    popupAnchorElementRef.current = null;
+    setHoveredIssueId(null);
     setCardAnchorRect(null);
   }
 
-  function scheduleHideCard() {
-    clearHideTimer();
-    hideTimerRef.current = window.setTimeout(() => {
-      activeAnchorElementRef.current = null;
-      setActiveSuggestionId(null);
+  function closePopup() {
+    clearHoverCloseTimer();
+    isPopupHoveredRef.current = false;
+    isPopupFocusedRef.current = false;
+    popupAnchorElementRef.current = null;
+    setHoveredIssueId(null);
+    setActiveIssueId(null);
+    setIsPopupPinned(false);
+    setCardAnchorRect(null);
+  }
+
+  function scheduleHoverClose() {
+    if (isPopupPinnedRef.current) {
+      return;
+    }
+
+    clearHoverCloseTimer();
+    hoverCloseTimerRef.current = window.setTimeout(() => {
+      if (isPopupPinnedRef.current || isPopupHoveredRef.current || isPopupFocusedRef.current) {
+        return;
+      }
+      popupAnchorElementRef.current = null;
+      setHoveredIssueId(null);
       setCardAnchorRect(null);
-      hideTimerRef.current = null;
+      hoverCloseTimerRef.current = null;
     }, HOVER_HIDE_DELAY_MS);
   }
 
-  function clearHideTimer() {
-    if (hideTimerRef.current === null) {
+  function clearHoverCloseTimer() {
+    if (hoverCloseTimerRef.current === null) {
       return;
     }
-    window.clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = null;
+    window.clearTimeout(hoverCloseTimerRef.current);
+    hoverCloseTimerRef.current = null;
   }
 
   function scheduleAnalysis(text: string, delayMs: number) {
@@ -313,21 +490,44 @@ export default function App() {
     analysisTimerRef.current = null;
   }
 
-  function getActiveAnchorElement(suggestionId: string): HTMLElement | null {
-    if (activeAnchorElementRef.current?.isConnected) {
-      return activeAnchorElementRef.current;
-    }
-    if (!editor) {
-      return null;
+  function syncPinnedPopupAnchor(editorRoot: ParentNode) {
+    const suggestionId = activeIssueIdRef.current;
+    if (!suggestionId) {
+      return;
     }
 
-    const nextAnchor =
-      Array.from(editor.view.dom.querySelectorAll<HTMLElement>("[data-issue-id]")).find(
-        (element) => element.dataset.issueId === suggestionId
-      ) ?? null;
+    const currentAnchor = popupAnchorElementRef.current;
+    if (currentAnchor?.isConnected && currentAnchor.dataset.issueId === suggestionId) {
+      setCardAnchorRect(toCardAnchor(currentAnchor));
+      return;
+    }
 
-    activeAnchorElementRef.current = nextAnchor;
-    return nextAnchor;
+    const issueAnchor = findIssueAnchor(editorRoot, suggestionId);
+    if (!issueAnchor) {
+      return;
+    }
+
+    popupAnchorElementRef.current = issueAnchor;
+    setCardAnchorRect(toCardAnchor(issueAnchor));
+  }
+
+  function resolveAnchorElement(suggestionId: string): HTMLElement | null {
+    const currentAnchor = popupAnchorElementRef.current;
+    if (currentAnchor?.isConnected && currentAnchor.dataset.issueId === suggestionId) {
+      return currentAnchor;
+    }
+
+    const issueAnchor = editor ? findIssueAnchor(editor.view.dom, suggestionId) : null;
+    if (issueAnchor) {
+      popupAnchorElementRef.current = issueAnchor;
+      return issueAnchor;
+    }
+
+    if (currentAnchor?.isConnected) {
+      return currentAnchor;
+    }
+
+    return null;
   }
 
   return (
@@ -350,24 +550,34 @@ export default function App() {
         <div className="panel-header">
           <div>
             <h2>Web editor</h2>
-            <p>Hover highlighted text to inspect suggestions without leaving the editor flow.</p>
+            <p>Hover for preview, click an issue to pin the correction popover, then edit without losing it.</p>
           </div>
           <button type="button" className="analyze-button" onClick={() => editor && void runAnalysis(editor.getText())}>
             Analyze now
           </button>
         </div>
-        <div className="editor-stage" onMouseOver={handleEditorMouseOver} onMouseOut={handleEditorMouseOut} onClick={handleEditorClick}>
+        <div
+          ref={editorStageRef}
+          className="editor-stage"
+          onMouseOver={handleEditorMouseOver}
+          onMouseOut={handleEditorMouseOut}
+          onClick={handleEditorClick}
+        >
           <EditorContent editor={editor} />
         </div>
-        {activeSuggestion ? (
+        {visibleSuggestion ? (
           <SuggestionCard
             ref={cardRef}
-            suggestion={activeSuggestion}
+            suggestion={visibleSuggestion}
             anchorRect={cardAnchorRect}
+            mode={isPopupPinned ? "pinned" : "preview"}
             onAccept={handleAccept}
             onDismiss={handleDismiss}
-            onMouseEnter={handleCardMouseEnter}
-            onMouseLeave={handleCardMouseLeave}
+            onMouseEnter={handlePopupMouseEnter}
+            onMouseLeave={handlePopupMouseLeave}
+            onFocusCapture={handlePopupFocusCapture}
+            onBlurCapture={handlePopupBlurCapture}
+            onPointerDownCapture={handlePopupPointerDownCapture}
           />
         ) : null}
       </section>
@@ -376,7 +586,7 @@ export default function App() {
         <div className="panel-header">
           <div>
             <h2>Open suggestions</h2>
-            <p>Hover highlighted text or use this list to reopen a suggestion card.</p>
+            <p>Use this list to pin a suggestion if you prefer not to target the underline directly.</p>
           </div>
           <span>{analysis.normalized_text}</span>
         </div>
@@ -386,7 +596,7 @@ export default function App() {
               key={suggestion.id}
               type="button"
               className="suggestion-list__item"
-              onClick={(event) => openSuggestionCard(suggestion.id, event.currentTarget)}
+              onClick={(event) => pinIssue(suggestion.id, event.currentTarget)}
             >
               <strong>{suggestion.original_text}</strong>
               <span>{suggestion.explanation_en}</span>
@@ -414,6 +624,12 @@ function getElementFromTarget(target: EventTarget | null): HTMLElement | null {
   return null;
 }
 
+function findIssueAnchor(root: ParentNode, suggestionId: string): HTMLElement | null {
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-issue-id]")).find(
+    (element) => element.dataset.issueId === suggestionId
+  ) ?? null;
+}
+
 function toCardAnchor(element: HTMLElement): SuggestionCardAnchor {
   const rect = element.getBoundingClientRect();
   return {
@@ -424,4 +640,52 @@ function toCardAnchor(element: HTMLElement): SuggestionCardAnchor {
     width: rect.width,
     height: rect.height
   };
+}
+
+function matchSuggestion(previous: Suggestion | null, nextSuggestions: Suggestion[]): Suggestion | null {
+  if (!previous) {
+    return null;
+  }
+
+  let bestMatch: { suggestion: Suggestion; score: number } | null = null;
+  for (const suggestion of nextSuggestions) {
+    if (suggestion.id === previous.id) {
+      return suggestion;
+    }
+
+    let score = 0;
+    if (suggestion.subtype === previous.subtype) {
+      score += 5;
+    }
+    if (suggestion.source === previous.source) {
+      score += 3;
+    }
+    if (suggestion.category === previous.category) {
+      score += 2;
+    }
+    if (suggestion.original_text === previous.original_text) {
+      score += 4;
+    }
+
+    const spanDistance = Math.abs(suggestion.span_start - previous.span_start) + Math.abs(suggestion.span_end - previous.span_end);
+    if (spanDistance === 0) {
+      score += 4;
+    } else if (spanDistance <= 4) {
+      score += 3;
+    } else if (spanDistance <= 10) {
+      score += 1;
+    }
+
+    if (suggestion.replacement_options.some((option) => previous.replacement_options.includes(option))) {
+      score += 2;
+    }
+
+    if (score < 7 || (bestMatch && score <= bestMatch.score)) {
+      continue;
+    }
+
+    bestMatch = { suggestion, score };
+  }
+
+  return bestMatch?.suggestion ?? null;
 }
