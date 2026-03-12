@@ -93,11 +93,20 @@ This rebuilds `data/shuddho_lexicon.db` through a temporary file and replaces it
 
 The feedback database remains separate in `data/shuddho_feedback.db`.
 
-The current spell engine still reads `services/spell/data/seed_lexicon.txt` at runtime. If you want to refresh that file from the imported clean lexicon without changing runtime behavior, run:
+At runtime, the spell engine now prefers `data/shuddho_lexicon.db` when it is present:
+
+- accepted dictionary membership is loaded from active, trusted `words_clean.normalized_word`
+- direct correction suggestions use active, trusted `words_clean.word -> normalized_word` mappings when those fields differ
+- `words_review_flagged` stays review-only and is not loaded into the active spell lexicon
+- `cleaning_summary.txt` remains report metadata only through `import_reports`
+
+If the SQLite lexicon database is missing or invalid, the spell engine falls back to `services/spell/data/seed_lexicon.txt`. You can still refresh that seed file from the imported clean lexicon for a static snapshot or fallback runtime:
 
 ```bash
 python scripts/import_lexicon_to_sqlite.py --export-seed-lexicon
 ```
+
+After re-importing `data/shuddho_lexicon.db`, restart the FastAPI backend so the in-memory spell engine reloads the latest lexicon.
 
 ## API
 
