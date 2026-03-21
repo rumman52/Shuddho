@@ -299,6 +299,11 @@ button {
   color: var(--muted);
 }
 
+.suggestion-list__replacement {
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+
 @media (max-width: 780px) {
   .hero,
   .panel-header {

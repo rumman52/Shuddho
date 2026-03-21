@@ -11,10 +11,6 @@ from shared.utils.text import stable_id
 from .runtime_lexicon import load_runtime_lexicon
 
 
-DIRECT_MAP_EXPLANATION_BN = "এই শব্দটির মানক রূপ অভিধানে ভিন্নভাবে সংরক্ষিত আছে।"
-DIRECT_MAP_EXPLANATION_EN = "This form maps to a normalized canonical spelling in the main lexicon."
-UNKNOWN_WORD_EXPLANATION_BN = "এই শব্দটির জন্য যথেষ্ট নির্ভরযোগ্য বিকল্প পাওয়া যায়নি।"
-UNKNOWN_WORD_EXPLANATION_EN = "No sufficiently reliable alternative was found for this word."
 DIRECT_MAP_CONFIDENCE = 0.99
 MIN_GENERIC_CANDIDATE_SCORE = 0.94
 MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.95
@@ -63,27 +59,34 @@ class SpellEngine:
                 continue
 
             is_direct_map = token in self.correction_map
+            primary_candidate = candidates[0].word
             if is_direct_map:
-                top_candidates = [candidates[0].word]
+                top_candidates = [primary_candidate]
                 confidence = DIRECT_MAP_CONFIDENCE
+                subtype = "dictionary_variant"
+                explanation_bn = f"এখানে '{token}' এর অভিধানভিত্তিক রূপ '{primary_candidate}'।"
+                explanation_en = f"The dictionary-backed form for '{token}' here is '{primary_candidate}'."
             else:
                 top_candidates = [candidate.word for candidate in candidates[:MAX_GENERIC_REPLACEMENTS]]
                 confidence = min(max(candidates[0].score, 0.0), 0.97)
                 if confidence < MIN_GENERIC_SUGGESTION_CONFIDENCE:
                     continue
+                subtype = "spelling_candidate"
+                explanation_bn = f"'{token}' শব্দটির সবচেয়ে কাছের নিরাপদ সংশোধন '{primary_candidate}'।"
+                explanation_en = f"The closest safe correction for '{token}' is '{primary_candidate}'."
 
             suggestions.append(
                 Suggestion(
                     id=stable_id("spell", f"{match.start()}:{match.end()}:{token}:{','.join(top_candidates)}"),
                     category=SuggestionCategory.SPELLING,
-                    subtype="unknown_word",
+                    subtype=subtype,
                     span_start=match.start(),
                     span_end=match.end(),
                     original_text=token,
                     replacement_options=top_candidates,
                     confidence=round(confidence, 2),
-                    explanation_bn=DIRECT_MAP_EXPLANATION_BN if is_direct_map else UNKNOWN_WORD_EXPLANATION_BN,
-                    explanation_en=DIRECT_MAP_EXPLANATION_EN if is_direct_map else UNKNOWN_WORD_EXPLANATION_EN,
+                    explanation_bn=explanation_bn,
+                    explanation_en=explanation_en,
                     source=SuggestionSource.SPELL,
                     severity=SuggestionSeverity.MEDIUM,
                 )

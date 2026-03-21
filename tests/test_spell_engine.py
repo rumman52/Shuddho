@@ -39,8 +39,10 @@ def test_spell_engine_uses_main_csv_direct_mapping_and_accepts_canonical_target(
 
     suggestions = engine.analyze("অইউরোপীয়")
     assert len(suggestions) == 1
+    assert suggestions[0].subtype == "dictionary_variant"
     assert suggestions[0].replacement_options == ["অইউরোপীয়"]
     assert suggestions[0].confidence >= 0.99
+    assert "অইউরোপীয়" in suggestions[0].explanation_bn
 
 
 def test_spell_engine_candidate_pool_ignores_noisy_self_canonical_rows(tmp_path: Path) -> None:

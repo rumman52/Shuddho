@@ -48,6 +48,7 @@ def test_analyze_flow_surfaces_csv_direct_map_suggestion(tmp_path: Path) -> None
 
     assert len(merged) == 1
     assert merged[0].original_text == "অইউরোপীয়"
+    assert merged[0].subtype == "dictionary_variant"
     assert merged[0].replacement_options == ["অইউরোপীয়"]
 
 
@@ -69,6 +70,57 @@ def test_analyze_flow_does_not_emit_random_valid_word_suggestion(tmp_path: Path)
     merged = manager.merge(text, normalized, spell.analyze(normalized.text), [])
 
     assert merged == []
+
+
+def test_analyze_flow_returns_sentence_grounded_spacing_and_punctuation_suggestions(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("যায়", "যায়", "fixture.csv", "1", "0", "1"),
+        ],
+    )
+
+    text = "সে  স্কুলে যায় ।"
+    normalizer = BanglaNormalizer()
+    rules = RuleEngine()
+    spell = SpellEngine(runtime_csv_path=runtime_csv_path)
+    manager = SuggestionManager()
+
+    normalized = normalizer.normalize(text)
+    merged = manager.merge(text, normalized, spell.analyze(normalized.text), rules.analyze(text))
+
+    by_subtype = {suggestion.subtype: suggestion for suggestion in merged}
+
+    assert normalized.text == "সে স্কুলে যায়।"
+    assert by_subtype["extra_whitespace"].original_text == "  "
+    assert by_subtype["extra_whitespace"].replacement_options == [" "]
+    assert by_subtype["dictionary_variant"].original_text == "যায়"
+    assert by_subtype["dictionary_variant"].replacement_options == ["যায়"]
+    assert by_subtype["space_before_punctuation"].original_text == " ।"
+
+
+def test_analyze_flow_returns_repeated_word_and_duplicate_punctuation_for_exact_spans(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[("যায়", "যায়", "fixture.csv", "1", "0", "1")],
+    )
+
+    text = "আমি আমি স্কুলে যাই।।"
+    normalizer = BanglaNormalizer()
+    rules = RuleEngine()
+    spell = SpellEngine(runtime_csv_path=runtime_csv_path)
+    manager = SuggestionManager()
+
+    normalized = normalizer.normalize(text)
+    merged = manager.merge(text, normalized, spell.analyze(normalized.text), rules.analyze(text))
+
+    by_subtype = {suggestion.subtype: suggestion for suggestion in merged}
+
+    assert by_subtype["repeated_word"].span_start == 0
+    assert by_subtype["repeated_word"].span_end == 7
+    assert by_subtype["repeated_word"].original_text == "আমি আমি"
+    assert by_subtype["duplicate_punctuation"].original_text == "।।"
+    assert by_subtype["duplicate_punctuation"].replacement_options == ["।"]
 
 
 def _write_clean_csv_fixture(

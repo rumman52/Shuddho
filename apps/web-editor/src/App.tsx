@@ -599,7 +599,10 @@ export default function App() {
               onClick={(event) => pinIssue(suggestion.id, event.currentTarget)}
             >
               <strong>{suggestion.original_text}</strong>
-              <span>{suggestion.explanation_en}</span>
+              {suggestion.replacement_options[0] ? (
+                <span className="suggestion-list__replacement">{suggestion.replacement_options[0]}</span>
+              ) : null}
+              <span>{suggestion.explanation_bn || suggestion.explanation_en}</span>
             </button>
           ))}
           {analysis.suggestions.length === 0 ? <p className="empty-state">No issues found for this draft.</p> : null}

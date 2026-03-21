@@ -7,15 +7,22 @@ from shared.schemas.python_models import Suggestion, SuggestionCategory, Suggest
 from shared.utils.text import stable_id
 
 
+TOKEN_BOUNDARY_CHARS = r"\u0980-\u09FFA-Za-z0-9"
+
+
 class RuleEngine:
-    repeated_word_pattern = re.compile(r"(?P<word>[\u0980-\u09FFA-Za-z]+)(?P<space>\s+)(?P=word)")
+    repeated_word_pattern = re.compile(
+        rf"(?<![{TOKEN_BOUNDARY_CHARS}])(?P<word>[\u0980-\u09FFA-Za-z]+)(?P<space>\s+)(?P=word)(?![{TOKEN_BOUNDARY_CHARS}])"
+    )
     duplicate_punctuation_pattern = re.compile(rf"([{re.escape(PUNCTUATION_CHARS)}])\1+")
+    extra_whitespace_pattern = re.compile(rf"(?<=[{TOKEN_BOUNDARY_CHARS}])[^\S\r\n]{{2,}}(?=[{TOKEN_BOUNDARY_CHARS}])")
     whitespace_before_punctuation_pattern = re.compile(rf"\s+([{re.escape(PUNCTUATION_CHARS)}])")
 
     def analyze(self, text: str) -> list[Suggestion]:
         suggestions: list[Suggestion] = []
         suggestions.extend(self._repeated_word_suggestions(text))
         suggestions.extend(self._duplicate_punctuation_suggestions(text))
+        suggestions.extend(self._extra_whitespace_suggestions(text))
         suggestions.extend(self._whitespace_before_punctuation_suggestions(text))
         suggestions.extend(self._exact_typo_suggestions(text))
         return suggestions
@@ -35,11 +42,11 @@ class RuleEngine:
                     span_end=span_end,
                     original_text=text[span_start:span_end],
                     replacement_options=[word],
-                    confidence=0.96,
-                    explanation_bn="একই শব্দ পরপর দুবার এসেছে। একটি রাখাই যথেষ্ট।",
-                    explanation_en="The same word appears consecutively. Keeping one instance is usually correct.",
+                    confidence=0.98,
+                    explanation_bn=f"একই শব্দ '{word}' পরপর দুইবার এসেছে।",
+                    explanation_en=f"The word '{word}' appears twice in a row.",
                     source=SuggestionSource.RULE,
-                    severity=SuggestionSeverity.MEDIUM
+                    severity=SuggestionSeverity.MEDIUM,
                 )
             )
         return suggestions
@@ -48,6 +55,7 @@ class RuleEngine:
         suggestions: list[Suggestion] = []
         for match in self.duplicate_punctuation_pattern.finditer(text):
             characters = match.group(0)
+            replacement = characters[0]
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"punctuation:{match.start()}:{match.end()}:{characters}"),
@@ -56,12 +64,35 @@ class RuleEngine:
                     span_start=match.start(),
                     span_end=match.end(),
                     original_text=characters,
-                    replacement_options=[characters[0]],
-                    confidence=0.97,
-                    explanation_bn="একাধিক একই চিহ্ন একসাথে এসেছে। সাধারণত একটি চিহ্নই যথেষ্ট।",
-                    explanation_en="The same punctuation mark appears multiple times. A single mark is usually enough.",
+                    replacement_options=[replacement],
+                    confidence=0.99,
+                    explanation_bn=f"এখানে '{characters}' এর বদলে '{replacement}' ব্যবহার করুন।",
+                    explanation_en=f"Replace '{characters}' with '{replacement}' here.",
                     source=SuggestionSource.RULE,
-                    severity=SuggestionSeverity.LOW
+                    severity=SuggestionSeverity.LOW,
+                )
+            )
+        return suggestions
+
+    def _extra_whitespace_suggestions(self, text: str) -> list[Suggestion]:
+        suggestions: list[Suggestion] = []
+        for match in self.extra_whitespace_pattern.finditer(text):
+            span_start = match.start()
+            span_end = match.end()
+            suggestions.append(
+                Suggestion(
+                    id=stable_id("rule", f"extra-space:{span_start}:{span_end}"),
+                    category=SuggestionCategory.GRAMMAR,
+                    subtype="extra_whitespace",
+                    span_start=span_start,
+                    span_end=span_end,
+                    original_text=text[span_start:span_end],
+                    replacement_options=[" "],
+                    confidence=0.97,
+                    explanation_bn="দুইটি শব্দের মাঝে অতিরিক্ত ফাঁকা আছে।",
+                    explanation_en="There is extra whitespace between these words.",
+                    source=SuggestionSource.RULE,
+                    severity=SuggestionSeverity.LOW,
                 )
             )
         return suggestions
@@ -72,7 +103,6 @@ class RuleEngine:
             punctuation = match.group(1)
             span_start = match.start()
             span_end = match.end()
-            replacement = punctuation
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"spacing:{span_start}:{span_end}:{punctuation}"),
@@ -81,12 +111,12 @@ class RuleEngine:
                     span_start=span_start,
                     span_end=span_end,
                     original_text=text[span_start:span_end],
-                    replacement_options=[replacement],
+                    replacement_options=[punctuation],
                     confidence=0.95,
-                    explanation_bn="বিরামচিহ্নের আগে অতিরিক্ত ফাঁকা আছে।",
-                    explanation_en="There is unnecessary whitespace before punctuation.",
+                    explanation_bn=f"যতিচিহ্ন '{punctuation}' এর আগে অপ্রয়োজনীয় ফাঁকা আছে।",
+                    explanation_en=f"There is unnecessary whitespace before '{punctuation}'.",
                     source=SuggestionSource.RULE,
-                    severity=SuggestionSeverity.LOW
+                    severity=SuggestionSeverity.LOW,
                 )
             )
         return suggestions
@@ -94,7 +124,9 @@ class RuleEngine:
     def _exact_typo_suggestions(self, text: str) -> list[Suggestion]:
         suggestions: list[Suggestion] = []
         for typo, replacement in SAFE_EXACT_TYPOS.items():
-            for match in re.finditer(re.escape(typo), text):
+            typo_pattern = re.compile(rf"(?<![{TOKEN_BOUNDARY_CHARS}]){re.escape(typo)}(?![{TOKEN_BOUNDARY_CHARS}])")
+            for match in typo_pattern.finditer(text):
+                original_text = match.group(0)
                 suggestions.append(
                     Suggestion(
                         id=stable_id("rule", f"typo:{match.start()}:{match.end()}:{typo}->{replacement}"),
@@ -102,14 +134,13 @@ class RuleEngine:
                         subtype="safe_exact_typo",
                         span_start=match.start(),
                         span_end=match.end(),
-                        original_text=match.group(0),
+                        original_text=original_text,
                         replacement_options=[replacement],
                         confidence=0.98,
-                        explanation_bn="এটি একটি পরিচিত ও নিরাপদ সংশোধন।",
-                        explanation_en="This is a known conservative correction.",
+                        explanation_bn=f"এখানে '{original_text}' এর বদলে '{replacement}' লেখা উচিত।",
+                        explanation_en=f"Replace '{original_text}' with '{replacement}' here.",
                         source=SuggestionSource.RULE,
-                        severity=SuggestionSeverity.MEDIUM
+                        severity=SuggestionSeverity.MEDIUM,
                     )
                 )
         return suggestions
-
