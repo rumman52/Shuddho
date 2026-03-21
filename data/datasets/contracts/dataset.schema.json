@@ -8,6 +8,19 @@
       "type": "array",
       "items": { "type": "integer" }
     },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "start": { "type": "integer" },
+          "end": { "type": "integer" },
+          "label": { "type": "string" },
+          "subtype": { "type": "string" }
+        },
+        "required": ["start", "end", "label"]
+      }
+    },
     "source_text": { "type": "string" },
     "target_text": { "type": "string" },
     "text": { "type": "string" },
@@ -17,4 +30,3 @@
     }
   }
 }
-

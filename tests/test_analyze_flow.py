@@ -236,3 +236,31 @@ def _write_clean_csv_fixture(
     lines.extend(",".join(row) for row in rows)
     runtime_csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return runtime_csv_path
+
+
+def test_analyze_flow_preserves_multiline_sentence_boundaries(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("কিন্ত", "কিন্তু", "fixture.csv", "1", "0", "1"),
+            ("কিন্তু", "কিন্তু", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+
+    text = "আমি আমি স্কুলে যাই।।\nআমি কিন্ত বাসায় যাই ।"
+    normalizer = BanglaNormalizer()
+    rules = RuleEngine()
+    spell = SpellEngine(runtime_csv_path=runtime_csv_path)
+    manager = SuggestionManager()
+
+    normalized = normalizer.normalize(text)
+    merged = manager.merge(text, normalized, spell.analyze(normalized.text), rules.analyze(text))
+
+    by_rule_id = {suggestion.rule_id: suggestion for suggestion in merged}
+
+    assert normalized.text == "আমি আমি স্কুলে যাই।।\nআমি কিন্ত বাসায় যাই।"
+    assert by_rule_id["REP_001"].original_text == "আমি আমি"
+    assert by_rule_id["PUNC_001"].original_text == "।।"
+    assert by_rule_id["SPELL_002"].original_text == "কিন্ত"
+    assert by_rule_id["PUNC_002"].original_text == " ।"
+    assert all(suggestion.original_text == text[suggestion.span_start : suggestion.span_end] for suggestion in merged)

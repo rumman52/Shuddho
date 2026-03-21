@@ -1,2 +1,4 @@
-{"input_text":"আমি বাংলা বাংলা লিখি।","token_labels":[0,1,1,0]}
-
+{"input_text":"আমি আমি স্কুলে যাই।।","target_text":"আমি স্কুলে যাই।","issues":[{"start":0,"end":7,"label":"grammar","subtype":"repeated_word"},{"start":19,"end":21,"label":"punctuation","subtype":"duplicate_punctuation"}]}
+{"input_text":"সে  স্কুলে যায় ।","target_text":"সে স্কুলে যায়।","issues":[{"start":2,"end":4,"label":"spacing","subtype":"extra_whitespace"},{"start":15,"end":17,"label":"punctuation","subtype":"space_before_punctuation"}]}
+{"input_text":"আমি কিন্ত স্কুলে যাই।","target_text":"আমি কিন্তু স্কুলে যাই।","issues":[{"start":4,"end":9,"label":"spelling","subtype":"variant_mapping"}]}
+{"input_text":"বাংলা ব্যকরন শিখি।","target_text":"বাংলা ব্যাকরণ শিখি।","issues":[{"start":6,"end":12,"label":"spelling","subtype":"safe_exact_typo"}]}

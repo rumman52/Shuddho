@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from services.analysis.shuddho_analysis.pipeline import AnalysisPipeline
+from services.analysis.shuddho_analysis.detector import DetectorService
+from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
+from services.analysis.shuddho_analysis.ranking import SuggestionRankingPipeline
 from services.feedback.shuddho_feedback.store import FeedbackStore
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
@@ -33,7 +38,19 @@ spell_engine = SpellEngine(
 )
 rule_engine = RuleEngine()
 suggestion_manager = SuggestionManager()
+detector_service = DetectorService.from_checkpoint_path(os.environ.get("SHUDDHO_DETECTOR_CHECKPOINT"))
+candidate_generator = CandidateGenerator()
 feedback_store = FeedbackStore()
+ranking_pipeline = SuggestionRankingPipeline(feedback_store=feedback_store)
+analysis_pipeline = AnalysisPipeline(
+    normalizer=normalizer,
+    spell_engine=spell_engine,
+    rule_engine=rule_engine,
+    suggestion_manager=suggestion_manager,
+    detector_service=detector_service,
+    candidate_generator=candidate_generator,
+    ranking_pipeline=ranking_pipeline,
+)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -48,11 +65,7 @@ def root() -> dict[str, str]:
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
-    normalized = normalizer.normalize(payload.text)
-    spell_suggestions = spell_engine.analyze(normalized.text, payload.personal_dictionary)
-    rule_suggestions = rule_engine.analyze(payload.text)
-    merged = suggestion_manager.merge(payload.text, normalized, spell_suggestions, rule_suggestions)
-    return AnalyzeResponse(text=payload.text, normalized_text=normalized.text, suggestions=merged)
+    return analysis_pipeline.analyze(payload.text, payload.personal_dictionary)
 
 
 @app.post("/feedback", response_model=FeedbackRecord)

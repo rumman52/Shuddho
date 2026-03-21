@@ -67,6 +67,9 @@
     "severity": {
       "type": "string",
       "enum": ["low", "medium", "high"]
+    },
+    "feedback_key": {
+      "type": ["string", "null"]
     }
   }
 }

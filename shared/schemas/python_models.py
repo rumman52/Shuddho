@@ -40,6 +40,7 @@ class Suggestion(BaseModel):
     explanation_en: str
     source: SuggestionSource
     severity: SuggestionSeverity
+    feedback_key: str | None = None
 
 
 class AnalyzeRequest(BaseModel):
@@ -63,6 +64,11 @@ class FeedbackRequest(BaseModel):
     action: FeedbackAction
     text: str
     replacement: str | None = None
+    feedback_key: str | None = None
+    rule_id: str | None = None
+    subtype: str | None = None
+    source: SuggestionSource | None = None
+    original_text: str | None = None
 
 
 class FeedbackRecord(BaseModel):
@@ -71,6 +77,11 @@ class FeedbackRecord(BaseModel):
     action: FeedbackAction
     text: str
     replacement: str | None = None
+    feedback_key: str | None = None
+    rule_id: str | None = None
+    subtype: str | None = None
+    source: SuggestionSource | None = None
+    original_text: str | None = None
     created_at: datetime
 
 

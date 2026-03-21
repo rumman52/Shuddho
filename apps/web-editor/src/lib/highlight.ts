@@ -1,30 +1,10 @@
 import type { Editor } from "@tiptap/react";
 import type { Suggestion } from "@shared/schemas/contracts";
 
-function getTextSegments(editor: Editor): Array<{ start: number; end: number; from: number; to: number }> {
-  const segments: Array<{ start: number; end: number; from: number; to: number }> = [];
-  let textOffset = 0;
-
-  editor.state.doc.descendants((node, position) => {
-    if (!node.isText || !node.text) {
-      return;
-    }
-
-    const length = node.text.length;
-    segments.push({
-      start: textOffset,
-      end: textOffset + length,
-      from: position,
-      to: position + length
-    });
-    textOffset += length;
-  });
-
-  return segments;
-}
+import { getEditorTextSurface } from "./textSurface";
 
 function toDocumentRange(editor: Editor, start: number, end: number): { from: number; to: number } | null {
-  const segments = getTextSegments(editor);
+  const { segments } = getEditorTextSurface(editor);
   let from: number | null = null;
   let to: number | null = null;
 
@@ -95,4 +75,3 @@ export function replaceSuggestion(editor: Editor, suggestion: Suggestion, replac
   editor.chain().focus().insertContentAt(range, replacement).run();
   return true;
 }
-

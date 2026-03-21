@@ -1,4 +1,8 @@
 export type SupportedEditable = HTMLTextAreaElement | HTMLInputElement | HTMLElement;
+export interface EditableSelection {
+  start: number;
+  end: number;
+}
 
 const SUPPORTED_INPUT_TYPES = new Set(["text", "search", "email", "url"]);
 
@@ -43,3 +47,38 @@ export function isSupportedEditor(target: SupportedEditable): boolean {
   return true;
 }
 
+export function supportsInlineMirror(target: SupportedEditable): target is HTMLTextAreaElement | HTMLInputElement {
+  if (target instanceof HTMLTextAreaElement) {
+    return true;
+  }
+  if (target instanceof HTMLInputElement) {
+    return SUPPORTED_INPUT_TYPES.has(target.type);
+  }
+  return false;
+}
+
+export function getEditableSelection(target: SupportedEditable): EditableSelection | null {
+  if (!supportsInlineMirror(target)) {
+    return null;
+  }
+
+  const start = target.selectionStart ?? 0;
+  const end = target.selectionEnd ?? start;
+  return {
+    start: Math.max(0, start),
+    end: Math.max(start, end),
+  };
+}
+
+export function selectEditableRange(
+  target: SupportedEditable,
+  start: number,
+  end: number
+): void {
+  if (!supportsInlineMirror(target)) {
+    return;
+  }
+
+  target.focus();
+  target.setSelectionRange(Math.max(0, start), Math.max(start, end));
+}

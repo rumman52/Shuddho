@@ -12,6 +12,7 @@ export interface Suggestion {
   explanation_en: string;
   source: "rule" | "spell" | "model" | "hybrid";
   severity: "low" | "medium" | "high";
+  feedback_key?: string | null;
 }
 
 export interface AnalyzeResponse {
@@ -27,6 +28,6 @@ export interface SuggestionRange {
 }
 
 export interface OverlayState {
-  textLength: number;
+  text: string;
   ranges: SuggestionRange[];
 }

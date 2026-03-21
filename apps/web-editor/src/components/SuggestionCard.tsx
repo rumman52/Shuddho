@@ -23,6 +23,12 @@ interface SuggestionCardProps {
   suggestion: Suggestion;
   anchorRect: SuggestionCardAnchor | null;
   mode: "preview" | "pinned";
+  navigation: {
+    current: number;
+    total: number;
+    onPrevious: () => void;
+    onNext: () => void;
+  } | null;
   onAccept: (replacement: string) => void;
   onDismiss: () => void;
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
@@ -42,6 +48,7 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
     suggestion,
     anchorRect,
     mode,
+    navigation,
     onAccept,
     onDismiss,
     onMouseEnter,
@@ -104,6 +111,19 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
           <span className="suggestion-card__mode">{mode === "pinned" ? "Pinned" : "Preview"}</span>
         </div>
       </div>
+      {navigation ? (
+        <div className="suggestion-card__navigation">
+          <button type="button" className="suggestion-card__nav-button" onClick={navigation.onPrevious}>
+            Previous
+          </button>
+          <span className="suggestion-card__nav-status">
+            {navigation.current} / {navigation.total}
+          </span>
+          <button type="button" className="suggestion-card__nav-button" onClick={navigation.onNext}>
+            Next
+          </button>
+        </div>
+      ) : null}
       <div className="suggestion-card__original">
         <span className="suggestion-card__label">Original</span>
         <strong>{suggestion.original_text}</strong>

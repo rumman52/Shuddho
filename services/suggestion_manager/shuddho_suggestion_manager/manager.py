@@ -4,6 +4,7 @@ import time
 
 from services.normalizer.shuddho_normalizer.normalizer import NormalizedText
 from shared.schemas.python_models import Suggestion, SuggestionSource
+from shared.utils.suggestions import ensure_feedback_key
 
 
 SOURCE_PRIORITY = {
@@ -15,18 +16,50 @@ SOURCE_PRIORITY = {
 
 
 class SuggestionManager:
+    def prepare_candidates(
+        self,
+        *,
+        original_text: str,
+        normalized: NormalizedText,
+        spell_suggestions: list[Suggestion],
+        rule_suggestions: list[Suggestion],
+        detector_suggestions: list[Suggestion] | None = None,
+        model_suggestions: list[Suggestion] | None = None,
+    ) -> list[Suggestion]:
+        mapped_spell = [self._map_to_original(suggestion, original_text, normalized) for suggestion in spell_suggestions]
+        combined = list(rule_suggestions)
+        if detector_suggestions:
+            combined.extend(detector_suggestions)
+        if model_suggestions:
+            combined.extend(model_suggestions)
+        combined.extend(mapped_spell)
+        return [ensure_feedback_key(suggestion) for suggestion in combined]
+
+    def finalize_ranked(self, suggestions: list[Suggestion]) -> list[Suggestion]:
+        filtered = [suggestion for suggestion in suggestions if self._keep_confident(suggestion)]
+        deduped = self._dedupe(filtered)
+        deduped.sort(key=self._sort_key)
+        return self._assign_response_ids(deduped)
+
     def merge(
         self,
         original_text: str,
         normalized: NormalizedText,
         spell_suggestions: list[Suggestion],
-        rule_suggestions: list[Suggestion]
+        rule_suggestions: list[Suggestion],
+        detector_suggestions: list[Suggestion] | None = None,
+        model_suggestions: list[Suggestion] | None = None,
     ) -> list[Suggestion]:
-        mapped_spell = [self._map_to_original(suggestion, original_text, normalized) for suggestion in spell_suggestions]
-        combined = rule_suggestions + mapped_spell
-        combined = [suggestion for suggestion in combined if self._keep_confident(suggestion)]
-        combined.sort(key=self._sort_key)
-        return self._assign_response_ids(self._dedupe(combined))
+        prepared = self.prepare_candidates(
+            original_text=original_text,
+            normalized=normalized,
+            spell_suggestions=spell_suggestions,
+            rule_suggestions=rule_suggestions,
+            detector_suggestions=detector_suggestions,
+            model_suggestions=model_suggestions,
+        )
+        prepared.sort(key=self._sort_key)
+        return self.finalize_ranked(prepared)
 
     def _map_to_original(self, suggestion: Suggestion, original_text: str, normalized: NormalizedText) -> Suggestion:
         span_start, span_end = normalized.to_original_span(suggestion.span_start, suggestion.span_end)
@@ -59,7 +92,7 @@ class SuggestionManager:
             key = (
                 suggestion.span_start,
                 suggestion.span_end,
-                suggestion.subtype,
+                suggestion.category.value,
                 tuple(suggestion.replacement_options)
             )
             if key in seen_keys:
@@ -68,7 +101,7 @@ class SuggestionManager:
                 previous = deduped[-1]
                 if previous.replacement_options == suggestion.replacement_options:
                     continue
-                if previous.source == SuggestionSource.RULE and suggestion.source == SuggestionSource.SPELL:
+                if previous.source == SuggestionSource.RULE and suggestion.source in {SuggestionSource.SPELL, SuggestionSource.MODEL}:
                     continue
                 if suggestion.confidence <= previous.confidence:
                     continue

@@ -108,6 +108,15 @@ button {
   font-size: 0.9rem;
 }
 
+.panel-header__normalized {
+  max-width: 42%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .analyze-button,
 .suggestion-card__option,
 .suggestion-card__dismiss {
@@ -221,6 +230,27 @@ button {
   color: var(--accent);
 }
 
+.suggestion-card__navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.suggestion-card__nav-button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: white;
+  color: var(--ink);
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+
+.suggestion-card__nav-status {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .suggestion-card__original {
   padding: 0.85rem 0.95rem;
   border-radius: 16px;
@@ -287,6 +317,7 @@ button {
   background: white;
   padding: 1rem;
   cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
 .suggestion-list__item strong,
@@ -304,6 +335,14 @@ button {
   font-weight: 600;
 }
 
+.suggestion-list__item:hover,
+.suggestion-list__item:focus-visible,
+.suggestion-list__item[data-suggestion-active="true"] {
+  border-color: rgba(15, 109, 98, 0.28);
+  box-shadow: 0 12px 24px rgba(15, 109, 98, 0.08);
+  transform: translateY(-1px);
+}
+
 @media (max-width: 780px) {
   .hero,
   .panel-header {
@@ -311,6 +350,10 @@ button {
   }
 
   .panel-header span {
+    max-width: 100%;
+  }
+
+  .panel-header__normalized {
     max-width: 100%;
   }
 

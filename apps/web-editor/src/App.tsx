@@ -7,6 +7,7 @@ import { SuggestionCard, type SuggestionCardAnchor } from "./components/Suggesti
 import { IssueMark } from "./lib/editorExtensions";
 import { analyzeText, sendFeedback } from "./lib/api";
 import { applyIssueMarks, replaceSuggestion } from "./lib/highlight";
+import { getEditorTextSurface } from "./lib/textSurface";
 
 const INITIAL_TEXT = sampleFixtures[0]?.text ?? "à¦†à¦®à¦¿  à¦¬à¦¾à¦‚à¦²à¦¾ à¦²à¦¿à¦–à¦¿  à¥¤à¥¤ à¦¬à¦¾à¦‚à¦²à¦¾ à¦¬à¦¾à¦‚à¦²à¦¾ à¦­à¦¾à¦·à¦¾ à¦–à§à¦¬ à¦¸à§à¦¨à§à¦¦à¦° !!";
 const ANALYSIS_DEBOUNCE_MS = 550;
@@ -34,6 +35,7 @@ export default function App() {
   const isPopupFocusedRef = useRef(false);
   const popupAnchorElementRef = useRef<HTMLElement | null>(null);
   const editorStageRef = useRef<HTMLDivElement | null>(null);
+  const suggestionListRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const lastVisibleSuggestionRef = useRef<Suggestion | null>(null);
 
@@ -43,17 +45,10 @@ export default function App() {
     editorProps: {
       attributes: {
         class: "shuddho-editor"
-      },
-      handleKeyDown: (_view, event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          return true;
-        }
-        return false;
       }
     },
     onUpdate: ({ editor: currentEditor }) => {
-      const text = currentEditor.getText();
+      const text = getEditorTextSurface(currentEditor).text;
       setAnalysis((previous) => ({
         ...previous,
         text
@@ -73,6 +68,10 @@ export default function App() {
   const visibleSuggestion = useMemo(
     () => analysis.suggestions.find((suggestion) => suggestion.id === visibleIssueId) ?? null,
     [analysis.suggestions, visibleIssueId]
+  );
+  const visibleSuggestionIndex = useMemo(
+    () => (visibleSuggestion ? analysis.suggestions.findIndex((suggestion) => suggestion.id === visibleSuggestion.id) : -1),
+    [analysis.suggestions, visibleSuggestion]
   );
 
   useEffect(() => {
@@ -101,7 +100,7 @@ export default function App() {
     if (!editor) {
       return;
     }
-    void runAnalysis(editor.getText());
+    void runAnalysis(getEditorTextSurface(editor).text);
   }, [editor]);
 
   useEffect(() => {
@@ -259,19 +258,24 @@ export default function App() {
     closePopup();
     if (!applied) {
       setStatus("Suggestion no longer matched current text");
-      scheduleAnalysis(editor.getText(), POST_ACCEPT_ANALYSIS_DELAY_MS);
+      scheduleAnalysis(getEditorTextSurface(editor).text, POST_ACCEPT_ANALYSIS_DELAY_MS);
       return;
     }
 
     setStatus("Suggestion accepted");
-    scheduleAnalysis(editor.getText(), POST_ACCEPT_ANALYSIS_DELAY_MS);
+    scheduleAnalysis(getEditorTextSurface(editor).text, POST_ACCEPT_ANALYSIS_DELAY_MS);
 
     try {
       await sendFeedback({
         suggestion_id: suggestion.id,
         action: "accepted",
         text: feedbackText,
-        replacement
+        replacement,
+        feedback_key: suggestion.feedback_key,
+        rule_id: suggestion.rule_id,
+        subtype: suggestion.subtype,
+        source: suggestion.source,
+        original_text: suggestion.original_text
       });
     } catch (error) {
       setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
@@ -297,7 +301,12 @@ export default function App() {
       await sendFeedback({
         suggestion_id: suggestion.id,
         action: "dismissed",
-        text: feedbackText
+        text: feedbackText,
+        feedback_key: suggestion.feedback_key,
+        rule_id: suggestion.rule_id,
+        subtype: suggestion.subtype,
+        source: suggestion.source,
+        original_text: suggestion.original_text
       });
     } catch (error) {
       setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
@@ -394,6 +403,23 @@ export default function App() {
     if (!isPopupPinnedRef.current) {
       pinVisibleIssue();
     }
+  }
+
+  function navigateVisibleSuggestion(direction: -1 | 1) {
+    if (!analysis.suggestions.length) {
+      return;
+    }
+
+    const currentIndex = visibleSuggestionIndex >= 0 ? visibleSuggestionIndex : 0;
+    const nextIndex = (currentIndex + direction + analysis.suggestions.length) % analysis.suggestions.length;
+    const nextSuggestion = analysis.suggestions[nextIndex];
+    const anchorElement = resolveAnchorElement(nextSuggestion.id) ?? resolveSuggestionListAnchor(nextSuggestion.id);
+    if (!anchorElement) {
+      return;
+    }
+
+    anchorElement.scrollIntoView({ block: "nearest", inline: "nearest" });
+    pinIssue(nextSuggestion.id, anchorElement);
   }
 
   function showHoverPreview(suggestionId: string, anchorElement: HTMLElement) {
@@ -530,6 +556,13 @@ export default function App() {
     return null;
   }
 
+  function resolveSuggestionListAnchor(suggestionId: string): HTMLElement | null {
+    if (!suggestionListRef.current) {
+      return null;
+    }
+    return findSuggestionListAnchor(suggestionListRef.current, suggestionId);
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -552,7 +585,11 @@ export default function App() {
             <h2>Web editor</h2>
             <p>Hover for preview, click an issue to pin the correction popover, then edit without losing it.</p>
           </div>
-          <button type="button" className="analyze-button" onClick={() => editor && void runAnalysis(editor.getText())}>
+          <button
+            type="button"
+            className="analyze-button"
+            onClick={() => editor && void runAnalysis(getEditorTextSurface(editor).text)}
+          >
             Analyze now
           </button>
         </div>
@@ -571,6 +608,16 @@ export default function App() {
             suggestion={visibleSuggestion}
             anchorRect={cardAnchorRect}
             mode={isPopupPinned ? "pinned" : "preview"}
+            navigation={
+              analysis.suggestions.length > 1 && visibleSuggestionIndex >= 0
+                ? {
+                    current: visibleSuggestionIndex + 1,
+                    total: analysis.suggestions.length,
+                    onPrevious: () => navigateVisibleSuggestion(-1),
+                    onNext: () => navigateVisibleSuggestion(1)
+                  }
+                : null
+            }
             onAccept={handleAccept}
             onDismiss={handleDismiss}
             onMouseEnter={handlePopupMouseEnter}
@@ -588,14 +635,31 @@ export default function App() {
             <h2>Open suggestions</h2>
             <p>Use this list to pin a suggestion if you prefer not to target the underline directly.</p>
           </div>
-          <span>{analysis.normalized_text}</span>
+          <pre className="panel-header__normalized">{analysis.normalized_text}</pre>
         </div>
-        <div className="suggestion-list">
+        <div ref={suggestionListRef} className="suggestion-list">
           {analysis.suggestions.map((suggestion: Suggestion) => (
             <button
               key={suggestion.id}
               type="button"
               className="suggestion-list__item"
+              data-suggestion-id={suggestion.id}
+              data-suggestion-active={suggestion.id === visibleIssueId ? "true" : undefined}
+              onMouseEnter={(event) => {
+                if (!isPopupPinnedRef.current) {
+                  showHoverPreview(suggestion.id, event.currentTarget);
+                }
+              }}
+              onFocus={(event) => {
+                if (!isPopupPinnedRef.current) {
+                  showHoverPreview(suggestion.id, event.currentTarget);
+                }
+              }}
+              onBlur={() => {
+                if (!isPopupPinnedRef.current) {
+                  scheduleHoverClose();
+                }
+              }}
               onClick={(event) => pinIssue(suggestion.id, event.currentTarget)}
             >
               <strong>{suggestion.original_text}</strong>
@@ -630,6 +694,12 @@ function getElementFromTarget(target: EventTarget | null): HTMLElement | null {
 function findIssueAnchor(root: ParentNode, suggestionId: string): HTMLElement | null {
   return Array.from(root.querySelectorAll<HTMLElement>("[data-issue-id]")).find(
     (element) => element.dataset.issueId === suggestionId
+  ) ?? null;
+}
+
+function findSuggestionListAnchor(root: ParentNode, suggestionId: string): HTMLElement | null {
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-suggestion-id]")).find(
+    (element) => element.dataset.suggestionId === suggestionId
   ) ?? null;
 }
 

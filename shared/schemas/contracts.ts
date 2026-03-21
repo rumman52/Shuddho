@@ -21,6 +21,7 @@ export interface Suggestion {
   explanation_en: string;
   source: SuggestionSource;
   severity: SuggestionSeverity;
+  feedback_key?: string | null;
 }
 
 export interface AnalyzeRequest {
@@ -39,4 +40,9 @@ export interface FeedbackRequest {
   action: "accepted" | "dismissed";
   text: string;
   replacement?: string | null;
+  feedback_key?: string | null;
+  rule_id?: string | null;
+  subtype?: string | null;
+  source?: SuggestionSource | null;
+  original_text?: string | null;
 }

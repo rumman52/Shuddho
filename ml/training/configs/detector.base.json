@@ -5,16 +5,22 @@
   "batch_size": 16,
   "epochs": 10,
   "learning_rate": 0.0003,
+  "device": "auto",
   "model": {
     "vocab_size": 4000,
     "hidden_size": 128,
     "num_heads": 4,
     "num_layers": 2,
-    "num_labels": 4
+    "num_labels": 5
   },
   "data": {
     "train_path": "data/datasets/synthetic/detector_train.jsonl",
     "validation_path": "data/datasets/synthetic/detector_valid.jsonl"
+  },
+  "output": {
+    "dir": "artifacts/detector/detector-base"
+  },
+  "inference": {
+    "confidence_threshold": 0.8
   }
 }
-

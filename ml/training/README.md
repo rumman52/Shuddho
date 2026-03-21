@@ -10,6 +10,6 @@ Responsibilities:
 
 Current state:
 - configs are real files
-- model training entrypoints are placeholders with explicit TODOs
+- detector training is wired to JSONL dataset contracts and checkpoint output
+- corrector training is still a placeholder
 - no pretrained checkpoints are used anywhere in this repo
-

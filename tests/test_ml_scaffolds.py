@@ -1,4 +1,14 @@
-import torch
+import sys
+
+import pytest
+
+if sys.platform == "win32":  # pragma: no cover - environment-specific guard
+    pytest.skip("PyTorch scaffold tests are skipped on Windows dev environments.", allow_module_level=True)
+
+try:
+    import torch
+except (ImportError, OSError) as exc:  # pragma: no cover - environment-specific guard
+    pytest.skip(f"PyTorch runtime unavailable: {exc}", allow_module_level=True)
 
 from ml.corrector.model import BanglaCorrectorSeq2Seq
 from ml.detector.model import BanglaDetectorEncoder
@@ -18,4 +28,3 @@ def test_corrector_shape_contract() -> None:
     target_ids = torch.randint(0, 128, (2, 7))
     outputs = model(source_ids, target_ids)
     assert outputs["logits"].shape == (2, 7, 128)
-
