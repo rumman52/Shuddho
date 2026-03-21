@@ -92,6 +92,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"repeat:{span_start}:{span_end}:{word}"),
+                    rule_id="REP_001",
                     category=SuggestionCategory.GRAMMAR,
                     subtype="repeated_word",
                     span_start=span_start,
@@ -115,6 +116,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"punctuation:{match.start()}:{match.end()}:{characters}"),
+                    rule_id="PUNC_001",
                     category=SuggestionCategory.PUNCTUATION,
                     subtype="duplicate_punctuation",
                     span_start=match.start(),
@@ -138,6 +140,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"extra-space:{span_start}:{span_end}"),
+                    rule_id="SPACE_001",
                     category=SuggestionCategory.GRAMMAR,
                     subtype="extra_whitespace",
                     span_start=span_start,
@@ -162,6 +165,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"spacing-before:{span_start}:{span_end}:{punctuation}"),
+                    rule_id="PUNC_002",
                     category=SuggestionCategory.PUNCTUATION,
                     subtype="space_before_punctuation",
                     span_start=span_start,
@@ -186,6 +190,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"bangla-full-stop:{match.start()}:{match.end()}"),
+                    rule_id="PUNC_003",
                     category=SuggestionCategory.PUNCTUATION,
                     subtype="bangla_full_stop",
                     span_start=match.start(),
@@ -209,6 +214,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"spacing-after:{match.start()}:{match.end()}:{punctuation}"),
+                    rule_id="PUNC_004",
                     category=SuggestionCategory.PUNCTUATION,
                     subtype="space_after_punctuation",
                     span_start=match.start(),
@@ -243,6 +249,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"unbalanced-closing:{index}:{character}"),
+                    rule_id="PUNC_005",
                     category=SuggestionCategory.PUNCTUATION,
                     subtype="unbalanced_delimiter",
                     span_start=index,
@@ -261,6 +268,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"unbalanced-opening:{index}:{character}"),
+                    rule_id="PUNC_005",
                     category=SuggestionCategory.PUNCTUATION,
                     subtype="unbalanced_delimiter",
                     span_start=index,
@@ -287,6 +295,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"duplicate-negation:{match.start()}:{match.end()}"),
+                    rule_id="GRAM_001",
                     category=SuggestionCategory.GRAMMAR,
                     subtype="duplicate_negation",
                     span_start=match.start(),
@@ -315,6 +324,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"coordinator-repeat:{left.start}:{right.end}:{left.text}"),
+                    rule_id="GRAM_002",
                     category=SuggestionCategory.GRAMMAR,
                     subtype="repeated_coordinator",
                     span_start=left.start,
@@ -343,6 +353,7 @@ class RuleEngine:
                         subject_token=token,
                         subject_index=index,
                         replacement_map=POLITE_IMPERATIVE_MAP,
+                        rule_id="GRAM_003",
                         subtype="honorific_pronoun_verb_mismatch",
                         confidence=0.85,
                     )
@@ -356,6 +367,7 @@ class RuleEngine:
                         subject_token=token,
                         subject_index=index,
                         replacement_map=CASUAL_IMPERATIVE_MAP,
+                        rule_id="GRAM_004",
                         subtype="casual_pronoun_verb_mismatch",
                         confidence=0.85,
                     )
@@ -377,6 +389,7 @@ class RuleEngine:
                     subject_token=token,
                     subject_index=index,
                     replacement_map=FIRST_PERSON_VERB_MAP,
+                    rule_id="GRAM_005",
                     subtype="first_person_verb_mismatch",
                     confidence=0.65,
                 )
@@ -402,6 +415,7 @@ class RuleEngine:
         return [
             Suggestion(
                 id=stable_id("rule", f"mixed-address:{seen_polite.start}:{seen_casual.end}"),
+                rule_id="GRAM_006",
                 category=SuggestionCategory.GRAMMAR,
                 subtype="mixed_address_register",
                 span_start=later.start,
@@ -438,6 +452,7 @@ class RuleEngine:
                 suggestions.append(
                     Suggestion(
                         id=stable_id("rule", f"postposition-split:{token.start}:{token.end}:{suffix}"),
+                        rule_id="GRAM_007",
                         category=SuggestionCategory.GRAMMAR,
                         subtype="fused_postposition",
                         span_start=token.start,
@@ -471,6 +486,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"genitive-join:{noun.start}:{marker.end}:{marker.text}"),
+                    rule_id="GRAM_008",
                     category=SuggestionCategory.GRAMMAR,
                     subtype="genitive_spacing",
                     span_start=noun.start,
@@ -502,6 +518,7 @@ class RuleEngine:
         return [
             Suggestion(
                 id=stable_id("rule", f"mixed-digits:{len(text)}:{text}"),
+                rule_id="STYLE_001",
                 category=SuggestionCategory.STYLE,
                 subtype="mixed_digit_style",
                 span_start=0,
@@ -524,6 +541,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"unit-spacing:{match.start()}:{match.end()}:{unit}"),
+                    rule_id="STYLE_002",
                     category=SuggestionCategory.STYLE,
                     subtype="number_unit_spacing",
                     span_start=match.start(),
@@ -551,6 +569,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"code-mix:{match.start()}:{match.end()}:{token.lower()}"),
+                    rule_id="STYLE_003",
                     category=SuggestionCategory.STYLE,
                     subtype="code_mixed_latin",
                     span_start=match.start(),
@@ -575,7 +594,8 @@ class RuleEngine:
                 suggestions.append(
                     Suggestion(
                         id=stable_id("rule", f"typo:{match.start()}:{match.end()}:{typo}->{replacement}"),
-                        category=SuggestionCategory.CORRECTNESS,
+                        rule_id="SPELL_001",
+                        category=SuggestionCategory.SPELLING,
                         subtype="safe_exact_typo",
                         span_start=match.start(),
                         span_end=match.end(),
@@ -597,6 +617,7 @@ class RuleEngine:
         subject_token: TokenSpan,
         subject_index: int,
         replacement_map: dict[str, str],
+        rule_id: str,
         subtype: str,
         confidence: float,
     ) -> list[Suggestion]:
@@ -620,6 +641,7 @@ class RuleEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("rule", f"agree:{subtype}:{candidate.start}:{candidate.end}:{candidate.text}->{replacement}"),
+                    rule_id=rule_id,
                     category=SuggestionCategory.GRAMMAR,
                     subtype=subtype,
                     span_start=candidate.start,

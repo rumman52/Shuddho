@@ -122,6 +122,29 @@ def test_runtime_lexicon_uses_csv_even_when_it_contains_only_self_canonical_rows
     assert runtime_lexicon.correction_map == {}
 
 
+def test_spell_engine_prefers_curated_variant_override_even_if_token_exists_in_lexicon(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("কিন্ত", "কিন্ত", "fixture.csv", "1", "1", "1"),
+            ("কিন্তু", "কিন্তু", "fixture.csv", "1", "1", "1"),
+            ("আমি", "আমি", "fixture.csv", "1", "1", "1"),
+            ("আসব", "আসব", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    suggestions = engine.analyze("কিন্ত আমি আসব")
+
+    assert len(suggestions) == 1
+    assert suggestions[0].rule_id == "SPELL_002"
+    assert suggestions[0].subtype == "dictionary_variant"
+    assert suggestions[0].original_text == "কিন্ত"
+    assert suggestions[0].replacement_options == ["কিন্তু"]
+    assert suggestions[0].source.value == "spell"
+
+
 def _write_clean_csv_fixture(
     base_dir: Path,
     *,

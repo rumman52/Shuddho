@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
@@ -180,6 +181,49 @@ def test_analyze_flow_returns_mixed_digit_and_code_mix_suggestions(tmp_path: Pat
 
     assert "code_mixed_latin" in subtypes
     assert "mixed_digit_style" in subtypes
+
+
+def test_analyze_flow_matches_prompt_response_contract(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("কিন্ত", "কিন্ত", "fixture.csv", "1", "1", "1"),
+            ("কিন্তু", "কিন্তু", "fixture.csv", "1", "1", "1"),
+            ("আমি", "আমি", "fixture.csv", "1", "1", "1"),
+            ("আসব", "আসব", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+
+    text = "কিন্ত আমি আমি আসব।।"
+    normalizer = BanglaNormalizer()
+    rules = RuleEngine()
+    spell = SpellEngine(runtime_csv_path=runtime_csv_path)
+    manager = SuggestionManager()
+
+    normalized = normalizer.normalize(text)
+    merged = manager.merge(text, normalized, spell.analyze(normalized.text), rules.analyze(text))
+
+    assert merged
+
+    by_subtype = {suggestion.subtype: suggestion for suggestion in merged}
+    dictionary_variant = by_subtype["dictionary_variant"]
+    repeated_word = by_subtype["repeated_word"]
+    duplicate_punctuation = by_subtype["duplicate_punctuation"]
+
+    for suggestion in merged:
+        dumped = suggestion.model_dump()
+        assert re.fullmatch(r"s_\d+_\d+", suggestion.id)
+        assert dumped["original_text"] == text[suggestion.span_start : suggestion.span_end]
+        assert "rule_id" in dumped
+        assert "status" not in dumped
+
+    assert dictionary_variant.rule_id == "SPELL_002"
+    assert dictionary_variant.original_text == "কিন্ত"
+    assert dictionary_variant.replacement_options == ["কিন্তু"]
+    assert repeated_word.rule_id == "REP_001"
+    assert repeated_word.original_text == "আমি আমি"
+    assert duplicate_punctuation.rule_id == "PUNC_001"
+    assert duplicate_punctuation.original_text == "।।"
 
 
 def _write_clean_csv_fixture(

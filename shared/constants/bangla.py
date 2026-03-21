@@ -38,6 +38,10 @@ SAFE_EXACT_TYPOS: dict[str, str] = {
     "অবশ্যইই": "অবশ্যই",
 }
 
+CURATED_VARIANT_CORRECTIONS: dict[str, str] = {
+    "কিন্ত": "কিন্তু",
+}
+
 REDUPLICATION_WHITELIST = frozenset(
     {
         "ধীরে ধীরে",

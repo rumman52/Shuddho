@@ -1,17 +1,15 @@
 export type SuggestionCategory =
-  | "correctness"
   | "spelling"
   | "grammar"
   | "punctuation"
-  | "clarity"
   | "style";
 
 export type SuggestionSource = "rule" | "spell" | "model" | "hybrid";
 export type SuggestionSeverity = "low" | "medium" | "high";
-export type SuggestionStatus = "open" | "accepted" | "dismissed";
 
 export interface Suggestion {
   id: string;
+  rule_id: string;
   category: SuggestionCategory;
   subtype: string;
   span_start: number;
@@ -23,7 +21,6 @@ export interface Suggestion {
   explanation_en: string;
   source: SuggestionSource;
   severity: SuggestionSeverity;
-  status: SuggestionStatus;
 }
 
 export interface AnalyzeRequest {
@@ -43,4 +40,3 @@ export interface FeedbackRequest {
   text: string;
   replacement?: string | null;
 }
-

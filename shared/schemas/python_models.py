@@ -7,11 +7,9 @@ from pydantic import BaseModel, Field
 
 
 class SuggestionCategory(str, Enum):
-    CORRECTNESS = "correctness"
     SPELLING = "spelling"
     GRAMMAR = "grammar"
     PUNCTUATION = "punctuation"
-    CLARITY = "clarity"
     STYLE = "style"
 
 
@@ -28,14 +26,9 @@ class SuggestionSeverity(str, Enum):
     HIGH = "high"
 
 
-class SuggestionStatus(str, Enum):
-    OPEN = "open"
-    ACCEPTED = "accepted"
-    DISMISSED = "dismissed"
-
-
 class Suggestion(BaseModel):
     id: str
+    rule_id: str
     category: SuggestionCategory
     subtype: str
     span_start: int = Field(ge=0)
@@ -47,7 +40,6 @@ class Suggestion(BaseModel):
     explanation_en: str
     source: SuggestionSource
     severity: SuggestionSeverity
-    status: SuggestionStatus = SuggestionStatus.OPEN
 
 
 class AnalyzeRequest(BaseModel):
@@ -84,4 +76,3 @@ class FeedbackRecord(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-

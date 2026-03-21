@@ -20,6 +20,12 @@ def test_rule_engine_detects_duplicate_punctuation_and_spacing() -> None:
     assert "duplicate_punctuation" in subtypes
     assert "space_before_punctuation" in subtypes
 
+    duplicate_punctuation = next(suggestion for suggestion in suggestions if suggestion.subtype == "duplicate_punctuation")
+    spacing = next(suggestion for suggestion in suggestions if suggestion.subtype == "space_before_punctuation")
+
+    assert duplicate_punctuation.rule_id == "PUNC_001"
+    assert spacing.rule_id == "PUNC_002"
+
 
 def test_rule_engine_detects_extra_whitespace_between_words() -> None:
     engine = RuleEngine()

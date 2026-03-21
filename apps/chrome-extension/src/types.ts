@@ -1,6 +1,7 @@
 export interface Suggestion {
   id: string;
-  category: "correctness" | "spelling" | "grammar" | "punctuation" | "clarity" | "style";
+  rule_id: string;
+  category: "spelling" | "grammar" | "punctuation" | "style";
   subtype: string;
   span_start: number;
   span_end: number;
@@ -11,7 +12,6 @@ export interface Suggestion {
   explanation_en: string;
   source: "rule" | "spell" | "model" | "hybrid";
   severity: "low" | "medium" | "high";
-  status: "open" | "accepted" | "dismissed";
 }
 
 export interface AnalyzeResponse {
@@ -30,4 +30,3 @@ export interface OverlayState {
   textLength: number;
   ranges: SuggestionRange[];
 }
-

@@ -4,7 +4,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from shared.constants.bangla import BANGLA_LETTER_PATTERN, BANGLA_WORD_PATTERN, COMMON_BANGLA_CONFUSIONS
+from shared.constants.bangla import (
+    BANGLA_LETTER_PATTERN,
+    BANGLA_WORD_PATTERN,
+    COMMON_BANGLA_CONFUSIONS,
+    CURATED_VARIANT_CORRECTIONS,
+)
 from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
 from shared.utils.text import stable_id
 
@@ -39,7 +44,7 @@ class SpellEngine:
 
         self.lexicon_source = runtime_lexicon.source
         self.lexicon = set(runtime_lexicon.accepted_words)
-        self.correction_map = runtime_lexicon.correction_map
+        self.correction_map = {**runtime_lexicon.correction_map, **CURATED_VARIANT_CORRECTIONS}
         self.frequency_rank = {word: rank for rank, word in enumerate(runtime_lexicon.candidate_words)}
         self._candidate_index = self._build_candidate_index(runtime_lexicon.candidate_words)
 
@@ -49,7 +54,7 @@ class SpellEngine:
 
         for match in BANGLA_WORD_PATTERN.finditer(text):
             token = match.group(0)
-            if token in personal or token in self.lexicon or not BANGLA_LETTER_PATTERN.search(token):
+            if token in personal or (token in self.lexicon and token not in self.correction_map) or not BANGLA_LETTER_PATTERN.search(token):
                 continue
             if len(token) < 3:
                 continue
@@ -63,6 +68,7 @@ class SpellEngine:
             if is_direct_map:
                 top_candidates = [primary_candidate]
                 confidence = DIRECT_MAP_CONFIDENCE
+                rule_id = "SPELL_002"
                 subtype = "dictionary_variant"
                 explanation_bn = f"এখানে '{token}' এর অভিধানভিত্তিক রূপ '{primary_candidate}'।"
                 explanation_en = f"The dictionary-backed form for '{token}' here is '{primary_candidate}'."
@@ -71,6 +77,7 @@ class SpellEngine:
                 confidence = min(max(candidates[0].score, 0.0), 0.97)
                 if confidence < MIN_GENERIC_SUGGESTION_CONFIDENCE:
                     continue
+                rule_id = "SPELL_003"
                 subtype = "spelling_candidate"
                 explanation_bn = f"'{token}' শব্দটির সবচেয়ে কাছের নিরাপদ সংশোধন '{primary_candidate}'।"
                 explanation_en = f"The closest safe correction for '{token}' is '{primary_candidate}'."
@@ -78,6 +85,7 @@ class SpellEngine:
             suggestions.append(
                 Suggestion(
                     id=stable_id("spell", f"{match.start()}:{match.end()}:{token}:{','.join(top_candidates)}"),
+                    rule_id=rule_id,
                     category=SuggestionCategory.SPELLING,
                     subtype=subtype,
                     span_start=match.start(),

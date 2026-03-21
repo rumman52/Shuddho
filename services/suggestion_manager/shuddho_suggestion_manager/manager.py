@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from services.normalizer.shuddho_normalizer.normalizer import NormalizedText
 from shared.schemas.python_models import Suggestion, SuggestionSource
 
@@ -24,7 +26,7 @@ class SuggestionManager:
         combined = rule_suggestions + mapped_spell
         combined = [suggestion for suggestion in combined if self._keep_confident(suggestion)]
         combined.sort(key=self._sort_key)
-        return self._dedupe(combined)
+        return self._assign_response_ids(self._dedupe(combined))
 
     def _map_to_original(self, suggestion: Suggestion, original_text: str, normalized: NormalizedText) -> Suggestion:
         span_start, span_end = normalized.to_original_span(suggestion.span_start, suggestion.span_end)
@@ -85,3 +87,10 @@ class SuggestionManager:
         if not self._overlaps(left, right):
             return False
         return left.span_start == right.span_start and left.span_end == right.span_end
+
+    def _assign_response_ids(self, suggestions: list[Suggestion]) -> list[Suggestion]:
+        batch_timestamp = int(time.time() * 1000)
+        return [
+            suggestion.model_copy(update={"id": f"s_{batch_timestamp}_{index}"})
+            for index, suggestion in enumerate(suggestions, start=1)
+        ]

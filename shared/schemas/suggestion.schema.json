@@ -4,6 +4,7 @@
   "type": "object",
   "required": [
     "id",
+    "rule_id",
     "category",
     "subtype",
     "span_start",
@@ -14,16 +15,19 @@
     "explanation_bn",
     "explanation_en",
     "source",
-    "severity",
-    "status"
+    "severity"
   ],
   "properties": {
     "id": {
+      "type": "string",
+      "pattern": "^s_[0-9]+_[0-9]+$"
+    },
+    "rule_id": {
       "type": "string"
     },
     "category": {
       "type": "string",
-      "enum": ["correctness", "spelling", "grammar", "punctuation", "clarity", "style"]
+      "enum": ["spelling", "grammar", "punctuation", "style"]
     },
     "subtype": {
       "type": "string"
@@ -63,11 +67,6 @@
     "severity": {
       "type": "string",
       "enum": ["low", "medium", "high"]
-    },
-    "status": {
-      "type": "string",
-      "enum": ["open", "accepted", "dismissed"]
     }
   }
 }
-
