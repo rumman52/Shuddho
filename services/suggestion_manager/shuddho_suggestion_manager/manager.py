@@ -62,7 +62,7 @@ class SuggestionManager:
             )
             if key in seen_keys:
                 continue
-            if deduped and self._overlaps(deduped[-1], suggestion):
+            if deduped and self._should_resolve_overlap(deduped[-1], suggestion):
                 previous = deduped[-1]
                 if previous.replacement_options == suggestion.replacement_options:
                     continue
@@ -81,3 +81,7 @@ class SuggestionManager:
     def _overlaps(self, left: Suggestion, right: Suggestion) -> bool:
         return left.span_start < right.span_end and right.span_start < left.span_end
 
+    def _should_resolve_overlap(self, left: Suggestion, right: Suggestion) -> bool:
+        if not self._overlaps(left, right):
+            return False
+        return left.span_start == right.span_start and left.span_end == right.span_end
