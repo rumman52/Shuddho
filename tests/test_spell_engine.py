@@ -20,7 +20,7 @@ def test_runtime_lexicon_loads_from_main_csv_without_sqlite_runtime(tmp_path: Pa
 
     assert runtime_lexicon.source == "words_clean.csv"
     assert runtime_lexicon.accepted_words == runtime_lexicon.candidate_words
-    assert runtime_lexicon.accepted_words == ("অইউরোপীয়",)
+    assert runtime_lexicon.accepted_words == ("অইউরোপীয়", "শরদ", "শাদ")
     assert runtime_lexicon.correction_map == {"অইউরোপীয়": "অইউরোপীয়"}
 
 
@@ -45,7 +45,7 @@ def test_spell_engine_uses_main_csv_direct_mapping_and_accepts_canonical_target(
     assert "অইউরোপীয়" in suggestions[0].explanation_bn
 
 
-def test_spell_engine_candidate_pool_ignores_noisy_self_canonical_rows(tmp_path: Path) -> None:
+def test_spell_engine_candidate_pool_remains_conservative_with_self_canonical_rows(tmp_path: Path) -> None:
     runtime_csv_path = _write_clean_csv_fixture(
         tmp_path,
         rows=[
@@ -77,6 +77,22 @@ def test_spell_engine_does_not_emit_random_suggestion_for_ami_bhat_khacchi(tmp_p
     assert engine.analyze("আমি ভাত খাচ্ছি") == []
 
 
+def test_spell_engine_accepts_self_canonical_words_from_main_csv(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("আমি", "আমি", "fixture.csv", "1", "1", "1"),
+            ("বাংলা", "বাংলা", "fixture.csv", "1", "1", "1"),
+            ("লিখি", "লিখি", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    assert engine.lexicon_source == "words_clean.csv"
+    assert engine.analyze("আমি বাংলা লিখি") == []
+
+
 def test_spell_engine_uses_seed_only_as_missing_csv_fallback(tmp_path: Path) -> None:
     fallback_seed_path = tmp_path / "seed_lexicon.txt"
     fallback_seed_path.write_text("# legacy fallback\nআমি\nবাংলা\nলিখি\n", encoding="utf-8")
@@ -86,6 +102,24 @@ def test_spell_engine_uses_seed_only_as_missing_csv_fallback(tmp_path: Path) -> 
 
     assert engine.lexicon_source == "seed_fallback"
     assert engine.analyze("আমি বাংলা লিখি") == []
+
+
+def test_runtime_lexicon_uses_csv_even_when_it_contains_only_self_canonical_rows(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("আমি", "আমি", "fixture.csv", "1", "1", "1"),
+            ("বাংলা", "বাংলা", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    fallback_seed_path = tmp_path / "seed_lexicon.txt"
+    fallback_seed_path.write_text("# legacy fallback\nfallback\n", encoding="utf-8")
+
+    runtime_lexicon = load_runtime_lexicon(runtime_csv_path, fallback_seed_path=fallback_seed_path)
+
+    assert runtime_lexicon.source == "words_clean.csv"
+    assert runtime_lexicon.accepted_words == ("আমি", "বাংলা")
+    assert runtime_lexicon.correction_map == {}
 
 
 def _write_clean_csv_fixture(

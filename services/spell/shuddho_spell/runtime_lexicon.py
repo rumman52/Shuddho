@@ -25,7 +25,7 @@ def load_runtime_lexicon(
 ) -> RuntimeLexicon:
     if clean_csv_path.exists():
         runtime_lexicon = _load_runtime_lexicon_from_csv(clean_csv_path)
-        if runtime_lexicon.correction_map:
+        if runtime_lexicon.accepted_words or runtime_lexicon.correction_map:
             return runtime_lexicon
 
     if fallback_seed_path is not None and fallback_seed_path.exists():
@@ -51,16 +51,18 @@ def _load_runtime_lexicon_from_csv(clean_csv_path: Path) -> RuntimeLexicon:
 
             raw_word = _require_text(row, "word", clean_csv_path, row_index)
             canonical_word = _require_text(row, "normalized_word", clean_csv_path, row_index)
+            if canonical_word in seen_words:
+                pass
+            else:
+                seen_words.add(canonical_word)
+                accepted_words.append(canonical_word)
+
             if raw_word == canonical_word:
                 continue
             if raw_word in correction_map:
                 continue
 
             correction_map[raw_word] = canonical_word
-            if canonical_word in seen_words:
-                continue
-            seen_words.add(canonical_word)
-            accepted_words.append(canonical_word)
 
     return RuntimeLexicon(
         accepted_words=tuple(accepted_words),
