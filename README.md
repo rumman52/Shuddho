@@ -71,6 +71,20 @@ npm run build:extension
 
 Then load `apps/chrome-extension/dist` as an unpacked extension in Chrome.
 
+## Deployment
+
+Railway should deploy the FastAPI backend only. This repo also contains the web editor and Chrome extension workspaces, but they are not server processes and should not be imported as Railway services.
+
+- Railway: build from the root `Dockerfile` and run only the Python API
+- Chrome extension: build locally with `npm run build:extension` and distribute through the Chrome Web Store
+- Frontend: host separately from Railway
+
+Required Railway variables:
+
+- `SHUDDHO_ALLOWED_ORIGINS`
+- `SHUDDHO_DETECTOR_THRESHOLD`
+- `SHUDDHO_DETECTOR_CHECKPOINT`
+
 ### Lexicon import
 
 The lexicon import assets live in `data/imports/lexicon/`:
@@ -119,7 +133,10 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
 
 ```json
 {
-  "status": "ok"
+  "status": "ok",
+  "detector_loaded": false,
+  "detector_checkpoint": null,
+  "allowed_origins": ["https://shuddho-web-editor.vercel.app"]
 }
 ```
 

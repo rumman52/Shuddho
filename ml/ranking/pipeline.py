@@ -61,7 +61,7 @@ class NeuralRankerInterface(SuggestionRanker):
     ) -> float:
         source_bonus = {
             SuggestionSource.RULE: 0.1,
-            SuggestionSource.HYBRID: 0.08,
+            SuggestionSource.HYBRID: 0.13,
             SuggestionSource.SPELL: 0.05,
             SuggestionSource.MODEL: 0.0,
         }[suggestion.source]
@@ -71,7 +71,7 @@ class NeuralRankerInterface(SuggestionRanker):
             SuggestionSeverity.LOW: 0.0,
         }[suggestion.severity]
 
-        replacement_penalty = 0.06 if not suggestion.replacement_options else 0.0
+        replacement_penalty = 0.12 if not suggestion.replacement_options else 0.0
         fusion_bonus = min(max(candidate_support - 1, 0), 2) * 0.04
         exact_conflict_penalty = min(exact_span_conflicts, 3) * 0.05
         overlap_penalty = min(overlap_conflicts, 4) * 0.02
@@ -101,6 +101,7 @@ class NeuralRankerInterface(SuggestionRanker):
             "extra_whitespace",
             "dictionary_variant",
             "safe_exact_typo",
+            "detector_spelling",
         }:
             bonus += 0.04
 
@@ -114,6 +115,16 @@ class NeuralRankerInterface(SuggestionRanker):
             bonus += 0.02
         if text and "\n" in text and "\n" in suggestion.original_text:
             bonus -= 0.01
+        if suggestion.replacement_options:
+            bonus += 0.03
+            if len(suggestion.replacement_options) == 1:
+                bonus += 0.02
+            if any(any("\u0980" <= character <= "\u09ff" for character in option) for option in suggestion.replacement_options):
+                bonus += 0.03
+            if len(suggestion.original_text) <= 12:
+                bonus += 0.01
+        elif suggestion.source == SuggestionSource.MODEL:
+            bonus -= 0.03
 
         return bonus
 

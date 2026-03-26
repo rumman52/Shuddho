@@ -17,16 +17,33 @@ from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from shared.schemas.python_models import AnalyzeRequest, AnalyzeResponse, FeedbackRecord, FeedbackRequest, HealthResponse
 
-ALLOWED_ORIGINS = [
+ALLOWED_ORIGINS_ENV_VAR = "SHUDDHO_ALLOWED_ORIGINS"
+DEFAULT_ALLOWED_ORIGINS = [
     "https://shuddho-web-editor.vercel.app",
-    "http://localhost:5173",
-    "http://localhost:3000"
 ]
+ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
+
+
+def _parse_allowed_origins(value: str | None) -> list[str]:
+    if value is None or not value.strip():
+        return list(DEFAULT_ALLOWED_ORIGINS)
+
+    allowed_origins: list[str] = []
+    for raw_origin in value.split(","):
+        origin = raw_origin.strip()
+        if origin and origin not in allowed_origins:
+            allowed_origins.append(origin)
+
+    return allowed_origins or list(DEFAULT_ALLOWED_ORIGINS)
+
+
+ALLOWED_ORIGINS = _parse_allowed_origins(os.environ.get(ALLOWED_ORIGINS_ENV_VAR))
 
 app = FastAPI(title="Shuddho API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"]
@@ -38,7 +55,7 @@ spell_engine = SpellEngine(
 )
 rule_engine = RuleEngine()
 suggestion_manager = SuggestionManager()
-detector_service = DetectorService.from_checkpoint_path(os.environ.get("SHUDDHO_DETECTOR_CHECKPOINT"))
+detector_service = DetectorService.from_environment(os.environ)
 candidate_generator = CandidateGenerator()
 feedback_store = FeedbackStore()
 ranking_pipeline = SuggestionRankingPipeline(feedback_store=feedback_store)
@@ -55,7 +72,12 @@ analysis_pipeline = AnalysisPipeline(
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok")
+    return HealthResponse(
+        status="ok",
+        detector_loaded=detector_service.is_loaded(),
+        detector_checkpoint=detector_service.checkpoint_path,
+        allowed_origins=ALLOWED_ORIGINS,
+    )
 
 
 @app.get("/")

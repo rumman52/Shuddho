@@ -4,6 +4,12 @@ import type { OverlayState, SuggestionRange } from "./types";
 const MAX_RENDERED_RANGES = 48;
 const MAX_PANEL_ITEMS = 10;
 
+interface OverlayActions {
+  canApplySuggestion: boolean;
+  onAccept?: (range: SuggestionRange, replacement: string) => boolean;
+  onDismiss?: (range: SuggestionRange) => boolean;
+}
+
 export class IssueOverlay {
   private readonly host: HTMLDivElement;
   private readonly shadowRoot: ShadowRoot;
@@ -17,6 +23,8 @@ export class IssueOverlay {
   private readonly activeOriginal: HTMLDivElement;
   private readonly activeReplacement: HTMLDivElement;
   private readonly activeExplanation: HTMLDivElement;
+  private readonly activeActions: HTMLDivElement;
+  private readonly panelHint: HTMLDivElement;
   private readonly panelList: HTMLDivElement;
   private readonly inlineRoot: HTMLDivElement;
   private readonly inlineContent: HTMLDivElement;
@@ -28,6 +36,7 @@ export class IssueOverlay {
   private panelOpen = false;
   private resizeObserver: ResizeObserver | null = null;
   private observedTarget: HTMLElement | null = null;
+  private actions: OverlayActions = { canApplySuggestion: false };
 
   constructor() {
     this.host = document.createElement("div");
@@ -95,6 +104,7 @@ export class IssueOverlay {
           display: none;
           margin-top: 8px;
           width: 320px;
+          max-width: min(320px, calc(100vw - 16px));
           pointer-events: auto;
           background: white;
           border: 1px solid rgba(18, 32, 48, 0.1);
@@ -150,6 +160,39 @@ export class IssueOverlay {
         .active-explanation {
           margin-top: 8px;
         }
+        .panel-actions {
+          margin-top: 10px;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .action-button {
+          border-radius: 999px;
+          border: 1px solid rgba(18, 32, 48, 0.12);
+          padding: 6px 12px;
+          font-size: 12px;
+          cursor: pointer;
+          background: white;
+          color: #1f2a37;
+        }
+        .action-button--primary {
+          background: #0f6d62;
+          border-color: #0f6d62;
+          color: white;
+        }
+        .action-button--secondary {
+          background: #fffaf2;
+          border-color: rgba(201, 135, 26, 0.3);
+          color: #7a4f00;
+        }
+        .action-button:disabled {
+          opacity: 0.45;
+          cursor: default;
+        }
+        .panel-hint {
+          margin-top: 10px;
+          line-height: 1.35;
+        }
         .panel-list {
           margin-top: 10px;
           display: grid;
@@ -192,7 +235,7 @@ export class IssueOverlay {
           position: fixed;
           pointer-events: none;
           overflow: hidden;
-          border-radius: 8px;
+          border-radius: 10px;
         }
         .inline-content {
           position: absolute;
@@ -216,15 +259,42 @@ export class IssueOverlay {
         }
         .inline-fragment--issue {
           box-shadow: inset 0 -2px 0 rgba(184, 50, 74, 0.74);
-          background: linear-gradient(180deg, transparent 62%, rgba(184, 50, 74, 0.12) 62%);
+          background:
+            linear-gradient(180deg, transparent 60%, rgba(184, 50, 74, 0.12) 60%),
+            repeating-linear-gradient(
+              -55deg,
+              rgba(184, 50, 74, 0.88) 0 2px,
+              transparent 2px 5px
+            );
+          background-size: 100% 100%, 10px 4px;
+          background-repeat: no-repeat, repeat-x;
+          background-position: 0 0, 0 calc(100% - 1px);
         }
         .inline-fragment--low {
           box-shadow: inset 0 -2px 0 rgba(201, 135, 26, 0.78);
-          background: linear-gradient(180deg, transparent 62%, rgba(201, 135, 26, 0.1) 62%);
+          background:
+            linear-gradient(180deg, transparent 60%, rgba(201, 135, 26, 0.1) 60%),
+            repeating-linear-gradient(
+              -55deg,
+              rgba(201, 135, 26, 0.9) 0 2px,
+              transparent 2px 5px
+            );
+          background-size: 100% 100%, 10px 4px;
+          background-repeat: no-repeat, repeat-x;
+          background-position: 0 0, 0 calc(100% - 1px);
         }
         .inline-fragment--high {
           box-shadow: inset 0 -2px 0 rgba(142, 35, 57, 0.88);
-          background: linear-gradient(180deg, transparent 58%, rgba(142, 35, 57, 0.16) 58%);
+          background:
+            linear-gradient(180deg, transparent 56%, rgba(142, 35, 57, 0.16) 56%),
+            repeating-linear-gradient(
+              -55deg,
+              rgba(142, 35, 57, 0.96) 0 2px,
+              transparent 2px 5px
+            );
+          background-size: 100% 100%, 10px 4px;
+          background-repeat: no-repeat, repeat-x;
+          background-position: 0 0, 0 calc(100% - 1px);
         }
         .inline-fragment--active {
           background: linear-gradient(180deg, transparent 46%, rgba(15, 109, 98, 0.2) 46%);
@@ -246,6 +316,8 @@ export class IssueOverlay {
             <div class="active-original"></div>
             <div class="active-replacement"></div>
             <div class="muted active-explanation"></div>
+            <div class="panel-actions"></div>
+            <div class="muted panel-hint"></div>
           </div>
           <div class="panel-list"></div>
         </div>
@@ -265,6 +337,8 @@ export class IssueOverlay {
     this.activeOriginal = this.shadowRoot.querySelector(".active-original") as HTMLDivElement;
     this.activeReplacement = this.shadowRoot.querySelector(".active-replacement") as HTMLDivElement;
     this.activeExplanation = this.shadowRoot.querySelector(".active-explanation") as HTMLDivElement;
+    this.activeActions = this.shadowRoot.querySelector(".panel-actions") as HTMLDivElement;
+    this.panelHint = this.shadowRoot.querySelector(".panel-hint") as HTMLDivElement;
     this.panelList = this.shadowRoot.querySelector(".panel-list") as HTMLDivElement;
     this.inlineRoot = this.shadowRoot.querySelector(".inline-root") as HTMLDivElement;
     this.inlineContent = this.shadowRoot.querySelector(".inline-content") as HTMLDivElement;
@@ -280,12 +354,13 @@ export class IssueOverlay {
     });
   }
 
-  render(target: HTMLElement, state: OverlayState): void {
+  render(target: HTMLElement, state: OverlayState, actions?: OverlayActions): void {
     const targetChanged = this.target !== target;
     this.target = target;
     this.visible = true;
     this.state = normalizeOverlayState(state);
     this.inlineVisible = supportsInlineMirror(target);
+    this.actions = actions ?? { canApplySuggestion: false };
     this.observeTarget(target);
 
     if (this.state.ranges.length === 0) {
@@ -330,10 +405,21 @@ export class IssueOverlay {
     }
 
     const rect = this.target.getBoundingClientRect();
+    const preferredWidth = this.panelOpen ? 320 : Math.max(Math.min(rect.width, 320), 180);
+    const rootWidth = Math.min(preferredWidth, Math.max(window.innerWidth - 16, 160));
     this.root.style.display = "block";
-    this.root.style.left = `${Math.max(rect.left, 8)}px`;
-    this.root.style.top = `${Math.max(rect.top - 20, 8)}px`;
-    this.root.style.width = `${Math.max(Math.min(rect.width, 360), 160)}px`;
+    this.root.style.width = `${rootWidth}px`;
+
+    const rootHeight = this.root.getBoundingClientRect().height || (this.panelOpen ? 320 : 44);
+    const maxLeft = Math.max(8, window.innerWidth - rootWidth - 8);
+    const desiredLeft = rect.right - rootWidth;
+    const preferredTop = rect.top - 20;
+    const fallbackTop = rect.bottom + 8;
+    const maxTop = Math.max(8, window.innerHeight - rootHeight - 8);
+    const resolvedTop = preferredTop >= 8 ? clamp(preferredTop, 8, maxTop) : clamp(fallbackTop, 8, maxTop);
+
+    this.root.style.left = `${clamp(desiredLeft, 8, maxLeft)}px`;
+    this.root.style.top = `${resolvedTop}px`;
 
     if (!this.inlineVisible || !supportsInlineMirror(this.target)) {
       this.inlineRoot.style.display = "none";
@@ -433,6 +519,8 @@ export class IssueOverlay {
       this.activeOriginal.textContent = "No issues in this field.";
       this.activeReplacement.textContent = "";
       this.activeExplanation.textContent = "Type more Bangla text to analyze this input.";
+      this.activeActions.replaceChildren();
+      this.panelHint.textContent = "";
       this.panelList.replaceChildren();
       return;
     }
@@ -440,6 +528,12 @@ export class IssueOverlay {
     this.activeOriginal.textContent = activeRange.suggestion.original_text;
     this.activeReplacement.textContent = activeRange.suggestion.replacement_options[0] ?? "No direct replacement";
     this.activeExplanation.textContent = activeRange.suggestion.explanation_bn || activeRange.suggestion.explanation_en;
+    this.renderActiveActions(activeRange);
+    this.panelHint.textContent = this.actions.canApplySuggestion
+      ? "Accept applies directly in this field."
+      : activeRange.suggestion.replacement_options.length
+        ? "Preview only in rich editors. Direct apply is currently limited to textarea and input fields."
+        : "No direct replacement is available for this issue yet.";
 
     const windowStart = Math.max(0, this.activeRangeIndex - Math.floor(MAX_PANEL_ITEMS / 2));
     const visibleRanges = this.state.ranges.slice(windowStart, windowStart + MAX_PANEL_ITEMS);
@@ -479,6 +573,7 @@ export class IssueOverlay {
             state.text.slice(start, end),
             range,
             index === this.activeRangeIndex,
+            index,
           )
         );
       }
@@ -500,6 +595,7 @@ export class IssueOverlay {
     text: string,
     range?: SuggestionRange,
     active = false,
+    issueIndex?: number,
   ): HTMLSpanElement {
     const fragment = document.createElement("span");
     const classNames = ["inline-fragment"];
@@ -510,6 +606,9 @@ export class IssueOverlay {
       classNames.push("inline-fragment--active");
     }
     fragment.className = classNames.join(" ");
+    if (issueIndex !== undefined) {
+      fragment.dataset.issueIndex = String(issueIndex);
+    }
     fragment.textContent = text || "\u200b";
     return fragment;
   }
@@ -524,8 +623,12 @@ export class IssueOverlay {
     this.inlineContent.style.fontStyle = styles.fontStyle;
     this.inlineContent.style.lineHeight = styles.lineHeight;
     this.inlineContent.style.letterSpacing = styles.letterSpacing;
+    this.inlineContent.style.wordSpacing = styles.wordSpacing;
     this.inlineContent.style.textAlign = styles.textAlign;
+    this.inlineContent.style.textIndent = styles.textIndent;
     this.inlineContent.style.textTransform = styles.textTransform;
+    this.inlineContent.style.direction = styles.direction;
+    this.inlineContent.style.tabSize = styles.tabSize;
     this.inlineContent.style.paddingTop = styles.paddingTop;
     this.inlineContent.style.paddingRight = styles.paddingRight;
     this.inlineContent.style.paddingBottom = styles.paddingBottom;
@@ -599,6 +702,76 @@ export class IssueOverlay {
   private setPanelOpen(open: boolean): void {
     this.panelOpen = open;
     this.panel.classList.toggle("open", open);
+    this.syncPosition();
+  }
+
+  private renderActiveActions(activeRange: SuggestionRange): void {
+    this.activeActions.replaceChildren();
+
+    const replacements = activeRange.suggestion.replacement_options.slice(0, 2);
+    for (const [index, replacement] of replacements.entries()) {
+      const button = this.createActionButton(
+        replacement,
+        index === 0 ? "primary" : "secondary",
+        () => {
+          if (!this.actions.canApplySuggestion) {
+            return;
+          }
+          const handled = this.actions.onAccept?.(activeRange, replacement);
+          if (handled !== false) {
+            this.setPanelOpen(false);
+          }
+        }
+      );
+      button.disabled = !this.actions.canApplySuggestion;
+      this.activeActions.appendChild(button);
+    }
+
+    const dismissButton = this.createActionButton("Dismiss", "secondary", () => {
+      const handled = this.actions.onDismiss?.(activeRange);
+      if (handled !== false) {
+        this.dismissRange(this.activeRangeIndex);
+      }
+    });
+    this.activeActions.appendChild(dismissButton);
+  }
+
+  private createActionButton(
+    label: string,
+    variant: "primary" | "secondary",
+    onClick: () => void,
+  ): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `action-button action-button--${variant}`;
+    button.textContent = label;
+    button.title = label;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  private dismissRange(index: number): void {
+    if (index < 0 || index >= this.state.ranges.length) {
+      return;
+    }
+
+    const nextRanges = this.state.ranges.filter((_, rangeIndex) => rangeIndex !== index);
+    if (nextRanges.length === 0) {
+      this.hide();
+      return;
+    }
+
+    this.state = {
+      ...this.state,
+      ranges: nextRanges,
+    };
+    this.activeRangeIndex = Math.min(index, nextRanges.length - 1);
+    this.renderRail();
+    this.renderPanel();
+    if (this.target && supportsInlineMirror(this.target)) {
+      this.renderInlineMirror(this.target, this.state);
+    }
+    this.syncPosition();
   }
 }
 

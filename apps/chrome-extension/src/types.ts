@@ -15,6 +15,18 @@ export interface Suggestion {
   feedback_key?: string | null;
 }
 
+export interface FeedbackRequest {
+  suggestion_id: string;
+  action: "accepted" | "dismissed";
+  text: string;
+  replacement?: string | null;
+  feedback_key?: string | null;
+  rule_id?: string | null;
+  subtype?: string | null;
+  source?: Suggestion["source"] | null;
+  original_text?: string | null;
+}
+
 export interface AnalyzeResponse {
   text: string;
   normalized_text: string;

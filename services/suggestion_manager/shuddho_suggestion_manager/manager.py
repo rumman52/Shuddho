@@ -33,7 +33,8 @@ class SuggestionManager:
         if model_suggestions:
             combined.extend(model_suggestions)
         combined.extend(mapped_spell)
-        return [ensure_feedback_key(suggestion) for suggestion in combined]
+        fused = self._fuse_consensus_candidates(combined)
+        return [ensure_feedback_key(suggestion) for suggestion in fused]
 
     def finalize_ranked(self, suggestions: list[Suggestion]) -> list[Suggestion]:
         filtered = [suggestion for suggestion in suggestions if self._keep_confident(suggestion)]
@@ -97,21 +98,61 @@ class SuggestionManager:
             )
             if key in seen_keys:
                 continue
-            if deduped and self._should_resolve_overlap(deduped[-1], suggestion):
-                previous = deduped[-1]
-                if previous.replacement_options == suggestion.replacement_options:
-                    continue
-                if previous.source == SuggestionSource.RULE and suggestion.source in {SuggestionSource.SPELL, SuggestionSource.MODEL}:
-                    continue
-                if suggestion.confidence <= previous.confidence:
-                    continue
-                deduped[-1] = suggestion
-                seen_keys.add(key)
+            conflict_index = self._find_conflict_index(deduped, suggestion)
+            if conflict_index is not None:
+                previous = deduped[conflict_index]
+                if self._prefer_incoming(previous, suggestion):
+                    deduped[conflict_index] = suggestion
+                    seen_keys.add(key)
                 continue
             deduped.append(suggestion)
             seen_keys.add(key)
 
         return deduped
+
+    def _fuse_consensus_candidates(self, suggestions: list[Suggestion]) -> list[Suggestion]:
+        grouped: dict[tuple[int, int, str, tuple[str, ...]], list[Suggestion]] = {}
+        for suggestion in suggestions:
+            grouped.setdefault(
+                (
+                    suggestion.span_start,
+                    suggestion.span_end,
+                    suggestion.category.value,
+                    tuple(suggestion.replacement_options),
+                ),
+                [],
+            ).append(suggestion)
+
+        fused: list[Suggestion] = []
+        for group in grouped.values():
+            if len(group) == 1:
+                fused.append(group[0])
+                continue
+
+            best = min(group, key=self._fusion_priority_key)
+            sources = {suggestion.source for suggestion in group}
+            if len(sources) == 1:
+                fused.append(best)
+                continue
+
+            explanation_bn = best.explanation_bn
+            explanation_en = best.explanation_en
+            if best.replacement_options:
+                explanation_bn = f"একাধিক সিগন্যাল মিলিয়ে এখানে '{best.replacement_options[0]}' সবচেয়ে কার্যকর সংশোধন।"
+                explanation_en = f"Multiple signals agree that '{best.replacement_options[0]}' is the most useful correction here."
+
+            fused.append(
+                best.model_copy(
+                    update={
+                        "source": SuggestionSource.HYBRID,
+                        "confidence": min(0.99, round(max(item.confidence for item in group) + 0.04, 2)),
+                        "explanation_bn": explanation_bn,
+                        "explanation_en": explanation_en,
+                    }
+                )
+            )
+
+        return fused
 
     def _overlaps(self, left: Suggestion, right: Suggestion) -> bool:
         return left.span_start < right.span_end and right.span_start < left.span_end
@@ -119,7 +160,41 @@ class SuggestionManager:
     def _should_resolve_overlap(self, left: Suggestion, right: Suggestion) -> bool:
         if not self._overlaps(left, right):
             return False
-        return left.span_start == right.span_start and left.span_end == right.span_end
+        if left.category != right.category:
+            return False
+        if left.span_start == right.span_start and left.span_end == right.span_end:
+            return True
+        if left.replacement_options == right.replacement_options and self._contains(left, right):
+            return True
+        if (not left.replacement_options or not right.replacement_options) and self._contains(left, right):
+            return True
+        return False
+
+    def _find_conflict_index(self, suggestions: list[Suggestion], suggestion: Suggestion) -> int | None:
+        for index, existing in enumerate(suggestions):
+            if self._should_resolve_overlap(existing, suggestion):
+                return index
+        return None
+
+    def _prefer_incoming(self, existing: Suggestion, incoming: Suggestion) -> bool:
+        if not existing.replacement_options and incoming.replacement_options:
+            return True
+        if existing.source != SuggestionSource.HYBRID and incoming.source == SuggestionSource.HYBRID:
+            return True
+        if self._contains(existing, incoming) and not self._contains(incoming, existing):
+            return bool(incoming.replacement_options) and incoming.confidence >= existing.confidence - 0.06
+        return incoming.confidence > existing.confidence
+
+    def _contains(self, left: Suggestion, right: Suggestion) -> bool:
+        return left.span_start <= right.span_start and left.span_end >= right.span_end
+
+    def _fusion_priority_key(self, suggestion: Suggestion) -> tuple[int, int, float]:
+        replacement_penalty = 0 if suggestion.replacement_options else 1
+        return (
+            replacement_penalty,
+            SOURCE_PRIORITY[suggestion.source],
+            -suggestion.confidence,
+        )
 
     def _assign_response_ids(self, suggestions: list[Suggestion]) -> list[Suggestion]:
         batch_timestamp = int(time.time() * 1000)

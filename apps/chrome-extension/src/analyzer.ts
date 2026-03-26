@@ -1,4 +1,5 @@
-import type { AnalyzeResponse } from "./types";
+import type { AnalyzeResponse, FeedbackRequest } from "./types";
+import { getApiBaseUrl } from "./config";
 
 export class DebouncedAnalyzer {
   private readonly baseUrl: string;
@@ -6,7 +7,7 @@ export class DebouncedAnalyzer {
   private timerId: number | null = null;
   private activeController: AbortController | null = null;
 
-  constructor(baseUrl = "http://127.0.0.1:8000", delayMs = 650) {
+  constructor(baseUrl = getApiBaseUrl(), delayMs = 650) {
     this.baseUrl = baseUrl;
     this.delayMs = delayMs;
   }
@@ -51,5 +52,18 @@ export class DebouncedAnalyzer {
       onError(error);
     }
   }
-}
 
+  async sendFeedback(payload: FeedbackRequest): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/feedback`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Feedback failed with ${response.status}`);
+    }
+  }
+}

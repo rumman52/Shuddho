@@ -29,7 +29,9 @@ class AnalysisPipeline:
         self.rule_engine = rule_engine
         self.suggestion_manager = suggestion_manager
         self.detector_service = detector_service or DetectorService()
-        self.candidate_generator = candidate_generator or CandidateGenerator()
+        self.candidate_generator = candidate_generator or CandidateGenerator(spell_engine=spell_engine)
+        if getattr(self.candidate_generator, "spell_engine", None) is None:
+            self.candidate_generator.spell_engine = spell_engine
         self.ranking_pipeline = ranking_pipeline or SuggestionRankingPipeline()
 
     def analyze(self, text: str, personal_dictionary: list[str] | None = None) -> AnalyzeResponse:
@@ -54,6 +56,7 @@ class AnalysisPipeline:
             rule_suggestions=rule_suggestions,
             detector_findings=detector_findings,
             model_suggestions=[],
+            text=text,
         )
         prepared_suggestions = self.suggestion_manager.prepare_candidates(
             original_text=text,

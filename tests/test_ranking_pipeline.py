@@ -60,7 +60,7 @@ def test_ranker_penalizes_exact_span_conflicts_and_prefers_conservative_fix() ->
         [
             _suggestion("ML_001", "model_guess", SuggestionSource.MODEL, "কিন্ত", ["কিন্তু"]),
             _suggestion("SPELL_002", "dictionary_variant", SuggestionSource.SPELL, "কিন্ত", ["কিন্তু"]),
-            _suggestion("SPELL_004", "spelling_candidate", SuggestionSource.MODEL, "কিন্ত", ["কিন্তুই"]),
+            _suggestion("SPELL_004", "spelling_candidate", SuggestionSource.MODEL, "কিন্ত", ["কিন্তুঈ"]),
         ],
         text="আমি কিন্ত স্কুলে যাই।",
     )
@@ -82,6 +82,20 @@ def test_ranking_pipeline_with_empty_feedback_store_keeps_analyze_safe(tmp_path:
 
     assert ranked[0].rule_id == "PUNC_002"
     assert len(ranked) == 2
+
+
+def test_ranking_pipeline_prefers_actionable_hybrid_fix_over_vague_warning() -> None:
+    ranking = SuggestionRankingPipeline(ranker=NeuralRankerInterface())
+    ranked = ranking.rank(
+        [
+            _suggestion("DET_SPELLING", "detector_spelling", SuggestionSource.MODEL, "কিন্ত", []),
+            _suggestion("DET_SPELLING", "detector_spelling", SuggestionSource.HYBRID, "কিন্ত", ["কিন্তু"]),
+        ],
+        text="আমি কিন্ত স্কুলে যাই।",
+    )
+
+    assert ranked[0].source == SuggestionSource.HYBRID
+    assert ranked[0].replacement_options == ["কিন্তু"]
 
 
 def _suggestion(

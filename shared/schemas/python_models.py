@@ -87,3 +87,6 @@ class FeedbackRecord(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    detector_loaded: bool
+    detector_checkpoint: str | None = None
+    allowed_origins: list[str]

@@ -1,13 +1,15 @@
 import { DebouncedAnalyzer } from "./analyzer";
 import {
+  applyTextReplacement,
   extractEditableText,
   isAnalyzableText,
   isSupportedEditable,
   isSupportedEditor,
+  supportsInlineMirror,
   type SupportedEditable
 } from "./editable";
 import { IssueOverlay } from "./overlay";
-import type { SuggestionRange } from "./types";
+import type { FeedbackRequest, SuggestionRange } from "./types";
 
 const analyzer = new DebouncedAnalyzer();
 const overlay = new IssueOverlay();
@@ -55,6 +57,10 @@ function scheduleAnalyze(target: SupportedEditable): void {
       overlay.render(target, {
         text: response.text,
         ranges
+      }, {
+        canApplySuggestion: supportsInlineMirror(target),
+        onAccept: (range, replacement) => applySuggestion(target, range, replacement),
+        onDismiss: (range) => dismissSuggestion(target, range)
       });
     },
     () => {
@@ -106,4 +112,55 @@ function detachTargetScrollListener(): void {
 
 function handleTargetScroll(): void {
   overlay.syncPosition();
+}
+
+function applySuggestion(target: SupportedEditable, range: SuggestionRange, replacement: string): boolean {
+  if (!activeTarget || activeTarget !== target) {
+    return false;
+  }
+  const originalText = extractEditableText(target);
+  const applied = applyTextReplacement(target, range.start, range.end, replacement);
+  if (!applied) {
+    return false;
+  }
+
+  overlay.hide();
+  void sendFeedback({
+    suggestion_id: range.suggestion.id,
+    action: "accepted",
+    text: originalText,
+    replacement,
+    feedback_key: range.suggestion.feedback_key,
+    rule_id: range.suggestion.rule_id,
+    subtype: range.suggestion.subtype,
+    source: range.suggestion.source,
+    original_text: range.suggestion.original_text
+  });
+  return true;
+}
+
+function dismissSuggestion(target: SupportedEditable, range: SuggestionRange): boolean {
+  if (!activeTarget || activeTarget !== target) {
+    return false;
+  }
+
+  void sendFeedback({
+    suggestion_id: range.suggestion.id,
+    action: "dismissed",
+    text: extractEditableText(target),
+    feedback_key: range.suggestion.feedback_key,
+    rule_id: range.suggestion.rule_id,
+    subtype: range.suggestion.subtype,
+    source: range.suggestion.source,
+    original_text: range.suggestion.original_text
+  });
+  return true;
+}
+
+async function sendFeedback(payload: FeedbackRequest): Promise<void> {
+  try {
+    await analyzer.sendFeedback(payload);
+  } catch (error) {
+    console.warn("Shuddho feedback request failed", error);
+  }
 }

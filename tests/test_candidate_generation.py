@@ -1,7 +1,10 @@
+from pathlib import Path
+
 from ml.ranking.pipeline import NeuralRankerInterface
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
 from services.analysis.shuddho_analysis.models import DetectorFinding
 from services.analysis.shuddho_analysis.ranking import SuggestionRankingPipeline
+from services.spell.shuddho_spell.engine import SpellEngine
 from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
 
 
@@ -31,6 +34,66 @@ def test_candidate_generator_combines_rule_spell_detector_and_model_candidates()
     assert len(bundle.spell_suggestions) == 1
     assert len(bundle.detector_suggestions) == 1
     assert len(bundle.model_suggestions) == 1
+
+
+def test_candidate_generator_turns_detector_spelling_into_actionable_bengali_candidate(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("কিন্তু", "কিন্তু", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    generator = CandidateGenerator(spell_engine=SpellEngine(runtime_csv_path=runtime_csv_path))
+
+    bundle = generator.generate(
+        spell_suggestions=[],
+        rule_suggestions=[],
+        detector_findings=[
+            DetectorFinding(
+                rule_id="DET_SPELLING",
+                category=SuggestionCategory.SPELLING,
+                subtype="detector_spelling",
+                span_start=0,
+                span_end=5,
+                original_text="কিন্ত",
+                confidence=0.84,
+                explanation_bn="",
+                explanation_en="",
+                source=SuggestionSource.MODEL,
+            )
+        ],
+        text="কিন্ত",
+    )
+
+    assert bundle.detector_suggestions[0].replacement_options == ["কিন্তু"]
+    assert bundle.detector_suggestions[0].source == SuggestionSource.HYBRID
+
+
+def test_candidate_generator_turns_detector_punctuation_into_actionable_fix() -> None:
+    generator = CandidateGenerator()
+
+    bundle = generator.generate(
+        spell_suggestions=[],
+        rule_suggestions=[],
+        detector_findings=[
+            DetectorFinding(
+                rule_id="DET_PUNCTUATION",
+                category=SuggestionCategory.PUNCTUATION,
+                subtype="detector_punctuation",
+                span_start=0,
+                span_end=2,
+                original_text="।।",
+                confidence=0.83,
+                explanation_bn="",
+                explanation_en="",
+                source=SuggestionSource.MODEL,
+            )
+        ],
+        text="সে যায়।।",
+    )
+
+    assert bundle.detector_suggestions[0].replacement_options == ["।"]
+    assert bundle.detector_suggestions[0].source == SuggestionSource.HYBRID
 
 
 def test_ranking_pipeline_prefers_conservative_candidates() -> None:
@@ -85,3 +148,15 @@ def _suggestion(
         source=source,
         severity=SuggestionSeverity.MEDIUM,
     )
+
+
+def _write_clean_csv_fixture(
+    base_dir: Path,
+    *,
+    rows: list[tuple[str, str, str, str, str, str]],
+) -> Path:
+    runtime_csv_path = base_dir / "words_clean.csv"
+    lines = ["word,normalized_word,source,is_trusted,is_common,is_active"]
+    lines.extend(",".join(row) for row in rows)
+    runtime_csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return runtime_csv_path

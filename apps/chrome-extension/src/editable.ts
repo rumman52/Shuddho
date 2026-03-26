@@ -82,3 +82,22 @@ export function selectEditableRange(
   target.focus();
   target.setSelectionRange(Math.max(0, start), Math.max(start, end));
 }
+
+export function applyTextReplacement(
+  target: SupportedEditable,
+  start: number,
+  end: number,
+  replacement: string
+): boolean {
+  if (!supportsInlineMirror(target)) {
+    return false;
+  }
+
+  const safeStart = Math.max(0, start);
+  const safeEnd = Math.max(safeStart, end);
+  target.focus();
+  target.setSelectionRange(safeStart, safeEnd);
+  target.setRangeText(replacement, safeStart, safeEnd, "end");
+  target.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
