@@ -73,11 +73,11 @@ Then load `apps/chrome-extension/dist` as an unpacked extension in Chrome.
 
 ## Deployment
 
-Railway should deploy the FastAPI backend only. This repo also contains the web editor and Chrome extension workspaces, but they are not server processes and should not be imported as Railway services.
+Railway should deploy the FastAPI backend only. This repo also contains the `apps/web-editor` and `apps/chrome-extension` workspaces, but they are not server processes and should not be imported as Railway services.
 
 - Railway: build from the root `Dockerfile` and run only the Python API
-- Chrome extension: build locally with `npm run build:extension` and distribute through the Chrome Web Store
-- Frontend: host separately from Railway
+- Web editor: deploy `apps/web-editor` separately from Railway
+- Chrome extension: build locally with `npm run build:extension` and distribute separately, such as through the Chrome Web Store
 
 Required Railway variables:
 
