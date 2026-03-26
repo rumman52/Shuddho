@@ -11,7 +11,7 @@ COPY shared ./shared
 COPY ml ./ml
 COPY data ./data
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir .
 
 CMD ["sh", "-c", "python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -78,12 +78,17 @@ Railway should deploy the FastAPI backend only. This repo also contains the `app
 - Railway: build from the root `Dockerfile` and run only the Python API
 - Web editor: deploy `apps/web-editor` separately from Railway
 - Chrome extension: build locally with `npm run build:extension` and distribute separately, such as through the Chrome Web Store
+- Service Source: GitHub repo `rumman52/Shuddho`
+- Root Directory: `/`
+- Build Command: leave empty
+- Start Command: leave empty if the Dockerfile `CMD` is used
+- Healthcheck Path: `/health`
 
 Required Railway variables:
 
-- `SHUDDHO_ALLOWED_ORIGINS`
-- `SHUDDHO_DETECTOR_THRESHOLD`
-- `SHUDDHO_DETECTOR_CHECKPOINT`
+- `SHUDDHO_ALLOWED_ORIGINS=https://your-frontend-domain`
+- `SHUDDHO_DETECTOR_THRESHOLD=0.82`
+- `SHUDDHO_DETECTOR_CHECKPOINT=...` only if a real checkpoint exists
 
 ### Lexicon import
 
