@@ -1,10 +1,11 @@
 import type { AnalyzeRequest, AnalyzeResponse, FeedbackRequest } from "@shared/schemas/contracts";
 
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
 const API_BASE_URL = resolveApiBaseUrl();
 
 function resolveApiBaseUrl(): string {
-  const configuredBaseUrl = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL;
-  return (configuredBaseUrl ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
+  const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL;
+  return (configuredBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
 }
 
 async function request<TResponse>(path: string, init: RequestInit): Promise<TResponse> {

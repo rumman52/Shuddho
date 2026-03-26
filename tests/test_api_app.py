@@ -1,6 +1,12 @@
 import re
 
-from services.api.shuddho_api.app import ALLOWED_ORIGIN_REGEX, ALLOWED_ORIGINS, detector_service, health
+from services.api.shuddho_api.app import (
+    ALLOWED_ORIGIN_REGEX,
+    ALLOWED_ORIGINS,
+    _parse_allowed_origins,
+    detector_service,
+    health,
+)
 
 
 def test_health_reports_detector_status() -> None:
@@ -26,3 +32,14 @@ def test_cors_allows_localhost_dev_origin() -> None:
 
 def test_cors_keeps_production_frontend_origin() -> None:
     assert "https://shuddho-web-editor.vercel.app" in ALLOWED_ORIGINS
+
+
+def test_parse_allowed_origins_supports_trycloudflare_origin() -> None:
+    allowed_origins = _parse_allowed_origins(
+        "https://random-name.trycloudflare.com, https://shuddho-web-editor.vercel.app"
+    )
+
+    assert allowed_origins == [
+        "https://random-name.trycloudflare.com",
+        "https://shuddho-web-editor.vercel.app",
+    ]

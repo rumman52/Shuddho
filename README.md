@@ -71,6 +71,28 @@ npm run build:extension
 
 Then load `apps/chrome-extension/dist` as an unpacked extension in Chrome.
 
+## Local Public Testing
+
+Run the backend locally from the repo root:
+
+```bash
+python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port 8000
+```
+
+Expose the local backend with a temporary Cloudflare Quick Tunnel:
+
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+Copy the generated `https://...trycloudflare.com` URL and point the clients at it:
+
+- Web editor: set `VITE_API_BASE_URL=https://your-random-name.trycloudflare.com`
+- Chrome extension: build with `SHUDDHO_EXTENSION_API_BASE_URL=https://your-random-name.trycloudflare.com npm run build:extension`
+- Backend CORS: set `SHUDDHO_ALLOWED_ORIGINS=https://your-random-name.trycloudflare.com` or include multiple origins as a comma-separated list
+
+The trycloudflare URL is temporary, so update the frontend or extension config again whenever Cloudflare gives you a new tunnel address.
+
 ## Deployment
 
 Railway should deploy the FastAPI backend only. This repo also contains the `apps/web-editor` and `apps/chrome-extension` workspaces, but they are not server processes and should not be imported as Railway services.
