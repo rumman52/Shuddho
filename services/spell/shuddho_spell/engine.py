@@ -16,9 +16,11 @@ from shared.utils.text import stable_id
 from .runtime_lexicon import load_runtime_lexicon
 
 
-DIRECT_MAP_CONFIDENCE = 0.99
-MIN_GENERIC_CANDIDATE_SCORE = 0.94
-MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.95
+DIRECT_SPELLING_CONFIDENCE = 0.99
+DIRECT_VARIANT_CONFIDENCE = 0.9
+MIN_GENERIC_CANDIDATE_SCORE = 0.95
+MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.96
+MIN_GENERIC_SCORE_MARGIN = 0.03
 MAX_GENERIC_REPLACEMENTS = 1
 
 
@@ -44,68 +46,133 @@ class SpellEngine:
 
         self.lexicon_source = runtime_lexicon.source
         self.lexicon = set(runtime_lexicon.accepted_words)
-        self.correction_map = {**runtime_lexicon.correction_map, **CURATED_VARIANT_CORRECTIONS}
+        self.spelling_error_map = dict(runtime_lexicon.correction_map)
+        self.orthography_variant_map = dict(CURATED_VARIANT_CORRECTIONS)
+        self.correction_map = {**self.spelling_error_map, **self.orthography_variant_map}
         self.frequency_rank = {word: rank for rank, word in enumerate(runtime_lexicon.candidate_words)}
         self._candidate_index = self._build_candidate_index(runtime_lexicon.candidate_words)
+        self._reverse_correction_map = _build_reverse_correction_map(self.correction_map)
 
     def analyze(self, text: str, personal_dictionary: list[str] | None = None) -> list[Suggestion]:
-        personal = set(personal_dictionary or [])
+        personal = self._expand_personal_dictionary(personal_dictionary)
         suggestions: list[Suggestion] = []
 
         for match in BANGLA_WORD_PATTERN.finditer(text):
             token = match.group(0)
-            if token in personal or (token in self.lexicon and token not in self.correction_map) or not BANGLA_LETTER_PATTERN.search(token):
+            if self._should_skip_token(token, personal):
                 continue
-            if len(token) < 3:
+
+            variant_candidate = self.orthography_variant_map.get(token)
+            if variant_candidate:
+                if variant_candidate in personal:
+                    continue
+                suggestions.append(
+                    Suggestion(
+                        id=stable_id("spell", f"{match.start()}:{match.end()}:{token}:{variant_candidate}"),
+                        rule_id="SPELL_002",
+                        category=SuggestionCategory.SPELLING,
+                        subtype="orthography_variant",
+                        span_start=match.start(),
+                        span_end=match.end(),
+                        original_text=token,
+                        replacement_options=[variant_candidate],
+                        confidence=DIRECT_VARIANT_CONFIDENCE,
+                        explanation_bn=f"'{token}' রূপটি গ্রহণযোগ্য ভিন্নরূপ হলেও এখানে মানক বানান '{variant_candidate}' বেশি প্রচলিত।",
+                        explanation_en=f"'{token}' is an acceptable variant, but '{variant_candidate}' is the preferred standard spelling here.",
+                        source=SuggestionSource.SPELL,
+                        severity=SuggestionSeverity.LOW,
+                    )
+                )
+                continue
+
+            direct_candidate = self.spelling_error_map.get(token)
+            if direct_candidate:
+                if direct_candidate in personal:
+                    continue
+                suggestions.append(
+                    Suggestion(
+                        id=stable_id("spell", f"{match.start()}:{match.end()}:{token}:{direct_candidate}"),
+                        rule_id="SPELL_002",
+                        category=SuggestionCategory.SPELLING,
+                        subtype="spelling_error",
+                        span_start=match.start(),
+                        span_end=match.end(),
+                        original_text=token,
+                        replacement_options=[direct_candidate],
+                        confidence=DIRECT_SPELLING_CONFIDENCE,
+                        explanation_bn=f"এখানে '{token}' এর অভিধানভিত্তিক শুদ্ধ রূপ '{direct_candidate}'।",
+                        explanation_en=f"The dictionary-backed spelling for '{token}' here is '{direct_candidate}'.",
+                        source=SuggestionSource.SPELL,
+                        severity=SuggestionSeverity.MEDIUM,
+                    )
+                )
                 continue
 
             candidates = self.generate_candidates(token)
-            if not candidates:
+            if not candidates or self._is_ambiguous_generic_candidate(candidates):
                 continue
 
-            is_direct_map = token in self.correction_map
-            primary_candidate = candidates[0].word
-            if is_direct_map:
-                top_candidates = [primary_candidate]
-                confidence = DIRECT_MAP_CONFIDENCE
-                rule_id = "SPELL_002"
-                subtype = "dictionary_variant"
-                explanation_bn = f"এখানে '{token}' এর অভিধানভিত্তিক রূপ '{primary_candidate}'।"
-                explanation_en = f"The dictionary-backed form for '{token}' here is '{primary_candidate}'."
-            else:
-                top_candidates = [candidate.word for candidate in candidates[:MAX_GENERIC_REPLACEMENTS]]
-                confidence = min(max(candidates[0].score, 0.0), 0.97)
-                if confidence < MIN_GENERIC_SUGGESTION_CONFIDENCE:
-                    continue
-                rule_id = "SPELL_003"
-                subtype = "spelling_candidate"
-                explanation_bn = f"'{token}' শব্দটির সবচেয়ে কাছের নিরাপদ সংশোধন '{primary_candidate}'।"
-                explanation_en = f"The closest safe correction for '{token}' is '{primary_candidate}'."
+            top_candidates = [candidate.word for candidate in candidates[:MAX_GENERIC_REPLACEMENTS]]
+            if any(candidate in personal for candidate in top_candidates):
+                continue
+
+            primary_candidate = top_candidates[0]
+            confidence = min(max(candidates[0].score, 0.0), 0.97)
+            if confidence < MIN_GENERIC_SUGGESTION_CONFIDENCE:
+                continue
 
             suggestions.append(
                 Suggestion(
                     id=stable_id("spell", f"{match.start()}:{match.end()}:{token}:{','.join(top_candidates)}"),
-                    rule_id=rule_id,
+                    rule_id="SPELL_003",
                     category=SuggestionCategory.SPELLING,
-                    subtype=subtype,
+                    subtype="spelling_error",
                     span_start=match.start(),
                     span_end=match.end(),
                     original_text=token,
                     replacement_options=top_candidates,
                     confidence=round(confidence, 2),
-                    explanation_bn=explanation_bn,
-                    explanation_en=explanation_en,
+                    explanation_bn=f"'{token}' শব্দটির সবচেয়ে কাছের নিরাপদ সংশোধন '{primary_candidate}'।",
+                    explanation_en=f"The closest safe correction for '{token}' is '{primary_candidate}'.",
                     source=SuggestionSource.SPELL,
-                    severity=SuggestionSeverity.MEDIUM,
+                    severity=SuggestionSeverity.LOW,
                 )
             )
 
         return suggestions
 
+    def _should_skip_token(self, token: str, personal: set[str]) -> bool:
+        if token in personal:
+            return True
+        if not BANGLA_LETTER_PATTERN.search(token):
+            return True
+        if len(token) < 3:
+            return True
+        return token in self.lexicon and token not in self.correction_map
+
+    def _expand_personal_dictionary(self, personal_dictionary: list[str] | None) -> set[str]:
+        personal_words: set[str] = set()
+        for entry in personal_dictionary or []:
+            for token in BANGLA_WORD_PATTERN.findall(entry.strip()):
+                if token:
+                    personal_words.add(token)
+
+        expanded = set(personal_words)
+        for token in tuple(personal_words):
+            mapped = self.correction_map.get(token)
+            if mapped:
+                expanded.add(mapped)
+            expanded.update(self._reverse_correction_map.get(token, ()))
+
+        return expanded
+
+    def _is_ambiguous_generic_candidate(self, candidates: list[SpellCandidate]) -> bool:
+        return len(candidates) > 1 and (candidates[0].score - candidates[1].score) < MIN_GENERIC_SCORE_MARGIN
+
     def generate_candidates(self, token: str) -> list[SpellCandidate]:
         mapped_candidate = self.correction_map.get(token)
         if mapped_candidate:
-            return [SpellCandidate(word=mapped_candidate, score=DIRECT_MAP_CONFIDENCE)]
+            return [SpellCandidate(word=mapped_candidate, score=DIRECT_SPELLING_CONFIDENCE)]
 
         ranked: list[SpellCandidate] = []
         seen_candidates: set[str] = set()
@@ -238,6 +305,15 @@ def _build_reverse_confusions() -> dict[str, tuple[str, ...]]:
             if source_character not in reverse_confusions[target_character]:
                 reverse_confusions[target_character].append(source_character)
     return {key: tuple(values) for key, values in reverse_confusions.items()}
+
+
+def _build_reverse_correction_map(correction_map: dict[str, str]) -> dict[str, tuple[str, ...]]:
+    reverse_map: dict[str, list[str]] = {}
+    for source, target in correction_map.items():
+        reverse_map.setdefault(target, [])
+        if source not in reverse_map[target]:
+            reverse_map[target].append(source)
+    return {key: tuple(values) for key, values in reverse_map.items()}
 
 
 REVERSE_BANGLA_CONFUSIONS = _build_reverse_confusions()

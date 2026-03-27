@@ -19,8 +19,18 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["services*", "shared*"]
-exclude = ["apps*", "data*", "docs*", "ml*", "node_modules*", "scripts*", "tests*"]
+exclude = [
+  "apps*",
+  "data*",
+  "docs*",
+  "ml*",
+  "node_modules*",
+  "scripts*",
+  "tests*",
+  "services.suggestion-manager*"
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+pythonpath = ["."]

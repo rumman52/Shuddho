@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from services.spell.shuddho_spell.engine import SpellEngine
+from services.spell.shuddho_spell.engine import SpellCandidate, SpellEngine
 from services.spell.shuddho_spell.runtime_lexicon import load_runtime_lexicon
 
 
@@ -39,7 +39,7 @@ def test_spell_engine_uses_main_csv_direct_mapping_and_accepts_canonical_target(
 
     suggestions = engine.analyze("অইউরোপীয়")
     assert len(suggestions) == 1
-    assert suggestions[0].subtype == "dictionary_variant"
+    assert suggestions[0].subtype == "spelling_error"
     assert suggestions[0].replacement_options == ["অইউরোপীয়"]
     assert suggestions[0].confidence >= 0.99
     assert "অইউরোপীয়" in suggestions[0].explanation_bn
@@ -139,10 +139,65 @@ def test_spell_engine_prefers_curated_variant_override_even_if_token_exists_in_l
 
     assert len(suggestions) == 1
     assert suggestions[0].rule_id == "SPELL_002"
-    assert suggestions[0].subtype == "dictionary_variant"
+    assert suggestions[0].subtype == "orthography_variant"
     assert suggestions[0].original_text == "কিন্ত"
     assert suggestions[0].replacement_options == ["কিন্তু"]
     assert suggestions[0].source.value == "spell"
+    assert suggestions[0].severity.value == "low"
+
+
+def test_spell_engine_personal_dictionary_accepts_variant_and_canonical_forms(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("কিন্ত", "কিন্ত", "fixture.csv", "1", "1", "1"),
+            ("কিন্তু", "কিন্তু", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    assert engine.analyze("কিন্ত", personal_dictionary=["কিন্ত"]) == []
+    assert engine.analyze("কিন্ত", personal_dictionary=["কিন্তু"]) == []
+
+
+def test_spell_engine_suppresses_ambiguous_generic_candidates(tmp_path: Path, monkeypatch) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("আমি", "আমি", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    def fake_generate_candidates(token: str) -> list[SpellCandidate]:
+        assert token == "ক্লম"
+        return [
+            SpellCandidate(word="কলম", score=0.96),
+            SpellCandidate(word="কুলম", score=0.94),
+        ]
+
+    monkeypatch.setattr(engine, "generate_candidates", fake_generate_candidates)
+
+    assert engine.analyze("ক্লম") == []
+
+
+def test_spell_engine_personal_dictionary_suppresses_generic_candidate_targets(tmp_path: Path, monkeypatch) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("আমি", "আমি", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    def fake_generate_candidates(token: str) -> list[SpellCandidate]:
+        assert token == "রাহুলল"
+        return [SpellCandidate(word="রাহুল", score=0.97)]
+
+    monkeypatch.setattr(engine, "generate_candidates", fake_generate_candidates)
+
+    assert engine.analyze("রাহুলল", personal_dictionary=["রাহুল"]) == []
 
 
 def _write_clean_csv_fixture(

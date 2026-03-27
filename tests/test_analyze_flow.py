@@ -12,11 +12,11 @@ def test_analyze_flow_merges_rule_and_spell_outputs(tmp_path: Path) -> None:
         tmp_path,
         rows=[
             ("অইউরোপীয়", "অইউরোপীয়", "fixture.csv", "1", "0", "1"),
-            ("বংলা", "বাংলা", "fixture.csv", "1", "0", "1"),
+            ("বঙ্গলা", "বাংলা", "fixture.csv", "1", "0", "1"),
         ],
     )
 
-    text = "শুদ্ধ বাংলা ব্যকরণ আর বংলা বাংলা বাংলা ভাষা সুন্দর।।"
+    text = "শুদ্ধ বাংলা ব্যকরণ আর বঙ্গলা বাংলা বাংলা ভাষা সুন্দর।।"
     normalizer = BanglaNormalizer()
     rules = RuleEngine()
     spell = SpellEngine(runtime_csv_path=runtime_csv_path)
@@ -26,7 +26,7 @@ def test_analyze_flow_merges_rule_and_spell_outputs(tmp_path: Path) -> None:
     merged = manager.merge(text, normalized, spell.analyze(normalized.text), rules.analyze(text))
 
     subtypes = {suggestion.subtype for suggestion in merged}
-    assert "safe_exact_typo" in subtypes
+    assert "spelling_error" in subtypes
     assert "duplicate_punctuation" in subtypes
     assert "repeated_word" in subtypes
 
@@ -49,7 +49,7 @@ def test_analyze_flow_surfaces_csv_direct_map_suggestion(tmp_path: Path) -> None
 
     assert len(merged) == 1
     assert merged[0].original_text == "অইউরোপীয়"
-    assert merged[0].subtype == "dictionary_variant"
+    assert merged[0].subtype == "spelling_error"
     assert merged[0].replacement_options == ["অইউরোপীয়"]
 
 
@@ -74,7 +74,7 @@ def test_analyze_flow_returns_sentence_grounded_spacing_and_punctuation_suggesti
 
     assert normalized.text == "সে স্কুলে যায়।"
     assert by_subtype["extra_whitespace"].original_text == "  "
-    assert by_subtype["dictionary_variant"].replacement_options == ["যায়"]
+    assert by_subtype["spelling_error"].replacement_options == ["যায়"]
     assert by_subtype["space_before_punctuation"].original_text == " ।"
 
 
@@ -206,7 +206,7 @@ def test_analyze_flow_matches_prompt_response_contract(tmp_path: Path) -> None:
     assert merged
 
     by_subtype = {suggestion.subtype: suggestion for suggestion in merged}
-    dictionary_variant = by_subtype["dictionary_variant"]
+    orthography_variant = by_subtype["orthography_variant"]
     repeated_word = by_subtype["repeated_word"]
     duplicate_punctuation = by_subtype["duplicate_punctuation"]
 
@@ -217,9 +217,9 @@ def test_analyze_flow_matches_prompt_response_contract(tmp_path: Path) -> None:
         assert "rule_id" in dumped
         assert "status" not in dumped
 
-    assert dictionary_variant.rule_id == "SPELL_002"
-    assert dictionary_variant.original_text == "কিন্ত"
-    assert dictionary_variant.replacement_options == ["কিন্তু"]
+    assert orthography_variant.rule_id == "SPELL_002"
+    assert orthography_variant.original_text == "কিন্ত"
+    assert orthography_variant.replacement_options == ["কিন্তু"]
     assert repeated_word.rule_id == "REP_001"
     assert repeated_word.original_text == "আমি আমি"
     assert duplicate_punctuation.rule_id == "PUNC_001"

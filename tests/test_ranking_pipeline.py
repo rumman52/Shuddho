@@ -23,7 +23,7 @@ def test_ranking_pipeline_uses_feedback_history_when_available(tmp_path: Path) -
             replacement="কিন্তু",
             feedback_key="fbk_accept",
             rule_id="SPELL_002",
-            subtype="dictionary_variant",
+            subtype="orthography_variant",
             source=SuggestionSource.SPELL,
             original_text="কিন্ত",
         )
@@ -36,7 +36,7 @@ def test_ranking_pipeline_uses_feedback_history_when_available(tmp_path: Path) -
             replacement="কিন্তু",
             feedback_key="fbk_dismiss",
             rule_id="SPELL_003",
-            subtype="spelling_candidate",
+            subtype="spelling_error",
             source=SuggestionSource.MODEL,
             original_text="কিন্ত",
         )
@@ -45,8 +45,8 @@ def test_ranking_pipeline_uses_feedback_history_when_available(tmp_path: Path) -
     ranking = SuggestionRankingPipeline(ranker=NeuralRankerInterface(), feedback_store=store)
     ranked = ranking.rank(
         [
-            _suggestion("SPELL_003", "spelling_candidate", SuggestionSource.MODEL, "কিন্ত", ["কিন্তু"], feedback_key="fbk_dismiss"),
-            _suggestion("SPELL_002", "dictionary_variant", SuggestionSource.SPELL, "কিন্ত", ["কিন্তু"], feedback_key="fbk_accept"),
+            _suggestion("SPELL_003", "spelling_error", SuggestionSource.MODEL, "কিন্ত", ["কিন্তু"], feedback_key="fbk_dismiss"),
+            _suggestion("SPELL_002", "orthography_variant", SuggestionSource.SPELL, "কিন্ত", ["কিন্তু"], feedback_key="fbk_accept"),
         ],
         text="আমি কিন্ত স্কুলে যাই।",
     )
@@ -59,8 +59,8 @@ def test_ranker_penalizes_exact_span_conflicts_and_prefers_conservative_fix() ->
     ranked = ranker.rank(
         [
             _suggestion("ML_001", "model_guess", SuggestionSource.MODEL, "কিন্ত", ["কিন্তু"]),
-            _suggestion("SPELL_002", "dictionary_variant", SuggestionSource.SPELL, "কিন্ত", ["কিন্তু"]),
-            _suggestion("SPELL_004", "spelling_candidate", SuggestionSource.MODEL, "কিন্ত", ["কিন্তুঈ"]),
+            _suggestion("SPELL_002", "orthography_variant", SuggestionSource.SPELL, "কিন্ত", ["কিন্তু"]),
+            _suggestion("SPELL_004", "spelling_error", SuggestionSource.MODEL, "কিন্ত", ["কিন্তুঈ"]),
         ],
         text="আমি কিন্ত স্কুলে যাই।",
     )
@@ -71,7 +71,10 @@ def test_ranker_penalizes_exact_span_conflicts_and_prefers_conservative_fix() ->
 
 
 def test_ranking_pipeline_with_empty_feedback_store_keeps_analyze_safe(tmp_path: Path) -> None:
-    ranking = SuggestionRankingPipeline(ranker=NeuralRankerInterface(), feedback_store=FeedbackStore(database_path=tmp_path / "feedback.db"))
+    ranking = SuggestionRankingPipeline(
+        ranker=NeuralRankerInterface(),
+        feedback_store=FeedbackStore(database_path=tmp_path / "feedback.db"),
+    )
     ranked = ranking.rank(
         [
             _suggestion("PUNC_002", "space_before_punctuation", SuggestionSource.RULE, " ।", ["।"], category=SuggestionCategory.PUNCTUATION),

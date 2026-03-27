@@ -6,6 +6,7 @@ export type SuggestionCategory =
 
 export type SuggestionSource = "rule" | "spell" | "model" | "hybrid";
 export type SuggestionSeverity = "low" | "medium" | "high";
+export type AnalyzeMode = "standard" | "strict" | "formal";
 
 export interface Suggestion {
   id: string;
@@ -27,6 +28,7 @@ export interface Suggestion {
 export interface AnalyzeRequest {
   text: string;
   personal_dictionary?: string[];
+  mode?: AnalyzeMode;
 }
 
 export interface AnalyzeResponse {

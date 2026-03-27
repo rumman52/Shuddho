@@ -7,11 +7,12 @@ from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
-from shared.schemas.python_models import SuggestionCategory, SuggestionSeverity, SuggestionSource
+from shared.schemas.python_models import AnalyzeMode, SuggestionCategory, SuggestionSeverity, SuggestionSource
 
 
 class StubDetectorService(DetectorService):
-    def detect(self, *, text, normalized, rule_suggestions):  # type: ignore[override]
+    def detect(self, *, text, normalized, rule_suggestions, spell_suggestions=None):  # type: ignore[override]
+        del normalized, rule_suggestions, spell_suggestions
         if "শুদ্ধ" not in text:
             return []
 
@@ -68,6 +69,44 @@ def test_analysis_pipeline_merges_detector_findings_without_breaking_response_id
     assert detector_suggestion.source == SuggestionSource.MODEL
     assert detector_suggestion.original_text == "শুদ্ধ"
     assert detector_suggestion.replacement_options == ["শুদ্ধ"]
+
+
+def test_analysis_pipeline_standard_mode_filters_weak_style_only_warnings(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("আমি", "আমি", "fixture.csv", "1", "1", "1"),
+            ("আগামীকাল", "আগামীকাল", "fixture.csv", "1", "1", "1"),
+            ("সকালে", "সকালে", "fixture.csv", "1", "1", "1"),
+            ("তোমাদের", "তোমাদের", "fixture.csv", "1", "1", "1"),
+            ("সাথে", "সাথে", "fixture.csv", "1", "1", "1"),
+            ("আসব", "আসব", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    pipeline = _build_pipeline(runtime_csv_path)
+    text = "আমি আগামীকাল সকালে তোমাদের সাথে tomorrow আসব।"
+
+    standard_response = pipeline.analyze(text, mode=AnalyzeMode.STANDARD)
+    strict_response = pipeline.analyze(text, mode=AnalyzeMode.STRICT)
+    formal_response = pipeline.analyze(text, mode=AnalyzeMode.FORMAL)
+
+    assert "code_mixed_latin" not in {suggestion.subtype for suggestion in standard_response.suggestions}
+    assert "code_mixed_latin" in {suggestion.subtype for suggestion in strict_response.suggestions}
+    assert "code_mixed_latin" in {suggestion.subtype for suggestion in formal_response.suggestions}
+
+
+def test_analysis_pipeline_standard_mode_keeps_actionable_style_suggestions(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("চাল", "চাল", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    pipeline = _build_pipeline(runtime_csv_path)
+
+    response = pipeline.analyze("৫কেজি চাল", mode=AnalyzeMode.STANDARD)
+
+    assert "number_unit_spacing" in {suggestion.subtype for suggestion in response.suggestions}
 
 
 def _build_pipeline(runtime_csv_path: Path, detector_service: DetectorService | None = None) -> AnalysisPipeline:

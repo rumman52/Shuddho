@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEven
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
-import type { AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
+import type { AnalyzeMode, AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
 import { SuggestionCard, type SuggestionCardAnchor } from "./components/SuggestionCard";
 import { IssueMark } from "./lib/editorExtensions";
 import { analyzeText, sendFeedback } from "./lib/api";
@@ -15,11 +15,13 @@ const HOVER_HIDE_DELAY_MS = 180;
 const POST_ACCEPT_ANALYSIS_DELAY_MS = 80;
 
 export default function App() {
+  const [requestMode, setRequestMode] = useState<AnalyzeMode>("standard");
   const [analysis, setAnalysis] = useState<AnalyzeResponse>({
     text: INITIAL_TEXT,
     normalized_text: INITIAL_TEXT,
     suggestions: []
   });
+  const [showStyleSuggestions, setShowStyleSuggestions] = useState(false);
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null);
   const [isPopupPinned, setIsPopupPinned] = useState(false);
@@ -28,6 +30,7 @@ export default function App() {
   const analysisTimerRef = useRef<number | null>(null);
   const hoverCloseTimerRef = useRef<number | null>(null);
   const latestAnalysisRequestRef = useRef(0);
+  const requestModeRef = useRef<AnalyzeMode>(requestMode);
   const hoveredIssueIdRef = useRef<string | null>(null);
   const activeIssueIdRef = useRef<string | null>(null);
   const isPopupPinnedRef = useRef(false);
@@ -73,6 +76,22 @@ export default function App() {
     () => (visibleSuggestion ? analysis.suggestions.findIndex((suggestion) => suggestion.id === visibleSuggestion.id) : -1),
     [analysis.suggestions, visibleSuggestion]
   );
+  const hardSuggestions = useMemo(
+    () => analysis.suggestions.filter((suggestion) => suggestion.category !== "style"),
+    [analysis.suggestions]
+  );
+  const optionalStyleSuggestions = useMemo(
+    () => analysis.suggestions.filter((suggestion) => suggestion.category === "style"),
+    [analysis.suggestions]
+  );
+
+  useEffect(() => {
+    requestModeRef.current = requestMode;
+  }, [requestMode]);
+
+  useEffect(() => {
+    setShowStyleSuggestions(requestMode === "formal");
+  }, [requestMode]);
 
   useEffect(() => {
     hoveredIssueIdRef.current = hoveredIssueId;
@@ -100,8 +119,8 @@ export default function App() {
     if (!editor) {
       return;
     }
-    void runAnalysis(getEditorTextSurface(editor).text);
-  }, [editor]);
+    void runAnalysis(getEditorTextSurface(editor).text, requestMode);
+  }, [editor, requestMode]);
 
   useEffect(() => {
     if (!editor) {
@@ -220,7 +239,7 @@ export default function App() {
     };
   }, []);
 
-  async function runAnalysis(text: string) {
+  async function runAnalysis(text: string, mode: AnalyzeMode = requestModeRef.current) {
     const requestId = ++latestAnalysisRequestRef.current;
 
     if (!text.trim()) {
@@ -232,12 +251,12 @@ export default function App() {
 
     setStatus("Analyzing...");
     try {
-      const response = await analyzeText({ text });
+      const response = await analyzeText({ text, mode });
       if (requestId !== latestAnalysisRequestRef.current) {
         return;
       }
       setAnalysis(response);
-      setStatus(`${response.suggestions.length} suggestion(s)`);
+      setStatus(formatAnalysisStatus(response.suggestions, mode));
     } catch (error) {
       if (requestId !== latestAnalysisRequestRef.current) {
         return;
@@ -504,7 +523,7 @@ export default function App() {
   function scheduleAnalysis(text: string, delayMs: number) {
     clearAnalysisTimer();
     analysisTimerRef.current = window.setTimeout(() => {
-      void runAnalysis(text);
+      void runAnalysis(text, requestModeRef.current);
     }, delayMs);
   }
 
@@ -563,6 +582,41 @@ export default function App() {
     return findSuggestionListAnchor(suggestionListRef.current, suggestionId);
   }
 
+  function renderSuggestionListItem(suggestion: Suggestion, deemphasized = false) {
+    return (
+      <button
+        key={suggestion.id}
+        type="button"
+        className="suggestion-list__item"
+        data-suggestion-id={suggestion.id}
+        data-suggestion-active={suggestion.id === visibleIssueId ? "true" : undefined}
+        style={deemphasized ? { opacity: 0.82 } : undefined}
+        onMouseEnter={(event) => {
+          if (!isPopupPinnedRef.current) {
+            showHoverPreview(suggestion.id, event.currentTarget);
+          }
+        }}
+        onFocus={(event) => {
+          if (!isPopupPinnedRef.current) {
+            showHoverPreview(suggestion.id, event.currentTarget);
+          }
+        }}
+        onBlur={() => {
+          if (!isPopupPinnedRef.current) {
+            scheduleHoverClose();
+          }
+        }}
+        onClick={(event) => pinIssue(suggestion.id, event.currentTarget)}
+      >
+        <strong>{suggestion.original_text}</strong>
+        {suggestion.replacement_options[0] ? (
+          <span className="suggestion-list__replacement">{suggestion.replacement_options[0]}</span>
+        ) : null}
+        <span>{suggestion.explanation_bn || suggestion.explanation_en}</span>
+      </button>
+    );
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -575,7 +629,11 @@ export default function App() {
         </div>
         <div className="status-panel">
           <span>{status}</span>
-          <strong>{analysis.suggestions.length}</strong>
+          <strong>{hardSuggestions.length}</strong>
+          <span>{hardSuggestions.length === 1 ? "hard issue" : "hard issues"}</span>
+          {optionalStyleSuggestions.length > 0 ? (
+            <span>{optionalStyleSuggestions.length} optional style</span>
+          ) : null}
         </div>
       </section>
 
@@ -585,13 +643,34 @@ export default function App() {
             <h2>Web editor</h2>
             <p>Hover for preview, click an issue to pin the correction popover, then edit without losing it.</p>
           </div>
-          <button
-            type="button"
-            className="analyze-button"
-            onClick={() => editor && void runAnalysis(getEditorTextSurface(editor).text)}
-          >
-            Analyze now
-          </button>
+          <div style={{ display: "flex", gap: "0.75rem", alignItems: "end", flexWrap: "wrap" }}>
+            <label style={{ display: "grid", gap: "0.35rem", color: "var(--muted)", fontSize: "0.9rem" }}>
+              <span>Request mode</span>
+              <select
+                value={requestMode}
+                onChange={(event) => setRequestMode(event.target.value as AnalyzeMode)}
+                style={{
+                  minWidth: "10rem",
+                  borderRadius: "999px",
+                  border: "1px solid var(--border)",
+                  padding: "0.7rem 0.9rem",
+                  background: "white",
+                  color: "var(--ink)"
+                }}
+              >
+                <option value="standard">Standard</option>
+                <option value="strict">Strict</option>
+                <option value="formal">Formal</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="analyze-button"
+              onClick={() => editor && void runAnalysis(getEditorTextSurface(editor).text, requestMode)}
+            >
+              Analyze now
+            </button>
+          </div>
         </div>
         <div
           ref={editorStageRef}
@@ -633,44 +712,58 @@ export default function App() {
         <div className="panel-header">
           <div>
             <h2>Open suggestions</h2>
-            <p>Use this list to pin a suggestion if you prefer not to target the underline directly.</p>
+            <p>Hard errors stay visible here. Optional style guidance is separated below and muted by default.</p>
           </div>
           <pre className="panel-header__normalized">{analysis.normalized_text}</pre>
         </div>
         <div ref={suggestionListRef} className="suggestion-list">
-          {analysis.suggestions.map((suggestion: Suggestion) => (
-            <button
-              key={suggestion.id}
-              type="button"
-              className="suggestion-list__item"
-              data-suggestion-id={suggestion.id}
-              data-suggestion-active={suggestion.id === visibleIssueId ? "true" : undefined}
-              onMouseEnter={(event) => {
-                if (!isPopupPinnedRef.current) {
-                  showHoverPreview(suggestion.id, event.currentTarget);
-                }
-              }}
-              onFocus={(event) => {
-                if (!isPopupPinnedRef.current) {
-                  showHoverPreview(suggestion.id, event.currentTarget);
-                }
-              }}
-              onBlur={() => {
-                if (!isPopupPinnedRef.current) {
-                  scheduleHoverClose();
-                }
-              }}
-              onClick={(event) => pinIssue(suggestion.id, event.currentTarget)}
-            >
-              <strong>{suggestion.original_text}</strong>
-              {suggestion.replacement_options[0] ? (
-                <span className="suggestion-list__replacement">{suggestion.replacement_options[0]}</span>
-              ) : null}
-              <span>{suggestion.explanation_bn || suggestion.explanation_en}</span>
-            </button>
-          ))}
-          {analysis.suggestions.length === 0 ? <p className="empty-state">No issues found for this draft.</p> : null}
+          {hardSuggestions.map((suggestion) => renderSuggestionListItem(suggestion))}
+          {hardSuggestions.length === 0 ? (
+            <p className="empty-state">
+              {optionalStyleSuggestions.length > 0
+                ? "No hard errors found. Optional style guidance is available below."
+                : "No issues found for this draft."}
+            </p>
+          ) : null}
         </div>
+        {optionalStyleSuggestions.length > 0 ? (
+          <section
+            aria-label="Optional style suggestions"
+            style={{
+              marginTop: "1rem",
+              paddingTop: "1rem",
+              borderTop: "1px solid var(--border)",
+              opacity: requestMode === "formal" ? 1 : 0.9
+            }}
+          >
+            <div className="panel-header" style={{ marginBottom: "0.75rem" }}>
+              <div>
+                <h2 style={{ fontSize: "1.2rem" }}>Optional style suggestions</h2>
+                <p style={{ margin: 0 }}>
+                  {requestMode === "formal"
+                    ? "Formal mode opens style and register guidance automatically."
+                    : "Style suggestions stay collapsed by default so likely errors remain prominent."}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="suggestion-card__dismiss"
+                onClick={() => setShowStyleSuggestions((current) => !current)}
+              >
+                {showStyleSuggestions ? "Hide style suggestions" : `Show style suggestions (${optionalStyleSuggestions.length})`}
+              </button>
+            </div>
+            {showStyleSuggestions ? (
+              <div className="suggestion-list">
+                {optionalStyleSuggestions.map((suggestion) => renderSuggestionListItem(suggestion, true))}
+              </div>
+            ) : (
+              <p className="empty-state" style={{ margin: 0 }}>
+                Optional style guidance is hidden in {requestMode} mode.
+              </p>
+            )}
+          </section>
+        ) : null}
       </section>
     </main>
   );
@@ -761,4 +854,17 @@ function matchSuggestion(previous: Suggestion | null, nextSuggestions: Suggestio
   }
 
   return bestMatch?.suggestion ?? null;
+}
+
+function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
+  const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
+  const styleSuggestionCount = suggestions.length - hardIssueCount;
+  const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
+  const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
+
+  if (styleSuggestionCount === 0) {
+    return `${hardIssueCount} ${hardLabel} • ${mode} mode`;
+  }
+
+  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} • ${mode} mode`;
 }

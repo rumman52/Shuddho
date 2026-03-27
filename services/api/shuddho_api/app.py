@@ -90,7 +90,7 @@ def root() -> dict[str, str]:
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
-    return analysis_pipeline.analyze(payload.text, payload.personal_dictionary)
+    return analysis_pipeline.analyze(payload.text, payload.personal_dictionary, payload.mode)
 
 
 @app.post("/feedback", response_model=FeedbackRecord)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SuggestionCategory(str, Enum):
@@ -26,6 +26,12 @@ class SuggestionSeverity(str, Enum):
     HIGH = "high"
 
 
+class AnalyzeMode(str, Enum):
+    STANDARD = "standard"
+    STRICT = "strict"
+    FORMAL = "formal"
+
+
 class Suggestion(BaseModel):
     id: str
     rule_id: str
@@ -46,6 +52,20 @@ class Suggestion(BaseModel):
 class AnalyzeRequest(BaseModel):
     text: str
     personal_dictionary: list[str] = Field(default_factory=list)
+    mode: AnalyzeMode = AnalyzeMode.STANDARD
+
+    @field_validator("personal_dictionary")
+    @classmethod
+    def normalize_personal_dictionary(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for entry in value:
+            compact = " ".join(entry.split())
+            if not compact or compact in seen:
+                continue
+            seen.add(compact)
+            normalized.append(compact)
+        return normalized
 
 
 class AnalyzeResponse(BaseModel):

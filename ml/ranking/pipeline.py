@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from shared.schemas.python_models import Suggestion, SuggestionSeverity, SuggestionSource
+
+
+BANGLA_WORD_RE = re.compile(r"[\u0980-\u09FF]{2,}")
 
 
 @dataclass(frozen=True)
 class RankedSuggestion:
     suggestion: Suggestion
     score: float
+
+
+@dataclass(frozen=True)
+class RankingSignals:
+    candidate_support: int
+    contextual_support: float
+    ambiguity_penalty: float
+    exact_span_conflicts: int
+    overlap_conflicts: int
+    feedback_bonus: float
 
 
 class SuggestionRanker:
@@ -22,7 +37,64 @@ class SuggestionRanker:
         raise NotImplementedError
 
 
+class HeuristicContextualReranker:
+    def score(self, suggestion: Suggestion, *, signals: RankingSignals, text: str) -> float:
+        del text
+        source_bonus = {
+            SuggestionSource.RULE: 0.1,
+            SuggestionSource.HYBRID: 0.14,
+            SuggestionSource.SPELL: 0.06,
+            SuggestionSource.MODEL: 0.0,
+        }[suggestion.source]
+        severity_bonus = {
+            SuggestionSeverity.HIGH: 0.04,
+            SuggestionSeverity.MEDIUM: 0.02,
+            SuggestionSeverity.LOW: 0.0,
+        }[suggestion.severity]
+
+        replacement_penalty = 0.12 if not suggestion.replacement_options else 0.0
+        fusion_bonus = min(max(signals.candidate_support - 1, 0), 3) * 0.04
+        exact_conflict_penalty = min(signals.exact_span_conflicts, 3) * 0.05
+        overlap_penalty = min(signals.overlap_conflicts, 4) * 0.02
+
+        score = (
+            suggestion.confidence
+            + source_bonus
+            + severity_bonus
+            + fusion_bonus
+            + signals.contextual_support
+            + signals.feedback_bonus
+            - replacement_penalty
+            - signals.ambiguity_penalty
+            - exact_conflict_penalty
+            - overlap_penalty
+        )
+        return round(max(score, 0.0), 4)
+
+
+class ContextualRerankerScaffold:
+    def __init__(self, scorer: Callable[[Suggestion, RankingSignals, str], float] | None = None) -> None:
+        self.scorer = scorer
+
+    def is_loaded(self) -> bool:
+        return self.scorer is not None
+
+    def score(self, suggestion: Suggestion, *, signals: RankingSignals, text: str) -> float | None:
+        if self.scorer is None:
+            return None
+        return float(self.scorer(suggestion, signals, text))
+
+
 class NeuralRankerInterface(SuggestionRanker):
+    def __init__(
+        self,
+        *,
+        heuristic_reranker: HeuristicContextualReranker | None = None,
+        reranker_scaffold: ContextualRerankerScaffold | None = None,
+    ) -> None:
+        self.heuristic_reranker = heuristic_reranker or HeuristicContextualReranker()
+        self.reranker_scaffold = reranker_scaffold or ContextualRerankerScaffold()
+
     def rank(
         self,
         suggestions: list[Suggestion],
@@ -33,117 +105,35 @@ class NeuralRankerInterface(SuggestionRanker):
         candidate_support = _count_candidate_support(suggestions)
         exact_span_conflicts = _count_exact_span_conflicts(suggestions)
         overlap_conflicts = _count_partial_overlaps(suggestions)
+        contextual_support = _contextual_support_scores(suggestions, text=text)
+        ambiguity_penalties = _ambiguity_penalties(suggestions)
+        feedback_bonuses = _feedback_bonuses(suggestions, feedback_index)
 
-        return [
-            RankedSuggestion(
-                suggestion=suggestion,
-                score=self._score(
-                    suggestion,
-                    candidate_support=candidate_support.get(_candidate_group_key(suggestion), 1),
-                    exact_span_conflicts=exact_span_conflicts.get(suggestion.id, 0),
-                    overlap_conflicts=overlap_conflicts.get(suggestion.id, 0),
-                    text=text,
-                    feedback_index=feedback_index,
-                ),
+        ranked: list[RankedSuggestion] = []
+        for suggestion in suggestions:
+            signals = RankingSignals(
+                candidate_support=candidate_support.get(_candidate_group_key(suggestion), 1),
+                contextual_support=contextual_support.get(suggestion.id, 0.0),
+                ambiguity_penalty=ambiguity_penalties.get(suggestion.id, 0.0),
+                exact_span_conflicts=exact_span_conflicts.get(suggestion.id, 0),
+                overlap_conflicts=overlap_conflicts.get(suggestion.id, 0),
+                feedback_bonus=feedback_bonuses.get(suggestion.id, 0.0),
             )
-            for suggestion in suggestions
-        ]
+            scaffold_score = self.reranker_scaffold.score(
+                suggestion,
+                signals=signals,
+                text=text,
+            )
+            score = scaffold_score
+            if score is None:
+                score = self.heuristic_reranker.score(
+                    suggestion,
+                    signals=signals,
+                    text=text,
+                )
+            ranked.append(RankedSuggestion(suggestion=suggestion, score=round(score, 4)))
 
-    def _score(
-        self,
-        suggestion: Suggestion,
-        *,
-        candidate_support: int,
-        exact_span_conflicts: int,
-        overlap_conflicts: int,
-        text: str,
-        feedback_index,
-    ) -> float:
-        source_bonus = {
-            SuggestionSource.RULE: 0.1,
-            SuggestionSource.HYBRID: 0.13,
-            SuggestionSource.SPELL: 0.05,
-            SuggestionSource.MODEL: 0.0,
-        }[suggestion.source]
-        severity_bonus = {
-            SuggestionSeverity.HIGH: 0.04,
-            SuggestionSeverity.MEDIUM: 0.02,
-            SuggestionSeverity.LOW: 0.0,
-        }[suggestion.severity]
-
-        replacement_penalty = 0.12 if not suggestion.replacement_options else 0.0
-        fusion_bonus = min(max(candidate_support - 1, 0), 2) * 0.04
-        exact_conflict_penalty = min(exact_span_conflicts, 3) * 0.05
-        overlap_penalty = min(overlap_conflicts, 4) * 0.02
-
-        context_bonus = self._text_context_bonus(suggestion, text=text)
-        feedback_bonus = self._feedback_bonus(suggestion, feedback_index)
-
-        score = (
-            suggestion.confidence
-            + source_bonus
-            + severity_bonus
-            + fusion_bonus
-            + context_bonus
-            + feedback_bonus
-            - replacement_penalty
-            - exact_conflict_penalty
-            - overlap_penalty
-        )
-        return round(max(score, 0.0), 4)
-
-    def _text_context_bonus(self, suggestion: Suggestion, *, text: str) -> float:
-        bonus = 0.0
-        if suggestion.subtype in {
-            "repeated_word",
-            "duplicate_punctuation",
-            "space_before_punctuation",
-            "extra_whitespace",
-            "dictionary_variant",
-            "safe_exact_typo",
-            "detector_spelling",
-        }:
-            bonus += 0.04
-
-        if suggestion.category.value == "punctuation" and any(character in suggestion.original_text for character in ",.;:!?।"):
-            bonus += 0.03
-        if suggestion.category.value == "spelling" and len(suggestion.replacement_options) == 1 and len(suggestion.original_text) >= 3:
-            bonus += 0.03
-        if suggestion.category.value == "grammar" and " " in suggestion.original_text and suggestion.replacement_options:
-            bonus += 0.025
-        if suggestion.subtype == "extra_whitespace" and suggestion.original_text.strip() == "":
-            bonus += 0.02
-        if text and "\n" in text and "\n" in suggestion.original_text:
-            bonus -= 0.01
-        if suggestion.replacement_options:
-            bonus += 0.03
-            if len(suggestion.replacement_options) == 1:
-                bonus += 0.02
-            if any(any("\u0980" <= character <= "\u09ff" for character in option) for option in suggestion.replacement_options):
-                bonus += 0.03
-            if len(suggestion.original_text) <= 12:
-                bonus += 0.01
-        elif suggestion.source == SuggestionSource.MODEL:
-            bonus -= 0.03
-
-        return bonus
-
-    def _feedback_bonus(self, suggestion: Suggestion, feedback_index) -> float:
-        if feedback_index is None:
-            return 0.0
-
-        exact_stats = feedback_index.by_feedback_key.get(suggestion.feedback_key or "")
-        rule_stats = feedback_index.by_rule_id.get(suggestion.rule_id)
-        subtype_stats = feedback_index.by_subtype.get(suggestion.subtype)
-
-        bonus = 0.0
-        if exact_stats is not None:
-            bonus += exact_stats.balance * min(exact_stats.total, 5) / 5 * 0.18
-        if rule_stats is not None:
-            bonus += rule_stats.balance * min(rule_stats.total, 5) / 5 * 0.08
-        if subtype_stats is not None:
-            bonus += subtype_stats.balance * min(subtype_stats.total, 5) / 5 * 0.05
-        return bonus
+        return ranked
 
 
 def _candidate_group_key(suggestion: Suggestion) -> tuple[int, int, str, tuple[str, ...]]:
@@ -155,14 +145,14 @@ def _candidate_group_key(suggestion: Suggestion) -> tuple[int, int, str, tuple[s
     )
 
 
-def _count_candidate_support(suggestions: list[Suggestion]) -> dict[tuple[int, int, str, tuple[str, ...]], int]:
+def _count_candidate_support(suggestions: Sequence[Suggestion]) -> dict[tuple[int, int, str, tuple[str, ...]], int]:
     support: dict[tuple[int, int, str, tuple[str, ...]], set[SuggestionSource]] = {}
     for suggestion in suggestions:
         support.setdefault(_candidate_group_key(suggestion), set()).add(suggestion.source)
     return {key: len(sources) for key, sources in support.items()}
 
 
-def _count_exact_span_conflicts(suggestions: list[Suggestion]) -> dict[str, int]:
+def _count_exact_span_conflicts(suggestions: Sequence[Suggestion]) -> dict[str, int]:
     conflicts: dict[str, int] = {suggestion.id: 0 for suggestion in suggestions}
     for index, left in enumerate(suggestions):
         for right in suggestions[index + 1 :]:
@@ -173,7 +163,7 @@ def _count_exact_span_conflicts(suggestions: list[Suggestion]) -> dict[str, int]
     return conflicts
 
 
-def _count_partial_overlaps(suggestions: list[Suggestion]) -> dict[str, int]:
+def _count_partial_overlaps(suggestions: Sequence[Suggestion]) -> dict[str, int]:
     overlaps: dict[str, int] = {suggestion.id: 0 for suggestion in suggestions}
     for index, left in enumerate(suggestions):
         for right in suggestions[index + 1 :]:
@@ -183,3 +173,112 @@ def _count_partial_overlaps(suggestions: list[Suggestion]) -> dict[str, int]:
                 overlaps[left.id] += 1
                 overlaps[right.id] += 1
     return overlaps
+
+
+def _contextual_support_scores(suggestions: Sequence[Suggestion], *, text: str) -> dict[str, float]:
+    support_scores: dict[str, float] = {}
+    for suggestion in suggestions:
+        bonus = 0.0
+        if suggestion.subtype in {
+            "repeated_word",
+            "duplicate_punctuation",
+            "space_before_punctuation",
+            "extra_whitespace",
+            "orthography_variant",
+            "spelling_error",
+            "detector_spelling",
+        }:
+            bonus += 0.04
+
+        if suggestion.category.value == "punctuation" and any(character in suggestion.original_text for character in ",.;:!?।"):
+            bonus += 0.03
+        if suggestion.category.value == "spelling" and len(suggestion.replacement_options) == 1 and BANGLA_WORD_RE.fullmatch(suggestion.original_text or ""):
+            bonus += 0.04
+        if suggestion.category.value == "grammar" and " " in suggestion.original_text and suggestion.replacement_options:
+            bonus += 0.025
+        if suggestion.subtype == "extra_whitespace" and suggestion.original_text.strip() == "":
+            bonus += 0.02
+        if suggestion.source == SuggestionSource.HYBRID:
+            bonus += 0.03
+        if suggestion.replacement_options:
+            bonus += 0.03
+            if len(suggestion.replacement_options) == 1:
+                bonus += 0.02
+            if any(any("\u0980" <= character <= "\u09ff" for character in option) for option in suggestion.replacement_options):
+                bonus += 0.03
+        elif suggestion.source == SuggestionSource.MODEL:
+            bonus -= 0.03
+
+        if text and "\n" in text and "\n" in suggestion.original_text:
+            bonus -= 0.01
+
+        if _has_nearby_supporting_candidate(suggestion, suggestions):
+            bonus += 0.04
+
+        support_scores[suggestion.id] = round(bonus, 4)
+    return support_scores
+
+
+def _has_nearby_supporting_candidate(target: Suggestion, suggestions: Sequence[Suggestion]) -> bool:
+    target_replacements = tuple(target.replacement_options)
+    if not target_replacements:
+        return False
+
+    for suggestion in suggestions:
+        if suggestion.id == target.id:
+            continue
+        if tuple(suggestion.replacement_options) != target_replacements:
+            continue
+        if target.span_start < suggestion.span_end and suggestion.span_start < target.span_end:
+            return True
+        if abs(target.span_start - suggestion.span_start) <= 2 and abs(target.span_end - suggestion.span_end) <= 2:
+            return True
+    return False
+
+
+def _ambiguity_penalties(suggestions: Sequence[Suggestion]) -> dict[str, float]:
+    penalties: dict[str, float] = {}
+    for suggestion in suggestions:
+        penalty = 0.0
+        if len(suggestion.replacement_options) > 1:
+            penalty += min(len(suggestion.replacement_options) - 1, 3) * 0.04
+        if suggestion.source == SuggestionSource.MODEL and not suggestion.replacement_options:
+            penalty += 0.06
+        if suggestion.source == SuggestionSource.MODEL and len(suggestion.replacement_options) > 1:
+            penalty += 0.03
+        if suggestion.category.value == "spelling" and _has_same_span_competing_replacement(suggestion, suggestions):
+            penalty += 0.04
+        penalties[suggestion.id] = round(penalty, 4)
+    return penalties
+
+
+def _has_same_span_competing_replacement(target: Suggestion, suggestions: Sequence[Suggestion]) -> bool:
+    for suggestion in suggestions:
+        if suggestion.id == target.id:
+            continue
+        if suggestion.span_start != target.span_start or suggestion.span_end != target.span_end:
+            continue
+        if tuple(suggestion.replacement_options) != tuple(target.replacement_options):
+            return True
+    return False
+
+
+def _feedback_bonuses(suggestions: Sequence[Suggestion], feedback_index) -> dict[str, float]:
+    if feedback_index is None:
+        return {suggestion.id: 0.0 for suggestion in suggestions}
+
+    bonuses: dict[str, float] = {}
+    for suggestion in suggestions:
+        exact_stats = feedback_index.by_feedback_key.get(suggestion.feedback_key or "")
+        rule_stats = feedback_index.by_rule_id.get(suggestion.rule_id)
+        subtype_stats = feedback_index.by_subtype.get(suggestion.subtype)
+
+        bonus = 0.0
+        if exact_stats is not None:
+            bonus += exact_stats.balance * min(exact_stats.total, 5) / 5 * 0.18
+        if rule_stats is not None:
+            bonus += rule_stats.balance * min(rule_stats.total, 5) / 5 * 0.08
+        if subtype_stats is not None:
+            bonus += subtype_stats.balance * min(subtype_stats.total, 5) / 5 * 0.05
+        bonuses[suggestion.id] = round(bonus, 4)
+    return bonuses

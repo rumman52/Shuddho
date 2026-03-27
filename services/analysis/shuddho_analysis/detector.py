@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
-from collections.abc import Mapping
+import sys
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
 
-from ml.detector.labels import DETECTOR_LABEL_TO_CATEGORY
-from ml.detector.runtime import BanglaDetectorRuntime
+from ml.detector.labels import DETECTOR_ID_TO_LABEL, DETECTOR_LABEL_TO_CATEGORY, normalize_detector_label
+from ml.detector.runtime import BanglaDetectorRuntime, DetectorPrediction
+from ml.training.dataset import tokenize_with_offsets
 from services.normalizer.shuddho_normalizer.normalizer import NormalizedText
 from shared.schemas.python_models import Suggestion, SuggestionSeverity, SuggestionSource
 
@@ -19,24 +25,239 @@ DETECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_DETECTOR_THRESHOLD"
 LEGACY_DETECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_DETECTOR_CONFIDENCE_THRESHOLD"
 
 
-class DetectorService:
+@dataclass(frozen=True)
+class DetectorTokenPrediction:
+    token: str
+    start: int
+    end: int
+    label: str
+    confidence: float
+
+
+@runtime_checkable
+class TokenSpanDetectorBackend(Protocol):
+    backend_name: str
+    checkpoint_path: str | None
+    confidence_threshold: float
+
+    def predict(self, text: str) -> list[DetectorPrediction]:
+        ...
+
+    def predict_token_spans(self, text: str) -> list[DetectorTokenPrediction]:
+        ...
+
+
+class RuntimeSpanDetectorAdapter:
+    backend_name = "shuddho_detector_runtime"
+
     def __init__(
         self,
-        runtime: BanglaDetectorRuntime | None = None,
+        runtime: Any,
         *,
+        checkpoint_path: str | None = None,
+        confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    ) -> None:
+        self.runtime = runtime
+        self.checkpoint_path = checkpoint_path
+        self.confidence_threshold = confidence_threshold
+        if hasattr(self.runtime, "confidence_threshold"):
+            self.runtime.confidence_threshold = confidence_threshold
+
+    def predict(self, text: str) -> list[DetectorPrediction]:
+        return list(self.runtime.predict(text))
+
+    def predict_token_spans(self, text: str) -> list[DetectorTokenPrediction]:
+        span_predictions = self.predict(text)
+        tokens = tokenize_with_offsets(text)
+        token_predictions: list[DetectorTokenPrediction] = []
+
+        for token in tokens:
+            supporting_prediction = _best_supporting_span_prediction(
+                token.start,
+                token.end,
+                span_predictions,
+            )
+            if supporting_prediction is None:
+                token_predictions.append(
+                    DetectorTokenPrediction(
+                        token=token.text,
+                        start=token.start,
+                        end=token.end,
+                        label="ok",
+                        confidence=1.0,
+                    )
+                )
+                continue
+
+            token_predictions.append(
+                DetectorTokenPrediction(
+                    token=token.text,
+                    start=token.start,
+                    end=token.end,
+                    label=supporting_prediction.label,
+                    confidence=supporting_prediction.confidence,
+                )
+            )
+
+        return token_predictions
+
+
+class BanglaBertTokenClassifierScaffold:
+    backend_name = "banglabert_token_classifier"
+
+    def __init__(
+        self,
+        *,
+        model: Any | None = None,
+        tokenizer: Any | None = None,
+        id_to_label: Mapping[int, str] | None = None,
+        max_length: int = 256,
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
         checkpoint_path: str | None = None,
     ) -> None:
-        self.runtime = runtime
+        self.model = model
+        self.tokenizer = tokenizer
+        self.id_to_label = {
+            int(index): normalize_detector_label(label)
+            for index, label in (id_to_label or DETECTOR_ID_TO_LABEL).items()
+        }
+        self.max_length = max_length
         self.confidence_threshold = confidence_threshold
         self.checkpoint_path = checkpoint_path
 
-        # Keep the runtime's internal prediction gate aligned with the service-level threshold.
-        if self.runtime is not None and hasattr(self.runtime, "confidence_threshold"):
-            self.runtime.confidence_threshold = confidence_threshold
+    def is_loaded(self) -> bool:
+        return self.model is not None and self.tokenizer is not None
+
+    @classmethod
+    def load(
+        cls,
+        checkpoint_path: str | Path,
+        *,
+        confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    ) -> "BanglaBertTokenClassifierScaffold":
+        checkpoint_dir = Path(checkpoint_path)
+        if not checkpoint_dir.exists():
+            raise FileNotFoundError(checkpoint_dir)
+
+        try:
+            from transformers import AutoModelForTokenClassification, AutoTokenizer
+        except (ImportError, OSError) as error:
+            raise RuntimeError("Transformers is required to load BanglaBERT detector checkpoints") from error
+
+        tokenizer = AutoTokenizer.from_pretrained(checkpoint_dir)
+        model = AutoModelForTokenClassification.from_pretrained(checkpoint_dir)
+        raw_id_to_label = getattr(model.config, "id2label", None) or DETECTOR_ID_TO_LABEL
+        id_to_label = {
+            int(index): normalize_detector_label(label)
+            for index, label in raw_id_to_label.items()
+        }
+        max_length = int(
+            min(
+                getattr(model.config, "max_position_embeddings", 256),
+                getattr(tokenizer, "model_max_length", 256),
+            )
+        )
+        return cls(
+            model=model,
+            tokenizer=tokenizer,
+            id_to_label=id_to_label,
+            max_length=max_length,
+            confidence_threshold=confidence_threshold,
+            checkpoint_path=str(checkpoint_dir),
+        )
+
+    def predict(self, text: str) -> list[DetectorPrediction]:
+        token_predictions = self.predict_token_spans(text)
+        return _collapse_token_predictions(
+            text,
+            token_predictions,
+            confidence_threshold=self.confidence_threshold,
+        )
+
+    def predict_token_spans(self, text: str) -> list[DetectorTokenPrediction]:
+        if not self.is_loaded():
+            return []
+
+        encoded = self._tokenize(text)
+        offsets = _extract_offset_mapping(encoded.get("offset_mapping", []))
+        if not offsets:
+            return []
+
+        logits = self._forward(encoded)
+        if not logits:
+            return []
+
+        token_predictions: list[DetectorTokenPrediction] = []
+        for offset, token_logits in zip(offsets, logits):
+            start, end = offset
+            if end <= start:
+                continue
+            probabilities = _softmax(token_logits)
+            predicted_index = _argmax(probabilities)
+            label = self.id_to_label.get(predicted_index, "ok")
+            confidence = round(float(probabilities[predicted_index]), 4)
+            if label != "ok" and confidence < self.confidence_threshold:
+                label = "ok"
+            token_predictions.append(
+                DetectorTokenPrediction(
+                    token=text[start:end],
+                    start=start,
+                    end=end,
+                    label=label,
+                    confidence=confidence,
+                )
+            )
+
+        return token_predictions
+
+    def _tokenize(self, text: str) -> Mapping[str, Any]:
+        return self.tokenizer(
+            text,
+            truncation=True,
+            max_length=self.max_length,
+            return_offsets_mapping=True,
+        )
+
+    def _forward(self, encoded: Mapping[str, Any]) -> list[list[float]]:
+        model_inputs = {
+            key: _ensure_batched(value)
+            for key, value in encoded.items()
+            if key != "offset_mapping"
+        }
+        outputs = _call_model(self.model, model_inputs)
+        logits = outputs["logits"] if isinstance(outputs, Mapping) else getattr(outputs, "logits")
+        batched_logits = _to_python(logits)
+        if batched_logits and isinstance(batched_logits[0], list) and batched_logits[0] and isinstance(batched_logits[0][0], list):
+            return batched_logits[0]
+        return batched_logits
+
+
+class DetectorService:
+    def __init__(
+        self,
+        runtime: Any | None = None,
+        *,
+        backend: TokenSpanDetectorBackend | None = None,
+        confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+        checkpoint_path: str | None = None,
+    ) -> None:
+        self.confidence_threshold = confidence_threshold
+        self.checkpoint_path = checkpoint_path
+        self.backend = backend or self._coerce_backend(
+            runtime,
+            confidence_threshold=confidence_threshold,
+            checkpoint_path=checkpoint_path,
+        )
+        self.runtime = runtime if backend is None else getattr(backend, "runtime", runtime)
 
     def is_loaded(self) -> bool:
-        return self.runtime is not None
+        return self.backend is not None
+
+    @property
+    def backend_name(self) -> str:
+        if self.backend is None:
+            return "disabled"
+        return getattr(self.backend, "backend_name", "detector_backend")
 
     @classmethod
     def from_environment(
@@ -76,7 +297,10 @@ class DetectorService:
             return cls(confidence_threshold=confidence_threshold)
 
         try:
-            runtime = BanglaDetectorRuntime.load(normalized_checkpoint_path)
+            backend = cls._load_backend_from_checkpoint(
+                normalized_checkpoint_path,
+                confidence_threshold=confidence_threshold,
+            )
         except FileNotFoundError:
             logger.warning(
                 "Detector checkpoint was not found at '%s'; detector runtime is disabled and analyze requests will fall back to rules and spell checks only.",
@@ -98,10 +322,20 @@ class DetectorService:
             )
 
         return cls(
-            runtime=runtime,
+            backend=backend,
             confidence_threshold=confidence_threshold,
             checkpoint_path=normalized_checkpoint_path,
         )
+
+    def detect_token_spans(self, text: str) -> list[DetectorTokenPrediction]:
+        if not self.is_loaded():
+            return []
+
+        try:
+            return list(self.backend.predict_token_spans(text))
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            logger.warning("Detector backend '%s' failed during token prediction (%s). Falling back to no detector output.", self.backend_name, error)
+            return []
 
     def detect(
         self,
@@ -109,15 +343,26 @@ class DetectorService:
         text: str,
         normalized: NormalizedText,
         rule_suggestions: list[Suggestion],
+        spell_suggestions: list[Suggestion] | None = None,
     ) -> list[DetectorFinding]:
+        del normalized
         if not self.is_loaded():
             return []
 
+        try:
+            predictions = list(self.backend.predict(text))
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            logger.warning("Detector backend '%s' failed during span prediction (%s). Falling back to no detector output.", self.backend_name, error)
+            return []
+
+        spell_candidates = spell_suggestions or []
         findings: list[DetectorFinding] = []
-        for prediction in self.runtime.predict(text):
+        for prediction in predictions:
             if prediction.confidence < self.confidence_threshold:
                 continue
-            if any(self._overlaps_rule(prediction.start, prediction.end, suggestion) for suggestion in rule_suggestions):
+            if any(self._overlaps_suggestion(prediction.start, prediction.end, suggestion) for suggestion in rule_suggestions):
+                continue
+            if any(self._overlaps_actionable_spell(prediction.start, prediction.end, suggestion) for suggestion in spell_candidates):
                 continue
 
             category = DETECTOR_LABEL_TO_CATEGORY.get(prediction.label)
@@ -131,10 +376,10 @@ class DetectorService:
                     subtype=f"detector_{prediction.label}",
                     span_start=prediction.start,
                     span_end=prediction.end,
-                    original_text=prediction.text,
+                    original_text=text[prediction.start : prediction.end],
                     replacement_options=(),
                     confidence=round(prediction.confidence, 2),
-                    explanation_bn=f"মডেলটি এই অংশে {prediction.label} ধরনের সমস্যা অনুমান করেছে।",
+                    explanation_bn=f"Detector highlighted a likely {prediction.label} issue in this span.",
                     explanation_en=f"The detector estimated a {prediction.label} issue in this span.",
                     severity=SuggestionSeverity.LOW,
                     source=SuggestionSource.MODEL,
@@ -142,8 +387,55 @@ class DetectorService:
             )
         return findings
 
-    def _overlaps_rule(self, start: int, end: int, suggestion: Suggestion) -> bool:
+    @classmethod
+    def _load_backend_from_checkpoint(
+        cls,
+        checkpoint_path: str,
+        *,
+        confidence_threshold: float,
+    ) -> TokenSpanDetectorBackend:
+        checkpoint_dir = Path(checkpoint_path)
+        if checkpoint_dir.exists() and not (checkpoint_dir / "metadata.json").exists():
+            return BanglaBertTokenClassifierScaffold.load(
+                checkpoint_dir,
+                confidence_threshold=confidence_threshold,
+            )
+
+        runtime = BanglaDetectorRuntime.load(str(checkpoint_dir))
+        return RuntimeSpanDetectorAdapter(
+            runtime,
+            checkpoint_path=str(checkpoint_dir),
+            confidence_threshold=confidence_threshold,
+        )
+
+    def _coerce_backend(
+        self,
+        runtime: Any | None,
+        *,
+        confidence_threshold: float,
+        checkpoint_path: str | None,
+    ) -> TokenSpanDetectorBackend | None:
+        if runtime is None:
+            return None
+        if isinstance(runtime, TokenSpanDetectorBackend):
+            return runtime
+        return RuntimeSpanDetectorAdapter(
+            runtime,
+            checkpoint_path=checkpoint_path,
+            confidence_threshold=confidence_threshold,
+        )
+
+    def _overlaps_suggestion(self, start: int, end: int, suggestion: Suggestion) -> bool:
         return start < suggestion.span_end and suggestion.span_start < end
+
+    def _overlaps_actionable_spell(self, start: int, end: int, suggestion: Suggestion) -> bool:
+        if suggestion.source != SuggestionSource.SPELL:
+            return False
+        if not suggestion.replacement_options:
+            return False
+        if suggestion.confidence < max(self.confidence_threshold, 0.86):
+            return False
+        return self._overlaps_suggestion(start, end, suggestion)
 
     @staticmethod
     def _resolve_confidence_threshold(value: str | None, *, env_var_name: str) -> float:
@@ -171,3 +463,169 @@ class DetectorService:
             return DEFAULT_CONFIDENCE_THRESHOLD
 
         return threshold
+
+
+def _best_supporting_span_prediction(
+    start: int,
+    end: int,
+    predictions: Sequence[DetectorPrediction],
+) -> DetectorPrediction | None:
+    best_prediction: DetectorPrediction | None = None
+    best_overlap = -1
+    for prediction in predictions:
+        overlap = min(end, prediction.end) - max(start, prediction.start)
+        if overlap <= 0:
+            continue
+        if overlap > best_overlap or (overlap == best_overlap and prediction.confidence > (best_prediction.confidence if best_prediction else 0.0)):
+            best_prediction = prediction
+            best_overlap = overlap
+    return best_prediction
+
+
+def _collapse_token_predictions(
+    text: str,
+    token_predictions: Sequence[DetectorTokenPrediction],
+    *,
+    confidence_threshold: float,
+) -> list[DetectorPrediction]:
+    grouped_predictions: list[DetectorPrediction] = []
+    active_label: str | None = None
+    active_start = 0
+    active_end = 0
+    active_confidences: list[float] = []
+
+    for token_prediction in token_predictions:
+        label = normalize_detector_label(token_prediction.label)
+        if label == "ok" or token_prediction.confidence < confidence_threshold:
+            if active_label is not None:
+                grouped_predictions.append(
+                    _build_prediction(
+                        text,
+                        label=active_label,
+                        start=active_start,
+                        end=active_end,
+                        confidences=active_confidences,
+                    )
+                )
+                active_label = None
+                active_confidences = []
+            continue
+
+        if active_label == label and token_prediction.start <= active_end + 1:
+            active_end = token_prediction.end
+            active_confidences.append(token_prediction.confidence)
+            continue
+
+        if active_label is not None:
+            grouped_predictions.append(
+                _build_prediction(
+                    text,
+                    label=active_label,
+                    start=active_start,
+                    end=active_end,
+                    confidences=active_confidences,
+                )
+            )
+
+        active_label = label
+        active_start = token_prediction.start
+        active_end = token_prediction.end
+        active_confidences = [token_prediction.confidence]
+
+    if active_label is not None:
+        grouped_predictions.append(
+            _build_prediction(
+                text,
+                label=active_label,
+                start=active_start,
+                end=active_end,
+                confidences=active_confidences,
+            )
+        )
+
+    return grouped_predictions
+
+
+def _build_prediction(
+    text: str,
+    *,
+    label: str,
+    start: int,
+    end: int,
+    confidences: Sequence[float],
+) -> DetectorPrediction:
+    mean_confidence = sum(confidences) / max(len(confidences), 1)
+    return DetectorPrediction(
+        label=label,
+        start=start,
+        end=end,
+        text=text[start:end],
+        confidence=round(mean_confidence, 4),
+    )
+
+
+def _extract_offset_mapping(raw_offsets: Any) -> list[tuple[int, int]]:
+    offsets = _to_python(raw_offsets)
+    if offsets and isinstance(offsets[0], list) and offsets[0] and isinstance(offsets[0][0], (list, tuple)):
+        offsets = offsets[0]
+
+    normalized_offsets: list[tuple[int, int]] = []
+    for offset in offsets:
+        if not isinstance(offset, (list, tuple)) or len(offset) != 2:
+            continue
+        start, end = offset
+        normalized_offsets.append((int(start), int(end)))
+    return normalized_offsets
+
+
+def _ensure_batched(value: Any) -> Any:
+    python_value = _to_python(value)
+    if isinstance(python_value, list) and python_value and not isinstance(python_value[0], list):
+        return [python_value]
+    return python_value
+
+
+def _call_model(model: Any, model_inputs: Mapping[str, Any]) -> Any:
+    try:
+        return model(**model_inputs)
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        torch_module = sys.modules.get("torch")
+        if torch_module is None:
+            raise
+
+        tensor_inputs = {
+            key: torch_module.tensor(value, dtype=torch_module.long)
+            for key, value in model_inputs.items()
+        }
+        return model(**tensor_inputs)
+
+
+def _to_python(value: Any) -> Any:
+    current = value
+    for attribute in ("detach", "cpu"):
+        method = getattr(current, attribute, None)
+        if callable(method):
+            current = method()
+    tolist = getattr(current, "tolist", None)
+    if callable(tolist):
+        return tolist()
+    return current
+
+
+def _softmax(values: Sequence[float]) -> list[float]:
+    if not values:
+        return []
+    max_value = max(values)
+    exps = [math.exp(value - max_value) for value in values]
+    total = sum(exps) or 1.0
+    return [value / total for value in exps]
+
+
+def _argmax(values: Sequence[float]) -> int:
+    best_index = 0
+    best_value = float("-inf")
+    for index, value in enumerate(values):
+        if value > best_value:
+            best_index = index
+            best_value = value
+    return best_index

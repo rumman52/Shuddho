@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from services.spell.shuddho_spell.engine import SpellEngine
 from shared.constants.bangla import BANGLA_WORD_PATTERN, COMMON_POSTPOSITIONS
@@ -33,26 +33,118 @@ class CandidateGenerator:
         return CandidateBundle(
             spell_suggestions=self._rulebacked_candidates(spell_suggestions),
             rule_suggestions=self._rulebacked_candidates(rule_suggestions),
-            detector_suggestions=self._detector_backed_candidates(detector_findings, text=text),
+            detector_suggestions=self._detector_backed_candidates(
+                detector_findings,
+                spell_suggestions=spell_suggestions,
+                rule_suggestions=rule_suggestions,
+                text=text,
+            ),
             model_suggestions=self._rulebacked_candidates(model_suggestions or []),
         )
 
     def _rulebacked_candidates(self, suggestions: list[Suggestion]) -> list[Suggestion]:
         return list(suggestions)
 
-    def _detector_backed_candidates(self, findings: list[DetectorFinding], *, text: str) -> list[Suggestion]:
+    def _detector_backed_candidates(
+        self,
+        findings: list[DetectorFinding],
+        *,
+        spell_suggestions: list[Suggestion],
+        rule_suggestions: list[Suggestion],
+        text: str,
+    ) -> list[Suggestion]:
         suggestions: list[Suggestion] = []
         for finding in findings:
+            contextual_replacements = self._contextual_replacements(
+                finding,
+                spell_suggestions=spell_suggestions,
+                rule_suggestions=rule_suggestions,
+            )
+            if contextual_replacements:
+                suggestions.append(
+                    self._to_suggestion(
+                        finding,
+                        replacement_options=contextual_replacements,
+                        actionable=True,
+                        contextual_support=len(contextual_replacements),
+                    )
+                )
+                continue
+
             if finding.replacement_options:
-                suggestions.append(self._to_suggestion(finding, replacement_options=self._unique_replacements(finding.replacement_options)))
+                suggestions.append(
+                    self._to_suggestion(
+                        finding,
+                        replacement_options=self._unique_replacements(finding.replacement_options),
+                    )
+                )
                 continue
 
             replacements = self._resolve_replacements(finding, text=text)
             if replacements:
-                suggestions.append(self._to_suggestion(finding, replacement_options=replacements, actionable=True))
+                suggestions.append(
+                    self._to_suggestion(
+                        finding,
+                        replacement_options=replacements,
+                        actionable=True,
+                        contextual_support=1,
+                    )
+                )
                 continue
             suggestions.append(self._to_suggestion(finding))
         return suggestions
+
+    def _contextual_replacements(
+        self,
+        finding: DetectorFinding,
+        *,
+        spell_suggestions: Sequence[Suggestion],
+        rule_suggestions: Sequence[Suggestion],
+    ) -> list[str]:
+        exact_support = self._supporting_suggestions(
+            finding,
+            suggestions=[*spell_suggestions, *rule_suggestions],
+            require_exact_span=True,
+        )
+        if exact_support:
+            return self._unique_replacements(
+                replacement
+                for suggestion in exact_support
+                for replacement in suggestion.replacement_options
+            )
+
+        overlap_support = self._supporting_suggestions(
+            finding,
+            suggestions=[*spell_suggestions, *rule_suggestions],
+            require_exact_span=False,
+        )
+        return self._unique_replacements(
+            replacement
+            for suggestion in overlap_support
+            for replacement in suggestion.replacement_options
+        )
+
+    def _supporting_suggestions(
+        self,
+        finding: DetectorFinding,
+        *,
+        suggestions: Sequence[Suggestion],
+        require_exact_span: bool,
+    ) -> list[Suggestion]:
+        supported: list[Suggestion] = []
+        for suggestion in suggestions:
+            if not suggestion.replacement_options:
+                continue
+            if require_exact_span:
+                if suggestion.span_start != finding.span_start or suggestion.span_end != finding.span_end:
+                    continue
+            elif not self._overlaps(finding, suggestion):
+                continue
+
+            if suggestion.category != finding.category and suggestion.source not in {SuggestionSource.RULE, SuggestionSource.SPELL, SuggestionSource.HYBRID}:
+                continue
+            supported.append(suggestion)
+        return supported
 
     def _resolve_replacements(self, finding: DetectorFinding, *, text: str) -> list[str]:
         if finding.replacement_options:
@@ -148,17 +240,25 @@ class CandidateGenerator:
         *,
         replacement_options: list[str] | None = None,
         actionable: bool = False,
+        contextual_support: int = 0,
     ) -> Suggestion:
         resolved_replacements = replacement_options or list(finding.replacement_options)
         resolved_source = SuggestionSource.HYBRID if actionable and finding.source == SuggestionSource.MODEL else finding.source
         resolved_confidence = finding.confidence
         if actionable:
-            resolved_confidence = min(0.97, round(finding.confidence + 0.06, 2))
+            resolved_confidence = min(
+                0.98,
+                round(
+                    finding.confidence + 0.04 + (min(contextual_support, 3) * 0.02),
+                    2,
+                ),
+            )
 
         explanation_bn, explanation_en = self._build_explanation(
             finding,
             replacement_options=resolved_replacements,
             actionable=actionable,
+            contextual_support=contextual_support,
         )
 
         return Suggestion(
@@ -186,28 +286,34 @@ class CandidateGenerator:
         *,
         replacement_options: list[str],
         actionable: bool,
+        contextual_support: int,
     ) -> tuple[str, str]:
         if not actionable or not replacement_options:
             return finding.explanation_bn, finding.explanation_en
 
         primary_replacement = replacement_options[0]
+        if contextual_support > 0:
+            return (
+                f"Detector context supports '{primary_replacement}' as the most grounded fix for this span.",
+                f"Context around this detector span supports '{primary_replacement}' as the most grounded correction.",
+            )
         if finding.category == SuggestionCategory.SPELLING:
             return (
-                f"ডিটেক্টর ও বানান-প্রার্থী মিলিয়ে এখানে '{finding.original_text}' এর বদলে '{primary_replacement}' ভালো হবে।",
+                f"Detector and spelling candidates both support '{primary_replacement}' as the best correction here.",
                 f"Detector and spelling candidates both support '{primary_replacement}' as the best correction here.",
             )
         if finding.category == SuggestionCategory.GRAMMAR:
             return (
-                f"এখানে '{finding.original_text}' এর বদলে '{primary_replacement}' লিখলে বাক্যটি বেশি স্বাভাবিক হবে।",
+                f"Replacing '{finding.original_text}' with '{primary_replacement}' makes this phrase more natural.",
                 f"Replacing '{finding.original_text}' with '{primary_replacement}' makes this phrase more natural.",
             )
         if finding.category == SuggestionCategory.PUNCTUATION:
             return (
-                f"এখানে '{finding.original_text}' এর বদলে '{primary_replacement}' ব্যবহার করুন।",
+                f"Use '{primary_replacement}' instead of '{finding.original_text}' here.",
                 f"Use '{primary_replacement}' instead of '{finding.original_text}' here.",
             )
         return (
-            f"এখানে '{finding.original_text}' অংশটি '{primary_replacement}' করলে লেখাটি বেশি পরিষ্কার হবে।",
+            f"Changing '{finding.original_text}' to '{primary_replacement}' makes this text clearer.",
             f"Changing '{finding.original_text}' to '{primary_replacement}' makes this text clearer.",
         )
 
@@ -231,6 +337,9 @@ class CandidateGenerator:
         if noun.endswith(("া", "ি", "ী", "ু", "ূ", "ে", "ো", "ৌ")):
             return f"{noun}র"
         return f"{noun}এর"
+
+    def _overlaps(self, finding: DetectorFinding, suggestion: Suggestion) -> bool:
+        return finding.span_start < suggestion.span_end and suggestion.span_start < finding.span_end
 
 
 def _severity_rank(severity: SuggestionSeverity) -> int:

@@ -143,3 +143,13 @@ def test_rule_engine_detects_unbalanced_delimiter() -> None:
     engine = RuleEngine()
     suggestions = engine.analyze("সে বলল (আমি যাব।")
     assert any(suggestion.subtype == "unbalanced_delimiter" for suggestion in suggestions)
+
+
+def test_rule_engine_surfaces_exact_typos_as_spelling_errors() -> None:
+    engine = RuleEngine()
+    suggestions = engine.analyze("শুদ্ধ বাংলা ব্যকরণ আর বঙ্গলা দরকার।")
+
+    spellings = [suggestion for suggestion in suggestions if suggestion.rule_id == "SPELL_001"]
+
+    assert spellings
+    assert all(suggestion.subtype == "spelling_error" for suggestion in spellings)

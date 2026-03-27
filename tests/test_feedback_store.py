@@ -21,7 +21,7 @@ def test_feedback_store_loads_signal_index_from_saved_history(tmp_path: Path) ->
             replacement="কিন্তু",
             feedback_key="fbk_spell",
             rule_id="SPELL_002",
-            subtype="dictionary_variant",
+            subtype="orthography_variant",
             source=SuggestionSource.SPELL,
             original_text="কিন্ত",
         )
@@ -34,7 +34,7 @@ def test_feedback_store_loads_signal_index_from_saved_history(tmp_path: Path) ->
             replacement="কিন্তু",
             feedback_key="fbk_spell",
             rule_id="SPELL_002",
-            subtype="dictionary_variant",
+            subtype="orthography_variant",
             source=SuggestionSource.SPELL,
             original_text="কিন্ত",
         )
@@ -55,19 +55,19 @@ def test_feedback_store_loads_signal_index_from_saved_history(tmp_path: Path) ->
 
     signal_index = store.load_signal_index(
         [
-            _suggestion("SPELL_002", "dictionary_variant", "কিন্ত", ["কিন্তু"], feedback_key="fbk_spell"),
+            _suggestion("SPELL_002", "orthography_variant", "কিন্ত", ["কিন্তু"], feedback_key="fbk_spell"),
             _suggestion("REP_001", "repeated_word", "আমি আমি", ["আমি"], source=SuggestionSource.RULE, feedback_key="fbk_grammar"),
         ]
     )
 
     assert signal_index.by_feedback_key["fbk_spell"] == FeedbackStats(accepted=1, dismissed=1)
     assert signal_index.by_rule_id["REP_001"] == FeedbackStats(accepted=1, dismissed=0)
-    assert signal_index.by_subtype["dictionary_variant"] == FeedbackStats(accepted=1, dismissed=1)
+    assert signal_index.by_subtype["orthography_variant"] == FeedbackStats(accepted=1, dismissed=1)
 
 
 def test_feedback_store_handles_empty_history_without_crashing(tmp_path: Path) -> None:
     store = FeedbackStore(database_path=tmp_path / "feedback.db")
-    signal_index = store.load_signal_index([_suggestion("SPELL_002", "dictionary_variant", "কিন্ত", ["কিন্তু"])])
+    signal_index = store.load_signal_index([_suggestion("SPELL_002", "orthography_variant", "কিন্ত", ["কিন্তু"])])
 
     assert signal_index.by_feedback_key == {}
     assert signal_index.by_rule_id == {}

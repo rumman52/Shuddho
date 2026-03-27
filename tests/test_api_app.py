@@ -1,12 +1,17 @@
+import importlib
 import re
 
 from services.api.shuddho_api.app import (
     ALLOWED_ORIGIN_REGEX,
     ALLOWED_ORIGINS,
     _parse_allowed_origins,
+    analyze,
     detector_service,
     health,
 )
+from shared.schemas.python_models import AnalyzeMode, AnalyzeRequest, AnalyzeResponse
+
+app_module = importlib.import_module("services.api.shuddho_api.app")
 
 
 def test_health_reports_detector_status() -> None:
@@ -48,3 +53,31 @@ def test_parse_allowed_origins_supports_trycloudflare_origin() -> None:
         "https://random-name.trycloudflare.com",
         "https://shuddho-web-editor.vercel.app",
     ]
+
+
+def test_analyze_route_forwards_mode_to_analysis_pipeline(monkeypatch) -> None:
+    recorded_call: dict[str, object] = {}
+
+    class StubPipeline:
+        def analyze(self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode) -> AnalyzeResponse:
+            recorded_call["text"] = text
+            recorded_call["personal_dictionary"] = personal_dictionary
+            recorded_call["mode"] = mode
+            return AnalyzeResponse(text=text, normalized_text=text, suggestions=[])
+
+    monkeypatch.setattr(app_module, "analysis_pipeline", StubPipeline())
+
+    response = analyze(
+        AnalyzeRequest(
+            text="বাংলা",
+            personal_dictionary=["নিজস্ব শব্দ"],
+            mode=AnalyzeMode.FORMAL,
+        )
+    )
+
+    assert response.suggestions == []
+    assert recorded_call == {
+        "text": "বাংলা",
+        "personal_dictionary": ["নিজস্ব শব্দ"],
+        "mode": AnalyzeMode.FORMAL,
+    }

@@ -69,6 +69,35 @@ def test_candidate_generator_turns_detector_spelling_into_actionable_bengali_can
     assert bundle.detector_suggestions[0].source == SuggestionSource.HYBRID
 
 
+def test_candidate_generator_prefers_contextual_spell_support_for_detector_span() -> None:
+    generator = CandidateGenerator()
+
+    bundle = generator.generate(
+        spell_suggestions=[_suggestion("SPELL_002", SuggestionSource.SPELL, 0.95, "কিন্ত", ["কিন্তু"])],
+        rule_suggestions=[],
+        detector_findings=[
+            DetectorFinding(
+                rule_id="DET_SPELLING",
+                category=SuggestionCategory.SPELLING,
+                subtype="detector_spelling",
+                span_start=0,
+                span_end=5,
+                original_text="কিন্ত",
+                confidence=0.83,
+                explanation_bn="",
+                explanation_en="",
+                source=SuggestionSource.MODEL,
+            )
+        ],
+        text="কিন্ত",
+    )
+
+    detector_suggestion = bundle.detector_suggestions[0]
+    assert detector_suggestion.replacement_options == ["কিন্তু"]
+    assert detector_suggestion.source == SuggestionSource.HYBRID
+    assert detector_suggestion.confidence > 0.83
+
+
 def test_candidate_generator_turns_detector_punctuation_into_actionable_fix() -> None:
     generator = CandidateGenerator()
 
@@ -132,7 +161,7 @@ def _suggestion(
     original_text: str,
     replacements: list[str],
 ) -> Suggestion:
-    category = SuggestionCategory.SPELLING if rule_id.startswith("SPELL") else SuggestionCategory.GRAMMAR
+    category = SuggestionCategory.SPELLING if rule_id.startswith("SPELL") or rule_id.startswith("DET_SPELLING") else SuggestionCategory.GRAMMAR
     return Suggestion(
         id=rule_id.lower(),
         rule_id=rule_id,

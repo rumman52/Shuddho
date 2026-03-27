@@ -5,7 +5,9 @@ import pytest
 from ml.detector.runtime import DetectorPrediction
 from services.analysis.shuddho_analysis.detector import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    BanglaBertTokenClassifierScaffold,
     DetectorService,
+    DetectorTokenPrediction,
 )
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
@@ -17,6 +19,60 @@ class FakeRuntime:
 
     def predict(self, text: str) -> list[DetectorPrediction]:
         return list(self.predictions)
+
+
+class FakeTokenBackend:
+    backend_name = "fake_token_backend"
+
+    def __init__(
+        self,
+        *,
+        token_predictions: list[DetectorTokenPrediction],
+        span_predictions: list[DetectorPrediction] | None = None,
+        confidence_threshold: float = 0.8,
+    ) -> None:
+        self.token_predictions = token_predictions
+        self.span_predictions = span_predictions or []
+        self.confidence_threshold = confidence_threshold
+        self.checkpoint_path = "fake-checkpoint"
+
+    def predict(self, text: str) -> list[DetectorPrediction]:
+        return list(self.span_predictions)
+
+    def predict_token_spans(self, text: str) -> list[DetectorTokenPrediction]:
+        return list(self.token_predictions)
+
+
+class FailingBackend(FakeTokenBackend):
+    def predict(self, text: str) -> list[DetectorPrediction]:
+        raise RuntimeError("backend failure")
+
+    def predict_token_spans(self, text: str) -> list[DetectorTokenPrediction]:
+        raise RuntimeError("backend failure")
+
+
+class FakeTokenizer:
+    def __call__(self, text: str, *, truncation: bool, max_length: int, return_offsets_mapping: bool) -> dict[str, list]:
+        assert truncation is True
+        assert return_offsets_mapping is True
+        assert max_length >= 2
+        return {
+            "input_ids": [11, 12],
+            "attention_mask": [1, 1],
+            "offset_mapping": [(0, 5), (6, 12)],
+        }
+
+
+class FakeModel:
+    def __call__(self, **kwargs) -> dict[str, list[list[list[float]]]]:
+        return {
+            "logits": [
+                [
+                    [0.0, 5.0, 0.0],
+                    [5.0, 0.0, 0.0],
+                ]
+            ]
+        }
 
 
 def test_detector_service_maps_runtime_predictions_into_findings() -> None:
@@ -38,6 +94,42 @@ def test_detector_service_maps_runtime_predictions_into_findings() -> None:
     assert findings[0].original_text == "কিন্ত"
     assert findings[0].source == SuggestionSource.MODEL
     assert service.is_loaded() is True
+
+
+def test_detector_service_exposes_token_predictions_from_backend() -> None:
+    backend = FakeTokenBackend(
+        token_predictions=[
+            DetectorTokenPrediction(token="কিন্ত", start=0, end=5, label="spelling", confidence=0.88),
+            DetectorTokenPrediction(token="স্কুলে", start=6, end=12, label="ok", confidence=0.99),
+        ],
+        span_predictions=[
+            DetectorPrediction(label="spelling", start=0, end=5, text="কিন্ত", confidence=0.88),
+        ],
+    )
+    service = DetectorService(backend=backend)
+
+    token_predictions = service.detect_token_spans("কিন্ত স্কুলে")
+
+    assert [prediction.label for prediction in token_predictions] == ["spelling", "ok"]
+
+
+def test_banglabert_scaffold_collapses_token_predictions_into_spans() -> None:
+    scaffold = BanglaBertTokenClassifierScaffold(
+        model=FakeModel(),
+        tokenizer=FakeTokenizer(),
+        id_to_label={0: "ok", 1: "spelling", 2: "grammar"},
+        confidence_threshold=0.6,
+        checkpoint_path="fake-bert",
+    )
+
+    token_predictions = scaffold.predict_token_spans("কিন্ত স্কুলে")
+    span_predictions = scaffold.predict("কিন্ত স্কুলে")
+
+    assert [prediction.label for prediction in token_predictions] == ["spelling", "ok"]
+    assert len(span_predictions) == 1
+    assert span_predictions[0].label == "spelling"
+    assert span_predictions[0].start == 0
+    assert span_predictions[0].end == 5
 
 
 def test_detector_service_skips_predictions_overlapping_existing_rules() -> None:
@@ -75,6 +167,55 @@ def test_detector_service_skips_predictions_overlapping_existing_rules() -> None
     assert findings[0].rule_id == "DET_SPELLING"
 
 
+def test_detector_service_skips_predictions_overlapping_actionable_spell_suggestions() -> None:
+    text = "আমি কিন্ত স্কুলে যাই।"
+    service = DetectorService(
+        runtime=FakeRuntime(
+            [
+                DetectorPrediction(label="spelling", start=4, end=9, text="কিন্ত", confidence=0.91),
+            ]
+        ),
+        confidence_threshold=0.8,
+    )
+    spell_suggestions = [
+        Suggestion(
+            id="spell_1",
+            rule_id="SPELL_002",
+            category=SuggestionCategory.SPELLING,
+            subtype="orthography_variant",
+            span_start=4,
+            span_end=9,
+            original_text="কিন্ত",
+            replacement_options=["কিন্তু"],
+            confidence=0.95,
+            explanation_bn="",
+            explanation_en="",
+            source=SuggestionSource.SPELL,
+            severity=SuggestionSeverity.LOW,
+        )
+    ]
+
+    findings = service.detect(
+        text=text,
+        normalized=BanglaNormalizer().normalize(text),
+        rule_suggestions=[],
+        spell_suggestions=spell_suggestions,
+    )
+
+    assert findings == []
+
+
+def test_detector_service_returns_empty_predictions_when_backend_fails() -> None:
+    service = DetectorService(backend=FailingBackend(token_predictions=[]))
+
+    assert service.detect_token_spans("কিন্ত") == []
+    assert service.detect(
+        text="কিন্ত",
+        normalized=BanglaNormalizer().normalize("কিন্ত"),
+        rule_suggestions=[],
+    ) == []
+
+
 def test_detector_service_logs_warning_when_checkpoint_env_is_missing(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
         service = DetectorService.from_environment({})
@@ -104,7 +245,7 @@ def test_detector_service_reads_threshold_from_environment(monkeypatch: pytest.M
     runtime = RuntimeWithThreshold()
 
     def fake_load(checkpoint_path: str) -> RuntimeWithThreshold:
-        assert checkpoint_path == "checkpoints/detector"
+        assert str(checkpoint_path).replace("\\", "/") == "checkpoints/detector"
         return runtime
 
     monkeypatch.setattr("services.analysis.shuddho_analysis.detector.BanglaDetectorRuntime.load", fake_load)
@@ -150,7 +291,7 @@ def test_detector_service_supports_legacy_threshold_environment_variable(
     runtime = RuntimeWithThreshold()
 
     def fake_load(checkpoint_path: str) -> RuntimeWithThreshold:
-        assert checkpoint_path == "checkpoints/detector"
+        assert str(checkpoint_path).replace("\\", "/") == "checkpoints/detector"
         return runtime
 
     monkeypatch.setattr("services.analysis.shuddho_analysis.detector.BanglaDetectorRuntime.load", fake_load)

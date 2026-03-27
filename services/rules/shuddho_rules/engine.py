@@ -596,7 +596,7 @@ class RuleEngine:
                         id=stable_id("rule", f"typo:{match.start()}:{match.end()}:{typo}->{replacement}"),
                         rule_id="SPELL_001",
                         category=SuggestionCategory.SPELLING,
-                        subtype="safe_exact_typo",
+                        subtype="spelling_error",
                         span_start=match.start(),
                         span_end=match.end(),
                         original_text=original_text,
