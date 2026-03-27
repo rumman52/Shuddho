@@ -7,8 +7,8 @@ from services.api.shuddho_api.app import (
     _parse_allowed_origins,
     analyze,
     detector_service,
-    gemini_client,
     health,
+    openrouter_client,
 )
 from shared.schemas.python_models import (
     AnalyzeMode,
@@ -25,13 +25,22 @@ app_module = importlib.import_module("services.api.shuddho_api.app")
 
 def test_health_reports_detector_status() -> None:
     response = health()
+    payload = response.model_dump()
 
     assert response.status == "ok"
     assert response.detector_loaded is detector_service.is_loaded()
     assert response.detector_checkpoint == detector_service.checkpoint_path
     assert response.allowed_origins == ALLOWED_ORIGINS
-    assert response.gemini_available is gemini_client.is_available()
-    assert response.gemini_model == gemini_client.model_name
+    assert set(payload) == {
+        "status",
+        "detector_loaded",
+        "detector_checkpoint",
+        "allowed_origins",
+        "openrouter_available",
+        "openrouter_model",
+    }
+    assert response.openrouter_available is openrouter_client.is_available()
+    assert response.openrouter_model == openrouter_client.model_name
 
 
 def test_cors_allows_extension_origin() -> None:
@@ -51,8 +60,15 @@ def test_default_allowed_origins_include_local_dev_hosts() -> None:
     assert "http://localhost:5173" in ALLOWED_ORIGINS
 
 
-def test_cors_keeps_production_frontend_origin() -> None:
-    assert "https://shuddho-web-editor.vercel.app" in ALLOWED_ORIGINS
+def test_parse_allowed_origins_can_include_production_frontend_origin() -> None:
+    allowed_origins = _parse_allowed_origins(
+        "http://127.0.0.1:5173, https://shuddho-web-editor.vercel.app"
+    )
+
+    assert allowed_origins == [
+        "http://127.0.0.1:5173",
+        "https://shuddho-web-editor.vercel.app",
+    ]
 
 
 def test_parse_allowed_origins_supports_trycloudflare_origin() -> None:

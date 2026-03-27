@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from services.llm.shuddho_llm.client import GeminiClient, GeminiHint
-from services.llm.shuddho_llm.parsing import GeminiIssue, GeminiIssueCategory
+from services.llm.shuddho_llm.openrouter_client import OpenRouterClient, OpenRouterHint
+from services.llm.shuddho_llm.parsing import OpenRouterIssue, OpenRouterIssueCategory
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
@@ -28,9 +28,9 @@ from .ranking import SuggestionRankingPipeline
 
 
 SENTENCE_PATTERN = re.compile(r"[^.!?\u0964\n]+(?:[.!?\u0964]+|$)")
-MAX_GEMINI_SENTENCES_PER_REQUEST = 3
-MAX_GEMINI_SENTENCE_LENGTH = 280
-MIN_GEMINI_BANGLA_LETTERS = 4
+MAX_OPENROUTER_SENTENCES_PER_REQUEST = 3
+MAX_OPENROUTER_SENTENCE_LENGTH = 280
+MIN_OPENROUTER_BANGLA_LETTERS = 4
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ class AnalysisPipeline:
         detector_service: DetectorService | None = None,
         candidate_generator: CandidateGenerator | None = None,
         ranking_pipeline: SuggestionRankingPipeline | None = None,
-        gemini_client: GeminiClient | None = None,
+        openrouter_client: OpenRouterClient | None = None,
     ) -> None:
         self.normalizer = normalizer
         self.spell_engine = spell_engine
@@ -62,7 +62,7 @@ class AnalysisPipeline:
         if getattr(self.candidate_generator, "spell_engine", None) is None:
             self.candidate_generator.spell_engine = spell_engine
         self.ranking_pipeline = ranking_pipeline or SuggestionRankingPipeline()
-        self.gemini_client = gemini_client or GeminiClient.disabled()
+        self.openrouter_client = openrouter_client or OpenRouterClient.disabled()
 
     def analyze(
         self,
@@ -93,7 +93,7 @@ class AnalysisPipeline:
             rule_suggestions=rule_suggestions,
             spell_suggestions=spell_suggestions,
         )
-        model_suggestions = self._gemini_model_suggestions(
+        model_suggestions = self._openrouter_model_suggestions(
             text=text,
             rule_suggestions=rule_suggestions,
             detector_findings=detector_findings,
@@ -132,7 +132,7 @@ class AnalysisPipeline:
             merged_suggestions=merged_suggestions,
         )
 
-    def _gemini_model_suggestions(
+    def _openrouter_model_suggestions(
         self,
         *,
         text: str,
@@ -141,7 +141,7 @@ class AnalysisPipeline:
         personal_dictionary: list[str] | None,
         mode: AnalyzeMode,
     ) -> list[Suggestion]:
-        if not self.gemini_client.is_available():
+        if not self.openrouter_client.is_available():
             return []
 
         model_suggestions: list[Suggestion] = []
@@ -157,16 +157,15 @@ class AnalysisPipeline:
                 rule_suggestions=rule_suggestions,
                 detector_findings=detector_findings,
             )
-            issues = self.gemini_client.analyze_sentence(
+            issues = self.openrouter_client.analyze_sentence(
                 sentence.text,
                 mode.value,
                 local_hints=sentence_hints,
             )
             for issue in issues:
-                suggestion = self._validate_gemini_issue(
+                suggestion = self._validate_openrouter_issue(
                     issue,
                     sentence=sentence,
-                    full_text=text,
                     personal_dictionary=personal_dictionary,
                     mode=mode,
                 )
@@ -184,7 +183,7 @@ class AnalysisPipeline:
     ) -> list[SentenceSpan]:
         suspicious_sentences: list[SentenceSpan] = []
         for sentence in _split_sentences(text):
-            if not _is_gemini_eligible_sentence(sentence.text):
+            if not _is_openrouter_eligible_sentence(sentence.text):
                 continue
 
             overlapping_rules = [
@@ -203,7 +202,7 @@ class AnalysisPipeline:
                 continue
 
             suspicious_sentences.append(sentence)
-            if len(suspicious_sentences) >= MAX_GEMINI_SENTENCES_PER_REQUEST:
+            if len(suspicious_sentences) >= MAX_OPENROUTER_SENTENCES_PER_REQUEST:
                 break
         return suspicious_sentences
 
@@ -213,13 +212,13 @@ class AnalysisPipeline:
         sentence: SentenceSpan,
         rule_suggestions: list[Suggestion],
         detector_findings: list[DetectorFinding],
-    ) -> list[GeminiHint]:
-        hints: list[GeminiHint] = []
+    ) -> list[OpenRouterHint]:
+        hints: list[OpenRouterHint] = []
         for suggestion in rule_suggestions:
             if not _overlaps_span(sentence.start, sentence.end, suggestion.span_start, suggestion.span_end):
                 continue
             hints.append(
-                GeminiHint(
+                OpenRouterHint(
                     start=max(0, suggestion.span_start - sentence.start),
                     end=max(0, suggestion.span_end - sentence.start),
                     category=suggestion.category.value,
@@ -232,7 +231,7 @@ class AnalysisPipeline:
             if not _overlaps_span(sentence.start, sentence.end, finding.span_start, finding.span_end):
                 continue
             hints.append(
-                GeminiHint(
+                OpenRouterHint(
                     start=max(0, finding.span_start - sentence.start),
                     end=max(0, finding.span_end - sentence.start),
                     category=finding.category.value,
@@ -242,21 +241,20 @@ class AnalysisPipeline:
             )
         return hints[:6]
 
-    def _validate_gemini_issue(
+    def _validate_openrouter_issue(
         self,
-        issue: GeminiIssue,
+        issue: OpenRouterIssue,
         *,
         sentence: SentenceSpan,
-        full_text: str,
         personal_dictionary: list[str] | None,
         mode: AnalyzeMode,
     ) -> Suggestion | None:
-        if issue.confidence < _minimum_gemini_confidence(issue.category, mode=mode):
+        if issue.confidence < _minimum_openrouter_confidence(issue.category, mode=mode):
             return None
         if not _is_precise_local_edit(issue.original, issue.replacement, sentence.text):
             return None
 
-        if issue.category == GeminiIssueCategory.SPELLING_ERROR:
+        if issue.category == OpenRouterIssueCategory.SPELLING_ERROR:
             if not BANGLA_WORD_PATTERN.fullmatch(issue.original) or not BANGLA_WORD_PATTERN.fullmatch(issue.replacement):
                 return None
             if not self.spell_engine.is_safe_spelling_replacement(
@@ -273,7 +271,7 @@ class AnalysisPipeline:
                 severity=SuggestionSeverity.MEDIUM,
             )
 
-        if issue.category == GeminiIssueCategory.ORTHOGRAPHY_VARIANT:
+        if issue.category == OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT:
             if mode == AnalyzeMode.STANDARD:
                 return None
             if not BANGLA_WORD_PATTERN.fullmatch(issue.original) or not BANGLA_WORD_PATTERN.fullmatch(issue.replacement):
@@ -298,7 +296,7 @@ class AnalysisPipeline:
         if _looks_user_word_like(issue.original, self.spell_engine, personal_dictionary):
             return None
 
-        if issue.category == GeminiIssueCategory.GRAMMAR_ERROR:
+        if issue.category == OpenRouterIssueCategory.GRAMMAR_ERROR:
             return self._build_llm_suggestion(
                 issue,
                 sentence=sentence,
@@ -307,7 +305,7 @@ class AnalysisPipeline:
                 severity=SuggestionSeverity.MEDIUM,
             )
 
-        if issue.category == GeminiIssueCategory.PUNCTUATION_ERROR:
+        if issue.category == OpenRouterIssueCategory.PUNCTUATION_ERROR:
             if not _is_precise_punctuation_edit(issue.original, issue.replacement):
                 return None
             return self._build_llm_suggestion(
@@ -318,7 +316,7 @@ class AnalysisPipeline:
                 severity=SuggestionSeverity.LOW,
             )
 
-        if issue.category == GeminiIssueCategory.SPACING_ERROR:
+        if issue.category == OpenRouterIssueCategory.SPACING_ERROR:
             if not _is_precise_spacing_edit(issue.original, issue.replacement):
                 return None
             return self._build_llm_suggestion(
@@ -343,7 +341,7 @@ class AnalysisPipeline:
 
     def _build_llm_suggestion(
         self,
-        issue: GeminiIssue,
+        issue: OpenRouterIssue,
         *,
         sentence: SentenceSpan,
         category: SuggestionCategory,
@@ -355,7 +353,6 @@ class AnalysisPipeline:
     ) -> Suggestion:
         span_start = sentence.start + issue.start
         span_end = sentence.start + issue.end
-        replacement_options = [issue.replacement]
         return Suggestion(
             id=stable_id(
                 "llm",
@@ -367,10 +364,10 @@ class AnalysisPipeline:
             span_start=span_start,
             span_end=span_end,
             original_text=issue.original,
-            replacement_options=replacement_options,
+            replacement_options=[issue.replacement],
             confidence=round(issue.confidence, 2),
             explanation_bn=issue.reason_bn,
-            explanation_en="Backend-validated Gemini suggestion.",
+            explanation_en="Backend-validated OpenRouter suggestion.",
             source=SuggestionSource.MODEL,
             severity=severity,
             suggestion_kind=suggestion_kind,
@@ -498,12 +495,12 @@ def _split_sentences(text: str) -> list[SentenceSpan]:
     return sentences
 
 
-def _is_gemini_eligible_sentence(sentence: str) -> bool:
+def _is_openrouter_eligible_sentence(sentence: str) -> bool:
     stripped_sentence = sentence.strip()
-    if not stripped_sentence or len(stripped_sentence) > MAX_GEMINI_SENTENCE_LENGTH:
+    if not stripped_sentence or len(stripped_sentence) > MAX_OPENROUTER_SENTENCE_LENGTH:
         return False
     bangla_letter_count = sum(1 for character in stripped_sentence if BANGLA_LETTER_PATTERN.search(character))
-    return bangla_letter_count >= MIN_GEMINI_BANGLA_LETTERS
+    return bangla_letter_count >= MIN_OPENROUTER_BANGLA_LETTERS
 
 
 def _is_context_sensitive_rule(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool:
@@ -514,31 +511,31 @@ def _is_context_sensitive_rule(suggestion: Suggestion, *, mode: AnalyzeMode) -> 
     return False
 
 
-def _minimum_gemini_confidence(category: GeminiIssueCategory, *, mode: AnalyzeMode) -> float:
+def _minimum_openrouter_confidence(category: OpenRouterIssueCategory, *, mode: AnalyzeMode) -> float:
     thresholds = {
         AnalyzeMode.STANDARD: {
-            GeminiIssueCategory.GRAMMAR_ERROR: 0.92,
-            GeminiIssueCategory.SPELLING_ERROR: 0.96,
-            GeminiIssueCategory.PUNCTUATION_ERROR: 0.9,
-            GeminiIssueCategory.SPACING_ERROR: 0.9,
-            GeminiIssueCategory.ORTHOGRAPHY_VARIANT: 0.98,
-            GeminiIssueCategory.STYLE_SUGGESTION: 0.9,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.92,
+            OpenRouterIssueCategory.SPELLING_ERROR: 0.96,
+            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.9,
+            OpenRouterIssueCategory.SPACING_ERROR: 0.9,
+            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.98,
+            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.9,
         },
         AnalyzeMode.STRICT: {
-            GeminiIssueCategory.GRAMMAR_ERROR: 0.86,
-            GeminiIssueCategory.SPELLING_ERROR: 0.94,
-            GeminiIssueCategory.PUNCTUATION_ERROR: 0.86,
-            GeminiIssueCategory.SPACING_ERROR: 0.86,
-            GeminiIssueCategory.ORTHOGRAPHY_VARIANT: 0.86,
-            GeminiIssueCategory.STYLE_SUGGESTION: 0.84,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.86,
+            OpenRouterIssueCategory.SPELLING_ERROR: 0.94,
+            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.86,
+            OpenRouterIssueCategory.SPACING_ERROR: 0.86,
+            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.86,
+            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.84,
         },
         AnalyzeMode.FORMAL: {
-            GeminiIssueCategory.GRAMMAR_ERROR: 0.84,
-            GeminiIssueCategory.SPELLING_ERROR: 0.94,
-            GeminiIssueCategory.PUNCTUATION_ERROR: 0.84,
-            GeminiIssueCategory.SPACING_ERROR: 0.84,
-            GeminiIssueCategory.ORTHOGRAPHY_VARIANT: 0.84,
-            GeminiIssueCategory.STYLE_SUGGESTION: 0.82,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.84,
+            OpenRouterIssueCategory.SPELLING_ERROR: 0.94,
+            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.84,
+            OpenRouterIssueCategory.SPACING_ERROR: 0.84,
+            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.84,
+            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.82,
         },
     }
     return thresholds[mode][category]

@@ -6,7 +6,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
-class GeminiIssueCategory(str, Enum):
+class OpenRouterIssueCategory(str, Enum):
     GRAMMAR_ERROR = "grammar_error"
     SPELLING_ERROR = "spelling_error"
     PUNCTUATION_ERROR = "punctuation_error"
@@ -15,12 +15,12 @@ class GeminiIssueCategory(str, Enum):
     STYLE_SUGGESTION = "style_suggestion"
 
 
-class GeminiIssue(BaseModel):
+class OpenRouterIssue(BaseModel):
     start: int = Field(ge=0)
     end: int = Field(ge=0)
     original: str
     replacement: str
-    category: GeminiIssueCategory
+    category: OpenRouterIssueCategory
     confidence: float = Field(ge=0.0, le=1.0)
     reason_bn: str
 
@@ -30,11 +30,11 @@ class GeminiIssue(BaseModel):
         return value.strip()
 
 
-class GeminiIssueEnvelope(BaseModel):
-    issues: list[GeminiIssue] = Field(default_factory=list)
+class OpenRouterIssueEnvelope(BaseModel):
+    issues: list[OpenRouterIssue] = Field(default_factory=list)
 
 
-def parse_gemini_response(raw_text: str, *, sentence: str | None = None) -> list[GeminiIssue]:
+def parse_openrouter_response(raw_text: str, *, sentence: str | None = None) -> list[OpenRouterIssue]:
     if not raw_text or not raw_text.strip():
         return []
 
@@ -45,11 +45,11 @@ def parse_gemini_response(raw_text: str, *, sentence: str | None = None) -> list
         return []
 
     try:
-        envelope = GeminiIssueEnvelope.model_validate(payload)
+        envelope = OpenRouterIssueEnvelope.model_validate(payload)
     except ValidationError:
         return []
 
-    valid_issues: list[GeminiIssue] = []
+    valid_issues: list[OpenRouterIssue] = []
     for issue in envelope.issues:
         if not _is_structurally_safe(issue):
             continue
@@ -71,7 +71,7 @@ def _strip_json_fences(raw_text: str) -> str:
     return text
 
 
-def _is_structurally_safe(issue: GeminiIssue) -> bool:
+def _is_structurally_safe(issue: OpenRouterIssue) -> bool:
     if issue.end <= issue.start:
         return False
     if not issue.original or not issue.replacement or not issue.reason_bn:
@@ -81,7 +81,7 @@ def _is_structurally_safe(issue: GeminiIssue) -> bool:
     return True
 
 
-def _matches_sentence(issue: GeminiIssue, sentence: str) -> bool:
+def _matches_sentence(issue: OpenRouterIssue, sentence: str) -> bool:
     if issue.end > len(sentence):
         return False
     return sentence[issue.start : issue.end] == issue.original

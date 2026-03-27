@@ -197,8 +197,8 @@ class HealthResponse(BaseModel):
     detector_loaded: bool
     detector_checkpoint: str | None = None
     allowed_origins: list[str]
-    gemini_available: bool = False
-    gemini_model: str | None = None
+    openrouter_available: bool = False
+    openrouter_model: str | None = None
 
 
 def _infer_suggestion_kind(

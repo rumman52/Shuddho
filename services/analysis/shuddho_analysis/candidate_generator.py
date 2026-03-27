@@ -344,6 +344,9 @@ class CandidateGenerator:
             return f"{noun}র"
         return f"{noun}এর"
 
+    def _overlaps(self, finding: DetectorFinding, suggestion: Suggestion) -> bool:
+        return finding.span_start < suggestion.span_end and suggestion.span_start < finding.span_end
+
     def _is_safe_model_suggestion(self, suggestion: Suggestion) -> bool:
         if suggestion.source != SuggestionSource.MODEL:
             return True
@@ -369,9 +372,6 @@ class CandidateGenerator:
             return len(primary_replacement) <= 12
 
         return len(primary_replacement) <= max(len(normalized_original) * 3, 48)
-
-    def _overlaps(self, finding: DetectorFinding, suggestion: Suggestion) -> bool:
-        return finding.span_start < suggestion.span_end and suggestion.span_start < finding.span_end
 
 
 def _severity_rank(severity: SuggestionSeverity) -> int:

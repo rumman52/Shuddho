@@ -1,3 +1,3 @@
-from .client import GeminiClient, GeminiHint
+from .openrouter_client import OpenRouterClient, OpenRouterHint
 
-__all__ = ["GeminiClient", "GeminiHint"]
+__all__ = ["OpenRouterClient", "OpenRouterHint"]

@@ -12,7 +12,7 @@ from services.analysis.shuddho_analysis.detector import DetectorService
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
 from services.analysis.shuddho_analysis.ranking import SuggestionRankingPipeline
 from services.feedback.shuddho_feedback.store import FeedbackStore
-from services.llm.shuddho_llm.client import GeminiClient
+from services.llm.shuddho_llm.openrouter_client import OpenRouterClient
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
@@ -61,7 +61,7 @@ spell_engine = SpellEngine(
 rule_engine = RuleEngine()
 suggestion_manager = SuggestionManager()
 detector_service = DetectorService.from_environment(os.environ)
-gemini_client = GeminiClient.from_environment(os.environ)
+openrouter_client = OpenRouterClient.from_environment(os.environ)
 candidate_generator = CandidateGenerator()
 feedback_store = FeedbackStore()
 ranking_pipeline = SuggestionRankingPipeline(feedback_store=feedback_store)
@@ -73,7 +73,7 @@ analysis_pipeline = AnalysisPipeline(
     detector_service=detector_service,
     candidate_generator=candidate_generator,
     ranking_pipeline=ranking_pipeline,
-    gemini_client=gemini_client,
+    openrouter_client=openrouter_client,
 )
 
 
@@ -84,8 +84,8 @@ def health() -> HealthResponse:
         detector_loaded=detector_service.is_loaded(),
         detector_checkpoint=detector_service.checkpoint_path,
         allowed_origins=ALLOWED_ORIGINS,
-        gemini_available=gemini_client.is_available(),
-        gemini_model=gemini_client.model_name,
+        openrouter_available=openrouter_client.is_available(),
+        openrouter_model=openrouter_client.model_name,
     )
 
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-GEMINI_ANALYSIS_RESPONSE_SCHEMA: dict[str, Any] = {
+OPENROUTER_ANALYSIS_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "issues": {
@@ -67,17 +67,17 @@ Prefer minimal span edits over sentence rewrites.
 
 
 @dataclass(frozen=True)
-class GeminiPrompt:
-    system_instruction: str
-    user_content: str
+class OpenRouterPrompt:
+    messages: list[dict[str, str]]
+    response_format: dict[str, object]
 
 
-def build_bangla_analysis_prompt(
+def build_openrouter_prompt(
     sentence: str,
     mode: str,
     *,
     local_hints: list[dict[str, object]] | None = None,
-) -> GeminiPrompt:
+) -> OpenRouterPrompt:
     hint_payload = json.dumps((local_hints or [])[:6], ensure_ascii=False)
     mode_guidance = _mode_guidance(mode)
     user_content = "\n".join(
@@ -91,9 +91,19 @@ def build_bangla_analysis_prompt(
             f"Local hints: {hint_payload}",
         ]
     )
-    return GeminiPrompt(
-        system_instruction=SYSTEM_INSTRUCTION,
-        user_content=user_content,
+    return OpenRouterPrompt(
+        messages=[
+            {"role": "system", "content": SYSTEM_INSTRUCTION},
+            {"role": "user", "content": user_content},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "shuddho_bangla_analysis",
+                "strict": True,
+                "schema": OPENROUTER_ANALYSIS_RESPONSE_SCHEMA,
+            },
+        },
     )
 
 

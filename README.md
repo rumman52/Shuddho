@@ -2,6 +2,8 @@
 
 Shuddho is a Bangla writing assistant monorepo with a conservative rule-and-lexicon MVP today and clean interfaces for future custom ML models trained from scratch.
 
+The current app keeps a hybrid backend architecture. Suggestions come from normalization, rules, the spell engine, detector-backed suspicious span analysis, optional OpenRouter analysis for context-sensitive Bangla issues, ranking, and confidence gating inside the backend API.
+
 ## What is implemented
 
 - React + TypeScript + Tiptap web editor in `apps/web-editor`
@@ -82,12 +84,19 @@ Keep that terminal open while the backend is running. If you close it, the FastA
 
 Warnings about Python `Scripts` paths not being on `PATH` are not blocking here because `py -m ...` runs the installed modules directly.
 
-The backend loads the repo-root `.env` and reads these variables:
+The backend loads the repo-root `.env` and can run in two modes:
 
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL`
-- `GEMINI_TIMEOUT_SECONDS`
+- Local-only fallback: no `OPENROUTER_API_KEY` set, so only local rules, spelling, and detector-backed logic run.
+- Hybrid mode: `OPENROUTER_API_KEY` is set, so suspicious Bangla sentences may be sent to OpenRouter and then validated locally before suggestions are returned.
+
+Relevant backend variables:
+
+- `OPENROUTER_API_KEY`
+- `OPENROUTER_MODEL`
+- `OPENROUTER_TIMEOUT_SECONDS`
 - `SHUDDHO_ALLOWED_ORIGINS`
+
+The default `OPENROUTER_MODEL` is `nvidia/nemotron-3-super-120b-a12b`. For lower-cost testing you can switch it to `nvidia/nemotron-3-super-120b-a12b:free` in your local `.env` or hosting environment.
 
 ### Web editor
 
@@ -98,7 +107,7 @@ npm run dev:web
 
 The editor expects the API at `http://127.0.0.1:8000`. Override with `VITE_API_BASE_URL` if needed.
 Copy `apps/web-editor/.env.example` to `apps/web-editor/.env.local` to keep a local override in the app workspace.
-The frontend calls only the Shuddho backend and does not use the Gemini SDK or any Gemini API key directly.
+The frontend calls only the Shuddho backend and does not contain any secret or direct OpenRouter call.
 
 ### Chrome extension
 
@@ -212,8 +221,8 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
     "http://localhost:5173",
     "https://shuddho-web-editor.vercel.app"
   ],
-  "gemini_available": false,
-  "gemini_model": "gemini-3-flash-preview"
+  "openrouter_available": false,
+  "openrouter_model": "nvidia/nemotron-3-super-120b-a12b"
 }
 ```
 
