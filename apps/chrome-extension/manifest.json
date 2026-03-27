@@ -6,6 +6,7 @@
   "permissions": ["storage", "activeTab"],
   "host_permissions": [
     "https://shuddho-api.onrender.com/*",
+    "https://*.trycloudflare.com/*",
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*"
   ],

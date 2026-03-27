@@ -30,6 +30,11 @@ def test_cors_allows_localhost_dev_origin() -> None:
     assert re.fullmatch(ALLOWED_ORIGIN_REGEX, origin)
 
 
+def test_default_allowed_origins_include_local_dev_hosts() -> None:
+    assert "http://127.0.0.1:5173" in ALLOWED_ORIGINS
+    assert "http://localhost:5173" in ALLOWED_ORIGINS
+
+
 def test_cors_keeps_production_frontend_origin() -> None:
     assert "https://shuddho-web-editor.vercel.app" in ALLOWED_ORIGINS
 

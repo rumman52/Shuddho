@@ -19,8 +19,11 @@ from shared.schemas.python_models import AnalyzeRequest, AnalyzeResponse, Feedba
 
 ALLOWED_ORIGINS_ENV_VAR = "SHUDDHO_ALLOWED_ORIGINS"
 DEFAULT_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
     "https://shuddho-web-editor.vercel.app",
 ]
+# Chrome extension origins and arbitrary localhost ports stay on the regex path.
 ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
 
 

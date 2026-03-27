@@ -61,6 +61,7 @@ npm run dev:web
 ```
 
 The editor expects the API at `http://127.0.0.1:8000`. Override with `VITE_API_BASE_URL` if needed.
+Copy `apps/web-editor/.env.example` to `apps/web-editor/.env.local` to keep a local override in the app workspace.
 
 ### Chrome extension
 
@@ -89,7 +90,13 @@ Copy the generated `https://...trycloudflare.com` URL and point the clients at i
 
 - Web editor: set `VITE_API_BASE_URL=https://your-random-name.trycloudflare.com`
 - Chrome extension: build with `SHUDDHO_EXTENSION_API_BASE_URL=https://your-random-name.trycloudflare.com npm run build:extension`
-- Backend CORS: set `SHUDDHO_ALLOWED_ORIGINS=https://your-random-name.trycloudflare.com` or include multiple origins as a comma-separated list
+
+`SHUDDHO_ALLOWED_ORIGINS` controls which frontend origins may call the API, not which backend URL the API is exposed on.
+
+- Local Vite origins such as `http://127.0.0.1:5173` and `http://localhost:5173` are allowed by default for development.
+- Chrome extension origins are allowed by default.
+- If a public frontend calls the tunneled backend, set `SHUDDHO_ALLOWED_ORIGINS` to the frontend origin, for example `https://shuddho-web-editor.vercel.app`.
+- Multiple frontend origins can be allowed with a comma-separated list, for example `SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://your-preview.vercel.app`.
 
 The trycloudflare URL is temporary, so update the frontend or extension config again whenever Cloudflare gives you a new tunnel address.
 
@@ -163,7 +170,11 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
   "status": "ok",
   "detector_loaded": false,
   "detector_checkpoint": null,
-  "allowed_origins": ["https://shuddho-web-editor.vercel.app"]
+  "allowed_origins": [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "https://shuddho-web-editor.vercel.app"
+  ]
 }
 ```
 
