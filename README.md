@@ -48,6 +48,20 @@ tests/
 
 ### Backend
 
+Create a root `.env` from `.env.example` before starting the API:
+
+```bash
+cp .env.example .env
+```
+
+On Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Then install and run the backend:
+
 ```bash
 pip install -e .
 uvicorn services.api.shuddho_api.app:app --reload
@@ -68,6 +82,13 @@ Keep that terminal open while the backend is running. If you close it, the FastA
 
 Warnings about Python `Scripts` paths not being on `PATH` are not blocking here because `py -m ...` runs the installed modules directly.
 
+The backend loads the repo-root `.env` and reads these variables:
+
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL`
+- `GEMINI_TIMEOUT_SECONDS`
+- `SHUDDHO_ALLOWED_ORIGINS`
+
 ### Web editor
 
 ```bash
@@ -77,6 +98,7 @@ npm run dev:web
 
 The editor expects the API at `http://127.0.0.1:8000`. Override with `VITE_API_BASE_URL` if needed.
 Copy `apps/web-editor/.env.example` to `apps/web-editor/.env.local` to keep a local override in the app workspace.
+The frontend calls only the Shuddho backend and does not use the Gemini SDK or any Gemini API key directly.
 
 ### Chrome extension
 
@@ -189,7 +211,9 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
     "http://127.0.0.1:5173",
     "http://localhost:5173",
     "https://shuddho-web-editor.vercel.app"
-  ]
+  ],
+  "gemini_available": false,
+  "gemini_model": "gemini-3-flash-preview"
 }
 ```
 
