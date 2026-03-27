@@ -690,7 +690,7 @@ export default function App() {
           <p className="eyebrow">Shuddho</p>
           <h1>Bangla writing assistant MVP</h1>
           <p className="lede">
-            Type Bangla text, inspect conservative suggestions, and send accept or dismiss feedback to the FastAPI backend.
+            Type Bangla text, review backend-validated suggestions, and keep context-sensitive analysis on the backend instead of in the browser.
           </p>
         </div>
         <div className="status-panel">
@@ -847,7 +847,7 @@ export default function App() {
           >
             <div className="panel-header" style={{ marginBottom: "0.75rem" }}>
               <div>
-                <h2 style={{ fontSize: "1.2rem" }}>Optional style suggestions</h2>
+                <h2 style={{ fontSize: "1.2rem" }}>Optional style & orthography suggestions</h2>
                 <p style={{ margin: 0 }}>
                   {requestMode === "formal"
                     ? "Formal mode opens style and register guidance automatically."

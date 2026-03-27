@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from services.feedback.shuddho_feedback.store import FeedbackStore
 from ml.ranking.pipeline import NeuralRankerInterface
-from shared.schemas.python_models import AnalyzeMode, Suggestion
+from shared.schemas.python_models import AnalyzeMode, Suggestion, SuggestionSource
 
 
 class SuggestionRankingPipeline:
@@ -32,6 +32,7 @@ class SuggestionRankingPipeline:
         ranked.sort(
             key=lambda item: (
                 -item.score,
+                1 if item.suggestion.source == SuggestionSource.MODEL else 0,
                 item.suggestion.span_start,
                 item.suggestion.span_end,
                 item.suggestion.rule_id,

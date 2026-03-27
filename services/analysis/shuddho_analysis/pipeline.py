@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+
+from services.llm.shuddho_llm.client import GeminiClient, GeminiHint
+from services.llm.shuddho_llm.parsing import GeminiIssue, GeminiIssueCategory
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
+from shared.constants.bangla import BANGLA_LETTER_PATTERN, BANGLA_WORD_PATTERN
 from shared.schemas.python_models import (
     AnalyzeMode,
     AnalyzeResponse,
@@ -13,11 +19,25 @@ from shared.schemas.python_models import (
     SuggestionSeverity,
     SuggestionSource,
 )
+from shared.utils.text import stable_id
 
 from .candidate_generator import CandidateGenerator
 from .detector import DetectorService
-from .models import AnalysisArtifacts
+from .models import AnalysisArtifacts, DetectorFinding
 from .ranking import SuggestionRankingPipeline
+
+
+SENTENCE_PATTERN = re.compile(r"[^.!?\u0964\n]+(?:[.!?\u0964]+|$)")
+MAX_GEMINI_SENTENCES_PER_REQUEST = 3
+MAX_GEMINI_SENTENCE_LENGTH = 280
+MIN_GEMINI_BANGLA_LETTERS = 4
+
+
+@dataclass(frozen=True)
+class SentenceSpan:
+    start: int
+    end: int
+    text: str
 
 
 class AnalysisPipeline:
@@ -31,6 +51,7 @@ class AnalysisPipeline:
         detector_service: DetectorService | None = None,
         candidate_generator: CandidateGenerator | None = None,
         ranking_pipeline: SuggestionRankingPipeline | None = None,
+        gemini_client: GeminiClient | None = None,
     ) -> None:
         self.normalizer = normalizer
         self.spell_engine = spell_engine
@@ -41,6 +62,7 @@ class AnalysisPipeline:
         if getattr(self.candidate_generator, "spell_engine", None) is None:
             self.candidate_generator.spell_engine = spell_engine
         self.ranking_pipeline = ranking_pipeline or SuggestionRankingPipeline()
+        self.gemini_client = gemini_client or GeminiClient.disabled()
 
     def analyze(
         self,
@@ -71,11 +93,18 @@ class AnalysisPipeline:
             rule_suggestions=rule_suggestions,
             spell_suggestions=spell_suggestions,
         )
+        model_suggestions = self._gemini_model_suggestions(
+            text=text,
+            rule_suggestions=rule_suggestions,
+            detector_findings=detector_findings,
+            personal_dictionary=personal_dictionary,
+            mode=mode,
+        )
         candidates = self.candidate_generator.generate(
             spell_suggestions=spell_suggestions,
             rule_suggestions=rule_suggestions,
             detector_findings=detector_findings,
-            model_suggestions=[],
+            model_suggestions=model_suggestions,
             text=text,
         )
         prepared_suggestions = self.suggestion_manager.prepare_candidates(
@@ -101,6 +130,253 @@ class AnalysisPipeline:
             prepared_suggestions=prepared_suggestions,
             ranked_suggestions=ranked_suggestions,
             merged_suggestions=merged_suggestions,
+        )
+
+    def _gemini_model_suggestions(
+        self,
+        *,
+        text: str,
+        rule_suggestions: list[Suggestion],
+        detector_findings: list[DetectorFinding],
+        personal_dictionary: list[str] | None,
+        mode: AnalyzeMode,
+    ) -> list[Suggestion]:
+        if not self.gemini_client.is_available():
+            return []
+
+        model_suggestions: list[Suggestion] = []
+        suspicious_sentences = self._select_suspicious_sentences(
+            text=text,
+            rule_suggestions=rule_suggestions,
+            detector_findings=detector_findings,
+            mode=mode,
+        )
+        for sentence in suspicious_sentences:
+            sentence_hints = self._build_sentence_hints(
+                sentence=sentence,
+                rule_suggestions=rule_suggestions,
+                detector_findings=detector_findings,
+            )
+            issues = self.gemini_client.analyze_sentence(
+                sentence.text,
+                mode.value,
+                local_hints=sentence_hints,
+            )
+            for issue in issues:
+                suggestion = self._validate_gemini_issue(
+                    issue,
+                    sentence=sentence,
+                    full_text=text,
+                    personal_dictionary=personal_dictionary,
+                    mode=mode,
+                )
+                if suggestion is not None:
+                    model_suggestions.append(suggestion)
+        return model_suggestions
+
+    def _select_suspicious_sentences(
+        self,
+        *,
+        text: str,
+        rule_suggestions: list[Suggestion],
+        detector_findings: list[DetectorFinding],
+        mode: AnalyzeMode,
+    ) -> list[SentenceSpan]:
+        suspicious_sentences: list[SentenceSpan] = []
+        for sentence in _split_sentences(text):
+            if not _is_gemini_eligible_sentence(sentence.text):
+                continue
+
+            overlapping_rules = [
+                suggestion
+                for suggestion in rule_suggestions
+                if _overlaps_span(sentence.start, sentence.end, suggestion.span_start, suggestion.span_end)
+                and _is_context_sensitive_rule(suggestion, mode=mode)
+            ]
+            overlapping_findings = [
+                finding
+                for finding in detector_findings
+                if _overlaps_span(sentence.start, sentence.end, finding.span_start, finding.span_end)
+                and finding.category in {SuggestionCategory.GRAMMAR, SuggestionCategory.STYLE, SuggestionCategory.PUNCTUATION}
+            ]
+            if not overlapping_rules and not overlapping_findings:
+                continue
+
+            suspicious_sentences.append(sentence)
+            if len(suspicious_sentences) >= MAX_GEMINI_SENTENCES_PER_REQUEST:
+                break
+        return suspicious_sentences
+
+    def _build_sentence_hints(
+        self,
+        *,
+        sentence: SentenceSpan,
+        rule_suggestions: list[Suggestion],
+        detector_findings: list[DetectorFinding],
+    ) -> list[GeminiHint]:
+        hints: list[GeminiHint] = []
+        for suggestion in rule_suggestions:
+            if not _overlaps_span(sentence.start, sentence.end, suggestion.span_start, suggestion.span_end):
+                continue
+            hints.append(
+                GeminiHint(
+                    start=max(0, suggestion.span_start - sentence.start),
+                    end=max(0, suggestion.span_end - sentence.start),
+                    category=suggestion.category.value,
+                    subtype=suggestion.subtype,
+                    text=suggestion.original_text,
+                )
+            )
+
+        for finding in detector_findings:
+            if not _overlaps_span(sentence.start, sentence.end, finding.span_start, finding.span_end):
+                continue
+            hints.append(
+                GeminiHint(
+                    start=max(0, finding.span_start - sentence.start),
+                    end=max(0, finding.span_end - sentence.start),
+                    category=finding.category.value,
+                    subtype=finding.subtype,
+                    text=finding.original_text,
+                )
+            )
+        return hints[:6]
+
+    def _validate_gemini_issue(
+        self,
+        issue: GeminiIssue,
+        *,
+        sentence: SentenceSpan,
+        full_text: str,
+        personal_dictionary: list[str] | None,
+        mode: AnalyzeMode,
+    ) -> Suggestion | None:
+        if issue.confidence < _minimum_gemini_confidence(issue.category, mode=mode):
+            return None
+        if not _is_precise_local_edit(issue.original, issue.replacement, sentence.text):
+            return None
+
+        if issue.category == GeminiIssueCategory.SPELLING_ERROR:
+            if not BANGLA_WORD_PATTERN.fullmatch(issue.original) or not BANGLA_WORD_PATTERN.fullmatch(issue.replacement):
+                return None
+            if not self.spell_engine.is_safe_spelling_replacement(
+                issue.original,
+                issue.replacement,
+                personal_dictionary=personal_dictionary,
+            ):
+                return None
+            return self._build_llm_suggestion(
+                issue,
+                sentence=sentence,
+                category=SuggestionCategory.SPELLING,
+                subtype="spelling_error",
+                severity=SuggestionSeverity.MEDIUM,
+            )
+
+        if issue.category == GeminiIssueCategory.ORTHOGRAPHY_VARIANT:
+            if mode == AnalyzeMode.STANDARD:
+                return None
+            if not BANGLA_WORD_PATTERN.fullmatch(issue.original) or not BANGLA_WORD_PATTERN.fullmatch(issue.replacement):
+                return None
+            if not self.spell_engine.is_safe_orthography_variant(
+                issue.original,
+                issue.replacement,
+                personal_dictionary=personal_dictionary,
+            ):
+                return None
+            return self._build_llm_suggestion(
+                issue,
+                sentence=sentence,
+                category=SuggestionCategory.STYLE,
+                subtype="orthography_variant",
+                severity=SuggestionSeverity.LOW,
+                suggestion_kind=SuggestionKind.ORTHOGRAPHY_VARIANT,
+                optional_mode_visibility=[AnalyzeMode.STRICT, AnalyzeMode.FORMAL],
+                is_variant_only=True,
+            )
+
+        if _looks_user_word_like(issue.original, self.spell_engine, personal_dictionary):
+            return None
+
+        if issue.category == GeminiIssueCategory.GRAMMAR_ERROR:
+            return self._build_llm_suggestion(
+                issue,
+                sentence=sentence,
+                category=SuggestionCategory.GRAMMAR,
+                subtype="llm_grammar_error",
+                severity=SuggestionSeverity.MEDIUM,
+            )
+
+        if issue.category == GeminiIssueCategory.PUNCTUATION_ERROR:
+            if not _is_precise_punctuation_edit(issue.original, issue.replacement):
+                return None
+            return self._build_llm_suggestion(
+                issue,
+                sentence=sentence,
+                category=SuggestionCategory.PUNCTUATION,
+                subtype="punctuation_error",
+                severity=SuggestionSeverity.LOW,
+            )
+
+        if issue.category == GeminiIssueCategory.SPACING_ERROR:
+            if not _is_precise_spacing_edit(issue.original, issue.replacement):
+                return None
+            return self._build_llm_suggestion(
+                issue,
+                sentence=sentence,
+                category=SuggestionCategory.PUNCTUATION,
+                subtype="spacing_error",
+                severity=SuggestionSeverity.LOW,
+            )
+
+        if mode == AnalyzeMode.STANDARD:
+            return None
+
+        return self._build_llm_suggestion(
+            issue,
+            sentence=sentence,
+            category=SuggestionCategory.STYLE,
+            subtype="style_suggestion",
+            severity=SuggestionSeverity.LOW,
+            optional_mode_visibility=[AnalyzeMode.STRICT, AnalyzeMode.FORMAL],
+        )
+
+    def _build_llm_suggestion(
+        self,
+        issue: GeminiIssue,
+        *,
+        sentence: SentenceSpan,
+        category: SuggestionCategory,
+        subtype: str,
+        severity: SuggestionSeverity,
+        suggestion_kind: SuggestionKind | None = None,
+        optional_mode_visibility: list[AnalyzeMode] | None = None,
+        is_variant_only: bool = False,
+    ) -> Suggestion:
+        span_start = sentence.start + issue.start
+        span_end = sentence.start + issue.end
+        replacement_options = [issue.replacement]
+        return Suggestion(
+            id=stable_id(
+                "llm",
+                f"{category.value}:{subtype}:{span_start}:{span_end}:{issue.original}:{issue.replacement}",
+            ),
+            rule_id=_llm_rule_id(subtype),
+            category=category,
+            subtype=subtype,
+            span_start=span_start,
+            span_end=span_end,
+            original_text=issue.original,
+            replacement_options=replacement_options,
+            confidence=round(issue.confidence, 2),
+            explanation_bn=issue.reason_bn,
+            explanation_en="Backend-validated Gemini suggestion.",
+            source=SuggestionSource.MODEL,
+            severity=severity,
+            suggestion_kind=suggestion_kind,
+            is_contextual=True,
+            optional_mode_visibility=optional_mode_visibility or [],
+            is_variant_only=is_variant_only,
         )
 
 
@@ -175,6 +451,12 @@ def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool
             AnalyzeMode.STRICT: 0.04,
             AnalyzeMode.FORMAL: 0.02,
         }[mode]
+    if suggestion.rule_id.startswith("LLM_") and suggestion.suggestion_kind in {
+        SuggestionKind.GRAMMAR_ERROR,
+        SuggestionKind.STYLE_SUGGESTION,
+        SuggestionKind.ORTHOGRAPHY_VARIANT,
+    }:
+        threshold += 0.02 if mode == AnalyzeMode.STANDARD else 0.0
     if not suggestion.replacement_options:
         threshold += 0.08 if mode == AnalyzeMode.STANDARD else 0.03
     if suggestion.is_variant_only and mode == AnalyzeMode.STANDARD:
@@ -199,3 +481,116 @@ def _is_high_precision_style_suggestion(suggestion: Suggestion) -> bool:
         and suggestion.subtype in {"number_unit_spacing", "mixed_digit_style"}
         and bool(suggestion.replacement_options)
     )
+
+
+def _split_sentences(text: str) -> list[SentenceSpan]:
+    sentences: list[SentenceSpan] = []
+    for match in SENTENCE_PATTERN.finditer(text):
+        raw_start = match.start()
+        raw_end = match.end()
+        while raw_start < raw_end and text[raw_start].isspace():
+            raw_start += 1
+        while raw_end > raw_start and text[raw_end - 1].isspace():
+            raw_end -= 1
+        if raw_end <= raw_start:
+            continue
+        sentences.append(SentenceSpan(start=raw_start, end=raw_end, text=text[raw_start:raw_end]))
+    return sentences
+
+
+def _is_gemini_eligible_sentence(sentence: str) -> bool:
+    stripped_sentence = sentence.strip()
+    if not stripped_sentence or len(stripped_sentence) > MAX_GEMINI_SENTENCE_LENGTH:
+        return False
+    bangla_letter_count = sum(1 for character in stripped_sentence if BANGLA_LETTER_PATTERN.search(character))
+    return bangla_letter_count >= MIN_GEMINI_BANGLA_LETTERS
+
+
+def _is_context_sensitive_rule(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool:
+    if suggestion.category == SuggestionCategory.GRAMMAR:
+        return True
+    if mode == AnalyzeMode.FORMAL and suggestion.category == SuggestionCategory.STYLE:
+        return suggestion.confidence >= 0.7 and bool(suggestion.replacement_options)
+    return False
+
+
+def _minimum_gemini_confidence(category: GeminiIssueCategory, *, mode: AnalyzeMode) -> float:
+    thresholds = {
+        AnalyzeMode.STANDARD: {
+            GeminiIssueCategory.GRAMMAR_ERROR: 0.92,
+            GeminiIssueCategory.SPELLING_ERROR: 0.96,
+            GeminiIssueCategory.PUNCTUATION_ERROR: 0.9,
+            GeminiIssueCategory.SPACING_ERROR: 0.9,
+            GeminiIssueCategory.ORTHOGRAPHY_VARIANT: 0.98,
+            GeminiIssueCategory.STYLE_SUGGESTION: 0.9,
+        },
+        AnalyzeMode.STRICT: {
+            GeminiIssueCategory.GRAMMAR_ERROR: 0.86,
+            GeminiIssueCategory.SPELLING_ERROR: 0.94,
+            GeminiIssueCategory.PUNCTUATION_ERROR: 0.86,
+            GeminiIssueCategory.SPACING_ERROR: 0.86,
+            GeminiIssueCategory.ORTHOGRAPHY_VARIANT: 0.86,
+            GeminiIssueCategory.STYLE_SUGGESTION: 0.84,
+        },
+        AnalyzeMode.FORMAL: {
+            GeminiIssueCategory.GRAMMAR_ERROR: 0.84,
+            GeminiIssueCategory.SPELLING_ERROR: 0.94,
+            GeminiIssueCategory.PUNCTUATION_ERROR: 0.84,
+            GeminiIssueCategory.SPACING_ERROR: 0.84,
+            GeminiIssueCategory.ORTHOGRAPHY_VARIANT: 0.84,
+            GeminiIssueCategory.STYLE_SUGGESTION: 0.82,
+        },
+    }
+    return thresholds[mode][category]
+
+
+def _is_precise_local_edit(original: str, replacement: str, sentence: str) -> bool:
+    normalized_original = original.strip()
+    normalized_replacement = replacement.strip()
+    if not normalized_original or not normalized_replacement:
+        return False
+    if normalized_original == normalized_replacement:
+        return False
+    if normalized_replacement == sentence.strip() and normalized_original != sentence.strip():
+        return False
+    if len(normalized_replacement) > max(len(normalized_original) * 3, 48):
+        return False
+    if len(normalized_replacement.split()) > max(len(normalized_original.split()) + 3, 6):
+        return False
+    return True
+
+
+def _is_precise_punctuation_edit(original: str, replacement: str) -> bool:
+    return len(original.strip()) <= 6 and len(replacement.strip()) <= 8
+
+
+def _is_precise_spacing_edit(original: str, replacement: str) -> bool:
+    if not replacement:
+        return False
+    return len(replacement) <= max(len(original) + 2, 8)
+
+
+def _looks_user_word_like(original: str, spell_engine: SpellEngine, personal_dictionary: list[str] | None) -> bool:
+    if " " in original.strip():
+        return False
+    if not BANGLA_WORD_PATTERN.fullmatch(original):
+        return spell_engine.looks_code_mixed_token(original)
+    return spell_engine.is_probable_named_entity_or_user_word(
+        original,
+        personal_dictionary=personal_dictionary,
+    )
+
+
+def _overlaps_span(left_start: int, left_end: int, right_start: int, right_end: int) -> bool:
+    return left_start < right_end and right_start < left_end
+
+
+def _llm_rule_id(subtype: str) -> str:
+    mapping = {
+        "spelling_error": "LLM_SPELL_001",
+        "orthography_variant": "LLM_VARIANT_001",
+        "punctuation_error": "LLM_PUNCT_001",
+        "spacing_error": "LLM_SPACE_001",
+        "style_suggestion": "LLM_STYLE_001",
+    }
+    return mapping.get(subtype, "LLM_GRAMMAR_001")

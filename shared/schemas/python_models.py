@@ -197,6 +197,8 @@ class HealthResponse(BaseModel):
     detector_loaded: bool
     detector_checkpoint: str | None = None
     allowed_origins: list[str]
+    gemini_available: bool = False
+    gemini_model: str | None = None
 
 
 def _infer_suggestion_kind(
@@ -210,6 +212,7 @@ def _infer_suggestion_kind(
     if subtype == SuggestionKind.NAMED_ENTITY_OR_USER_WORD.value:
         return SuggestionKind.NAMED_ENTITY_OR_USER_WORD
     if subtype in {
+        "spacing_error",
         "extra_whitespace",
         "space_before_punctuation",
         "space_after_punctuation",

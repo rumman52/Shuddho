@@ -7,6 +7,7 @@ from services.api.shuddho_api.app import (
     _parse_allowed_origins,
     analyze,
     detector_service,
+    gemini_client,
     health,
 )
 from shared.schemas.python_models import (
@@ -29,6 +30,8 @@ def test_health_reports_detector_status() -> None:
     assert response.detector_loaded is detector_service.is_loaded()
     assert response.detector_checkpoint == detector_service.checkpoint_path
     assert response.allowed_origins == ALLOWED_ORIGINS
+    assert response.gemini_available is gemini_client.is_available()
+    assert response.gemini_model == gemini_client.model_name
 
 
 def test_cors_allows_extension_origin() -> None:

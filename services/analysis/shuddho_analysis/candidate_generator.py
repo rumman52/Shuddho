@@ -39,11 +39,18 @@ class CandidateGenerator:
                 rule_suggestions=rule_suggestions,
                 text=text,
             ),
-            model_suggestions=self._rulebacked_candidates(model_suggestions or []),
+            model_suggestions=self._model_candidates(model_suggestions or []),
         )
 
     def _rulebacked_candidates(self, suggestions: list[Suggestion]) -> list[Suggestion]:
         return list(suggestions)
+
+    def _model_candidates(self, suggestions: list[Suggestion]) -> list[Suggestion]:
+        return [
+            suggestion
+            for suggestion in suggestions
+            if self._is_safe_model_suggestion(suggestion)
+        ]
 
     def _detector_backed_candidates(
         self,
@@ -336,6 +343,32 @@ class CandidateGenerator:
         if noun.endswith(("া", "ি", "ী", "ু", "ূ", "ে", "ো", "ৌ")):
             return f"{noun}র"
         return f"{noun}এর"
+
+    def _is_safe_model_suggestion(self, suggestion: Suggestion) -> bool:
+        if suggestion.source != SuggestionSource.MODEL:
+            return True
+        if not suggestion.replacement_options:
+            return False
+        if suggestion.confidence < 0.8:
+            return False
+
+        primary_replacement = suggestion.replacement_options[0].strip()
+        normalized_original = suggestion.original_text.strip()
+        if not primary_replacement or primary_replacement == normalized_original:
+            return False
+
+        if suggestion.category == SuggestionCategory.SPELLING:
+            return len(suggestion.replacement_options) == 1 and " " not in normalized_original and " " not in primary_replacement
+
+        if suggestion.category == SuggestionCategory.GRAMMAR:
+            if len(suggestion.replacement_options) != 1:
+                return False
+            return len(primary_replacement) <= max(len(normalized_original) * 3, 48)
+
+        if suggestion.category == SuggestionCategory.PUNCTUATION:
+            return len(primary_replacement) <= 12
+
+        return len(primary_replacement) <= max(len(normalized_original) * 3, 48)
 
     def _overlaps(self, finding: DetectorFinding, suggestion: Suggestion) -> bool:
         return finding.span_start < suggestion.span_end and suggestion.span_start < finding.span_end

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ MIN_GENERIC_CANDIDATE_SCORE = 0.985
 MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.985
 MIN_GENERIC_SCORE_MARGIN = 0.06
 MAX_GENERIC_REPLACEMENTS = 1
+LATIN_OR_DIGIT_PATTERN = re.compile(r"[A-Za-z0-9]")
 
 
 @dataclass(frozen=True)
@@ -183,6 +185,70 @@ class SpellEngine:
             expanded.update(self._reverse_correction_map.get(token, ()))
 
         return expanded
+
+    def expand_personal_dictionary(self, personal_dictionary: list[str] | None) -> set[str]:
+        return self._expand_personal_dictionary(personal_dictionary)
+
+    def looks_code_mixed_token(self, token: str) -> bool:
+        return bool(BANGLA_LETTER_PATTERN.search(token) and LATIN_OR_DIGIT_PATTERN.search(token))
+
+    def is_probable_named_entity_or_user_word(
+        self,
+        token: str,
+        *,
+        personal_dictionary: list[str] | None = None,
+    ) -> bool:
+        personal = self._expand_personal_dictionary(personal_dictionary)
+        if token in personal:
+            return True
+        if self.looks_code_mixed_token(token):
+            return True
+        if token in self.correction_map or token in self.lexicon:
+            return False
+        candidates = self.generate_candidates(token)
+        return self._looks_like_named_entity_or_user_word(token, candidates)
+
+    def is_safe_spelling_replacement(
+        self,
+        token: str,
+        replacement: str,
+        *,
+        personal_dictionary: list[str] | None = None,
+    ) -> bool:
+        personal = self._expand_personal_dictionary(personal_dictionary)
+        if token in personal or replacement in personal:
+            return False
+        if self.looks_code_mixed_token(token):
+            return False
+        if self.is_probable_named_entity_or_user_word(token, personal_dictionary=personal_dictionary):
+            return False
+
+        direct_candidate = self.spelling_error_map.get(token)
+        if direct_candidate == replacement:
+            return True
+
+        candidates = self.generate_candidates(token)
+        if not candidates:
+            return False
+        if self._is_ambiguous_generic_candidate(candidates):
+            return False
+        if not self._is_high_precision_generic_candidate(token, candidates):
+            return False
+        return candidates[0].word == replacement
+
+    def is_safe_orthography_variant(
+        self,
+        token: str,
+        replacement: str,
+        *,
+        personal_dictionary: list[str] | None = None,
+    ) -> bool:
+        personal = self._expand_personal_dictionary(personal_dictionary)
+        if token in personal or replacement in personal:
+            return False
+        if self.looks_code_mixed_token(token):
+            return False
+        return self.orthography_variant_map.get(token) == replacement
 
     def _looks_like_named_entity_or_user_word(self, token: str, candidates: list[SpellCandidate]) -> bool:
         if token in self.correction_map:
