@@ -28,6 +28,13 @@ def test_gemini_client_missing_key_falls_back_without_crashing() -> None:
     assert client.analyze_sentence("\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964", "standard") == []
 
 
+def test_gemini_client_placeholder_key_stays_disabled() -> None:
+    client = GeminiClient.from_environment({"GEMINI_API_KEY": "PASTE_MY_NEW_REAL_KEY_HERE"})
+
+    assert client.is_available() is False
+    assert client.model_name == DEFAULT_GEMINI_MODEL
+
+
 def test_parse_gemini_response_discards_malformed_payload_safely() -> None:
     assert parse_gemini_response("not-json", sentence="\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964") == []
 

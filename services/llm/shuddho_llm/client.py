@@ -15,6 +15,10 @@ DEFAULT_TIMEOUT_SECONDS = 20
 GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY"
 GEMINI_MODEL_ENV_VAR = "GEMINI_MODEL"
 GEMINI_TIMEOUT_SECONDS_ENV_VAR = "GEMINI_TIMEOUT_SECONDS"
+PLACEHOLDER_API_KEY_VALUES = {
+    "your_key_here",
+    "paste_my_new_real_key_here",
+}
 
 try:
     from google import genai
@@ -54,8 +58,11 @@ class GeminiClient:
         timeout_seconds = _parse_timeout(environment.get(GEMINI_TIMEOUT_SECONDS_ENV_VAR))
         api_key = (environment.get(GEMINI_API_KEY_ENV_VAR) or "").strip()
 
-        if not api_key:
-            logger.info("Gemini integration is disabled because %s is not set.", GEMINI_API_KEY_ENV_VAR)
+        if not api_key or api_key.casefold() in PLACEHOLDER_API_KEY_VALUES:
+            logger.info(
+                "Gemini integration is disabled because %s is missing or still set to a placeholder value.",
+                GEMINI_API_KEY_ENV_VAR,
+            )
             return cls.disabled(model_name=model_name, timeout_seconds=timeout_seconds)
 
         if genai is None or types is None:
