@@ -221,6 +221,7 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
     "http://localhost:5173",
     "https://shuddho-web-editor.vercel.app"
   ],
+  "openrouter_configured": false,
   "openrouter_available": false,
   "openrouter_model": "nvidia/nemotron-3-super-120b-a12b"
 }

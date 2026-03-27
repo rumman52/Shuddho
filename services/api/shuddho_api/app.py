@@ -79,12 +79,14 @@ analysis_pipeline = AnalysisPipeline(
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    openrouter_configured = openrouter_client.is_available()
     return HealthResponse(
         status="ok",
         detector_loaded=detector_service.is_loaded(),
         detector_checkpoint=detector_service.checkpoint_path,
         allowed_origins=ALLOWED_ORIGINS,
-        openrouter_available=openrouter_client.is_available(),
+        openrouter_configured=openrouter_configured,
+        openrouter_available=openrouter_configured,
         openrouter_model=openrouter_client.model_name,
     )
 

@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 DEFAULT_TIMEOUT_SECONDS = 20
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_CHAT_COMPLETIONS_URL = f"{OPENROUTER_API_BASE_URL}/chat/completions"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
 OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
 OPENROUTER_TIMEOUT_SECONDS_ENV_VAR = "OPENROUTER_TIMEOUT_SECONDS"
@@ -89,6 +90,9 @@ class OpenRouterClient:
     def is_available(self) -> bool:
         return self.enabled and self.session is not None and bool(self.api_key)
 
+    def is_configured(self) -> bool:
+        return self.is_available()
+
     def analyze_sentence(
         self,
         sentence: str,
@@ -129,7 +133,7 @@ class OpenRouterClient:
 
         try:
             response = self.session.post(
-                OPENROUTER_API_URL,
+                OPENROUTER_CHAT_COMPLETIONS_URL,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",

@@ -197,6 +197,7 @@ class HealthResponse(BaseModel):
     detector_loaded: bool
     detector_checkpoint: str | None = None
     allowed_origins: list[str]
+    openrouter_configured: bool = False
     openrouter_available: bool = False
     openrouter_model: str | None = None
 

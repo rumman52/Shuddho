@@ -36,9 +36,11 @@ def test_health_reports_detector_status() -> None:
         "detector_loaded",
         "detector_checkpoint",
         "allowed_origins",
+        "openrouter_configured",
         "openrouter_available",
         "openrouter_model",
     }
+    assert response.openrouter_configured is openrouter_client.is_available()
     assert response.openrouter_available is openrouter_client.is_available()
     assert response.openrouter_model == openrouter_client.model_name
 
