@@ -1,0 +1,6 @@
+fastapi<1.0.0,>=0.115.0
+pydantic<3.0.0,>=2.8.0
+uvicorn<1.0.0,>=0.30.0
+pytest<9.0.0,>=8.2.0
+torch<3.0.0,>=2.4.0
+sentencepiece<1.0.0,>=0.2.0

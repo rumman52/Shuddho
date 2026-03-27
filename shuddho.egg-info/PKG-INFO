@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: shuddho
+Version: 0.1.0
+Summary: Bangla AI writing assistant MVP scaffold
+Requires-Python: >=3.11
+Requires-Dist: fastapi<1.0.0,>=0.115.0
+Requires-Dist: pydantic<3.0.0,>=2.8.0
+Requires-Dist: uvicorn<1.0.0,>=0.30.0
+Requires-Dist: pytest<9.0.0,>=8.2.0
+Requires-Dist: torch<3.0.0,>=2.4.0
+Requires-Dist: sentencepiece<1.0.0,>=0.2.0
