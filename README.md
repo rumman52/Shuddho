@@ -53,6 +53,21 @@ pip install -e .
 uvicorn services.api.shuddho_api.app:app --reload
 ```
 
+#### Run backend locally
+
+On Windows, install and start the API from the repo root with:
+
+```bat
+py -m pip install -e .
+py -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port 8000
+```
+
+Test the backend at `http://127.0.0.1:8000/health`.
+
+Keep that terminal open while the backend is running. If you close it, the FastAPI server stops.
+
+Warnings about Python `Scripts` paths not being on `PATH` are not blocking here because `py -m ...` runs the installed modules directly.
+
 ### Web editor
 
 ```bash
