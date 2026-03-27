@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEven
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
-import type { AnalyzeMode, AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
+import type { AnalyzeMode, AnalyzeResponse, FeedbackAction, Suggestion } from "@shared/schemas/contracts";
 import { SuggestionCard, type SuggestionCardAnchor } from "./components/SuggestionCard";
 import { IssueMark } from "./lib/editorExtensions";
 import { analyzeText, sendFeedback } from "./lib/api";
@@ -13,9 +13,13 @@ const INITIAL_TEXT = sampleFixtures[0]?.text ?? "à¦†à¦®à¦¿  à¦¬à¦
 const ANALYSIS_DEBOUNCE_MS = 550;
 const HOVER_HIDE_DELAY_MS = 180;
 const POST_ACCEPT_ANALYSIS_DELAY_MS = 80;
+const PERSONAL_DICTIONARY_STORAGE_KEY = "shuddho-personal-dictionary";
+const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 
 export default function App() {
   const [requestMode, setRequestMode] = useState<AnalyzeMode>("standard");
+  const [userId] = useState<string>(() => loadOrCreateLocalUserId());
+  const [personalDictionary, setPersonalDictionary] = useState<string[]>(() => loadPersonalDictionary());
   const [analysis, setAnalysis] = useState<AnalyzeResponse>({
     text: INITIAL_TEXT,
     normalized_text: INITIAL_TEXT,
@@ -94,6 +98,10 @@ export default function App() {
   }, [requestMode]);
 
   useEffect(() => {
+    window.localStorage.setItem(PERSONAL_DICTIONARY_STORAGE_KEY, JSON.stringify(personalDictionary));
+  }, [personalDictionary]);
+
+  useEffect(() => {
     hoveredIssueIdRef.current = hoveredIssueId;
   }, [hoveredIssueId]);
 
@@ -120,7 +128,7 @@ export default function App() {
       return;
     }
     void runAnalysis(getEditorTextSurface(editor).text, requestMode);
-  }, [editor, requestMode]);
+  }, [editor, requestMode, personalDictionary]);
 
   useEffect(() => {
     if (!editor) {
@@ -251,7 +259,7 @@ export default function App() {
 
     setStatus("Analyzing...");
     try {
-      const response = await analyzeText({ text, mode });
+      const response = await analyzeText({ text, mode, personal_dictionary: personalDictionary, user_id: userId });
       if (requestId !== latestAnalysisRequestRef.current) {
         return;
       }
@@ -294,7 +302,8 @@ export default function App() {
         rule_id: suggestion.rule_id,
         subtype: suggestion.subtype,
         source: suggestion.source,
-        original_text: suggestion.original_text
+        original_text: suggestion.original_text,
+        user_id: userId,
       });
     } catch (error) {
       setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
@@ -325,7 +334,64 @@ export default function App() {
         rule_id: suggestion.rule_id,
         subtype: suggestion.subtype,
         source: suggestion.source,
-        original_text: suggestion.original_text
+        original_text: suggestion.original_text,
+        user_id: userId,
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
+    }
+  }
+
+  async function handlePersistentFeedbackAction(
+    action: FeedbackAction,
+    { userDictionaryEntry }: { userDictionaryEntry?: string } = {}
+  ) {
+    if (!visibleSuggestion) {
+      return;
+    }
+
+    const suggestion = visibleSuggestion;
+    setAnalysis((previous) => ({
+      ...previous,
+      suggestions: previous.suggestions.filter((item) => item.id !== suggestion.id)
+    }));
+    closePopup();
+
+    if (action === "add_to_personal_dictionary") {
+      const nextEntry = (userDictionaryEntry ?? suggestion.original_text).trim();
+      if (nextEntry) {
+        setPersonalDictionary((previous) => {
+          const normalizedEntry = normalizeDictionaryEntry(nextEntry);
+          if (!normalizedEntry || previous.includes(normalizedEntry)) {
+            return previous;
+          }
+          return [...previous, normalizedEntry];
+        });
+      }
+      setStatus("Added to personal dictionary");
+    } else if (action === "ignore_forever") {
+      setStatus("Suggestion ignored forever");
+    } else {
+      setStatus("Marked as not wrong");
+    }
+
+    const currentText = editor ? getEditorTextSurface(editor).text : analysis.text;
+    scheduleAnalysis(currentText, POST_ACCEPT_ANALYSIS_DELAY_MS);
+
+    try {
+      await sendFeedback({
+        suggestion_id: suggestion.id,
+        action,
+        text: analysis.text,
+        replacement: suggestion.replacement_options[0] ?? null,
+        feedback_key: suggestion.feedback_key,
+        rule_id: suggestion.rule_id,
+        subtype: suggestion.subtype,
+        source: suggestion.source,
+        original_text: suggestion.original_text,
+        suppression_key: suggestion.suppression_key,
+        user_dictionary_entry: userDictionaryEntry ?? suggestion.original_text,
+        user_id: userId,
       });
     } catch (error) {
       setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
@@ -706,6 +772,49 @@ export default function App() {
             onPointerDownCapture={handlePopupPointerDownCapture}
           />
         ) : null}
+        {visibleSuggestion ? (
+          <div
+            style={{
+              marginTop: "0.85rem",
+              padding: "0.85rem 1rem",
+              borderRadius: "18px",
+              border: "1px solid var(--border)",
+              background: "rgba(255, 255, 255, 0.82)"
+            }}
+          >
+            <div className="panel-header" style={{ marginBottom: "0.65rem" }}>
+              <div>
+                <h2 style={{ fontSize: "1.1rem" }}>Trust & adapt</h2>
+                <p style={{ margin: 0 }}>
+                  Tell Shuddho when this suggestion should be suppressed or treated as your preferred wording.
+                </p>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="suggestion-card__dismiss"
+                onClick={() => void handlePersistentFeedbackAction("not_wrong")}
+              >
+                This is not wrong
+              </button>
+              <button
+                type="button"
+                className="suggestion-card__dismiss"
+                onClick={() => void handlePersistentFeedbackAction("ignore_forever")}
+              >
+                Ignore forever
+              </button>
+              <button
+                type="button"
+                className="suggestion-card__dismiss"
+                onClick={() => void handlePersistentFeedbackAction("add_to_personal_dictionary")}
+              >
+                Add to personal dictionary
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="suggestions-panel">
@@ -867,4 +976,53 @@ function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): str
   }
 
   return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} • ${mode} mode`;
+}
+
+function loadPersonalDictionary(): string[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const rawValue = window.localStorage.getItem(PERSONAL_DICTIONARY_STORAGE_KEY);
+  if (!rawValue) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((entry) => normalizeDictionaryEntry(String(entry)))
+      .filter((entry): entry is string => Boolean(entry));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeDictionaryEntry(entry: string): string {
+  return entry.trim().replace(/\s+/g, " ");
+}
+
+function loadOrCreateLocalUserId(): string {
+  if (typeof window === "undefined") {
+    return "anonymous-web-editor";
+  }
+
+  const existingUserId = window.localStorage.getItem(USER_PROFILE_ID_STORAGE_KEY);
+  if (existingUserId) {
+    return existingUserId;
+  }
+
+  const generatedUserId = createLocalUserId();
+  window.localStorage.setItem(USER_PROFILE_ID_STORAGE_KEY, generatedUserId);
+  return generatedUserId;
+}
+
+function createLocalUserId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }

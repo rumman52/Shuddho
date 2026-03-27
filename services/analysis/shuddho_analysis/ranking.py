@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from services.feedback.shuddho_feedback.store import FeedbackStore
 from ml.ranking.pipeline import NeuralRankerInterface
-from shared.schemas.python_models import Suggestion
+from shared.schemas.python_models import AnalyzeMode, Suggestion
 
 
 class SuggestionRankingPipeline:
@@ -15,9 +15,20 @@ class SuggestionRankingPipeline:
         self.ranker = ranker or NeuralRankerInterface()
         self.feedback_store = feedback_store
 
-    def rank(self, suggestions: list[Suggestion], *, text: str) -> list[Suggestion]:
+    def rank(
+        self,
+        suggestions: list[Suggestion],
+        *,
+        text: str,
+        mode: AnalyzeMode = AnalyzeMode.STANDARD,
+    ) -> list[Suggestion]:
         feedback_index = self.feedback_store.load_signal_index(suggestions) if self.feedback_store is not None else None
-        ranked = self.ranker.rank(list(suggestions), text=text, feedback_index=feedback_index)
+        ranked = self.ranker.rank(
+            list(suggestions),
+            text=text,
+            feedback_index=feedback_index,
+            mode=mode,
+        )
         ranked.sort(
             key=lambda item: (
                 -item.score,

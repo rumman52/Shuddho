@@ -10,17 +10,24 @@ from shared.constants.bangla import (
     COMMON_BANGLA_CONFUSIONS,
     CURATED_VARIANT_CORRECTIONS,
 )
-from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
+from shared.schemas.python_models import (
+    AnalyzeMode,
+    Suggestion,
+    SuggestionCategory,
+    SuggestionKind,
+    SuggestionSeverity,
+    SuggestionSource,
+)
 from shared.utils.text import stable_id
 
 from .runtime_lexicon import load_runtime_lexicon
 
 
 DIRECT_SPELLING_CONFIDENCE = 0.99
-DIRECT_VARIANT_CONFIDENCE = 0.9
-MIN_GENERIC_CANDIDATE_SCORE = 0.95
-MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.96
-MIN_GENERIC_SCORE_MARGIN = 0.03
+DIRECT_VARIANT_CONFIDENCE = 0.84
+MIN_GENERIC_CANDIDATE_SCORE = 0.985
+MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.985
+MIN_GENERIC_SCORE_MARGIN = 0.06
 MAX_GENERIC_REPLACEMENTS = 1
 
 
@@ -70,17 +77,20 @@ class SpellEngine:
                     Suggestion(
                         id=stable_id("spell", f"{match.start()}:{match.end()}:{token}:{variant_candidate}"),
                         rule_id="SPELL_002",
-                        category=SuggestionCategory.SPELLING,
+                        category=SuggestionCategory.STYLE,
                         subtype="orthography_variant",
                         span_start=match.start(),
                         span_end=match.end(),
                         original_text=token,
                         replacement_options=[variant_candidate],
                         confidence=DIRECT_VARIANT_CONFIDENCE,
-                        explanation_bn=f"'{token}' রূপটি গ্রহণযোগ্য ভিন্নরূপ হলেও এখানে মানক বানান '{variant_candidate}' বেশি প্রচলিত।",
-                        explanation_en=f"'{token}' is an acceptable variant, but '{variant_candidate}' is the preferred standard spelling here.",
+                        explanation_bn=f"'{token}' রূপটি গ্রহণযোগ্য, তবে মানক রূপ '{variant_candidate}' এখানে বেশি উপযুক্ত হতে পারে।",
+                        explanation_en=f"'{token}' is acceptable, but '{variant_candidate}' is the preferred standard form here.",
                         source=SuggestionSource.SPELL,
                         severity=SuggestionSeverity.LOW,
+                        suggestion_kind=SuggestionKind.ORTHOGRAPHY_VARIANT,
+                        optional_mode_visibility=[AnalyzeMode.STRICT, AnalyzeMode.FORMAL],
+                        is_variant_only=True,
                     )
                 )
                 continue
@@ -104,12 +114,19 @@ class SpellEngine:
                         explanation_en=f"The dictionary-backed spelling for '{token}' here is '{direct_candidate}'.",
                         source=SuggestionSource.SPELL,
                         severity=SuggestionSeverity.MEDIUM,
+                        suggestion_kind=SuggestionKind.TRUE_SPELLING_ERROR,
                     )
                 )
                 continue
 
             candidates = self.generate_candidates(token)
-            if not candidates or self._is_ambiguous_generic_candidate(candidates):
+            if not candidates:
+                continue
+            if self._looks_like_named_entity_or_user_word(token, candidates):
+                continue
+            if self._is_ambiguous_generic_candidate(candidates):
+                continue
+            if not self._is_high_precision_generic_candidate(token, candidates):
                 continue
 
             top_candidates = [candidate.word for candidate in candidates[:MAX_GENERIC_REPLACEMENTS]]
@@ -132,10 +149,11 @@ class SpellEngine:
                     original_text=token,
                     replacement_options=top_candidates,
                     confidence=round(confidence, 2),
-                    explanation_bn=f"'{token}' শব্দটির সবচেয়ে কাছের নিরাপদ সংশোধন '{primary_candidate}'।",
-                    explanation_en=f"The closest safe correction for '{token}' is '{primary_candidate}'.",
+                    explanation_bn=f"'{token}' শব্দটির নির্ভরযোগ্য উচ্চ-নির্ভুল সংশোধন '{primary_candidate}'।",
+                    explanation_en=f"The only high-precision correction for '{token}' here is '{primary_candidate}'.",
                     source=SuggestionSource.SPELL,
                     severity=SuggestionSeverity.LOW,
+                    suggestion_kind=SuggestionKind.TRUE_SPELLING_ERROR,
                 )
             )
 
@@ -166,11 +184,36 @@ class SpellEngine:
 
         return expanded
 
+    def _looks_like_named_entity_or_user_word(self, token: str, candidates: list[SpellCandidate]) -> bool:
+        if token in self.correction_map:
+            return False
+        if len(token) >= 5 and not candidates:
+            return True
+        if len(candidates) > 1 and (candidates[0].score - candidates[1].score) < max(MIN_GENERIC_SCORE_MARGIN, 0.08):
+            return True
+        top_candidate = candidates[0]
+        if len(token) >= 5 and top_candidate.score < 0.99:
+            return True
+        return False
+
     def _is_ambiguous_generic_candidate(self, candidates: list[SpellCandidate]) -> bool:
         return len(candidates) > 1 and (candidates[0].score - candidates[1].score) < MIN_GENERIC_SCORE_MARGIN
 
+    def _is_high_precision_generic_candidate(self, token: str, candidates: list[SpellCandidate]) -> bool:
+        top_candidate = candidates[0]
+        if top_candidate.score < MIN_GENERIC_CANDIDATE_SCORE:
+            return False
+        distance = levenshtein_distance(token, top_candidate.word)
+        if distance != 1:
+            return False
+        if len(token) >= 5 and _bigram_overlap_score(token, top_candidate.word) < 0.8:
+            return False
+        if len(candidates) > 1 and (top_candidate.score - candidates[1].score) < MIN_GENERIC_SCORE_MARGIN:
+            return False
+        return True
+
     def generate_candidates(self, token: str) -> list[SpellCandidate]:
-        mapped_candidate = self.correction_map.get(token)
+        mapped_candidate = self.spelling_error_map.get(token)
         if mapped_candidate:
             return [SpellCandidate(word=mapped_candidate, score=DIRECT_SPELLING_CONFIDENCE)]
 
@@ -183,7 +226,7 @@ class SpellEngine:
             seen_candidates.add(candidate)
 
             distance = levenshtein_distance(token, candidate)
-            if distance > 2:
+            if distance > 1:
                 continue
             if not is_safe_generic_candidate(token, candidate, distance):
                 continue
@@ -197,14 +240,14 @@ class SpellEngine:
 
     def _score_candidate(self, token: str, candidate: str, distance: int) -> float:
         rank = self.frequency_rank.get(candidate, 999)
-        score = 1.0 - (distance * 0.28) - (abs(len(token) - len(candidate)) * 0.08)
+        score = 1.0 - (distance * 0.18) - (abs(len(token) - len(candidate)) * 0.06)
         if token[:1] == candidate[:1]:
-            score += 0.1
+            score += 0.12
         if token[-1:] == candidate[-1:]:
-            score += 0.08
+            score += 0.1
         score += common_confusion_bonus(token, candidate)
-        score += _bigram_overlap_score(token, candidate) * 0.1
-        score += max(0.0, 0.02 - (rank * 0.0001))
+        score += _bigram_overlap_score(token, candidate) * 0.12
+        score += max(0.0, 0.015 - (rank * 0.00008))
         return round(score, 4)
 
     def _build_candidate_index(self, candidate_words: tuple[str, ...]) -> dict[tuple[str, int], tuple[str, ...]]:
@@ -216,7 +259,7 @@ class SpellEngine:
     def _iter_candidate_pool(self, token: str) -> Iterator[str]:
         token_length = len(token)
         for first_character in candidate_initial_chars(token):
-            for candidate_length in range(max(1, token_length - 2), token_length + 3):
+            for candidate_length in range(max(1, token_length - 1), token_length + 2):
                 yield from self._candidate_index.get((first_character, candidate_length), ())
 
 
@@ -224,10 +267,10 @@ def common_confusion_bonus(source: str, target: str) -> float:
     bonus = 0.0
     for left, right in zip(source, target):
         if left == right:
-            bonus += 0.015
+            bonus += 0.02
             continue
         if right in COMMON_BANGLA_CONFUSIONS.get(left, ()):
-            bonus += 0.03
+            bonus += 0.04
     return bonus
 
 
@@ -269,19 +312,13 @@ def candidate_initial_chars(token: str) -> tuple[str, ...]:
 
 
 def is_safe_generic_candidate(token: str, candidate: str, distance: int) -> bool:
-    if distance <= 0:
+    if distance != 1:
         return False
     if token[-1:] != candidate[-1:]:
         return False
-
-    overlap = _bigram_overlap_score(token, candidate)
-    if distance == 1:
-        return overlap >= 0.5
-    if min(len(token), len(candidate)) < 6:
+    if token[:1] != candidate[:1]:
         return False
-    if token[-1:] != candidate[-1:]:
-        return False
-    return overlap >= 0.75
+    return _bigram_overlap_score(token, candidate) >= 0.6
 
 
 def _bigram_overlap_score(source: str, target: str) -> float:

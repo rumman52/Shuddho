@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from shared.schemas.python_models import Suggestion, SuggestionSeverity, SuggestionSource
+from shared.schemas.python_models import AnalyzeMode, Suggestion, SuggestionKind, SuggestionSeverity, SuggestionSource
 
 
 BANGLA_WORD_RE = re.compile(r"[\u0980-\u09FF]{2,}")
@@ -19,8 +19,12 @@ class RankedSuggestion:
 @dataclass(frozen=True)
 class RankingSignals:
     candidate_support: int
+    rule_precision_bonus: float
+    spell_certainty_bonus: float
+    detector_confidence_bonus: float
     contextual_support: float
     ambiguity_penalty: float
+    variant_penalty: float
     exact_span_conflicts: int
     overlap_conflicts: int
     feedback_bonus: float
@@ -33,18 +37,19 @@ class SuggestionRanker:
         *,
         text: str = "",
         feedback_index=None,
+        mode: AnalyzeMode = AnalyzeMode.STANDARD,
     ) -> list[RankedSuggestion]:
         raise NotImplementedError
 
 
 class HeuristicContextualReranker:
-    def score(self, suggestion: Suggestion, *, signals: RankingSignals, text: str) -> float:
-        del text
+    def score(self, suggestion: Suggestion, *, signals: RankingSignals, text: str, mode: AnalyzeMode) -> float:
+        del text, mode
         source_bonus = {
-            SuggestionSource.RULE: 0.1,
-            SuggestionSource.HYBRID: 0.14,
-            SuggestionSource.SPELL: 0.06,
-            SuggestionSource.MODEL: 0.0,
+            SuggestionSource.RULE: 0.08,
+            SuggestionSource.HYBRID: 0.12,
+            SuggestionSource.SPELL: 0.04,
+            SuggestionSource.MODEL: -0.01,
         }[suggestion.source]
         severity_bonus = {
             SuggestionSeverity.HIGH: 0.04,
@@ -62,10 +67,14 @@ class HeuristicContextualReranker:
             + source_bonus
             + severity_bonus
             + fusion_bonus
+            + signals.rule_precision_bonus
+            + signals.spell_certainty_bonus
+            + signals.detector_confidence_bonus
             + signals.contextual_support
             + signals.feedback_bonus
             - replacement_penalty
             - signals.ambiguity_penalty
+            - signals.variant_penalty
             - exact_conflict_penalty
             - overlap_penalty
         )
@@ -73,16 +82,23 @@ class HeuristicContextualReranker:
 
 
 class ContextualRerankerScaffold:
-    def __init__(self, scorer: Callable[[Suggestion, RankingSignals, str], float] | None = None) -> None:
+    def __init__(self, scorer: Callable[[Suggestion, RankingSignals, str, AnalyzeMode], float] | None = None) -> None:
         self.scorer = scorer
 
     def is_loaded(self) -> bool:
         return self.scorer is not None
 
-    def score(self, suggestion: Suggestion, *, signals: RankingSignals, text: str) -> float | None:
+    def score(
+        self,
+        suggestion: Suggestion,
+        *,
+        signals: RankingSignals,
+        text: str,
+        mode: AnalyzeMode,
+    ) -> float | None:
         if self.scorer is None:
             return None
-        return float(self.scorer(suggestion, signals, text))
+        return float(self.scorer(suggestion, signals, text, mode))
 
 
 class NeuralRankerInterface(SuggestionRanker):
@@ -101,20 +117,29 @@ class NeuralRankerInterface(SuggestionRanker):
         *,
         text: str = "",
         feedback_index=None,
+        mode: AnalyzeMode = AnalyzeMode.STANDARD,
     ) -> list[RankedSuggestion]:
         candidate_support = _count_candidate_support(suggestions)
         exact_span_conflicts = _count_exact_span_conflicts(suggestions)
         overlap_conflicts = _count_partial_overlaps(suggestions)
-        contextual_support = _contextual_support_scores(suggestions, text=text)
-        ambiguity_penalties = _ambiguity_penalties(suggestions)
+        rule_precision_bonuses = _rule_precision_bonuses(suggestions)
+        spell_certainty_bonuses = _spell_certainty_bonuses(suggestions)
+        detector_confidence_bonuses = _detector_confidence_bonuses(suggestions)
+        contextual_support = _contextual_support_scores(suggestions, text=text, mode=mode)
+        ambiguity_penalties = _ambiguity_penalties(suggestions, mode=mode)
+        variant_penalties = _variant_penalties(suggestions, mode=mode)
         feedback_bonuses = _feedback_bonuses(suggestions, feedback_index)
 
         ranked: list[RankedSuggestion] = []
         for suggestion in suggestions:
             signals = RankingSignals(
                 candidate_support=candidate_support.get(_candidate_group_key(suggestion), 1),
+                rule_precision_bonus=rule_precision_bonuses.get(suggestion.id, 0.0),
+                spell_certainty_bonus=spell_certainty_bonuses.get(suggestion.id, 0.0),
+                detector_confidence_bonus=detector_confidence_bonuses.get(suggestion.id, 0.0),
                 contextual_support=contextual_support.get(suggestion.id, 0.0),
                 ambiguity_penalty=ambiguity_penalties.get(suggestion.id, 0.0),
+                variant_penalty=variant_penalties.get(suggestion.id, 0.0),
                 exact_span_conflicts=exact_span_conflicts.get(suggestion.id, 0),
                 overlap_conflicts=overlap_conflicts.get(suggestion.id, 0),
                 feedback_bonus=feedback_bonuses.get(suggestion.id, 0.0),
@@ -123,6 +148,7 @@ class NeuralRankerInterface(SuggestionRanker):
                 suggestion,
                 signals=signals,
                 text=text,
+                mode=mode,
             )
             score = scaffold_score
             if score is None:
@@ -130,6 +156,7 @@ class NeuralRankerInterface(SuggestionRanker):
                     suggestion,
                     signals=signals,
                     text=text,
+                    mode=mode,
                 )
             ranked.append(RankedSuggestion(suggestion=suggestion, score=round(score, 4)))
 
@@ -175,45 +202,103 @@ def _count_partial_overlaps(suggestions: Sequence[Suggestion]) -> dict[str, int]
     return overlaps
 
 
-def _contextual_support_scores(suggestions: Sequence[Suggestion], *, text: str) -> dict[str, float]:
+def _rule_precision_bonuses(suggestions: Sequence[Suggestion]) -> dict[str, float]:
+    bonuses: dict[str, float] = {}
+    for suggestion in suggestions:
+        bonus = 0.0
+        if suggestion.source == SuggestionSource.RULE:
+            bonus += 0.08
+        elif suggestion.source == SuggestionSource.HYBRID:
+            bonus += 0.06
+        elif suggestion.source == SuggestionSource.SPELL and suggestion.suggestion_kind == SuggestionKind.TRUE_SPELLING_ERROR:
+            bonus += 0.04
+
+        if suggestion.suggestion_kind in {
+            SuggestionKind.PUNCTUATION_ERROR,
+            SuggestionKind.SPACING_ERROR,
+        }:
+            bonus += 0.03
+        elif suggestion.suggestion_kind == SuggestionKind.GRAMMAR_ERROR and suggestion.replacement_options:
+            bonus += 0.02
+        elif suggestion.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT:
+            bonus -= 0.02
+
+        bonuses[suggestion.id] = round(bonus, 4)
+    return bonuses
+
+
+def _spell_certainty_bonuses(suggestions: Sequence[Suggestion]) -> dict[str, float]:
+    bonuses: dict[str, float] = {}
+    for suggestion in suggestions:
+        bonus = 0.0
+        if suggestion.suggestion_kind == SuggestionKind.TRUE_SPELLING_ERROR and suggestion.source in {
+            SuggestionSource.SPELL,
+            SuggestionSource.HYBRID,
+        }:
+            bonus += 0.04
+            if len(suggestion.replacement_options) == 1:
+                bonus += 0.03
+            if suggestion.confidence >= 0.98:
+                bonus += 0.03
+        if suggestion.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT:
+            bonus -= 0.02
+        bonuses[suggestion.id] = round(bonus, 4)
+    return bonuses
+
+
+def _detector_confidence_bonuses(suggestions: Sequence[Suggestion]) -> dict[str, float]:
+    bonuses: dict[str, float] = {}
+    for suggestion in suggestions:
+        bonus = 0.0
+        if suggestion.source in {SuggestionSource.MODEL, SuggestionSource.HYBRID}:
+            if suggestion.is_contextual:
+                bonus += 0.02
+            if suggestion.confidence >= 0.9:
+                bonus += 0.02
+            if not suggestion.replacement_options:
+                bonus -= 0.04
+        bonuses[suggestion.id] = round(bonus, 4)
+    return bonuses
+
+
+def _contextual_support_scores(
+    suggestions: Sequence[Suggestion],
+    *,
+    text: str,
+    mode: AnalyzeMode,
+) -> dict[str, float]:
     support_scores: dict[str, float] = {}
     for suggestion in suggestions:
         bonus = 0.0
-        if suggestion.subtype in {
-            "repeated_word",
-            "duplicate_punctuation",
-            "space_before_punctuation",
-            "extra_whitespace",
-            "orthography_variant",
-            "spelling_error",
-            "detector_spelling",
+        if suggestion.is_contextual:
+            bonus += 0.03
+        if suggestion.suggestion_kind in {
+            SuggestionKind.GRAMMAR_ERROR,
+            SuggestionKind.PUNCTUATION_ERROR,
+            SuggestionKind.SPACING_ERROR,
         }:
+            bonus += 0.03
+        if suggestion.suggestion_kind == SuggestionKind.TRUE_SPELLING_ERROR and len(suggestion.replacement_options) == 1:
             bonus += 0.04
+        if suggestion.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT:
+            bonus += 0.01 if mode == AnalyzeMode.FORMAL else 0.0
 
-        if suggestion.category.value == "punctuation" and any(character in suggestion.original_text for character in ",.;:!?।"):
-            bonus += 0.03
-        if suggestion.category.value == "spelling" and len(suggestion.replacement_options) == 1 and BANGLA_WORD_RE.fullmatch(suggestion.original_text or ""):
-            bonus += 0.04
-        if suggestion.category.value == "grammar" and " " in suggestion.original_text and suggestion.replacement_options:
-            bonus += 0.025
-        if suggestion.subtype == "extra_whitespace" and suggestion.original_text.strip() == "":
+        if suggestion.category.value == "spelling" and BANGLA_WORD_RE.fullmatch(suggestion.original_text or ""):
             bonus += 0.02
-        if suggestion.source == SuggestionSource.HYBRID:
-            bonus += 0.03
         if suggestion.replacement_options:
-            bonus += 0.03
+            bonus += 0.02
             if len(suggestion.replacement_options) == 1:
                 bonus += 0.02
             if any(any("\u0980" <= character <= "\u09ff" for character in option) for option in suggestion.replacement_options):
-                bonus += 0.03
+                bonus += 0.02
         elif suggestion.source == SuggestionSource.MODEL:
-            bonus -= 0.03
+            bonus -= 0.04
 
         if text and "\n" in text and "\n" in suggestion.original_text:
             bonus -= 0.01
 
         if _has_nearby_supporting_candidate(suggestion, suggestions):
-            bonus += 0.04
+            bonus += 0.03
 
         support_scores[suggestion.id] = round(bonus, 4)
     return support_scores
@@ -236,18 +321,45 @@ def _has_nearby_supporting_candidate(target: Suggestion, suggestions: Sequence[S
     return False
 
 
-def _ambiguity_penalties(suggestions: Sequence[Suggestion]) -> dict[str, float]:
+def _ambiguity_penalties(suggestions: Sequence[Suggestion], *, mode: AnalyzeMode) -> dict[str, float]:
     penalties: dict[str, float] = {}
     for suggestion in suggestions:
         penalty = 0.0
         if len(suggestion.replacement_options) > 1:
-            penalty += min(len(suggestion.replacement_options) - 1, 3) * 0.04
+            penalty += min(len(suggestion.replacement_options) - 1, 3) * 0.05
         if suggestion.source == SuggestionSource.MODEL and not suggestion.replacement_options:
-            penalty += 0.06
+            penalty += 0.08
         if suggestion.source == SuggestionSource.MODEL and len(suggestion.replacement_options) > 1:
-            penalty += 0.03
-        if suggestion.category.value == "spelling" and _has_same_span_competing_replacement(suggestion, suggestions):
             penalty += 0.04
+        if suggestion.category.value == "spelling" and _has_same_span_competing_replacement(suggestion, suggestions):
+            penalty += 0.05
+        if suggestion.suggestion_kind == SuggestionKind.NO_SUGGESTION:
+            penalty += 0.1
+        if suggestion.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT and mode == AnalyzeMode.STANDARD:
+            penalty += 0.04
+        penalties[suggestion.id] = round(penalty, 4)
+    return penalties
+
+
+def _variant_penalties(suggestions: Sequence[Suggestion], *, mode: AnalyzeMode) -> dict[str, float]:
+    penalties: dict[str, float] = {}
+    for suggestion in suggestions:
+        penalty = 0.0
+        if suggestion.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT:
+            penalty += {
+                AnalyzeMode.STANDARD: 0.16,
+                AnalyzeMode.STRICT: 0.05,
+                AnalyzeMode.FORMAL: 0.0,
+            }[mode]
+        elif suggestion.suggestion_kind == SuggestionKind.STYLE_SUGGESTION:
+            penalty += {
+                AnalyzeMode.STANDARD: 0.08,
+                AnalyzeMode.STRICT: 0.03,
+                AnalyzeMode.FORMAL: 0.0,
+            }[mode]
+
+        if suggestion.is_variant_only and mode != AnalyzeMode.FORMAL:
+            penalty += 0.02
         penalties[suggestion.id] = round(penalty, 4)
     return penalties
 

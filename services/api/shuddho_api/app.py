@@ -15,7 +15,7 @@ from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
-from shared.schemas.python_models import AnalyzeRequest, AnalyzeResponse, FeedbackRecord, FeedbackRequest, HealthResponse
+from shared.schemas.python_models import AnalyzeRequest, AnalyzeResponse, FeedbackRecord, FeedbackRequest, HealthResponse, Suggestion
 
 ALLOWED_ORIGINS_ENV_VAR = "SHUDDHO_ALLOWED_ORIGINS"
 DEFAULT_ALLOWED_ORIGINS = [
@@ -90,9 +90,46 @@ def root() -> dict[str, str]:
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
-    return analysis_pipeline.analyze(payload.text, payload.personal_dictionary, payload.mode)
+    effective_personal_dictionary = _merge_personal_dictionaries(
+        payload.personal_dictionary,
+        feedback_store.load_personal_dictionary(user_id=payload.user_id),
+    )
+    response = analysis_pipeline.analyze(
+        payload.text,
+        effective_personal_dictionary,
+        payload.mode,
+    )
+    suppressed_keys = feedback_store.load_suppressed_keys(user_id=payload.user_id)
+    if not suppressed_keys:
+        return response
+    return response.model_copy(
+        update={
+            "suggestions": _filter_suppressed_suggestions(response.suggestions, suppressed_keys),
+        }
+    )
 
 
 @app.post("/feedback", response_model=FeedbackRecord)
 def feedback(payload: FeedbackRequest) -> FeedbackRecord:
     return feedback_store.save(payload)
+
+
+def _merge_personal_dictionaries(*sources: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for entry in source:
+            normalized = " ".join(entry.split())
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+    return merged
+
+
+def _filter_suppressed_suggestions(suggestions: list[Suggestion], suppressed_keys: set[str]) -> list[Suggestion]:
+    return [
+        suggestion
+        for suggestion in suggestions
+        if suggestion.suppression_key not in suppressed_keys
+    ]

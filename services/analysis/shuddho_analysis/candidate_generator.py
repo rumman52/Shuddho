@@ -91,7 +91,6 @@ class CandidateGenerator:
                     )
                 )
                 continue
-            suggestions.append(self._to_suggestion(finding))
         return suggestions
 
     def _contextual_replacements(
@@ -141,7 +140,7 @@ class CandidateGenerator:
             elif not self._overlaps(finding, suggestion):
                 continue
 
-            if suggestion.category != finding.category and suggestion.source not in {SuggestionSource.RULE, SuggestionSource.SPELL, SuggestionSource.HYBRID}:
+            if suggestion.category != finding.category:
                 continue
             supported.append(suggestion)
         return supported
@@ -155,15 +154,12 @@ class CandidateGenerator:
         if finding.category == SuggestionCategory.PUNCTUATION:
             return self._punctuation_replacements(finding.original_text, text=text)
         if finding.category == SuggestionCategory.GRAMMAR:
-            grammar_replacements = self._grammar_replacements(finding.original_text)
-            if grammar_replacements:
-                return grammar_replacements
-            return self._spell_backed_replacements(finding.original_text)
+            return self._grammar_replacements(finding.original_text)
         if finding.category == SuggestionCategory.STYLE:
             spacing_replacements = self._spacing_replacements(finding.original_text)
             if spacing_replacements:
                 return spacing_replacements
-            return self._punctuation_replacements(finding.original_text, text=text)
+            return []
         return []
 
     def _spell_backed_replacements(self, token: str) -> list[str]:
@@ -172,7 +168,9 @@ class CandidateGenerator:
         if not BANGLA_WORD_PATTERN.fullmatch(token):
             return []
         candidates = self.spell_engine.generate_candidates(token)
-        return self._unique_replacements(candidate.word for candidate in candidates[:2])
+        if not candidates:
+            return []
+        return self._unique_replacements(candidate.word for candidate in candidates[:1])
 
     def _punctuation_replacements(self, original_text: str, *, text: str) -> list[str]:
         stripped = original_text.strip()
@@ -278,6 +276,7 @@ class CandidateGenerator:
             explanation_en=explanation_en,
             source=resolved_source,
             severity=finding.severity if actionable else max(finding.severity, SuggestionSeverity.LOW, key=_severity_rank),
+            is_contextual=actionable or finding.source in {SuggestionSource.MODEL, SuggestionSource.HYBRID},
         )
 
     def _build_explanation(
