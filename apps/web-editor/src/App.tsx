@@ -19,12 +19,13 @@ const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 type BackendMode = "checking" | "online" | "offline";
 
 export default function App() {
-  const [requestMode, setRequestMode] = useState<AnalyzeMode>("strict");
+  const [requestMode, setRequestMode] = useState<AnalyzeMode>("standard");
   const [userId] = useState<string>(() => loadOrCreateLocalUserId());
   const [personalDictionary, setPersonalDictionary] = useState<string[]>(() => loadPersonalDictionary());
   const [analysis, setAnalysis] = useState<AnalyzeResponse>({
     text: INITIAL_TEXT,
     normalized_text: INITIAL_TEXT,
+    corrected_text: INITIAL_TEXT,
     suggestions: []
   });
   const [showStyleSuggestions, setShowStyleSuggestions] = useState(false);
@@ -261,7 +262,7 @@ export default function App() {
     const requestId = ++latestAnalysisRequestRef.current;
 
     if (!text.trim()) {
-      setAnalysis({ text, normalized_text: text, suggestions: [] });
+      setAnalysis({ text, normalized_text: text, corrected_text: text, suggestions: [] });
       closePopup();
       setStatus("Empty input");
       return;
@@ -274,18 +275,18 @@ export default function App() {
         return;
       }
       setBackendMode("online");
-      setBackendMessage(`Backend connected at ${apiBaseUrl}. Detector and contextual suggestions are active.`);
+      setBackendMessage(`Backend connected at ${apiBaseUrl}. Conservative backend analysis is active.`);
       setAnalysis(response);
-      setStatus(formatAnalysisStatus(response.suggestions, mode));
+      setStatus(formatPreciseAnalysisStatus(response.suggestions, mode));
     } catch (error) {
       if (requestId !== latestAnalysisRequestRef.current) {
         return;
       }
       const fallbackResponse = analyzeTextLocally({ text, mode, personal_dictionary: personalDictionary });
       setBackendMode("offline");
-      setBackendMessage(`Backend unavailable at ${apiBaseUrl}. Using browser fallback rules and safe spelling checks.`);
+      setBackendMessage(`Browser fallback is active because the backend is unavailable at ${apiBaseUrl}. Results currently come from local safe checks only.`);
       setAnalysis(fallbackResponse);
-      setStatus(formatFallbackStatus(fallbackResponse.suggestions, mode));
+      setStatus(formatPreciseFallbackStatus(fallbackResponse.suggestions, mode));
     }
   }
 
@@ -647,7 +648,7 @@ export default function App() {
       );
     } catch {
       setBackendMode("offline");
-      setBackendMessage(`Backend unavailable at ${apiBaseUrl}. The editor will keep working with browser fallback checks.`);
+      setBackendMessage(`Browser fallback is active because the backend is unavailable at ${apiBaseUrl}. Exact contextual backend corrections are unavailable until it reconnects.`);
     }
   }
 
@@ -756,7 +757,7 @@ export default function App() {
                     : "rgba(255, 255, 255, 0.12)",
             }}
           >
-            {backendMode === "online" ? "Backend live" : backendMode === "offline" ? "Browser fallback" : "Checking API"}
+            {backendMode === "online" ? "Backend live" : backendMode === "offline" ? "Browser fallback only" : "Checking API"}
           </span>
           <span>{status}</span>
           <strong>{hardSuggestions.length}</strong>
@@ -824,6 +825,21 @@ export default function App() {
             </button>
           </div>
         </div>
+        {backendMode === "offline" ? (
+          <div
+            role="status"
+            style={{
+              marginBottom: "0.9rem",
+              padding: "0.85rem 1rem",
+              borderRadius: "18px",
+              border: "1px solid rgba(187, 128, 48, 0.28)",
+              background: "rgba(255, 244, 228, 0.82)",
+              color: "var(--ink)"
+            }}
+          >
+            Browser fallback is active. Contextual backend corrections are currently unavailable, so Shuddho is only using local safe checks in this session.
+          </div>
+        ) : null}
         <div
           ref={editorStageRef}
           className="editor-stage"
@@ -1051,7 +1067,7 @@ function matchSuggestion(previous: Suggestion | null, nextSuggestions: Suggestio
   return bestMatch?.suggestion ?? null;
 }
 
-function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
+export function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
   const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
   const styleSuggestionCount = suggestions.length - hardIssueCount;
   const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
@@ -1064,7 +1080,7 @@ function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): str
   return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} • ${mode} mode`;
 }
 
-function formatFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
+export function formatFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
   const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
   const styleSuggestionCount = suggestions.length - hardIssueCount;
   const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
@@ -1075,6 +1091,32 @@ function formatFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMode): str
   }
 
   return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} â€¢ browser fallback â€¢ ${mode} mode`;
+}
+
+function formatPreciseAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
+  const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
+  const styleSuggestionCount = suggestions.length - hardIssueCount;
+  const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
+  const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
+
+  if (styleSuggestionCount === 0) {
+    return `${hardIssueCount} ${hardLabel} | ${mode} mode`;
+  }
+
+  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} | ${mode} mode`;
+}
+
+function formatPreciseFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
+  const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
+  const styleSuggestionCount = suggestions.length - hardIssueCount;
+  const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
+  const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
+
+  if (styleSuggestionCount === 0) {
+    return `${hardIssueCount} ${hardLabel} | browser fallback only | ${mode} mode`;
+  }
+
+  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} | browser fallback only | ${mode} mode`;
 }
 
 function loadPersonalDictionary(): string[] {

@@ -1,7 +1,7 @@
 import type { AnalyzeResponse, FeedbackRequest } from "./types";
 import { getApiBaseUrl } from "./config";
 
-const DEFAULT_ANALYZE_MODE = "strict";
+const DEFAULT_ANALYZE_MODE = "standard";
 
 export class DebouncedAnalyzer {
   private readonly baseUrl: string;

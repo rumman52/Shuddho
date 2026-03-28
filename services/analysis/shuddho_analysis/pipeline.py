@@ -77,6 +77,7 @@ class AnalysisPipeline:
         return AnalyzeResponse(
             text=text,
             normalized_text=artifacts.normalized.text,
+            corrected_text=build_corrected_text(text, artifacts.merged_suggestions),
             suggestions=artifacts.merged_suggestions,
         )
 
@@ -441,6 +442,39 @@ def _apply_request_mode(suggestions: list[Suggestion], *, mode: AnalyzeMode) -> 
     return [*hard_suggestions, *style_suggestions]
 
 
+def build_corrected_text(text: str, suggestions: list[Suggestion]) -> str:
+    safe_suggestions = sorted(
+        (
+            suggestion
+            for suggestion in suggestions
+            if _is_safe_auto_apply_suggestion(text, suggestion)
+        ),
+        key=lambda suggestion: (
+            suggestion.span_start,
+            -suggestion.confidence,
+            suggestion.span_end,
+            suggestion.rule_id,
+        ),
+    )
+    if not safe_suggestions:
+        return text
+
+    parts: list[str] = []
+    cursor = 0
+    for suggestion in safe_suggestions:
+        if suggestion.span_start < cursor:
+            continue
+
+        replacement = suggestion.replacement_options[0]
+        parts.append(text[cursor:suggestion.span_start])
+        parts.append(replacement)
+        cursor = suggestion.span_end
+
+    parts.append(text[cursor:])
+    corrected_text = "".join(parts)
+    return corrected_text if corrected_text else text
+
+
 def _mode_allows_visibility(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool:
     if suggestion.suggestion_kind in {
         SuggestionKind.NO_SUGGESTION,
@@ -501,6 +535,64 @@ def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool
     if suggestion.severity == SuggestionSeverity.HIGH:
         threshold -= 0.03
     return suggestion.confidence >= threshold
+
+
+def _is_safe_auto_apply_suggestion(text: str, suggestion: Suggestion) -> bool:
+    if suggestion.category == SuggestionCategory.STYLE:
+        return False
+    if suggestion.rule_id.startswith("DET_"):
+        return False
+    if suggestion.source == SuggestionSource.MODEL and suggestion.suggestion_kind == SuggestionKind.GRAMMAR_ERROR:
+        return False
+    if suggestion.suggestion_kind in {
+        SuggestionKind.STYLE_SUGGESTION,
+        SuggestionKind.ORTHOGRAPHY_VARIANT,
+        SuggestionKind.NAMED_ENTITY_OR_USER_WORD,
+        SuggestionKind.NO_SUGGESTION,
+    }:
+        return False
+    if len(suggestion.replacement_options) != 1:
+        return False
+    if suggestion.span_start < 0 or suggestion.span_end > len(text) or suggestion.span_start >= suggestion.span_end:
+        return False
+
+    original_text = text[suggestion.span_start:suggestion.span_end]
+    replacement = suggestion.replacement_options[0]
+    if not replacement or original_text != suggestion.original_text or replacement == original_text:
+        return False
+    if "\n" in replacement:
+        return False
+    if suggestion.confidence < _auto_apply_confidence_threshold(suggestion):
+        return False
+
+    if suggestion.suggestion_kind == SuggestionKind.TRUE_SPELLING_ERROR:
+        return (
+            BANGLA_WORD_PATTERN.fullmatch(original_text.strip()) is not None
+            and BANGLA_WORD_PATTERN.fullmatch(replacement.strip()) is not None
+        )
+    if suggestion.suggestion_kind == SuggestionKind.PUNCTUATION_ERROR:
+        return _is_precise_punctuation_edit(original_text, replacement)
+    if suggestion.suggestion_kind == SuggestionKind.SPACING_ERROR:
+        return _is_precise_spacing_edit(original_text, replacement)
+    if suggestion.suggestion_kind == SuggestionKind.GRAMMAR_ERROR:
+        return _is_precise_local_edit(original_text, replacement, text)
+    return False
+
+
+def _auto_apply_confidence_threshold(suggestion: Suggestion) -> float:
+    thresholds = {
+        SuggestionSource.RULE: 0.0,
+        SuggestionSource.SPELL: 0.97,
+        SuggestionSource.HYBRID: 0.97,
+        SuggestionSource.MODEL: 0.98,
+    }
+    threshold = thresholds[suggestion.source]
+    if suggestion.suggestion_kind == SuggestionKind.GRAMMAR_ERROR:
+        if suggestion.source == SuggestionSource.MODEL:
+            return 1.01
+        if suggestion.source == SuggestionSource.HYBRID:
+            threshold = max(threshold, 0.98)
+    return threshold
 
 
 def _formal_style_sort_key(suggestion: Suggestion) -> tuple[int, int, float, int]:

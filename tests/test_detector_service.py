@@ -226,6 +226,20 @@ def test_detector_service_logs_warning_when_checkpoint_env_is_missing(caplog: py
     assert "SHUDDHO_DETECTOR_CHECKPOINT is not set" in caplog.text
 
 
+def test_detector_service_can_be_disabled_explicitly_from_environment(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        service = DetectorService.from_environment(
+            {
+                "SHUDDHO_DETECTOR_ENABLED": "false",
+                "SHUDDHO_DETECTOR_CHECKPOINT": "artifacts/detector/detector-base",
+            }
+        )
+
+    assert service.is_loaded() is False
+    assert service.checkpoint_path == "artifacts/detector/detector-base"
+    assert "SHUDDHO_DETECTOR_ENABLED is disabled" in caplog.text
+
+
 def test_detector_service_logs_warning_when_checkpoint_path_is_missing(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
         service = DetectorService.from_checkpoint_path("missing-checkpoint")

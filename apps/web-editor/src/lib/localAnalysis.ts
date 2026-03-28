@@ -14,7 +14,7 @@ export function analyzeTextLocally(
   payload: Pick<AnalyzeRequest, "text" | "mode" | "personal_dictionary">,
 ): AnalyzeResponse {
   const text = payload.text;
-  const mode = payload.mode ?? "strict";
+  const mode = payload.mode ?? "standard";
   const suggestions = dedupeSuggestions([
     ...buildRepeatedWordSuggestions(text),
     ...buildDuplicatePunctuationSuggestions(text),
@@ -28,6 +28,7 @@ export function analyzeTextLocally(
   return {
     text,
     normalized_text: normalizePreviewText(text),
+    corrected_text: applySafeCorrections(text, suggestions),
     suggestions,
   };
 }
@@ -318,6 +319,58 @@ function dedupeSuggestions(suggestions: Suggestion[]): Suggestion[] {
     (left, right) => left.span_start - right.span_start || left.span_end - right.span_end || right.confidence - left.confidence,
   );
 }
+
+function applySafeCorrections(text: string, suggestions: Suggestion[]): string {
+  const safeSuggestions = suggestions
+    .filter((suggestion) => isSafeAutoApplySuggestion(text, suggestion))
+    .sort((left, right) => left.span_start - right.span_start || right.confidence - left.confidence || left.span_end - right.span_end);
+
+  if (safeSuggestions.length === 0) {
+    return text;
+  }
+
+  let cursor = 0;
+  const parts: string[] = [];
+  for (const suggestion of safeSuggestions) {
+    if (suggestion.span_start < cursor) {
+      continue;
+    }
+
+    parts.push(text.slice(cursor, suggestion.span_start));
+    parts.push(suggestion.replacement_options[0] ?? "");
+    cursor = suggestion.span_end;
+  }
+
+  parts.push(text.slice(cursor));
+  const correctedText = parts.join("");
+  return correctedText || text;
+}
+
+function isSafeAutoApplySuggestion(text: string, suggestion: Suggestion): boolean {
+  if (suggestion.category === "style") {
+    return false;
+  }
+  if (suggestion.replacement_options.length !== 1) {
+    return false;
+  }
+
+  const replacement = suggestion.replacement_options[0] ?? "";
+  const originalText = text.slice(suggestion.span_start, suggestion.span_end);
+  if (!replacement || originalText !== suggestion.original_text || replacement === originalText) {
+    return false;
+  }
+
+  return SAFE_AUTO_APPLY_SUBTYPES.has(suggestion.subtype);
+}
+
+const SAFE_AUTO_APPLY_SUBTYPES = new Set([
+  "repeated_word",
+  "duplicate_punctuation",
+  "extra_whitespace",
+  "space_before_punctuation",
+  "bangla_full_stop",
+  "space_after_punctuation",
+]);
 
 function normalizePreviewText(text: string): string {
   return text.replace(/\u00a0/g, " ").replace(/[ \t]{2,}/g, " ");

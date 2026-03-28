@@ -19,7 +19,8 @@ from .models import DetectorFinding
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIDENCE_THRESHOLD = 0.82
+DEFAULT_CONFIDENCE_THRESHOLD = 0.92
+DETECTOR_ENABLED_ENV_VAR = "SHUDDHO_DETECTOR_ENABLED"
 DETECTOR_CHECKPOINT_ENV_VAR = "SHUDDHO_DETECTOR_CHECKPOINT"
 DETECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_DETECTOR_THRESHOLD"
 LEGACY_DETECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_DETECTOR_CONFIDENCE_THRESHOLD"
@@ -278,6 +279,17 @@ class DetectorService:
             threshold_value,
             env_var_name=threshold_env_var,
         )
+        if not cls._resolve_enabled_flag(environment.get(DETECTOR_ENABLED_ENV_VAR)):
+            normalized_checkpoint_path = checkpoint_path.strip() if checkpoint_path else None
+            logger.warning(
+                "%s is disabled via %s; detector-backed suggestions will be skipped even if a checkpoint is configured.",
+                DETECTOR_ENABLED_ENV_VAR,
+                environment.get(DETECTOR_ENABLED_ENV_VAR),
+            )
+            return cls(
+                confidence_threshold=confidence_threshold,
+                checkpoint_path=normalized_checkpoint_path,
+            )
         return cls.from_checkpoint_path(
             checkpoint_path,
             confidence_threshold=confidence_threshold,
@@ -493,6 +505,24 @@ class DetectorService:
             return DEFAULT_CONFIDENCE_THRESHOLD
 
         return threshold
+
+    @staticmethod
+    def _resolve_enabled_flag(value: str | None) -> bool:
+        if value is None or not value.strip():
+            return True
+
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+
+        logger.warning(
+            "Invalid %s value '%s'; expected true/false. Falling back to enabled.",
+            DETECTOR_ENABLED_ENV_VAR,
+            value,
+        )
+        return True
 
 
 def _best_supporting_span_prediction(

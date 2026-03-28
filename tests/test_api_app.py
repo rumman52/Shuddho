@@ -92,7 +92,7 @@ def test_analyze_route_forwards_mode_to_analysis_pipeline(monkeypatch) -> None:
             recorded_call["text"] = text
             recorded_call["personal_dictionary"] = personal_dictionary
             recorded_call["mode"] = mode
-            return AnalyzeResponse(text=text, normalized_text=text, suggestions=[])
+            return AnalyzeResponse(text=text, normalized_text=text, corrected_text=text, suggestions=[])
 
     class StubFeedbackStore:
         def load_personal_dictionary(self, user_id: str | None = None) -> list[str]:
@@ -120,6 +120,7 @@ def test_analyze_route_forwards_mode_to_analysis_pipeline(monkeypatch) -> None:
         "personal_dictionary": ["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac \u09b6\u09ac\u09cd\u09a6"],
         "mode": AnalyzeMode.FORMAL,
     }
+    assert response.corrected_text == "\u09ac\u09be\u0982\u09b2\u09be"
 
 
 def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions(monkeypatch) -> None:
@@ -133,9 +134,10 @@ def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions
             return AnalyzeResponse(
                 text=text,
                 normalized_text=text,
+                corrected_text="\u0986\u09ae\u09bf\u0964",
                 suggestions=[
                     _suggestion("REP_001", "\u0986\u09ae\u09bf \u0986\u09ae\u09bf", ["\u0986\u09ae\u09bf"], suppression_key="sup_hidden"),
-                    _suggestion("PUNC_001", "\u0964\u0964", ["\u0964"], category=SuggestionCategory.PUNCTUATION, suppression_key="sup_visible"),
+                    _suggestion("PUNC_001", "\u0964\u0964", ["\u0964"], category=SuggestionCategory.PUNCTUATION, suppression_key="sup_visible", span_start=7),
                 ],
             )
 
@@ -153,7 +155,7 @@ def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions
 
     response = analyze(
         AnalyzeRequest(
-            text="\u09ac\u09be\u0982\u09b2\u09be",
+            text="\u0986\u09ae\u09bf \u0986\u09ae\u09bf\u0964\u0964",
             personal_dictionary=["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac \u09b6\u09ac\u09cd\u09a6", "\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09b6\u09ac\u09cd\u09a6"],
             mode=AnalyzeMode.STRICT,
             user_id="web-user",
@@ -161,11 +163,12 @@ def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions
     )
 
     assert recorded_call == {
-        "text": "\u09ac\u09be\u0982\u09b2\u09be",
+        "text": "\u0986\u09ae\u09bf \u0986\u09ae\u09bf\u0964\u0964",
         "personal_dictionary": ["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac \u09b6\u09ac\u09cd\u09a6", "\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09b6\u09ac\u09cd\u09a6"],
         "mode": AnalyzeMode.STRICT,
     }
     assert [suggestion.rule_id for suggestion in response.suggestions] == ["PUNC_001"]
+    assert response.corrected_text == "\u0986\u09ae\u09bf \u0986\u09ae\u09bf\u0964"
 
 
 def _suggestion(
@@ -175,14 +178,15 @@ def _suggestion(
     *,
     category: SuggestionCategory = SuggestionCategory.GRAMMAR,
     suppression_key: str | None = None,
+    span_start: int = 0,
 ) -> Suggestion:
     return Suggestion(
         id=rule_id.lower(),
         rule_id=rule_id,
         category=category,
         subtype=rule_id.lower(),
-        span_start=0,
-        span_end=len(original_text),
+        span_start=span_start,
+        span_end=span_start + len(original_text),
         original_text=original_text,
         replacement_options=replacements,
         confidence=0.95,

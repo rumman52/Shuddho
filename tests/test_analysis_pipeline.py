@@ -58,6 +58,8 @@ def test_analysis_pipeline_preserves_hard_errors_while_hiding_variant_only_spell
     assert spell_variant.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT
     assert spell_variant.is_variant_only is True
     assert strict_response.normalized_text == text
+    assert standard_response.corrected_text == "\u0986\u09ae\u09bf \u0995\u09bf\u09a8\u09cd\u09a4 \u09b8\u09cd\u0995\u09c1\u09b2\u09c7 \u09af\u09be\u0987\u0964"
+    assert strict_response.corrected_text == "\u0986\u09ae\u09bf \u0995\u09bf\u09a8\u09cd\u09a4 \u09b8\u09cd\u0995\u09c1\u09b2\u09c7 \u09af\u09be\u0987\u0964"
 
 
 def test_analysis_pipeline_merges_detector_findings_without_breaking_response_ids(tmp_path: Path) -> None:
@@ -76,6 +78,7 @@ def test_analysis_pipeline_merges_detector_findings_without_breaking_response_id
     assert detector_suggestion.source == SuggestionSource.MODEL
     assert detector_suggestion.original_text == "\u09b6\u09c1\u09a6\u09cd\u09a7"
     assert detector_suggestion.replacement_options == ["\u09b6\u09c1\u09a6\u09cd\u09a7"]
+    assert response.corrected_text == "\u09b6\u09c1\u09a6\u09cd\u09a7 \u09ac\u09be\u0982\u09b2\u09be"
 
 
 def test_analysis_pipeline_filters_low_confidence_code_mix_warnings_even_in_formal_mode(tmp_path: Path) -> None:

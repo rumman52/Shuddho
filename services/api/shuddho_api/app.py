@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from services.analysis.shuddho_analysis.pipeline import AnalysisPipeline
+from services.analysis.shuddho_analysis.pipeline import AnalysisPipeline, build_corrected_text
 from services.analysis.shuddho_analysis.detector import DetectorService
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
 from services.analysis.shuddho_analysis.ranking import SuggestionRankingPipeline
@@ -142,9 +142,11 @@ def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
     suppressed_keys = feedback_store.load_suppressed_keys(user_id=payload.user_id)
     if not suppressed_keys:
         return response
+    visible_suggestions = _filter_suppressed_suggestions(response.suggestions, suppressed_keys)
     return response.model_copy(
         update={
-            "suggestions": _filter_suppressed_suggestions(response.suggestions, suppressed_keys),
+            "suggestions": visible_suggestions,
+            "corrected_text": build_corrected_text(response.text, visible_suggestions),
         }
     )
 

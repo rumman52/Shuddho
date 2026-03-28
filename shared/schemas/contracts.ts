@@ -56,6 +56,7 @@ export interface AnalyzeRequest {
 export interface AnalyzeResponse {
   text: string;
   normalized_text: string;
+  corrected_text: string;
   suggestions: Suggestion[];
 }
 

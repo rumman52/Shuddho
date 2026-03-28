@@ -148,6 +148,7 @@ class AnalyzeRequest(BaseModel):
 class AnalyzeResponse(BaseModel):
     text: str
     normalized_text: str
+    corrected_text: str
     suggestions: list[Suggestion]
 
 
