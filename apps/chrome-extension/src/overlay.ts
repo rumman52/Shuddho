@@ -1,4 +1,4 @@
-import { getEditableSelection, selectEditableRange, supportsInlineMirror } from "./editable";
+import { getEditableSelection, selectEditableRange, supportsDirectApply, supportsInlineMirror } from "./editable";
 import type { OverlayState, SuggestionRange } from "./types";
 
 const MAX_RENDERED_RANGES = 48;
@@ -471,7 +471,7 @@ export class IssueOverlay {
     }
 
     this.activeRangeIndex = index;
-    if (supportsInlineMirror(this.target)) {
+    if (supportsDirectApply(this.target)) {
       selectEditableRange(this.target, range.start, range.end);
     }
     if (openPanel) {
@@ -532,7 +532,7 @@ export class IssueOverlay {
     this.panelHint.textContent = this.actions.canApplySuggestion
       ? "Accept applies directly in this field."
       : activeRange.suggestion.replacement_options.length
-        ? "Preview only in rich editors. Direct apply is currently limited to textarea and input fields."
+        ? "Preview only in this editor. Direct apply is not available for this field yet."
         : "No direct replacement is available for this issue yet.";
 
     const windowStart = Math.max(0, this.activeRangeIndex - Math.floor(MAX_PANEL_ITEMS / 2));

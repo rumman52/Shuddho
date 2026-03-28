@@ -1,6 +1,8 @@
 import type { AnalyzeResponse, FeedbackRequest } from "./types";
 import { getApiBaseUrl } from "./config";
 
+const DEFAULT_ANALYZE_MODE = "strict";
+
 export class DebouncedAnalyzer {
   private readonly baseUrl: string;
   private readonly delayMs: number;
@@ -36,7 +38,7 @@ export class DebouncedAnalyzer {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, mode: DEFAULT_ANALYZE_MODE }),
         signal: this.activeController.signal
       });
 

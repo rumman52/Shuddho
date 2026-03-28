@@ -17,7 +17,7 @@ const PERSONAL_DICTIONARY_STORAGE_KEY = "shuddho-personal-dictionary";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 
 export default function App() {
-  const [requestMode, setRequestMode] = useState<AnalyzeMode>("standard");
+  const [requestMode, setRequestMode] = useState<AnalyzeMode>("strict");
   const [userId] = useState<string>(() => loadOrCreateLocalUserId());
   const [personalDictionary, setPersonalDictionary] = useState<string[]>(() => loadPersonalDictionary());
   const [analysis, setAnalysis] = useState<AnalyzeResponse>({

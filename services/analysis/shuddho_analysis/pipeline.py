@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 SENTENCE_PATTERN = re.compile(r"[^.!?\u0964\n]+(?:[.!?\u0964]+|$)")
 MAX_OPENROUTER_SENTENCES_PER_REQUEST = 3
+STRICT_MODE_OPENROUTER_SENTENCE_LIMIT = 5
 MAX_OPENROUTER_SENTENCE_LENGTH = 280
 MIN_OPENROUTER_BANGLA_LETTERS = 4
 
@@ -218,6 +219,12 @@ class AnalysisPipeline:
         mode: AnalyzeMode,
     ) -> list[SentenceSpan]:
         suspicious_sentences: list[SentenceSpan] = []
+        analyze_all_eligible_sentences = mode in {AnalyzeMode.STRICT, AnalyzeMode.FORMAL}
+        sentence_limit = (
+            STRICT_MODE_OPENROUTER_SENTENCE_LIMIT
+            if analyze_all_eligible_sentences
+            else MAX_OPENROUTER_SENTENCES_PER_REQUEST
+        )
         for sentence in _split_sentences(text):
             if not _is_openrouter_eligible_sentence(sentence.text):
                 continue
@@ -234,11 +241,11 @@ class AnalysisPipeline:
                 if _overlaps_span(sentence.start, sentence.end, finding.span_start, finding.span_end)
                 and finding.category in {SuggestionCategory.GRAMMAR, SuggestionCategory.STYLE, SuggestionCategory.PUNCTUATION}
             ]
-            if not overlapping_rules and not overlapping_findings:
+            if not analyze_all_eligible_sentences and not overlapping_rules and not overlapping_findings:
                 continue
 
             suspicious_sentences.append(sentence)
-            if len(suspicious_sentences) >= MAX_OPENROUTER_SENTENCES_PER_REQUEST:
+            if len(suspicious_sentences) >= sentence_limit:
                 break
         return suspicious_sentences
 

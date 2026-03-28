@@ -3,9 +3,9 @@ import {
   applyTextReplacement,
   extractEditableText,
   isAnalyzableText,
+  supportsDirectApply,
   isSupportedEditable,
   isSupportedEditor,
-  supportsInlineMirror,
   type SupportedEditable
 } from "./editable";
 import { IssueOverlay } from "./overlay";
@@ -58,7 +58,7 @@ function scheduleAnalyze(target: SupportedEditable): void {
         text: response.text,
         ranges
       }, {
-        canApplySuggestion: supportsInlineMirror(target),
+        canApplySuggestion: supportsDirectApply(target),
         onAccept: (range, replacement) => applySuggestion(target, range, replacement),
         onDismiss: (range) => dismissSuggestion(target, range)
       });
