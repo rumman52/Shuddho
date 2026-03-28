@@ -43,7 +43,15 @@ def _parse_allowed_origins(value: str | None) -> list[str]:
 
     return allowed_origins or list(DEFAULT_ALLOWED_ORIGINS)
 
-load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+ENV_FILE_PATH = REPO_ROOT / ".env"
+ENV_FILE_LOADED = load_dotenv(ENV_FILE_PATH, override=False)
+logger.info(
+    "Shuddho API environment env_file=%s exists=%s loaded=%s",
+    ENV_FILE_PATH,
+    ENV_FILE_PATH.is_file(),
+    ENV_FILE_LOADED,
+)
 ALLOWED_ORIGINS = _parse_allowed_origins(os.environ.get(ALLOWED_ORIGINS_ENV_VAR))
 
 app = FastAPI(title="Shuddho API", version="0.1.0")
@@ -58,7 +66,7 @@ app.add_middleware(
 
 normalizer = BanglaNormalizer()
 spell_engine = SpellEngine(
-    runtime_csv_path=Path(__file__).resolve().parents[3] / "data" / "imports" / "lexicon" / "words_clean.csv"
+    runtime_csv_path=REPO_ROOT / "data" / "imports" / "lexicon" / "words_clean.csv"
 )
 rule_engine = RuleEngine()
 suggestion_manager = SuggestionManager()
@@ -85,6 +93,19 @@ logger.info(
     openrouter_client.is_available(),
     openrouter_client.model_name,
 )
+if not openrouter_client.is_configured():
+    if openrouter_client.has_api_key():
+        logger.warning(
+            "OpenRouter is disabled because OPENROUTER_API_KEY in %s is still a placeholder or invalid. "
+            "Replace it with OPENROUTER_API_KEY=your_real_openrouter_key_here and restart the backend.",
+            ENV_FILE_PATH,
+        )
+    else:
+        logger.warning(
+            "OpenRouter is disabled because OPENROUTER_API_KEY is missing from %s. "
+            "Add OPENROUTER_API_KEY=your_real_openrouter_key_here and restart the backend.",
+            ENV_FILE_PATH,
+        )
 
 
 @app.get("/health", response_model=HealthResponse)

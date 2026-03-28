@@ -62,6 +62,8 @@ On Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
+On this repo, the backend reads only the repo-root `.env`, for example [`C:/Projects/Shuddho/.env`](C:/Projects/Shuddho/.env). A frontend app-level `.env` does not configure OpenRouter for the API.
+
 Then install and run the backend:
 
 ```bash
@@ -77,6 +79,8 @@ On Windows, install and start the API from the repo root with:
 py -m pip install -e .
 py -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port 8000
 ```
+
+Or run [run_backend_windows.bat](C:/Projects/Shuddho/run_backend_windows.bat), which first switches into the repo root so it still works when launched from another directory.
 
 Test the backend at `http://127.0.0.1:8000/health`.
 

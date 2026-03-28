@@ -72,10 +72,16 @@ class OpenRouterClient:
         )
 
         if not configured:
-            logger.info(
-                "OpenRouter integration is disabled because %s is missing or still set to a placeholder value.",
-                OPENROUTER_API_KEY_ENV_VAR,
-            )
+            if not api_key_present:
+                logger.warning(
+                    "OpenRouter integration is disabled because %s is missing from the environment.",
+                    OPENROUTER_API_KEY_ENV_VAR,
+                )
+            else:
+                logger.warning(
+                    "OpenRouter integration is disabled because %s is still set to a placeholder value.",
+                    OPENROUTER_API_KEY_ENV_VAR,
+                )
             return cls.disabled(
                 model_name=model_name,
                 timeout_seconds=timeout_seconds,
