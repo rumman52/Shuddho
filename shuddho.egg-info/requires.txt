@@ -1,6 +1,13 @@
 fastapi<1.0.0,>=0.115.0
 pydantic<3.0.0,>=2.8.0
+python-dotenv<2.0.0,>=1.0.1
+requests<3.0.0,>=2.32.0
 uvicorn<1.0.0,>=0.30.0
 pytest<9.0.0,>=8.2.0
-torch<3.0.0,>=2.4.0
 sentencepiece<1.0.0,>=0.2.0
+
+[:sys_platform != "win32"]
+torch<3.0.0,>=2.4.0
+
+[:sys_platform == "win32"]
+torch==2.5.1

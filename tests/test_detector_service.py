@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -234,7 +235,27 @@ def test_detector_service_logs_warning_when_checkpoint_path_is_missing(caplog: p
     assert "Detector checkpoint was not found" in caplog.text
 
 
-def test_detector_service_reads_threshold_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_detector_service_logs_clear_warning_when_checkpoint_directory_is_incomplete(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    checkpoint_dir = tmp_path / "detector"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "metadata.json").write_text("{}", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        service = DetectorService.from_checkpoint_path(str(checkpoint_dir))
+
+    assert service.is_loaded() is False
+    assert service.checkpoint_path == str(checkpoint_dir)
+    assert "best_model.pt" in caplog.text
+    assert "Native checkpoints require metadata.json, best_model.pt." in caplog.text
+
+
+def test_detector_service_reads_threshold_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     class RuntimeWithThreshold:
         def __init__(self) -> None:
             self.confidence_threshold = 0.1
@@ -243,23 +264,27 @@ def test_detector_service_reads_threshold_from_environment(monkeypatch: pytest.M
             return []
 
     runtime = RuntimeWithThreshold()
+    checkpoint_dir = tmp_path / "detector"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    (checkpoint_dir / "best_model.pt").write_text("stub", encoding="utf-8")
 
     def fake_load(checkpoint_path: str) -> RuntimeWithThreshold:
-        assert str(checkpoint_path).replace("\\", "/") == "checkpoints/detector"
+        assert Path(checkpoint_path) == checkpoint_dir
         return runtime
 
     monkeypatch.setattr("services.analysis.shuddho_analysis.detector.BanglaDetectorRuntime.load", fake_load)
 
     service = DetectorService.from_environment(
         {
-            "SHUDDHO_DETECTOR_CHECKPOINT": "checkpoints/detector",
+            "SHUDDHO_DETECTOR_CHECKPOINT": str(checkpoint_dir),
             "SHUDDHO_DETECTOR_THRESHOLD": "0.91",
         }
     )
 
     assert service.is_loaded() is True
     assert service.confidence_threshold == 0.91
-    assert service.checkpoint_path == "checkpoints/detector"
+    assert service.checkpoint_path == str(checkpoint_dir)
     assert runtime.confidence_threshold == 0.91
 
 
@@ -280,6 +305,7 @@ def test_detector_service_invalid_threshold_falls_back_without_crashing(
 
 def test_detector_service_supports_legacy_threshold_environment_variable(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     class RuntimeWithThreshold:
         def __init__(self) -> None:
@@ -289,16 +315,20 @@ def test_detector_service_supports_legacy_threshold_environment_variable(
             return []
 
     runtime = RuntimeWithThreshold()
+    checkpoint_dir = tmp_path / "detector"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    (checkpoint_dir / "best_model.pt").write_text("stub", encoding="utf-8")
 
     def fake_load(checkpoint_path: str) -> RuntimeWithThreshold:
-        assert str(checkpoint_path).replace("\\", "/") == "checkpoints/detector"
+        assert Path(checkpoint_path) == checkpoint_dir
         return runtime
 
     monkeypatch.setattr("services.analysis.shuddho_analysis.detector.BanglaDetectorRuntime.load", fake_load)
 
     service = DetectorService.from_environment(
         {
-            "SHUDDHO_DETECTOR_CHECKPOINT": "checkpoints/detector",
+            "SHUDDHO_DETECTOR_CHECKPOINT": str(checkpoint_dir),
             "SHUDDHO_DETECTOR_CONFIDENCE_THRESHOLD": "0.77",
         }
     )

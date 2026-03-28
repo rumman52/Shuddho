@@ -23,6 +23,8 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.82
 DETECTOR_CHECKPOINT_ENV_VAR = "SHUDDHO_DETECTOR_CHECKPOINT"
 DETECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_DETECTOR_THRESHOLD"
 LEGACY_DETECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_DETECTOR_CONFIDENCE_THRESHOLD"
+RUNTIME_CHECKPOINT_REQUIRED_FILES = ("metadata.json", "best_model.pt")
+SCAFFOLD_CHECKPOINT_MARKER_FILES = ("config.json",)
 
 
 @dataclass(frozen=True)
@@ -301,10 +303,12 @@ class DetectorService:
                 normalized_checkpoint_path,
                 confidence_threshold=confidence_threshold,
             )
-        except FileNotFoundError:
+        except FileNotFoundError as error:
             logger.warning(
-                "Detector checkpoint was not found at '%s'; detector runtime is disabled and analyze requests will fall back to rules and spell checks only.",
+                "Detector checkpoint was not found or is incomplete at '%s' (%s); detector runtime is disabled and analyze requests will fall back to rules and spell checks only. Native checkpoints require %s.",
                 normalized_checkpoint_path,
+                error,
+                ", ".join(RUNTIME_CHECKPOINT_REQUIRED_FILES),
             )
             return cls(
                 confidence_threshold=confidence_threshold,
@@ -395,18 +399,44 @@ class DetectorService:
         confidence_threshold: float,
     ) -> TokenSpanDetectorBackend:
         checkpoint_dir = Path(checkpoint_path)
-        if checkpoint_dir.exists() and not (checkpoint_dir / "metadata.json").exists():
+        if not checkpoint_dir.exists():
+            raise FileNotFoundError(checkpoint_dir)
+
+        if (checkpoint_dir / "metadata.json").exists():
+            missing_runtime_files = cls._missing_runtime_checkpoint_files(checkpoint_dir)
+            if missing_runtime_files:
+                raise FileNotFoundError(
+                    f"missing required detector checkpoint files: {', '.join(missing_runtime_files)}"
+                )
+
+            runtime = BanglaDetectorRuntime.load(str(checkpoint_dir))
+            return RuntimeSpanDetectorAdapter(
+                runtime,
+                checkpoint_path=str(checkpoint_dir),
+                confidence_threshold=confidence_threshold,
+            )
+
+        if cls._looks_like_transformers_checkpoint(checkpoint_dir):
             return BanglaBertTokenClassifierScaffold.load(
                 checkpoint_dir,
                 confidence_threshold=confidence_threshold,
             )
 
-        runtime = BanglaDetectorRuntime.load(str(checkpoint_dir))
-        return RuntimeSpanDetectorAdapter(
-            runtime,
-            checkpoint_path=str(checkpoint_dir),
-            confidence_threshold=confidence_threshold,
+        raise FileNotFoundError(
+            f"missing required detector checkpoint files: {', '.join(cls._missing_runtime_checkpoint_files(checkpoint_dir))}"
         )
+
+    @staticmethod
+    def _looks_like_transformers_checkpoint(checkpoint_dir: Path) -> bool:
+        return any((checkpoint_dir / marker).exists() for marker in SCAFFOLD_CHECKPOINT_MARKER_FILES)
+
+    @staticmethod
+    def _missing_runtime_checkpoint_files(checkpoint_dir: Path) -> list[str]:
+        return [
+            filename
+            for filename in RUNTIME_CHECKPOINT_REQUIRED_FILES
+            if not (checkpoint_dir / filename).exists()
+        ]
 
     def _coerce_backend(
         self,

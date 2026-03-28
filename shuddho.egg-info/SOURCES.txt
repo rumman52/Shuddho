@@ -13,6 +13,10 @@ services/api/shuddho_api/app.py
 services/feedback/__init__.py
 services/feedback/shuddho_feedback/__init__.py
 services/feedback/shuddho_feedback/store.py
+services/llm/shuddho_llm/__init__.py
+services/llm/shuddho_llm/openrouter_client.py
+services/llm/shuddho_llm/parsing.py
+services/llm/shuddho_llm/prompting.py
 services/normalizer/__init__.py
 services/normalizer/shuddho_normalizer/__init__.py
 services/normalizer/shuddho_normalizer/normalizer.py
@@ -24,9 +28,6 @@ services/spell/shuddho_spell/__init__.py
 services/spell/shuddho_spell/engine.py
 services/spell/shuddho_spell/lexicon_import.py
 services/spell/shuddho_spell/runtime_lexicon.py
-services/suggestion-manager/__init__.py
-services/suggestion-manager/shuddho_suggestion_manager/__init__.py
-services/suggestion-manager/shuddho_suggestion_manager/manager.py
 services/suggestion_manager/__init__.py
 services/suggestion_manager/shuddho_suggestion_manager/__init__.py
 services/suggestion_manager/shuddho_suggestion_manager/manager.py
@@ -50,10 +51,15 @@ tests/test_candidate_generation.py
 tests/test_detector_dataset.py
 tests/test_detector_service.py
 tests/test_feedback_store.py
+tests/test_frontend_backend_only.py
 tests/test_lexicon_import.py
 tests/test_ml_scaffolds.py
 tests/test_normalizer.py
+tests/test_openrouter_client.py
+tests/test_openrouter_pipeline.py
+tests/test_python_models.py
 tests/test_ranking_pipeline.py
+tests/test_repo_config.py
 tests/test_rule_engine.py
 tests/test_spell_engine.py
 tests/test_synthetic_error_generation.py

@@ -1,0 +1,180 @@
+{
+  "format": "shuddho-detector-v1",
+  "name": "detector-base",
+  "max_length": 256,
+  "confidence_threshold": 0.8,
+  "label_to_id": {
+    "ok": 0,
+    "spelling": 1,
+    "grammar": 2,
+    "punctuation": 3,
+    "spacing": 4
+  },
+  "vocabulary": {
+    "<pad>": 0,
+    "<unk>": 1,
+    "।": 2,
+    "আমি": 3,
+    "স্কুলে": 4,
+    "যাই": 5,
+    "যায়": 6,
+    "সে": 7,
+    "কিন্ত": 8,
+    "পড়ি": 9,
+    "বই": 10,
+    "বাংলা": 11,
+    "বাড়ি": 12,
+    "ব্যকরন": 13,
+    "শিখি": 14
+  },
+  "model": {
+    "vocab_size": 4000,
+    "hidden_size": 128,
+    "num_heads": 4,
+    "num_layers": 2,
+    "num_labels": 5
+  },
+  "metrics": {
+    "best_validation": {
+      "loss": 0.6597,
+      "token_accuracy": 0.6,
+      "error_precision": 0.0,
+      "error_recall": 0.0,
+      "error_f1": 0.0
+    },
+    "history": [
+      {
+        "epoch": 1,
+        "loss": 2.0124,
+        "token_accuracy": 0.0,
+        "error_precision": 0.3158,
+        "error_recall": 1.0,
+        "error_f1": 0.48,
+        "validation_loss": 1.6265,
+        "validation_token_accuracy": 0.1,
+        "validation_error_precision": 0.3333,
+        "validation_error_recall": 0.75,
+        "validation_error_f1": 0.4615
+      },
+      {
+        "epoch": 2,
+        "loss": 1.5822,
+        "token_accuracy": 0.2105,
+        "error_precision": 0.1667,
+        "error_recall": 0.3333,
+        "error_f1": 0.2222,
+        "validation_loss": 1.3289,
+        "validation_token_accuracy": 0.5,
+        "validation_error_precision": 0.3333,
+        "validation_error_recall": 0.25,
+        "validation_error_f1": 0.2857
+      },
+      {
+        "epoch": 3,
+        "loss": 1.2569,
+        "token_accuracy": 0.5263,
+        "error_precision": 0.25,
+        "error_recall": 0.1667,
+        "error_f1": 0.2,
+        "validation_loss": 1.1347,
+        "validation_token_accuracy": 0.6,
+        "validation_error_precision": 0.0,
+        "validation_error_recall": 0.0,
+        "validation_error_f1": 0.0
+      },
+      {
+        "epoch": 4,
+        "loss": 0.9318,
+        "token_accuracy": 0.6842,
+        "error_precision": 0.0,
+        "error_recall": 0.0,
+        "error_f1": 0.0,
+        "validation_loss": 1.0258,
+        "validation_token_accuracy": 0.6,
+        "validation_error_precision": 0.0,
+        "validation_error_recall": 0.0,
+        "validation_error_f1": 0.0
+      },
+      {
+        "epoch": 5,
+        "loss": 0.8941,
+        "token_accuracy": 0.6842,
+        "error_precision": 0.0,
+        "error_recall": 0.0,
+        "error_f1": 0.0,
+        "validation_loss": 0.9642,
+        "validation_token_accuracy": 0.6,
+        "validation_error_precision": 0.0,
+        "validation_error_recall": 0.0,
+        "validation_error_f1": 0.0
+      },
+      {
+        "epoch": 6,
+        "loss": 0.8045,
+        "token_accuracy": 0.6842,
+        "error_precision": 0.0,
+        "error_recall": 0.0,
+        "error_f1": 0.0,
+        "validation_loss": 0.919,
+        "validation_token_accuracy": 0.6,
+        "validation_error_precision": 0.0,
+        "validation_error_recall": 0.0,
+        "validation_error_f1": 0.0
+      },
+      {
+        "epoch": 7,
+        "loss": 0.7506,
+        "token_accuracy": 0.6842,
+        "error_precision": 0.0,
+        "error_recall": 0.0,
+        "error_f1": 0.0,
+        "validation_loss": 0.8678,
+        "validation_token_accuracy": 0.6,
+        "validation_error_precision": 0.0,
+        "validation_error_recall": 0.0,
+        "validation_error_f1": 0.0
+      },
+      {
+        "epoch": 8,
+        "loss": 0.6854,
+        "token_accuracy": 0.6842,
+        "error_precision": 0.0,
+        "error_recall": 0.0,
+        "error_f1": 0.0,
+        "validation_loss": 0.8069,
+        "validation_token_accuracy": 0.6,
+        "validation_error_precision": 0.0,
+        "validation_error_recall": 0.0,
+        "validation_error_f1": 0.0
+      },
+      {
+        "epoch": 9,
+        "loss": 0.6525,
+        "token_accuracy": 0.6842,
+        "error_precision": 0.0,
+        "error_recall": 0.0,
+        "error_f1": 0.0,
+        "validation_loss": 0.736,
+        "validation_token_accuracy": 0.6,
+        "validation_error_precision": 0.0,
+        "validation_error_recall": 0.0,
+        "validation_error_f1": 0.0
+      },
+      {
+        "epoch": 10,
+        "loss": 0.5838,
+        "token_accuracy": 0.6842,
+        "error_precision": 0.0,
+        "error_recall": 0.0,
+        "error_f1": 0.0,
+        "validation_loss": 0.6597,
+        "validation_token_accuracy": 0.6,
+        "validation_error_precision": 0.0,
+        "validation_error_recall": 0.0,
+        "validation_error_f1": 0.0
+      }
+    ],
+    "train_examples": 4,
+    "validation_examples": 2
+  }
+}
