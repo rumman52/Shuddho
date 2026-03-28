@@ -1,15 +1,27 @@
 import type { AnalyzeRequest, AnalyzeResponse, FeedbackRequest } from "@shared/schemas/contracts";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
-const API_BASE_URL = resolveApiBaseUrl();
+const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
+let apiBaseUrl = resolveApiBaseUrl();
+
+export interface HealthResponse {
+  status: string;
+  detector_loaded: boolean;
+  detector_checkpoint: string | null;
+  allowed_origins: string[];
+  openrouter_configured: boolean;
+  openrouter_available: boolean;
+  openrouter_model: string | null;
+}
 
 function resolveApiBaseUrl(): string {
+  const runtimeOverride = readStoredApiBaseUrl();
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL;
-  return (configuredBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+  return normalizeApiBaseUrl(runtimeOverride ?? configuredBaseUrl ?? DEFAULT_API_BASE_URL);
 }
 
 async function request<TResponse>(path: string, init: RequestInit): Promise<TResponse> {
-  const url = `${API_BASE_URL}${path}`;
+  const url = `${apiBaseUrl}${path}`;
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
 
@@ -51,3 +63,57 @@ export function sendFeedback(payload: FeedbackRequest): Promise<void> {
   });
 }
 
+export function getHealth(): Promise<HealthResponse> {
+  return request<HealthResponse>("/health", {
+    method: "GET",
+  });
+}
+
+export function getApiBaseUrl(): string {
+  return apiBaseUrl;
+}
+
+export function setApiBaseUrlOverride(nextBaseUrl: string): string {
+  apiBaseUrl = normalizeApiBaseUrl(nextBaseUrl || DEFAULT_API_BASE_URL);
+  if (typeof window !== "undefined") {
+    const trimmedValue = nextBaseUrl.trim();
+    if (trimmedValue) {
+      window.localStorage.setItem(API_BASE_URL_STORAGE_KEY, trimmedValue);
+    } else {
+      window.localStorage.removeItem(API_BASE_URL_STORAGE_KEY);
+    }
+  }
+
+  return apiBaseUrl;
+}
+
+function readStoredApiBaseUrl(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const storedValue = window.localStorage.getItem(API_BASE_URL_STORAGE_KEY);
+  if (!storedValue) {
+    return null;
+  }
+
+  const trimmedValue = storedValue.trim();
+  return trimmedValue || null;
+}
+
+function normalizeApiBaseUrl(rawBaseUrl: string): string {
+  const trimmedValue = rawBaseUrl.trim();
+  if (!trimmedValue) {
+    return DEFAULT_API_BASE_URL;
+  }
+
+  if (/^[a-z]+:\/\//i.test(trimmedValue) || trimmedValue.startsWith("/")) {
+    return trimmedValue.replace(/\/+$/, "");
+  }
+
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmedValue)) {
+    return `http://${trimmedValue}`.replace(/\/+$/, "");
+  }
+
+  return `https://${trimmedValue}`.replace(/\/+$/, "");
+}

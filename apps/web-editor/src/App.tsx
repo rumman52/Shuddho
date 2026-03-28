@@ -5,8 +5,9 @@ import sampleFixtures from "@shared/fixtures/bangla_samples.json";
 import type { AnalyzeMode, AnalyzeResponse, FeedbackAction, Suggestion } from "@shared/schemas/contracts";
 import { SuggestionCard, type SuggestionCardAnchor } from "./components/SuggestionCard";
 import { IssueMark } from "./lib/editorExtensions";
-import { analyzeText, sendFeedback } from "./lib/api";
+import { analyzeText, getApiBaseUrl, getHealth, sendFeedback, setApiBaseUrlOverride } from "./lib/api";
 import { applyIssueMarks, replaceSuggestion } from "./lib/highlight";
+import { analyzeTextLocally } from "./lib/localAnalysis";
 import { getEditorTextSurface } from "./lib/textSurface";
 
 const INITIAL_TEXT = sampleFixtures[0]?.text ?? "à¦†à¦®à¦¿  à¦¬à¦¾à¦‚à¦²à¦¾ à¦²à¦¿à¦–à¦¿  à¥¤à¥¤ à¦¬à¦¾à¦‚à¦²à¦¾ à¦¬à¦¾à¦‚à¦²à¦¾ à¦­à¦¾à¦·à¦¾ à¦–à§à¦¬ à¦¸à§à¦¨à§à¦¦à¦° !!";
@@ -15,6 +16,7 @@ const HOVER_HIDE_DELAY_MS = 180;
 const POST_ACCEPT_ANALYSIS_DELAY_MS = 80;
 const PERSONAL_DICTIONARY_STORAGE_KEY = "shuddho-personal-dictionary";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
+type BackendMode = "checking" | "online" | "offline";
 
 export default function App() {
   const [requestMode, setRequestMode] = useState<AnalyzeMode>("strict");
@@ -31,6 +33,10 @@ export default function App() {
   const [isPopupPinned, setIsPopupPinned] = useState(false);
   const [cardAnchorRect, setCardAnchorRect] = useState<SuggestionCardAnchor | null>(null);
   const [status, setStatus] = useState("Waiting for input");
+  const [backendMode, setBackendMode] = useState<BackendMode>("checking");
+  const [backendMessage, setBackendMessage] = useState("Checking backend connection...");
+  const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
+  const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
   const analysisTimerRef = useRef<number | null>(null);
   const hoverCloseTimerRef = useRef<number | null>(null);
   const latestAnalysisRequestRef = useRef(0);
@@ -100,6 +106,10 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(PERSONAL_DICTIONARY_STORAGE_KEY, JSON.stringify(personalDictionary));
   }, [personalDictionary]);
+
+  useEffect(() => {
+    void refreshBackendHealth();
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     hoveredIssueIdRef.current = hoveredIssueId;
@@ -263,13 +273,19 @@ export default function App() {
       if (requestId !== latestAnalysisRequestRef.current) {
         return;
       }
+      setBackendMode("online");
+      setBackendMessage(`Backend connected at ${apiBaseUrl}. Detector and contextual suggestions are active.`);
       setAnalysis(response);
       setStatus(formatAnalysisStatus(response.suggestions, mode));
     } catch (error) {
       if (requestId !== latestAnalysisRequestRef.current) {
         return;
       }
-      setStatus(error instanceof Error ? error.message : "Analyze request failed");
+      const fallbackResponse = analyzeTextLocally({ text, mode, personal_dictionary: personalDictionary });
+      setBackendMode("offline");
+      setBackendMessage(`Backend unavailable at ${apiBaseUrl}. Using browser fallback rules and safe spelling checks.`);
+      setAnalysis(fallbackResponse);
+      setStatus(formatFallbackStatus(fallbackResponse.suggestions, mode));
     }
   }
 
@@ -291,6 +307,11 @@ export default function App() {
 
     setStatus("Suggestion accepted");
     scheduleAnalysis(getEditorTextSurface(editor).text, POST_ACCEPT_ANALYSIS_DELAY_MS);
+
+    if (backendMode !== "online") {
+      setStatus("Suggestion accepted locally");
+      return;
+    }
 
     try {
       await sendFeedback({
@@ -324,6 +345,10 @@ export default function App() {
     }));
     closePopup();
     setStatus("Suggestion dismissed");
+
+    if (backendMode !== "online") {
+      return;
+    }
 
     try {
       await sendFeedback({
@@ -377,6 +402,10 @@ export default function App() {
 
     const currentText = editor ? getEditorTextSurface(editor).text : analysis.text;
     scheduleAnalysis(currentText, POST_ACCEPT_ANALYSIS_DELAY_MS);
+
+    if (backendMode !== "online") {
+      return;
+    }
 
     try {
       await sendFeedback({
@@ -601,6 +630,27 @@ export default function App() {
     analysisTimerRef.current = null;
   }
 
+  function handleApiBaseUrlSave() {
+    const nextApiBaseUrl = setApiBaseUrlOverride(apiBaseUrlDraft);
+    setApiBaseUrlDraft(nextApiBaseUrl);
+    setApiBaseUrl(nextApiBaseUrl);
+  }
+
+  async function refreshBackendHealth() {
+    setBackendMode("checking");
+    setBackendMessage(`Checking backend at ${apiBaseUrl}...`);
+    try {
+      const health = await getHealth();
+      setBackendMode("online");
+      setBackendMessage(
+        `Backend connected at ${apiBaseUrl} (${health.detector_loaded ? "detector ready" : "detector unavailable"}).`,
+      );
+    } catch {
+      setBackendMode("offline");
+      setBackendMessage(`Backend unavailable at ${apiBaseUrl}. The editor will keep working with browser fallback checks.`);
+    }
+  }
+
   function syncPinnedPopupAnchor(editorRoot: ParentNode) {
     const suggestionId = activeIssueIdRef.current;
     if (!suggestionId) {
@@ -688,12 +738,26 @@ export default function App() {
       <section className="hero">
         <div>
           <p className="eyebrow">Shuddho</p>
-          <h1>Bangla writing assistant MVP</h1>
+          <h1>Bangla writing assistant</h1>
           <p className="lede">
-            Type Bangla text, review backend-validated suggestions, and keep context-sensitive analysis on the backend instead of in the browser.
+            Type Bangla text, use backend analysis when it is reachable, and keep writing with browser fallback checks when it is not.
           </p>
         </div>
         <div className="status-panel">
+          <span
+            style={{
+              padding: "0.3rem 0.65rem",
+              borderRadius: "999px",
+              background:
+                backendMode === "online"
+                  ? "rgba(255, 255, 255, 0.16)"
+                  : backendMode === "offline"
+                    ? "rgba(255, 244, 228, 0.22)"
+                    : "rgba(255, 255, 255, 0.12)",
+            }}
+          >
+            {backendMode === "online" ? "Backend live" : backendMode === "offline" ? "Browser fallback" : "Checking API"}
+          </span>
           <span>{status}</span>
           <strong>{hardSuggestions.length}</strong>
           <span>{hardSuggestions.length === 1 ? "hard issue" : "hard issues"}</span>
@@ -707,9 +771,25 @@ export default function App() {
         <div className="panel-header">
           <div>
             <h2>Web editor</h2>
-            <p>Hover for preview, click an issue to pin the correction popover, then edit without losing it.</p>
+            <p>{backendMessage}</p>
           </div>
           <div style={{ display: "flex", gap: "0.75rem", alignItems: "end", flexWrap: "wrap" }}>
+            <label style={{ display: "grid", gap: "0.35rem", color: "var(--muted)", fontSize: "0.9rem" }}>
+              <span>API URL</span>
+              <input
+                value={apiBaseUrlDraft}
+                onChange={(event) => setApiBaseUrlDraft(event.target.value)}
+                placeholder="http://127.0.0.1:8000"
+                style={{
+                  minWidth: "15rem",
+                  borderRadius: "999px",
+                  border: "1px solid var(--border)",
+                  padding: "0.7rem 0.9rem",
+                  background: "white",
+                  color: "var(--ink)"
+                }}
+              />
+            </label>
             <label style={{ display: "grid", gap: "0.35rem", color: "var(--muted)", fontSize: "0.9rem" }}>
               <span>Request mode</span>
               <select
@@ -729,6 +809,12 @@ export default function App() {
                 <option value="formal">Formal</option>
               </select>
             </label>
+            <button type="button" className="suggestion-card__dismiss" onClick={handleApiBaseUrlSave}>
+              Use API URL
+            </button>
+            <button type="button" className="suggestion-card__dismiss" onClick={() => void refreshBackendHealth()}>
+              Retry API
+            </button>
             <button
               type="button"
               className="analyze-button"
@@ -976,6 +1062,19 @@ function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): str
   }
 
   return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} • ${mode} mode`;
+}
+
+function formatFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
+  const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
+  const styleSuggestionCount = suggestions.length - hardIssueCount;
+  const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
+  const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
+
+  if (styleSuggestionCount === 0) {
+    return `${hardIssueCount} ${hardLabel} â€¢ browser fallback â€¢ ${mode} mode`;
+  }
+
+  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} â€¢ browser fallback â€¢ ${mode} mode`;
 }
 
 function loadPersonalDictionary(): string[] {
