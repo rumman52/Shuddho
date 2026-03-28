@@ -23,6 +23,8 @@ class FakeSession:
 def test_openrouter_client_missing_key_falls_back_without_crashing() -> None:
     client = OpenRouterClient.from_environment({})
 
+    assert client.has_api_key() is False
+    assert client.is_configured() is False
     assert client.is_available() is False
     assert client.model_name == DEFAULT_OPENROUTER_MODEL
     assert client.analyze_sentence("\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964", "standard") == []
@@ -31,6 +33,8 @@ def test_openrouter_client_missing_key_falls_back_without_crashing() -> None:
 def test_openrouter_client_placeholder_key_stays_disabled() -> None:
     client = OpenRouterClient.from_environment({"OPENROUTER_API_KEY": "your_key_here"})
 
+    assert client.has_api_key() is True
+    assert client.is_configured() is False
     assert client.is_available() is False
     assert client.model_name == DEFAULT_OPENROUTER_MODEL
 

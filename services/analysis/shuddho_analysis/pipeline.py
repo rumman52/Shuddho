@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -26,6 +27,7 @@ from .detector import DetectorService
 from .models import AnalysisArtifacts, DetectorFinding
 from .ranking import SuggestionRankingPipeline
 
+logger = logging.getLogger(__name__)
 
 SENTENCE_PATTERN = re.compile(r"[^.!?\u0964\n]+(?:[.!?\u0964]+|$)")
 MAX_OPENROUTER_SENTENCES_PER_REQUEST = 3
@@ -84,6 +86,13 @@ class AnalysisPipeline:
         *,
         mode: AnalyzeMode = AnalyzeMode.STANDARD,
     ) -> AnalysisArtifacts:
+        logger.debug(
+            "Starting analysis mode=%s text_length=%s openrouter_configured=%s openrouter_available=%s",
+            mode.value,
+            len(text),
+            self.openrouter_client.is_configured(),
+            self.openrouter_client.is_available(),
+        )
         normalized = self.normalizer.normalize(text)
         rule_suggestions = self.rule_engine.analyze(text)
         spell_suggestions = self.spell_engine.analyze(normalized.text, personal_dictionary)
@@ -142,6 +151,12 @@ class AnalysisPipeline:
         mode: AnalyzeMode,
     ) -> list[Suggestion]:
         if not self.openrouter_client.is_available():
+            logger.info(
+                "Skipping OpenRouter analysis mode=%s openrouter_configured=%s openrouter_available=%s",
+                mode.value,
+                self.openrouter_client.is_configured(),
+                self.openrouter_client.is_available(),
+            )
             return []
 
         model_suggestions: list[Suggestion] = []
@@ -151,7 +166,17 @@ class AnalysisPipeline:
             detector_findings=detector_findings,
             mode=mode,
         )
+        logger.info(
+            "OpenRouter routing mode=%s suspicious_sentences_selected=%s",
+            mode.value,
+            len(suspicious_sentences),
+        )
+
+        sentences_sent = 0
+        issues_returned = 0
+        issues_filtered_out = 0
         for sentence in suspicious_sentences:
+            sentences_sent += 1
             sentence_hints = self._build_sentence_hints(
                 sentence=sentence,
                 rule_suggestions=rule_suggestions,
@@ -162,6 +187,7 @@ class AnalysisPipeline:
                 mode.value,
                 local_hints=sentence_hints,
             )
+            issues_returned += len(issues)
             for issue in issues:
                 suggestion = self._validate_openrouter_issue(
                     issue,
@@ -171,6 +197,16 @@ class AnalysisPipeline:
                 )
                 if suggestion is not None:
                     model_suggestions.append(suggestion)
+                else:
+                    issues_filtered_out += 1
+        logger.info(
+            "OpenRouter analysis summary mode=%s sentences_sent=%s issues_returned=%s issues_filtered_out=%s suggestions_kept=%s",
+            mode.value,
+            sentences_sent,
+            issues_returned,
+            issues_filtered_out,
+            len(model_suggestions),
+        )
         return model_suggestions
 
     def _select_suspicious_sentences(
@@ -414,8 +450,8 @@ def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool
         AnalyzeMode.STANDARD: {
             SuggestionKind.TRUE_SPELLING_ERROR: 0.96,
             SuggestionKind.GRAMMAR_ERROR: 0.9,
-            SuggestionKind.PUNCTUATION_ERROR: 0.9,
-            SuggestionKind.SPACING_ERROR: 0.9,
+            SuggestionKind.PUNCTUATION_ERROR: 0.88,
+            SuggestionKind.SPACING_ERROR: 0.88,
             SuggestionKind.STYLE_SUGGESTION: 0.9,
             SuggestionKind.ORTHOGRAPHY_VARIANT: 0.99,
         },
@@ -438,8 +474,6 @@ def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool
     }
 
     threshold = base_thresholds[mode].get(suggestion.suggestion_kind, 0.95)
-    if suggestion.source == SuggestionSource.MODEL:
-        threshold += 0.04
     if suggestion.source == SuggestionSource.HYBRID:
         threshold -= 0.02
     if _is_high_precision_style_suggestion(suggestion):
@@ -449,7 +483,6 @@ def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool
             AnalyzeMode.FORMAL: 0.02,
         }[mode]
     if suggestion.rule_id.startswith("LLM_") and suggestion.suggestion_kind in {
-        SuggestionKind.GRAMMAR_ERROR,
         SuggestionKind.STYLE_SUGGESTION,
         SuggestionKind.ORTHOGRAPHY_VARIANT,
     }:
@@ -514,18 +547,18 @@ def _is_context_sensitive_rule(suggestion: Suggestion, *, mode: AnalyzeMode) -> 
 def _minimum_openrouter_confidence(category: OpenRouterIssueCategory, *, mode: AnalyzeMode) -> float:
     thresholds = {
         AnalyzeMode.STANDARD: {
-            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.92,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.9,
             OpenRouterIssueCategory.SPELLING_ERROR: 0.96,
-            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.9,
-            OpenRouterIssueCategory.SPACING_ERROR: 0.9,
+            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.88,
+            OpenRouterIssueCategory.SPACING_ERROR: 0.88,
             OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.98,
             OpenRouterIssueCategory.STYLE_SUGGESTION: 0.9,
         },
         AnalyzeMode.STRICT: {
-            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.86,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.84,
             OpenRouterIssueCategory.SPELLING_ERROR: 0.94,
-            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.86,
-            OpenRouterIssueCategory.SPACING_ERROR: 0.86,
+            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.84,
+            OpenRouterIssueCategory.SPACING_ERROR: 0.84,
             OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.86,
             OpenRouterIssueCategory.STYLE_SUGGESTION: 0.84,
         },

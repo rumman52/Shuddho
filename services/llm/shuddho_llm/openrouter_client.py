@@ -43,12 +43,16 @@ class OpenRouterClient:
         model_name: str,
         timeout_seconds: int,
         enabled: bool,
+        configured: bool | None = None,
+        api_key_present: bool | None = None,
     ) -> None:
         self.session = session
         self.api_key = api_key
         self.model_name = model_name
         self.timeout_seconds = timeout_seconds
         self.enabled = enabled
+        self.configured = enabled if configured is None else configured
+        self.api_key_present = bool(api_key) if api_key_present is None else api_key_present
 
     @classmethod
     def from_environment(cls, environ: dict[str, str] | None = None) -> "OpenRouterClient":
@@ -56,13 +60,28 @@ class OpenRouterClient:
         model_name = (environment.get(OPENROUTER_MODEL_ENV_VAR) or DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
         timeout_seconds = _parse_timeout(environment.get(OPENROUTER_TIMEOUT_SECONDS_ENV_VAR))
         api_key = (environment.get(OPENROUTER_API_KEY_ENV_VAR) or "").strip()
+        api_key_present = bool(api_key)
+        configured = api_key_present and api_key.casefold() not in PLACEHOLDER_API_KEY_VALUES
 
-        if not api_key or api_key.casefold() in PLACEHOLDER_API_KEY_VALUES:
+        logger.info(
+            "OpenRouter client initialization api_key_found=%s configured=%s model=%s timeout_seconds=%s",
+            api_key_present,
+            configured,
+            model_name,
+            timeout_seconds,
+        )
+
+        if not configured:
             logger.info(
                 "OpenRouter integration is disabled because %s is missing or still set to a placeholder value.",
                 OPENROUTER_API_KEY_ENV_VAR,
             )
-            return cls.disabled(model_name=model_name, timeout_seconds=timeout_seconds)
+            return cls.disabled(
+                model_name=model_name,
+                timeout_seconds=timeout_seconds,
+                configured=False,
+                api_key_present=api_key_present,
+            )
 
         return cls(
             session=requests.Session(),
@@ -70,6 +89,8 @@ class OpenRouterClient:
             model_name=model_name,
             timeout_seconds=timeout_seconds,
             enabled=True,
+            configured=True,
+            api_key_present=True,
         )
 
     @classmethod
@@ -78,6 +99,8 @@ class OpenRouterClient:
         *,
         model_name: str = DEFAULT_OPENROUTER_MODEL,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        configured: bool = False,
+        api_key_present: bool = False,
     ) -> "OpenRouterClient":
         return cls(
             session=None,
@@ -85,13 +108,18 @@ class OpenRouterClient:
             model_name=model_name,
             timeout_seconds=timeout_seconds,
             enabled=False,
+            configured=configured,
+            api_key_present=api_key_present,
         )
 
     def is_available(self) -> bool:
         return self.enabled and self.session is not None and bool(self.api_key)
 
     def is_configured(self) -> bool:
-        return self.is_available()
+        return self.configured
+
+    def has_api_key(self) -> bool:
+        return self.api_key_present
 
     def analyze_sentence(
         self,
@@ -101,6 +129,11 @@ class OpenRouterClient:
         local_hints: list[OpenRouterHint] | None = None,
     ) -> list[OpenRouterIssue]:
         if not self.is_available():
+            logger.debug(
+                "Skipping OpenRouter request because client is unavailable model=%s configured=%s",
+                self.model_name,
+                self.is_configured(),
+            )
             return []
         if not sentence.strip():
             return []
@@ -131,6 +164,14 @@ class OpenRouterClient:
             "response_format": prompt.response_format,
         }
 
+        logger.debug(
+            "Sending OpenRouter request model=%s mode=%s chars=%s local_hints=%s",
+            self.model_name,
+            mode,
+            len(sentence),
+            len(local_hints or []),
+        )
+
         try:
             response = self.session.post(
                 OPENROUTER_CHAT_COMPLETIONS_URL,
@@ -142,20 +183,42 @@ class OpenRouterClient:
                 timeout=self.timeout_seconds,
             )
         except requests.RequestException as error:
-            logger.warning("OpenRouter analyze_sentence failed: %s", error)
+            logger.warning(
+                "OpenRouter analyze_sentence failed model=%s timeout_seconds=%s error=%s",
+                self.model_name,
+                self.timeout_seconds,
+                error,
+            )
             return []
 
         if getattr(response, "status_code", 500) >= 400:
-            logger.warning("OpenRouter analyze_sentence returned status %s", getattr(response, "status_code", "unknown"))
+            logger.warning(
+                "OpenRouter analyze_sentence returned status=%s model=%s response_body=%r",
+                getattr(response, "status_code", "unknown"),
+                self.model_name,
+                _extract_response_text(response),
+            )
             return []
 
         try:
             response_payload = response.json()
         except ValueError:
+            logger.warning(
+                "OpenRouter analyze_sentence returned non-JSON payload model=%s response_body=%r",
+                self.model_name,
+                _extract_response_text(response),
+            )
             return []
 
         raw_text = _extract_message_content(response_payload)
-        return parse_openrouter_response(raw_text, sentence=sentence)
+        issues = parse_openrouter_response(raw_text, sentence=sentence)
+        if raw_text.strip() and not issues:
+            logger.info(
+                "OpenRouter response was discarded after parsing or validation model=%s raw_chars=%s",
+                self.model_name,
+                len(raw_text),
+            )
+        return issues
 
 
 def _extract_message_content(payload: dict[str, Any]) -> str:
@@ -199,3 +262,13 @@ def _parse_timeout(value: str | None) -> int:
         )
         return DEFAULT_TIMEOUT_SECONDS
     return timeout_seconds
+
+
+def _extract_response_text(response: Any, max_chars: int = 400) -> str:
+    raw_text = getattr(response, "text", "")
+    if not isinstance(raw_text, str):
+        return ""
+    compact = " ".join(raw_text.split())
+    if len(compact) <= max_chars:
+        return compact
+    return f"{compact[:max_chars]}..."

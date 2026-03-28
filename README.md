@@ -98,6 +98,15 @@ Relevant backend variables:
 
 The default `OPENROUTER_MODEL` is `nvidia/nemotron-3-super-120b-a12b`. For lower-cost testing you can switch it to `nvidia/nemotron-3-super-120b-a12b:free` in your local `.env` or hosting environment.
 
+### OpenRouter troubleshooting
+
+- Create a repo-root `.env` from `.env.example` and set a real `OPENROUTER_API_KEY`.
+- Restart the backend after changing `.env` so the client is re-initialized.
+- Open `http://127.0.0.1:8000/health` and confirm `openrouter_configured`, `openrouter_available`, and `openrouter_model`.
+- Test with suspicious Bangla sentences that need context, not isolated dictionary words.
+- Use `strict` mode first when verifying OpenRouter, because `standard` mode remains intentionally lower-noise.
+- Check backend logs for OpenRouter startup status, suspicious sentence counts, issues returned, and issues filtered out.
+
 ### Web editor
 
 ```bash

@@ -8,7 +8,7 @@ from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
-from shared.schemas.python_models import AnalyzeMode
+from shared.schemas.python_models import AnalyzeMode, SuggestionSource
 
 
 class RecordingOpenRouterClient:
@@ -17,6 +17,9 @@ class RecordingOpenRouterClient:
         self.available = available
         self.calls: list[tuple[str, str, list[OpenRouterHint]]] = []
         self.model_name = "openrouter-test"
+
+    def is_configured(self) -> bool:
+        return self.available
 
     def is_available(self) -> bool:
         return self.available
@@ -70,6 +73,54 @@ def test_pipeline_hides_low_confidence_openrouter_suggestions(tmp_path: Path) ->
     response = pipeline.analyze(sentence, mode=AnalyzeMode.STANDARD)
 
     assert all(not suggestion.rule_id.startswith("LLM_") for suggestion in response.suggestions)
+
+
+def test_pipeline_keeps_valid_openrouter_grammar_suggestions_in_strict_mode(tmp_path: Path) -> None:
+    sentence = "\u0986\u09ae\u09bf \u0986\u09ae\u09bf \u09b8\u09cd\u0995\u09c1\u09b2\u09c7 \u09af\u09be\u0987\u0964"
+    openrouter_client = RecordingOpenRouterClient(
+        {
+            sentence: [
+                OpenRouterIssue(
+                    start=0,
+                    end=7,
+                    original="\u0986\u09ae\u09bf \u0986\u09ae\u09bf",
+                    replacement="\u0986\u09ae\u09bf",
+                    category=OpenRouterIssueCategory.GRAMMAR_ERROR,
+                    confidence=0.88,
+                    reason_bn="\u098f\u0996\u09be\u09a8\u09c7 \u0985\u09aa\u09cd\u09b0\u09df\u09cb\u099c\u09a8\u09c0\u09df \u09aa\u09c1\u09a8\u09b0\u09be\u09ac\u09c3\u09a4\u09cd\u09a4\u09bf \u0986\u099b\u09c7\u0964",
+                )
+            ]
+        }
+    )
+    pipeline = _build_pipeline(tmp_path, openrouter_client=openrouter_client)
+
+    response = pipeline.analyze(sentence, mode=AnalyzeMode.STRICT)
+
+    assert any(suggestion.source == SuggestionSource.HYBRID for suggestion in response.suggestions)
+
+
+def test_pipeline_standard_mode_no_longer_overfilters_valid_openrouter_grammar_suggestions(tmp_path: Path) -> None:
+    sentence = "\u0986\u09ae\u09bf \u0986\u09ae\u09bf \u09b8\u09cd\u0995\u09c1\u09b2\u09c7 \u09af\u09be\u0987\u0964"
+    openrouter_client = RecordingOpenRouterClient(
+        {
+            sentence: [
+                OpenRouterIssue(
+                    start=0,
+                    end=7,
+                    original="\u0986\u09ae\u09bf \u0986\u09ae\u09bf",
+                    replacement="\u0986\u09ae\u09bf",
+                    category=OpenRouterIssueCategory.GRAMMAR_ERROR,
+                    confidence=0.92,
+                    reason_bn="\u098f\u0996\u09be\u09a8\u09c7 \u0985\u09aa\u09cd\u09b0\u09df\u09cb\u099c\u09a8\u09c0\u09df \u09aa\u09c1\u09a8\u09b0\u09be\u09ac\u09c3\u09a4\u09cd\u09a4\u09bf \u0986\u099b\u09c7\u0964",
+                )
+            ]
+        }
+    )
+    pipeline = _build_pipeline(tmp_path, openrouter_client=openrouter_client)
+
+    response = pipeline.analyze(sentence, mode=AnalyzeMode.STANDARD)
+
+    assert any(suggestion.source == SuggestionSource.HYBRID for suggestion in response.suggestions)
 
 
 def _build_pipeline(tmp_path: Path, *, openrouter_client: RecordingOpenRouterClient) -> AnalysisPipeline:

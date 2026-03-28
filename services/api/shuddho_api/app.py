@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from shared.schemas.python_models import AnalyzeRequest, AnalyzeResponse, FeedbackRecord, FeedbackRequest, HealthResponse, Suggestion
 
+logger = logging.getLogger(__name__)
 ALLOWED_ORIGINS_ENV_VAR = "SHUDDHO_ALLOWED_ORIGINS"
 DEFAULT_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
@@ -76,17 +78,26 @@ analysis_pipeline = AnalysisPipeline(
     openrouter_client=openrouter_client,
 )
 
+logger.info(
+    "Shuddho API startup openrouter_api_key_found=%s openrouter_configured=%s openrouter_available=%s openrouter_model=%s",
+    openrouter_client.has_api_key(),
+    openrouter_client.is_configured(),
+    openrouter_client.is_available(),
+    openrouter_client.model_name,
+)
+
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    openrouter_configured = openrouter_client.is_available()
+    openrouter_configured = openrouter_client.is_configured()
+    openrouter_available = openrouter_client.is_available()
     return HealthResponse(
         status="ok",
         detector_loaded=detector_service.is_loaded(),
         detector_checkpoint=detector_service.checkpoint_path,
         allowed_origins=ALLOWED_ORIGINS,
         openrouter_configured=openrouter_configured,
-        openrouter_available=openrouter_configured,
+        openrouter_available=openrouter_available,
         openrouter_model=openrouter_client.model_name,
     )
 
