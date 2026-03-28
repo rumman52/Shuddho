@@ -1,0 +1,7 @@
+INFO:     Will watch for changes in these directories: ['C:\\Projects\\Shuddho']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [18976] using WatchFiles
+SHUDDHO_DETECTOR_CHECKPOINT is not set; detector runtime is disabled and analyze requests will fall back to rules and spell checks only.
+INFO:     Started server process [16596]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
