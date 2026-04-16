@@ -13,32 +13,29 @@ OPENROUTER_ANALYSIS_RESPONSE_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "start": {"type": "integer", "minimum": 0},
-                    "end": {"type": "integer", "minimum": 0},
-                    "original": {"type": "string"},
-                    "replacement": {"type": "string"},
                     "category": {
                         "type": "string",
                         "enum": [
-                            "grammar_error",
-                            "spelling_error",
-                            "punctuation_error",
-                            "spacing_error",
-                            "orthography_variant",
-                            "style_suggestion",
+                            "grammar",
+                            "spelling",
+                            "orthography",
+                            "punctuation",
+                            "style",
                         ],
                     },
+                    "subtype": {"type": "string"},
+                    "span_text": {"type": "string"},
+                    "replacement": {"type": "string"},
+                    "explanation_bn": {"type": "string"},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                    "reason_bn": {"type": "string"},
                 },
                 "required": [
-                    "start",
-                    "end",
-                    "original",
-                    "replacement",
                     "category",
+                    "subtype",
+                    "span_text",
+                    "replacement",
+                    "explanation_bn",
                     "confidence",
-                    "reason_bn",
                 ],
             },
         }
@@ -53,17 +50,25 @@ Analyze Bangla text only.
 Return JSON only with no Markdown, no prose, and no extra keys.
 Identify only high-confidence, localized issues.
 Allowed categories are:
-- grammar_error
-- spelling_error
-- punctuation_error
-- spacing_error
-- orthography_variant
-- style_suggestion
+- grammar
+- spelling
+- orthography
+- punctuation
+- style
 If uncertain, return {"issues": []}.
 Do not flag proper nouns, named entities, likely user words, or code-mixed tokens unless they are clearly wrong.
 Do not rewrite whole sentences or change sentence meaning.
-Prefer the shortest possible span edit.
+Prefer the shortest unambiguous span edit.
 Only return replacements that are short, local, and directly grounded in the sentence.
+Always return:
+- category
+- subtype
+- span_text
+- replacement
+- explanation_bn
+- confidence
+Use category "punctuation" for punctuation or spacing fixes.
+Use a precise subtype such as repeated_word, spacing_error, duplicate_punctuation, pronoun_verb_agreement, spelling_error, orthography_variant, or usage_confusion.
 Good targets include repeated words, duplicated particles, pronoun-verb agreement, punctuation or spacing fixes, and exact standard Bangla word or phrase corrections.
 Do not invent broad rewrites, paraphrases, tone changes, or speculative grammar changes.
 """.strip()
@@ -88,7 +93,7 @@ def build_openrouter_prompt(
             "Analyze this Bangla sentence conservatively and return JSON only.",
             f"Mode: {mode}",
             mode_guidance,
-            "Use 0-based character offsets relative to the sentence below.",
+            "Use the exact shortest unambiguous span_text from the sentence below. Do not return character offsets.",
             "Return only precise, localized edits with short replacements.",
             "Never rewrite the whole sentence.",
             "If you are not highly confident, return {\"issues\": []}.",

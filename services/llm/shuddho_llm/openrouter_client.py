@@ -262,6 +262,12 @@ class OpenRouterClient:
                 self.model_name,
                 len(raw_text),
             )
+        elif issues:
+            logger.info(
+                "OpenRouter response parsed successfully model=%s issues=%s",
+                self.model_name,
+                len(issues),
+            )
         return issues
 
     def _resolve_runtime_state(self, *, status: str | None, reason: str | None) -> tuple[str, str | None]:

@@ -15,8 +15,10 @@ class FakeSession:
     def __init__(self, payload: dict, status_code: int = 200) -> None:
         self.payload = payload
         self.status_code = status_code
+        self.calls: list[tuple[tuple, dict]] = []
 
     def post(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self.calls.append((args, kwargs))
         return FakeResponse(self.payload, status_code=self.status_code)
 
 
@@ -44,18 +46,19 @@ def test_parse_openrouter_response_discards_malformed_payload_safely() -> None:
 
 
 def test_openrouter_client_ignores_malformed_response_text() -> None:
-    client = OpenRouterClient(
-        session=FakeSession(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": "```json\nnot valid\n```",
-                        }
+    session = FakeSession(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "```json\nnot valid\n```",
                     }
-                ]
-            }
-        ),
+                }
+            ]
+        }
+    )
+    client = OpenRouterClient(
+        session=session,
         api_key="test-key",
         model_name="openrouter-test",
         timeout_seconds=20,
@@ -63,6 +66,7 @@ def test_openrouter_client_ignores_malformed_response_text() -> None:
     )
 
     assert client.analyze_sentence("\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964", "standard") == []
+    assert session.calls[0][1]["json"]["response_format"]["json_schema"]["strict"] is True
 
 
 def test_parse_openrouter_response_accepts_valid_json_issues() -> None:
@@ -71,13 +75,12 @@ def test_parse_openrouter_response_accepts_valid_json_issues() -> None:
         {
           "issues": [
             {
-              "start": 0,
-              "end": 5,
-              "original": "\u0986\u09ae\u09b0\u09be\u09be",
+              "category": "spelling",
+              "subtype": "spelling_error",
+              "span_text": "\u0986\u09ae\u09b0\u09be\u09be",
               "replacement": "\u0986\u09ae\u09b0\u09be",
-              "category": "spelling_error",
-              "confidence": 0.96,
-              "reason_bn": "\u098f\u0996\u09be\u09a8\u09c7 \u0985\u09a4\u09bf\u09b0\u09bf\u0995\u09cd\u09a4 \u0985\u0995\u09cd\u09b7\u09b0 \u0986\u099b\u09c7\u0964"
+              "explanation_bn": "\u098f\u0996\u09be\u09a8\u09c7 \u0985\u09a4\u09bf\u09b0\u09bf\u0995\u09cd\u09a4 \u0985\u0995\u09cd\u09b7\u09b0 \u0986\u099b\u09c7\u0964",
+              "confidence": 0.96
             }
           ]
         }
@@ -87,3 +90,28 @@ def test_parse_openrouter_response_accepts_valid_json_issues() -> None:
 
     assert len(issues) == 1
     assert issues[0].category == OpenRouterIssueCategory.SPELLING_ERROR
+    assert issues[0].subtype == "spelling_error"
+    assert issues[0].start == 0
+    assert issues[0].end == 5
+
+
+def test_parse_openrouter_response_discards_ambiguous_span_text_matches() -> None:
+    issues = parse_openrouter_response(
+        """
+        {
+          "issues": [
+            {
+              "category": "grammar",
+              "subtype": "repeated_word",
+              "span_text": "\u0986\u09ae\u09bf",
+              "replacement": "\u0986\u09ae\u09b0\u09be",
+              "explanation_bn": "\u098f\u0995\u0987 \u09b6\u09ac\u09cd\u09a6 \u09aa\u09c1\u09a8\u09b0\u09be\u09ac\u09c3\u09a4\u09cd\u09a4 \u09b9\u09df\u09c7\u099b\u09c7\u0964",
+              "confidence": 0.94
+            }
+          ]
+        }
+        """,
+        sentence="\u0986\u09ae\u09bf \u0986\u09ae\u09bf \u09b8\u09cd\u0995\u09c1\u09b2\u09c7 \u09af\u09be\u0987\u0964",
+    )
+
+    assert issues == []

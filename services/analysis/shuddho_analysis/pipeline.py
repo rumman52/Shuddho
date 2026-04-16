@@ -317,7 +317,7 @@ class AnalysisPipeline:
                 issue,
                 sentence=sentence,
                 category=SuggestionCategory.SPELLING,
-                subtype="spelling_error",
+                subtype=issue.subtype or "spelling_error",
                 severity=SuggestionSeverity.MEDIUM,
             )
 
@@ -336,7 +336,7 @@ class AnalysisPipeline:
                 issue,
                 sentence=sentence,
                 category=SuggestionCategory.STYLE,
-                subtype="orthography_variant",
+                subtype=issue.subtype or "orthography_variant",
                 severity=SuggestionSeverity.LOW,
                 suggestion_kind=SuggestionKind.ORTHOGRAPHY_VARIANT,
                 optional_mode_visibility=[AnalyzeMode.STRICT, AnalyzeMode.FORMAL],
@@ -351,7 +351,7 @@ class AnalysisPipeline:
                 issue,
                 sentence=sentence,
                 category=SuggestionCategory.GRAMMAR,
-                subtype="llm_grammar_error",
+                subtype=issue.subtype or "llm_grammar_error",
                 severity=SuggestionSeverity.MEDIUM,
             )
 
@@ -362,7 +362,7 @@ class AnalysisPipeline:
                 issue,
                 sentence=sentence,
                 category=SuggestionCategory.PUNCTUATION,
-                subtype="punctuation_error",
+                subtype=issue.subtype or "punctuation_error",
                 severity=SuggestionSeverity.LOW,
             )
 
@@ -373,7 +373,7 @@ class AnalysisPipeline:
                 issue,
                 sentence=sentence,
                 category=SuggestionCategory.PUNCTUATION,
-                subtype="spacing_error",
+                subtype=issue.subtype or "spacing_error",
                 severity=SuggestionSeverity.LOW,
             )
 
@@ -384,7 +384,7 @@ class AnalysisPipeline:
             issue,
             sentence=sentence,
             category=SuggestionCategory.STYLE,
-            subtype="style_suggestion",
+            subtype=issue.subtype or "style_suggestion",
             severity=SuggestionSeverity.LOW,
             optional_mode_visibility=[AnalyzeMode.STRICT, AnalyzeMode.FORMAL],
         )

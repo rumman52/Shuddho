@@ -88,6 +88,7 @@ export interface OpenRouterHealth {
 
 export interface HealthResponse {
   status: string;
+  backend_reachable: boolean;
   detector_loaded: boolean;
   detector_checkpoint?: string | null;
   allowed_origins: string[];
@@ -98,6 +99,7 @@ export interface HealthResponse {
   openrouter: OpenRouterHealth;
   analysis_profile: AnalysisProfile;
   degraded_reasons: string[];
+  mode_capabilities: Record<string, string[]>;
 }
 
 export interface FeedbackRequest {

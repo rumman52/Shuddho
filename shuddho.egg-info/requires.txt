@@ -10,4 +10,4 @@ sentencepiece<1.0.0,>=0.2.0
 torch<3.0.0,>=2.4.0
 
 [:sys_platform == "win32"]
-torch==2.5.1
+torch<3.0.0,>=2.5.1

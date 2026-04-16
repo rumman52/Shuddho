@@ -30,11 +30,13 @@ def test_health_reports_detector_status() -> None:
     openrouter_runtime = openrouter_client.runtime_status()
 
     assert response.status == "ok"
+    assert response.backend_reachable is True
     assert response.detector_loaded is detector_service.is_loaded()
     assert response.detector_checkpoint == detector_service.checkpoint_path
     assert response.allowed_origins == ALLOWED_ORIGINS
     assert set(payload) == {
         "status",
+        "backend_reachable",
         "detector_loaded",
         "detector_checkpoint",
         "allowed_origins",
@@ -45,6 +47,7 @@ def test_health_reports_detector_status() -> None:
         "openrouter",
         "analysis_profile",
         "degraded_reasons",
+        "mode_capabilities",
     }
     assert response.openrouter_configured is openrouter_client.is_configured()
     assert response.openrouter_available is openrouter_client.is_available()
@@ -68,6 +71,9 @@ def test_health_reports_detector_status() -> None:
         "backend_rules_and_spell_only",
     }
     assert all(reason.startswith(("detector_", "openrouter_")) for reason in response.degraded_reasons)
+    assert set(response.mode_capabilities) == {"standard", "strict", "formal"}
+    assert "rules" in response.mode_capabilities["standard"]
+    assert "spell" in response.mode_capabilities["strict"]
 
 
 def test_health_exposes_degraded_runtime_reasons(monkeypatch) -> None:
@@ -123,9 +129,11 @@ def test_health_exposes_degraded_runtime_reasons(monkeypatch) -> None:
     response = app_module.health()
 
     assert response.analysis_profile == "backend_rules_and_spell_only"
+    assert response.backend_reachable is True
     assert response.degraded_reasons == ["detector_disabled", "openrouter_missing_api_key"]
     assert response.detector.reason == "SHUDDHO_DETECTOR_ENABLED=false disabled detector startup."
     assert response.openrouter.reason == "OPENROUTER_API_KEY is missing from the repo-root environment."
+    assert "backend_openrouter_structured_json" not in response.mode_capabilities["standard"]
 
 
 def test_cors_allows_extension_origin() -> None:

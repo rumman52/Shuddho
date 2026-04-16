@@ -210,6 +210,7 @@ def _build_health_response() -> HealthResponse:
     degraded_reasons = _derive_degraded_reasons(detector_runtime, openrouter_runtime)
     return HealthResponse(
         status="ok",
+        backend_reachable=True,
         detector_loaded=detector_runtime.loaded,
         detector_checkpoint=detector_runtime.checkpoint,
         allowed_origins=ALLOWED_ORIGINS,
@@ -237,6 +238,7 @@ def _build_health_response() -> HealthResponse:
         ),
         analysis_profile=analysis_profile,
         degraded_reasons=degraded_reasons,
+        mode_capabilities=_build_mode_capabilities(detector_runtime, openrouter_runtime),
     )
 
 
@@ -263,3 +265,46 @@ def _derive_degraded_reasons(
     if openrouter_runtime.status != "ready":
         degraded_reasons.append(f"openrouter_{openrouter_runtime.status}")
     return degraded_reasons
+
+
+def _build_mode_capabilities(
+    detector_runtime: DetectorRuntimeStatus,
+    openrouter_runtime: OpenRouterRuntimeStatus,
+) -> dict[str, list[str]]:
+    base_capabilities = {
+        "standard": [
+            "rules",
+            "spell",
+            "safe_localized_corrections",
+            "punctuation_spacing_normalization",
+            "low_noise_visibility",
+        ],
+        "strict": [
+            "rules",
+            "spell",
+            "safe_localized_corrections",
+            "punctuation_spacing_normalization",
+            "broader_contextual_visibility",
+            "orthography_variants",
+        ],
+        "formal": [
+            "rules",
+            "spell",
+            "safe_localized_corrections",
+            "punctuation_spacing_normalization",
+            "broader_contextual_visibility",
+            "orthography_variants",
+            "formal_style_guidance",
+        ],
+    }
+
+    if detector_runtime.loaded:
+        for capabilities in base_capabilities.values():
+            capabilities.append("detector_suspicious_span_routing")
+
+    if openrouter_runtime.available:
+        for capabilities in base_capabilities.values():
+            capabilities.append("backend_openrouter_structured_json")
+            capabilities.append("local_openrouter_validation")
+
+    return base_capabilities

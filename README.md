@@ -11,6 +11,7 @@ The current app keeps a hybrid backend architecture. Suggestions come from norma
 - Bangla normalizer, spell engine, rule engine, and suggestion merger
 - SQLite feedback logging for accept and dismiss events
 - Chrome Extension Manifest V3 scaffold with backend integration in `apps/chrome-extension`
+- OpenRouter SDK agent scaffold in `apps/openrouter-agent`
 - docs, fixtures, evaluation script, corpus utilities, and ML scaffolding for future custom training
 
 ## Repository shape
@@ -18,6 +19,7 @@ The current app keeps a hybrid backend architecture. Suggestions come from norma
 ```text
 apps/
   chrome-extension/
+  openrouter-agent/
   web-editor/
 data/
   corpus/
@@ -50,6 +52,12 @@ tests/
 
 ### Backend
 
+Python guidance for local development:
+
+- Recommended Windows happy path: Python `3.11.x`
+- Declared editable-install range: Python `>=3.11,<3.15`
+- If detector or torch installation looks flaky on Windows, switch back to Python `3.11` first before debugging anything else.
+
 Create a repo-root `.env` from `.env.example` before starting the API:
 
 ```bash
@@ -71,16 +79,24 @@ pip install -e .
 uvicorn services.api.shuddho_api.app:app --reload
 ```
 
+The editable install now includes the repo's `ml/` packages as well as `services/` and `shared/`, so detector and ranking imports match the runtime layout used by the app.
+
 #### Run backend locally
 
 On Windows, install and start the API from the repo root with:
 
 ```bat
-py -m pip install -e .
-py -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port 8000
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port 8000
 ```
 
+If you intentionally use a newer local interpreter such as Python `3.12`, `3.13`, or `3.14`, `pip install -e .` may resolve a newer compatible `torch` build on Windows. That is supported by the package metadata, but Python `3.11` remains the recommended troubleshooting baseline.
+
 Or run [run_backend_windows.bat](C:/Projects/Shuddho/run_backend_windows.bat), which first switches into the repo root so it still works when launched from another directory.
+That script now also warns when `.env` is missing and prints the Python version it is starting with.
 
 Test the backend at `http://127.0.0.1:8000/health`.
 
@@ -116,6 +132,8 @@ The default `OPENROUTER_MODEL` is `nvidia/nemotron-3-super-120b-a12b`. For lower
 - Create a repo-root `.env` from `.env.example` and set a real `OPENROUTER_API_KEY`.
 - Restart the backend after changing `.env` so the client is re-initialized.
 - Open `http://127.0.0.1:8000/health` and confirm `openrouter_configured`, `openrouter_available`, `openrouter.status`, and `openrouter.reason`.
+- `backend_reachable` should be `true` whenever `/health` responds.
+- `mode_capabilities` summarizes what `standard`, `strict`, and `formal` can currently surface in this runtime.
 - Test with suspicious Bangla sentences that need context, not isolated dictionary words.
 - Use `strict` mode first when verifying OpenRouter, because `standard` mode remains intentionally lower-noise.
 - Check backend logs for OpenRouter startup status, suspicious sentence counts, issues returned, and issues filtered out.
@@ -127,8 +145,10 @@ The default `OPENROUTER_MODEL` is `nvidia/nemotron-3-super-120b-a12b`. For lower
   - `Backend live but detector disabled` means the API is running, but detector-backed contextual routing is degraded.
   - `Backend live but OpenRouter unavailable` means backend rules and spelling still work, but contextual LLM suggestions are unavailable.
 - The backend status is most explicit at `http://127.0.0.1:8000/health`. Check:
+  - `backend_reachable`
   - `analysis_profile`
   - `degraded_reasons`
+  - `mode_capabilities`
   - `detector.status` and `detector.reason`
   - `openrouter.status` and `openrouter.reason`
 - The backend reads only the repo-root `.env`. If detector or OpenRouter settings changed, restart the backend after editing `.env`.
@@ -154,6 +174,32 @@ npm run build:extension
 ```
 
 Then load `apps/chrome-extension/dist` as an unpacked extension in Chrome.
+
+### OpenRouter agent Quickstart
+
+Shuddho now includes a small server-side OpenRouter agent scaffold in [`apps/openrouter-agent`](C:/Projects/Shuddho/apps/openrouter-agent/README.md). It follows OpenRouter's modular agent pattern:
+
+- standalone agent core with hooks
+- reusable tool definitions
+- headless CLI entrypoint for local development
+
+Install and run it from the repo root:
+
+```bash
+npm install
+npm run build:agent
+npm run start:agent
+```
+
+The agent reads `OPENROUTER_API_KEY` from the repo-root `.env`.
+
+Optional attribution variables:
+
+- `OPENROUTER_AGENT_SITE_URL`
+- `OPENROUTER_AGENT_TITLE`
+- `OPENROUTER_AGENT_MODEL`
+
+The web editor and Chrome extension still do not call OpenRouter directly. This new agent workspace is server-side only.
 
 ## Local Public Testing
 
@@ -251,6 +297,7 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
 ```json
 {
   "status": "ok",
+  "backend_reachable": true,
   "detector_loaded": false,
   "detector_checkpoint": "artifacts/detector/detector-base",
   "allowed_origins": [
@@ -284,7 +331,33 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
   "degraded_reasons": [
     "detector_missing_checkpoint",
     "openrouter_missing_api_key"
-  ]
+  ],
+  "mode_capabilities": {
+    "standard": [
+      "rules",
+      "spell",
+      "safe_localized_corrections",
+      "punctuation_spacing_normalization",
+      "low_noise_visibility"
+    ],
+    "strict": [
+      "rules",
+      "spell",
+      "safe_localized_corrections",
+      "punctuation_spacing_normalization",
+      "broader_contextual_visibility",
+      "orthography_variants"
+    ],
+    "formal": [
+      "rules",
+      "spell",
+      "safe_localized_corrections",
+      "punctuation_spacing_normalization",
+      "broader_contextual_visibility",
+      "orthography_variants",
+      "formal_style_guidance"
+    ]
+  }
 }
 ```
 

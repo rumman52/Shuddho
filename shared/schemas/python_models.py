@@ -223,6 +223,7 @@ class OpenRouterHealth(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    backend_reachable: bool = True
     detector_loaded: bool
     detector_checkpoint: str | None = None
     allowed_origins: list[str]
@@ -233,6 +234,7 @@ class HealthResponse(BaseModel):
     openrouter: OpenRouterHealth
     analysis_profile: AnalysisProfile
     degraded_reasons: list[str] = Field(default_factory=list)
+    mode_capabilities: dict[str, list[str]] = Field(default_factory=dict)
 
 
 def _infer_suggestion_kind(
