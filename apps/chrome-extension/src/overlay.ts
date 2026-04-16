@@ -10,6 +10,11 @@ interface OverlayActions {
   onDismiss?: (range: SuggestionRange) => boolean;
 }
 
+interface OverlayNotice {
+  title: string;
+  message: string;
+}
+
 export class IssueOverlay {
   private readonly host: HTMLDivElement;
   private readonly shadowRoot: ShadowRoot;
@@ -37,6 +42,7 @@ export class IssueOverlay {
   private resizeObserver: ResizeObserver | null = null;
   private observedTarget: HTMLElement | null = null;
   private actions: OverlayActions = { canApplySuggestion: false };
+  private notice: OverlayNotice | null = null;
 
   constructor() {
     this.host = document.createElement("div");
@@ -359,6 +365,7 @@ export class IssueOverlay {
     this.target = target;
     this.visible = true;
     this.state = normalizeOverlayState(state);
+    this.notice = null;
     this.inlineVisible = supportsInlineMirror(target);
     this.actions = actions ?? { canApplySuggestion: false };
     this.observeTarget(target);
@@ -388,6 +395,7 @@ export class IssueOverlay {
     this.inlineVisible = false;
     this.target = null;
     this.state = { text: "", ranges: [] };
+    this.notice = null;
     this.activeRangeIndex = -1;
     this.root.style.display = "none";
     this.inlineRoot.style.display = "none";
@@ -395,6 +403,21 @@ export class IssueOverlay {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.observedTarget = null;
+  }
+
+  showNotice(target: HTMLElement, title: string, message: string): void {
+    this.target = target;
+    this.visible = true;
+    this.notice = { title, message };
+    this.state = { text: "", ranges: [] };
+    this.inlineVisible = false;
+    this.actions = { canApplySuggestion: false };
+    this.observeTarget(target);
+    this.badge.textContent = `Shuddho - ${title}`;
+    this.renderRail();
+    this.renderPanel();
+    this.setPanelOpen(true);
+    this.syncPosition();
   }
 
   syncPosition(): void {
@@ -508,6 +531,19 @@ export class IssueOverlay {
   }
 
   private renderPanel(): void {
+    if (this.notice) {
+      this.panelStatus.textContent = this.notice.title;
+      this.prevButton.disabled = true;
+      this.nextButton.disabled = true;
+      this.activeOriginal.textContent = this.notice.title;
+      this.activeReplacement.textContent = "";
+      this.activeExplanation.textContent = this.notice.message;
+      this.activeActions.replaceChildren();
+      this.panelHint.textContent = "The Chrome extension stays backend-first. Suggestions resume when the API is reachable again.";
+      this.panelList.replaceChildren();
+      return;
+    }
+
     const activeRange = this.getActiveRange();
     this.panelStatus.textContent = activeRange
       ? `Issue ${this.activeRangeIndex + 1} of ${this.state.ranges.length}`

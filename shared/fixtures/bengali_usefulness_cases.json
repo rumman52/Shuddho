@@ -1,0 +1,26 @@
+[
+  {
+    "id": "repeated-word",
+    "text": "আমি আমি স্কুলে যাই।",
+    "expected_subtypes": ["repeated_word"],
+    "expected_replacements": ["আমি"]
+  },
+  {
+    "id": "spacing-punctuation",
+    "text": "সে আজ আসবে ।তুমি থাকবে?",
+    "expected_subtypes": ["space_before_punctuation", "space_after_punctuation"],
+    "expected_replacements": ["।", "। ত"]
+  },
+  {
+    "id": "hard-spelling",
+    "text": "কিন্ত ব্যাবহার ঠিক না।",
+    "expected_subtypes": ["spelling_error"],
+    "expected_replacements": ["কিন্তু", "ব্যবহার"]
+  },
+  {
+    "id": "phrase-correction",
+    "text": "এর পর যদি ও আসো, জানিও।",
+    "expected_subtypes": ["safe_exact_correction"],
+    "expected_replacements": ["এরপর", "যদিও"]
+  }
+]

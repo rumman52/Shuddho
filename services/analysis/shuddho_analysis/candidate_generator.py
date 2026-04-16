@@ -4,8 +4,8 @@ import re
 from collections.abc import Iterable, Sequence
 
 from services.spell.shuddho_spell.engine import SpellEngine
-from shared.constants.bangla import BANGLA_WORD_PATTERN, COMMON_POSTPOSITIONS
-from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
+from shared.constants.bangla import BANGLA_WORD_PATTERN, COMMON_POSTPOSITIONS, SAFE_EXACT_TYPOS
+from shared.schemas.python_models import AnalyzeMode, Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
 from shared.utils.text import stable_id
 
 from .models import CandidateBundle, DetectorFinding
@@ -15,6 +15,10 @@ SPACE_BEFORE_PUNCTUATION_PATTERN = re.compile(r"^\s*([,.;:!?।])$")
 SPACE_AFTER_PUNCTUATION_PATTERN = re.compile(r"^([,.;:!?।])([^\s])$")
 REPEATED_WORD_PATTERN = re.compile(r"^(?P<word>[\u0980-\u09FF]+)(?P<space>\s+)(?P=word)$")
 GENITIVE_PATTERN = re.compile(r"^(?P<noun>[\u0980-\u09FF]+)\s+(?P<marker>এর|র)$")
+CURATED_REPEATED_WORD_PATTERN = re.compile(r"(?<![\u0980-\u09FFA-Za-z])(?P<word>[\u0980-\u09FF]{2,})(?P<space>\s+)(?P=word)(?![\u0980-\u09FFA-Za-z])")
+DUPLICATE_PUNCTUATION_PATTERN = re.compile(r"([,.;:!?।])\1+")
+SPACE_BEFORE_PUNCTUATION_SCAN_PATTERN = re.compile(r"\s+([,.;:!?।])")
+SPACE_AFTER_TERMINATOR_SCAN_PATTERN = re.compile(r"([।!?])([^\s\"'”’)\]}])")
 
 
 class CandidateGenerator:
@@ -29,14 +33,24 @@ class CandidateGenerator:
         detector_findings: list[DetectorFinding],
         model_suggestions: list[Suggestion] | None = None,
         text: str = "",
+        personal_dictionary: list[str] | None = None,
+        mode: AnalyzeMode = AnalyzeMode.STANDARD,
     ) -> CandidateBundle:
+        curated_contextual_suggestions = self._curated_contextual_candidates(
+            text=text,
+            spell_suggestions=spell_suggestions,
+            rule_suggestions=rule_suggestions,
+            personal_dictionary=personal_dictionary,
+            mode=mode,
+        )
+        merged_rule_suggestions = self._merge_unique_suggestions(rule_suggestions, curated_contextual_suggestions)
         return CandidateBundle(
             spell_suggestions=self._rulebacked_candidates(spell_suggestions),
-            rule_suggestions=self._rulebacked_candidates(rule_suggestions),
+            rule_suggestions=self._rulebacked_candidates(merged_rule_suggestions),
             detector_suggestions=self._detector_backed_candidates(
                 detector_findings,
                 spell_suggestions=spell_suggestions,
-                rule_suggestions=rule_suggestions,
+                rule_suggestions=merged_rule_suggestions,
                 text=text,
             ),
             model_suggestions=self._model_candidates(model_suggestions or []),
@@ -51,6 +65,32 @@ class CandidateGenerator:
             for suggestion in suggestions
             if self._is_safe_model_suggestion(suggestion)
         ]
+
+    def _curated_contextual_candidates(
+        self,
+        *,
+        text: str,
+        spell_suggestions: Sequence[Suggestion],
+        rule_suggestions: Sequence[Suggestion],
+        personal_dictionary: list[str] | None,
+        mode: AnalyzeMode,
+    ) -> list[Suggestion]:
+        del mode
+        existing_suggestions = [*spell_suggestions, *rule_suggestions]
+        personal_words = self._expanded_personal_dictionary(personal_dictionary)
+        suggestions: list[Suggestion] = []
+        suggestions.extend(self._curated_repeated_word_suggestions(text, existing_suggestions))
+        suggestions.extend(self._curated_duplicate_punctuation_suggestions(text, existing_suggestions))
+        suggestions.extend(self._curated_space_before_punctuation_suggestions(text, existing_suggestions))
+        suggestions.extend(self._curated_space_after_terminator_suggestions(text, existing_suggestions))
+        suggestions.extend(
+            self._curated_exact_correction_suggestions(
+                text,
+                existing_suggestions,
+                personal_words=personal_words,
+            )
+        )
+        return self._merge_unique_suggestions([], suggestions)
 
     def _detector_backed_candidates(
         self,
@@ -98,6 +138,171 @@ class CandidateGenerator:
                     )
                 )
                 continue
+        return suggestions
+
+    def _curated_repeated_word_suggestions(
+        self,
+        text: str,
+        existing_suggestions: Sequence[Suggestion],
+    ) -> list[Suggestion]:
+        suggestions: list[Suggestion] = []
+        for match in CURATED_REPEATED_WORD_PATTERN.finditer(text):
+            word = match.group("word")
+            span_start = match.start()
+            span_end = match.end()
+            if self._has_covering_suggestion(existing_suggestions, span_start, span_end, word):
+                continue
+            suggestions.append(
+                Suggestion(
+                    id=stable_id("curated", f"repeat:{span_start}:{span_end}:{word}"),
+                    rule_id="REP_001",
+                    category=SuggestionCategory.GRAMMAR,
+                    subtype="repeated_word",
+                    span_start=span_start,
+                    span_end=span_end,
+                    original_text=text[span_start:span_end],
+                    replacement_options=[word],
+                    confidence=0.93,
+                    explanation_bn=f"একই শব্দ '{word}' পরপর দুইবার এসেছে।",
+                    explanation_en=f"The word '{word}' appears twice in a row.",
+                    source=SuggestionSource.RULE,
+                    severity=SuggestionSeverity.MEDIUM,
+                )
+            )
+        return suggestions
+
+    def _curated_duplicate_punctuation_suggestions(
+        self,
+        text: str,
+        existing_suggestions: Sequence[Suggestion],
+    ) -> list[Suggestion]:
+        suggestions: list[Suggestion] = []
+        for match in DUPLICATE_PUNCTUATION_PATTERN.finditer(text):
+            original_text = match.group(0)
+            replacement = original_text[0]
+            span_start = match.start()
+            span_end = match.end()
+            if self._has_covering_suggestion(existing_suggestions, span_start, span_end, replacement):
+                continue
+            suggestions.append(
+                Suggestion(
+                    id=stable_id("curated", f"punctuation:{span_start}:{span_end}:{original_text}"),
+                    rule_id="PUNC_001",
+                    category=SuggestionCategory.PUNCTUATION,
+                    subtype="duplicate_punctuation",
+                    span_start=span_start,
+                    span_end=span_end,
+                    original_text=original_text,
+                    replacement_options=[replacement],
+                    confidence=0.99,
+                    explanation_bn="এখানে বাড়তি যতিচিহ্ন আছে।",
+                    explanation_en="There is duplicate punctuation here.",
+                    source=SuggestionSource.RULE,
+                    severity=SuggestionSeverity.LOW,
+                )
+            )
+        return suggestions
+
+    def _curated_space_before_punctuation_suggestions(
+        self,
+        text: str,
+        existing_suggestions: Sequence[Suggestion],
+    ) -> list[Suggestion]:
+        suggestions: list[Suggestion] = []
+        for match in SPACE_BEFORE_PUNCTUATION_SCAN_PATTERN.finditer(text):
+            punctuation = match.group(1)
+            span_start = match.start()
+            span_end = match.end()
+            if self._has_covering_suggestion(existing_suggestions, span_start, span_end, punctuation):
+                continue
+            suggestions.append(
+                Suggestion(
+                    id=stable_id("curated", f"space-before:{span_start}:{span_end}:{punctuation}"),
+                    rule_id="PUNC_002",
+                    category=SuggestionCategory.PUNCTUATION,
+                    subtype="space_before_punctuation",
+                    span_start=span_start,
+                    span_end=span_end,
+                    original_text=text[span_start:span_end],
+                    replacement_options=[punctuation],
+                    confidence=0.98,
+                    explanation_bn="যতিচিহ্নের আগে অপ্রয়োজনীয় ফাঁকা আছে।",
+                    explanation_en="There is unnecessary whitespace before punctuation.",
+                    source=SuggestionSource.RULE,
+                    severity=SuggestionSeverity.LOW,
+                )
+            )
+        return suggestions
+
+    def _curated_space_after_terminator_suggestions(
+        self,
+        text: str,
+        existing_suggestions: Sequence[Suggestion],
+    ) -> list[Suggestion]:
+        suggestions: list[Suggestion] = []
+        for match in SPACE_AFTER_TERMINATOR_SCAN_PATTERN.finditer(text):
+            punctuation = match.group(1)
+            next_character = match.group(2)
+            span_start = match.start()
+            span_end = match.end()
+            replacement = f"{punctuation} {next_character}"
+            if self._has_covering_suggestion(existing_suggestions, span_start, span_end, replacement):
+                continue
+            suggestions.append(
+                Suggestion(
+                    id=stable_id("curated", f"space-after:{span_start}:{span_end}:{replacement}"),
+                    rule_id="PUNC_004",
+                    category=SuggestionCategory.PUNCTUATION,
+                    subtype="space_after_punctuation",
+                    span_start=span_start,
+                    span_end=span_end,
+                    original_text=text[span_start:span_end],
+                    replacement_options=[replacement],
+                    confidence=0.88,
+                    explanation_bn="যতিচিহ্নের পরে সাধারণত একটি ফাঁকা থাকে।",
+                    explanation_en="Punctuation is usually followed by a space here.",
+                    source=SuggestionSource.RULE,
+                    severity=SuggestionSeverity.LOW,
+                )
+            )
+        return suggestions
+
+    def _curated_exact_correction_suggestions(
+        self,
+        text: str,
+        existing_suggestions: Sequence[Suggestion],
+        *,
+        personal_words: set[str],
+    ) -> list[Suggestion]:
+        suggestions: list[Suggestion] = []
+        for typo, replacement in SAFE_EXACT_TYPOS.items():
+            typo_pattern = re.compile(rf"(?<![\u0980-\u09FFA-Za-z]){re.escape(typo)}(?![\u0980-\u09FFA-Za-z])")
+            for match in typo_pattern.finditer(text):
+                original_text = match.group(0)
+                if original_text in personal_words or replacement in personal_words:
+                    continue
+                span_start = match.start()
+                span_end = match.end()
+                if self._has_covering_suggestion(existing_suggestions, span_start, span_end, replacement):
+                    continue
+                category = SuggestionCategory.SPELLING if " " not in original_text else SuggestionCategory.GRAMMAR
+                suggestions.append(
+                    Suggestion(
+                        id=stable_id("curated", f"exact:{span_start}:{span_end}:{original_text}->{replacement}"),
+                        rule_id="SPELL_001" if category == SuggestionCategory.SPELLING else "GRAM_009",
+                        category=category,
+                        subtype="spelling_error" if category == SuggestionCategory.SPELLING else "safe_exact_correction",
+                        span_start=span_start,
+                        span_end=span_end,
+                        original_text=original_text,
+                        replacement_options=[replacement],
+                        confidence=0.98,
+                        explanation_bn=f"এখানে '{original_text}' এর বদলে '{replacement}' লেখা উচিত।",
+                        explanation_en=f"Replace '{original_text}' with '{replacement}' here.",
+                        source=SuggestionSource.RULE,
+                        severity=SuggestionSeverity.MEDIUM if category == SuggestionCategory.SPELLING else SuggestionSeverity.LOW,
+                    )
+                )
         return suggestions
 
     def _contextual_replacements(
@@ -322,6 +527,47 @@ class CandidateGenerator:
             f"Changing '{finding.original_text}' to '{primary_replacement}' makes this text clearer.",
             f"Changing '{finding.original_text}' to '{primary_replacement}' makes this text clearer.",
         )
+
+    def _expanded_personal_dictionary(self, personal_dictionary: list[str] | None) -> set[str]:
+        if self.spell_engine is None:
+            return {entry.strip() for entry in (personal_dictionary or []) if entry.strip()}
+        return self.spell_engine.expand_personal_dictionary(personal_dictionary)
+
+    def _has_covering_suggestion(
+        self,
+        suggestions: Sequence[Suggestion],
+        span_start: int,
+        span_end: int,
+        replacement: str,
+    ) -> bool:
+        for suggestion in suggestions:
+            if suggestion.span_start != span_start or suggestion.span_end != span_end:
+                continue
+            if not suggestion.replacement_options:
+                return True
+            if replacement in suggestion.replacement_options:
+                return True
+        return False
+
+    def _merge_unique_suggestions(
+        self,
+        primary: Sequence[Suggestion],
+        secondary: Sequence[Suggestion],
+    ) -> list[Suggestion]:
+        merged: list[Suggestion] = []
+        seen: set[tuple[int, int, str, tuple[str, ...]]] = set()
+        for suggestion in [*primary, *secondary]:
+            key = (
+                suggestion.span_start,
+                suggestion.span_end,
+                suggestion.rule_id,
+                tuple(suggestion.replacement_options),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(suggestion)
+        return merged
 
     def _unique_replacements(self, replacements: Iterable[str]) -> list[str]:
         unique: list[str] = []

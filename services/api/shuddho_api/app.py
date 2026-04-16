@@ -9,16 +9,26 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.analysis.shuddho_analysis.pipeline import AnalysisPipeline, build_corrected_text
-from services.analysis.shuddho_analysis.detector import DetectorService
+from services.analysis.shuddho_analysis.detector import DetectorRuntimeStatus, DetectorService
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
 from services.analysis.shuddho_analysis.ranking import SuggestionRankingPipeline
 from services.feedback.shuddho_feedback.store import FeedbackStore
-from services.llm.shuddho_llm.openrouter_client import OpenRouterClient
+from services.llm.shuddho_llm.openrouter_client import OpenRouterClient, OpenRouterRuntimeStatus
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
-from shared.schemas.python_models import AnalyzeRequest, AnalyzeResponse, FeedbackRecord, FeedbackRequest, HealthResponse, Suggestion
+from shared.schemas.python_models import (
+    AnalysisProfile,
+    AnalyzeRequest,
+    AnalyzeResponse,
+    DetectorHealth,
+    FeedbackRecord,
+    FeedbackRequest,
+    HealthResponse,
+    OpenRouterHealth,
+    Suggestion,
+)
 
 logger = logging.getLogger(__name__)
 ALLOWED_ORIGINS_ENV_VAR = "SHUDDHO_ALLOWED_ORIGINS"
@@ -86,13 +96,39 @@ analysis_pipeline = AnalysisPipeline(
     openrouter_client=openrouter_client,
 )
 
+detector_runtime = detector_service.runtime_status()
+openrouter_runtime = openrouter_client.runtime_status()
+if detector_runtime.loaded and openrouter_runtime.available:
+    analysis_profile = AnalysisProfile.FULL_BACKEND
+elif detector_runtime.loaded:
+    analysis_profile = AnalysisProfile.BACKEND_WITHOUT_OPENROUTER
+elif openrouter_runtime.available:
+    analysis_profile = AnalysisProfile.BACKEND_WITHOUT_DETECTOR
+else:
+    analysis_profile = AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY
+
+degraded_reasons: list[str] = []
+if detector_runtime.status != "ready":
+    degraded_reasons.append(f"detector_{detector_runtime.status}")
+if openrouter_runtime.status != "ready":
+    degraded_reasons.append(f"openrouter_{openrouter_runtime.status}")
+
 logger.info(
-    "Shuddho API startup openrouter_api_key_found=%s openrouter_configured=%s openrouter_available=%s openrouter_model=%s",
-    openrouter_client.has_api_key(),
-    openrouter_client.is_configured(),
-    openrouter_client.is_available(),
-    openrouter_client.model_name,
+    "Shuddho API startup env_file=%s detector_status=%s detector_reason=%s detector_checkpoint=%s detector_checkpoint_exists=%s "
+    "openrouter_status=%s openrouter_reason=%s openrouter_model=%s analysis_profile=%s degraded_reasons=%s",
+    ENV_FILE_PATH,
+    detector_runtime.status,
+    detector_runtime.reason,
+    detector_runtime.checkpoint,
+    detector_runtime.checkpoint_exists,
+    openrouter_runtime.status,
+    openrouter_runtime.reason,
+    openrouter_runtime.model,
+    analysis_profile.value,
+    degraded_reasons,
 )
+if degraded_reasons:
+    logger.warning("Shuddho API is running in degraded analysis mode reasons=%s", degraded_reasons)
 if not openrouter_client.is_configured():
     if openrouter_client.has_api_key():
         logger.warning(
@@ -110,17 +146,7 @@ if not openrouter_client.is_configured():
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    openrouter_configured = openrouter_client.is_configured()
-    openrouter_available = openrouter_client.is_available()
-    return HealthResponse(
-        status="ok",
-        detector_loaded=detector_service.is_loaded(),
-        detector_checkpoint=detector_service.checkpoint_path,
-        allowed_origins=ALLOWED_ORIGINS,
-        openrouter_configured=openrouter_configured,
-        openrouter_available=openrouter_available,
-        openrouter_model=openrouter_client.model_name,
-    )
+    return _build_health_response()
 
 
 @app.get("/")
@@ -175,3 +201,65 @@ def _filter_suppressed_suggestions(suggestions: list[Suggestion], suppressed_key
         for suggestion in suggestions
         if suggestion.suppression_key not in suppressed_keys
     ]
+
+
+def _build_health_response() -> HealthResponse:
+    detector_runtime = detector_service.runtime_status()
+    openrouter_runtime = openrouter_client.runtime_status()
+    analysis_profile = _derive_analysis_profile(detector_runtime, openrouter_runtime)
+    degraded_reasons = _derive_degraded_reasons(detector_runtime, openrouter_runtime)
+    return HealthResponse(
+        status="ok",
+        detector_loaded=detector_runtime.loaded,
+        detector_checkpoint=detector_runtime.checkpoint,
+        allowed_origins=ALLOWED_ORIGINS,
+        openrouter_configured=openrouter_runtime.configured,
+        openrouter_available=openrouter_runtime.available,
+        openrouter_model=openrouter_runtime.model,
+        detector=DetectorHealth(
+            enabled=detector_runtime.enabled,
+            loaded=detector_runtime.loaded,
+            status=detector_runtime.status,
+            reason=detector_runtime.reason,
+            checkpoint=detector_runtime.checkpoint,
+            checkpoint_exists=detector_runtime.checkpoint_exists,
+            backend_name=detector_runtime.backend_name,
+            threshold=detector_runtime.threshold,
+        ),
+        openrouter=OpenRouterHealth(
+            configured=openrouter_runtime.configured,
+            available=openrouter_runtime.available,
+            status=openrouter_runtime.status,
+            reason=openrouter_runtime.reason,
+            model=openrouter_runtime.model,
+            api_key_present=openrouter_runtime.api_key_present,
+            timeout_seconds=openrouter_runtime.timeout_seconds,
+        ),
+        analysis_profile=analysis_profile,
+        degraded_reasons=degraded_reasons,
+    )
+
+
+def _derive_analysis_profile(
+    detector_runtime: DetectorRuntimeStatus,
+    openrouter_runtime: OpenRouterRuntimeStatus,
+) -> AnalysisProfile:
+    if detector_runtime.loaded and openrouter_runtime.available:
+        return AnalysisProfile.FULL_BACKEND
+    if detector_runtime.loaded:
+        return AnalysisProfile.BACKEND_WITHOUT_OPENROUTER
+    if openrouter_runtime.available:
+        return AnalysisProfile.BACKEND_WITHOUT_DETECTOR
+    return AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY
+
+
+def _derive_degraded_reasons(
+    detector_runtime: DetectorRuntimeStatus,
+    openrouter_runtime: OpenRouterRuntimeStatus,
+) -> list[str]:
+    degraded_reasons: list[str] = []
+    if detector_runtime.status != "ready":
+        degraded_reasons.append(f"detector_{detector_runtime.status}")
+    if openrouter_runtime.status != "ready":
+        degraded_reasons.append(f"openrouter_{openrouter_runtime.status}")
+    return degraded_reasons

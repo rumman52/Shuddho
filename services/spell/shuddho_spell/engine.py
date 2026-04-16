@@ -10,6 +10,7 @@ from shared.constants.bangla import (
     BANGLA_WORD_PATTERN,
     COMMON_BANGLA_CONFUSIONS,
     CURATED_VARIANT_CORRECTIONS,
+    SAFE_EXACT_TYPOS,
 )
 from shared.schemas.python_models import (
     AnalyzeMode,
@@ -26,9 +27,9 @@ from .runtime_lexicon import load_runtime_lexicon
 
 DIRECT_SPELLING_CONFIDENCE = 0.99
 DIRECT_VARIANT_CONFIDENCE = 0.84
-MIN_GENERIC_CANDIDATE_SCORE = 0.985
-MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.985
-MIN_GENERIC_SCORE_MARGIN = 0.06
+MIN_GENERIC_CANDIDATE_SCORE = 0.96
+MIN_GENERIC_SUGGESTION_CONFIDENCE = 0.95
+MIN_GENERIC_SCORE_MARGIN = 0.04
 MAX_GENERIC_REPLACEMENTS = 1
 LATIN_OR_DIGIT_PATTERN = re.compile(r"[A-Za-z0-9]")
 
@@ -55,7 +56,15 @@ class SpellEngine:
 
         self.lexicon_source = runtime_lexicon.source
         self.lexicon = set(runtime_lexicon.accepted_words)
-        self.spelling_error_map = dict(runtime_lexicon.correction_map)
+        self.curated_spelling_map = {
+            source: target
+            for source, target in SAFE_EXACT_TYPOS.items()
+            if " " not in source and " " not in target
+        }
+        self.spelling_error_map = {
+            **runtime_lexicon.correction_map,
+            **self.curated_spelling_map,
+        }
         self.orthography_variant_map = dict(CURATED_VARIANT_CORRECTIONS)
         self.correction_map = {**self.spelling_error_map, **self.orthography_variant_map}
         self.frequency_rank = {word: rank for rank, word in enumerate(runtime_lexicon.candidate_words)}
@@ -253,12 +262,14 @@ class SpellEngine:
     def _looks_like_named_entity_or_user_word(self, token: str, candidates: list[SpellCandidate]) -> bool:
         if token in self.correction_map:
             return False
-        if len(token) >= 5 and not candidates:
+        if len(token) >= 6 and not candidates:
             return True
-        if len(candidates) > 1 and (candidates[0].score - candidates[1].score) < max(MIN_GENERIC_SCORE_MARGIN, 0.08):
-            return True
+        if not candidates:
+            return False
         top_candidate = candidates[0]
-        if len(token) >= 5 and top_candidate.score < 0.99:
+        if len(token) >= 6 and top_candidate.score < 0.97:
+            return True
+        if len(candidates) > 1 and len(token) >= 6 and (top_candidate.score - candidates[1].score) < 0.05:
             return True
         return False
 
@@ -272,7 +283,7 @@ class SpellEngine:
         distance = levenshtein_distance(token, top_candidate.word)
         if distance != 1:
             return False
-        if len(token) >= 5 and _bigram_overlap_score(token, top_candidate.word) < 0.8:
+        if len(token) >= 5 and _bigram_overlap_score(token, top_candidate.word) < 0.67:
             return False
         if len(candidates) > 1 and (top_candidate.score - candidates[1].score) < MIN_GENERIC_SCORE_MARGIN:
             return False
@@ -384,7 +395,7 @@ def is_safe_generic_candidate(token: str, candidate: str, distance: int) -> bool
         return False
     if token[:1] != candidate[:1]:
         return False
-    return _bigram_overlap_score(token, candidate) >= 0.6
+    return _bigram_overlap_score(token, candidate) >= 0.5
 
 
 def _bigram_overlap_score(source: str, target: str) -> float:

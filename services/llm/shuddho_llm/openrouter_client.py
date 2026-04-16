@@ -34,6 +34,17 @@ class OpenRouterHint:
     text: str
 
 
+@dataclass(frozen=True)
+class OpenRouterRuntimeStatus:
+    configured: bool
+    available: bool
+    status: str
+    reason: str | None
+    model: str
+    api_key_present: bool
+    timeout_seconds: int
+
+
 class OpenRouterClient:
     def __init__(
         self,
@@ -45,6 +56,8 @@ class OpenRouterClient:
         enabled: bool,
         configured: bool | None = None,
         api_key_present: bool | None = None,
+        status: str | None = None,
+        reason: str | None = None,
     ) -> None:
         self.session = session
         self.api_key = api_key
@@ -53,6 +66,9 @@ class OpenRouterClient:
         self.enabled = enabled
         self.configured = enabled if configured is None else configured
         self.api_key_present = bool(api_key) if api_key_present is None else api_key_present
+        resolved_status, resolved_reason = self._resolve_runtime_state(status=status, reason=reason)
+        self.status = resolved_status
+        self.reason = resolved_reason
 
     @classmethod
     def from_environment(cls, environ: dict[str, str] | None = None) -> "OpenRouterClient":
@@ -77,16 +93,22 @@ class OpenRouterClient:
                     "OpenRouter integration is disabled because %s is missing from the environment.",
                     OPENROUTER_API_KEY_ENV_VAR,
                 )
+                status = "missing_api_key"
+                reason = f"{OPENROUTER_API_KEY_ENV_VAR} is missing from the repo-root environment."
             else:
                 logger.warning(
                     "OpenRouter integration is disabled because %s is still set to a placeholder value.",
                     OPENROUTER_API_KEY_ENV_VAR,
                 )
+                status = "placeholder_api_key"
+                reason = f"{OPENROUTER_API_KEY_ENV_VAR} is still set to a placeholder value."
             return cls.disabled(
                 model_name=model_name,
                 timeout_seconds=timeout_seconds,
                 configured=False,
                 api_key_present=api_key_present,
+                status=status,
+                reason=reason,
             )
 
         return cls(
@@ -97,6 +119,7 @@ class OpenRouterClient:
             enabled=True,
             configured=True,
             api_key_present=True,
+            status="ready",
         )
 
     @classmethod
@@ -107,6 +130,8 @@ class OpenRouterClient:
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         configured: bool = False,
         api_key_present: bool = False,
+        status: str = "disabled",
+        reason: str | None = None,
     ) -> "OpenRouterClient":
         return cls(
             session=None,
@@ -116,6 +141,8 @@ class OpenRouterClient:
             enabled=False,
             configured=configured,
             api_key_present=api_key_present,
+            status=status,
+            reason=reason,
         )
 
     def is_available(self) -> bool:
@@ -126,6 +153,17 @@ class OpenRouterClient:
 
     def has_api_key(self) -> bool:
         return self.api_key_present
+
+    def runtime_status(self) -> OpenRouterRuntimeStatus:
+        return OpenRouterRuntimeStatus(
+            configured=self.is_configured(),
+            available=self.is_available(),
+            status=self.status,
+            reason=self.reason,
+            model=self.model_name,
+            api_key_present=self.api_key_present,
+            timeout_seconds=self.timeout_seconds,
+        )
 
     def analyze_sentence(
         self,
@@ -225,6 +263,17 @@ class OpenRouterClient:
                 len(raw_text),
             )
         return issues
+
+    def _resolve_runtime_state(self, *, status: str | None, reason: str | None) -> tuple[str, str | None]:
+        if status:
+            return status, reason
+        if self.is_available():
+            return "ready", None
+        if not self.api_key_present:
+            return "missing_api_key", f"{OPENROUTER_API_KEY_ENV_VAR} is missing from the repo-root environment."
+        if not self.configured:
+            return "placeholder_api_key", f"{OPENROUTER_API_KEY_ENV_VAR} is still set to a placeholder value."
+        return "unavailable", reason
 
 
 def _extract_message_content(payload: dict[str, Any]) -> str:

@@ -1,13 +1,26 @@
 import type { AnalyzeMode, AnalyzeRequest, AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
 
 const BANGLA_WORD_PATTERN = /[\u0980-\u09FFA-Za-z]+/gu;
+export const LOCAL_FALLBACK_LABEL = "Local fallback checks";
+export const LOCAL_FALLBACK_DESCRIPTION =
+  "Browser-only safe checks are active. Backend contextual analysis is not available right now.";
+
+const SAFE_EXACT_REPLACEMENTS = new Map<string, string>([
+  ["কিন্ত", "কিন্তু"],
+  ["ব্যাবহার", "ব্যবহার"],
+  ["বংলা", "বাংলা"],
+  ["ব্যকরন", "ব্যাকরণ"],
+  ["ব্যকরণ", "ব্যাকরণ"],
+  ["অবশ্যইই", "অবশ্যই"],
+]);
+
 const SAFE_VARIANT_REPLACEMENTS = new Map<string, string>([
   ["নিয়ে", "নিয়ে"],
   ["নিয়েই", "নিয়েই"],
   ["হয়", "হয়"],
   ["হয়নি", "হয়নি"],
   ["হয়েছে", "হয়েছে"],
-  ["ব্যাবহার", "ব্যবহার"],
+  ["দেয়", "দেয়"],
 ]);
 
 export function analyzeTextLocally(
@@ -22,6 +35,7 @@ export function analyzeTextLocally(
     ...buildWhitespaceBeforePunctuationSuggestions(text),
     ...buildBanglaFullStopSuggestions(text),
     ...buildSpaceAfterTerminatorSuggestions(text),
+    ...buildExactCorrectionSuggestions(text, payload.personal_dictionary ?? []),
     ...buildVariantSuggestions(text, mode, payload.personal_dictionary ?? []),
   ]);
 
@@ -258,6 +272,39 @@ function buildVariantSuggestions(
         severity: "low",
         optionalModeVisibility: ["strict", "formal"],
         isVariantOnly: true,
+      }),
+    );
+  }
+
+  return suggestions;
+}
+
+function buildExactCorrectionSuggestions(text: string, personalDictionary: string[]): Suggestion[] {
+  const ignoredWords = new Set(personalDictionary.map((entry) => entry.trim()).filter(Boolean));
+  const suggestions: Suggestion[] = [];
+  for (const match of text.matchAll(BANGLA_WORD_PATTERN)) {
+    const originalText = match[0];
+    const replacement = SAFE_EXACT_REPLACEMENTS.get(originalText);
+    if (!replacement || ignoredWords.has(originalText) || ignoredWords.has(replacement)) {
+      continue;
+    }
+
+    const start = match.index ?? 0;
+    suggestions.push(
+      buildSuggestion({
+        prefix: "local-exact",
+        ruleId: "SPELL_001",
+        category: "spelling",
+        subtype: "spelling_error",
+        start,
+        end: start + originalText.length,
+        originalText,
+        replacementOptions: [replacement],
+        confidence: 0.98,
+        explanationBn: `এখানে '${originalText}' এর বদলে '${replacement}' লেখা উচিত।`,
+        explanationEn: `Replace '${originalText}' with '${replacement}' here.`,
+        source: "rule",
+        severity: "medium",
       }),
     );
   }

@@ -31,7 +31,10 @@ COMMON_BANGLA_CONFUSIONS: dict[str, tuple[str, ...]] = {
 
 SAFE_EXACT_TYPOS: dict[str, str] = {
     "বংলা": "বাংলা",
+    "ব্যকরন": "ব্যাকরণ",
     "ব্যকরণ": "ব্যাকরণ",
+    "ব্যাবহার": "ব্যবহার",
+    "কিন্ত": "কিন্তু",
     "বানানভুল": "বানান ভুল",
     "এর পর": "এরপর",
     "যদি ও": "যদিও",
@@ -39,7 +42,12 @@ SAFE_EXACT_TYPOS: dict[str, str] = {
 }
 
 CURATED_VARIANT_CORRECTIONS: dict[str, str] = {
-    "কিন্ত": "কিন্তু",
+    "নিয়ে": "নিয়ে",
+    "নিয়েই": "নিয়েই",
+    "হয়": "হয়",
+    "হয়নি": "হয়নি",
+    "হয়েছে": "হয়েছে",
+    "দেয়": "দেয়",
 }
 
 REDUPLICATION_WHITELIST = frozenset(

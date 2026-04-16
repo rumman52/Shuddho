@@ -18,3 +18,14 @@ def test_frontend_uses_backend_only_calls() -> None:
 
     assert '"/analyze"' in api_source
     assert '"/feedback"' in api_source
+
+
+def test_frontend_status_copy_makes_backend_vs_fallback_honest() -> None:
+    app_source = Path("apps/web-editor/src/App.tsx").read_text(encoding="utf-8")
+
+    assert "Backend live" in app_source
+    assert "Backend unreachable — local fallback only" in app_source
+    assert "Backend live but detector disabled" in app_source
+    assert "Backend live but OpenRouter unavailable" in app_source
+    assert "Local fallback checks" in app_source
+    assert "contextual backend corrections are turned off" in app_source

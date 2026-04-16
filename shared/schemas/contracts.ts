@@ -7,6 +7,11 @@ export type SuggestionCategory =
 export type SuggestionSource = "rule" | "spell" | "model" | "hybrid";
 export type SuggestionSeverity = "low" | "medium" | "high";
 export type AnalyzeMode = "standard" | "strict" | "formal";
+export type AnalysisProfile =
+  | "full_backend"
+  | "backend_without_detector"
+  | "backend_without_openrouter"
+  | "backend_rules_and_spell_only";
 export type SuggestionKind =
   | "true_spelling_error"
   | "orthography_variant"
@@ -58,6 +63,41 @@ export interface AnalyzeResponse {
   normalized_text: string;
   corrected_text: string;
   suggestions: Suggestion[];
+}
+
+export interface DetectorHealth {
+  enabled: boolean;
+  loaded: boolean;
+  status: string;
+  reason?: string | null;
+  checkpoint?: string | null;
+  checkpoint_exists: boolean;
+  backend_name: string;
+  threshold: number;
+}
+
+export interface OpenRouterHealth {
+  configured: boolean;
+  available: boolean;
+  status: string;
+  reason?: string | null;
+  model?: string | null;
+  api_key_present: boolean;
+  timeout_seconds: number;
+}
+
+export interface HealthResponse {
+  status: string;
+  detector_loaded: boolean;
+  detector_checkpoint?: string | null;
+  allowed_origins: string[];
+  openrouter_configured: boolean;
+  openrouter_available: boolean;
+  openrouter_model?: string | null;
+  detector: DetectorHealth;
+  openrouter: OpenRouterHealth;
+  analysis_profile: AnalysisProfile;
+  degraded_reasons: string[];
 }
 
 export interface FeedbackRequest {

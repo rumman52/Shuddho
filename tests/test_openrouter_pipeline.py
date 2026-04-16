@@ -56,6 +56,18 @@ def test_pipeline_strict_mode_routes_all_eligible_sentences_to_openrouter(tmp_pa
     ]
 
 
+def test_pipeline_standard_mode_routes_first_eligible_sentence_when_local_rules_are_quiet(tmp_path: Path) -> None:
+    openrouter_client = RecordingOpenRouterClient()
+    pipeline = _build_pipeline(tmp_path, openrouter_client=openrouter_client)
+
+    pipeline.analyze(
+        "\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964",
+        mode=AnalyzeMode.STANDARD,
+    )
+
+    assert [call[0] for call in openrouter_client.calls] == ["\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964"]
+
+
 def test_pipeline_still_works_when_openrouter_is_unavailable(tmp_path: Path) -> None:
     openrouter_client = RecordingOpenRouterClient(available=False)
     pipeline = _build_pipeline(tmp_path, openrouter_client=openrouter_client)

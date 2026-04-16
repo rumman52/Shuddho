@@ -206,7 +206,7 @@ def test_analyze_flow_matches_prompt_response_contract(tmp_path: Path) -> None:
     assert merged
 
     by_subtype = {suggestion.subtype: suggestion for suggestion in merged}
-    orthography_variant = by_subtype["orthography_variant"]
+    spelling_error = by_subtype["spelling_error"]
     repeated_word = by_subtype["repeated_word"]
     duplicate_punctuation = by_subtype["duplicate_punctuation"]
 
@@ -217,9 +217,9 @@ def test_analyze_flow_matches_prompt_response_contract(tmp_path: Path) -> None:
         assert "rule_id" in dumped
         assert "status" not in dumped
 
-    assert orthography_variant.rule_id == "SPELL_002"
-    assert orthography_variant.original_text == "কিন্ত"
-    assert orthography_variant.replacement_options == ["কিন্তু"]
+    assert spelling_error.rule_id in {"SPELL_001", "SPELL_002"}
+    assert spelling_error.original_text == "কিন্ত"
+    assert spelling_error.replacement_options == ["কিন্তু"]
     assert repeated_word.rule_id == "REP_001"
     assert repeated_word.original_text == "আমি আমি"
     assert duplicate_punctuation.rule_id == "PUNC_001"
@@ -261,6 +261,6 @@ def test_analyze_flow_preserves_multiline_sentence_boundaries(tmp_path: Path) ->
     assert normalized.text == "আমি আমি স্কুলে যাই।।\nআমি কিন্ত বাসায় যাই।"
     assert by_rule_id["REP_001"].original_text == "আমি আমি"
     assert by_rule_id["PUNC_001"].original_text == "।।"
-    assert by_rule_id["SPELL_002"].original_text == "কিন্ত"
+    assert by_rule_id["SPELL_001"].original_text == "কিন্ত"
     assert by_rule_id["PUNC_002"].original_text == " ।"
     assert all(suggestion.original_text == text[suggestion.span_start : suggestion.span_end] for suggestion in merged)

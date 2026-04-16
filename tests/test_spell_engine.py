@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from services.spell.shuddho_spell.engine import SpellCandidate, SpellEngine
@@ -138,8 +139,8 @@ def test_spell_engine_treats_curated_variant_override_as_optional_style_guidance
     runtime_csv_path = _write_clean_csv_fixture(
         tmp_path,
         rows=[
-            ("\u0995\u09bf\u09a8\u09cd\u09a4", "\u0995\u09bf\u09a8\u09cd\u09a4", "fixture.csv", "1", "1", "1"),
-            ("\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "fixture.csv", "1", "1", "1"),
+            ("\u09a8\u09bf\u09df\u09c7", "\u09a8\u09bf\u09df\u09c7", "fixture.csv", "1", "1", "1"),
+            ("\u09a8\u09bf\u09af\u09bc\u09c7", "\u09a8\u09bf\u09af\u09bc\u09c7", "fixture.csv", "1", "1", "1"),
             ("\u0986\u09ae\u09bf", "\u0986\u09ae\u09bf", "fixture.csv", "1", "1", "1"),
             ("\u0986\u09b8\u09ac", "\u0986\u09b8\u09ac", "fixture.csv", "1", "1", "1"),
         ],
@@ -147,7 +148,7 @@ def test_spell_engine_treats_curated_variant_override_as_optional_style_guidance
 
     engine = SpellEngine(runtime_csv_path=runtime_csv_path)
 
-    suggestions = engine.analyze("\u0995\u09bf\u09a8\u09cd\u09a4 \u0986\u09ae\u09bf \u0986\u09b8\u09ac")
+    suggestions = engine.analyze("\u09a8\u09bf\u09df\u09c7 \u0986\u09ae\u09bf \u0986\u09b8\u09ac")
 
     assert len(suggestions) == 1
     assert suggestions[0].rule_id == "SPELL_002"
@@ -156,8 +157,8 @@ def test_spell_engine_treats_curated_variant_override_as_optional_style_guidance
     assert suggestions[0].suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT
     assert suggestions[0].is_variant_only is True
     assert suggestions[0].optional_mode_visibility == [AnalyzeMode.STRICT, AnalyzeMode.FORMAL]
-    assert suggestions[0].original_text == "\u0995\u09bf\u09a8\u09cd\u09a4"
-    assert suggestions[0].replacement_options == ["\u0995\u09bf\u09a8\u09cd\u09a4\u09c1"]
+    assert suggestions[0].original_text == "\u09a8\u09bf\u09df\u09c7"
+    assert suggestions[0].replacement_options == ["\u09a8\u09bf\u09af\u09bc\u09c7"]
     assert suggestions[0].source.value == "spell"
     assert suggestions[0].severity.value == "low"
 
@@ -166,15 +167,59 @@ def test_spell_engine_personal_dictionary_accepts_variant_and_canonical_forms(tm
     runtime_csv_path = _write_clean_csv_fixture(
         tmp_path,
         rows=[
-            ("\u0995\u09bf\u09a8\u09cd\u09a4", "\u0995\u09bf\u09a8\u09cd\u09a4", "fixture.csv", "1", "1", "1"),
-            ("\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "fixture.csv", "1", "1", "1"),
+            ("\u09a8\u09bf\u09df\u09c7", "\u09a8\u09bf\u09df\u09c7", "fixture.csv", "1", "1", "1"),
+            ("\u09a8\u09bf\u09af\u09bc\u09c7", "\u09a8\u09bf\u09af\u09bc\u09c7", "fixture.csv", "1", "1", "1"),
         ],
     )
 
     engine = SpellEngine(runtime_csv_path=runtime_csv_path)
 
-    assert engine.analyze("\u0995\u09bf\u09a8\u09cd\u09a4", personal_dictionary=["\u0995\u09bf\u09a8\u09cd\u09a4"]) == []
-    assert engine.analyze("\u0995\u09bf\u09a8\u09cd\u09a4", personal_dictionary=["\u0995\u09bf\u09a8\u09cd\u09a4\u09c1"]) == []
+    assert engine.analyze("\u09a8\u09bf\u09df\u09c7", personal_dictionary=["\u09a8\u09bf\u09df\u09c7"]) == []
+    assert engine.analyze("\u09a8\u09bf\u09df\u09c7", personal_dictionary=["\u09a8\u09bf\u09af\u09bc\u09c7"]) == []
+
+
+def test_spell_engine_surfaces_curated_high_value_bengali_corrections(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "fixture.csv", "1", "1", "1"),
+            ("\u09ac\u09cd\u09af\u09ac\u09b9\u09be\u09b0", "\u09ac\u09cd\u09af\u09ac\u09b9\u09be\u09b0", "fixture.csv", "1", "1", "1"),
+            ("\u09ac\u09be\u0982\u09b2\u09be", "\u09ac\u09be\u0982\u09b2\u09be", "fixture.csv", "1", "1", "1"),
+            ("\u09ac\u09cd\u09af\u09be\u0995\u09b0\u09a3", "\u09ac\u09cd\u09af\u09be\u0995\u09b0\u09a3", "fixture.csv", "1", "1", "1"),
+            ("\u0985\u09ac\u09b6\u09cd\u09af\u0987", "\u0985\u09ac\u09b6\u09cd\u09af\u0987", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+    fixture_cases = json.loads(Path("shared/fixtures/bengali_usefulness_cases.json").read_text(encoding="utf-8"))
+    hard_spelling_case = next(case for case in fixture_cases if case["id"] == "hard-spelling")
+
+    suggestions = engine.analyze(hard_spelling_case["text"])
+    replacements = {replacement for suggestion in suggestions for replacement in suggestion.replacement_options}
+
+    assert "কিন্তু" in replacements
+    assert "ব্যবহার" in replacements
+    assert all(suggestion.category == SuggestionCategory.SPELLING for suggestion in suggestions)
+
+
+def test_spell_engine_keeps_code_mixed_and_proper_noun_like_tokens_protected(tmp_path: Path, monkeypatch) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("\u09b0\u09be\u09b9\u09c1\u09b2", "\u09b0\u09be\u09b9\u09c1\u09b2", "fixture.csv", "1", "1", "1"),
+            ("\u09ac\u09be\u0982\u09b2\u09be", "\u09ac\u09be\u0982\u09b2\u09be", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    def fake_generate_candidates(token: str) -> list[SpellCandidate]:
+        if token == "\u09b0\u09be\u09b9\u09c1\u09b2\u09b2":
+            return [SpellCandidate(word="\u09b0\u09be\u09b9\u09c1\u09b2", score=0.96)]
+        raise AssertionError(f"unexpected token: {token}")
+
+    monkeypatch.setattr(engine, "generate_candidates", fake_generate_candidates)
+
+    assert engine.analyze("Rahul123 \u09ac\u09be\u0982\u09b2\u09be") == []
+    assert engine.analyze("\u09b0\u09be\u09b9\u09c1\u09b2\u09b2") == []
 
 
 def test_spell_engine_suppresses_ambiguous_generic_candidates(tmp_path: Path, monkeypatch) -> None:

@@ -63,8 +63,15 @@ function scheduleAnalyze(target: SupportedEditable): void {
         onDismiss: (range) => dismissSuggestion(target, range)
       });
     },
-    () => {
-      overlay.hide();
+    (error) => {
+      if (!activeTarget || activeTarget !== target) {
+        return;
+      }
+      overlay.showNotice(
+        target,
+        "Backend unavailable",
+        `Smart analysis is paused because the Shuddho backend could not analyze this text. ${error instanceof Error ? error.message : ""}`.trim(),
+      );
     }
   );
 }

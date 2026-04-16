@@ -34,6 +34,13 @@ class AnalyzeMode(str, Enum):
     FORMAL = "formal"
 
 
+class AnalysisProfile(str, Enum):
+    FULL_BACKEND = "full_backend"
+    BACKEND_WITHOUT_DETECTOR = "backend_without_detector"
+    BACKEND_WITHOUT_OPENROUTER = "backend_without_openrouter"
+    BACKEND_RULES_AND_SPELL_ONLY = "backend_rules_and_spell_only"
+
+
 class SuggestionKind(str, Enum):
     TRUE_SPELLING_ERROR = "true_spelling_error"
     ORTHOGRAPHY_VARIANT = "orthography_variant"
@@ -193,6 +200,27 @@ class FeedbackRecord(BaseModel):
     created_at: datetime
 
 
+class DetectorHealth(BaseModel):
+    enabled: bool
+    loaded: bool
+    status: str
+    reason: str | None = None
+    checkpoint: str | None = None
+    checkpoint_exists: bool = False
+    backend_name: str = "disabled"
+    threshold: float = Field(ge=0.0, le=1.0)
+
+
+class OpenRouterHealth(BaseModel):
+    configured: bool = False
+    available: bool = False
+    status: str
+    reason: str | None = None
+    model: str | None = None
+    api_key_present: bool = False
+    timeout_seconds: int = Field(ge=1)
+
+
 class HealthResponse(BaseModel):
     status: str
     detector_loaded: bool
@@ -201,6 +229,10 @@ class HealthResponse(BaseModel):
     openrouter_configured: bool = False
     openrouter_available: bool = False
     openrouter_model: str | None = None
+    detector: DetectorHealth
+    openrouter: OpenRouterHealth
+    analysis_profile: AnalysisProfile
+    degraded_reasons: list[str] = Field(default_factory=list)
 
 
 def _infer_suggestion_kind(

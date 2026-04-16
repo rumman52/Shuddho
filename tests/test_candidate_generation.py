@@ -92,10 +92,11 @@ def test_candidate_generator_drops_detector_spelling_when_no_safe_replacement_ex
     runtime_csv_path = _write_clean_csv_fixture(
         tmp_path,
         rows=[
-            ("\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "fixture.csv", "1", "1", "1"),
+            ("\u09b0\u09be\u09b9\u09c1\u09b2", "\u09b0\u09be\u09b9\u09c1\u09b2", "fixture.csv", "1", "1", "1"),
         ],
     )
     generator = CandidateGenerator(spell_engine=SpellEngine(runtime_csv_path=runtime_csv_path))
+    generator.spell_engine.generate_candidates = lambda token: []  # type: ignore[method-assign]
 
     bundle = generator.generate(
         spell_suggestions=[],
@@ -106,15 +107,15 @@ def test_candidate_generator_drops_detector_spelling_when_no_safe_replacement_ex
                 category=SuggestionCategory.SPELLING,
                 subtype="detector_spelling",
                 span_start=0,
-                span_end=5,
-                original_text="\u0995\u09bf\u09a8\u09cd\u09a4",
+                span_end=6,
+                original_text="\u09b0\u09be\u09b9\u09c1\u09b2\u09b2",
                 confidence=0.84,
                 explanation_bn="",
                 explanation_en="",
                 source=SuggestionSource.MODEL,
             )
         ],
-        text="\u0995\u09bf\u09a8\u09cd\u09a4",
+        text="\u09b0\u09be\u09b9\u09c1\u09b2\u09b2",
     )
 
     assert bundle.detector_suggestions == []

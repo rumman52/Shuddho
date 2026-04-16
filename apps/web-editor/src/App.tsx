@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEven
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
-import type { AnalyzeMode, AnalyzeResponse, FeedbackAction, Suggestion } from "@shared/schemas/contracts";
+import type { AnalyzeMode, AnalyzeResponse, FeedbackAction, HealthResponse, Suggestion } from "@shared/schemas/contracts";
 import { SuggestionCard, type SuggestionCardAnchor } from "./components/SuggestionCard";
 import { IssueMark } from "./lib/editorExtensions";
 import { analyzeText, getApiBaseUrl, getHealth, sendFeedback, setApiBaseUrlOverride } from "./lib/api";
 import { applyIssueMarks, replaceSuggestion } from "./lib/highlight";
-import { analyzeTextLocally } from "./lib/localAnalysis";
+import { LOCAL_FALLBACK_DESCRIPTION, LOCAL_FALLBACK_LABEL, analyzeTextLocally } from "./lib/localAnalysis";
 import { getEditorTextSurface } from "./lib/textSurface";
 
 const INITIAL_TEXT = sampleFixtures[0]?.text ?? "à¦†à¦®à¦¿  à¦¬à¦¾à¦‚à¦²à¦¾ à¦²à¦¿à¦–à¦¿  à¥¤à¥¤ à¦¬à¦¾à¦‚à¦²à¦¾ à¦¬à¦¾à¦‚à¦²à¦¾ à¦­à¦¾à¦·à¦¾ à¦–à§à¦¬ à¦¸à§à¦¨à§à¦¦à¦° !!";
@@ -36,6 +36,7 @@ export default function App() {
   const [status, setStatus] = useState("Waiting for input");
   const [backendMode, setBackendMode] = useState<BackendMode>("checking");
   const [backendMessage, setBackendMessage] = useState("Checking backend connection...");
+  const [backendHealth, setBackendHealth] = useState<HealthResponse | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
   const analysisTimerRef = useRef<number | null>(null);
@@ -95,6 +96,15 @@ export default function App() {
     () => analysis.suggestions.filter((suggestion) => suggestion.category === "style"),
     [analysis.suggestions]
   );
+  const backendStatus = useMemo(
+    () => describeBackendStatus(backendMode, backendHealth),
+    [backendMode, backendHealth]
+  );
+  const runtimeBanner = useMemo(
+    () => describeRuntimeBanner(backendMode, backendHealth, apiBaseUrl),
+    [backendMode, backendHealth, apiBaseUrl]
+  );
+  const isLocalFallbackActive = backendMode === "offline";
 
   useEffect(() => {
     requestModeRef.current = requestMode;
@@ -275,7 +285,11 @@ export default function App() {
         return;
       }
       setBackendMode("online");
-      setBackendMessage(`Backend connected at ${apiBaseUrl}. Conservative backend analysis is active.`);
+      setBackendMessage(
+        backendHealth
+          ? formatBackendMessage(backendHealth, apiBaseUrl)
+          : `Backend live at ${apiBaseUrl}. Contextual backend analysis is active for this session.`
+      );
       setAnalysis(response);
       setStatus(formatPreciseAnalysisStatus(response.suggestions, mode));
     } catch (error) {
@@ -284,7 +298,11 @@ export default function App() {
       }
       const fallbackResponse = analyzeTextLocally({ text, mode, personal_dictionary: personalDictionary });
       setBackendMode("offline");
-      setBackendMessage(`Browser fallback is active because the backend is unavailable at ${apiBaseUrl}. Results currently come from local safe checks only.`);
+      setBackendHealth(null);
+      setBackendMessage(
+        `${LOCAL_FALLBACK_LABEL} are active because the backend request failed at ${apiBaseUrl}. ` +
+          `${error instanceof Error ? error.message : LOCAL_FALLBACK_DESCRIPTION}`
+      );
       setAnalysis(fallbackResponse);
       setStatus(formatPreciseFallbackStatus(fallbackResponse.suggestions, mode));
     }
@@ -642,13 +660,15 @@ export default function App() {
     setBackendMessage(`Checking backend at ${apiBaseUrl}...`);
     try {
       const health = await getHealth();
+      setBackendHealth(health);
       setBackendMode("online");
-      setBackendMessage(
-        `Backend connected at ${apiBaseUrl} (${health.detector_loaded ? "detector ready" : "detector unavailable"}).`,
-      );
+      setBackendMessage(formatBackendMessage(health, apiBaseUrl));
     } catch {
+      setBackendHealth(null);
       setBackendMode("offline");
-      setBackendMessage(`Browser fallback is active because the backend is unavailable at ${apiBaseUrl}. Exact contextual backend corrections are unavailable until it reconnects.`);
+      setBackendMessage(
+        `${LOCAL_FALLBACK_LABEL} are active because the backend is unreachable at ${apiBaseUrl}. ${LOCAL_FALLBACK_DESCRIPTION}`,
+      );
     }
   }
 
@@ -741,7 +761,7 @@ export default function App() {
           <p className="eyebrow">Shuddho</p>
           <h1>Bangla writing assistant</h1>
           <p className="lede">
-            Type Bangla text, use backend analysis when it is reachable, and keep writing with browser fallback checks when it is not.
+            Type Bangla text and Shuddho will tell you plainly whether you are using the live backend or local fallback-only checks.
           </p>
         </div>
         <div className="status-panel">
@@ -757,7 +777,7 @@ export default function App() {
                     : "rgba(255, 255, 255, 0.12)",
             }}
           >
-            {backendMode === "online" ? "Backend live" : backendMode === "offline" ? "Browser fallback only" : "Checking API"}
+            {backendStatus}
           </span>
           <span>{status}</span>
           <strong>{hardSuggestions.length}</strong>
@@ -837,7 +857,21 @@ export default function App() {
               color: "var(--ink)"
             }}
           >
-            Browser fallback is active. Contextual backend corrections are currently unavailable, so Shuddho is only using local safe checks in this session.
+            {runtimeBanner}
+          </div>
+        ) : runtimeBanner ? (
+          <div
+            role="status"
+            style={{
+              marginBottom: "0.9rem",
+              padding: "0.85rem 1rem",
+              borderRadius: "18px",
+              border: "1px solid rgba(15, 109, 98, 0.2)",
+              background: "rgba(240, 249, 247, 0.94)",
+              color: "var(--ink)"
+            }}
+          >
+            {runtimeBanner}
           </div>
         ) : null}
         <div
@@ -923,7 +957,11 @@ export default function App() {
         <div className="panel-header">
           <div>
             <h2>Open suggestions</h2>
-            <p>Hard errors stay visible here. Optional style guidance is separated below and muted by default.</p>
+            <p>
+              {isLocalFallbackActive
+                ? "Local fallback checks are shown here. Backend contextual corrections are unavailable until the API reconnects."
+                : "Hard errors stay visible here. Optional style guidance is separated below and muted by default."}
+            </p>
           </div>
           <pre className="panel-header__normalized">{analysis.normalized_text}</pre>
         </div>
@@ -931,7 +969,9 @@ export default function App() {
           {hardSuggestions.map((suggestion) => renderSuggestionListItem(suggestion))}
           {hardSuggestions.length === 0 ? (
             <p className="empty-state">
-              {optionalStyleSuggestions.length > 0
+              {isLocalFallbackActive
+                ? "No local fallback issues found. Contextual backend suggestions are unavailable in this degraded mode."
+                : optionalStyleSuggestions.length > 0
                 ? "No hard errors found. Optional style guidance is available below."
                 : "No issues found for this draft."}
             </p>
@@ -1067,6 +1107,66 @@ function matchSuggestion(previous: Suggestion | null, nextSuggestions: Suggestio
   return bestMatch?.suggestion ?? null;
 }
 
+function describeBackendStatus(backendMode: BackendMode, health: HealthResponse | null): string {
+  if (backendMode === "offline") {
+    return "Backend unreachable — local fallback only";
+  }
+  if (backendMode === "checking") {
+    return "Checking backend";
+  }
+  if (health && !health.detector.loaded) {
+    return "Backend live but detector disabled";
+  }
+  if (health && !health.openrouter.available) {
+    return "Backend live but OpenRouter unavailable";
+  }
+  return "Backend live";
+}
+
+function formatBackendMessage(health: HealthResponse, apiBaseUrl: string): string {
+  const details = [`Backend reached at ${apiBaseUrl}.`];
+  if (health.detector.loaded) {
+    details.push(`Detector ready at ${health.detector.checkpoint ?? "configured checkpoint"}.`);
+  } else {
+    details.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
+  }
+
+  if (health.openrouter.available) {
+    details.push(`OpenRouter ready with ${health.openrouter.model ?? "the configured model"}.`);
+  } else {
+    details.push(`OpenRouter unavailable${health.openrouter.reason ? `: ${health.openrouter.reason}` : "."}`);
+  }
+
+  return details.join(" ");
+}
+
+function describeRuntimeBanner(
+  backendMode: BackendMode,
+  health: HealthResponse | null,
+  apiBaseUrl: string,
+): string | null {
+  if (backendMode === "offline") {
+    return `Local fallback checks only. The backend could not be reached at ${apiBaseUrl}, so contextual backend corrections are turned off in this session.`;
+  }
+  if (backendMode !== "online" || !health || health.analysis_profile === "full_backend") {
+    return null;
+  }
+
+  const reasons: string[] = [];
+  if (!health.detector.loaded) {
+    reasons.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
+  }
+  if (!health.openrouter.available) {
+    reasons.push(`OpenRouter unavailable${health.openrouter.reason ? `: ${health.openrouter.reason}` : "."}`);
+  }
+
+  if (!reasons.length) {
+    return null;
+  }
+
+  return `${describeBackendStatus("online", health)}. ${reasons.join(" ")} You are still getting backend rules and spelling checks, but not the full contextual stack.`;
+}
+
 export function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
   const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
   const styleSuggestionCount = suggestions.length - hardIssueCount;
@@ -1087,10 +1187,10 @@ export function formatFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMod
   const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
 
   if (styleSuggestionCount === 0) {
-    return `${hardIssueCount} ${hardLabel} â€¢ browser fallback â€¢ ${mode} mode`;
+    return `${hardIssueCount} ${hardLabel} • ${LOCAL_FALLBACK_LABEL.toLowerCase()} • ${mode} mode`;
   }
 
-  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} â€¢ browser fallback â€¢ ${mode} mode`;
+  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} • ${LOCAL_FALLBACK_LABEL.toLowerCase()} • ${mode} mode`;
 }
 
 function formatPreciseAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
@@ -1113,10 +1213,10 @@ function formatPreciseFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMod
   const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
 
   if (styleSuggestionCount === 0) {
-    return `${hardIssueCount} ${hardLabel} | browser fallback only | ${mode} mode`;
+    return `${hardIssueCount} ${hardLabel} | ${LOCAL_FALLBACK_LABEL.toLowerCase()} | ${mode} mode`;
   }
 
-  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} | browser fallback only | ${mode} mode`;
+  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} | ${LOCAL_FALLBACK_LABEL.toLowerCase()} | ${mode} mode`;
 }
 
 function loadPersonalDictionary(): string[] {

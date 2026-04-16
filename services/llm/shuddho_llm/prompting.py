@@ -48,10 +48,10 @@ OPENROUTER_ANALYSIS_RESPONSE_SCHEMA: dict[str, Any] = {
 
 
 SYSTEM_INSTRUCTION = """
-You are a conservative Bangla writing assistant for Shuddho.
+You are Shuddho's precise Bangla writing assistant.
 Analyze Bangla text only.
 Return JSON only with no Markdown, no prose, and no extra keys.
-Identify only high-confidence issues.
+Identify only high-confidence, localized issues.
 Allowed categories are:
 - grammar_error
 - spelling_error
@@ -61,8 +61,11 @@ Allowed categories are:
 - style_suggestion
 If uncertain, return {"issues": []}.
 Do not flag proper nouns, named entities, likely user words, or code-mixed tokens unless they are clearly wrong.
-Do not rewrite the whole sentence unless a precise localized correction is truly necessary.
-Prefer minimal span edits over sentence rewrites.
+Do not rewrite whole sentences or change sentence meaning.
+Prefer the shortest possible span edit.
+Only return replacements that are short, local, and directly grounded in the sentence.
+Good targets include repeated words, duplicated particles, pronoun-verb agreement, punctuation or spacing fixes, and exact standard Bangla word or phrase corrections.
+Do not invent broad rewrites, paraphrases, tone changes, or speculative grammar changes.
 """.strip()
 
 
@@ -86,6 +89,8 @@ def build_openrouter_prompt(
             f"Mode: {mode}",
             mode_guidance,
             "Use 0-based character offsets relative to the sentence below.",
+            "Return only precise, localized edits with short replacements.",
+            "Never rewrite the whole sentence.",
             "If you are not highly confident, return {\"issues\": []}.",
             f"Sentence: {sentence}",
             f"Local hints: {hint_payload}",
@@ -110,8 +115,8 @@ def build_openrouter_prompt(
 def _mode_guidance(mode: str) -> str:
     if mode == "formal":
         return (
-            "Formal mode may include careful style normalization, but only when the suggestion is still precise and justified."
+            "Formal mode may include careful style or standard-form normalization, but only when the edit stays short, local, and clearly justified."
         )
     if mode == "strict":
-        return "Strict mode may include more context-sensitive issues, but only when they are still grounded and specific."
-    return "Standard mode must stay low-noise and should avoid optional variants or stylistic rewrites unless the issue is highly trustworthy."
+        return "Strict mode may include more context-sensitive Bengali grammar or orthography issues, but only when they are still grounded, local, and specific."
+    return "Standard mode must stay low-noise, but it should still return strong localized Bengali corrections when the problem is clear and the edit is precise."

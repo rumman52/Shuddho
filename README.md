@@ -50,7 +50,7 @@ tests/
 
 ### Backend
 
-Create a root `.env` from `.env.example` before starting the API:
+Create a repo-root `.env` from `.env.example` before starting the API:
 
 ```bash
 cp .env.example .env
@@ -62,7 +62,7 @@ On Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
-On this repo, the backend reads only the repo-root `.env`, for example [`C:/Projects/Shuddho/.env`](C:/Projects/Shuddho/.env). A frontend app-level `.env` does not configure OpenRouter for the API.
+On this repo, the backend reads only the repo-root `.env`, for example [`C:/Projects/Shuddho/.env`](C:/Projects/Shuddho/.env). A frontend app-level `.env` does not configure OpenRouter or detector startup for the API. If backend behavior looks unchanged after editing a frontend `.env`, check the repo-root `.env` and restart FastAPI.
 
 Then install and run the backend:
 
@@ -99,6 +99,15 @@ Relevant backend variables:
 - `OPENROUTER_MODEL`
 - `OPENROUTER_TIMEOUT_SECONDS`
 - `SHUDDHO_ALLOWED_ORIGINS`
+- `SHUDDHO_DETECTOR_ENABLED`
+- `SHUDDHO_DETECTOR_CHECKPOINT`
+- `SHUDDHO_DETECTOR_THRESHOLD`
+
+Detector defaults are now local-dev friendly:
+
+- `SHUDDHO_DETECTOR_ENABLED=auto` tries to load the detector automatically.
+- If `SHUDDHO_DETECTOR_CHECKPOINT` is unset, Shuddho falls back to `artifacts/detector/detector-base`.
+- Set `SHUDDHO_DETECTOR_ENABLED=false` only when you explicitly want to disable detector-backed analysis.
 
 The default `OPENROUTER_MODEL` is `nvidia/nemotron-3-super-120b-a12b`. For lower-cost testing you can switch it to `nvidia/nemotron-3-super-120b-a12b:free` in your local `.env` or hosting environment.
 
@@ -106,10 +115,25 @@ The default `OPENROUTER_MODEL` is `nvidia/nemotron-3-super-120b-a12b`. For lower
 
 - Create a repo-root `.env` from `.env.example` and set a real `OPENROUTER_API_KEY`.
 - Restart the backend after changing `.env` so the client is re-initialized.
-- Open `http://127.0.0.1:8000/health` and confirm `openrouter_configured`, `openrouter_available`, and `openrouter_model`.
+- Open `http://127.0.0.1:8000/health` and confirm `openrouter_configured`, `openrouter_available`, `openrouter.status`, and `openrouter.reason`.
 - Test with suspicious Bangla sentences that need context, not isolated dictionary words.
 - Use `strict` mode first when verifying OpenRouter, because `standard` mode remains intentionally lower-noise.
 - Check backend logs for OpenRouter startup status, suspicious sentence counts, issues returned, and issues filtered out.
+
+### Why suggestions may look generic or empty
+
+- The editor may be in explicit degraded mode. Check the UI banner first:
+  - `Backend unreachable — local fallback only` means you are seeing browser-only safe checks, not full backend analysis.
+  - `Backend live but detector disabled` means the API is running, but detector-backed contextual routing is degraded.
+  - `Backend live but OpenRouter unavailable` means backend rules and spelling still work, but contextual LLM suggestions are unavailable.
+- The backend status is most explicit at `http://127.0.0.1:8000/health`. Check:
+  - `analysis_profile`
+  - `degraded_reasons`
+  - `detector.status` and `detector.reason`
+  - `openrouter.status` and `openrouter.reason`
+- The backend reads only the repo-root `.env`. If detector or OpenRouter settings changed, restart the backend after editing `.env`.
+- `standard` mode is still lower-noise than `strict` or `formal`. If you are validating contextual Bengali corrections, compare all three modes.
+- If the repo contains `artifacts/detector/detector-base` but health still shows the detector unavailable, inspect `detector.reason` and backend startup logs for the exact checkpoint or load failure.
 
 ### Web editor
 
@@ -228,7 +252,7 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
 {
   "status": "ok",
   "detector_loaded": false,
-  "detector_checkpoint": null,
+  "detector_checkpoint": "artifacts/detector/detector-base",
   "allowed_origins": [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
@@ -236,7 +260,31 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
   ],
   "openrouter_configured": false,
   "openrouter_available": false,
-  "openrouter_model": "nvidia/nemotron-3-super-120b-a12b"
+  "openrouter_model": "nvidia/nemotron-3-super-120b-a12b",
+  "detector": {
+    "enabled": true,
+    "loaded": false,
+    "status": "missing_checkpoint",
+    "reason": "Detector checkpoint could not be loaded from 'artifacts/detector/detector-base': ...",
+    "checkpoint": "artifacts/detector/detector-base",
+    "checkpoint_exists": false,
+    "backend_name": "disabled",
+    "threshold": 0.92
+  },
+  "openrouter": {
+    "configured": false,
+    "available": false,
+    "status": "missing_api_key",
+    "reason": "OPENROUTER_API_KEY is missing from the repo-root environment.",
+    "model": "nvidia/nemotron-3-super-120b-a12b",
+    "api_key_present": false,
+    "timeout_seconds": 20
+  },
+  "analysis_profile": "backend_rules_and_spell_only",
+  "degraded_reasons": [
+    "detector_missing_checkpoint",
+    "openrouter_missing_api_key"
+  ]
 }
 ```
 

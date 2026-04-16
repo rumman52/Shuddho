@@ -1,18 +1,8 @@
-import type { AnalyzeRequest, AnalyzeResponse, FeedbackRequest } from "@shared/schemas/contracts";
+import type { AnalyzeRequest, AnalyzeResponse, FeedbackRequest, HealthResponse } from "@shared/schemas/contracts";
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
 let apiBaseUrl = resolveApiBaseUrl();
-
-export interface HealthResponse {
-  status: string;
-  detector_loaded: boolean;
-  detector_checkpoint: string | null;
-  allowed_origins: string[];
-  openrouter_configured: boolean;
-  openrouter_available: boolean;
-  openrouter_model: string | null;
-}
 
 function resolveApiBaseUrl(): string {
   const runtimeOverride = readStoredApiBaseUrl();

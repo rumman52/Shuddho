@@ -5,6 +5,7 @@ import pytest
 
 from ml.detector.runtime import DetectorPrediction
 from services.analysis.shuddho_analysis.detector import (
+    DEFAULT_CHECKPOINT_DISPLAY_PATH,
     DEFAULT_CONFIDENCE_THRESHOLD,
     BanglaBertTokenClassifierScaffold,
     DetectorService,
@@ -217,13 +218,41 @@ def test_detector_service_returns_empty_predictions_when_backend_fails() -> None
     ) == []
 
 
-def test_detector_service_logs_warning_when_checkpoint_env_is_missing(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING):
-        service = DetectorService.from_environment({})
+def test_detector_service_auto_loads_default_checkpoint_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class RuntimeWithThreshold:
+        def __init__(self) -> None:
+            self.confidence_threshold = 0.1
 
-    assert service.is_loaded() is False
+        def predict(self, text: str) -> list[DetectorPrediction]:
+            return []
+
+    runtime = RuntimeWithThreshold()
+    default_checkpoint_dir = tmp_path / "artifacts" / "detector" / "detector-base"
+    default_checkpoint_dir.mkdir(parents=True)
+    (default_checkpoint_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    (default_checkpoint_dir / "best_model.pt").write_text("stub", encoding="utf-8")
+
+    def fake_load(checkpoint_path: str) -> RuntimeWithThreshold:
+        assert Path(checkpoint_path) == default_checkpoint_dir
+        return runtime
+
+    monkeypatch.setattr("services.analysis.shuddho_analysis.detector.REPO_ROOT", tmp_path)
+    monkeypatch.setattr("services.analysis.shuddho_analysis.detector.BanglaDetectorRuntime.load", fake_load)
+
+    service = DetectorService.from_environment({})
+    runtime_status = service.runtime_status()
+
+    assert service.is_loaded() is True
+    assert service.checkpoint_path == DEFAULT_CHECKPOINT_DISPLAY_PATH
+    assert runtime_status.enabled is True
+    assert runtime_status.loaded is True
+    assert runtime_status.status == "ready"
+    assert runtime_status.checkpoint_exists is True
     assert service.confidence_threshold == DEFAULT_CONFIDENCE_THRESHOLD
-    assert "SHUDDHO_DETECTOR_CHECKPOINT is not set" in caplog.text
+    assert runtime.confidence_threshold == DEFAULT_CONFIDENCE_THRESHOLD
 
 
 def test_detector_service_can_be_disabled_explicitly_from_environment(caplog: pytest.LogCaptureFixture) -> None:
@@ -237,6 +266,8 @@ def test_detector_service_can_be_disabled_explicitly_from_environment(caplog: py
 
     assert service.is_loaded() is False
     assert service.checkpoint_path == "artifacts/detector/detector-base"
+    assert service.runtime_status().enabled is False
+    assert service.runtime_status().status == "disabled"
     assert "SHUDDHO_DETECTOR_ENABLED is disabled" in caplog.text
 
 
@@ -246,6 +277,7 @@ def test_detector_service_logs_warning_when_checkpoint_path_is_missing(caplog: p
 
     assert service.is_loaded() is False
     assert service.checkpoint_path == "missing-checkpoint"
+    assert service.runtime_status().status == "missing_checkpoint"
     assert "Detector checkpoint was not found" in caplog.text
 
 
@@ -303,8 +335,11 @@ def test_detector_service_reads_threshold_from_environment(
 
 
 def test_detector_service_invalid_threshold_falls_back_without_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    monkeypatch.setattr("services.analysis.shuddho_analysis.detector.REPO_ROOT", tmp_path)
     with caplog.at_level(logging.WARNING):
         service = DetectorService.from_environment(
             {
@@ -314,6 +349,7 @@ def test_detector_service_invalid_threshold_falls_back_without_crashing(
 
     assert service.is_loaded() is False
     assert service.confidence_threshold == DEFAULT_CONFIDENCE_THRESHOLD
+    assert service.runtime_status().status == "missing_checkpoint"
     assert "Invalid SHUDDHO_DETECTOR_THRESHOLD value" in caplog.text
 
 

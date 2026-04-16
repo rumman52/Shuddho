@@ -26,6 +26,8 @@ app_module = importlib.import_module("services.api.shuddho_api.app")
 def test_health_reports_detector_status() -> None:
     response = health()
     payload = response.model_dump()
+    detector_runtime = detector_service.runtime_status()
+    openrouter_runtime = openrouter_client.runtime_status()
 
     assert response.status == "ok"
     assert response.detector_loaded is detector_service.is_loaded()
@@ -39,10 +41,91 @@ def test_health_reports_detector_status() -> None:
         "openrouter_configured",
         "openrouter_available",
         "openrouter_model",
+        "detector",
+        "openrouter",
+        "analysis_profile",
+        "degraded_reasons",
     }
     assert response.openrouter_configured is openrouter_client.is_configured()
     assert response.openrouter_available is openrouter_client.is_available()
     assert response.openrouter_model == openrouter_client.model_name
+    assert response.detector.loaded is detector_runtime.loaded
+    assert response.detector.enabled is detector_runtime.enabled
+    assert response.detector.status == detector_runtime.status
+    assert response.detector.reason == detector_runtime.reason
+    assert response.detector.checkpoint == detector_runtime.checkpoint
+    assert response.detector.backend_name == detector_runtime.backend_name
+    assert response.detector.threshold == detector_runtime.threshold
+    assert response.openrouter.status == openrouter_runtime.status
+    assert response.openrouter.reason == openrouter_runtime.reason
+    assert response.openrouter.model == openrouter_runtime.model
+    assert response.openrouter.api_key_present is openrouter_runtime.api_key_present
+    assert response.openrouter.timeout_seconds == openrouter_runtime.timeout_seconds
+    assert response.analysis_profile in {
+        "full_backend",
+        "backend_without_detector",
+        "backend_without_openrouter",
+        "backend_rules_and_spell_only",
+    }
+    assert all(reason.startswith(("detector_", "openrouter_")) for reason in response.degraded_reasons)
+
+
+def test_health_exposes_degraded_runtime_reasons(monkeypatch) -> None:
+    class StubDetectorService:
+        checkpoint_path = "artifacts/detector/detector-base"
+
+        def is_loaded(self) -> bool:
+            return False
+
+        def runtime_status(self):
+            return type(
+                "DetectorStatus",
+                (),
+                {
+                    "enabled": False,
+                    "loaded": False,
+                    "status": "disabled",
+                    "reason": "SHUDDHO_DETECTOR_ENABLED=false disabled detector startup.",
+                    "checkpoint": self.checkpoint_path,
+                    "checkpoint_exists": True,
+                    "backend_name": "disabled",
+                    "threshold": 0.92,
+                },
+            )()
+
+    class StubOpenRouterClient:
+        model_name = "openrouter-test"
+
+        def is_configured(self) -> bool:
+            return False
+
+        def is_available(self) -> bool:
+            return False
+
+        def runtime_status(self):
+            return type(
+                "OpenRouterStatus",
+                (),
+                {
+                    "configured": False,
+                    "available": False,
+                    "status": "missing_api_key",
+                    "reason": "OPENROUTER_API_KEY is missing from the repo-root environment.",
+                    "model": self.model_name,
+                    "api_key_present": False,
+                    "timeout_seconds": 20,
+                },
+            )()
+
+    monkeypatch.setattr(app_module, "detector_service", StubDetectorService())
+    monkeypatch.setattr(app_module, "openrouter_client", StubOpenRouterClient())
+
+    response = app_module.health()
+
+    assert response.analysis_profile == "backend_rules_and_spell_only"
+    assert response.degraded_reasons == ["detector_disabled", "openrouter_missing_api_key"]
+    assert response.detector.reason == "SHUDDHO_DETECTOR_ENABLED=false disabled detector startup."
+    assert response.openrouter.reason == "OPENROUTER_API_KEY is missing from the repo-root environment."
 
 
 def test_cors_allows_extension_origin() -> None:

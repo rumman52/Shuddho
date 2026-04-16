@@ -30,8 +30,8 @@ from .ranking import SuggestionRankingPipeline
 logger = logging.getLogger(__name__)
 
 SENTENCE_PATTERN = re.compile(r"[^.!?\u0964\n]+(?:[.!?\u0964]+|$)")
-MAX_OPENROUTER_SENTENCES_PER_REQUEST = 3
-STRICT_MODE_OPENROUTER_SENTENCE_LIMIT = 5
+MAX_OPENROUTER_SENTENCES_PER_REQUEST = 4
+STRICT_MODE_OPENROUTER_SENTENCE_LIMIT = 6
 MAX_OPENROUTER_SENTENCE_LENGTH = 280
 MIN_OPENROUTER_BANGLA_LETTERS = 4
 
@@ -117,6 +117,8 @@ class AnalysisPipeline:
             detector_findings=detector_findings,
             model_suggestions=model_suggestions,
             text=text,
+            personal_dictionary=personal_dictionary,
+            mode=mode,
         )
         prepared_suggestions = self.suggestion_manager.prepare_candidates(
             original_text=text,
@@ -220,6 +222,7 @@ class AnalysisPipeline:
         mode: AnalyzeMode,
     ) -> list[SentenceSpan]:
         suspicious_sentences: list[SentenceSpan] = []
+        eligible_sentences: list[SentenceSpan] = []
         analyze_all_eligible_sentences = mode in {AnalyzeMode.STRICT, AnalyzeMode.FORMAL}
         sentence_limit = (
             STRICT_MODE_OPENROUTER_SENTENCE_LIMIT
@@ -229,6 +232,7 @@ class AnalysisPipeline:
         for sentence in _split_sentences(text):
             if not _is_openrouter_eligible_sentence(sentence.text):
                 continue
+            eligible_sentences.append(sentence)
 
             overlapping_rules = [
                 suggestion
@@ -248,6 +252,8 @@ class AnalysisPipeline:
             suspicious_sentences.append(sentence)
             if len(suspicious_sentences) >= sentence_limit:
                 break
+        if not analyze_all_eligible_sentences and not suspicious_sentences and eligible_sentences:
+            suspicious_sentences.append(eligible_sentences[0])
         return suspicious_sentences
 
     def _build_sentence_hints(
@@ -489,12 +495,12 @@ def _mode_allows_visibility(suggestion: Suggestion, *, mode: AnalyzeMode) -> boo
 def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool:
     base_thresholds = {
         AnalyzeMode.STANDARD: {
-            SuggestionKind.TRUE_SPELLING_ERROR: 0.96,
-            SuggestionKind.GRAMMAR_ERROR: 0.9,
-            SuggestionKind.PUNCTUATION_ERROR: 0.88,
-            SuggestionKind.SPACING_ERROR: 0.88,
-            SuggestionKind.STYLE_SUGGESTION: 0.9,
-            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.99,
+            SuggestionKind.TRUE_SPELLING_ERROR: 0.94,
+            SuggestionKind.GRAMMAR_ERROR: 0.86,
+            SuggestionKind.PUNCTUATION_ERROR: 0.84,
+            SuggestionKind.SPACING_ERROR: 0.84,
+            SuggestionKind.STYLE_SUGGESTION: 0.88,
+            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.95,
         },
         AnalyzeMode.STRICT: {
             SuggestionKind.TRUE_SPELLING_ERROR: 0.92,
@@ -637,21 +643,28 @@ def _is_openrouter_eligible_sentence(sentence: str) -> bool:
 
 def _is_context_sensitive_rule(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool:
     if suggestion.category == SuggestionCategory.GRAMMAR:
-        return True
-    if mode == AnalyzeMode.FORMAL and suggestion.category == SuggestionCategory.STYLE:
-        return suggestion.confidence >= 0.7 and bool(suggestion.replacement_options)
+        return suggestion.confidence >= 0.62
+    if suggestion.category == SuggestionCategory.PUNCTUATION:
+        return suggestion.confidence >= 0.84 and bool(suggestion.replacement_options)
+    if suggestion.suggestion_kind == SuggestionKind.SPACING_ERROR:
+        return suggestion.confidence >= 0.84 and bool(suggestion.replacement_options)
+    if suggestion.category == SuggestionCategory.STYLE:
+        if suggestion.subtype in {"number_unit_spacing", "mixed_digit_style"}:
+            return suggestion.confidence >= 0.7 and bool(suggestion.replacement_options)
+        if mode == AnalyzeMode.FORMAL:
+            return suggestion.confidence >= 0.7 and bool(suggestion.replacement_options)
     return False
 
 
 def _minimum_openrouter_confidence(category: OpenRouterIssueCategory, *, mode: AnalyzeMode) -> float:
     thresholds = {
         AnalyzeMode.STANDARD: {
-            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.9,
-            OpenRouterIssueCategory.SPELLING_ERROR: 0.96,
-            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.88,
-            OpenRouterIssueCategory.SPACING_ERROR: 0.88,
-            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.98,
-            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.9,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.86,
+            OpenRouterIssueCategory.SPELLING_ERROR: 0.95,
+            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.84,
+            OpenRouterIssueCategory.SPACING_ERROR: 0.84,
+            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.95,
+            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.88,
         },
         AnalyzeMode.STRICT: {
             OpenRouterIssueCategory.GRAMMAR_ERROR: 0.84,

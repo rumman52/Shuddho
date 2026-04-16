@@ -47,9 +47,9 @@ class HeuristicContextualReranker:
         del text, mode
         source_bonus = {
             SuggestionSource.RULE: 0.08,
-            SuggestionSource.HYBRID: 0.12,
+            SuggestionSource.HYBRID: 0.15,
             SuggestionSource.SPELL: 0.04,
-            SuggestionSource.MODEL: -0.01,
+            SuggestionSource.MODEL: 0.01 if _is_short_localized_contextual_edit(suggestion) else -0.01,
         }[suggestion.source]
         severity_bonus = {
             SuggestionSeverity.HIGH: 0.04,
@@ -252,9 +252,11 @@ def _detector_confidence_bonuses(suggestions: Sequence[Suggestion]) -> dict[str,
         bonus = 0.0
         if suggestion.source in {SuggestionSource.MODEL, SuggestionSource.HYBRID}:
             if suggestion.is_contextual:
-                bonus += 0.02
+                bonus += 0.04
             if suggestion.confidence >= 0.9:
-                bonus += 0.02
+                bonus += 0.03
+            if _is_short_localized_contextual_edit(suggestion):
+                bonus += 0.03
             if not suggestion.replacement_options:
                 bonus -= 0.04
         bonuses[suggestion.id] = round(bonus, 4)
@@ -271,13 +273,15 @@ def _contextual_support_scores(
     for suggestion in suggestions:
         bonus = 0.0
         if suggestion.is_contextual:
-            bonus += 0.03
+            bonus += 0.05
         if suggestion.suggestion_kind in {
             SuggestionKind.GRAMMAR_ERROR,
             SuggestionKind.PUNCTUATION_ERROR,
             SuggestionKind.SPACING_ERROR,
         }:
             bonus += 0.03
+            if mode == AnalyzeMode.STANDARD and len(suggestion.replacement_options) == 1:
+                bonus += 0.02
         if suggestion.suggestion_kind == SuggestionKind.TRUE_SPELLING_ERROR and len(suggestion.replacement_options) == 1:
             bonus += 0.04
         if suggestion.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT:
@@ -337,6 +341,17 @@ def _ambiguity_penalties(suggestions: Sequence[Suggestion], *, mode: AnalyzeMode
             penalty += 0.1
         if suggestion.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT and mode == AnalyzeMode.STANDARD:
             penalty += 0.04
+        if (
+            mode == AnalyzeMode.STANDARD
+            and suggestion.is_contextual
+            and suggestion.suggestion_kind in {
+                SuggestionKind.GRAMMAR_ERROR,
+                SuggestionKind.PUNCTUATION_ERROR,
+                SuggestionKind.SPACING_ERROR,
+            }
+            and len(suggestion.replacement_options) == 1
+        ):
+            penalty = max(0.0, penalty - 0.03)
         penalties[suggestion.id] = round(penalty, 4)
     return penalties
 
@@ -394,3 +409,22 @@ def _feedback_bonuses(suggestions: Sequence[Suggestion], feedback_index) -> dict
             bonus += subtype_stats.balance * min(subtype_stats.total, 5) / 5 * 0.05
         bonuses[suggestion.id] = round(bonus, 4)
     return bonuses
+
+
+def _has_short_bengali_replacement(suggestion: Suggestion) -> bool:
+    if len(suggestion.replacement_options) != 1:
+        return False
+    replacement = suggestion.replacement_options[0]
+    if not replacement or len(replacement) > max(len(suggestion.original_text) * 2, 24):
+        return False
+    return any("\u0980" <= character <= "\u09ff" for character in replacement)
+
+
+def _is_short_localized_contextual_edit(suggestion: Suggestion) -> bool:
+    if suggestion.suggestion_kind not in {
+        SuggestionKind.GRAMMAR_ERROR,
+        SuggestionKind.PUNCTUATION_ERROR,
+        SuggestionKind.SPACING_ERROR,
+    }:
+        return False
+    return _has_short_bengali_replacement(suggestion)

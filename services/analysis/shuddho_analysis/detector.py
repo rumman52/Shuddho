@@ -26,6 +26,22 @@ DETECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_DETECTOR_THRESHOLD"
 LEGACY_DETECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_DETECTOR_CONFIDENCE_THRESHOLD"
 RUNTIME_CHECKPOINT_REQUIRED_FILES = ("metadata.json", "best_model.pt")
 SCAFFOLD_CHECKPOINT_MARKER_FILES = ("config.json",)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_CHECKPOINT_RELATIVE_PATH = Path("artifacts") / "detector" / "detector-base"
+DEFAULT_CHECKPOINT_DISPLAY_PATH = DEFAULT_CHECKPOINT_RELATIVE_PATH.as_posix()
+DETECTOR_ENABLED_AUTO_VALUE = "auto"
+
+
+@dataclass(frozen=True)
+class DetectorRuntimeStatus:
+    enabled: bool
+    loaded: bool
+    status: str
+    reason: str | None
+    checkpoint: str | None
+    checkpoint_exists: bool
+    backend_name: str
+    threshold: float
 
 
 @dataclass(frozen=True)
@@ -243,18 +259,34 @@ class DetectorService:
         backend: TokenSpanDetectorBackend | None = None,
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
         checkpoint_path: str | None = None,
+        enabled: bool | None = None,
+        status: str | None = None,
+        reason: str | None = None,
+        checkpoint_exists: bool | None = None,
     ) -> None:
         self.confidence_threshold = confidence_threshold
-        self.checkpoint_path = checkpoint_path
+        self.checkpoint_path = checkpoint_path.strip() if checkpoint_path else None
         self.backend = backend or self._coerce_backend(
             runtime,
             confidence_threshold=confidence_threshold,
-            checkpoint_path=checkpoint_path,
+            checkpoint_path=self.checkpoint_path,
         )
         self.runtime = runtime if backend is None else getattr(backend, "runtime", runtime)
+        self.enabled = self.backend is not None if enabled is None else enabled
+        if checkpoint_exists is None:
+            _, resolved_checkpoint_path = self._resolve_checkpoint_path(self.checkpoint_path)
+            checkpoint_exists = bool(resolved_checkpoint_path and resolved_checkpoint_path.exists())
+        self.checkpoint_exists = checkpoint_exists
+        if self.backend is not None and status is None:
+            status = "ready"
+        self.status = status or ("disabled" if not self.enabled else "unavailable")
+        self.reason = None if self.status == "ready" else reason
 
     def is_loaded(self) -> bool:
         return self.backend is not None
+
+    def is_enabled(self) -> bool:
+        return self.enabled
 
     @property
     def backend_name(self) -> str:
@@ -262,13 +294,25 @@ class DetectorService:
             return "disabled"
         return getattr(self.backend, "backend_name", "detector_backend")
 
+    def runtime_status(self) -> DetectorRuntimeStatus:
+        return DetectorRuntimeStatus(
+            enabled=self.enabled,
+            loaded=self.is_loaded(),
+            status=self.status,
+            reason=self.reason,
+            checkpoint=self.checkpoint_path,
+            checkpoint_exists=self.checkpoint_exists,
+            backend_name=self.backend_name,
+            threshold=self.confidence_threshold,
+        )
+
     @classmethod
     def from_environment(
         cls,
         environ: Mapping[str, str] | None = None,
     ) -> "DetectorService":
         environment = os.environ if environ is None else environ
-        checkpoint_path = environment.get(DETECTOR_CHECKPOINT_ENV_VAR)
+        explicit_checkpoint = environment.get(DETECTOR_CHECKPOINT_ENV_VAR)
         threshold_value = environment.get(DETECTOR_THRESHOLD_ENV_VAR)
         threshold_env_var = DETECTOR_THRESHOLD_ENV_VAR
         if threshold_value is None:
@@ -279,20 +323,38 @@ class DetectorService:
             threshold_value,
             env_var_name=threshold_env_var,
         )
-        if not cls._resolve_enabled_flag(environment.get(DETECTOR_ENABLED_ENV_VAR)):
-            normalized_checkpoint_path = checkpoint_path.strip() if checkpoint_path else None
+        enabled_mode = cls._resolve_enabled_mode(environment.get(DETECTOR_ENABLED_ENV_VAR))
+        configured_checkpoint = cls._configured_checkpoint_path(explicit_checkpoint)
+        normalized_checkpoint_path, resolved_checkpoint_path = cls._resolve_checkpoint_path(configured_checkpoint)
+        checkpoint_exists = bool(resolved_checkpoint_path and resolved_checkpoint_path.exists())
+
+        logger.info(
+            "Detector environment initialization enabled_mode=%s checkpoint=%s checkpoint_exists=%s threshold=%.2f",
+            enabled_mode,
+            normalized_checkpoint_path,
+            checkpoint_exists,
+            confidence_threshold,
+        )
+
+        if enabled_mode == "false":
             logger.warning(
-                "%s is disabled via %s; detector-backed suggestions will be skipped even if a checkpoint is configured.",
+                "%s is disabled via %s; detector-backed suggestions will be skipped.",
                 DETECTOR_ENABLED_ENV_VAR,
                 environment.get(DETECTOR_ENABLED_ENV_VAR),
             )
             return cls(
                 confidence_threshold=confidence_threshold,
                 checkpoint_path=normalized_checkpoint_path,
+                enabled=False,
+                status="disabled",
+                reason=f"{DETECTOR_ENABLED_ENV_VAR}=false disabled detector startup.",
+                checkpoint_exists=checkpoint_exists,
             )
+
         return cls.from_checkpoint_path(
-            checkpoint_path,
+            normalized_checkpoint_path,
             confidence_threshold=confidence_threshold,
+            enabled=True,
         )
 
     @classmethod
@@ -301,14 +363,22 @@ class DetectorService:
         checkpoint_path: str | None,
         *,
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+        enabled: bool = True,
     ) -> "DetectorService":
-        normalized_checkpoint_path = checkpoint_path.strip() if checkpoint_path else None
-        if not normalized_checkpoint_path:
+        normalized_checkpoint_path, resolved_checkpoint_path = cls._resolve_checkpoint_path(checkpoint_path)
+        checkpoint_exists = bool(resolved_checkpoint_path and resolved_checkpoint_path.exists())
+        if not normalized_checkpoint_path or resolved_checkpoint_path is None:
             logger.warning(
-                "%s is not set; detector runtime is disabled and analyze requests will fall back to rules and spell checks only.",
-                DETECTOR_CHECKPOINT_ENV_VAR,
+                "No detector checkpoint path could be resolved; detector-backed suggestions will be skipped.",
             )
-            return cls(confidence_threshold=confidence_threshold)
+            return cls(
+                confidence_threshold=confidence_threshold,
+                checkpoint_path=normalized_checkpoint_path,
+                enabled=enabled,
+                status="missing_checkpoint",
+                reason="No detector checkpoint path is configured.",
+                checkpoint_exists=False,
+            )
 
         try:
             backend = cls._load_backend_from_checkpoint(
@@ -325,6 +395,10 @@ class DetectorService:
             return cls(
                 confidence_threshold=confidence_threshold,
                 checkpoint_path=normalized_checkpoint_path,
+                enabled=enabled,
+                status="missing_checkpoint",
+                reason=f"Detector checkpoint could not be loaded from '{normalized_checkpoint_path}': {error}",
+                checkpoint_exists=checkpoint_exists,
             )
         except (OSError, RuntimeError, KeyError, ValueError) as error:
             logger.warning(
@@ -335,12 +409,19 @@ class DetectorService:
             return cls(
                 confidence_threshold=confidence_threshold,
                 checkpoint_path=normalized_checkpoint_path,
+                enabled=enabled,
+                status="load_failed",
+                reason=f"Detector checkpoint failed to load from '{normalized_checkpoint_path}': {error}",
+                checkpoint_exists=checkpoint_exists,
             )
 
         return cls(
             backend=backend,
             confidence_threshold=confidence_threshold,
             checkpoint_path=normalized_checkpoint_path,
+            enabled=enabled,
+            status="ready",
+            checkpoint_exists=checkpoint_exists,
         )
 
     def detect_token_spans(self, text: str) -> list[DetectorTokenPrediction]:
@@ -410,7 +491,9 @@ class DetectorService:
         *,
         confidence_threshold: float,
     ) -> TokenSpanDetectorBackend:
-        checkpoint_dir = Path(checkpoint_path)
+        _, checkpoint_dir = cls._resolve_checkpoint_path(checkpoint_path)
+        if checkpoint_dir is None:
+            raise FileNotFoundError(checkpoint_path)
         if not checkpoint_dir.exists():
             raise FileNotFoundError(checkpoint_dir)
 
@@ -507,22 +590,41 @@ class DetectorService:
         return threshold
 
     @staticmethod
-    def _resolve_enabled_flag(value: str | None) -> bool:
+    def _configured_checkpoint_path(explicit_checkpoint: str | None) -> str:
+        if explicit_checkpoint and explicit_checkpoint.strip():
+            return explicit_checkpoint.strip()
+        return DEFAULT_CHECKPOINT_DISPLAY_PATH
+
+    @staticmethod
+    def _resolve_checkpoint_path(checkpoint_path: str | None) -> tuple[str | None, Path | None]:
+        if checkpoint_path is None or not checkpoint_path.strip():
+            return None, None
+
+        normalized_checkpoint_path = checkpoint_path.strip()
+        resolved_checkpoint_path = Path(normalized_checkpoint_path)
+        if not resolved_checkpoint_path.is_absolute():
+            resolved_checkpoint_path = REPO_ROOT / resolved_checkpoint_path
+        return normalized_checkpoint_path, resolved_checkpoint_path
+
+    @staticmethod
+    def _resolve_enabled_mode(value: str | None) -> str:
         if value is None or not value.strip():
-            return True
+            return DETECTOR_ENABLED_AUTO_VALUE
 
         normalized = value.strip().lower()
         if normalized in {"1", "true", "yes", "on"}:
-            return True
+            return "true"
         if normalized in {"0", "false", "no", "off"}:
-            return False
+            return "false"
+        if normalized == DETECTOR_ENABLED_AUTO_VALUE:
+            return DETECTOR_ENABLED_AUTO_VALUE
 
         logger.warning(
-            "Invalid %s value '%s'; expected true/false. Falling back to enabled.",
+            "Invalid %s value '%s'; expected auto/true/false. Falling back to auto.",
             DETECTOR_ENABLED_ENV_VAR,
             value,
         )
-        return True
+        return DETECTOR_ENABLED_AUTO_VALUE
 
 
 def _best_supporting_span_prediction(
