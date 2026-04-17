@@ -6,6 +6,7 @@ class FakeResponse:
     def __init__(self, payload: dict, status_code: int = 200) -> None:
         self._payload = payload
         self.status_code = status_code
+        self.text = ""
 
     def json(self) -> dict:
         return self._payload
@@ -16,6 +17,11 @@ class FakeSession:
         self.payload = payload
         self.status_code = status_code
         self.calls: list[tuple[tuple, dict]] = []
+        self.get_calls: list[tuple[tuple, dict]] = []
+
+    def get(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self.get_calls.append((args, kwargs))
+        return FakeResponse({"data": []}, status_code=200)
 
     def post(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         self.calls.append((args, kwargs))
@@ -29,7 +35,7 @@ def test_openrouter_client_missing_key_falls_back_without_crashing() -> None:
     assert client.is_configured() is False
     assert client.is_available() is False
     assert client.model_name == DEFAULT_OPENROUTER_MODEL
-    assert client.analyze_sentence("\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964", "standard") == []
+    assert client.analyze_sentence("আমি বাংলা লিখি।", "standard") == []
 
 
 def test_openrouter_client_placeholder_key_stays_disabled() -> None:
@@ -42,7 +48,7 @@ def test_openrouter_client_placeholder_key_stays_disabled() -> None:
 
 
 def test_parse_openrouter_response_discards_malformed_payload_safely() -> None:
-    assert parse_openrouter_response("not-json", sentence="\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964") == []
+    assert parse_openrouter_response("not-json", sentence="আমি বাংলা লিখি।") == []
 
 
 def test_openrouter_client_ignores_malformed_response_text() -> None:
@@ -65,8 +71,9 @@ def test_openrouter_client_ignores_malformed_response_text() -> None:
         enabled=True,
     )
 
-    assert client.analyze_sentence("\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf\u0964", "standard") == []
+    assert client.analyze_sentence("আমি বাংলা লিখি।", "standard") == []
     assert session.calls[0][1]["json"]["response_format"]["json_schema"]["strict"] is True
+    assert session.get_calls
 
 
 def test_parse_openrouter_response_accepts_valid_json_issues() -> None:
@@ -77,15 +84,18 @@ def test_parse_openrouter_response_accepts_valid_json_issues() -> None:
             {
               "category": "spelling",
               "subtype": "spelling_error",
-              "span_text": "\u0986\u09ae\u09b0\u09be\u09be",
-              "replacement": "\u0986\u09ae\u09b0\u09be",
-              "explanation_bn": "\u098f\u0996\u09be\u09a8\u09c7 \u0985\u09a4\u09bf\u09b0\u09bf\u0995\u09cd\u09a4 \u0985\u0995\u09cd\u09b7\u09b0 \u0986\u099b\u09c7\u0964",
-              "confidence": 0.96
+              "span_text": "আমরাআ",
+              "replacement": "আমরা",
+              "explanation_bn": "এখানে অতিরিক্ত অক্ষর আছে।",
+              "confidence": 0.96,
+              "occurrence_index": 0,
+              "anchor_before": null,
+              "anchor_after": " আসি।"
             }
           ]
         }
         """,
-        sentence="\u0986\u09ae\u09b0\u09be\u09be \u0986\u09b8\u09bf\u0964",
+        sentence="আমরাআ আসি।",
     )
 
     assert len(issues) == 1
@@ -95,7 +105,7 @@ def test_parse_openrouter_response_accepts_valid_json_issues() -> None:
     assert issues[0].end == 5
 
 
-def test_parse_openrouter_response_discards_ambiguous_span_text_matches() -> None:
+def test_parse_openrouter_response_discards_ambiguous_span_text_matches_without_occurrence_or_anchors() -> None:
     issues = parse_openrouter_response(
         """
         {
@@ -103,15 +113,73 @@ def test_parse_openrouter_response_discards_ambiguous_span_text_matches() -> Non
             {
               "category": "grammar",
               "subtype": "repeated_word",
-              "span_text": "\u0986\u09ae\u09bf",
-              "replacement": "\u0986\u09ae\u09b0\u09be",
-              "explanation_bn": "\u098f\u0995\u0987 \u09b6\u09ac\u09cd\u09a6 \u09aa\u09c1\u09a8\u09b0\u09be\u09ac\u09c3\u09a4\u09cd\u09a4 \u09b9\u09df\u09c7\u099b\u09c7\u0964",
-              "confidence": 0.94
+              "span_text": "আমি",
+              "replacement": "আমরা",
+              "explanation_bn": "একই শব্দ পুনরাবৃত্ত হয়েছে।",
+              "confidence": 0.94,
+              "occurrence_index": null,
+              "anchor_before": null,
+              "anchor_after": null
             }
           ]
         }
         """,
-        sentence="\u0986\u09ae\u09bf \u0986\u09ae\u09bf \u09b8\u09cd\u0995\u09c1\u09b2\u09c7 \u09af\u09be\u0987\u0964",
+        sentence="আমি আমি স্কুলে যাই।",
     )
 
     assert issues == []
+
+
+def test_parse_openrouter_response_uses_occurrence_index_for_repeated_span_text() -> None:
+    issues = parse_openrouter_response(
+        """
+        {
+          "issues": [
+            {
+              "category": "grammar",
+              "subtype": "pronoun_verb_agreement",
+              "span_text": "আমি",
+              "replacement": "আমরা",
+              "explanation_bn": "'আমি' এর বদলে 'আমরা' দরকার।",
+              "confidence": 0.95,
+              "occurrence_index": 1,
+              "anchor_before": "আমি ",
+              "anchor_after": " স্কুলে"
+            }
+          ]
+        }
+        """,
+        sentence="আমি আমি স্কুলে যাই।",
+    )
+
+    assert len(issues) == 1
+    assert issues[0].start == 4
+    assert issues[0].end == 7
+    assert issues[0].occurrence_index == 1
+
+
+def test_parse_openrouter_response_uses_anchor_triplet_for_repeated_bengali_word() -> None:
+    issues = parse_openrouter_response(
+        """
+        {
+          "issues": [
+            {
+              "category": "grammar",
+              "subtype": "repeated_word",
+              "span_text": "আজও",
+              "replacement": "আজ",
+              "explanation_bn": "'আজও' নয়, এখানে 'আজ' হবে।",
+              "confidence": 0.96,
+              "occurrence_index": null,
+              "anchor_before": "আজও ",
+              "anchor_after": " ভালো।"
+            }
+          ]
+        }
+        """,
+        sentence="আজও আজও ভালো।",
+    )
+
+    assert len(issues) == 1
+    assert issues[0].start == 4
+    assert issues[0].end == 7

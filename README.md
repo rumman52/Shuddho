@@ -98,7 +98,7 @@ If you intentionally use a newer local interpreter such as Python `3.12`, `3.13`
 Or run [run_backend_windows.bat](C:/Projects/Shuddho/run_backend_windows.bat), which first switches into the repo root so it still works when launched from another directory.
 That script now also warns when `.env` is missing and prints the Python version it is starting with.
 
-Test the backend at `http://127.0.0.1:8000/health`.
+Test the backend at `http://127.0.0.1:8000/health` and inspect live runtime state at `http://127.0.0.1:8000/health/deep`.
 
 Keep that terminal open while the backend is running. If you close it, the FastAPI server stops.
 
@@ -114,6 +114,7 @@ Relevant backend variables:
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL`
 - `OPENROUTER_TIMEOUT_SECONDS`
+- `OPENROUTER_PROBE_TTL_SECONDS`
 - `SHUDDHO_ALLOWED_ORIGINS`
 - `SHUDDHO_DETECTOR_ENABLED`
 - `SHUDDHO_DETECTOR_CHECKPOINT`
@@ -162,8 +163,10 @@ npm install
 npm run dev:web
 ```
 
-The editor expects the API at `http://127.0.0.1:8000`. Override with `VITE_API_BASE_URL` if needed.
-Copy `apps/web-editor/.env.example` to `apps/web-editor/.env.local` to keep a local override in the app workspace.
+The editor defaults to `http://127.0.0.1:8000` only for local browser sessions.
+Set `VITE_API_BASE_URL` for every deployed frontend build.
+If a non-local frontend still points at `localhost`, the UI now shows a hard configuration warning and refuses to pretend backend analysis is available.
+Copy `apps/web-editor/.env.example` to `apps/web-editor/.env.local` only for local development overrides.
 The frontend calls only the Shuddho backend and does not contain any secret or direct OpenRouter call.
 
 ### Chrome extension
@@ -228,13 +231,14 @@ Copy the generated `https://...trycloudflare.com` URL and point the clients at i
 - Multiple frontend origins can be allowed with a comma-separated list, for example `SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://your-preview.vercel.app`.
 
 The trycloudflare URL is temporary, so update the frontend or extension config again whenever Cloudflare gives you a new tunnel address.
+This local-public flow is still valid because the browser is local and the backend URL is public, not `localhost`.
 
 ## Deployment
 
 Railway should deploy the FastAPI backend only. This repo also contains the `apps/web-editor` and `apps/chrome-extension` workspaces, but they are not server processes and should not be imported as Railway services.
 
 - Railway: build from the root `Dockerfile` and run only the Python API
-- Web editor: deploy `apps/web-editor` separately from Railway
+- Web editor: deploy `apps/web-editor` separately from Railway or Vercel, and always set `VITE_API_BASE_URL` to the public backend URL
 - Chrome extension: build locally with `npm run build:extension` and distribute separately, such as through the Chrome Web Store
 - Service Source: GitHub repo `rumman52/Shuddho`
 - Root Directory: `/`
@@ -247,6 +251,12 @@ Required Railway variables:
 - `SHUDDHO_ALLOWED_ORIGINS=https://your-frontend-domain`
 - `SHUDDHO_DETECTOR_THRESHOLD=0.82`
 - `SHUDDHO_DETECTOR_CHECKPOINT=...` only if a real checkpoint exists
+
+Recommended frontend deployment rules:
+
+- Vercel or any other frontend host must set `VITE_API_BASE_URL=https://your-public-backend-domain`
+- Do not ship a deployed frontend that still points at `http://127.0.0.1:8000` or `http://localhost:8000`
+- The backend still reads only the repo-root `.env`; frontend app `.env.local` files do not configure API OpenRouter or detector startup
 
 ### Lexicon import
 
@@ -271,6 +281,7 @@ This rebuilds `data/shuddho_lexicon.db` through a temporary file and replaces it
 The feedback database remains separate in `data/shuddho_feedback.db`.
 
 At runtime, the spell engine now uses `data/imports/lexicon/words_clean.csv` as its main source of truth and loads it once at backend startup.
+`data/shuddho_lexicon.db` remains an offline import/reporting mirror and is not consulted on live analysis requests.
 
 - runtime accepted words: canonical `normalized_word` values from active, trusted rows where `word != normalized_word`
 - runtime direct correction map: active, trusted `word -> normalized_word` pairs from `words_clean.csv`
@@ -360,6 +371,28 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
   }
 }
 ```
+
+### `GET /health/deep`
+
+`/health/deep` extends `/health` with:
+
+- `backend_version`
+- `env_file_path`
+- `env_file_loaded`
+- `last_startup_timestamp`
+- `lexicon.runtime_source_of_truth`
+- `lexicon.runtime_source`
+- `lexicon.runtime_exists`
+- `lexicon.version`
+- `lexicon.checksum`
+- `lexicon.accepted_word_count`
+- `lexicon.candidate_word_count`
+- `lexicon.correction_map_count`
+- `openrouter.probed`
+- `openrouter.probe_success`
+- `openrouter.probe_status`
+
+This is the endpoint the web editor now uses to distinguish "configured", "available", and "probed successfully".
 
 ### `POST /analyze`
 

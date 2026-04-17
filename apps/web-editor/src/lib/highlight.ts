@@ -1,7 +1,7 @@
 import type { Editor } from "@tiptap/react";
 import type { Suggestion } from "@shared/schemas/contracts";
 
-import { getEditorTextSurface } from "./textSurface";
+import { getEditorTextSurface, resolveSuggestionMatch } from "./textSurface";
 
 function toDocumentRange(editor: Editor, start: number, end: number): { from: number; to: number } | null {
   const { segments } = getEditorTextSurface(editor);
@@ -45,9 +45,14 @@ export function applyIssueMarks(editor: Editor, suggestions: Suggestion[]): void
   clearIssueMarks(editor);
   const issueMark = editor.state.schema.marks.issue;
   const transaction = editor.state.tr;
+  const textSurface = getEditorTextSurface(editor);
 
   for (const suggestion of suggestions) {
-    const range = toDocumentRange(editor, suggestion.span_start, suggestion.span_end);
+    const match = resolveSuggestionMatch(textSurface.text, suggestion);
+    if (match.status === "stale") {
+      continue;
+    }
+    const range = toDocumentRange(editor, match.spanStart, match.spanEnd);
     if (!range) {
       continue;
     }
@@ -67,7 +72,11 @@ export function applyIssueMarks(editor: Editor, suggestions: Suggestion[]): void
 }
 
 export function replaceSuggestion(editor: Editor, suggestion: Suggestion, replacement: string): boolean {
-  const range = toDocumentRange(editor, suggestion.span_start, suggestion.span_end);
+  const match = resolveSuggestionMatch(getEditorTextSurface(editor).text, suggestion);
+  if (match.status === "stale") {
+    return false;
+  }
+  const range = toDocumentRange(editor, match.spanStart, match.spanEnd);
   if (!range) {
     return false;
   }

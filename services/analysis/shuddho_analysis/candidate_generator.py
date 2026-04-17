@@ -600,10 +600,18 @@ class CandidateGenerator:
             return False
         if suggestion.confidence < 0.8:
             return False
+        if not suggestion.source_trace:
+            return False
+        if "anchor_nearest_safe" in suggestion.source_trace and suggestion.confidence < 0.94:
+            return False
+        if suggestion.occurrence_index is None and not suggestion.anchor_before and not suggestion.anchor_after and "exact_unique_match" not in suggestion.source_trace:
+            return False
 
         primary_replacement = suggestion.replacement_options[0].strip()
         normalized_original = suggestion.original_text.strip()
         if not primary_replacement or primary_replacement == normalized_original:
+            return False
+        if len((suggestion.explanation_bn or "").split()) <= 3:
             return False
 
         if suggestion.category == SuggestionCategory.SPELLING:
@@ -612,12 +620,12 @@ class CandidateGenerator:
         if suggestion.category == SuggestionCategory.GRAMMAR:
             if len(suggestion.replacement_options) != 1:
                 return False
-            return len(primary_replacement) <= max(len(normalized_original) * 3, 48)
+            return len(primary_replacement) <= max(int(len(normalized_original) * 2.5), len(normalized_original) + 8, 24)
 
         if suggestion.category == SuggestionCategory.PUNCTUATION:
             return len(primary_replacement) <= 12
 
-        return len(primary_replacement) <= max(len(normalized_original) * 3, 48)
+        return len(primary_replacement) <= max(int(len(normalized_original) * 2.5), len(normalized_original) + 8, 24)
 
 
 def _severity_rank(severity: SuggestionSeverity) -> int:

@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from services.normalizer.shuddho_normalizer.normalizer import NormalizedText
-from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
+from shared.schemas.python_models import AnalysisProfile, Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
+
+from .span_resolution import SentenceSpan
 
 
 @dataclass(frozen=True)
@@ -41,3 +43,8 @@ class AnalysisArtifacts:
     prepared_suggestions: list[Suggestion]
     ranked_suggestions: list[Suggestion]
     merged_suggestions: list[Suggestion]
+    sentence_spans: list[SentenceSpan] = field(default_factory=list)
+    used_detector: bool = False
+    used_openrouter: bool = False
+    runtime_warnings: list[str] = field(default_factory=list)
+    analysis_profile: AnalysisProfile = AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY

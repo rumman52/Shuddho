@@ -11,7 +11,8 @@ export type AnalysisProfile =
   | "full_backend"
   | "backend_without_detector"
   | "backend_without_openrouter"
-  | "backend_rules_and_spell_only";
+  | "backend_rules_and_spell_only"
+  | "frontend_local_fallback";
 export type SuggestionKind =
   | "true_spelling_error"
   | "orthography_variant"
@@ -49,6 +50,13 @@ export interface Suggestion {
   optional_mode_visibility?: AnalyzeMode[];
   suppression_key?: string | null;
   is_variant_only?: boolean;
+  sentence_index?: number | null;
+  sentence_start?: number | null;
+  sentence_end?: number | null;
+  occurrence_index?: number | null;
+  anchor_before?: string | null;
+  anchor_after?: string | null;
+  source_trace?: string[] | null;
 }
 
 export interface AnalyzeRequest {
@@ -63,6 +71,16 @@ export interface AnalyzeResponse {
   normalized_text: string;
   corrected_text: string;
   suggestions: Suggestion[];
+  analysis_profile: AnalysisProfile;
+  runtime_source: AnalysisProfile;
+  runtime_warnings: string[];
+  used_detector: boolean;
+  used_openrouter: boolean;
+  lexicon_source: string;
+  lexicon_version?: string | null;
+  backend_version?: string | null;
+  sentence_count: number;
+  request_mode_applied: AnalyzeMode;
 }
 
 export interface DetectorHealth {
@@ -84,6 +102,28 @@ export interface OpenRouterHealth {
   model?: string | null;
   api_key_present: boolean;
   timeout_seconds: number;
+  probed: boolean;
+  probe_success?: boolean | null;
+  probe_status?: string | null;
+  probe_reason?: string | null;
+  probe_checked_at?: string | null;
+}
+
+export interface LexiconHealth {
+  runtime_source_of_truth: string;
+  runtime_source: string;
+  runtime_path?: string | null;
+  runtime_exists: boolean;
+  version?: string | null;
+  checksum?: string | null;
+  accepted_word_count: number;
+  candidate_word_count: number;
+  correction_map_count: number;
+  import_database_path?: string | null;
+  import_database_exists: boolean;
+  loaded_at?: string | null;
+  reload_supported: boolean;
+  restart_required: boolean;
 }
 
 export interface HealthResponse {
@@ -100,6 +140,14 @@ export interface HealthResponse {
   analysis_profile: AnalysisProfile;
   degraded_reasons: string[];
   mode_capabilities: Record<string, string[]>;
+}
+
+export interface HealthDeepResponse extends HealthResponse {
+  backend_version?: string | null;
+  env_file_path?: string | null;
+  env_file_loaded: boolean;
+  last_startup_timestamp: string;
+  lexicon: LexiconHealth;
 }
 
 export interface FeedbackRequest {

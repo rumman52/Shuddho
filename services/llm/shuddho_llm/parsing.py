@@ -5,6 +5,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from services.analysis.shuddho_analysis.span_resolution import SentenceSpan, resolve_sentence_span
+
 
 class OpenRouterIssueCategory(str, Enum):
     GRAMMAR_ERROR = "grammar_error"
@@ -24,11 +26,26 @@ class OpenRouterIssue(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     reason_bn: str
     subtype: str = "localized_issue"
+    occurrence_index: int | None = Field(default=None, ge=0)
+    anchor_before: str | None = None
+    anchor_after: str | None = None
+    reasoning_key: str | None = None
+    source_trace: list[str] | None = None
 
-    @field_validator("original", "replacement", "reason_bn", "subtype")
+    @field_validator("original", "replacement", "reason_bn", "subtype", "reasoning_key")
     @classmethod
-    def normalize_text_fields(cls, value: str) -> str:
-        return value.strip()
+    def normalize_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        compact = value.strip()
+        return compact or None
+
+    @field_validator("anchor_before", "anchor_after")
+    @classmethod
+    def normalize_anchor_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value if value else None
 
 
 class StructuredOpenRouterIssueCategory(str, Enum):
@@ -46,11 +63,25 @@ class StructuredOpenRouterIssue(BaseModel):
     replacement: str
     explanation_bn: str
     confidence: float = Field(ge=0.0, le=1.0)
+    occurrence_index: int | None = Field(default=None, ge=0)
+    anchor_before: str | None = None
+    anchor_after: str | None = None
+    reasoning_key: str | None = None
 
-    @field_validator("subtype", "span_text", "replacement", "explanation_bn")
+    @field_validator("subtype", "span_text", "replacement", "explanation_bn", "reasoning_key")
     @classmethod
-    def normalize_text_fields(cls, value: str) -> str:
-        return value.strip()
+    def normalize_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        compact = value.strip()
+        return compact or None
+
+    @field_validator("anchor_before", "anchor_after")
+    @classmethod
+    def normalize_anchor_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value if value else None
 
 
 class StructuredOpenRouterIssueEnvelope(BaseModel):
@@ -123,11 +154,19 @@ def _to_internal_issue(
     if sentence is None:
         return None
 
-    span_offsets = _resolve_span_offsets(issue.span_text, sentence)
-    if span_offsets is None:
+    resolved_span = resolve_sentence_span(
+        sentence=SentenceSpan(sentence_index=0, start=0, end=len(sentence), text=sentence),
+        span_text=issue.span_text,
+        occurrence_index=issue.occurrence_index,
+        anchor_before=issue.anchor_before,
+        anchor_after=issue.anchor_after,
+        confidence=issue.confidence,
+    )
+    if resolved_span is None:
         return None
 
-    start, end = span_offsets
+    start = resolved_span.match.start
+    end = resolved_span.match.end
     parsed_issue = OpenRouterIssue(
         start=start,
         end=end,
@@ -137,6 +176,11 @@ def _to_internal_issue(
         confidence=issue.confidence,
         reason_bn=issue.explanation_bn,
         subtype=issue.subtype,
+        occurrence_index=resolved_span.match.occurrence_index,
+        anchor_before=issue.anchor_before,
+        anchor_after=issue.anchor_after,
+        reasoning_key=issue.reasoning_key,
+        source_trace=list(resolved_span.source_trace),
     )
     if not _is_structurally_safe(parsed_issue):
         return None
@@ -179,23 +223,3 @@ def _map_category(
     if category == StructuredOpenRouterIssueCategory.STYLE:
         return OpenRouterIssueCategory.STYLE_SUGGESTION
     return None
-
-
-def _resolve_span_offsets(span_text: str, sentence: str) -> tuple[int, int] | None:
-    normalized_span = span_text.strip()
-    if not normalized_span:
-        return None
-
-    matches: list[tuple[int, int]] = []
-    cursor = 0
-    while True:
-        index = sentence.find(normalized_span, cursor)
-        if index < 0:
-            break
-        matches.append((index, index + len(normalized_span)))
-        cursor = index + 1
-
-    if len(matches) != 1:
-        return None
-
-    return matches[0]

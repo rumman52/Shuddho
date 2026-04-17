@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -16,13 +17,16 @@ DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 DEFAULT_TIMEOUT_SECONDS = 20
 OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_CHAT_COMPLETIONS_URL = f"{OPENROUTER_API_BASE_URL}/chat/completions"
+OPENROUTER_MODELS_URL = f"{OPENROUTER_API_BASE_URL}/models"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
 OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
 OPENROUTER_TIMEOUT_SECONDS_ENV_VAR = "OPENROUTER_TIMEOUT_SECONDS"
+OPENROUTER_PROBE_TTL_SECONDS_ENV_VAR = "OPENROUTER_PROBE_TTL_SECONDS"
 PLACEHOLDER_API_KEY_VALUES = {
     "your_key_here",
     "paste_my_new_real_key_here",
 }
+DEFAULT_PROBE_TTL_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,20 @@ class OpenRouterRuntimeStatus:
     model: str
     api_key_present: bool
     timeout_seconds: int
+    probed: bool
+    probe_success: bool | None
+    probe_status: str | None
+    probe_reason: str | None
+    probe_checked_at: datetime | None
+
+
+@dataclass(frozen=True)
+class OpenRouterProbeStatus:
+    probed: bool
+    success: bool | None
+    status: str
+    reason: str | None
+    checked_at: datetime | None
 
 
 class OpenRouterClient:
@@ -58,17 +76,26 @@ class OpenRouterClient:
         api_key_present: bool | None = None,
         status: str | None = None,
         reason: str | None = None,
+        probe_ttl_seconds: int = DEFAULT_PROBE_TTL_SECONDS,
     ) -> None:
         self.session = session
         self.api_key = api_key
         self.model_name = model_name
         self.timeout_seconds = timeout_seconds
+        self.probe_ttl_seconds = probe_ttl_seconds
         self.enabled = enabled
         self.configured = enabled if configured is None else configured
         self.api_key_present = bool(api_key) if api_key_present is None else api_key_present
         resolved_status, resolved_reason = self._resolve_runtime_state(status=status, reason=reason)
         self.status = resolved_status
         self.reason = resolved_reason
+        self._probe_status = OpenRouterProbeStatus(
+            probed=False,
+            success=None,
+            status="not_probed",
+            reason=None,
+            checked_at=None,
+        )
 
     @classmethod
     def from_environment(cls, environ: dict[str, str] | None = None) -> "OpenRouterClient":
@@ -78,6 +105,7 @@ class OpenRouterClient:
         api_key = (environment.get(OPENROUTER_API_KEY_ENV_VAR) or "").strip()
         api_key_present = bool(api_key)
         configured = api_key_present and api_key.casefold() not in PLACEHOLDER_API_KEY_VALUES
+        probe_ttl_seconds = _parse_probe_ttl(environment.get(OPENROUTER_PROBE_TTL_SECONDS_ENV_VAR))
 
         logger.info(
             "OpenRouter client initialization api_key_found=%s configured=%s model=%s timeout_seconds=%s",
@@ -109,6 +137,7 @@ class OpenRouterClient:
                 api_key_present=api_key_present,
                 status=status,
                 reason=reason,
+                probe_ttl_seconds=probe_ttl_seconds,
             )
 
         return cls(
@@ -120,6 +149,7 @@ class OpenRouterClient:
             configured=True,
             api_key_present=True,
             status="ready",
+            probe_ttl_seconds=probe_ttl_seconds,
         )
 
     @classmethod
@@ -132,6 +162,7 @@ class OpenRouterClient:
         api_key_present: bool = False,
         status: str = "disabled",
         reason: str | None = None,
+        probe_ttl_seconds: int = DEFAULT_PROBE_TTL_SECONDS,
     ) -> "OpenRouterClient":
         return cls(
             session=None,
@@ -143,10 +174,15 @@ class OpenRouterClient:
             api_key_present=api_key_present,
             status=status,
             reason=reason,
+            probe_ttl_seconds=probe_ttl_seconds,
         )
 
     def is_available(self) -> bool:
-        return self.enabled and self.session is not None and bool(self.api_key)
+        if not (self.enabled and self.session is not None and bool(self.api_key) and self.configured):
+            return False
+        if self._probe_status.probed and self._probe_status.success is False:
+            return False
+        return True
 
     def is_configured(self) -> bool:
         return self.configured
@@ -163,7 +199,72 @@ class OpenRouterClient:
             model=self.model_name,
             api_key_present=self.api_key_present,
             timeout_seconds=self.timeout_seconds,
+            probed=self._probe_status.probed,
+            probe_success=self._probe_status.success,
+            probe_status=self._probe_status.status,
+            probe_reason=self._probe_status.reason,
+            probe_checked_at=self._probe_status.checked_at,
         )
+
+    def probe_availability(self, *, force: bool = False) -> OpenRouterProbeStatus:
+        if not (self.enabled and self.session is not None and bool(self.api_key) and self.configured):
+            return self._probe_status
+        if not hasattr(self.session, "get"):
+            return self._probe_status
+        if not force and self._probe_status.probed and self._probe_status.checked_at is not None:
+            age = datetime.now(timezone.utc) - self._probe_status.checked_at
+            if age < timedelta(seconds=self.probe_ttl_seconds):
+                return self._probe_status
+
+        checked_at = datetime.now(timezone.utc)
+        try:
+            response = self.session.get(
+                OPENROUTER_MODELS_URL,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=min(self.timeout_seconds, 5),
+            )
+        except requests.RequestException as error:
+            reason = f"OpenRouter availability probe failed: {error.__class__.__name__}."
+            self._probe_status = OpenRouterProbeStatus(
+                probed=True,
+                success=False,
+                status="probe_failed",
+                reason=reason,
+                checked_at=checked_at,
+            )
+            self.status = "probe_failed"
+            self.reason = reason
+            logger.warning("OpenRouter availability probe failed model=%s error=%s", self.model_name, error.__class__.__name__)
+            return self._probe_status
+
+        if getattr(response, "status_code", 500) >= 400:
+            reason = f"OpenRouter availability probe returned HTTP {getattr(response, 'status_code', 'unknown')}."
+            self._probe_status = OpenRouterProbeStatus(
+                probed=True,
+                success=False,
+                status="probe_failed",
+                reason=reason,
+                checked_at=checked_at,
+            )
+            self.status = "probe_failed"
+            self.reason = reason
+            logger.warning(
+                "OpenRouter availability probe returned status=%s model=%s",
+                getattr(response, "status_code", "unknown"),
+                self.model_name,
+            )
+            return self._probe_status
+
+        self._probe_status = OpenRouterProbeStatus(
+            probed=True,
+            success=True,
+            status="ready",
+            reason=None,
+            checked_at=checked_at,
+        )
+        self.status = "ready"
+        self.reason = None
+        return self._probe_status
 
     def analyze_sentence(
         self,
@@ -172,7 +273,8 @@ class OpenRouterClient:
         *,
         local_hints: list[OpenRouterHint] | None = None,
     ) -> list[OpenRouterIssue]:
-        if not self.is_available():
+        probe_status = self.probe_availability(force=False)
+        if not self.is_available() or (probe_status.probed and probe_status.success is False):
             logger.debug(
                 "Skipping OpenRouter request because client is unavailable model=%s configured=%s",
                 self.model_name,
@@ -227,6 +329,7 @@ class OpenRouterClient:
                 timeout=self.timeout_seconds,
             )
         except requests.RequestException as error:
+            self._mark_runtime_unavailable("request_failed", f"OpenRouter request failed: {error.__class__.__name__}.")
             logger.warning(
                 "OpenRouter analyze_sentence failed model=%s timeout_seconds=%s error=%s",
                 self.model_name,
@@ -236,6 +339,10 @@ class OpenRouterClient:
             return []
 
         if getattr(response, "status_code", 500) >= 400:
+            self._mark_runtime_unavailable(
+                "request_failed",
+                f"OpenRouter request returned HTTP {getattr(response, 'status_code', 'unknown')}.",
+            )
             logger.warning(
                 "OpenRouter analyze_sentence returned status=%s model=%s response_body=%r",
                 getattr(response, "status_code", "unknown"),
@@ -247,6 +354,7 @@ class OpenRouterClient:
         try:
             response_payload = response.json()
         except ValueError:
+            self._mark_runtime_unavailable("request_failed", "OpenRouter returned a non-JSON response.")
             logger.warning(
                 "OpenRouter analyze_sentence returned non-JSON payload model=%s response_body=%r",
                 self.model_name,
@@ -254,6 +362,7 @@ class OpenRouterClient:
             )
             return []
 
+        self._mark_runtime_ready()
         raw_text = _extract_message_content(response_payload)
         issues = parse_openrouter_response(raw_text, sentence=sentence)
         if raw_text.strip() and not issues:
@@ -273,13 +382,37 @@ class OpenRouterClient:
     def _resolve_runtime_state(self, *, status: str | None, reason: str | None) -> tuple[str, str | None]:
         if status:
             return status, reason
-        if self.is_available():
+        if self.enabled and self.session is not None and bool(self.api_key) and self.configured:
             return "ready", None
         if not self.api_key_present:
             return "missing_api_key", f"{OPENROUTER_API_KEY_ENV_VAR} is missing from the repo-root environment."
         if not self.configured:
             return "placeholder_api_key", f"{OPENROUTER_API_KEY_ENV_VAR} is still set to a placeholder value."
         return "unavailable", reason
+
+    def _mark_runtime_ready(self) -> None:
+        checked_at = datetime.now(timezone.utc)
+        self.status = "ready"
+        self.reason = None
+        self._probe_status = OpenRouterProbeStatus(
+            probed=True,
+            success=True,
+            status="ready",
+            reason=None,
+            checked_at=checked_at,
+        )
+
+    def _mark_runtime_unavailable(self, status: str, reason: str) -> None:
+        checked_at = datetime.now(timezone.utc)
+        self.status = status
+        self.reason = reason
+        self._probe_status = OpenRouterProbeStatus(
+            probed=True,
+            success=False,
+            status=status,
+            reason=reason,
+            checked_at=checked_at,
+        )
 
 
 def _extract_message_content(payload: dict[str, Any]) -> str:
@@ -323,6 +456,18 @@ def _parse_timeout(value: str | None) -> int:
         )
         return DEFAULT_TIMEOUT_SECONDS
     return timeout_seconds
+
+
+def _parse_probe_ttl(value: str | None) -> int:
+    if value is None or not value.strip():
+        return DEFAULT_PROBE_TTL_SECONDS
+    try:
+        ttl_seconds = int(value)
+    except ValueError:
+        return DEFAULT_PROBE_TTL_SECONDS
+    if ttl_seconds <= 0:
+        return DEFAULT_PROBE_TTL_SECONDS
+    return ttl_seconds
 
 
 def _extract_response_text(response: Any, max_chars: int = 400) -> str:

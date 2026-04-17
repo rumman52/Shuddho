@@ -28,6 +28,10 @@ OPENROUTER_ANALYSIS_RESPONSE_SCHEMA: dict[str, Any] = {
                     "replacement": {"type": "string"},
                     "explanation_bn": {"type": "string"},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "occurrence_index": {"type": ["integer", "null"], "minimum": 0},
+                    "anchor_before": {"type": ["string", "null"]},
+                    "anchor_after": {"type": ["string", "null"]},
+                    "reasoning_key": {"type": ["string", "null"]},
                 },
                 "required": [
                     "category",
@@ -36,11 +40,16 @@ OPENROUTER_ANALYSIS_RESPONSE_SCHEMA: dict[str, Any] = {
                     "replacement",
                     "explanation_bn",
                     "confidence",
+                    "occurrence_index",
+                    "anchor_before",
+                    "anchor_after",
                 ],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["issues"],
+    "additionalProperties": False,
 }
 
 
@@ -67,6 +76,12 @@ Always return:
 - replacement
 - explanation_bn
 - confidence
+ - occurrence_index
+ - anchor_before
+ - anchor_after
+If the same span_text appears multiple times, set occurrence_index to the zero-based occurrence you mean.
+Use anchor_before and anchor_after as short exact snippets from the same sentence when the span could repeat.
+reasoning_key is optional and should stay short.
 Use category "punctuation" for punctuation or spacing fixes.
 Use a precise subtype such as repeated_word, spacing_error, duplicate_punctuation, pronoun_verb_agreement, spelling_error, orthography_variant, or usage_confusion.
 Good targets include repeated words, duplicated particles, pronoun-verb agreement, punctuation or spacing fixes, and exact standard Bangla word or phrase corrections.
@@ -94,6 +109,7 @@ def build_openrouter_prompt(
             f"Mode: {mode}",
             mode_guidance,
             "Use the exact shortest unambiguous span_text from the sentence below. Do not return character offsets.",
+            "If a span could repeat, include occurrence_index plus short exact anchor_before and anchor_after snippets from the same sentence.",
             "Return only precise, localized edits with short replacements.",
             "Never rewrite the whole sentence.",
             "If you are not highly confident, return {\"issues\": []}.",

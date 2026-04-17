@@ -44,12 +44,12 @@ void checkBackend();
 
 function describeBackendStatus(health: HealthResponse, baseUrl: string): string {
   if (!health.detector.loaded) {
-    return `Backend live but detector disabled at ${baseUrl}.`;
+    return `Backend live — detector unavailable at ${baseUrl}.`;
   }
   if (!health.openrouter.available) {
-    return `Backend live but OpenRouter unavailable at ${baseUrl}.`;
+    return `Backend live — OpenRouter unavailable at ${baseUrl}.`;
   }
-  return `Backend live at ${baseUrl}.`;
+  return `Full backend contextual analysis active at ${baseUrl}.`;
 }
 
 function buildHealthTitle(health: HealthResponse): string {

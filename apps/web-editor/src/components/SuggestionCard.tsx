@@ -6,7 +6,7 @@ import {
   type FocusEventHandler,
   type ForwardedRef,
   type MouseEventHandler,
-  type PointerEventHandler
+  type PointerEventHandler,
 } from "react";
 import type { Suggestion } from "@shared/schemas/contracts";
 
@@ -29,8 +29,13 @@ interface SuggestionCardProps {
     onPrevious: () => void;
     onNext: () => void;
   } | null;
+  runtimeLabel: string;
+  sourceLabel: string;
+  isStale: boolean;
+  canAddToDictionary: boolean;
   onAccept: (replacement: string) => void;
   onDismiss: () => void;
+  onAddToDictionary: () => void;
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
   onFocusCapture: FocusEventHandler<HTMLDivElement>;
@@ -40,8 +45,8 @@ interface SuggestionCardProps {
 
 const CARD_OFFSET = 12;
 const VIEWPORT_PADDING = 16;
-const FALLBACK_WIDTH = 320;
-const FALLBACK_HEIGHT = 220;
+const FALLBACK_WIDTH = 360;
+const FALLBACK_HEIGHT = 280;
 
 export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(function SuggestionCard(
   {
@@ -49,19 +54,28 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
     anchorRect,
     mode,
     navigation,
+    runtimeLabel,
+    sourceLabel,
+    isStale,
+    canAddToDictionary,
     onAccept,
     onDismiss,
+    onAddToDictionary,
     onMouseEnter,
     onMouseLeave,
     onFocusCapture,
     onBlurCapture,
-    onPointerDownCapture
+    onPointerDownCapture,
   },
-  forwardedRef
+  forwardedRef,
 ) {
   const localRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
-  const explanation = suggestion.explanation_bn || suggestion.explanation_en;
+  const primaryExplanation = suggestion.explanation_bn || suggestion.explanation_en;
+  const secondaryExplanation =
+    suggestion.explanation_bn && suggestion.explanation_en && suggestion.explanation_en !== suggestion.explanation_bn
+      ? suggestion.explanation_en
+      : null;
 
   useLayoutEffect(() => {
     if (!anchorRect || !localRef.current) {
@@ -71,13 +85,7 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
 
     const { width, height } = localRef.current.getBoundingClientRect();
     setPosition(resolveCardPosition(anchorRect, width || FALLBACK_WIDTH, height || FALLBACK_HEIGHT));
-  }, [
-    anchorRect,
-    explanation,
-    suggestion.id,
-    suggestion.original_text,
-    suggestion.replacement_options.length
-  ]);
+  }, [anchorRect, primaryExplanation, secondaryExplanation, suggestion.id, suggestion.original_text, suggestion.replacement_options.length]);
 
   if (!anchorRect) {
     return null;
@@ -92,11 +100,12 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
       role="dialog"
       aria-modal="false"
       data-popup-mode={mode}
+      data-stale={isStale ? "true" : undefined}
       tabIndex={-1}
       style={{
         left: resolvedPosition.left,
         top: resolvedPosition.top,
-        visibility: position ? "visible" : "hidden"
+        visibility: position ? "visible" : "hidden",
       }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -108,8 +117,13 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
         <span>{suggestion.category}</span>
         <div className="suggestion-card__badges">
           <span>{Math.round(suggestion.confidence * 100)}%</span>
+          <span className="suggestion-card__badge">{sourceLabel}</span>
           <span className="suggestion-card__mode">{mode === "pinned" ? "Pinned" : "Preview"}</span>
         </div>
+      </div>
+      <div className="suggestion-card__runtime">
+        <span className="suggestion-card__label">Runtime</span>
+        <strong>{runtimeLabel}</strong>
       </div>
       {navigation ? (
         <div className="suggestion-card__navigation">
@@ -125,10 +139,19 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
         </div>
       ) : null}
       <div className="suggestion-card__original">
-        <span className="suggestion-card__label">Original</span>
+        <span className="suggestion-card__label">Issue</span>
         <strong>{suggestion.original_text}</strong>
       </div>
-      <p className="suggestion-card__explanation">{explanation}</p>
+      <div className="suggestion-card__why">
+        <span className="suggestion-card__label">Why this suggestion</span>
+        <p className="suggestion-card__explanation">{primaryExplanation}</p>
+        {secondaryExplanation ? <p className="suggestion-card__explanation suggestion-card__explanation--secondary">{secondaryExplanation}</p> : null}
+      </div>
+      {isStale ? (
+        <div className="suggestion-card__stale">
+          This suggestion no longer anchors safely to the current text. Run analysis again before accepting it.
+        </div>
+      ) : null}
       <div className="suggestion-card__actions">
         {suggestion.replacement_options.length > 0 ? (
           suggestion.replacement_options.map((option, index) => (
@@ -139,6 +162,7 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
                 index === 0 ? "suggestion-card__option--primary" : "suggestion-card__option--secondary"
               }`}
               onClick={() => onAccept(option)}
+              disabled={isStale}
             >
               {option}
             </button>
@@ -147,9 +171,16 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
           <span className="suggestion-card__empty">No replacement available</span>
         )}
       </div>
-      <button type="button" className="suggestion-card__dismiss" onClick={onDismiss}>
-        Dismiss
-      </button>
+      <div className="suggestion-card__footer">
+        <button type="button" className="suggestion-card__dismiss" onClick={onDismiss}>
+          Dismiss
+        </button>
+        {canAddToDictionary ? (
+          <button type="button" className="suggestion-card__dismiss" onClick={onAddToDictionary}>
+            Add to personal dictionary
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 });
@@ -157,7 +188,7 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
 function resolveCardPosition(
   anchorRect: SuggestionCardAnchor,
   cardWidth: number,
-  cardHeight: number
+  cardHeight: number,
 ): { left: number; top: number } {
   const maxLeft = Math.max(VIEWPORT_PADDING, window.innerWidth - cardWidth - VIEWPORT_PADDING);
   const maxTop = Math.max(VIEWPORT_PADDING, window.innerHeight - cardHeight - VIEWPORT_PADDING);

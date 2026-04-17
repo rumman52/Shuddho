@@ -15,3 +15,4 @@ apps/chrome-extension/dist/
 apps/chrome-extension/apps/
 apps/web-editor/dist/
 data/corpus/cleaned/*.txt
+test-artifacts/

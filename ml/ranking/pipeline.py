@@ -257,6 +257,10 @@ def _detector_confidence_bonuses(suggestions: Sequence[Suggestion]) -> dict[str,
                 bonus += 0.03
             if _is_short_localized_contextual_edit(suggestion):
                 bonus += 0.03
+            if _has_strong_anchor_trace(suggestion):
+                bonus += 0.04
+            elif not suggestion.source_trace:
+                bonus -= 0.06
             if not suggestion.replacement_options:
                 bonus -= 0.04
         bonuses[suggestion.id] = round(bonus, 4)
@@ -335,6 +339,12 @@ def _ambiguity_penalties(suggestions: Sequence[Suggestion], *, mode: AnalyzeMode
             penalty += 0.08
         if suggestion.source == SuggestionSource.MODEL and len(suggestion.replacement_options) > 1:
             penalty += 0.04
+        if suggestion.source == SuggestionSource.MODEL and not _has_strong_anchor_trace(suggestion):
+            penalty += 0.1
+        if suggestion.source == SuggestionSource.MODEL and _is_rewrite_like_model_suggestion(suggestion):
+            penalty += 0.14
+        if suggestion.source == SuggestionSource.MODEL and _looks_generic_explanation(suggestion.explanation_bn, suggestion):
+            penalty += 0.08
         if suggestion.category.value == "spelling" and _has_same_span_competing_replacement(suggestion, suggestions):
             penalty += 0.05
         if suggestion.suggestion_kind == SuggestionKind.NO_SUGGESTION:
@@ -428,3 +438,41 @@ def _is_short_localized_contextual_edit(suggestion: Suggestion) -> bool:
     }:
         return False
     return _has_short_bengali_replacement(suggestion)
+
+
+def _has_strong_anchor_trace(suggestion: Suggestion) -> bool:
+    if not suggestion.source_trace:
+        return False
+    return any(
+        marker in suggestion.source_trace
+        for marker in {"exact_unique_match", "occurrence_index", "anchor_triplet"}
+    )
+
+
+def _is_rewrite_like_model_suggestion(suggestion: Suggestion) -> bool:
+    if not suggestion.replacement_options:
+        return True
+    replacement = suggestion.replacement_options[0]
+    original = suggestion.original_text
+    if not replacement or not original:
+        return True
+    if len(replacement.split()) > 8:
+        return True
+    if len(replacement) > max(int(len(original) * 2.5), len(original) + 8, 24):
+        return True
+    if len(replacement) >= max(len(original) + 12, int(len(original) * 3)):
+        return True
+    return False
+
+
+def _looks_generic_explanation(explanation: str, suggestion: Suggestion) -> bool:
+    normalized = " ".join(explanation.split()).strip()
+    if not normalized:
+        return True
+    if len(normalized.split()) <= 3:
+        return True
+    if suggestion.original_text not in normalized and not any(
+        replacement in normalized for replacement in suggestion.replacement_options
+    ):
+        return any(marker in normalized for marker in {"আরও স্বাভাবিক", "আরও ভালো", "clearer", "more natural"})
+    return False

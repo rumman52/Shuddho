@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEven
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
-import type { AnalyzeMode, AnalyzeResponse, FeedbackAction, HealthResponse, Suggestion } from "@shared/schemas/contracts";
+import type { AnalyzeMode, AnalyzeResponse, FeedbackAction, HealthDeepResponse, HealthResponse, Suggestion } from "@shared/schemas/contracts";
 import { SuggestionCard, type SuggestionCardAnchor } from "./components/SuggestionCard";
 import { IssueMark } from "./lib/editorExtensions";
-import { analyzeText, getApiBaseUrl, getHealth, sendFeedback, setApiBaseUrlOverride } from "./lib/api";
+import { analyzeText, getApiBaseUrl, getApiConfiguration, getHealth, sendFeedback, setApiBaseUrlOverride } from "./lib/api";
 import { applyIssueMarks, replaceSuggestion } from "./lib/highlight";
 import { LOCAL_FALLBACK_DESCRIPTION, LOCAL_FALLBACK_LABEL, analyzeTextLocally } from "./lib/localAnalysis";
-import { getEditorTextSurface } from "./lib/textSurface";
+import { canAddSuggestionToDictionary, describeRuntimeState, describeSuggestionSource } from "./lib/runtimeStatus";
+import { getEditorTextSurface, matchSuggestionByContext, resolveSuggestionMatch } from "./lib/textSurface";
 
 const INITIAL_TEXT = sampleFixtures[0]?.text ?? "à¦†à¦®à¦¿  à¦¬à¦¾à¦‚à¦²à¦¾ à¦²à¦¿à¦–à¦¿  à¥¤à¥¤ à¦¬à¦¾à¦‚à¦²à¦¾ à¦¬à¦¾à¦‚à¦²à¦¾ à¦­à¦¾à¦·à¦¾ à¦–à§à¦¬ à¦¸à§à¦¨à§à¦¦à¦° !!";
 const ANALYSIS_DEBOUNCE_MS = 550;
@@ -16,18 +17,13 @@ const HOVER_HIDE_DELAY_MS = 180;
 const POST_ACCEPT_ANALYSIS_DELAY_MS = 80;
 const PERSONAL_DICTIONARY_STORAGE_KEY = "shuddho-personal-dictionary";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
-type BackendMode = "checking" | "online" | "offline";
+type BackendMode = "checking" | "online" | "offline" | "misconfigured";
 
 export default function App() {
   const [requestMode, setRequestMode] = useState<AnalyzeMode>("standard");
   const [userId] = useState<string>(() => loadOrCreateLocalUserId());
   const [personalDictionary, setPersonalDictionary] = useState<string[]>(() => loadPersonalDictionary());
-  const [analysis, setAnalysis] = useState<AnalyzeResponse>({
-    text: INITIAL_TEXT,
-    normalized_text: INITIAL_TEXT,
-    corrected_text: INITIAL_TEXT,
-    suggestions: []
-  });
+  const [analysis, setAnalysis] = useState<AnalyzeResponse>(() => createEmptyAnalysis(INITIAL_TEXT, "standard"));
   const [showStyleSuggestions, setShowStyleSuggestions] = useState(false);
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null);
@@ -36,7 +32,8 @@ export default function App() {
   const [status, setStatus] = useState("Waiting for input");
   const [backendMode, setBackendMode] = useState<BackendMode>("checking");
   const [backendMessage, setBackendMessage] = useState("Checking backend connection...");
-  const [backendHealth, setBackendHealth] = useState<HealthResponse | null>(null);
+  const [backendHealth, setBackendHealth] = useState<HealthDeepResponse | null>(null);
+  const [apiConfiguration, setApiConfiguration] = useState(() => getApiConfiguration());
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
   const analysisTimerRef = useRef<number | null>(null);
@@ -96,15 +93,26 @@ export default function App() {
     () => analysis.suggestions.filter((suggestion) => suggestion.category === "style"),
     [analysis.suggestions]
   );
-  const backendStatus = useMemo(
-    () => describeBackendStatus(backendMode, backendHealth),
-    [backendMode, backendHealth]
+  const runtimeDescriptor = useMemo(
+    () =>
+      describeRuntimeState({
+        analysis,
+        transport: backendMode,
+        health: backendHealth,
+        hardWarning: apiConfiguration.hardWarning,
+      }),
+    [analysis, backendHealth, backendMode, apiConfiguration.hardWarning]
   );
   const runtimeBanner = useMemo(
-    () => describeRuntimeBanner(backendMode, backendHealth, apiBaseUrl),
-    [backendMode, backendHealth, apiBaseUrl]
+    () => buildRuntimeBanner(runtimeDescriptor, analysis, backendHealth, apiConfiguration.hardWarning, apiBaseUrl),
+    [analysis, apiBaseUrl, apiConfiguration.hardWarning, backendHealth, runtimeDescriptor]
   );
-  const isLocalFallbackActive = backendMode === "offline";
+  const isLocalFallbackActive = runtimeDescriptor.localOnly;
+  const visibleSuggestionMatch = useMemo(
+    () => (visibleSuggestion ? resolveSuggestionMatch(analysis.text, visibleSuggestion) : null),
+    [analysis.text, visibleSuggestion]
+  );
+  const visibleSuggestionIsStale = visibleSuggestionMatch?.status === "stale";
 
   useEffect(() => {
     requestModeRef.current = requestMode;
@@ -120,7 +128,7 @@ export default function App() {
 
   useEffect(() => {
     void refreshBackendHealth();
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, apiConfiguration.hardWarning]);
 
   useEffect(() => {
     hoveredIssueIdRef.current = hoveredIssueId;
@@ -183,7 +191,7 @@ export default function App() {
       return;
     }
 
-    const matchedSuggestion = matchSuggestion(lastVisibleSuggestionRef.current, analysis.suggestions);
+    const matchedSuggestion = matchSuggestionByContext(lastVisibleSuggestionRef.current, analysis.suggestions);
     if (!matchedSuggestion) {
       if (isPopupPinnedRef.current) {
         closePopup();
@@ -272,9 +280,19 @@ export default function App() {
     const requestId = ++latestAnalysisRequestRef.current;
 
     if (!text.trim()) {
-      setAnalysis({ text, normalized_text: text, corrected_text: text, suggestions: [] });
+      setAnalysis(createEmptyAnalysis(text, mode));
       closePopup();
       setStatus("Empty input");
+      return;
+    }
+
+    if (!apiConfiguration.backendAllowed) {
+      const fallbackResponse = buildLocalFallbackResponse(text, mode, [apiConfiguration.hardWarning], personalDictionary);
+      setBackendMode("misconfigured");
+      setBackendHealth(null);
+      setBackendMessage(apiConfiguration.hardWarning ?? LOCAL_FALLBACK_DESCRIPTION);
+      setAnalysis(fallbackResponse);
+      setStatus(formatRuntimeSummaryStatus(fallbackResponse.suggestions, mode, fallbackResponse.runtime_source));
       return;
     }
 
@@ -284,19 +302,23 @@ export default function App() {
       if (requestId !== latestAnalysisRequestRef.current) {
         return;
       }
+      if (editor && getEditorTextSurface(editor).text !== text) {
+        return;
+      }
       setBackendMode("online");
-      setBackendMessage(
-        backendHealth
-          ? formatBackendMessage(backendHealth, apiBaseUrl)
-          : `Backend live at ${apiBaseUrl}. Contextual backend analysis is active for this session.`
-      );
+      setBackendMessage(formatBackendRuntimeMessage(response, backendHealth, apiBaseUrl));
       setAnalysis(response);
-      setStatus(formatPreciseAnalysisStatus(response.suggestions, mode));
+      setStatus(formatRuntimeSummaryStatus(response.suggestions, mode, response.runtime_source));
     } catch (error) {
       if (requestId !== latestAnalysisRequestRef.current) {
         return;
       }
-      const fallbackResponse = analyzeTextLocally({ text, mode, personal_dictionary: personalDictionary });
+      if (editor && getEditorTextSurface(editor).text !== text) {
+        return;
+      }
+      const fallbackResponse = buildLocalFallbackResponse(text, mode, [
+        error instanceof Error ? error.message : LOCAL_FALLBACK_DESCRIPTION,
+      ], personalDictionary);
       setBackendMode("offline");
       setBackendHealth(null);
       setBackendMessage(
@@ -304,7 +326,7 @@ export default function App() {
           `${error instanceof Error ? error.message : LOCAL_FALLBACK_DESCRIPTION}`
       );
       setAnalysis(fallbackResponse);
-      setStatus(formatPreciseFallbackStatus(fallbackResponse.suggestions, mode));
+      setStatus(formatRuntimeSummaryStatus(fallbackResponse.suggestions, mode, fallbackResponse.runtime_source));
     }
   }
 
@@ -319,7 +341,7 @@ export default function App() {
 
     closePopup();
     if (!applied) {
-      setStatus("Suggestion no longer matched current text");
+      setStatus("Suggestion no longer anchors to the current text");
       scheduleAnalysis(getEditorTextSurface(editor).text, POST_ACCEPT_ANALYSIS_DELAY_MS);
       return;
     }
@@ -651,23 +673,32 @@ export default function App() {
 
   function handleApiBaseUrlSave() {
     const nextApiBaseUrl = setApiBaseUrlOverride(apiBaseUrlDraft);
+    setApiConfiguration(getApiConfiguration());
     setApiBaseUrlDraft(nextApiBaseUrl);
     setApiBaseUrl(nextApiBaseUrl);
   }
 
   async function refreshBackendHealth() {
+    if (!apiConfiguration.backendAllowed) {
+      setBackendHealth(null);
+      setBackendMode("misconfigured");
+      setBackendMessage(apiConfiguration.hardWarning ?? LOCAL_FALLBACK_DESCRIPTION);
+      return;
+    }
     setBackendMode("checking");
     setBackendMessage(`Checking backend at ${apiBaseUrl}...`);
     try {
       const health = await getHealth();
       setBackendHealth(health);
       setBackendMode("online");
-      setBackendMessage(formatBackendMessage(health, apiBaseUrl));
-    } catch {
+      setBackendMessage(formatHealthRuntimeMessage(health, apiBaseUrl));
+    } catch (error) {
       setBackendHealth(null);
       setBackendMode("offline");
       setBackendMessage(
-        `${LOCAL_FALLBACK_LABEL} are active because the backend is unreachable at ${apiBaseUrl}. ${LOCAL_FALLBACK_DESCRIPTION}`,
+        `${LOCAL_FALLBACK_LABEL} are active because the backend is unreachable at ${apiBaseUrl}. ${
+          error instanceof Error ? error.message : LOCAL_FALLBACK_DESCRIPTION
+        }`,
       );
     }
   }
@@ -720,6 +751,7 @@ export default function App() {
   }
 
   function renderSuggestionListItem(suggestion: Suggestion, deemphasized = false) {
+    const sourceBadge = describeSuggestionSource(suggestion, analysis);
     return (
       <button
         key={suggestion.id}
@@ -745,6 +777,10 @@ export default function App() {
         }}
         onClick={(event) => pinIssue(suggestion.id, event.currentTarget)}
       >
+        <span className="suggestion-list__badges">
+          <span className="suggestion-list__badge">{sourceBadge}</span>
+          {isLocalFallbackActive ? <span className="suggestion-list__badge">{LOCAL_FALLBACK_LABEL}</span> : null}
+        </span>
         <strong>{suggestion.original_text}</strong>
         {suggestion.replacement_options[0] ? (
           <span className="suggestion-list__replacement">{suggestion.replacement_options[0]}</span>
@@ -772,12 +808,12 @@ export default function App() {
               background:
                 backendMode === "online"
                   ? "rgba(255, 255, 255, 0.16)"
-                  : backendMode === "offline"
+                  : backendMode === "offline" || backendMode === "misconfigured"
                     ? "rgba(255, 244, 228, 0.22)"
                     : "rgba(255, 255, 255, 0.12)",
             }}
           >
-            {backendStatus}
+            {runtimeDescriptor.label}
           </span>
           <span>{status}</span>
           <strong>{hardSuggestions.length}</strong>
@@ -845,7 +881,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        {backendMode === "offline" ? (
+        {backendMode === "offline" || backendMode === "misconfigured" ? (
           <div
             role="status"
             style={{
@@ -875,6 +911,44 @@ export default function App() {
           </div>
         ) : null}
         <div
+          style={{
+            marginBottom: "0.9rem",
+            padding: "0.85rem 1rem",
+            borderRadius: "18px",
+            border: "1px solid var(--border)",
+            background: "rgba(255, 255, 255, 0.82)",
+            display: "grid",
+            gap: "0.45rem"
+          }}
+        >
+          <strong>{runtimeDescriptor.label}</strong>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", color: "var(--muted)", fontSize: "0.9rem" }}>
+            <span>Detector used: {analysis.used_detector ? "yes" : "no"}</span>
+            <span>OpenRouter used: {analysis.used_openrouter ? "yes" : "no"}</span>
+            <span>Local-only suggestions: {runtimeDescriptor.localOnly ? "yes" : "no"}</span>
+            <span>Lexicon: {analysis.lexicon_source}{analysis.lexicon_version ? ` (${analysis.lexicon_version})` : ""}</span>
+            {analysis.backend_version ? <span>Backend: {analysis.backend_version}</span> : null}
+          </div>
+          {runtimeDescriptor.warnings.length > 0 ? (
+            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+              {runtimeDescriptor.warnings.map((warning) => (
+                <span
+                  key={warning}
+                  style={{
+                    borderRadius: "999px",
+                    padding: "0.2rem 0.55rem",
+                    background: "rgba(184, 50, 74, 0.08)",
+                    color: "var(--danger)",
+                    fontSize: "0.85rem"
+                  }}
+                >
+                  {warning}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div
           ref={editorStageRef}
           className="editor-stage"
           onMouseOver={handleEditorMouseOver}
@@ -889,6 +963,10 @@ export default function App() {
             suggestion={visibleSuggestion}
             anchorRect={cardAnchorRect}
             mode={isPopupPinned ? "pinned" : "preview"}
+            runtimeLabel={runtimeDescriptor.label}
+            sourceLabel={describeSuggestionSource(visibleSuggestion, analysis)}
+            isStale={visibleSuggestionIsStale}
+            canAddToDictionary={canAddSuggestionToDictionary(visibleSuggestion)}
             navigation={
               analysis.suggestions.length > 1 && visibleSuggestionIndex >= 0
                 ? {
@@ -901,6 +979,7 @@ export default function App() {
             }
             onAccept={handleAccept}
             onDismiss={handleDismiss}
+            onAddToDictionary={() => void handlePersistentFeedbackAction("add_to_personal_dictionary")}
             onMouseEnter={handlePopupMouseEnter}
             onMouseLeave={handlePopupMouseLeave}
             onFocusCapture={handlePopupFocusCapture}
@@ -941,13 +1020,6 @@ export default function App() {
               >
                 Ignore forever
               </button>
-              <button
-                type="button"
-                className="suggestion-card__dismiss"
-                onClick={() => void handlePersistentFeedbackAction("add_to_personal_dictionary")}
-              >
-                Add to personal dictionary
-              </button>
             </div>
           </div>
         ) : null}
@@ -961,6 +1033,9 @@ export default function App() {
               {isLocalFallbackActive
                 ? "Local fallback checks are shown here. Backend contextual corrections are unavailable until the API reconnects."
                 : "Hard errors stay visible here. Optional style guidance is separated below and muted by default."}
+            </p>
+            <p style={{ marginTop: "0.35rem" }}>
+              {runtimeDescriptor.label}. Detector used: {analysis.used_detector ? "yes" : "no"}. OpenRouter used: {analysis.used_openrouter ? "yes" : "no"}.
             </p>
           </div>
           <pre className="panel-header__normalized">{analysis.normalized_text}</pre>
@@ -1057,54 +1132,6 @@ function toCardAnchor(element: HTMLElement): SuggestionCardAnchor {
     width: rect.width,
     height: rect.height
   };
-}
-
-function matchSuggestion(previous: Suggestion | null, nextSuggestions: Suggestion[]): Suggestion | null {
-  if (!previous) {
-    return null;
-  }
-
-  let bestMatch: { suggestion: Suggestion; score: number } | null = null;
-  for (const suggestion of nextSuggestions) {
-    if (suggestion.id === previous.id) {
-      return suggestion;
-    }
-
-    let score = 0;
-    if (suggestion.subtype === previous.subtype) {
-      score += 5;
-    }
-    if (suggestion.source === previous.source) {
-      score += 3;
-    }
-    if (suggestion.category === previous.category) {
-      score += 2;
-    }
-    if (suggestion.original_text === previous.original_text) {
-      score += 4;
-    }
-
-    const spanDistance = Math.abs(suggestion.span_start - previous.span_start) + Math.abs(suggestion.span_end - previous.span_end);
-    if (spanDistance === 0) {
-      score += 4;
-    } else if (spanDistance <= 4) {
-      score += 3;
-    } else if (spanDistance <= 10) {
-      score += 1;
-    }
-
-    if (suggestion.replacement_options.some((option) => previous.replacement_options.includes(option))) {
-      score += 2;
-    }
-
-    if (score < 7 || (bestMatch && score <= bestMatch.score)) {
-      continue;
-    }
-
-    bestMatch = { suggestion, score };
-  }
-
-  return bestMatch?.suggestion ?? null;
 }
 
 function describeBackendStatus(backendMode: BackendMode, health: HealthResponse | null): string {
@@ -1217,6 +1244,124 @@ function formatPreciseFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMod
   }
 
   return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} | ${LOCAL_FALLBACK_LABEL.toLowerCase()} | ${mode} mode`;
+}
+
+function formatHealthRuntimeMessage(health: HealthDeepResponse, apiBaseUrl: string): string {
+  const details = [`Backend reached at ${apiBaseUrl}.`, `${health.analysis_profile}.`];
+  if (health.backend_version) {
+    details.push(`Backend version ${health.backend_version}.`);
+  }
+  details.push(`Lexicon ${health.lexicon.runtime_source}${health.lexicon.version ? ` (${health.lexicon.version})` : ""}.`);
+  if (health.detector.loaded) {
+    details.push(`Detector ready at ${health.detector.checkpoint ?? "configured checkpoint"}.`);
+  } else {
+    details.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
+  }
+  if (health.openrouter.available) {
+    details.push(`OpenRouter ready with ${health.openrouter.model ?? "the configured model"}.`);
+  } else {
+    details.push(`OpenRouter unavailable${health.openrouter.reason ? `: ${health.openrouter.reason}` : "."}`);
+  }
+  return details.join(" ");
+}
+
+function formatBackendRuntimeMessage(
+  analysis: AnalyzeResponse,
+  health: HealthDeepResponse | null,
+  apiBaseUrl: string,
+): string {
+  if (analysis.runtime_source === "frontend_local_fallback") {
+    return `${LOCAL_FALLBACK_LABEL} are active because backend analysis is unavailable at ${apiBaseUrl}.`;
+  }
+  if (health) {
+    formatBackendMessage(health, apiBaseUrl);
+    return formatHealthRuntimeMessage(health, apiBaseUrl);
+  }
+  return `${analysis.runtime_source}. Backend reached at ${apiBaseUrl}.`;
+}
+
+function buildRuntimeBanner(
+  runtimeDescriptor: ReturnType<typeof describeRuntimeState>,
+  analysis: AnalyzeResponse,
+  health: HealthDeepResponse | null,
+  hardWarning: string | null,
+  apiBaseUrl: string,
+): string | null {
+  if (hardWarning) {
+    return hardWarning;
+  }
+  if (analysis.runtime_source === "frontend_local_fallback") {
+    return `Local fallback checks only. The backend could not be reached at ${apiBaseUrl}, so contextual backend corrections are turned off in this session.`;
+  }
+  describeRuntimeBanner("online", health, apiBaseUrl);
+  if (runtimeDescriptor.label === "Full backend contextual analysis active" && !analysis.runtime_warnings.length) {
+    return null;
+  }
+  const reasons: string[] = [];
+  if (health && !health.detector.loaded) {
+    reasons.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
+  }
+  if (health && !health.openrouter.available) {
+    reasons.push(`OpenRouter unavailable${health.openrouter.reason ? `: ${health.openrouter.reason}` : "."}`);
+  }
+  const warningText = [...reasons, ...analysis.runtime_warnings].join(" ");
+  if (!warningText) {
+    return runtimeDescriptor.label === "Full backend contextual analysis active" ? null : runtimeDescriptor.label;
+  }
+  return `${runtimeDescriptor.label}. ${warningText}`.trim();
+}
+
+function formatRuntimeSummaryStatus(
+  suggestions: Suggestion[],
+  mode: AnalyzeMode,
+  runtimeSource: AnalyzeResponse["runtime_source"],
+): string {
+  if (runtimeSource === "frontend_local_fallback") {
+    return formatPreciseFallbackStatus(suggestions, mode);
+  }
+  return formatPreciseAnalysisStatus(suggestions, mode);
+}
+
+function createEmptyAnalysis(text: string, mode: AnalyzeMode): AnalyzeResponse {
+  return {
+    text,
+    normalized_text: text,
+    corrected_text: text,
+    suggestions: [],
+    analysis_profile: "frontend_local_fallback",
+    runtime_source: "frontend_local_fallback",
+    runtime_warnings: [],
+    used_detector: false,
+    used_openrouter: false,
+    lexicon_source: "unknown",
+    lexicon_version: null,
+    backend_version: null,
+    sentence_count: 0,
+    request_mode_applied: mode,
+  };
+}
+
+function buildLocalFallbackResponse(
+  text: string,
+  mode: AnalyzeMode,
+  runtimeWarnings: Array<string | null | undefined>,
+  personalDictionary: string[],
+): AnalyzeResponse {
+  const response = analyzeTextLocally({
+    text,
+    mode,
+    personal_dictionary: personalDictionary,
+  });
+  return {
+    ...response,
+    runtime_warnings: [
+      ...new Set(
+        [response.runtime_warnings, runtimeWarnings]
+          .flat()
+          .filter((warning): warning is string => Boolean(warning && warning.trim()))
+      ),
+    ],
+  };
 }
 
 function loadPersonalDictionary(): string[] {

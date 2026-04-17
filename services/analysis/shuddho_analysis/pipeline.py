@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
 
 from services.llm.shuddho_llm.openrouter_client import OpenRouterClient, OpenRouterHint
 from services.llm.shuddho_llm.parsing import OpenRouterIssue, OpenRouterIssueCategory
@@ -12,6 +11,7 @@ from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from shared.constants.bangla import BANGLA_LETTER_PATTERN, BANGLA_WORD_PATTERN
 from shared.schemas.python_models import (
+    AnalysisProfile,
     AnalyzeMode,
     AnalyzeResponse,
     Suggestion,
@@ -26,21 +26,14 @@ from .candidate_generator import CandidateGenerator
 from .detector import DetectorService
 from .models import AnalysisArtifacts, DetectorFinding
 from .ranking import SuggestionRankingPipeline
+from .span_resolution import SentenceSpan, enrich_suggestions_with_text_context, split_sentences
 
 logger = logging.getLogger(__name__)
 
-SENTENCE_PATTERN = re.compile(r"[^.!?\u0964\n]+(?:[.!?\u0964]+|$)")
 MAX_OPENROUTER_SENTENCES_PER_REQUEST = 4
 STRICT_MODE_OPENROUTER_SENTENCE_LIMIT = 6
 MAX_OPENROUTER_SENTENCE_LENGTH = 280
 MIN_OPENROUTER_BANGLA_LETTERS = 4
-
-
-@dataclass(frozen=True)
-class SentenceSpan:
-    start: int
-    end: int
-    text: str
 
 
 class AnalysisPipeline:
@@ -79,6 +72,15 @@ class AnalysisPipeline:
             normalized_text=artifacts.normalized.text,
             corrected_text=build_corrected_text(text, artifacts.merged_suggestions),
             suggestions=artifacts.merged_suggestions,
+            analysis_profile=artifacts.analysis_profile,
+            runtime_source=artifacts.analysis_profile,
+            runtime_warnings=artifacts.runtime_warnings,
+            used_detector=artifacts.used_detector,
+            used_openrouter=artifacts.used_openrouter,
+            lexicon_source=self.spell_engine.lexicon_source,
+            lexicon_version=self.spell_engine.lexicon_version,
+            sentence_count=len(artifacts.sentence_spans),
+            request_mode_applied=mode,
         )
 
     def analyze_artifacts(
@@ -95,6 +97,7 @@ class AnalysisPipeline:
             self.openrouter_client.is_configured(),
             self.openrouter_client.is_available(),
         )
+        sentence_spans = split_sentences(text)
         normalized = self.normalizer.normalize(text)
         rule_suggestions = self.rule_engine.analyze(text)
         spell_suggestions = self.spell_engine.analyze(normalized.text, personal_dictionary)
@@ -104,7 +107,7 @@ class AnalysisPipeline:
             rule_suggestions=rule_suggestions,
             spell_suggestions=spell_suggestions,
         )
-        model_suggestions = self._openrouter_model_suggestions(
+        model_suggestions, used_openrouter = self._openrouter_model_suggestions(
             text=text,
             rule_suggestions=rule_suggestions,
             detector_findings=detector_findings,
@@ -133,6 +136,10 @@ class AnalysisPipeline:
             self.suggestion_manager.finalize_ranked(ranked_suggestions),
             mode=mode,
         )
+        merged_suggestions = enrich_suggestions_with_text_context(text, merged_suggestions)
+        detector_runtime = self.detector_service.runtime_status()
+        openrouter_runtime = self.openrouter_client.runtime_status()
+        analysis_profile = _derive_runtime_profile(detector_runtime.loaded, openrouter_runtime.available)
         return AnalysisArtifacts(
             text=text,
             normalized=normalized,
@@ -143,6 +150,11 @@ class AnalysisPipeline:
             prepared_suggestions=prepared_suggestions,
             ranked_suggestions=ranked_suggestions,
             merged_suggestions=merged_suggestions,
+            sentence_spans=sentence_spans,
+            used_detector=detector_runtime.loaded,
+            used_openrouter=used_openrouter,
+            runtime_warnings=_build_runtime_warnings(detector_runtime, openrouter_runtime),
+            analysis_profile=analysis_profile,
         )
 
     def _openrouter_model_suggestions(
@@ -153,7 +165,7 @@ class AnalysisPipeline:
         detector_findings: list[DetectorFinding],
         personal_dictionary: list[str] | None,
         mode: AnalyzeMode,
-    ) -> list[Suggestion]:
+    ) -> tuple[list[Suggestion], bool]:
         if not self.openrouter_client.is_available():
             logger.info(
                 "Skipping OpenRouter analysis mode=%s openrouter_configured=%s openrouter_available=%s",
@@ -161,7 +173,7 @@ class AnalysisPipeline:
                 self.openrouter_client.is_configured(),
                 self.openrouter_client.is_available(),
             )
-            return []
+            return [], False
 
         model_suggestions: list[Suggestion] = []
         suspicious_sentences = self._select_suspicious_sentences(
@@ -175,6 +187,8 @@ class AnalysisPipeline:
             mode.value,
             len(suspicious_sentences),
         )
+        if not suspicious_sentences:
+            return [], False
 
         sentences_sent = 0
         issues_returned = 0
@@ -211,7 +225,7 @@ class AnalysisPipeline:
             issues_filtered_out,
             len(model_suggestions),
         )
-        return model_suggestions
+        return model_suggestions, sentences_sent > 0
 
     def _select_suspicious_sentences(
         self,
@@ -229,7 +243,7 @@ class AnalysisPipeline:
             if analyze_all_eligible_sentences
             else MAX_OPENROUTER_SENTENCES_PER_REQUEST
         )
-        for sentence in _split_sentences(text):
+        for sentence in split_sentences(text):
             if not _is_openrouter_eligible_sentence(sentence.text):
                 continue
             eligible_sentences.append(sentence)
@@ -301,7 +315,7 @@ class AnalysisPipeline:
     ) -> Suggestion | None:
         if issue.confidence < _minimum_openrouter_confidence(issue.category, mode=mode):
             return None
-        if not _is_precise_local_edit(issue.original, issue.replacement, sentence.text):
+        if not _passes_model_localization_checks(issue, sentence.text, mode=mode):
             return None
 
         if issue.category == OpenRouterIssueCategory.SPELLING_ERROR:
@@ -424,6 +438,13 @@ class AnalysisPipeline:
             is_contextual=True,
             optional_mode_visibility=optional_mode_visibility or [],
             is_variant_only=is_variant_only,
+            sentence_index=sentence.sentence_index,
+            sentence_start=sentence.start,
+            sentence_end=sentence.end,
+            occurrence_index=issue.occurrence_index,
+            anchor_before=issue.anchor_before,
+            anchor_after=issue.anchor_after,
+            source_trace=(issue.source_trace or []) + ([issue.reasoning_key] if issue.reasoning_key else []),
         )
 
 
@@ -496,26 +517,26 @@ def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool
     base_thresholds = {
         AnalyzeMode.STANDARD: {
             SuggestionKind.TRUE_SPELLING_ERROR: 0.94,
-            SuggestionKind.GRAMMAR_ERROR: 0.86,
+            SuggestionKind.GRAMMAR_ERROR: 0.82,
             SuggestionKind.PUNCTUATION_ERROR: 0.84,
             SuggestionKind.SPACING_ERROR: 0.84,
-            SuggestionKind.STYLE_SUGGESTION: 0.88,
+            SuggestionKind.STYLE_SUGGESTION: 0.9,
             SuggestionKind.ORTHOGRAPHY_VARIANT: 0.95,
         },
         AnalyzeMode.STRICT: {
             SuggestionKind.TRUE_SPELLING_ERROR: 0.92,
-            SuggestionKind.GRAMMAR_ERROR: 0.82,
-            SuggestionKind.PUNCTUATION_ERROR: 0.84,
-            SuggestionKind.SPACING_ERROR: 0.84,
+            SuggestionKind.GRAMMAR_ERROR: 0.78,
+            SuggestionKind.PUNCTUATION_ERROR: 0.82,
+            SuggestionKind.SPACING_ERROR: 0.82,
             SuggestionKind.STYLE_SUGGESTION: 0.82,
             SuggestionKind.ORTHOGRAPHY_VARIANT: 0.82,
         },
         AnalyzeMode.FORMAL: {
             SuggestionKind.TRUE_SPELLING_ERROR: 0.92,
-            SuggestionKind.GRAMMAR_ERROR: 0.82,
-            SuggestionKind.PUNCTUATION_ERROR: 0.84,
-            SuggestionKind.SPACING_ERROR: 0.84,
-            SuggestionKind.STYLE_SUGGESTION: 0.76,
+            SuggestionKind.GRAMMAR_ERROR: 0.78,
+            SuggestionKind.PUNCTUATION_ERROR: 0.82,
+            SuggestionKind.SPACING_ERROR: 0.82,
+            SuggestionKind.STYLE_SUGGESTION: 0.78,
             SuggestionKind.ORTHOGRAPHY_VARIANT: 0.8,
         },
     }
@@ -540,6 +561,12 @@ def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool
         threshold += 0.03
     if suggestion.severity == SuggestionSeverity.HIGH:
         threshold -= 0.03
+    if suggestion.rule_id.startswith("LLM_") and _is_rewrite_like_suggestion(suggestion, sentence=suggestion.original_text):
+        threshold += 0.18
+    if suggestion.rule_id.startswith("LLM_") and _looks_generic_explanation(suggestion.explanation_bn, suggestion):
+        threshold += 0.08
+    if suggestion.rule_id.startswith("LLM_") and suggestion.source_trace and "anchor_nearest_safe" in suggestion.source_trace:
+        threshold += 0.04
     return suggestion.confidence >= threshold
 
 
@@ -547,6 +574,8 @@ def _is_safe_auto_apply_suggestion(text: str, suggestion: Suggestion) -> bool:
     if suggestion.category == SuggestionCategory.STYLE:
         return False
     if suggestion.rule_id.startswith("DET_"):
+        return False
+    if suggestion.rule_id.startswith("LLM_"):
         return False
     if suggestion.source == SuggestionSource.MODEL and suggestion.suggestion_kind == SuggestionKind.GRAMMAR_ERROR:
         return False
@@ -616,23 +645,6 @@ def _is_high_precision_style_suggestion(suggestion: Suggestion) -> bool:
         and suggestion.subtype in {"number_unit_spacing", "mixed_digit_style"}
         and bool(suggestion.replacement_options)
     )
-
-
-def _split_sentences(text: str) -> list[SentenceSpan]:
-    sentences: list[SentenceSpan] = []
-    for match in SENTENCE_PATTERN.finditer(text):
-        raw_start = match.start()
-        raw_end = match.end()
-        while raw_start < raw_end and text[raw_start].isspace():
-            raw_start += 1
-        while raw_end > raw_start and text[raw_end - 1].isspace():
-            raw_end -= 1
-        if raw_end <= raw_start:
-            continue
-        sentences.append(SentenceSpan(start=raw_start, end=raw_end, text=text[raw_start:raw_end]))
-    return sentences
-
-
 def _is_openrouter_eligible_sentence(sentence: str) -> bool:
     stripped_sentence = sentence.strip()
     if not stripped_sentence or len(stripped_sentence) > MAX_OPENROUTER_SENTENCE_LENGTH:
@@ -659,34 +671,48 @@ def _is_context_sensitive_rule(suggestion: Suggestion, *, mode: AnalyzeMode) -> 
 def _minimum_openrouter_confidence(category: OpenRouterIssueCategory, *, mode: AnalyzeMode) -> float:
     thresholds = {
         AnalyzeMode.STANDARD: {
-            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.86,
-            OpenRouterIssueCategory.SPELLING_ERROR: 0.95,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.82,
+            OpenRouterIssueCategory.SPELLING_ERROR: 0.94,
             OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.84,
             OpenRouterIssueCategory.SPACING_ERROR: 0.84,
             OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.95,
-            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.88,
+            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.9,
         },
         AnalyzeMode.STRICT: {
-            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.84,
-            OpenRouterIssueCategory.SPELLING_ERROR: 0.94,
-            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.84,
-            OpenRouterIssueCategory.SPACING_ERROR: 0.84,
-            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.86,
-            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.84,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.78,
+            OpenRouterIssueCategory.SPELLING_ERROR: 0.92,
+            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.82,
+            OpenRouterIssueCategory.SPACING_ERROR: 0.82,
+            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.82,
+            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.82,
         },
         AnalyzeMode.FORMAL: {
-            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.84,
-            OpenRouterIssueCategory.SPELLING_ERROR: 0.94,
-            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.84,
-            OpenRouterIssueCategory.SPACING_ERROR: 0.84,
-            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.84,
-            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.82,
+            OpenRouterIssueCategory.GRAMMAR_ERROR: 0.78,
+            OpenRouterIssueCategory.SPELLING_ERROR: 0.92,
+            OpenRouterIssueCategory.PUNCTUATION_ERROR: 0.82,
+            OpenRouterIssueCategory.SPACING_ERROR: 0.82,
+            OpenRouterIssueCategory.ORTHOGRAPHY_VARIANT: 0.8,
+            OpenRouterIssueCategory.STYLE_SUGGESTION: 0.78,
         },
     }
     return thresholds[mode][category]
 
 
-def _is_precise_local_edit(original: str, replacement: str, sentence: str) -> bool:
+def _passes_model_localization_checks(issue: OpenRouterIssue, sentence: str, *, mode: AnalyzeMode) -> bool:
+    if issue.source_trace and "anchor_nearest_safe" in issue.source_trace and issue.confidence < 0.94:
+        return False
+    if not issue.source_trace:
+        return False
+    if issue.occurrence_index is None and not issue.anchor_before and not issue.anchor_after and "exact_unique_match" not in issue.source_trace:
+        return False
+    if _looks_generic_explanation(issue.reason_bn, issue):
+        return False
+    if not _is_precise_local_edit(issue.original, issue.replacement, sentence, mode=mode):
+        return False
+    return True
+
+
+def _is_precise_local_edit(original: str, replacement: str, sentence: str, *, mode: AnalyzeMode = AnalyzeMode.STANDARD) -> bool:
     normalized_original = original.strip()
     normalized_replacement = replacement.strip()
     if not normalized_original or not normalized_replacement:
@@ -695,11 +721,94 @@ def _is_precise_local_edit(original: str, replacement: str, sentence: str) -> bo
         return False
     if normalized_replacement == sentence.strip() and normalized_original != sentence.strip():
         return False
-    if len(normalized_replacement) > max(len(normalized_original) * 3, 48):
-        return False
-    if len(normalized_replacement.split()) > max(len(normalized_original.split()) + 3, 6):
+    if _is_rewrite_like_replacement(normalized_original, normalized_replacement, sentence, mode=mode):
         return False
     return True
+
+
+def _is_rewrite_like_replacement(original: str, replacement: str, sentence: str, *, mode: AnalyzeMode) -> bool:
+    if not original or not replacement:
+        return True
+    sentence_tokens = max(len(sentence.split()), 1)
+    replacement_tokens = len(replacement.split())
+    token_limit = 6 if mode == AnalyzeMode.STANDARD else 8
+    char_limit = (
+        max(int(len(original) * 2.2), len(original) + 6, 16)
+        if mode == AnalyzeMode.STANDARD
+        else max(int(len(original) * 2.5), len(original) + 8, 24)
+    )
+    if replacement_tokens > token_limit:
+        return True
+    if len(replacement) > char_limit:
+        return True
+    if len(replacement) >= max(len(sentence.strip()) * 0.4, len(original) + 12) and len(sentence.strip()) > len(original):
+        return True
+    if replacement_tokens >= max(sentence_tokens - 1, 1) and replacement != original:
+        return True
+    return False
+
+
+def _looks_generic_explanation(explanation: str, issue_or_suggestion: OpenRouterIssue | Suggestion) -> bool:
+    normalized = " ".join(explanation.split()).strip()
+    if not normalized:
+        return True
+    original = issue_or_suggestion.original if isinstance(issue_or_suggestion, OpenRouterIssue) else issue_or_suggestion.original_text
+    replacement = (
+        issue_or_suggestion.replacement
+        if isinstance(issue_or_suggestion, OpenRouterIssue)
+        else (issue_or_suggestion.replacement_options[0] if issue_or_suggestion.replacement_options else "")
+    )
+    generic_markers = {
+        "আরও স্বাভাবিক",
+        "আরও উপযুক্ত",
+        "আরও ভালো",
+        "স্পষ্টতর",
+        "clearer",
+        "more natural",
+        "better here",
+    }
+    if len(normalized.split()) <= 3:
+        return True
+    if not any(token in normalized for token in {original, replacement} if token):
+        return any(marker in normalized for marker in generic_markers)
+    return False
+
+
+def _is_rewrite_like_suggestion(suggestion: Suggestion, *, sentence: str) -> bool:
+    if not suggestion.replacement_options:
+        return True
+    comparison_sentence = sentence.strip()
+    if comparison_sentence == suggestion.original_text.strip() and (suggestion.anchor_before or suggestion.anchor_after):
+        comparison_sentence = f"{suggestion.anchor_before or ''}{suggestion.original_text}{suggestion.anchor_after or ''}".strip()
+    if not comparison_sentence or comparison_sentence == suggestion.original_text.strip():
+        return _is_rewrite_like_local_replacement(
+            suggestion.original_text.strip(),
+            suggestion.replacement_options[0].strip(),
+            mode=AnalyzeMode.STANDARD,
+        )
+    return _is_rewrite_like_replacement(
+        suggestion.original_text.strip(),
+        suggestion.replacement_options[0].strip(),
+        comparison_sentence,
+        mode=AnalyzeMode.STANDARD,
+    )
+
+
+def _is_rewrite_like_local_replacement(original: str, replacement: str, *, mode: AnalyzeMode) -> bool:
+    if not original or not replacement:
+        return True
+    replacement_tokens = len(replacement.split())
+    token_limit = 6 if mode == AnalyzeMode.STANDARD else 8
+    char_limit = (
+        max(int(len(original) * 2.2), len(original) + 6, 16)
+        if mode == AnalyzeMode.STANDARD
+        else max(int(len(original) * 2.5), len(original) + 8, 24)
+    )
+    if replacement_tokens > token_limit:
+        return True
+    if len(replacement) > char_limit:
+        return True
+    return False
 
 
 def _is_precise_punctuation_edit(original: str, replacement: str) -> bool:
@@ -725,6 +834,25 @@ def _looks_user_word_like(original: str, spell_engine: SpellEngine, personal_dic
 
 def _overlaps_span(left_start: int, left_end: int, right_start: int, right_end: int) -> bool:
     return left_start < right_end and right_start < left_end
+
+
+def _build_runtime_warnings(detector_runtime, openrouter_runtime) -> list[str]:  # type: ignore[no-untyped-def]
+    warnings: list[str] = []
+    if detector_runtime.status != "ready":
+        warnings.append(f"detector_{detector_runtime.status}")
+    if openrouter_runtime.status != "ready":
+        warnings.append(f"openrouter_{openrouter_runtime.status}")
+    return warnings
+
+
+def _derive_runtime_profile(detector_ready: bool, openrouter_ready: bool) -> AnalysisProfile:
+    if detector_ready and openrouter_ready:
+        return AnalysisProfile.FULL_BACKEND
+    if detector_ready:
+        return AnalysisProfile.BACKEND_WITHOUT_OPENROUTER
+    if openrouter_ready:
+        return AnalysisProfile.BACKEND_WITHOUT_DETECTOR
+    return AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY
 
 
 def _llm_rule_id(subtype: str) -> str:

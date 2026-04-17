@@ -230,6 +230,17 @@ button {
   color: var(--accent);
 }
 
+.suggestion-card__badge {
+  background: rgba(31, 42, 55, 0.08);
+}
+
+.suggestion-card__runtime,
+.suggestion-card__why {
+  padding: 0.8rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(31, 42, 55, 0.04);
+}
+
 .suggestion-card__navigation {
   display: flex;
   align-items: center;
@@ -281,10 +292,22 @@ button {
   gap: 0.5rem;
 }
 
+.suggestion-card__footer {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 .suggestion-card__option {
   width: 100%;
   text-align: left;
   padding: 0.8rem 1rem;
+}
+
+.suggestion-card__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  box-shadow: none;
 }
 
 .suggestion-card__option--primary {
@@ -299,6 +322,18 @@ button {
 .suggestion-card__empty {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.suggestion-card__stale {
+  border-radius: 16px;
+  padding: 0.85rem 0.95rem;
+  background: rgba(184, 50, 74, 0.08);
+  color: var(--danger);
+  font-size: 0.92rem;
+}
+
+.suggestion-card__explanation--secondary {
+  color: var(--muted);
 }
 
 .suggestion-card__dismiss {
@@ -323,6 +358,23 @@ button {
 .suggestion-list__item strong,
 .suggestion-list__item span {
   display: block;
+}
+
+.suggestion-list__badges {
+  display: flex !important;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.suggestion-list__badge {
+  display: inline-flex !important;
+  width: fit-content;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(31, 42, 55, 0.08);
+  color: var(--muted) !important;
+  font-size: 0.78rem;
 }
 
 .suggestion-list__item span {

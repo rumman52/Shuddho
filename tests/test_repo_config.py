@@ -10,11 +10,14 @@ def test_env_example_documents_openrouter_and_local_origins() -> None:
     assert "OPENROUTER_API_KEY=your_key_here" in env_example
     assert "OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b" in env_example
     assert "OPENROUTER_TIMEOUT_SECONDS=20" in env_example
+    assert "OPENROUTER_PROBE_TTL_SECONDS=300" in env_example
     assert "OPENROUTER_AGENT_MODEL=openrouter/auto" in env_example
     assert "OPENROUTER_AGENT_TITLE=Shuddho OpenRouter Agent" in env_example
     assert "SHUDDHO_ALLOWED_ORIGINS=http://127.0.0.1:5173,http://localhost:5173" in env_example
     assert "SHUDDHO_DETECTOR_ENABLED=auto" in env_example
     assert "SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base" in env_example
+    assert "The API reads only the repo-root .env file" in env_example
+    assert "Do not leave a deployed frontend pointing at localhost." in env_example
     assert "sk-or-v1-" not in env_example
 
 

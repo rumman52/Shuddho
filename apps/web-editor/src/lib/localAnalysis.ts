@@ -44,6 +44,16 @@ export function analyzeTextLocally(
     normalized_text: normalizePreviewText(text),
     corrected_text: applySafeCorrections(text, suggestions),
     suggestions,
+    analysis_profile: "frontend_local_fallback",
+    runtime_source: "frontend_local_fallback",
+    runtime_warnings: ["frontend_local_fallback"],
+    used_detector: false,
+    used_openrouter: false,
+    lexicon_source: "frontend_local_dictionary",
+    lexicon_version: null,
+    backend_version: null,
+    sentence_count: countSentences(text),
+    request_mode_applied: mode,
   };
 }
 
@@ -350,6 +360,7 @@ function buildSuggestion(args: {
     suppression_key: suppressionKey,
     optional_mode_visibility: args.optionalModeVisibility,
     is_variant_only: args.isVariantOnly,
+    source_trace: ["frontend_local_fallback"],
   };
 }
 
@@ -421,6 +432,11 @@ const SAFE_AUTO_APPLY_SUBTYPES = new Set([
 
 function normalizePreviewText(text: string): string {
   return text.replace(/\u00a0/g, " ").replace(/[ \t]{2,}/g, " ");
+}
+
+function countSentences(text: string): number {
+  const matches = text.match(/[^.!?\u0964\n]+(?:[.!?\u0964]+|$)/gu);
+  return matches?.length ?? 0;
 }
 
 function buildStableId(prefix: string, payload: string): string {

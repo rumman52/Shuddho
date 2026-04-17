@@ -1,17 +1,52 @@
-import type { AnalyzeRequest, AnalyzeResponse, FeedbackRequest, HealthResponse } from "@shared/schemas/contracts";
+import type { AnalyzeRequest, AnalyzeResponse, FeedbackRequest, HealthDeepResponse } from "@shared/schemas/contracts";
 
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
+const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
-let apiBaseUrl = resolveApiBaseUrl();
 
-function resolveApiBaseUrl(): string {
-  const runtimeOverride = readStoredApiBaseUrl();
-  const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL;
-  return normalizeApiBaseUrl(runtimeOverride ?? configuredBaseUrl ?? DEFAULT_API_BASE_URL);
+export interface ApiConfigurationState {
+  apiBaseUrl: string;
+  source: "default_local" | "environment" | "override";
+  isLocalBrowserOrigin: boolean;
+  targetsLocalhost: boolean;
+  hardWarning: string | null;
+  backendAllowed: boolean;
+}
+
+let apiConfiguration = resolveApiConfiguration();
+
+export function deriveApiConfiguration(args: {
+  configuredBaseUrl?: string | null;
+  storedBaseUrl?: string | null;
+  browserHostname?: string | null;
+}): ApiConfigurationState {
+  const { configuredBaseUrl, storedBaseUrl, browserHostname } = args;
+  const isLocalOrigin = isLocalBrowserOrigin(browserHostname);
+  const rawBaseUrl = storedBaseUrl?.trim() || configuredBaseUrl?.trim() || DEFAULT_LOCAL_API_BASE_URL;
+  const source =
+    storedBaseUrl?.trim() ? "override" : configuredBaseUrl?.trim() ? "environment" : "default_local";
+  const apiBaseUrl = normalizeApiBaseUrl(rawBaseUrl);
+  const targetsLocalhost = isLocalApiBaseUrl(apiBaseUrl);
+  const hardWarning =
+    !isLocalOrigin && targetsLocalhost
+      ? `This deployed editor is still pointing to ${apiBaseUrl}. Set VITE_API_BASE_URL to a public backend URL; localhost is only valid from local browser sessions.`
+      : null;
+
+  return {
+    apiBaseUrl,
+    source,
+    isLocalBrowserOrigin: isLocalOrigin,
+    targetsLocalhost,
+    hardWarning,
+    backendAllowed: hardWarning === null,
+  };
 }
 
 async function request<TResponse>(path: string, init: RequestInit): Promise<TResponse> {
-  const url = `${apiBaseUrl}${path}`;
+  if (!apiConfiguration.backendAllowed) {
+    throw new Error(apiConfiguration.hardWarning ?? "Backend analysis is disabled by frontend API configuration.");
+  }
+
+  const url = `${apiConfiguration.apiBaseUrl}${path}`;
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
 
@@ -19,7 +54,7 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
   try {
     response = await fetch(url, {
       ...init,
-      headers
+      headers,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown network error";
@@ -42,31 +77,34 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
 export function analyzeText(payload: AnalyzeRequest): Promise<AnalyzeResponse> {
   return request<AnalyzeResponse>("/analyze", {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
 }
 
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {
   return request<void>("/feedback", {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
 }
 
-export function getHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>("/health", {
+export function getHealth(): Promise<HealthDeepResponse> {
+  return request<HealthDeepResponse>("/health/deep", {
     method: "GET",
   });
 }
 
 export function getApiBaseUrl(): string {
-  return apiBaseUrl;
+  return apiConfiguration.apiBaseUrl;
+}
+
+export function getApiConfiguration(): ApiConfigurationState {
+  return apiConfiguration;
 }
 
 export function setApiBaseUrlOverride(nextBaseUrl: string): string {
-  apiBaseUrl = normalizeApiBaseUrl(nextBaseUrl || DEFAULT_API_BASE_URL);
+  const trimmedValue = nextBaseUrl.trim();
   if (typeof window !== "undefined") {
-    const trimmedValue = nextBaseUrl.trim();
     if (trimmedValue) {
       window.localStorage.setItem(API_BASE_URL_STORAGE_KEY, trimmedValue);
     } else {
@@ -74,7 +112,33 @@ export function setApiBaseUrlOverride(nextBaseUrl: string): string {
     }
   }
 
-  return apiBaseUrl;
+  apiConfiguration = deriveApiConfiguration({
+    configuredBaseUrl: readConfiguredBaseUrl(),
+    storedBaseUrl: trimmedValue || null,
+    browserHostname: readBrowserHostname(),
+  });
+  return apiConfiguration.apiBaseUrl;
+}
+
+function resolveApiConfiguration(): ApiConfigurationState {
+  return deriveApiConfiguration({
+    configuredBaseUrl: readConfiguredBaseUrl(),
+    storedBaseUrl: readStoredApiBaseUrl(),
+    browserHostname: readBrowserHostname(),
+  });
+}
+
+function readConfiguredBaseUrl(): string | null {
+  const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+  const configuredBaseUrl = importMetaEnv.VITE_API_BASE_URL ?? importMetaEnv.VITE_API_URL;
+  return configuredBaseUrl?.trim() || null;
+}
+
+function readBrowserHostname(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.location.hostname;
 }
 
 function readStoredApiBaseUrl(): string | null {
@@ -91,10 +155,21 @@ function readStoredApiBaseUrl(): string | null {
   return trimmedValue || null;
 }
 
+export function isLocalBrowserOrigin(hostname: string | null | undefined): boolean {
+  if (!hostname) {
+    return false;
+  }
+  return /^(localhost|127\.0\.0\.1)$/i.test(hostname);
+}
+
+export function isLocalApiBaseUrl(baseUrl: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(baseUrl);
+}
+
 function normalizeApiBaseUrl(rawBaseUrl: string): string {
   const trimmedValue = rawBaseUrl.trim();
   if (!trimmedValue) {
-    return DEFAULT_API_BASE_URL;
+    return DEFAULT_LOCAL_API_BASE_URL;
   }
 
   if (/^[a-z]+:\/\//i.test(trimmedValue) || trimmedValue.startsWith("/")) {

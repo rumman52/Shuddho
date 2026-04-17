@@ -153,6 +153,29 @@ def test_analysis_pipeline_strict_and_formal_modes_surface_variant_only_suggesti
     assert "orthography_variant" in {suggestion.subtype for suggestion in formal_response.suggestions}
 
 
+def test_analysis_pipeline_returns_runtime_metadata_and_safe_corrected_text(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "fixture.csv", "1", "1", "1"),
+            ("\u09ac\u09be\u0982\u09b2\u09be", "\u09ac\u09be\u0982\u09b2\u09be", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    pipeline = _build_pipeline(runtime_csv_path)
+
+    response = pipeline.analyze("\u0986\u09ae\u09bf \u0986\u09ae\u09bf \u0995\u09bf\u09a8\u09cd\u09a4 \u09ac\u09be\u0982\u09b2\u09be\u0964", mode=AnalyzeMode.STANDARD)
+
+    assert response.analysis_profile == "backend_rules_and_spell_only"
+    assert response.runtime_source == "backend_rules_and_spell_only"
+    assert response.used_detector is False
+    assert response.used_openrouter is False
+    assert response.lexicon_source == "words_clean.csv"
+    assert response.lexicon_version
+    assert response.sentence_count == 1
+    assert response.request_mode_applied == AnalyzeMode.STANDARD
+    assert response.corrected_text == "\u0986\u09ae\u09bf \u0995\u09bf\u09a8\u09cd\u09a4\u09c1 \u09ac\u09be\u0982\u09b2\u09be\u0964"
+
+
 def _build_pipeline(runtime_csv_path: Path, detector_service: DetectorService | None = None) -> AnalysisPipeline:
     return AnalysisPipeline(
         normalizer=BanglaNormalizer(),

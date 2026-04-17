@@ -256,7 +256,7 @@ class RuleEngine:
                     span_end=index + 1,
                     original_text=character,
                     replacement_options=[],
-                    confidence=0.7,
+                    confidence=0.83,
                     explanation_bn="বন্ধনী বা উদ্ধৃতি চিহ্নের জোড়া অসম্পূর্ণ।",
                     explanation_en="This bracket or quote is unbalanced.",
                     source=SuggestionSource.RULE,
@@ -391,7 +391,7 @@ class RuleEngine:
                     replacement_map=FIRST_PERSON_VERB_MAP,
                     rule_id="GRAM_005",
                     subtype="first_person_verb_mismatch",
-                    confidence=0.65,
+                    confidence=0.82,
                 )
             )
 

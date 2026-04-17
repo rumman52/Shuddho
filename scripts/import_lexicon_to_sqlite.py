@@ -42,6 +42,8 @@ def main() -> int:
     print(f"words_clean rows: {result.clean_rows}")
     print(f"words_review_flagged rows: {result.review_rows}")
     print(f"import_reports rows: {result.report_rows}")
+    print("Runtime source of truth remains data/imports/lexicon/words_clean.csv.")
+    print("SQLite stays an offline import/reporting mirror for tooling and inspection.")
 
     if args.export_seed_lexicon:
         exported_rows = export_seed_lexicon(result.database_path, paths.seed_lexicon_path)

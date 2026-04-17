@@ -30,6 +30,9 @@ def test_runtime_lexicon_loads_from_main_csv_without_sqlite_runtime(tmp_path: Pa
     assert runtime_lexicon.correction_map == {
         "\u0985\u0987\u0989\u09b0\u09cb\u09aa\u09c0\u09df": "\u0985\u0987\u0989\u09b0\u09cb\u09aa\u09c0\u09af\u09bc"
     }
+    assert runtime_lexicon.version
+    assert runtime_lexicon.checksum
+    assert runtime_lexicon.loaded_at is not None
 
 
 def test_spell_engine_uses_main_csv_direct_mapping_and_accepts_canonical_target(tmp_path: Path) -> None:
@@ -114,6 +117,7 @@ def test_spell_engine_uses_seed_only_as_missing_csv_fallback(tmp_path: Path) -> 
     engine = SpellEngine(runtime_csv_path=missing_csv_path, fallback_seed_path=fallback_seed_path)
 
     assert engine.lexicon_source == "seed_fallback"
+    assert engine.lexicon_version
     assert engine.analyze("\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be \u09b2\u09bf\u0996\u09bf") == []
 
 
@@ -259,6 +263,49 @@ def test_spell_engine_personal_dictionary_suppresses_generic_candidate_targets(t
     monkeypatch.setattr(engine, "generate_candidates", fake_generate_candidates)
 
     assert engine.analyze("\u09b0\u09be\u09b9\u09c1\u09b2\u09b2", personal_dictionary=["\u09b0\u09be\u09b9\u09c1\u09b2"]) == []
+
+
+def test_spell_engine_reload_updates_runtime_version_and_direct_map(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("\u0995\u09bf\u09a8\u09cd\u09a4", "\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+    first_version = engine.lexicon_version
+
+    runtime_csv_path.write_text(
+        "\n".join(
+            [
+                "word,normalized_word,source,is_trusted,is_common,is_active",
+                "\u0995\u09bf\u09a8\u09cd\u09a4,\u0995\u09bf\u09a8\u09cd\u09a4\u09c1,fixture.csv,1,1,1",
+                "\u09ac\u09c7\u0999\u09cd\u0997\u09b2\u09be,\u09ac\u09be\u0982\u09b2\u09be,fixture.csv,1,1,1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    engine.reload_runtime_lexicon()
+
+    assert engine.lexicon_version != first_version
+    suggestions = engine.analyze("\u09ac\u09c7\u0999\u09cd\u0997\u09b2\u09be")
+    assert suggestions
+    assert suggestions[0].replacement_options == ["\u09ac\u09be\u0982\u09b2\u09be"]
+
+
+def test_spell_engine_personal_dictionary_protects_direct_runtime_corrections(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("\u09ac\u09c7\u0999\u09cd\u0997\u09b2\u09be", "\u09ac\u09be\u0982\u09b2\u09be", "fixture.csv", "1", "1", "1"),
+            ("\u09ac\u09be\u0982\u09b2\u09be", "\u09ac\u09be\u0982\u09b2\u09be", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    assert engine.analyze("\u09ac\u09c7\u0999\u09cd\u0997\u09b2\u09be", personal_dictionary=["\u09ac\u09c7\u0999\u09cd\u0997\u09b2\u09be"]) == []
+    assert engine.analyze("\u09ac\u09c7\u0999\u09cd\u0997\u09b2\u09be", personal_dictionary=["\u09ac\u09be\u0982\u09b2\u09be"]) == []
 
 
 def _write_clean_csv_fixture(

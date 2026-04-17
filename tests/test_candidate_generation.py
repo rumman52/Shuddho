@@ -214,6 +214,8 @@ def _suggestion(
     replacements: list[str],
 ) -> Suggestion:
     category = SuggestionCategory.SPELLING if rule_id.startswith("SPELL") or rule_id.startswith("DET_SPELLING") else SuggestionCategory.GRAMMAR
+    explanation_bn = f"'{original_text}' এর জন্য নির্দিষ্ট সংশোধন প্রস্তাব আছে।"
+    source_trace = ["exact_unique_match"] if source == SuggestionSource.MODEL else None
     return Suggestion(
         id=rule_id.lower(),
         rule_id=rule_id,
@@ -224,10 +226,11 @@ def _suggestion(
         original_text=original_text,
         replacement_options=replacements,
         confidence=confidence,
-        explanation_bn="",
+        explanation_bn=explanation_bn,
         explanation_en="",
         source=source,
         severity=SuggestionSeverity.MEDIUM,
+        source_trace=source_trace,
     )
 
 

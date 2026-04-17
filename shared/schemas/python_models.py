@@ -39,6 +39,7 @@ class AnalysisProfile(str, Enum):
     BACKEND_WITHOUT_DETECTOR = "backend_without_detector"
     BACKEND_WITHOUT_OPENROUTER = "backend_without_openrouter"
     BACKEND_RULES_AND_SPELL_ONLY = "backend_rules_and_spell_only"
+    FRONTEND_LOCAL_FALLBACK = "frontend_local_fallback"
 
 
 class SuggestionKind(str, Enum):
@@ -72,6 +73,13 @@ class Suggestion(BaseModel):
     optional_mode_visibility: list[AnalyzeMode] = Field(default_factory=list)
     suppression_key: str | None = None
     is_variant_only: bool = False
+    sentence_index: int | None = None
+    sentence_start: int | None = Field(default=None, ge=0)
+    sentence_end: int | None = Field(default=None, ge=0)
+    occurrence_index: int | None = Field(default=None, ge=0)
+    anchor_before: str | None = None
+    anchor_after: str | None = None
+    source_trace: list[str] | None = None
 
     @field_validator("replacement_options")
     @classmethod
@@ -97,6 +105,21 @@ class Suggestion(BaseModel):
             seen.add(mode)
             normalized.append(mode)
         return normalized
+
+    @field_validator("source_trace")
+    @classmethod
+    def normalize_source_trace(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            compact = item.strip()
+            if not compact or compact in seen:
+                continue
+            seen.add(compact)
+            normalized.append(compact)
+        return normalized or None
 
     @model_validator(mode="after")
     def populate_precision_metadata(self) -> "Suggestion":
@@ -157,6 +180,16 @@ class AnalyzeResponse(BaseModel):
     normalized_text: str
     corrected_text: str
     suggestions: list[Suggestion]
+    analysis_profile: AnalysisProfile = AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY
+    runtime_source: AnalysisProfile = AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY
+    runtime_warnings: list[str] = Field(default_factory=list)
+    used_detector: bool = False
+    used_openrouter: bool = False
+    lexicon_source: str = "unknown"
+    lexicon_version: str | None = None
+    backend_version: str | None = None
+    sentence_count: int = Field(default=0, ge=0)
+    request_mode_applied: AnalyzeMode = AnalyzeMode.STANDARD
 
 
 class FeedbackAction(str, Enum):
@@ -219,6 +252,28 @@ class OpenRouterHealth(BaseModel):
     model: str | None = None
     api_key_present: bool = False
     timeout_seconds: int = Field(ge=1)
+    probed: bool = False
+    probe_success: bool | None = None
+    probe_status: str | None = None
+    probe_reason: str | None = None
+    probe_checked_at: datetime | None = None
+
+
+class LexiconHealth(BaseModel):
+    runtime_source_of_truth: str
+    runtime_source: str
+    runtime_path: str | None = None
+    runtime_exists: bool = False
+    version: str | None = None
+    checksum: str | None = None
+    accepted_word_count: int = Field(default=0, ge=0)
+    candidate_word_count: int = Field(default=0, ge=0)
+    correction_map_count: int = Field(default=0, ge=0)
+    import_database_path: str | None = None
+    import_database_exists: bool = False
+    loaded_at: datetime | None = None
+    reload_supported: bool = False
+    restart_required: bool = True
 
 
 class HealthResponse(BaseModel):
@@ -235,6 +290,14 @@ class HealthResponse(BaseModel):
     analysis_profile: AnalysisProfile
     degraded_reasons: list[str] = Field(default_factory=list)
     mode_capabilities: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class HealthDeepResponse(HealthResponse):
+    backend_version: str | None = None
+    env_file_path: str | None = None
+    env_file_loaded: bool = False
+    last_startup_timestamp: datetime
+    lexicon: LexiconHealth
 
 
 def _infer_suggestion_kind(

@@ -8,6 +8,7 @@ from services.api.shuddho_api.app import (
     analyze,
     detector_service,
     health,
+    health_deep,
     openrouter_client,
 )
 from shared.schemas.python_models import (
@@ -260,6 +261,74 @@ def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions
     }
     assert [suggestion.rule_id for suggestion in response.suggestions] == ["PUNC_001"]
     assert response.corrected_text == "\u0986\u09ae\u09bf \u0986\u09ae\u09bf\u0964"
+
+
+def test_health_deep_reports_runtime_lexicon_metadata() -> None:
+    response = health_deep()
+
+    assert response.backend_reachable is True
+    assert response.last_startup_timestamp is not None
+    assert response.backend_version
+    assert response.env_file_path
+    assert response.lexicon.runtime_source
+    assert response.lexicon.runtime_source_of_truth in {"csv_runtime", "seed_fallback"}
+    assert response.lexicon.accepted_word_count >= 0
+    assert response.lexicon.candidate_word_count >= 0
+    assert response.lexicon.correction_map_count >= 0
+    assert response.lexicon.restart_required is True
+
+
+def test_analyze_route_preserves_runtime_metadata_from_pipeline(monkeypatch) -> None:
+    class StubPipeline:
+        def analyze(self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode) -> AnalyzeResponse:
+            assert personal_dictionary == ["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac"]
+            assert mode == AnalyzeMode.STANDARD
+            return AnalyzeResponse(
+                text=text,
+                normalized_text=text,
+                corrected_text=text,
+                suggestions=[],
+                analysis_profile="backend_without_openrouter",
+                runtime_source="backend_without_openrouter",
+                runtime_warnings=["openrouter_probe_failed"],
+                used_detector=True,
+                used_openrouter=False,
+                lexicon_source="words_clean.csv",
+                lexicon_version="abc123",
+                backend_version="from-pipeline",
+                sentence_count=2,
+                request_mode_applied=AnalyzeMode.STANDARD,
+            )
+
+    class StubFeedbackStore:
+        def load_personal_dictionary(self, user_id: str | None = None) -> list[str]:
+            assert user_id is None
+            return []
+
+        def load_suppressed_keys(self, user_id: str | None = None) -> set[str]:
+            assert user_id is None
+            return set()
+
+    monkeypatch.setattr(app_module, "analysis_pipeline", StubPipeline())
+    monkeypatch.setattr(app_module, "feedback_store", StubFeedbackStore())
+
+    response = analyze(
+        AnalyzeRequest(
+            text="\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be\u0964 \u0986\u09ae\u09bf \u0986\u09b8\u09bf\u0964",
+            personal_dictionary=["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac"],
+            mode=AnalyzeMode.STANDARD,
+        )
+    )
+
+    assert response.analysis_profile == "backend_without_openrouter"
+    assert response.runtime_source == "backend_without_openrouter"
+    assert response.runtime_warnings == ["openrouter_probe_failed"]
+    assert response.used_detector is True
+    assert response.used_openrouter is False
+    assert response.lexicon_source == app_module.spell_engine.lexicon_source
+    assert response.lexicon_version == app_module.spell_engine.lexicon_version
+    assert response.backend_version == app_module.BACKEND_VERSION
+    assert response.sentence_count == 2
 
 
 def _suggestion(

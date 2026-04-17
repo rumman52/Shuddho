@@ -22,7 +22,7 @@ from shared.schemas.python_models import (
 )
 from shared.utils.text import stable_id
 
-from .runtime_lexicon import load_runtime_lexicon
+from .repository import LexiconRepository, RuntimeLexiconSnapshot
 
 
 DIRECT_SPELLING_CONFIDENCE = 0.99
@@ -49,12 +49,31 @@ class SpellEngine:
     ) -> None:
         default_csv_path = Path(__file__).resolve().parents[3] / "data" / "imports" / "lexicon" / "words_clean.csv"
         default_seed_path = Path(__file__).resolve().parents[1] / "data" / "seed_lexicon.txt"
-        runtime_lexicon = load_runtime_lexicon(
+        default_database_path = Path(__file__).resolve().parents[3] / "data" / "shuddho_lexicon.db"
+        self.repository = LexiconRepository(
             runtime_csv_path or default_csv_path,
             fallback_seed_path=fallback_seed_path or default_seed_path,
+            import_database_path=default_database_path,
         )
+        self._apply_snapshot(self.repository.snapshot)
 
-        self.lexicon_source = runtime_lexicon.source
+    def reload_runtime_lexicon(self) -> None:
+        self._apply_snapshot(self.repository.reload())
+
+    def _apply_snapshot(self, runtime_lexicon: RuntimeLexiconSnapshot) -> None:
+        self.lexicon_source = runtime_lexicon.runtime_source
+        self.lexicon_version = runtime_lexicon.version
+        self.lexicon_checksum = runtime_lexicon.checksum
+        self.lexicon_runtime_path = runtime_lexicon.runtime_path
+        self.lexicon_runtime_exists = runtime_lexicon.runtime_exists
+        self.lexicon_import_database_path = runtime_lexicon.import_database_path
+        self.lexicon_import_database_exists = runtime_lexicon.import_database_exists
+        self.lexicon_loaded_at = runtime_lexicon.loaded_at
+        self.lexicon_row_counts = {
+            "accepted_words": runtime_lexicon.accepted_word_count,
+            "candidate_words": runtime_lexicon.candidate_word_count,
+            "correction_map": runtime_lexicon.correction_map_count,
+        }
         self.lexicon = set(runtime_lexicon.accepted_words)
         self.curated_spelling_map = {
             source: target
