@@ -7,6 +7,7 @@ from shared.constants.bangla import (
     BANGLA_LETTER_PATTERN,
     BANGLA_TO_LATIN_DIGITS,
     BANGLA_WORD_PATTERN,
+    CASUAL_VERB_MAP,
     CASUAL_PRONOUNS,
     CLOSING_DELIMITERS,
     CODE_MIX_REPLACEMENTS,
@@ -16,14 +17,16 @@ from shared.constants.bangla import (
     FIRST_PERSON_PRONOUNS,
     FIRST_PERSON_VERB_MAP,
     GENITIVE_MARKERS,
+    HONORIFIC_VERB_MAP,
     LATIN_TO_BANGLA_DIGITS,
     OPENING_DELIMITERS,
-    POLITE_IMPERATIVE_MAP,
     POLITE_PRONOUNS,
     POSTPOSITION_EXCEPTIONS,
     PUNCTUATION_CHARS,
     REDUPLICATION_WHITELIST,
     SAFE_EXACT_TYPOS,
+    THIRD_PERSON_PRONOUNS,
+    THIRD_PERSON_VERB_MAP,
     TOKEN_PATTERN,
 )
 from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
@@ -32,7 +35,6 @@ from shared.utils.text import stable_id
 
 TOKEN_BOUNDARY_CHARS = r"\u0980-\u09FFA-Za-z0-9"
 CLAUSE_BREAK_TOKENS = frozenset(PUNCTUATION_CHARS)
-CASUAL_IMPERATIVE_MAP = {replacement: original for original, replacement in POLITE_IMPERATIVE_MAP.items()}
 MAX_AGREEMENT_LOOKAHEAD_WORDS = 3
 
 
@@ -69,6 +71,7 @@ class RuleEngine:
         suggestions.extend(self._coordinator_repetition_suggestions(text))
         suggestions.extend(self._pronoun_verb_mismatch_suggestions(text))
         suggestions.extend(self._first_person_verb_mismatch_suggestions(text))
+        suggestions.extend(self._third_person_verb_mismatch_suggestions(text))
         suggestions.extend(self._mixed_address_register_suggestions(text))
         suggestions.extend(self._fused_postposition_suggestions(text))
         suggestions.extend(self._genitive_spacing_suggestions(text))
@@ -352,7 +355,7 @@ class RuleEngine:
                         tokens=tokens,
                         subject_token=token,
                         subject_index=index,
-                        replacement_map=POLITE_IMPERATIVE_MAP,
+                        replacement_map=HONORIFIC_VERB_MAP,
                         rule_id="GRAM_003",
                         subtype="honorific_pronoun_verb_mismatch",
                         confidence=0.85,
@@ -366,12 +369,34 @@ class RuleEngine:
                         tokens=tokens,
                         subject_token=token,
                         subject_index=index,
-                        replacement_map=CASUAL_IMPERATIVE_MAP,
+                        replacement_map=CASUAL_VERB_MAP,
                         rule_id="GRAM_004",
                         subtype="casual_pronoun_verb_mismatch",
                         confidence=0.85,
                     )
                 )
+
+        return suggestions
+
+    def _third_person_verb_mismatch_suggestions(self, text: str) -> list[Suggestion]:
+        tokens = self._token_spans(text)
+        suggestions: list[Suggestion] = []
+
+        for index, token in enumerate(tokens):
+            if token.text not in THIRD_PERSON_PRONOUNS:
+                continue
+
+            suggestions.extend(
+                self._agreement_suggestions(
+                    tokens=tokens,
+                    subject_token=token,
+                    subject_index=index,
+                    replacement_map=THIRD_PERSON_VERB_MAP,
+                    rule_id="GRAM_010",
+                    subtype="third_person_verb_mismatch",
+                    confidence=0.84,
+                )
+            )
 
         return suggestions
 
@@ -591,12 +616,13 @@ class RuleEngine:
             typo_pattern = re.compile(rf"(?<![{TOKEN_BOUNDARY_CHARS}]){re.escape(typo)}(?![{TOKEN_BOUNDARY_CHARS}])")
             for match in typo_pattern.finditer(text):
                 original_text = match.group(0)
+                category = SuggestionCategory.SPELLING if " " not in replacement and " " not in original_text else SuggestionCategory.GRAMMAR
                 suggestions.append(
                     Suggestion(
                         id=stable_id("rule", f"typo:{match.start()}:{match.end()}:{typo}->{replacement}"),
-                        rule_id="SPELL_001",
-                        category=SuggestionCategory.SPELLING,
-                        subtype="spelling_error",
+                        rule_id="SPELL_001" if category == SuggestionCategory.SPELLING else "GRAM_009",
+                        category=category,
+                        subtype="spelling_error" if category == SuggestionCategory.SPELLING else "safe_exact_correction",
                         span_start=match.start(),
                         span_end=match.end(),
                         original_text=original_text,
@@ -605,7 +631,7 @@ class RuleEngine:
                         explanation_bn=f"এখানে '{original_text}' এর বদলে '{replacement}' লেখা উচিত।",
                         explanation_en=f"Replace '{original_text}' with '{replacement}' here.",
                         source=SuggestionSource.RULE,
-                        severity=SuggestionSeverity.MEDIUM,
+                        severity=SuggestionSeverity.MEDIUM if category == SuggestionCategory.SPELLING else SuggestionSeverity.LOW,
                     )
                 )
         return suggestions

@@ -233,7 +233,8 @@ def test_pipeline_does_not_auto_apply_llm_grammar_suggestions_into_corrected_tex
 
     response = pipeline.analyze(sentence, mode=AnalyzeMode.STRICT)
 
-    assert response.corrected_text == sentence
+    assert response.corrected_text == "আজও ভালো।"
+    assert response.corrected_text != "আজও আজ ভালো।"
 
 
 def _build_pipeline(tmp_path: Path, *, openrouter_client: RecordingOpenRouterClient) -> AnalysisPipeline:

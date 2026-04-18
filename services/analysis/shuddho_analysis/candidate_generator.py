@@ -79,7 +79,14 @@ class CandidateGenerator:
         existing_suggestions = [*spell_suggestions, *rule_suggestions]
         personal_words = self._expanded_personal_dictionary(personal_dictionary)
         suggestions: list[Suggestion] = []
-        suggestions.extend(self._curated_repeated_word_suggestions(text, existing_suggestions))
+        suggestions.extend(
+            self._curated_repeated_word_suggestions(
+                text,
+                existing_suggestions,
+                personal_words=personal_words,
+                personal_dictionary=personal_dictionary,
+            )
+        )
         suggestions.extend(self._curated_duplicate_punctuation_suggestions(text, existing_suggestions))
         suggestions.extend(self._curated_space_before_punctuation_suggestions(text, existing_suggestions))
         suggestions.extend(self._curated_space_after_terminator_suggestions(text, existing_suggestions))
@@ -144,13 +151,29 @@ class CandidateGenerator:
         self,
         text: str,
         existing_suggestions: Sequence[Suggestion],
+        *,
+        personal_words: set[str],
+        personal_dictionary: list[str] | None,
     ) -> list[Suggestion]:
         suggestions: list[Suggestion] = []
         for match in CURATED_REPEATED_WORD_PATTERN.finditer(text):
             word = match.group("word")
+            if word in personal_words:
+                continue
+            if self.spell_engine is not None and self.spell_engine.is_probable_named_entity_or_user_word(
+                word,
+                personal_dictionary=personal_dictionary,
+            ):
+                continue
             span_start = match.start()
             span_end = match.end()
-            if self._has_covering_suggestion(existing_suggestions, span_start, span_end, word):
+            if self._has_covering_suggestion(
+                existing_suggestions,
+                span_start,
+                span_end,
+                word,
+                minimum_confidence=0.9,
+            ):
                 continue
             suggestions.append(
                 Suggestion(
@@ -162,7 +185,7 @@ class CandidateGenerator:
                     span_end=span_end,
                     original_text=text[span_start:span_end],
                     replacement_options=[word],
-                    confidence=0.93,
+                    confidence=0.95,
                     explanation_bn=f"একই শব্দ '{word}' পরপর দুইবার এসেছে।",
                     explanation_en=f"The word '{word}' appears twice in a row.",
                     source=SuggestionSource.RULE,
@@ -539,9 +562,13 @@ class CandidateGenerator:
         span_start: int,
         span_end: int,
         replacement: str,
+        *,
+        minimum_confidence: float = 0.0,
     ) -> bool:
         for suggestion in suggestions:
             if suggestion.span_start != span_start or suggestion.span_end != span_end:
+                continue
+            if suggestion.confidence < minimum_confidence:
                 continue
             if not suggestion.replacement_options:
                 return True
@@ -555,7 +582,7 @@ class CandidateGenerator:
         secondary: Sequence[Suggestion],
     ) -> list[Suggestion]:
         merged: list[Suggestion] = []
-        seen: set[tuple[int, int, str, tuple[str, ...]]] = set()
+        positions: dict[tuple[int, int, str, tuple[str, ...]], int] = {}
         for suggestion in [*primary, *secondary]:
             key = (
                 suggestion.span_start,
@@ -563,11 +590,19 @@ class CandidateGenerator:
                 suggestion.rule_id,
                 tuple(suggestion.replacement_options),
             )
-            if key in seen:
+            existing_index = positions.get(key)
+            if existing_index is not None:
+                if self._prefer_duplicate_candidate(merged[existing_index], suggestion):
+                    merged[existing_index] = suggestion
                 continue
-            seen.add(key)
+            positions[key] = len(merged)
             merged.append(suggestion)
         return merged
+
+    def _prefer_duplicate_candidate(self, existing: Suggestion, incoming: Suggestion) -> bool:
+        if incoming.confidence != existing.confidence:
+            return incoming.confidence > existing.confidence
+        return incoming.source == SuggestionSource.HYBRID and existing.source != SuggestionSource.HYBRID
 
     def _unique_replacements(self, replacements: Iterable[str]) -> list[str]:
         unique: list[str] = []

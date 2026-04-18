@@ -23,6 +23,7 @@ from shared.schemas.python_models import (
 from shared.utils.text import stable_id
 
 from .candidate_generator import CandidateGenerator
+from .conflict_resolution import build_best_corrected_text, resolve_same_span_conflicts
 from .detector import DetectorService
 from .models import AnalysisArtifacts, DetectorFinding
 from .ranking import SuggestionRankingPipeline
@@ -136,6 +137,7 @@ class AnalysisPipeline:
             self.suggestion_manager.finalize_ranked(ranked_suggestions),
             mode=mode,
         )
+        merged_suggestions = resolve_same_span_conflicts(merged_suggestions)
         merged_suggestions = enrich_suggestions_with_text_context(text, merged_suggestions)
         detector_runtime = self.detector_service.runtime_status()
         openrouter_runtime = self.openrouter_client.runtime_status()
@@ -470,36 +472,11 @@ def _apply_request_mode(suggestions: list[Suggestion], *, mode: AnalyzeMode) -> 
 
 
 def build_corrected_text(text: str, suggestions: list[Suggestion]) -> str:
-    safe_suggestions = sorted(
-        (
-            suggestion
-            for suggestion in suggestions
-            if _is_safe_auto_apply_suggestion(text, suggestion)
-        ),
-        key=lambda suggestion: (
-            suggestion.span_start,
-            -suggestion.confidence,
-            suggestion.span_end,
-            suggestion.rule_id,
-        ),
+    return build_best_corrected_text(
+        text,
+        suggestions,
+        is_safe_auto_apply_suggestion=_is_safe_auto_apply_suggestion,
     )
-    if not safe_suggestions:
-        return text
-
-    parts: list[str] = []
-    cursor = 0
-    for suggestion in safe_suggestions:
-        if suggestion.span_start < cursor:
-            continue
-
-        replacement = suggestion.replacement_options[0]
-        parts.append(text[cursor:suggestion.span_start])
-        parts.append(replacement)
-        cursor = suggestion.span_end
-
-    parts.append(text[cursor:])
-    corrected_text = "".join(parts)
-    return corrected_text if corrected_text else text
 
 
 def _mode_allows_visibility(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool:

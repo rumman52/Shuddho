@@ -53,6 +53,80 @@ class SuggestionKind(str, Enum):
     NO_SUGGESTION = "no_suggestion"
 
 
+class SuggestionAlternative(BaseModel):
+    id: str
+    rule_id: str
+    category: SuggestionCategory
+    subtype: str
+    original_text: str
+    replacement_options: list[str]
+    confidence: float = Field(ge=0.0, le=1.0)
+    explanation_bn: str
+    explanation_en: str
+    source: SuggestionSource
+    severity: SuggestionSeverity
+    feedback_key: str | None = None
+    suggestion_kind: SuggestionKind | None = None
+    suppression_key: str | None = None
+    is_variant_only: bool = False
+    source_trace: list[str] | None = None
+
+    @field_validator("replacement_options")
+    @classmethod
+    def normalize_replacement_options(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for option in value:
+            compact = _normalize_replacement_option(option)
+            if not compact or compact in seen:
+                continue
+            seen.add(compact)
+            normalized.append(compact)
+        return normalized
+
+    @field_validator("source_trace")
+    @classmethod
+    def normalize_source_trace(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            compact = item.strip()
+            if not compact or compact in seen:
+                continue
+            seen.add(compact)
+            normalized.append(compact)
+        return normalized or None
+
+    @model_validator(mode="after")
+    def populate_precision_metadata(self) -> "SuggestionAlternative":
+        suggestion_kind = self.suggestion_kind or _infer_suggestion_kind(
+            category=self.category,
+            subtype=self.subtype,
+            is_variant_only=self.is_variant_only,
+        )
+        self.suggestion_kind = suggestion_kind
+        self.is_variant_only = self.is_variant_only or suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT
+
+        if self.feedback_key is None:
+            self.feedback_key = _build_feedback_key(
+                category=self.category.value,
+                original_text=self.original_text,
+                replacement_options=self.replacement_options,
+            )
+
+        if self.suppression_key is None:
+            self.suppression_key = _build_suppression_key(
+                rule_id=self.rule_id,
+                subtype=self.subtype,
+                original_text=self.original_text,
+                replacement_options=self.replacement_options,
+            )
+
+        return self
+
+
 class Suggestion(BaseModel):
     id: str
     rule_id: str
@@ -80,6 +154,10 @@ class Suggestion(BaseModel):
     anchor_before: str | None = None
     anchor_after: str | None = None
     source_trace: list[str] | None = None
+    conflict_group_id: str | None = None
+    is_primary: bool = True
+    primary_reason: str | None = None
+    alternatives: list[SuggestionAlternative] = Field(default_factory=list)
 
     @field_validator("replacement_options")
     @classmethod

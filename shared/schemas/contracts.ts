@@ -57,6 +57,29 @@ export interface Suggestion {
   anchor_before?: string | null;
   anchor_after?: string | null;
   source_trace?: string[] | null;
+  conflict_group_id?: string | null;
+  is_primary?: boolean;
+  primary_reason?: string | null;
+  alternatives?: SuggestionAlternative[];
+}
+
+export interface SuggestionAlternative {
+  id: string;
+  rule_id: string;
+  category: SuggestionCategory;
+  subtype: string;
+  original_text: string;
+  replacement_options: string[];
+  confidence: number;
+  explanation_bn: string;
+  explanation_en: string;
+  source: SuggestionSource;
+  severity: SuggestionSeverity;
+  feedback_key?: string | null;
+  suggestion_kind?: SuggestionKind | null;
+  suppression_key?: string | null;
+  is_variant_only?: boolean;
+  source_trace?: string[] | null;
 }
 
 export interface AnalyzeRequest {

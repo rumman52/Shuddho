@@ -8,7 +8,7 @@ import {
   type MouseEventHandler,
   type PointerEventHandler,
 } from "react";
-import type { Suggestion } from "@shared/schemas/contracts";
+import type { Suggestion, SuggestionAlternative } from "@shared/schemas/contracts";
 
 export interface SuggestionCardAnchor {
   left: number;
@@ -33,7 +33,7 @@ interface SuggestionCardProps {
   sourceLabel: string;
   isStale: boolean;
   canAddToDictionary: boolean;
-  onAccept: (replacement: string) => void;
+  onAccept: (candidate: Suggestion | SuggestionAlternative, replacement: string) => void;
   onDismiss: () => void;
   onAddToDictionary: () => void;
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
@@ -76,6 +76,7 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
     suggestion.explanation_bn && suggestion.explanation_en && suggestion.explanation_en !== suggestion.explanation_bn
       ? suggestion.explanation_en
       : null;
+  const alternatives = suggestion.alternatives ?? [];
 
   useLayoutEffect(() => {
     if (!anchorRect || !localRef.current) {
@@ -85,7 +86,16 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
 
     const { width, height } = localRef.current.getBoundingClientRect();
     setPosition(resolveCardPosition(anchorRect, width || FALLBACK_WIDTH, height || FALLBACK_HEIGHT));
-  }, [anchorRect, primaryExplanation, secondaryExplanation, suggestion.id, suggestion.original_text, suggestion.replacement_options.length]);
+  }, [
+    anchorRect,
+    primaryExplanation,
+    secondaryExplanation,
+    suggestion.alternatives?.length,
+    suggestion.id,
+    suggestion.original_text,
+    suggestion.primary_reason,
+    suggestion.replacement_options.length,
+  ]);
 
   if (!anchorRect) {
     return null;
@@ -147,6 +157,12 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
         <p className="suggestion-card__explanation">{primaryExplanation}</p>
         {secondaryExplanation ? <p className="suggestion-card__explanation suggestion-card__explanation--secondary">{secondaryExplanation}</p> : null}
       </div>
+      {suggestion.primary_reason ? (
+        <div className="suggestion-card__why">
+          <span className="suggestion-card__label">Why this is primary</span>
+          <p className="suggestion-card__explanation">{suggestion.primary_reason}</p>
+        </div>
+      ) : null}
       {isStale ? (
         <div className="suggestion-card__stale">
           This suggestion no longer anchors safely to the current text. Run analysis again before accepting it.
@@ -161,7 +177,7 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
               className={`suggestion-card__option ${
                 index === 0 ? "suggestion-card__option--primary" : "suggestion-card__option--secondary"
               }`}
-              onClick={() => onAccept(option)}
+              onClick={() => onAccept(suggestion, option)}
               disabled={isStale}
             >
               {option}
@@ -171,6 +187,34 @@ export const SuggestionCard = forwardRef<HTMLDivElement, SuggestionCardProps>(fu
           <span className="suggestion-card__empty">No replacement available</span>
         )}
       </div>
+      {alternatives.length > 0 ? (
+        <div className="suggestion-card__why">
+          <span className="suggestion-card__label">Alternatives</span>
+          {alternatives.map((alternative) => {
+            const alternativeExplanation = alternative.explanation_bn || alternative.explanation_en;
+            return (
+              <div key={alternative.id} style={{ display: "grid", gap: "0.45rem" }}>
+                <div className="suggestion-card__actions">
+                  {alternative.replacement_options.map((option) => (
+                    <button
+                      key={`${alternative.id}:${option}`}
+                      type="button"
+                      className="suggestion-card__option suggestion-card__option--secondary"
+                      onClick={() => onAccept(alternative, option)}
+                      disabled={isStale}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+                {alternativeExplanation ? (
+                  <p className="suggestion-card__explanation suggestion-card__explanation--secondary">{alternativeExplanation}</p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
       <div className="suggestion-card__footer">
         <button type="button" className="suggestion-card__dismiss" onClick={onDismiss}>
           Dismiss

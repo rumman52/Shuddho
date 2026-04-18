@@ -103,6 +103,33 @@ def test_ranking_pipeline_prefers_actionable_hybrid_fix_over_vague_warning() -> 
     assert ranked[0].replacement_options == ["\u0995\u09bf\u09a8\u09cd\u09a4\u09c1"]
 
 
+def test_ranker_demotes_same_span_spelling_when_contextual_grammar_exists() -> None:
+    ranker = NeuralRankerInterface()
+    ranked = ranker.rank(
+        [
+            _suggestion(
+                "GRAM_005",
+                "first_person_verb_mismatch",
+                SuggestionSource.RULE,
+                "\u0996\u09be\u09df",
+                ["\u0996\u09be\u0987"],
+                category=SuggestionCategory.GRAMMAR,
+            ),
+            _suggestion(
+                "SPELL_002",
+                "spelling_error",
+                SuggestionSource.SPELL,
+                "\u0996\u09be\u09df",
+                ["\u0996\u09be\u09df\u09bc"],
+                category=SuggestionCategory.SPELLING,
+            ),
+        ],
+        text="\u0986\u09ae\u09bf \u09ad\u09be\u09a4 \u0996\u09be\u09df\u0964",
+    )
+
+    assert ranked[0].suggestion.rule_id == "GRAM_005"
+
+
 def _suggestion(
     rule_id: str,
     subtype: str,

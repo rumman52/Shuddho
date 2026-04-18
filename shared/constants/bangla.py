@@ -69,6 +69,7 @@ REDUPLICATION_WHITELIST = frozenset(
 POLITE_PRONOUNS = frozenset({"আপনি", "তিনি", "আপনারা", "তাঁরা"})
 CASUAL_PRONOUNS = frozenset({"তুমি", "তোমরা"})
 FIRST_PERSON_PRONOUNS = frozenset({"আমি", "আমরা"})
+THIRD_PERSON_PRONOUNS = frozenset({"সে", "ও", "এ", "তারা", "ওরা", "এরা"})
 
 POLITE_IMPERATIVE_MAP: dict[str, str] = {
     "যাও": "যান",
@@ -79,6 +80,26 @@ POLITE_IMPERATIVE_MAP: dict[str, str] = {
     "বলো": "বলুন",
     "দেখো": "দেখুন",
     "শোনো": "শুনুন",
+}
+
+HONORIFIC_VERB_MAP: dict[str, str] = {
+    **POLITE_IMPERATIVE_MAP,
+    "যায়": "যান",
+    "খায়": "খান",
+    "করে": "করুন",
+}
+
+CASUAL_VERB_MAP: dict[str, str] = {
+    "যায়": "যাও",
+    "খায়": "খাও",
+    "করে": "করো",
+    "দেয়": "দাও",
+    "নেয়": "নাও",
+    "আসে": "আসো",
+    "থাকে": "থাকো",
+    "যান": "যাও",
+    "খান": "খাও",
+    "করুন": "করো",
 }
 
 FIRST_PERSON_VERB_MAP: dict[str, str] = {
@@ -93,6 +114,16 @@ FIRST_PERSON_VERB_MAP: dict[str, str] = {
     "খাবে": "খাব",
     "করবে": "করব",
     "হবে": "হব",
+}
+
+THIRD_PERSON_VERB_MAP: dict[str, str] = {
+    "যাই": "যায়",
+    "খাই": "খায়",
+    "করি": "করে",
+    "দিই": "দেয়",
+    "নিই": "নেয়",
+    "আসি": "আসে",
+    "থাকি": "থাকে",
 }
 
 COMMON_POSTPOSITIONS = (

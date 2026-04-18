@@ -176,6 +176,75 @@ def test_analysis_pipeline_returns_runtime_metadata_and_safe_corrected_text(tmp_
     assert response.corrected_text == "\u0986\u09ae\u09bf \u0995\u09bf\u09a8\u09cd\u09a4\u09c1 \u09ac\u09be\u0982\u09b2\u09be\u0964"
 
 
+def test_analysis_pipeline_prefers_same_span_grammar_primary_over_spelling_variant(tmp_path: Path) -> None:
+    pipeline = _build_pipeline(_write_clean_csv_fixture(tmp_path, rows=_regression_runtime_rows()))
+
+    response = pipeline.analyze("আমি ভাত খায়।", mode=AnalyzeMode.STANDARD)
+
+    verb_suggestion = next(suggestion for suggestion in response.suggestions if suggestion.original_text == "খায়")
+
+    assert verb_suggestion.subtype == "first_person_verb_mismatch"
+    assert verb_suggestion.replacement_options == ["খাই"]
+    assert response.corrected_text == "আমি ভাত খাই।"
+    assert verb_suggestion.conflict_group_id is not None
+    assert verb_suggestion.primary_reason is not None
+    assert any(alternative.replacement_options == ["খায়"] for alternative in verb_suggestion.alternatives)
+    assert all(
+        suggestion.replacement_options != ["খায়"] or suggestion.span_start != verb_suggestion.span_start
+        for suggestion in response.suggestions
+    )
+
+
+def test_analysis_pipeline_covers_requested_agreement_regressions(tmp_path: Path) -> None:
+    pipeline = _build_pipeline(_write_clean_csv_fixture(tmp_path, rows=_regression_runtime_rows()))
+
+    assert pipeline.analyze("আমি স্কুলে যায়।", mode=AnalyzeMode.STANDARD).corrected_text == "আমি স্কুলে যাই।"
+    assert pipeline.analyze("তুমি ভাত খায়।", mode=AnalyzeMode.STANDARD).corrected_text == "তুমি ভাত খাও।"
+    assert pipeline.analyze("তুমি স্কুলে যায়।", mode=AnalyzeMode.STANDARD).corrected_text == "তুমি স্কুলে যাও।"
+
+    honorific_response = pipeline.analyze("আপনি স্কুলে যায়।", mode=AnalyzeMode.STANDARD)
+    honorific_suggestion = next(suggestion for suggestion in honorific_response.suggestions if suggestion.original_text == "যায়")
+    assert honorific_response.corrected_text == "আপনি স্কুলে যান।"
+    assert honorific_suggestion.subtype == "honorific_pronoun_verb_mismatch"
+    assert honorific_suggestion.replacement_options == ["যান"]
+
+    third_person_response = pipeline.analyze("সে স্কুলে যাই।", mode=AnalyzeMode.STANDARD)
+    assert third_person_response.corrected_text == "সে স্কুলে যায়।"
+    assert any(suggestion.subtype == "third_person_verb_mismatch" for suggestion in third_person_response.suggestions)
+
+
+def test_analysis_pipeline_fixes_mid_sentence_repeated_word_safely(tmp_path: Path) -> None:
+    pipeline = _build_pipeline(_write_clean_csv_fixture(tmp_path, rows=_regression_runtime_rows()))
+
+    response = pipeline.analyze("সে বাংলা বাংলা লিখে।", mode=AnalyzeMode.STANDARD)
+
+    repeated_word = next(suggestion for suggestion in response.suggestions if suggestion.subtype == "repeated_word")
+
+    assert repeated_word.original_text == "বাংলা বাংলা"
+    assert repeated_word.replacement_options == ["বাংলা"]
+    assert response.corrected_text == "সে বাংলা লিখে।"
+
+
+def test_analysis_pipeline_composes_overlapping_safe_punctuation_spacing_and_repeat_fixes(tmp_path: Path) -> None:
+    pipeline = _build_pipeline(_write_clean_csv_fixture(tmp_path, rows=_regression_runtime_rows()))
+
+    response = pipeline.analyze("আমি  বাংলা লিখি  ।। বাংলা বাংলা ভাষা খুব সুন্দর !!", mode=AnalyzeMode.STANDARD)
+
+    assert response.corrected_text == "আমি বাংলা লিখি। বাংলা ভাষা খুব সুন্দর!"
+    assert "।।" not in response.corrected_text
+    assert " !!" not in response.corrected_text
+
+
+def test_analysis_pipeline_keeps_localized_fixes_without_generic_rewrite(tmp_path: Path) -> None:
+    pipeline = _build_pipeline(_write_clean_csv_fixture(tmp_path, rows=_regression_runtime_rows()))
+
+    response = pipeline.analyze("শুদ্ধ বাংলা ব্যকরণ আর বংলা বানানভুল ঠিক করা দরকার।", mode=AnalyzeMode.STANDARD)
+
+    assert response.corrected_text == "শুদ্ধ বাংলা ব্যাকরণ আর বাংলা বানান ভুল ঠিক করা দরকার।"
+    assert all(suggestion.source != SuggestionSource.MODEL for suggestion in response.suggestions)
+    assert all((suggestion.span_end - suggestion.span_start) < len(response.text) for suggestion in response.suggestions if suggestion.replacement_options)
+
+
 def _build_pipeline(runtime_csv_path: Path, detector_service: DetectorService | None = None) -> AnalysisPipeline:
     return AnalysisPipeline(
         normalizer=BanglaNormalizer(),
@@ -196,3 +265,36 @@ def _write_clean_csv_fixture(
     lines.extend(",".join(row) for row in rows)
     runtime_csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return runtime_csv_path
+
+
+def _regression_runtime_rows() -> list[tuple[str, str, str, str, str, str]]:
+    return [
+        ("আমি", "আমি", "fixture.csv", "1", "1", "1"),
+        ("তুমি", "তুমি", "fixture.csv", "1", "1", "1"),
+        ("আপনি", "আপনি", "fixture.csv", "1", "1", "1"),
+        ("সে", "সে", "fixture.csv", "1", "1", "1"),
+        ("ভাত", "ভাত", "fixture.csv", "1", "1", "1"),
+        ("স্কুলে", "স্কুলে", "fixture.csv", "1", "1", "1"),
+        ("বাংলা", "বাংলা", "fixture.csv", "1", "1", "1"),
+        ("ভাষা", "ভাষা", "fixture.csv", "1", "1", "1"),
+        ("খুব", "খুব", "fixture.csv", "1", "1", "1"),
+        ("সুন্দর", "সুন্দর", "fixture.csv", "1", "1", "1"),
+        ("লিখি", "লিখি", "fixture.csv", "1", "1", "1"),
+        ("লিখে", "লিখে", "fixture.csv", "1", "1", "1"),
+        ("যাই", "যাই", "fixture.csv", "1", "1", "1"),
+        ("যাও", "যাও", "fixture.csv", "1", "1", "1"),
+        ("যান", "যান", "fixture.csv", "1", "1", "1"),
+        ("যায়", "যায়", "fixture.csv", "1", "1", "1"),
+        ("খাই", "খাই", "fixture.csv", "1", "1", "1"),
+        ("খাও", "খাও", "fixture.csv", "1", "1", "1"),
+        ("খান", "খান", "fixture.csv", "1", "1", "1"),
+        ("খায়", "খায়", "fixture.csv", "1", "1", "1"),
+        ("শুদ্ধ", "শুদ্ধ", "fixture.csv", "1", "1", "1"),
+        ("ব্যাকরণ", "ব্যাকরণ", "fixture.csv", "1", "1", "1"),
+        ("ঠিক", "ঠিক", "fixture.csv", "1", "1", "1"),
+        ("করা", "করা", "fixture.csv", "1", "1", "1"),
+        ("দরকার", "দরকার", "fixture.csv", "1", "1", "1"),
+        ("যায়", "যায়", "fixture.csv", "1", "0", "1"),
+        ("খায়", "খায়", "fixture.csv", "1", "0", "1"),
+        ("বংলা", "বাংলা", "fixture.csv", "1", "0", "1"),
+    ]

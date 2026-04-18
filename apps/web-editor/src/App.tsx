@@ -2,7 +2,15 @@ import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEven
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
-import type { AnalyzeMode, AnalyzeResponse, FeedbackAction, HealthDeepResponse, HealthResponse, Suggestion } from "@shared/schemas/contracts";
+import type {
+  AnalyzeMode,
+  AnalyzeResponse,
+  FeedbackAction,
+  HealthDeepResponse,
+  HealthResponse,
+  Suggestion,
+  SuggestionAlternative,
+} from "@shared/schemas/contracts";
 import { SuggestionCard, type SuggestionCardAnchor } from "./components/SuggestionCard";
 import { IssueMark } from "./lib/editorExtensions";
 import { analyzeText, getApiBaseUrl, getApiConfiguration, getHealth, sendFeedback, setApiBaseUrlOverride } from "./lib/api";
@@ -330,7 +338,7 @@ export default function App() {
     }
   }
 
-  async function handleAccept(replacement: string) {
+  async function handleAccept(selectedCandidate: Suggestion | SuggestionAlternative, replacement: string) {
     if (!editor || !visibleSuggestion) {
       return;
     }
@@ -356,14 +364,14 @@ export default function App() {
 
     try {
       await sendFeedback({
-        suggestion_id: suggestion.id,
+        suggestion_id: selectedCandidate.id,
         action: "accepted",
         text: feedbackText,
         replacement,
-        feedback_key: suggestion.feedback_key,
-        rule_id: suggestion.rule_id,
-        subtype: suggestion.subtype,
-        source: suggestion.source,
+        feedback_key: selectedCandidate.feedback_key,
+        rule_id: selectedCandidate.rule_id,
+        subtype: selectedCandidate.subtype,
+        source: selectedCandidate.source,
         original_text: suggestion.original_text,
         user_id: userId,
       });
@@ -786,6 +794,10 @@ export default function App() {
           <span className="suggestion-list__replacement">{suggestion.replacement_options[0]}</span>
         ) : null}
         <span>{suggestion.explanation_bn || suggestion.explanation_en}</span>
+        {suggestion.primary_reason ? <span>{suggestion.primary_reason}</span> : null}
+        {(suggestion.alternatives?.length ?? 0) > 0 ? (
+          <span>{suggestion.alternatives?.length} alternative{suggestion.alternatives?.length === 1 ? "" : "s"} on this span</span>
+        ) : null}
       </button>
     );
   }

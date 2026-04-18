@@ -347,6 +347,8 @@ def _ambiguity_penalties(suggestions: Sequence[Suggestion], *, mode: AnalyzeMode
             penalty += 0.08
         if suggestion.category.value == "spelling" and _has_same_span_competing_replacement(suggestion, suggestions):
             penalty += 0.05
+        if _has_higher_priority_same_span_competitor(suggestion, suggestions):
+            penalty += 0.18
         if suggestion.suggestion_kind == SuggestionKind.NO_SUGGESTION:
             penalty += 0.1
         if suggestion.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT and mode == AnalyzeMode.STANDARD:
@@ -398,6 +400,34 @@ def _has_same_span_competing_replacement(target: Suggestion, suggestions: Sequen
         if tuple(suggestion.replacement_options) != tuple(target.replacement_options):
             return True
     return False
+
+
+def _has_higher_priority_same_span_competitor(target: Suggestion, suggestions: Sequence[Suggestion]) -> bool:
+    target_priority = _same_span_priority(target)
+    for suggestion in suggestions:
+        if suggestion.id == target.id:
+            continue
+        if suggestion.span_start != target.span_start or suggestion.span_end != target.span_end:
+            continue
+        if tuple(suggestion.replacement_options) == tuple(target.replacement_options):
+            continue
+        if _same_span_priority(suggestion) < target_priority:
+            return True
+    return False
+
+
+def _same_span_priority(suggestion: Suggestion) -> int:
+    return {
+        SuggestionKind.GRAMMAR_ERROR: 0,
+        SuggestionKind.PUNCTUATION_ERROR: 1,
+        SuggestionKind.SPACING_ERROR: 1,
+        SuggestionKind.TRUE_SPELLING_ERROR: 2,
+        SuggestionKind.ORTHOGRAPHY_VARIANT: 3,
+        SuggestionKind.STYLE_SUGGESTION: 4,
+        SuggestionKind.NAMED_ENTITY_OR_USER_WORD: 5,
+        SuggestionKind.NO_SUGGESTION: 6,
+        None: 6,
+    }[suggestion.suggestion_kind]
 
 
 def _feedback_bonuses(suggestions: Sequence[Suggestion], feedback_index) -> dict[str, float]:

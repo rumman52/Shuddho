@@ -37,6 +37,8 @@ def test_frontend_status_copy_makes_runtime_state_explicit() -> None:
     assert "Local fallback checks" in app_source
     assert "contextual backend corrections are turned off" in app_source
     assert "Set VITE_API_BASE_URL to a public backend URL" in api_source
+    assert "Backend misconfigured — localhost API blocked" in runtime_status_source
+    assert "backendAllowed: hardWarning === null" in api_source
     assert "Backend live — detector unavailable" in popup_source
     assert "Backend live — OpenRouter unavailable" in popup_source
     assert "Backend unreachable — smart analysis paused" in popup_source

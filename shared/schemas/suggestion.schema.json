@@ -70,6 +70,69 @@
     },
     "feedback_key": {
       "type": ["string", "null"]
+    },
+    "conflict_group_id": {
+      "type": ["string", "null"]
+    },
+    "is_primary": {
+      "type": "boolean"
+    },
+    "primary_reason": {
+      "type": ["string", "null"]
+    },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "rule_id",
+          "category",
+          "subtype",
+          "original_text",
+          "replacement_options",
+          "confidence",
+          "explanation_bn",
+          "explanation_en",
+          "source",
+          "severity"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "rule_id": { "type": "string" },
+          "category": {
+            "type": "string",
+            "enum": ["spelling", "grammar", "punctuation", "style"]
+          },
+          "subtype": { "type": "string" },
+          "original_text": { "type": "string" },
+          "replacement_options": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "explanation_bn": { "type": "string" },
+          "explanation_en": { "type": "string" },
+          "source": {
+            "type": "string",
+            "enum": ["rule", "spell", "model", "hybrid"]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+          },
+          "feedback_key": {
+            "type": ["string", "null"]
+          },
+          "suppression_key": {
+            "type": ["string", "null"]
+          }
+        }
+      }
     }
   }
 }

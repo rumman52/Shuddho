@@ -381,22 +381,32 @@ function dedupeSuggestions(suggestions: Suggestion[]): Suggestion[] {
 function applySafeCorrections(text: string, suggestions: Suggestion[]): string {
   const safeSuggestions = suggestions
     .filter((suggestion) => isSafeAutoApplySuggestion(text, suggestion))
-    .sort((left, right) => left.span_start - right.span_start || right.confidence - left.confidence || left.span_end - right.span_end);
+    .sort((left, right) => left.span_start - right.span_start || left.span_end - right.span_end || right.confidence - left.confidence);
 
   if (safeSuggestions.length === 0) {
     return text;
   }
 
+  const candidates = buildEditCandidates(text, safeSuggestions);
+  if (candidates.length === 0) {
+    return text;
+  }
+
+  const selected = selectBestNonOverlappingCandidates(candidates);
+  if (selected.length === 0) {
+    return text;
+  }
+
   let cursor = 0;
   const parts: string[] = [];
-  for (const suggestion of safeSuggestions) {
-    if (suggestion.span_start < cursor) {
+  for (const candidate of selected.sort((left, right) => left.start - right.start || left.end - right.end)) {
+    if (candidate.start < cursor) {
       continue;
     }
 
-    parts.push(text.slice(cursor, suggestion.span_start));
-    parts.push(suggestion.replacement_options[0] ?? "");
-    cursor = suggestion.span_end;
+    parts.push(text.slice(cursor, candidate.start));
+    parts.push(candidate.replacement);
+    cursor = candidate.end;
   }
 
   parts.push(text.slice(cursor));
@@ -429,6 +439,284 @@ const SAFE_AUTO_APPLY_SUBTYPES = new Set([
   "bangla_full_stop",
   "space_after_punctuation",
 ]);
+
+interface EditCandidate {
+  start: number;
+  end: number;
+  replacement: string;
+  score: number;
+}
+
+function buildEditCandidates(text: string, suggestions: Suggestion[]): EditCandidate[] {
+  const candidates = new Map<string, EditCandidate>();
+
+  for (const suggestion of suggestions) {
+    const replacement = suggestion.replacement_options[0] ?? "";
+    setBestCandidate(candidates, {
+      start: suggestion.span_start,
+      end: suggestion.span_end,
+      replacement,
+      score: editWeight(suggestion),
+    });
+  }
+
+  for (const cluster of buildOverlapClusters(suggestions)) {
+    if (cluster.length <= 1 || cluster.length > 5) {
+      continue;
+    }
+
+    for (const candidate of buildCompositeCandidates(text, cluster)) {
+      setBestCandidate(candidates, candidate);
+    }
+  }
+
+  return [...candidates.values()];
+}
+
+function setBestCandidate(store: Map<string, EditCandidate>, candidate: EditCandidate): void {
+  const key = `${candidate.start}:${candidate.end}:${candidate.replacement}`;
+  const existing = store.get(key);
+  if (!existing || candidate.score > existing.score) {
+    store.set(key, candidate);
+  }
+}
+
+function buildOverlapClusters(suggestions: Suggestion[]): Suggestion[][] {
+  const clusters: Suggestion[][] = [];
+  let current: Suggestion[] = [];
+  let currentEnd = -1;
+
+  for (const suggestion of suggestions) {
+    if (current.length === 0 || suggestion.span_start >= currentEnd) {
+      if (current.length > 0) {
+        clusters.push(current);
+      }
+      current = [suggestion];
+      currentEnd = suggestion.span_end;
+      continue;
+    }
+
+    current.push(suggestion);
+    currentEnd = Math.max(currentEnd, suggestion.span_end);
+  }
+
+  if (current.length > 0) {
+    clusters.push(current);
+  }
+
+  return clusters;
+}
+
+function buildCompositeCandidates(text: string, cluster: Suggestion[]): EditCandidate[] {
+  const clusterStart = Math.min(...cluster.map((suggestion) => suggestion.span_start));
+  const clusterEnd = Math.max(...cluster.map((suggestion) => suggestion.span_end));
+  const clusterText = text.slice(clusterStart, clusterEnd);
+  const generated = new Map<string, EditCandidate>();
+
+  for (let size = 2; size <= cluster.length; size += 1) {
+    for (const subset of combinations(cluster, size)) {
+      if (!subsetContainsOverlap(subset)) {
+        continue;
+      }
+
+      for (const replacement of composeSubset(clusterText, clusterStart, subset)) {
+        if (replacement === clusterText) {
+          continue;
+        }
+
+        setBestCandidate(generated, {
+          start: clusterStart,
+          end: clusterEnd,
+          replacement,
+          score: subset.reduce((total, suggestion) => total + editWeight(suggestion), 0) + cleanupBonus(clusterText, replacement),
+        });
+      }
+    }
+  }
+
+  return [...generated.values()];
+}
+
+function composeSubset(clusterText: string, clusterStart: number, subset: Suggestion[]): Set<string> {
+  const composed = new Set<string>();
+  for (const ordering of permutations(subset)) {
+    const candidate = applyOrdering(clusterText, clusterStart, ordering);
+    if (candidate) {
+      composed.add(candidate);
+    }
+  }
+  return composed;
+}
+
+function applyOrdering(clusterText: string, clusterStart: number, ordering: Suggestion[]): string | null {
+  let current = clusterText;
+  const priorEdits: Array<{ start: number; end: number; delta: number }> = [];
+
+  for (const suggestion of ordering) {
+    const needle = suggestion.original_text;
+    const replacement = suggestion.replacement_options[0] ?? "";
+    if (!needle || !replacement) {
+      return null;
+    }
+
+    const relativeStart = suggestion.span_start - clusterStart;
+    const shift = priorEdits.filter((edit) => edit.end <= relativeStart).reduce((total, edit) => total + edit.delta, 0);
+    const expectedIndex = Math.max(0, relativeStart + shift);
+    const occurrences = findOccurrences(current, needle);
+    if (occurrences.length === 0) {
+      return null;
+    }
+
+    const selectedIndex = occurrences.reduce((best, occurrence) => {
+      if (best === null) {
+        return occurrence;
+      }
+      const bestDistance = Math.abs(best - expectedIndex);
+      const occurrenceDistance = Math.abs(occurrence - expectedIndex);
+      if (occurrenceDistance < bestDistance || (occurrenceDistance === bestDistance && occurrence < best)) {
+        return occurrence;
+      }
+      return best;
+    }, null as number | null);
+
+    if (selectedIndex === null) {
+      return null;
+    }
+
+    current = `${current.slice(0, selectedIndex)}${replacement}${current.slice(selectedIndex + needle.length)}`;
+    priorEdits.push({
+      start: relativeStart,
+      end: suggestion.span_end - clusterStart,
+      delta: replacement.length - needle.length,
+    });
+  }
+
+  return current;
+}
+
+function findOccurrences(text: string, needle: string): number[] {
+  const occurrences: number[] = [];
+  let cursor = 0;
+  while (cursor <= text.length) {
+    const index = text.indexOf(needle, cursor);
+    if (index < 0) {
+      break;
+    }
+    occurrences.push(index);
+    cursor = index + 1;
+  }
+  return occurrences;
+}
+
+function selectBestNonOverlappingCandidates(candidates: EditCandidate[]): EditCandidate[] {
+  const ordered = [...candidates].sort((left, right) => left.end - right.end || left.start - right.start || right.score - left.score);
+  const predecessors = ordered.map((candidate, index) => findPredecessorIndex(ordered, candidate, index));
+  const bestScores = new Array<number>(ordered.length + 1).fill(0);
+  const selectedFlags = new Array<boolean>(ordered.length).fill(false);
+
+  for (let index = 1; index <= ordered.length; index += 1) {
+    const candidate = ordered[index - 1];
+    const includeScore = candidate.score + bestScores[predecessors[index - 1] + 1];
+    const excludeScore = bestScores[index - 1];
+    if (includeScore > excludeScore) {
+      bestScores[index] = includeScore;
+      selectedFlags[index - 1] = true;
+    } else {
+      bestScores[index] = excludeScore;
+    }
+  }
+
+  const selected: EditCandidate[] = [];
+  let index = ordered.length;
+  while (index > 0) {
+    const candidate = ordered[index - 1];
+    const predecessor = predecessors[index - 1];
+    const includeScore = candidate.score + bestScores[predecessor + 1];
+    if (selectedFlags[index - 1] && includeScore >= bestScores[index - 1]) {
+      selected.push(candidate);
+      index = predecessor + 1;
+    } else {
+      index -= 1;
+    }
+  }
+
+  return selected.reverse();
+}
+
+function findPredecessorIndex(candidates: EditCandidate[], candidate: EditCandidate, index: number): number {
+  let left = 0;
+  let right = index - 1;
+  let result = -1;
+
+  while (left <= right) {
+    const middle = Math.floor((left + right) / 2);
+    if (candidates[middle]?.end <= candidate.start) {
+      result = middle;
+      left = middle + 1;
+    } else {
+      right = middle - 1;
+    }
+  }
+
+  return result;
+}
+
+function subsetContainsOverlap(subset: Suggestion[]): boolean {
+  return subset.some((left, leftIndex) =>
+    subset.slice(leftIndex + 1).some((right) => left.span_start < right.span_end && right.span_start < left.span_end),
+  );
+}
+
+function editWeight(suggestion: Suggestion): number {
+  const kindBonus =
+    suggestion.category === "grammar"
+      ? 1.18
+      : suggestion.category === "punctuation"
+        ? 1.1
+        : suggestion.category === "spelling"
+          ? 1.0
+          : 0.6;
+  return kindBonus + suggestion.confidence;
+}
+
+function cleanupBonus(originalText: string, replacement: string): number {
+  return (localErrorCount(originalText) - localErrorCount(replacement)) * 0.12;
+}
+
+function localErrorCount(text: string): number {
+  return [
+    /[^\S\r\n]{2,}/gu,
+    /\s+([!?।,.])/gu,
+    /([!?।,.])\1+/gu,
+    /(?<![\u0980-\u09FFA-Za-z])([\u0980-\u09FF]{2,})\s+\1(?![\u0980-\u09FFA-Za-z])/gu,
+  ].reduce((total, pattern) => total + [...text.matchAll(pattern)].length, 0);
+}
+
+function* combinations<T>(items: T[], size: number, start = 0, prefix: T[] = []): Generator<T[]> {
+  if (prefix.length === size) {
+    yield prefix;
+    return;
+  }
+
+  for (let index = start; index < items.length; index += 1) {
+    yield* combinations(items, size, index + 1, [...prefix, items[index] as T]);
+  }
+}
+
+function* permutations<T>(items: T[]): Generator<T[]> {
+  if (items.length <= 1) {
+    yield items;
+    return;
+  }
+
+  for (let index = 0; index < items.length; index += 1) {
+    const head = items[index] as T;
+    const tail = [...items.slice(0, index), ...items.slice(index + 1)];
+    for (const permutation of permutations(tail)) {
+      yield [head, ...permutation];
+    }
+  }
+}
 
 function normalizePreviewText(text: string): string {
   return text.replace(/\u00a0/g, " ").replace(/[ \t]{2,}/g, " ");

@@ -2,6 +2,7 @@ from shared.schemas.python_models import (
     AnalyzeMode,
     AnalyzeRequest,
     Suggestion,
+    SuggestionAlternative,
     SuggestionCategory,
     SuggestionKind,
     SuggestionSeverity,
@@ -68,3 +69,24 @@ def test_suggestion_preserves_whitespace_only_replacements_for_spacing_fixes() -
 
     assert suggestion.replacement_options == [" "]
     assert suggestion.suggestion_kind == SuggestionKind.SPACING_ERROR
+
+
+def test_suggestion_alternative_infers_variant_metadata_and_keys() -> None:
+    alternative = SuggestionAlternative(
+        id="spell_002_alt",
+        rule_id="SPELL_002",
+        category=SuggestionCategory.STYLE,
+        subtype="orthography_variant",
+        original_text="খায়",
+        replacement_options=["খায়"],
+        confidence=0.84,
+        explanation_bn="",
+        explanation_en="",
+        source=SuggestionSource.SPELL,
+        severity=SuggestionSeverity.LOW,
+    )
+
+    assert alternative.suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT
+    assert alternative.is_variant_only is True
+    assert alternative.feedback_key is not None
+    assert alternative.suppression_key is not None

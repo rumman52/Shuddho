@@ -38,7 +38,7 @@ export function describeRuntimeState(args: {
 
   if (transport === "misconfigured") {
     return {
-      label: getRuntimeLabel("frontend_local_fallback"),
+      label: "Backend misconfigured — localhost API blocked",
       localOnly: true,
       degraded: true,
       warnings: compactWarnings([hardWarning, ...analysis.runtime_warnings]),

@@ -79,12 +79,36 @@ def test_rule_engine_detects_casual_pronoun_verb_mismatch() -> None:
     assert mismatch.replacement_options == ["করো"]
 
 
+def test_rule_engine_detects_familiar_second_person_present_mismatch() -> None:
+    engine = RuleEngine()
+    suggestions = engine.analyze("তুমি স্কুলে যায়।")
+    mismatch = next(suggestion for suggestion in suggestions if suggestion.subtype == "casual_pronoun_verb_mismatch")
+    assert mismatch.original_text == "যায়"
+    assert mismatch.replacement_options == ["যাও"]
+
+
 def test_rule_engine_detects_first_person_verb_mismatch() -> None:
     engine = RuleEngine()
     suggestions = engine.analyze("আমি যায়।")
     mismatch = next(suggestion for suggestion in suggestions if suggestion.subtype == "first_person_verb_mismatch")
     assert mismatch.original_text == "যায়"
     assert mismatch.replacement_options == ["যাই"]
+
+
+def test_rule_engine_detects_honorific_present_mismatch() -> None:
+    engine = RuleEngine()
+    suggestions = engine.analyze("আপনি ভাত খায়।")
+    mismatch = next(suggestion for suggestion in suggestions if suggestion.subtype == "honorific_pronoun_verb_mismatch")
+    assert mismatch.original_text == "খায়"
+    assert mismatch.replacement_options == ["খান"]
+
+
+def test_rule_engine_detects_third_person_reverse_direction_mismatch() -> None:
+    engine = RuleEngine()
+    suggestions = engine.analyze("সে স্কুলে যাই।")
+    mismatch = next(suggestion for suggestion in suggestions if suggestion.subtype == "third_person_verb_mismatch")
+    assert mismatch.original_text == "যাই"
+    assert mismatch.replacement_options == ["যায়"]
 
 
 def test_rule_engine_detects_mixed_address_register() -> None:
