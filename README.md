@@ -126,11 +126,12 @@ Detector defaults are now local-dev friendly:
 - If `SHUDDHO_DETECTOR_CHECKPOINT` is unset, Shuddho falls back to `artifacts/detector/detector-base`.
 - Set `SHUDDHO_DETECTOR_ENABLED=false` only when you explicitly want to disable detector-backed analysis.
 
-The default `OPENROUTER_MODEL` is `nvidia/nemotron-3-super-120b-a12b`. For lower-cost testing you can switch it to `nvidia/nemotron-3-super-120b-a12b:free` in your local `.env` or hosting environment.
+The default `OPENROUTER_MODEL` is `arcee-ai/trinity-large-preview:free`. Set it in the repo-root `.env` or hosting environment when you want the backend to use a different OpenRouter model.
 
 ### OpenRouter troubleshooting
 
 - Create a repo-root `.env` from `.env.example` and set a real `OPENROUTER_API_KEY`.
+- The repo-root `.env` controls backend OpenRouter config. Use `OPENROUTER_MODEL=arcee-ai/trinity-large-preview:free` for the current default model.
 - Restart the backend after changing `.env` so the client is re-initialized.
 - Open `http://127.0.0.1:8000/health` and confirm `openrouter_configured`, `openrouter_available`, `openrouter.status`, and `openrouter.reason`.
 - `backend_reachable` should be `true` whenever `/health` responds.
@@ -138,6 +139,25 @@ The default `OPENROUTER_MODEL` is `nvidia/nemotron-3-super-120b-a12b`. For lower
 - Test with suspicious Bangla sentences that need context, not isolated dictionary words.
 - Use `strict` mode first when verifying OpenRouter, because `standard` mode remains intentionally lower-noise.
 - Check backend logs for OpenRouter startup status, suspicious sentence counts, issues returned, and issues filtered out.
+- The curl example below is only for manual API verification, not for `.env` values:
+
+```bash
+curl https://openrouter.ai/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+  -d '{
+    "model": "arcee-ai/trinity-large-preview:free",
+    "messages": [
+      {
+        "role": "user",
+        "content": "How many r`s are in the word `strawberry?`"
+      }
+    ],
+    "reasoning": {
+      "enabled": true
+    }
+  }'
+```
 
 ### Why suggestions may look generic or empty
 
@@ -318,7 +338,7 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
   ],
   "openrouter_configured": false,
   "openrouter_available": false,
-  "openrouter_model": "nvidia/nemotron-3-super-120b-a12b",
+  "openrouter_model": "arcee-ai/trinity-large-preview:free",
   "detector": {
     "enabled": true,
     "loaded": false,
@@ -334,7 +354,7 @@ After updating `data/imports/lexicon/words_clean.csv`, restart the FastAPI backe
     "available": false,
     "status": "missing_api_key",
     "reason": "OPENROUTER_API_KEY is missing from the repo-root environment.",
-    "model": "nvidia/nemotron-3-super-120b-a12b",
+    "model": "arcee-ai/trinity-large-preview:free",
     "api_key_present": false,
     "timeout_seconds": 20
   },

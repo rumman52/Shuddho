@@ -39,12 +39,27 @@ def test_openrouter_client_missing_key_falls_back_without_crashing() -> None:
 
 
 def test_openrouter_client_placeholder_key_stays_disabled() -> None:
-    client = OpenRouterClient.from_environment({"OPENROUTER_API_KEY": "your_key_here"})
+    client = OpenRouterClient.from_environment({"OPENROUTER_API_KEY": "your_openrouter_api_key_here"})
 
     assert client.has_api_key() is True
     assert client.is_configured() is False
     assert client.is_available() is False
     assert client.model_name == DEFAULT_OPENROUTER_MODEL
+
+
+def test_openrouter_client_reads_valid_key_and_model_from_environment() -> None:
+    client = OpenRouterClient.from_environment(
+        {
+            "OPENROUTER_API_KEY": "sk-or-v1-valid-key",
+            "OPENROUTER_MODEL": "arcee-ai/trinity-large-preview:free",
+        }
+    )
+
+    assert client.has_api_key() is True
+    assert client.is_configured() is True
+    assert client.is_available() is True
+    assert client.model_name == "arcee-ai/trinity-large-preview:free"
+    assert client.runtime_status().status == "ready"
 
 
 def test_parse_openrouter_response_discards_malformed_payload_safely() -> None:

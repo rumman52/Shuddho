@@ -14,7 +14,7 @@ loadDotEnv({ path: resolve(REPO_ROOT, ".env") });
 
 async function main(): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey || apiKey === "your_key_here") {
+  if (!apiKey || apiKey.includes("your_openrouter_api_key") || apiKey.toLowerCase().includes("placeholder")) {
     throw new Error(
       "OPENROUTER_API_KEY is missing or still a placeholder. Set it in the repo-root .env before starting the agent.",
     );

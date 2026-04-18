@@ -10,6 +10,19 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+ENV_FILE_PATH = REPO_ROOT / ".env"
+ENV_FILE_LOADED = load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_MODEL = os.getenv(
+    "OPENROUTER_MODEL",
+    "arcee-ai/trinity-large-preview:free",
+).strip() or "arcee-ai/trinity-large-preview:free"
+
+print("OPENROUTER_API_KEY LOADED:", bool(OPENROUTER_API_KEY))
+print("OPENROUTER_MODEL:", OPENROUTER_MODEL)
+
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
 from services.analysis.shuddho_analysis.detector import DetectorRuntimeStatus, DetectorService
 from services.analysis.shuddho_analysis.pipeline import AnalysisPipeline, build_corrected_text
@@ -43,9 +56,6 @@ DEFAULT_ALLOWED_ORIGINS = [
     "https://shuddho-web-editor.vercel.app",
 ]
 ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
-REPO_ROOT = Path(__file__).resolve().parents[3]
-ENV_FILE_PATH = REPO_ROOT / ".env"
-ENV_FILE_LOADED = load_dotenv(ENV_FILE_PATH, override=False)
 STARTUP_TIMESTAMP = datetime.now(timezone.utc)
 
 

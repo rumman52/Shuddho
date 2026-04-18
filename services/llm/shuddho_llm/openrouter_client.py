@@ -13,7 +13,7 @@ from .prompting import build_openrouter_prompt
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+DEFAULT_OPENROUTER_MODEL = "arcee-ai/trinity-large-preview:free"
 DEFAULT_TIMEOUT_SECONDS = 20
 OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_CHAT_COMPLETIONS_URL = f"{OPENROUTER_API_BASE_URL}/chat/completions"
@@ -22,10 +22,6 @@ OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
 OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
 OPENROUTER_TIMEOUT_SECONDS_ENV_VAR = "OPENROUTER_TIMEOUT_SECONDS"
 OPENROUTER_PROBE_TTL_SECONDS_ENV_VAR = "OPENROUTER_PROBE_TTL_SECONDS"
-PLACEHOLDER_API_KEY_VALUES = {
-    "your_key_here",
-    "paste_my_new_real_key_here",
-}
 DEFAULT_PROBE_TTL_SECONDS = 300
 
 
@@ -104,7 +100,7 @@ class OpenRouterClient:
         timeout_seconds = _parse_timeout(environment.get(OPENROUTER_TIMEOUT_SECONDS_ENV_VAR))
         api_key = (environment.get(OPENROUTER_API_KEY_ENV_VAR) or "").strip()
         api_key_present = bool(api_key)
-        configured = api_key_present and api_key.casefold() not in PLACEHOLDER_API_KEY_VALUES
+        configured = api_key_present and not _is_placeholder_api_key(api_key)
         probe_ttl_seconds = _parse_probe_ttl(environment.get(OPENROUTER_PROBE_TTL_SECONDS_ENV_VAR))
 
         logger.info(
@@ -178,11 +174,7 @@ class OpenRouterClient:
         )
 
     def is_available(self) -> bool:
-        if not (self.enabled and self.session is not None and bool(self.api_key) and self.configured):
-            return False
-        if self._probe_status.probed and self._probe_status.success is False:
-            return False
-        return True
+        return self.enabled and self.session is not None and bool(self.api_key) and self.configured
 
     def is_configured(self) -> bool:
         return self.configured
@@ -232,8 +224,6 @@ class OpenRouterClient:
                 reason=reason,
                 checked_at=checked_at,
             )
-            self.status = "probe_failed"
-            self.reason = reason
             logger.warning("OpenRouter availability probe failed model=%s error=%s", self.model_name, error.__class__.__name__)
             return self._probe_status
 
@@ -246,8 +236,6 @@ class OpenRouterClient:
                 reason=reason,
                 checked_at=checked_at,
             )
-            self.status = "probe_failed"
-            self.reason = reason
             logger.warning(
                 "OpenRouter availability probe returned status=%s model=%s",
                 getattr(response, "status_code", "unknown"),
@@ -386,7 +374,7 @@ class OpenRouterClient:
             return "ready", None
         if not self.api_key_present:
             return "missing_api_key", f"{OPENROUTER_API_KEY_ENV_VAR} is missing from the repo-root environment."
-        if not self.configured:
+        if bool(self.api_key) and _is_placeholder_api_key(self.api_key):
             return "placeholder_api_key", f"{OPENROUTER_API_KEY_ENV_VAR} is still set to a placeholder value."
         return "unavailable", reason
 
@@ -432,6 +420,13 @@ def _extract_message_content(payload: dict[str, Any]) -> str:
                 text_parts.append(item["text"])
         return "\n".join(text_parts)
     return ""
+
+
+def _is_placeholder_api_key(api_key: str) -> bool:
+    normalized = api_key.strip().lower()
+    if not normalized:
+        return True
+    return "your_openrouter_api_key" in normalized or "placeholder" in normalized
 
 
 def _parse_timeout(value: str | None) -> int:

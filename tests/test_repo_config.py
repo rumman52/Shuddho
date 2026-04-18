@@ -7,8 +7,8 @@ import tomllib
 def test_env_example_documents_openrouter_and_local_origins() -> None:
     env_example = Path(".env.example").read_text(encoding="utf-8")
 
-    assert "OPENROUTER_API_KEY=your_key_here" in env_example
-    assert "OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b" in env_example
+    assert "OPENROUTER_API_KEY=your_openrouter_api_key_here" in env_example
+    assert "OPENROUTER_MODEL=arcee-ai/trinity-large-preview:free" in env_example
     assert "OPENROUTER_TIMEOUT_SECONDS=20" in env_example
     assert "OPENROUTER_PROBE_TTL_SECONDS=300" in env_example
     assert "OPENROUTER_AGENT_MODEL=openrouter/auto" in env_example

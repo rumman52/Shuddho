@@ -11,6 +11,7 @@ from services.api.shuddho_api.app import (
     health_deep,
     openrouter_client,
 )
+from services.llm.shuddho_llm.openrouter_client import OpenRouterClient
 from shared.schemas.python_models import (
     AnalyzeMode,
     AnalyzeRequest,
@@ -135,6 +136,25 @@ def test_health_exposes_degraded_runtime_reasons(monkeypatch) -> None:
     assert response.detector.reason == "SHUDDHO_DETECTOR_ENABLED=false disabled detector startup."
     assert response.openrouter.reason == "OPENROUTER_API_KEY is missing from the repo-root environment."
     assert "backend_openrouter_structured_json" not in response.mode_capabilities["standard"]
+
+
+def test_health_reports_openrouter_configured_with_valid_env_client(monkeypatch) -> None:
+    client = OpenRouterClient.from_environment(
+        {
+            "OPENROUTER_API_KEY": "sk-or-v1-valid-key",
+            "OPENROUTER_MODEL": "arcee-ai/trinity-large-preview:free",
+        }
+    )
+
+    monkeypatch.setattr(client, "probe_availability", lambda force=False: client._probe_status)
+    monkeypatch.setattr(app_module, "openrouter_client", client)
+
+    response = app_module.health()
+
+    assert response.openrouter_configured is True
+    assert response.openrouter_available is True
+    assert response.openrouter_model == "arcee-ai/trinity-large-preview:free"
+    assert response.openrouter.status == "ready"
 
 
 def test_cors_allows_extension_origin() -> None:
