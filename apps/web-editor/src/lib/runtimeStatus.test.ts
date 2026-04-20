@@ -11,11 +11,11 @@ function buildAnalysis(overrides: Partial<AnalyzeResponse> = {}): AnalyzeRespons
     normalized_text: "আমি বাংলা লিখি।",
     corrected_text: "আমি বাংলা লিখি।",
     suggestions: [],
-    analysis_profile: "full_backend",
-    runtime_source: "full_backend",
+    analysis_profile: "full_local",
+    runtime_source: "full_local",
     runtime_warnings: [],
     used_detector: true,
-    used_openrouter: true,
+    used_corrector: true,
     lexicon_source: "words_clean.csv",
     lexicon_version: "abc123",
     backend_version: "0.1.0",
@@ -26,10 +26,10 @@ function buildAnalysis(overrides: Partial<AnalyzeResponse> = {}): AnalyzeRespons
 }
 
 test("getRuntimeLabel returns the fixed runtime copy", () => {
-  assert.equal(getRuntimeLabel("full_backend"), "Full backend contextual analysis active");
+  assert.equal(getRuntimeLabel("full_local"), "Full local Bangla analysis active");
   assert.equal(getRuntimeLabel("backend_rules_and_spell_only"), "Backend live — rules/spell only");
   assert.equal(getRuntimeLabel("backend_without_detector"), "Backend live — detector unavailable");
-  assert.equal(getRuntimeLabel("backend_without_openrouter"), "Backend live — OpenRouter unavailable");
+  assert.equal(getRuntimeLabel("backend_without_corrector"), "Backend live — corrector unavailable");
   assert.equal(getRuntimeLabel("frontend_local_fallback"), "Backend unreachable — local fallback only");
 });
 
@@ -40,7 +40,7 @@ test("describeRuntimeState marks local fallback and exposes warnings", () => {
       runtime_source: "frontend_local_fallback",
       runtime_warnings: ["backend_unreachable_local_fallback"],
       used_detector: false,
-      used_openrouter: false,
+      used_corrector: false,
     }),
     transport: "offline",
     health: null,
@@ -59,7 +59,7 @@ test("describeRuntimeState marks deployed localhost backends as misconfigured", 
       runtime_source: "frontend_local_fallback",
       runtime_warnings: ["frontend_local_fallback"],
       used_detector: false,
-      used_openrouter: false,
+      used_corrector: false,
     }),
     transport: "misconfigured",
     health: null,

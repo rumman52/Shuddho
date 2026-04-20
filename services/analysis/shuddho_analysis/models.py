@@ -29,7 +29,7 @@ class CandidateBundle:
     spell_suggestions: list[Suggestion] = field(default_factory=list)
     rule_suggestions: list[Suggestion] = field(default_factory=list)
     detector_suggestions: list[Suggestion] = field(default_factory=list)
-    model_suggestions: list[Suggestion] = field(default_factory=list)
+    corrector_suggestions: list[Suggestion] = field(default_factory=list)
 
 
 @dataclass
@@ -45,6 +45,6 @@ class AnalysisArtifacts:
     merged_suggestions: list[Suggestion]
     sentence_spans: list[SentenceSpan] = field(default_factory=list)
     used_detector: bool = False
-    used_openrouter: bool = False
+    used_corrector: bool = False
     runtime_warnings: list[str] = field(default_factory=list)
     analysis_profile: AnalysisProfile = AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY

@@ -35,9 +35,9 @@ class AnalyzeMode(str, Enum):
 
 
 class AnalysisProfile(str, Enum):
-    FULL_BACKEND = "full_backend"
+    FULL_LOCAL = "full_local"
     BACKEND_WITHOUT_DETECTOR = "backend_without_detector"
-    BACKEND_WITHOUT_OPENROUTER = "backend_without_openrouter"
+    BACKEND_WITHOUT_CORRECTOR = "backend_without_corrector"
     BACKEND_RULES_AND_SPELL_ONLY = "backend_rules_and_spell_only"
     FRONTEND_LOCAL_FALLBACK = "frontend_local_fallback"
 
@@ -262,7 +262,7 @@ class AnalyzeResponse(BaseModel):
     runtime_source: AnalysisProfile = AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY
     runtime_warnings: list[str] = Field(default_factory=list)
     used_detector: bool = False
-    used_openrouter: bool = False
+    used_corrector: bool = False
     lexicon_source: str = "unknown"
     lexicon_version: str | None = None
     backend_version: str | None = None
@@ -322,19 +322,15 @@ class DetectorHealth(BaseModel):
     threshold: float = Field(ge=0.0, le=1.0)
 
 
-class OpenRouterHealth(BaseModel):
-    configured: bool = False
-    available: bool = False
+class CorrectorHealth(BaseModel):
+    enabled: bool
+    loaded: bool
     status: str
     reason: str | None = None
-    model: str | None = None
-    api_key_present: bool = False
-    timeout_seconds: int = Field(ge=1)
-    probed: bool = False
-    probe_success: bool | None = None
-    probe_status: str | None = None
-    probe_reason: str | None = None
-    probe_checked_at: datetime | None = None
+    checkpoint: str | None = None
+    checkpoint_exists: bool = False
+    backend_name: str = "disabled"
+    threshold: float = Field(ge=0.0, le=1.0)
 
 
 class LexiconHealth(BaseModel):
@@ -359,12 +355,11 @@ class HealthResponse(BaseModel):
     backend_reachable: bool = True
     detector_loaded: bool
     detector_checkpoint: str | None = None
+    corrector_loaded: bool
+    corrector_checkpoint: str | None = None
     allowed_origins: list[str]
-    openrouter_configured: bool = False
-    openrouter_available: bool = False
-    openrouter_model: str | None = None
     detector: DetectorHealth
-    openrouter: OpenRouterHealth
+    corrector: CorrectorHealth
     analysis_profile: AnalysisProfile
     degraded_reasons: list[str] = Field(default_factory=list)
     mode_capabilities: dict[str, list[str]] = Field(default_factory=dict)

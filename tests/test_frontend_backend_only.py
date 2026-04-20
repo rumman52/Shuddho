@@ -9,8 +9,7 @@ def test_frontend_uses_backend_only_calls() -> None:
     combined_source = f"{app_source}\n{api_source}\n{extension_source}\n{popup_source}"
 
     banned_fragments = [
-        "OPENROUTER_API_KEY",
-        "openrouter.ai/api/v1/chat/completions",
+        "api/v1/chat/completions",
         "Authorization\": \"Bearer",
         "requests.post(",
     ]
@@ -32,13 +31,13 @@ def test_frontend_status_copy_makes_runtime_state_explicit() -> None:
     assert "Backend unreachable — local fallback only" in runtime_status_source
     assert "Backend live — rules/spell only" in runtime_status_source
     assert "Backend live — detector unavailable" in runtime_status_source
-    assert "Backend live — OpenRouter unavailable" in runtime_status_source
-    assert "Full backend contextual analysis active" in runtime_status_source
+    assert "Backend live — corrector unavailable" in runtime_status_source
+    assert "Full local Bangla analysis active" in runtime_status_source
     assert "Local fallback checks" in app_source
     assert "contextual backend corrections are turned off" in app_source
     assert "Set VITE_API_BASE_URL to a public backend URL" in api_source
     assert "Backend misconfigured — localhost API blocked" in runtime_status_source
     assert "backendAllowed: hardWarning === null" in api_source
     assert "Backend live — detector unavailable" in popup_source
-    assert "Backend live — OpenRouter unavailable" in popup_source
+    assert "Backend live — corrector unavailable" in popup_source
     assert "Backend unreachable — smart analysis paused" in popup_source

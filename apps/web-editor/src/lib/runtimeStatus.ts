@@ -13,12 +13,12 @@ const BANGLA_LETTER_RE = /[\u0980-\u09ff]/u;
 
 export function getRuntimeLabel(profile: AnalysisProfile): string {
   switch (profile) {
-    case "full_backend":
-      return "Full backend contextual analysis active";
+    case "full_local":
+      return "Full local Bangla analysis active";
     case "backend_without_detector":
       return "Backend live — detector unavailable";
-    case "backend_without_openrouter":
-      return "Backend live — OpenRouter unavailable";
+    case "backend_without_corrector":
+      return "Backend live — corrector unavailable";
     case "backend_rules_and_spell_only":
       return "Backend live — rules/spell only";
     case "frontend_local_fallback":
@@ -67,7 +67,7 @@ export function describeRuntimeState(args: {
   return {
     label: getRuntimeLabel(profile),
     localOnly: profile === "frontend_local_fallback",
-    degraded: profile !== "full_backend",
+    degraded: profile !== "full_local",
     warnings: compactWarnings(analysis.runtime_warnings),
   };
 }

@@ -48,7 +48,7 @@ export function analyzeTextLocally(
     runtime_source: "frontend_local_fallback",
     runtime_warnings: ["frontend_local_fallback"],
     used_detector: false,
-    used_openrouter: false,
+    used_corrector: false,
     lexicon_source: "frontend_local_dictionary",
     lexicon_version: null,
     backend_version: null,

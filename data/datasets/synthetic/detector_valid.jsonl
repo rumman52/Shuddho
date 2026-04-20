@@ -1,2 +1,0 @@
-{"input_text":"আমি আমি বই পড়ি।।","target_text":"আমি বই পড়ি।","issues":[{"start":0,"end":7,"label":"grammar","subtype":"repeated_word"},{"start":15,"end":17,"label":"punctuation","subtype":"duplicate_punctuation"}]}
-{"input_text":"সে  বাড়ি যায় ।","target_text":"সে বাড়ি যায়।","issues":[{"start":2,"end":4,"label":"spacing","subtype":"extra_whitespace"},{"start":12,"end":14,"label":"punctuation","subtype":"space_before_punctuation"}]}

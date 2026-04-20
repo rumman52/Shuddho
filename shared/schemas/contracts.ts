@@ -8,9 +8,9 @@ export type SuggestionSource = "rule" | "spell" | "model" | "hybrid";
 export type SuggestionSeverity = "low" | "medium" | "high";
 export type AnalyzeMode = "standard" | "strict" | "formal";
 export type AnalysisProfile =
-  | "full_backend"
+  | "full_local"
   | "backend_without_detector"
-  | "backend_without_openrouter"
+  | "backend_without_corrector"
   | "backend_rules_and_spell_only"
   | "frontend_local_fallback";
 export type SuggestionKind =
@@ -98,7 +98,7 @@ export interface AnalyzeResponse {
   runtime_source: AnalysisProfile;
   runtime_warnings: string[];
   used_detector: boolean;
-  used_openrouter: boolean;
+  used_corrector: boolean;
   lexicon_source: string;
   lexicon_version?: string | null;
   backend_version?: string | null;
@@ -117,19 +117,15 @@ export interface DetectorHealth {
   threshold: number;
 }
 
-export interface OpenRouterHealth {
-  configured: boolean;
-  available: boolean;
+export interface CorrectorHealth {
+  enabled: boolean;
+  loaded: boolean;
   status: string;
   reason?: string | null;
-  model?: string | null;
-  api_key_present: boolean;
-  timeout_seconds: number;
-  probed: boolean;
-  probe_success?: boolean | null;
-  probe_status?: string | null;
-  probe_reason?: string | null;
-  probe_checked_at?: string | null;
+  checkpoint?: string | null;
+  checkpoint_exists: boolean;
+  backend_name: string;
+  threshold: number;
 }
 
 export interface LexiconHealth {
@@ -154,12 +150,11 @@ export interface HealthResponse {
   backend_reachable: boolean;
   detector_loaded: boolean;
   detector_checkpoint?: string | null;
+  corrector_loaded: boolean;
+  corrector_checkpoint?: string | null;
   allowed_origins: string[];
-  openrouter_configured: boolean;
-  openrouter_available: boolean;
-  openrouter_model?: string | null;
   detector: DetectorHealth;
-  openrouter: OpenRouterHealth;
+  corrector: CorrectorHealth;
   analysis_profile: AnalysisProfile;
   degraded_reasons: string[];
   mode_capabilities: Record<string, string[]>;

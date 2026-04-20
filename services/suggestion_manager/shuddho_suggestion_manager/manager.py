@@ -24,14 +24,14 @@ class SuggestionManager:
         spell_suggestions: list[Suggestion],
         rule_suggestions: list[Suggestion],
         detector_suggestions: list[Suggestion] | None = None,
-        model_suggestions: list[Suggestion] | None = None,
+        corrector_suggestions: list[Suggestion] | None = None,
     ) -> list[Suggestion]:
         mapped_spell = [self._map_to_original(suggestion, original_text, normalized) for suggestion in spell_suggestions]
         combined = list(rule_suggestions)
         if detector_suggestions:
             combined.extend(detector_suggestions)
-        if model_suggestions:
-            combined.extend(model_suggestions)
+        if corrector_suggestions:
+            combined.extend(corrector_suggestions)
         combined.extend(mapped_spell)
         fused = self._fuse_consensus_candidates(combined)
         return [ensure_feedback_key(suggestion) for suggestion in fused]
@@ -49,7 +49,7 @@ class SuggestionManager:
         spell_suggestions: list[Suggestion],
         rule_suggestions: list[Suggestion],
         detector_suggestions: list[Suggestion] | None = None,
-        model_suggestions: list[Suggestion] | None = None,
+        corrector_suggestions: list[Suggestion] | None = None,
     ) -> list[Suggestion]:
         prepared = self.prepare_candidates(
             original_text=original_text,
@@ -57,7 +57,7 @@ class SuggestionManager:
             spell_suggestions=spell_suggestions,
             rule_suggestions=rule_suggestions,
             detector_suggestions=detector_suggestions,
-            model_suggestions=model_suggestions,
+            corrector_suggestions=corrector_suggestions,
         )
         prepared.sort(key=self._sort_key)
         return self.finalize_ranked(prepared)

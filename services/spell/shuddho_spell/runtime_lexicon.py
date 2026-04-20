@@ -28,6 +28,7 @@ def load_runtime_lexicon(
         clean_csv_path,
         fallback_seed_path=fallback_seed_path,
         import_database_path=import_database_path,
+        runtime_metadata_path=clean_csv_path.with_name("runtime_metadata.json") if clean_csv_path.name == "runtime_words.csv" else None,
     )
     snapshot = repository.snapshot
     return RuntimeLexicon(

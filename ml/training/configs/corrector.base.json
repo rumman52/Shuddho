@@ -1,18 +1,26 @@
 {
   "name": "corrector-base",
   "seed": 42,
-  "max_length": 256,
+  "max_source_length": 192,
+  "max_target_length": 192,
   "batch_size": 12,
   "epochs": 12,
   "learning_rate": 0.0003,
+  "teacher_forcing_ratio": 0.9,
+  "device": "auto",
   "model": {
-    "vocab_size": 4000,
-    "hidden_size": 128,
-    "pad_token_id": 0
+    "vocab_size": 512,
+    "embedding_size": 128,
+    "hidden_size": 192,
+    "dropout": 0.15,
+    "min_frequency": 1
   },
   "data": {
-    "train_path": "data/datasets/synthetic/corrector_train.jsonl",
-    "validation_path": "data/datasets/synthetic/corrector_valid.jsonl"
+    "train_path": "data/datasets/train/corrector.synthetic.jsonl",
+    "validation_path": "data/datasets/valid/corrector.synthetic.jsonl",
+    "validation_split": 0.1
+  },
+  "output": {
+    "dir": "artifacts/corrector/corrector-base"
   }
 }
-

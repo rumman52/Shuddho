@@ -1,0 +1,40 @@
+{
+  "policy_version": "shuddho-lexicon-policy-v1",
+  "owner": "Shuddho",
+  "description": "Repo-local lexicon import sources and runtime build policy metadata.",
+  "inputs": [
+    {
+      "path": "data/imports/lexicon/words_clean.csv",
+      "role": "clean_import_rows",
+      "notes": "Trusted cleaned lexical imports. Still too broad to use directly at runtime."
+    },
+    {
+      "path": "data/imports/lexicon/words_review_flagged.csv",
+      "role": "review_queue",
+      "notes": "Rows flagged during import cleaning and reserved for manual review."
+    },
+    {
+      "path": "data/imports/lexicon/cleaning_summary.txt",
+      "role": "import_summary",
+      "notes": "Human-readable summary of the upstream cleaning pass."
+    }
+  ],
+  "runtime_outputs": [
+    {
+      "path": "data/runtime/lexicon/runtime_words.csv",
+      "role": "runtime_source_of_truth"
+    },
+    {
+      "path": "data/runtime/lexicon/runtime_review.csv",
+      "role": "review_layer_output"
+    },
+    {
+      "path": "data/runtime/lexicon/runtime_reject.csv",
+      "role": "reject_layer_output"
+    },
+    {
+      "path": "data/runtime/lexicon/runtime_metadata.json",
+      "role": "runtime_build_metadata"
+    }
+  ]
+}

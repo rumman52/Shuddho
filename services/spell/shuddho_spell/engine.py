@@ -47,13 +47,20 @@ class SpellEngine:
         *,
         fallback_seed_path: Path | None = None,
     ) -> None:
-        default_csv_path = Path(__file__).resolve().parents[3] / "data" / "imports" / "lexicon" / "words_clean.csv"
+        default_csv_path = Path(__file__).resolve().parents[3] / "data" / "runtime" / "lexicon" / "runtime_words.csv"
+        default_metadata_path = default_csv_path.with_name("runtime_metadata.json")
         default_seed_path = Path(__file__).resolve().parents[1] / "data" / "seed_lexicon.txt"
         default_database_path = Path(__file__).resolve().parents[3] / "data" / "shuddho_lexicon.db"
+        resolved_runtime_path = runtime_csv_path or default_csv_path
         self.repository = LexiconRepository(
-            runtime_csv_path or default_csv_path,
+            resolved_runtime_path,
             fallback_seed_path=fallback_seed_path or default_seed_path,
             import_database_path=default_database_path,
+            runtime_metadata_path=(
+                resolved_runtime_path.with_name("runtime_metadata.json")
+                if resolved_runtime_path.name == "runtime_words.csv"
+                else default_metadata_path if resolved_runtime_path == default_csv_path else None
+            ),
         )
         self._apply_snapshot(self.repository.snapshot)
 

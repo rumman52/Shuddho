@@ -31,7 +31,7 @@ class CandidateGenerator:
         spell_suggestions: list[Suggestion],
         rule_suggestions: list[Suggestion],
         detector_findings: list[DetectorFinding],
-        model_suggestions: list[Suggestion] | None = None,
+        corrector_suggestions: list[Suggestion] | None = None,
         text: str = "",
         personal_dictionary: list[str] | None = None,
         mode: AnalyzeMode = AnalyzeMode.STANDARD,
@@ -53,17 +53,17 @@ class CandidateGenerator:
                 rule_suggestions=merged_rule_suggestions,
                 text=text,
             ),
-            model_suggestions=self._model_candidates(model_suggestions or []),
+            corrector_suggestions=self._corrector_candidates(corrector_suggestions or []),
         )
 
     def _rulebacked_candidates(self, suggestions: list[Suggestion]) -> list[Suggestion]:
         return list(suggestions)
 
-    def _model_candidates(self, suggestions: list[Suggestion]) -> list[Suggestion]:
+    def _corrector_candidates(self, suggestions: list[Suggestion]) -> list[Suggestion]:
         return [
             suggestion
             for suggestion in suggestions
-            if self._is_safe_model_suggestion(suggestion)
+            if self._is_safe_corrector_suggestion(suggestion)
         ]
 
     def _curated_contextual_candidates(
@@ -628,7 +628,7 @@ class CandidateGenerator:
     def _overlaps(self, finding: DetectorFinding, suggestion: Suggestion) -> bool:
         return finding.span_start < suggestion.span_end and suggestion.span_start < finding.span_end
 
-    def _is_safe_model_suggestion(self, suggestion: Suggestion) -> bool:
+    def _is_safe_corrector_suggestion(self, suggestion: Suggestion) -> bool:
         if suggestion.source != SuggestionSource.MODEL:
             return True
         if not suggestion.replacement_options:

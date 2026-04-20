@@ -14,8 +14,8 @@
     "num_labels": 5
   },
   "data": {
-    "train_path": "data/datasets/synthetic/detector_train.jsonl",
-    "validation_path": "data/datasets/synthetic/detector_valid.jsonl"
+    "train_path": "data/datasets/train/detector.synthetic.jsonl",
+    "validation_path": "data/datasets/valid/detector.synthetic.jsonl"
   },
   "output": {
     "dir": "artifacts/detector/detector-base"

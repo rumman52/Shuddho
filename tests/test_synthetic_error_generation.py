@@ -8,5 +8,5 @@ def test_create_variants_emits_detector_ready_issue_records() -> None:
     assert "repeated_word" in by_subtype
     assert "space_before_punctuation" in by_subtype
     assert "duplicate_punctuation" in by_subtype
-    assert "variant_mapping" in by_subtype
-    assert by_subtype["variant_mapping"].source_text.startswith("আমি নিয়ে")
+    assert "orthography_variant" in by_subtype
+    assert by_subtype["orthography_variant"].source_text.startswith("আমি নিয়ে")

@@ -7,6 +7,8 @@ interface HealthResponse {
   status: string;
   detector_loaded: boolean;
   detector_checkpoint: string | null;
+  corrector_loaded: boolean;
+  corrector_checkpoint: string | null;
   allowed_origins: string[];
   analysis_profile: string;
   degraded_reasons: string[];
@@ -14,10 +16,9 @@ interface HealthResponse {
     loaded: boolean;
     reason: string | null;
   };
-  openrouter: {
-    available: boolean;
+  corrector: {
+    loaded: boolean;
     reason: string | null;
-    model: string | null;
   };
 }
 
@@ -46,10 +47,10 @@ function describeBackendStatus(health: HealthResponse, baseUrl: string): string 
   if (!health.detector.loaded) {
     return `Backend live — detector unavailable at ${baseUrl}.`;
   }
-  if (!health.openrouter.available) {
-    return `Backend live — OpenRouter unavailable at ${baseUrl}.`;
+  if (!health.corrector.loaded) {
+    return `Backend live — corrector unavailable at ${baseUrl}.`;
   }
-  return `Full backend contextual analysis active at ${baseUrl}.`;
+  return `Full local Bangla analysis active at ${baseUrl}.`;
 }
 
 function buildHealthTitle(health: HealthResponse): string {
@@ -57,13 +58,14 @@ function buildHealthTitle(health: HealthResponse): string {
   if (health.detector_checkpoint) {
     details.push(`Checkpoint: ${health.detector_checkpoint}`);
   }
+  if (health.corrector_checkpoint) {
+    details.push(`Corrector checkpoint: ${health.corrector_checkpoint}`);
+  }
   if (!health.detector.loaded && health.detector.reason) {
     details.push(`Detector: ${health.detector.reason}`);
   }
-  if (!health.openrouter.available && health.openrouter.reason) {
-    details.push(`OpenRouter: ${health.openrouter.reason}`);
-  } else if (health.openrouter.model) {
-    details.push(`OpenRouter model: ${health.openrouter.model}`);
+  if (!health.corrector.loaded && health.corrector.reason) {
+    details.push(`Corrector: ${health.corrector.reason}`);
   }
   if (health.degraded_reasons.length) {
     details.push(`Degraded reasons: ${health.degraded_reasons.join(", ")}`);

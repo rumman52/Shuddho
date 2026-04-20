@@ -6,12 +6,11 @@ from services.api.shuddho_api.app import (
     ALLOWED_ORIGINS,
     _parse_allowed_origins,
     analyze,
+    corrector_service,
     detector_service,
     health,
     health_deep,
-    openrouter_client,
 )
-from services.llm.shuddho_llm.openrouter_client import OpenRouterClient
 from shared.schemas.python_models import (
     AnalyzeMode,
     AnalyzeRequest,
@@ -25,35 +24,33 @@ from shared.schemas.python_models import (
 app_module = importlib.import_module("services.api.shuddho_api.app")
 
 
-def test_health_reports_detector_status() -> None:
+def test_health_reports_detector_and_corrector_status() -> None:
     response = health()
     payload = response.model_dump()
     detector_runtime = detector_service.runtime_status()
-    openrouter_runtime = openrouter_client.runtime_status()
+    corrector_runtime = corrector_service.runtime_status()
 
     assert response.status == "ok"
     assert response.backend_reachable is True
     assert response.detector_loaded is detector_service.is_loaded()
     assert response.detector_checkpoint == detector_service.checkpoint_path
+    assert response.corrector_loaded is corrector_service.is_loaded()
+    assert response.corrector_checkpoint == corrector_service.checkpoint_path
     assert response.allowed_origins == ALLOWED_ORIGINS
     assert set(payload) == {
         "status",
         "backend_reachable",
         "detector_loaded",
         "detector_checkpoint",
+        "corrector_loaded",
+        "corrector_checkpoint",
         "allowed_origins",
-        "openrouter_configured",
-        "openrouter_available",
-        "openrouter_model",
         "detector",
-        "openrouter",
+        "corrector",
         "analysis_profile",
         "degraded_reasons",
         "mode_capabilities",
     }
-    assert response.openrouter_configured is openrouter_client.is_configured()
-    assert response.openrouter_available is openrouter_client.is_available()
-    assert response.openrouter_model == openrouter_client.model_name
     assert response.detector.loaded is detector_runtime.loaded
     assert response.detector.enabled is detector_runtime.enabled
     assert response.detector.status == detector_runtime.status
@@ -61,18 +58,20 @@ def test_health_reports_detector_status() -> None:
     assert response.detector.checkpoint == detector_runtime.checkpoint
     assert response.detector.backend_name == detector_runtime.backend_name
     assert response.detector.threshold == detector_runtime.threshold
-    assert response.openrouter.status == openrouter_runtime.status
-    assert response.openrouter.reason == openrouter_runtime.reason
-    assert response.openrouter.model == openrouter_runtime.model
-    assert response.openrouter.api_key_present is openrouter_runtime.api_key_present
-    assert response.openrouter.timeout_seconds == openrouter_runtime.timeout_seconds
+    assert response.corrector.loaded is corrector_runtime.loaded
+    assert response.corrector.enabled is corrector_runtime.enabled
+    assert response.corrector.status == corrector_runtime.status
+    assert response.corrector.reason == corrector_runtime.reason
+    assert response.corrector.checkpoint == corrector_runtime.checkpoint
+    assert response.corrector.backend_name == corrector_runtime.backend_name
+    assert response.corrector.threshold == corrector_runtime.threshold
     assert response.analysis_profile in {
-        "full_backend",
+        "full_local",
         "backend_without_detector",
-        "backend_without_openrouter",
+        "backend_without_corrector",
         "backend_rules_and_spell_only",
     }
-    assert all(reason.startswith(("detector_", "openrouter_")) for reason in response.degraded_reasons)
+    assert all(reason.startswith(("detector_", "corrector_")) for reason in response.degraded_reasons)
     assert set(response.mode_capabilities) == {"standard", "strict", "formal"}
     assert "rules" in response.mode_capabilities["standard"]
     assert "spell" in response.mode_capabilities["strict"]
@@ -101,60 +100,39 @@ def test_health_exposes_degraded_runtime_reasons(monkeypatch) -> None:
                 },
             )()
 
-    class StubOpenRouterClient:
-        model_name = "openrouter-test"
+    class StubCorrectorService:
+        checkpoint_path = "artifacts/corrector/corrector-base"
 
-        def is_configured(self) -> bool:
-            return False
-
-        def is_available(self) -> bool:
+        def is_loaded(self) -> bool:
             return False
 
         def runtime_status(self):
             return type(
-                "OpenRouterStatus",
+                "CorrectorStatus",
                 (),
                 {
-                    "configured": False,
-                    "available": False,
-                    "status": "missing_api_key",
-                    "reason": "OPENROUTER_API_KEY is missing from the repo-root environment.",
-                    "model": self.model_name,
-                    "api_key_present": False,
-                    "timeout_seconds": 20,
+                    "enabled": True,
+                    "loaded": False,
+                    "status": "missing_checkpoint",
+                    "reason": "Corrector checkpoint could not be loaded from 'artifacts/corrector/corrector-base': missing required corrector checkpoint files: metadata.json",
+                    "checkpoint": self.checkpoint_path,
+                    "checkpoint_exists": False,
+                    "backend_name": "disabled",
+                    "threshold": 0.86,
                 },
             )()
 
     monkeypatch.setattr(app_module, "detector_service", StubDetectorService())
-    monkeypatch.setattr(app_module, "openrouter_client", StubOpenRouterClient())
+    monkeypatch.setattr(app_module, "corrector_service", StubCorrectorService())
 
     response = app_module.health()
 
     assert response.analysis_profile == "backend_rules_and_spell_only"
     assert response.backend_reachable is True
-    assert response.degraded_reasons == ["detector_disabled", "openrouter_missing_api_key"]
+    assert response.degraded_reasons == ["detector_disabled", "corrector_missing_checkpoint"]
     assert response.detector.reason == "SHUDDHO_DETECTOR_ENABLED=false disabled detector startup."
-    assert response.openrouter.reason == "OPENROUTER_API_KEY is missing from the repo-root environment."
-    assert "backend_openrouter_structured_json" not in response.mode_capabilities["standard"]
-
-
-def test_health_reports_openrouter_configured_with_valid_env_client(monkeypatch) -> None:
-    client = OpenRouterClient.from_environment(
-        {
-            "OPENROUTER_API_KEY": "sk-or-v1-valid-key",
-            "OPENROUTER_MODEL": "arcee-ai/trinity-large-preview:free",
-        }
-    )
-
-    monkeypatch.setattr(client, "probe_availability", lambda force=False: client._probe_status)
-    monkeypatch.setattr(app_module, "openrouter_client", client)
-
-    response = app_module.health()
-
-    assert response.openrouter_configured is True
-    assert response.openrouter_available is True
-    assert response.openrouter_model == "arcee-ai/trinity-large-preview:free"
-    assert response.openrouter.status == "ready"
+    assert response.corrector.reason.startswith("Corrector checkpoint could not be loaded")
+    assert "sentence_level_local_corrector" not in response.mode_capabilities["standard"]
 
 
 def test_cors_allows_extension_origin() -> None:
@@ -220,19 +198,19 @@ def test_analyze_route_forwards_mode_to_analysis_pipeline(monkeypatch) -> None:
 
     response = analyze(
         AnalyzeRequest(
-            text="\u09ac\u09be\u0982\u09b2\u09be",
-            personal_dictionary=["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac \u09b6\u09ac\u09cd\u09a6"],
+            text="বাংলা",
+            personal_dictionary=["নিজস্ব শব্দ"],
             mode=AnalyzeMode.FORMAL,
         )
     )
 
     assert response.suggestions == []
     assert recorded_call == {
-        "text": "\u09ac\u09be\u0982\u09b2\u09be",
-        "personal_dictionary": ["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac \u09b6\u09ac\u09cd\u09a6"],
+        "text": "বাংলা",
+        "personal_dictionary": ["নিজস্ব শব্দ"],
         "mode": AnalyzeMode.FORMAL,
     }
-    assert response.corrected_text == "\u09ac\u09be\u0982\u09b2\u09be"
+    assert response.corrected_text == "বাংলা"
 
 
 def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions(monkeypatch) -> None:
@@ -246,17 +224,17 @@ def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions
             return AnalyzeResponse(
                 text=text,
                 normalized_text=text,
-                corrected_text="\u0986\u09ae\u09bf\u0964",
+                corrected_text="আমি।",
                 suggestions=[
-                    _suggestion("REP_001", "\u0986\u09ae\u09bf \u0986\u09ae\u09bf", ["\u0986\u09ae\u09bf"], suppression_key="sup_hidden"),
-                    _suggestion("PUNC_001", "\u0964\u0964", ["\u0964"], category=SuggestionCategory.PUNCTUATION, suppression_key="sup_visible", span_start=7),
+                    _suggestion("REP_001", "আমি আমি", ["আমি"], suppression_key="sup_hidden"),
+                    _suggestion("PUNC_001", "।।", ["।"], category=SuggestionCategory.PUNCTUATION, suppression_key="sup_visible", span_start=7),
                 ],
             )
 
     class StubFeedbackStore:
         def load_personal_dictionary(self, user_id: str | None = None) -> list[str]:
             assert user_id == "web-user"
-            return ["\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09b6\u09ac\u09cd\u09a6"]
+            return ["সংরক্ষিত শব্দ"]
 
         def load_suppressed_keys(self, user_id: str | None = None) -> set[str]:
             assert user_id == "web-user"
@@ -267,20 +245,20 @@ def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions
 
     response = analyze(
         AnalyzeRequest(
-            text="\u0986\u09ae\u09bf \u0986\u09ae\u09bf\u0964\u0964",
-            personal_dictionary=["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac \u09b6\u09ac\u09cd\u09a6", "\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09b6\u09ac\u09cd\u09a6"],
+            text="আমি আমি।।",
+            personal_dictionary=["নিজস্ব শব্দ", "সংরক্ষিত শব্দ"],
             mode=AnalyzeMode.STRICT,
             user_id="web-user",
         )
     )
 
     assert recorded_call == {
-        "text": "\u0986\u09ae\u09bf \u0986\u09ae\u09bf\u0964\u0964",
-        "personal_dictionary": ["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac \u09b6\u09ac\u09cd\u09a6", "\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09b6\u09ac\u09cd\u09a6"],
+        "text": "আমি আমি।।",
+        "personal_dictionary": ["নিজস্ব শব্দ", "সংরক্ষিত শব্দ"],
         "mode": AnalyzeMode.STRICT,
     }
     assert [suggestion.rule_id for suggestion in response.suggestions] == ["PUNC_001"]
-    assert response.corrected_text == "\u0986\u09ae\u09bf \u0986\u09ae\u09bf\u0964"
+    assert response.corrected_text == "আমি আমি।"
 
 
 def test_health_deep_reports_runtime_lexicon_metadata() -> None:
@@ -291,7 +269,7 @@ def test_health_deep_reports_runtime_lexicon_metadata() -> None:
     assert response.backend_version
     assert response.env_file_path
     assert response.lexicon.runtime_source
-    assert response.lexicon.runtime_source_of_truth in {"csv_runtime", "seed_fallback"}
+    assert response.lexicon.runtime_source_of_truth in {"csv_runtime", "built_runtime_csv", "seed_fallback"}
     assert response.lexicon.accepted_word_count >= 0
     assert response.lexicon.candidate_word_count >= 0
     assert response.lexicon.correction_map_count >= 0
@@ -301,18 +279,18 @@ def test_health_deep_reports_runtime_lexicon_metadata() -> None:
 def test_analyze_route_preserves_runtime_metadata_from_pipeline(monkeypatch) -> None:
     class StubPipeline:
         def analyze(self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode) -> AnalyzeResponse:
-            assert personal_dictionary == ["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac"]
+            assert personal_dictionary == ["নিজস্ব"]
             assert mode == AnalyzeMode.STANDARD
             return AnalyzeResponse(
                 text=text,
                 normalized_text=text,
                 corrected_text=text,
                 suggestions=[],
-                analysis_profile="backend_without_openrouter",
-                runtime_source="backend_without_openrouter",
-                runtime_warnings=["openrouter_probe_failed"],
+                analysis_profile="backend_without_corrector",
+                runtime_source="backend_without_corrector",
+                runtime_warnings=["corrector_missing_checkpoint"],
                 used_detector=True,
-                used_openrouter=False,
+                used_corrector=False,
                 lexicon_source="words_clean.csv",
                 lexicon_version="abc123",
                 backend_version="from-pipeline",
@@ -334,17 +312,17 @@ def test_analyze_route_preserves_runtime_metadata_from_pipeline(monkeypatch) -> 
 
     response = analyze(
         AnalyzeRequest(
-            text="\u0986\u09ae\u09bf \u09ac\u09be\u0982\u09b2\u09be\u0964 \u0986\u09ae\u09bf \u0986\u09b8\u09bf\u0964",
-            personal_dictionary=["\u09a8\u09bf\u099c\u09b8\u09cd\u09ac"],
+            text="আমি বাংলা। আমি আসি।",
+            personal_dictionary=["নিজস্ব"],
             mode=AnalyzeMode.STANDARD,
         )
     )
 
-    assert response.analysis_profile == "backend_without_openrouter"
-    assert response.runtime_source == "backend_without_openrouter"
-    assert response.runtime_warnings == ["openrouter_probe_failed"]
+    assert response.analysis_profile == "backend_without_corrector"
+    assert response.runtime_source == "backend_without_corrector"
+    assert response.runtime_warnings == ["corrector_missing_checkpoint"]
     assert response.used_detector is True
-    assert response.used_openrouter is False
+    assert response.used_corrector is False
     assert response.lexicon_source == app_module.spell_engine.lexicon_source
     assert response.lexicon_version == app_module.spell_engine.lexicon_version
     assert response.backend_version == app_module.BACKEND_VERSION

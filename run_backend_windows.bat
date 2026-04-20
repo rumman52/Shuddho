@@ -19,7 +19,7 @@ if errorlevel 1 (
 )
 
 if not exist ".env" (
-  echo [shuddho] Warning: repo-root .env was not found. Copy .env.example to .env before starting if you need detector or OpenRouter config.
+  echo [shuddho] Warning: repo-root .env was not found. Copy .env.example to .env before starting if you need detector or corrector config.
 )
 
 %PYTHON% -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port 8000 --reload

@@ -4,6 +4,10 @@
   "type": "object",
   "properties": {
     "input_text": { "type": "string" },
+    "source_split": { "type": "string" },
+    "generation_method": { "type": "string" },
+    "annotation_source": { "type": "string" },
+    "review_status": { "type": "string" },
     "token_labels": {
       "type": "array",
       "items": { "type": "integer" }
@@ -16,7 +20,11 @@
           "start": { "type": "integer" },
           "end": { "type": "integer" },
           "label": { "type": "string" },
-          "subtype": { "type": "string" }
+          "subtype": { "type": "string" },
+          "fine_label": { "type": "string" },
+          "expected_text": { "type": "string" },
+          "observed_text": { "type": "string" },
+          "is_variant_only": { "type": "boolean" }
         },
         "required": ["start", "end", "label"]
       }

@@ -936,7 +936,7 @@ export default function App() {
           <strong>{runtimeDescriptor.label}</strong>
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", color: "var(--muted)", fontSize: "0.9rem" }}>
             <span>Detector used: {analysis.used_detector ? "yes" : "no"}</span>
-            <span>OpenRouter used: {analysis.used_openrouter ? "yes" : "no"}</span>
+            <span>Corrector used: {analysis.used_corrector ? "yes" : "no"}</span>
             <span>Local-only suggestions: {runtimeDescriptor.localOnly ? "yes" : "no"}</span>
             <span>Lexicon: {analysis.lexicon_source}{analysis.lexicon_version ? ` (${analysis.lexicon_version})` : ""}</span>
             {analysis.backend_version ? <span>Backend: {analysis.backend_version}</span> : null}
@@ -1047,7 +1047,7 @@ export default function App() {
                 : "Hard errors stay visible here. Optional style guidance is separated below and muted by default."}
             </p>
             <p style={{ marginTop: "0.35rem" }}>
-              {runtimeDescriptor.label}. Detector used: {analysis.used_detector ? "yes" : "no"}. OpenRouter used: {analysis.used_openrouter ? "yes" : "no"}.
+              {runtimeDescriptor.label}. Detector used: {analysis.used_detector ? "yes" : "no"}. Corrector used: {analysis.used_corrector ? "yes" : "no"}.
             </p>
           </div>
           <pre className="panel-header__normalized">{analysis.normalized_text}</pre>
@@ -1156,8 +1156,8 @@ function describeBackendStatus(backendMode: BackendMode, health: HealthResponse 
   if (health && !health.detector.loaded) {
     return "Backend live but detector disabled";
   }
-  if (health && !health.openrouter.available) {
-    return "Backend live but OpenRouter unavailable";
+  if (health && !health.corrector.loaded) {
+    return "Backend live but corrector unavailable";
   }
   return "Backend live";
 }
@@ -1170,10 +1170,10 @@ function formatBackendMessage(health: HealthResponse, apiBaseUrl: string): strin
     details.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
   }
 
-  if (health.openrouter.available) {
-    details.push(`OpenRouter ready with ${health.openrouter.model ?? "the configured model"}.`);
+  if (health.corrector.loaded) {
+    details.push(`Corrector ready at ${health.corrector.checkpoint ?? "configured checkpoint"}.`);
   } else {
-    details.push(`OpenRouter unavailable${health.openrouter.reason ? `: ${health.openrouter.reason}` : "."}`);
+    details.push(`Corrector unavailable${health.corrector.reason ? `: ${health.corrector.reason}` : "."}`);
   }
 
   return details.join(" ");
@@ -1187,7 +1187,7 @@ function describeRuntimeBanner(
   if (backendMode === "offline") {
     return `Local fallback checks only. The backend could not be reached at ${apiBaseUrl}, so contextual backend corrections are turned off in this session.`;
   }
-  if (backendMode !== "online" || !health || health.analysis_profile === "full_backend") {
+  if (backendMode !== "online" || !health || health.analysis_profile === "full_local") {
     return null;
   }
 
@@ -1195,15 +1195,15 @@ function describeRuntimeBanner(
   if (!health.detector.loaded) {
     reasons.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
   }
-  if (!health.openrouter.available) {
-    reasons.push(`OpenRouter unavailable${health.openrouter.reason ? `: ${health.openrouter.reason}` : "."}`);
+  if (!health.corrector.loaded) {
+    reasons.push(`Corrector unavailable${health.corrector.reason ? `: ${health.corrector.reason}` : "."}`);
   }
 
   if (!reasons.length) {
     return null;
   }
 
-  return `${describeBackendStatus("online", health)}. ${reasons.join(" ")} You are still getting backend rules and spelling checks, but not the full contextual stack.`;
+  return `${describeBackendStatus("online", health)}. ${reasons.join(" ")} You are still getting backend rules and spelling checks, but not the full local stack.`;
 }
 
 export function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
@@ -1269,10 +1269,10 @@ function formatHealthRuntimeMessage(health: HealthDeepResponse, apiBaseUrl: stri
   } else {
     details.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
   }
-  if (health.openrouter.available) {
-    details.push(`OpenRouter ready with ${health.openrouter.model ?? "the configured model"}.`);
+  if (health.corrector.loaded) {
+    details.push(`Corrector ready at ${health.corrector.checkpoint ?? "configured checkpoint"}.`);
   } else {
-    details.push(`OpenRouter unavailable${health.openrouter.reason ? `: ${health.openrouter.reason}` : "."}`);
+    details.push(`Corrector unavailable${health.corrector.reason ? `: ${health.corrector.reason}` : "."}`);
   }
   return details.join(" ");
 }
@@ -1306,19 +1306,19 @@ function buildRuntimeBanner(
     return `Local fallback checks only. The backend could not be reached at ${apiBaseUrl}, so contextual backend corrections are turned off in this session.`;
   }
   describeRuntimeBanner("online", health, apiBaseUrl);
-  if (runtimeDescriptor.label === "Full backend contextual analysis active" && !analysis.runtime_warnings.length) {
+  if (runtimeDescriptor.label === "Full local Bangla analysis active" && !analysis.runtime_warnings.length) {
     return null;
   }
   const reasons: string[] = [];
   if (health && !health.detector.loaded) {
     reasons.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
   }
-  if (health && !health.openrouter.available) {
-    reasons.push(`OpenRouter unavailable${health.openrouter.reason ? `: ${health.openrouter.reason}` : "."}`);
+  if (health && !health.corrector.loaded) {
+    reasons.push(`Corrector unavailable${health.corrector.reason ? `: ${health.corrector.reason}` : "."}`);
   }
   const warningText = [...reasons, ...analysis.runtime_warnings].join(" ");
   if (!warningText) {
-    return runtimeDescriptor.label === "Full backend contextual analysis active" ? null : runtimeDescriptor.label;
+    return runtimeDescriptor.label === "Full local Bangla analysis active" ? null : runtimeDescriptor.label;
   }
   return `${runtimeDescriptor.label}. ${warningText}`.trim();
 }
@@ -1344,7 +1344,7 @@ function createEmptyAnalysis(text: string, mode: AnalyzeMode): AnalyzeResponse {
     runtime_source: "frontend_local_fallback",
     runtime_warnings: [],
     used_detector: false,
-    used_openrouter: false,
+    used_corrector: false,
     lexicon_source: "unknown",
     lexicon_version: null,
     backend_version: null,

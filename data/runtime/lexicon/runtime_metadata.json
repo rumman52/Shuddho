@@ -1,0 +1,85 @@
+{
+  "format": "shuddho-runtime-lexicon-v1",
+  "policy_version": "shuddho-lexicon-policy-v1",
+  "runtime_source": "runtime_words.csv",
+  "runtime_source_of_truth": "built_runtime_csv",
+  "generated_at": "2026-04-20T17:13:22.247030+00:00",
+  "inputs": {
+    "clean_csv_path": "C:\\Projects\\Shuddho\\data\\imports\\lexicon\\words_clean.csv",
+    "review_csv_path": "C:\\Projects\\Shuddho\\data\\imports\\lexicon\\words_review_flagged.csv",
+    "summary_path": "C:\\Projects\\Shuddho\\data\\imports\\lexicon\\cleaning_summary.txt",
+    "provenance_path": "C:\\Projects\\Shuddho\\data\\imports\\lexicon\\provenance.json"
+  },
+  "input_checksums": {
+    "clean_csv": "950137ba765bb6d9d701dcf368cc3f3e45baf7b8b3661a37a8dc9ead03daaa0b",
+    "review_csv": "9233eec27b59d2c8dd685a2c0f00662b15dad9c48f359bc40758a76d9e1ddd60",
+    "summary": "519fb2699fcc5a95e6b04ade77a361aae92904ca0c7585df8bc089b9114327b2",
+    "provenance": "367f48d5a7bd6b136a5b16ea4a3ff6daa74bd92b21558a353b45a557e7c890bf"
+  },
+  "outputs": {
+    "runtime_words_path": "C:\\Projects\\Shuddho\\data\\runtime\\lexicon\\runtime_words.csv",
+    "runtime_review_path": "C:\\Projects\\Shuddho\\data\\runtime\\lexicon\\runtime_review.csv",
+    "runtime_reject_path": "C:\\Projects\\Shuddho\\data\\runtime\\lexicon\\runtime_reject.csv"
+  },
+  "counts": {
+    "accepted_word_count": 95712,
+    "candidate_word_count": 95712,
+    "correction_map_count": 95712,
+    "layer_counts": {
+      "core_formal_words": 0,
+      "accepted_variants": 95712,
+      "named_entities": 0,
+      "colloquial_or_dialect_review": 340454,
+      "reject_list": 0
+    }
+  },
+  "layers": {
+    "core_formal_words": "trusted, active, common rows with canonical forms",
+    "accepted_variants": "trusted, active rows that map a surface form to a canonical form",
+    "named_entities": "trusted, active rows from explicit named-entity style sources",
+    "colloquial_or_dialect_review": "trusted but non-common rows kept out of runtime until reviewed",
+    "reject_list": "inactive or untrusted rows excluded from runtime",
+    "user_dictionary": "runtime request-layer vocabulary merged per user, not baked into the shared artifact"
+  },
+  "user_dictionary_supported": true,
+  "provenance": {
+    "policy_version": "shuddho-lexicon-policy-v1",
+    "owner": "Shuddho",
+    "description": "Repo-local lexicon import sources and runtime build policy metadata.",
+    "inputs": [
+      {
+        "path": "data/imports/lexicon/words_clean.csv",
+        "role": "clean_import_rows",
+        "notes": "Trusted cleaned lexical imports. Still too broad to use directly at runtime."
+      },
+      {
+        "path": "data/imports/lexicon/words_review_flagged.csv",
+        "role": "review_queue",
+        "notes": "Rows flagged during import cleaning and reserved for manual review."
+      },
+      {
+        "path": "data/imports/lexicon/cleaning_summary.txt",
+        "role": "import_summary",
+        "notes": "Human-readable summary of the upstream cleaning pass."
+      }
+    ],
+    "runtime_outputs": [
+      {
+        "path": "data/runtime/lexicon/runtime_words.csv",
+        "role": "runtime_source_of_truth"
+      },
+      {
+        "path": "data/runtime/lexicon/runtime_review.csv",
+        "role": "review_layer_output"
+      },
+      {
+        "path": "data/runtime/lexicon/runtime_reject.csv",
+        "role": "reject_layer_output"
+      },
+      {
+        "path": "data/runtime/lexicon/runtime_metadata.json",
+        "role": "runtime_build_metadata"
+      }
+    ]
+  }
+}

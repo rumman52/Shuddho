@@ -168,7 +168,7 @@ def test_analysis_pipeline_returns_runtime_metadata_and_safe_corrected_text(tmp_
     assert response.analysis_profile == "backend_rules_and_spell_only"
     assert response.runtime_source == "backend_rules_and_spell_only"
     assert response.used_detector is False
-    assert response.used_openrouter is False
+    assert response.used_corrector is False
     assert response.lexicon_source == "words_clean.csv"
     assert response.lexicon_version
     assert response.sentence_count == 1

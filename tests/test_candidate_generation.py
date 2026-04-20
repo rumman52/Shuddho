@@ -8,7 +8,7 @@ from services.spell.shuddho_spell.engine import SpellEngine
 from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
 
 
-def test_candidate_generator_combines_rule_spell_detector_and_model_candidates() -> None:
+def test_candidate_generator_combines_rule_spell_detector_and_corrector_candidates() -> None:
     generator = CandidateGenerator()
     bundle = generator.generate(
         spell_suggestions=[_suggestion("SPELL_002", SuggestionSource.SPELL, 0.96, "\u0995\u09bf\u09a8\u09cd\u09a4", ["\u0995\u09bf\u09a8\u09cd\u09a4\u09c1"])],
@@ -27,29 +27,29 @@ def test_candidate_generator_combines_rule_spell_detector_and_model_candidates()
                 source=SuggestionSource.MODEL,
             )
         ],
-        model_suggestions=[_suggestion("ML_001", SuggestionSource.MODEL, 0.9, "\u0986\u09ae\u09bf \u0986\u09ae\u09bf", ["\u0986\u09ae\u09bf"])],
+        corrector_suggestions=[_suggestion("COR_001", SuggestionSource.MODEL, 0.9, "\u0986\u09ae\u09bf \u0986\u09ae\u09bf", ["\u0986\u09ae\u09bf"])],
     )
 
     assert len(bundle.rule_suggestions) == 1
     assert len(bundle.spell_suggestions) == 1
     assert len(bundle.detector_suggestions) == 1
-    assert len(bundle.model_suggestions) == 1
+    assert len(bundle.corrector_suggestions) == 1
 
 
-def test_candidate_generator_drops_unsafe_model_candidates() -> None:
+def test_candidate_generator_drops_unsafe_corrector_candidates() -> None:
     generator = CandidateGenerator()
 
     bundle = generator.generate(
         spell_suggestions=[],
         rule_suggestions=[],
         detector_findings=[],
-        model_suggestions=[
-            _suggestion("ML_001", SuggestionSource.MODEL, 0.79, "\u0995\u09bf\u09a8\u09cd\u09a4", ["\u0995\u09bf\u09a8\u09cd\u09a4\u09c1"]),
-            _suggestion("ML_002", SuggestionSource.MODEL, 0.9, "\u0995\u09bf\u09a8\u09cd\u09a4", []),
+        corrector_suggestions=[
+            _suggestion("COR_001", SuggestionSource.MODEL, 0.79, "\u0995\u09bf\u09a8\u09cd\u09a4", ["\u0995\u09bf\u09a8\u09cd\u09a4\u09c1"]),
+            _suggestion("COR_002", SuggestionSource.MODEL, 0.9, "\u0995\u09bf\u09a8\u09cd\u09a4", []),
         ],
     )
 
-    assert bundle.model_suggestions == []
+    assert bundle.corrector_suggestions == []
 
 
 def test_candidate_generator_turns_detector_spelling_into_actionable_bengali_candidate_when_direct_spell_mapping_exists(

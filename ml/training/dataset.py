@@ -4,7 +4,13 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from ml.detector.labels import DETECTOR_LABEL_TO_ID, DETECTOR_PAD_TOKEN, DETECTOR_UNK_TOKEN, normalize_detector_label
+from ml.detector.labels import (
+    DETECTOR_LABEL_TO_ID,
+    DETECTOR_PAD_TOKEN,
+    DETECTOR_UNK_TOKEN,
+    normalize_detector_label,
+    resolve_detector_label,
+)
 from shared.constants.bangla import TOKEN_PATTERN
 
 
@@ -110,7 +116,11 @@ def _parse_issue(issue: dict) -> DetectorIssue:
     return DetectorIssue(
         start=int(issue["start"]),
         end=int(issue["end"]),
-        label=normalize_detector_label(issue.get("label", "ok")),
+        label=resolve_detector_label(
+            label=issue.get("label", "ok"),
+            fine_label=issue.get("fine_label"),
+            subtype=issue.get("subtype"),
+        ),
         subtype=str(issue.get("subtype", "")),
     )
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,10 +39,12 @@ class LexiconRepository:
         *,
         fallback_seed_path: Path | None = None,
         import_database_path: Path | None = None,
+        runtime_metadata_path: Path | None = None,
     ) -> None:
         self.clean_csv_path = clean_csv_path
         self.fallback_seed_path = fallback_seed_path
         self.import_database_path = import_database_path
+        self.runtime_metadata_path = runtime_metadata_path
         self._snapshot = self._load_snapshot()
 
     @property
@@ -55,14 +58,21 @@ class LexiconRepository:
     def _load_snapshot(self) -> RuntimeLexiconSnapshot:
         if self.clean_csv_path.exists():
             accepted_words, candidate_words, correction_map = _load_runtime_lexicon_from_csv(self.clean_csv_path)
+            runtime_metadata = _load_runtime_metadata(self.runtime_metadata_path)
             checksum = _checksum_path(self.clean_csv_path)
-            version = checksum[:12] if checksum else None
+            version = str(runtime_metadata.get("policy_version", "")) + ":" + checksum[:12] if runtime_metadata and checksum else (
+                checksum[:12] if checksum else None
+            )
             return RuntimeLexiconSnapshot(
                 accepted_words=accepted_words,
                 candidate_words=candidate_words,
                 correction_map=correction_map,
-                runtime_source="words_clean.csv",
-                runtime_source_of_truth="csv_runtime",
+                runtime_source=str(runtime_metadata.get("runtime_source", self.clean_csv_path.name)) if runtime_metadata else self.clean_csv_path.name,
+                runtime_source_of_truth=(
+                    str(runtime_metadata.get("runtime_source_of_truth", "csv_runtime"))
+                    if runtime_metadata
+                    else "csv_runtime"
+                ),
                 runtime_path=self.clean_csv_path,
                 runtime_exists=True,
                 version=version,
@@ -102,7 +112,9 @@ class LexiconRepository:
 
 def _load_runtime_lexicon_from_csv(clean_csv_path: Path) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
     accepted_words: list[str] = []
+    candidate_words: list[str] = []
     seen_words: set[str] = set()
+    seen_candidates: set[str] = set()
     correction_map: dict[str, str] = {}
 
     with clean_csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -110,18 +122,28 @@ def _load_runtime_lexicon_from_csv(clean_csv_path: Path) -> tuple[tuple[str, ...
         _require_columns(reader.fieldnames, clean_csv_path)
 
         for row_index, row in enumerate(reader, start=1):
-            if not _parse_bool(row.get("is_active"), "is_active", clean_csv_path, row_index):
+            is_active = _parse_bool(row.get("is_active"), "is_active", clean_csv_path, row_index)
+            is_trusted = _parse_bool(row.get("is_trusted"), "is_trusted", clean_csv_path, row_index)
+            include_in_runtime = _parse_optional_bool(row.get("include_in_runtime"), default=is_active)
+            include_as_candidate = _parse_optional_bool(row.get("include_as_candidate"), default=include_in_runtime)
+
+            if not is_active:
                 continue
-            if not _parse_bool(row.get("is_trusted"), "is_trusted", clean_csv_path, row_index):
+            if not is_trusted:
+                continue
+            if not include_in_runtime and not include_as_candidate:
                 continue
 
             raw_word = _require_text(row, "word", clean_csv_path, row_index)
             canonical_word = _require_text(row, "normalized_word", clean_csv_path, row_index)
-            if canonical_word not in seen_words:
+            if include_in_runtime and canonical_word not in seen_words:
                 seen_words.add(canonical_word)
                 accepted_words.append(canonical_word)
+            if include_as_candidate and canonical_word not in seen_candidates:
+                seen_candidates.add(canonical_word)
+                candidate_words.append(canonical_word)
 
-            if raw_word == canonical_word:
+            if not include_in_runtime or raw_word == canonical_word:
                 continue
             if raw_word in correction_map:
                 continue
@@ -129,7 +151,8 @@ def _load_runtime_lexicon_from_csv(clean_csv_path: Path) -> tuple[tuple[str, ...
             correction_map[raw_word] = canonical_word
 
     accepted = tuple(accepted_words)
-    return accepted, accepted, correction_map
+    candidates = tuple(candidate_words or accepted_words)
+    return accepted, candidates, correction_map
 
 
 def _load_seed_fallback(seed_path: Path) -> tuple[str, ...]:
@@ -184,3 +207,21 @@ def _parse_bool(value: str | None, key: str, csv_path: Path, row_index: int) -> 
     if normalized in FALSE_VALUES:
         return False
     raise ValueError(f"{csv_path} row {row_index} has an invalid boolean value for {key!r}: {value!r}")
+
+
+def _parse_optional_bool(value: str | None, *, default: bool) -> bool:
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in TRUE_VALUES:
+        return True
+    if normalized in FALSE_VALUES:
+        return False
+    return default
+
+
+def _load_runtime_metadata(path: Path | None) -> dict[str, object] | None:
+    if path is None or not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else None
