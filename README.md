@@ -118,6 +118,15 @@ npm install
 npm run dev:web
 ```
 
+If a deploy or clean install ever fails with a missing Rollup native package such as `@rollup/rollup-linux-x64-gnu`, run a clean reinstall from the monorepo root:
+
+```powershell
+Remove-Item -Recurse -Force node_modules
+npm install
+```
+
+The repo now declares the Linux x64 GNU Rollup binary explicitly for the web editor workspace so Vercel's Linux builds do not depend on npm recovering that optional dependency transitively.
+
 Default local backend URL:
 
 - `http://127.0.0.1:8000`

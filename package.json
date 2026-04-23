@@ -2,6 +2,9 @@
   "name": "shuddho",
   "private": true,
   "version": "0.1.0",
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "workspaces": [
     "apps/web-editor",
     "apps/chrome-extension"
