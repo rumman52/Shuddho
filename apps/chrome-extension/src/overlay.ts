@@ -1,5 +1,5 @@
 import { getEditableSelection, selectEditableRange, supportsDirectApply, supportsInlineMirror } from "./editable";
-import type { OverlayState, SuggestionRange } from "./types";
+import type { OverlayState, RewriteIntent, RewriteResponse, SuggestionRange } from "./types";
 
 const MAX_RENDERED_RANGES = 48;
 const MAX_PANEL_ITEMS = 10;
@@ -8,6 +8,10 @@ interface OverlayActions {
   canApplySuggestion: boolean;
   onAccept?: (range: SuggestionRange, replacement: string) => boolean;
   onDismiss?: (range: SuggestionRange) => boolean;
+  onIgnoreForever?: (range: SuggestionRange) => boolean;
+  onAddToDictionary?: (range: SuggestionRange) => boolean;
+  onRewrite?: (range: SuggestionRange, intent: RewriteIntent) => Promise<RewriteResponse | null>;
+  onApplyRewrite?: (response: RewriteResponse, replacement: string) => boolean;
 }
 
 interface OverlayNotice {
@@ -29,12 +33,14 @@ export class IssueOverlay {
   private readonly activeReplacement: HTMLDivElement;
   private readonly activeExplanation: HTMLDivElement;
   private readonly activeActions: HTMLDivElement;
+  private readonly toneSummary: HTMLDivElement;
+  private readonly rewriteSection: HTMLDivElement;
   private readonly panelHint: HTMLDivElement;
   private readonly panelList: HTMLDivElement;
   private readonly inlineRoot: HTMLDivElement;
   private readonly inlineContent: HTMLDivElement;
   private target: HTMLElement | null = null;
-  private state: OverlayState = { text: "", ranges: [] };
+  private state: OverlayState = { text: "", ranges: [], tone: null };
   private activeRangeIndex = -1;
   private visible = false;
   private inlineVisible = false;
@@ -43,6 +49,7 @@ export class IssueOverlay {
   private observedTarget: HTMLElement | null = null;
   private actions: OverlayActions = { canApplySuggestion: false };
   private notice: OverlayNotice | null = null;
+  private rewriteResponse: RewriteResponse | null = null;
 
   constructor() {
     this.host = document.createElement("div");
@@ -170,6 +177,18 @@ export class IssueOverlay {
           margin-top: 10px;
           display: flex;
           flex-wrap: wrap;
+          gap: 8px;
+        }
+        .tone-summary,
+        .rewrite-section {
+          display: none;
+          margin-top: 10px;
+          padding: 10px 12px;
+          border-radius: 12px;
+          background: rgba(18, 32, 48, 0.04);
+        }
+        .rewrite-section {
+          display: grid;
           gap: 8px;
         }
         .action-button {
@@ -323,6 +342,8 @@ export class IssueOverlay {
             <div class="active-replacement"></div>
             <div class="muted active-explanation"></div>
             <div class="panel-actions"></div>
+            <div class="muted tone-summary"></div>
+            <div class="rewrite-section"></div>
             <div class="muted panel-hint"></div>
           </div>
           <div class="panel-list"></div>
@@ -344,6 +365,8 @@ export class IssueOverlay {
     this.activeReplacement = this.shadowRoot.querySelector(".active-replacement") as HTMLDivElement;
     this.activeExplanation = this.shadowRoot.querySelector(".active-explanation") as HTMLDivElement;
     this.activeActions = this.shadowRoot.querySelector(".panel-actions") as HTMLDivElement;
+    this.toneSummary = this.shadowRoot.querySelector(".tone-summary") as HTMLDivElement;
+    this.rewriteSection = this.shadowRoot.querySelector(".rewrite-section") as HTMLDivElement;
     this.panelHint = this.shadowRoot.querySelector(".panel-hint") as HTMLDivElement;
     this.panelList = this.shadowRoot.querySelector(".panel-list") as HTMLDivElement;
     this.inlineRoot = this.shadowRoot.querySelector(".inline-root") as HTMLDivElement;
@@ -366,6 +389,7 @@ export class IssueOverlay {
     this.visible = true;
     this.state = normalizeOverlayState(state);
     this.notice = null;
+    this.rewriteResponse = null;
     this.inlineVisible = supportsInlineMirror(target);
     this.actions = actions ?? { canApplySuggestion: false };
     this.observeTarget(target);
@@ -394,7 +418,7 @@ export class IssueOverlay {
     this.visible = false;
     this.inlineVisible = false;
     this.target = null;
-    this.state = { text: "", ranges: [] };
+    this.state = { text: "", ranges: [], tone: null };
     this.notice = null;
     this.activeRangeIndex = -1;
     this.root.style.display = "none";
@@ -409,7 +433,7 @@ export class IssueOverlay {
     this.target = target;
     this.visible = true;
     this.notice = { title, message };
-    this.state = { text: "", ranges: [] };
+    this.state = { text: "", ranges: [], tone: null };
     this.inlineVisible = false;
     this.actions = { canApplySuggestion: false };
     this.observeTarget(target);
@@ -539,6 +563,10 @@ export class IssueOverlay {
       this.activeReplacement.textContent = "";
       this.activeExplanation.textContent = this.notice.message;
       this.activeActions.replaceChildren();
+      this.toneSummary.style.display = "none";
+      this.toneSummary.textContent = "";
+      this.rewriteSection.style.display = "none";
+      this.rewriteSection.replaceChildren();
       this.panelHint.textContent = "The Chrome extension stays backend-first. Suggestions resume when the API is reachable again.";
       this.panelList.replaceChildren();
       return;
@@ -556,15 +584,27 @@ export class IssueOverlay {
       this.activeReplacement.textContent = "";
       this.activeExplanation.textContent = "Type more Bangla text to analyze this input.";
       this.activeActions.replaceChildren();
+      this.toneSummary.style.display = "none";
+      this.toneSummary.textContent = "";
+      this.rewriteSection.style.display = "none";
+      this.rewriteSection.replaceChildren();
       this.panelHint.textContent = "";
       this.panelList.replaceChildren();
       return;
     }
 
     this.activeOriginal.textContent = activeRange.suggestion.original_text;
-    this.activeReplacement.textContent = activeRange.suggestion.replacement_options[0] ?? "No direct replacement";
-    this.activeExplanation.textContent = activeRange.suggestion.explanation_bn || activeRange.suggestion.explanation_en;
+    this.activeReplacement.textContent =
+      `${activeRange.suggestion.short_title ?? activeRange.suggestion.replacement_options[0] ?? "No direct replacement"} ${
+        activeRange.suggestion.replacement_options[0] ? `→ ${activeRange.suggestion.replacement_options[0]}` : ""
+      }`.trim();
+    this.activeExplanation.textContent =
+      activeRange.suggestion.suggestion_reason_short_bn ||
+      activeRange.suggestion.explanation_bn ||
+      activeRange.suggestion.explanation_en;
     this.renderActiveActions(activeRange);
+    this.renderToneSummary();
+    this.renderRewriteSection();
     this.panelHint.textContent = this.actions.canApplySuggestion
       ? "Accept applies directly in this field."
       : activeRange.suggestion.replacement_options.length
@@ -583,7 +623,7 @@ export class IssueOverlay {
       item.innerHTML = `
         <strong>${escapeHtml(range.suggestion.original_text)}</strong>
         ${range.suggestion.replacement_options[0] ? `<span>${escapeHtml(range.suggestion.replacement_options[0])}</span>` : ""}
-        <div class="muted">${escapeHtml(range.suggestion.explanation_bn || range.suggestion.explanation_en)}</div>
+        <div class="muted">${escapeHtml(range.suggestion.suggestion_reason_short_bn || range.suggestion.explanation_bn || range.suggestion.explanation_en)}</div>
       `;
       item.addEventListener("click", () => {
         this.focusIssue(actualIndex, true);
@@ -770,6 +810,83 @@ export class IssueOverlay {
       }
     });
     this.activeActions.appendChild(dismissButton);
+
+    if (this.actions.onIgnoreForever) {
+      const ignoreButton = this.createActionButton("Ignore forever", "secondary", () => {
+        const handled = this.actions.onIgnoreForever?.(activeRange);
+        if (handled !== false) {
+          this.dismissRange(this.activeRangeIndex);
+        }
+      });
+      this.activeActions.appendChild(ignoreButton);
+    }
+
+    if (this.actions.onAddToDictionary) {
+      const addToDictionaryButton = this.createActionButton("Add to dictionary", "secondary", () => {
+        const handled = this.actions.onAddToDictionary?.(activeRange);
+        if (handled !== false) {
+          this.dismissRange(this.activeRangeIndex);
+        }
+      });
+      this.activeActions.appendChild(addToDictionaryButton);
+    }
+
+    for (const intent of activeRange.suggestion.rewrite_intents ?? []) {
+      const button = this.createActionButton(rewriteIntentLabel(intent), "secondary", async () => {
+        const response = await this.actions.onRewrite?.(activeRange, intent);
+        if (!response) {
+          return;
+        }
+        this.rewriteResponse = response;
+        this.renderRewriteSection();
+        this.syncPosition();
+      });
+      this.activeActions.appendChild(button);
+    }
+  }
+
+  private renderToneSummary(): void {
+    const primaryTone = this.state.tone?.primary_tone;
+    if (!primaryTone) {
+      this.toneSummary.style.display = "none";
+      this.toneSummary.textContent = "";
+      return;
+    }
+    this.toneSummary.style.display = "block";
+    const toneSuggestions = (this.state.tone?.suggestions ?? []).slice(0, 2).join(" ");
+    this.toneSummary.textContent = `Tone: ${primaryTone}. ${toneSuggestions}`.trim();
+  }
+
+  private renderRewriteSection(): void {
+    this.rewriteSection.replaceChildren();
+    if (!this.rewriteResponse) {
+      this.rewriteSection.style.display = "none";
+      return;
+    }
+    this.rewriteSection.style.display = "grid";
+
+    const heading = document.createElement("strong");
+    heading.textContent = `Rewrite: ${this.rewriteResponse.intent}`;
+    this.rewriteSection.appendChild(heading);
+
+    for (const option of this.rewriteResponse.options) {
+      const button = this.createActionButton(option.label, "primary", () => {
+        const handled = this.actions.onApplyRewrite?.(this.rewriteResponse as RewriteResponse, option.rewritten_text);
+        if (handled !== false) {
+          this.rewriteResponse = null;
+          this.setPanelOpen(false);
+        }
+      });
+      button.textContent = option.rewritten_text;
+      this.rewriteSection.appendChild(button);
+    }
+
+    for (const warning of this.rewriteResponse.warnings) {
+      const warningElement = document.createElement("div");
+      warningElement.className = "muted";
+      warningElement.textContent = warning;
+      this.rewriteSection.appendChild(warningElement);
+    }
   }
 
   private createActionButton(
@@ -827,6 +944,7 @@ function normalizeOverlayState(state: OverlayState): OverlayState {
   return {
     text: state.text,
     ranges,
+    tone: state.tone,
   };
 }
 
@@ -849,4 +967,21 @@ function escapeHtml(value: string): string {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+function rewriteIntentLabel(intent: RewriteIntent): string {
+  switch (intent) {
+    case "clarity":
+      return "Rewrite for clarity";
+    case "formal":
+      return "Rewrite more formally";
+    case "concise":
+      return "Rewrite shorter";
+    case "friendly":
+      return "Rewrite friendlier";
+    case "professional":
+      return "Rewrite more professionally";
+    default:
+      return intent;
+  }
 }

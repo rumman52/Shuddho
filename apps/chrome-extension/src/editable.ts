@@ -86,6 +86,15 @@ export function isSupportedEditor(target: SupportedEditable): boolean {
     return false;
   }
 
+  if (target instanceof HTMLInputElement && target.type === "password") {
+    return false;
+  }
+
+  const styles = window.getComputedStyle(target);
+  if (styles.visibility === "hidden" || styles.display === "none") {
+    return false;
+  }
+
   const rect = target.getBoundingClientRect();
   if (rect.width < 80 || rect.height < 24) {
     return false;

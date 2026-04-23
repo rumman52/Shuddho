@@ -1,12 +1,15 @@
 from shared.schemas.python_models import (
     AnalyzeMode,
     AnalyzeRequest,
+    RewriteRequest,
     Suggestion,
     SuggestionAlternative,
     SuggestionCategory,
     SuggestionKind,
     SuggestionSeverity,
     SuggestionSource,
+    ToneAnalysisResponse,
+    UserPreferences,
 )
 
 
@@ -90,3 +93,37 @@ def test_suggestion_alternative_infers_variant_metadata_and_keys() -> None:
     assert alternative.is_variant_only is True
     assert alternative.feedback_key is not None
     assert alternative.suppression_key is not None
+
+
+def test_user_preferences_normalize_dictionary_and_rule_keys() -> None:
+    preferences = UserPreferences(
+        user_id="user-1",
+        personal_dictionary=["  শব্দ  ", "শব্দ", "নিজস্ব   শব্দ"],
+        suppressed_rule_keys=[" RULE:1 ", "RULE:1", "RULE:2"],
+        disabled_sites=[" example.com ", "example.com", "mail.example.com"],
+    )
+
+    assert preferences.personal_dictionary == ["শব্দ", "নিজস্ব শব্দ"]
+    assert preferences.suppressed_rule_keys == ["RULE:1", "RULE:2"]
+    assert preferences.disabled_sites == ["example.com", "mail.example.com"]
+
+
+def test_rewrite_request_validates_selection_bounds() -> None:
+    request = RewriteRequest(text="বাংলা লেখা", selection_start=0, selection_end=5, intent="clarity")
+
+    assert request.selection_start == 0
+    assert request.selection_end == 5
+
+
+def test_tone_analysis_response_dedupes_detected_tones_and_suggestions() -> None:
+    response = ToneAnalysisResponse(
+        detected_tones=["professional", "professional", "respectful"],
+        primary_tone="professional",
+        confidence=0.82,
+        explanation_bn="",
+        explanation_en="",
+        suggestions=["  বাক্য ছোট করুন  ", "বাক্য ছোট করুন", "যতিচিহ্ন সংযত রাখুন"],
+    )
+
+    assert response.detected_tones == ["professional", "respectful"]
+    assert response.suggestions == ["বাক্য ছোট করুন", "যতিচিহ্ন সংযত রাখুন"]

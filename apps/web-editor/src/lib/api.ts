@@ -1,4 +1,14 @@
-import type { AnalyzeRequest, AnalyzeResponse, FeedbackRequest, HealthDeepResponse } from "@shared/schemas/contracts";
+import type {
+  AnalyzeRequest,
+  AnalyzeResponse,
+  FeedbackRequest,
+  HealthDeepResponse,
+  RewriteRequest,
+  RewriteResponse,
+  ToneAnalysisRequest,
+  ToneAnalysisResponse,
+  UserPreferences,
+} from "@shared/schemas/contracts";
 
 const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
@@ -91,6 +101,33 @@ export function sendFeedback(payload: FeedbackRequest): Promise<void> {
 export function getHealth(): Promise<HealthDeepResponse> {
   return request<HealthDeepResponse>("/health/deep", {
     method: "GET",
+  });
+}
+
+export function rewriteText(payload: RewriteRequest): Promise<RewriteResponse> {
+  return request<RewriteResponse>("/rewrite", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function analyzeTone(payload: ToneAnalysisRequest): Promise<ToneAnalysisResponse> {
+  return request<ToneAnalysisResponse>("/tone/analyze", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getUserPreferences(userId: string): Promise<UserPreferences> {
+  return request<UserPreferences>(`/preferences/${encodeURIComponent(userId)}`, {
+    method: "GET",
+  });
+}
+
+export function saveUserPreferences(userId: string, payload: UserPreferences): Promise<UserPreferences> {
+  return request<UserPreferences>(`/preferences/${encodeURIComponent(userId)}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

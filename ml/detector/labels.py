@@ -77,7 +77,7 @@ def resolve_detector_label(
     fine_label: str | None = None,
     subtype: str | None = None,
 ) -> str:
-    for candidate in (fine_label, subtype, label):
+    for candidate in (fine_label, label, subtype):
         if candidate is None:
             continue
         normalized = normalize_detector_label(candidate)

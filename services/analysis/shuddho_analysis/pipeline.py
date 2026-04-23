@@ -24,6 +24,7 @@ from .detector import DetectorService
 from .models import AnalysisArtifacts
 from .ranking import SuggestionRankingPipeline
 from .span_resolution import enrich_suggestions_with_text_context, split_sentences
+from .ui_enrichment import SuggestionUiEnricher
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class AnalysisPipeline:
         corrector_service: CorrectorService | None = None,
         candidate_generator: CandidateGenerator | None = None,
         ranking_pipeline: SuggestionRankingPipeline | None = None,
+        ui_enricher: SuggestionUiEnricher | None = None,
     ) -> None:
         self.normalizer = normalizer
         self.spell_engine = spell_engine
@@ -51,6 +53,7 @@ class AnalysisPipeline:
         if getattr(self.candidate_generator, "spell_engine", None) is None:
             self.candidate_generator.spell_engine = spell_engine
         self.ranking_pipeline = ranking_pipeline or SuggestionRankingPipeline()
+        self.ui_enricher = ui_enricher or SuggestionUiEnricher(auto_apply_checker=is_safe_auto_apply_suggestion)
 
     def analyze(
         self,
@@ -127,6 +130,7 @@ class AnalysisPipeline:
         )
         merged_suggestions = resolve_same_span_conflicts(merged_suggestions)
         merged_suggestions = enrich_suggestions_with_text_context(text, merged_suggestions)
+        merged_suggestions = self.ui_enricher.enrich(text, merged_suggestions)
 
         detector_runtime = self.detector_service.runtime_status()
         corrector_runtime = self.corrector_service.runtime_status()
@@ -176,6 +180,10 @@ def build_corrected_text(text: str, suggestions: list[Suggestion]) -> str:
         suggestions,
         is_safe_auto_apply_suggestion=_is_safe_auto_apply_suggestion,
     )
+
+
+def is_safe_auto_apply_suggestion(text: str, suggestion: Suggestion) -> bool:
+    return _is_safe_auto_apply_suggestion(text, suggestion)
 
 
 def _mode_allows_visibility(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool:

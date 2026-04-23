@@ -13,8 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
 from services.analysis.shuddho_analysis.corrector_service import CorrectorRuntimeStatus, CorrectorService
 from services.analysis.shuddho_analysis.detector import DetectorRuntimeStatus, DetectorService
+from services.analysis.shuddho_analysis.incremental_cache import ContentHashCache
 from services.analysis.shuddho_analysis.pipeline import AnalysisPipeline, build_corrected_text
+from services.analysis.shuddho_analysis.preferences import UserPreferencesService
 from services.analysis.shuddho_analysis.ranking import SuggestionRankingPipeline
+from services.analysis.shuddho_analysis.rewrite_service import RewriteService
+from services.analysis.shuddho_analysis.tone import ToneAnalyzer
 from services.feedback.shuddho_feedback.store import FeedbackStore
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
@@ -31,7 +35,12 @@ from shared.schemas.python_models import (
     HealthDeepResponse,
     HealthResponse,
     LexiconHealth,
+    RewriteRequest,
+    RewriteResponse,
     Suggestion,
+    ToneAnalysisRequest,
+    ToneAnalysisResponse,
+    UserPreferences,
 )
 
 logger = logging.getLogger(__name__)
@@ -126,6 +135,10 @@ analysis_pipeline = AnalysisPipeline(
     candidate_generator=candidate_generator,
     ranking_pipeline=ranking_pipeline,
 )
+tone_analyzer = ToneAnalyzer()
+analyze_cache: ContentHashCache[AnalyzeResponse] = ContentHashCache(ttl_seconds=8.0, max_entries=128)
+rewrite_cache: ContentHashCache[RewriteResponse] = ContentHashCache(ttl_seconds=20.0, max_entries=64)
+tone_cache: ContentHashCache[ToneAnalysisResponse] = ContentHashCache(ttl_seconds=20.0, max_entries=64)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -145,14 +158,33 @@ def root() -> dict[str, str]:
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
+    preferences_service = _preferences_service()
+    preferences = preferences_service.load(payload.user_id)
+    stored_personal_dictionary = (
+        feedback_store.load_personal_dictionary(user_id=payload.user_id)
+        if hasattr(feedback_store, "load_personal_dictionary")
+        else []
+    )
     effective_personal_dictionary = _merge_personal_dictionaries(
         payload.personal_dictionary,
-        feedback_store.load_personal_dictionary(user_id=payload.user_id),
+        stored_personal_dictionary,
+        preferences.personal_dictionary if preferences is not None else [],
     )
-    response = analysis_pipeline.analyze(
-        payload.text,
-        effective_personal_dictionary,
-        payload.mode,
+    cache_key = analyze_cache.build_key(
+        namespace="analyze",
+        payload={
+            "text": payload.text,
+            "personal_dictionary": effective_personal_dictionary,
+            "mode": payload.mode.value,
+        },
+    )
+    response = analyze_cache.get_or_create(
+        cache_key,
+        lambda: analysis_pipeline.analyze(
+            payload.text,
+            effective_personal_dictionary,
+            payload.mode,
+        ),
     )
     response = response.model_copy(
         update={
@@ -162,10 +194,8 @@ def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
         }
     )
     suppressed_keys = feedback_store.load_suppressed_keys(user_id=payload.user_id)
-    if not suppressed_keys:
-        return response
-
     visible_suggestions = _filter_suppressed_suggestions(response.suggestions, suppressed_keys)
+    visible_suggestions = preferences_service.filter_suggestions(visible_suggestions, preferences)
     return response.model_copy(
         update={
             "suggestions": visible_suggestions,
@@ -177,6 +207,55 @@ def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
 @app.post("/feedback", response_model=FeedbackRecord)
 def feedback(payload: FeedbackRequest) -> FeedbackRecord:
     return feedback_store.save(payload)
+
+
+@app.post("/rewrite", response_model=RewriteResponse)
+def rewrite(payload: RewriteRequest) -> RewriteResponse:
+    preferences = _preferences_service().load(payload.user_id)
+    cache_key = rewrite_cache.build_key(
+        namespace="rewrite",
+        payload={
+            "request": payload.model_dump(mode="json"),
+            "preferences": preferences.model_dump(mode="json") if preferences is not None else None,
+        },
+    )
+    response = rewrite_cache.get_or_create(
+        cache_key,
+        lambda: _rewrite_service().rewrite(payload, preferences),
+    )
+    degraded_reasons = _derive_degraded_reasons(
+        detector_service.runtime_status(),
+        corrector_service.runtime_status(),
+    )
+    if not degraded_reasons:
+        return response
+    return response.model_copy(
+        update={
+            "warnings": _dedupe_strings([*response.warnings, *degraded_reasons]),
+        }
+    )
+
+
+@app.post("/tone/analyze", response_model=ToneAnalysisResponse)
+def analyze_tone(payload: ToneAnalysisRequest) -> ToneAnalysisResponse:
+    cache_key = tone_cache.build_key(
+        namespace="tone",
+        payload=payload.model_dump(mode="json"),
+    )
+    return tone_cache.get_or_create(
+        cache_key,
+        lambda: tone_analyzer.analyze(payload.text),
+    )
+
+
+@app.get("/preferences/{user_id}", response_model=UserPreferences)
+def get_preferences(user_id: str) -> UserPreferences:
+    return _preferences_service().load(user_id) or UserPreferences(user_id=user_id)
+
+
+@app.post("/preferences/{user_id}", response_model=UserPreferences)
+def save_preferences(user_id: str, payload: UserPreferences) -> UserPreferences:
+    return _preferences_service().save(user_id, payload)
 
 
 def _merge_personal_dictionaries(*sources: list[str]) -> list[str]:
@@ -198,6 +277,14 @@ def _filter_suppressed_suggestions(suggestions: list[Suggestion], suppressed_key
         for suggestion in suggestions
         if suggestion.suppression_key not in suppressed_keys
     ]
+
+
+def _preferences_service() -> UserPreferencesService:
+    return UserPreferencesService(feedback_store)
+
+
+def _rewrite_service() -> RewriteService:
+    return RewriteService(analysis_pipeline)
 
 
 def _build_health_response() -> HealthResponse:
@@ -311,6 +398,8 @@ def _build_mode_capabilities(
             "deterministic_candidate_generation",
             "feedback_adaptation",
             "low_noise_visibility",
+            "tone_analysis",
+            "rewrite_service",
         ],
         "strict": [
             "rules",
@@ -319,6 +408,8 @@ def _build_mode_capabilities(
             "feedback_adaptation",
             "broader_contextual_visibility",
             "orthography_variants",
+            "tone_analysis",
+            "rewrite_service",
         ],
         "formal": [
             "rules",
@@ -328,6 +419,8 @@ def _build_mode_capabilities(
             "broader_contextual_visibility",
             "orthography_variants",
             "formal_style_guidance",
+            "tone_analysis",
+            "rewrite_service",
         ],
     }
 
@@ -341,6 +434,18 @@ def _build_mode_capabilities(
             capabilities.append("inline_corrector_span_projection")
 
     return base_capabilities
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    compact: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = " ".join(value.split())
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        compact.append(normalized)
+    return compact
 
 
 detector_runtime = detector_service.runtime_status()

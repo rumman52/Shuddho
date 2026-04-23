@@ -38,4 +38,7 @@ class SuggestionRankingPipeline:
                 item.suggestion.rule_id,
             )
         )
-        return [item.suggestion for item in ranked]
+        return [
+            item.suggestion.model_copy(update={"ranking_score": item.score})
+            for item in ranked
+        ]

@@ -1,106 +1,62 @@
-import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
+import { useEffect, useMemo, useRef, useState } from "react";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
 import type {
   AnalyzeMode,
   AnalyzeResponse,
   FeedbackAction,
   HealthDeepResponse,
-  HealthResponse,
+  RewriteIntent,
+  RewriteResponse,
   Suggestion,
   SuggestionAlternative,
+  ToneAnalysisResponse,
+  UserPreferences,
 } from "@shared/schemas/contracts";
-import { SuggestionCard, type SuggestionCardAnchor } from "./components/SuggestionCard";
-import { IssueMark } from "./lib/editorExtensions";
-import { analyzeText, getApiBaseUrl, getApiConfiguration, getHealth, sendFeedback, setApiBaseUrlOverride } from "./lib/api";
-import { applyIssueMarks, replaceSuggestion } from "./lib/highlight";
-import { LOCAL_FALLBACK_DESCRIPTION, LOCAL_FALLBACK_LABEL, analyzeTextLocally } from "./lib/localAnalysis";
-import { canAddSuggestionToDictionary, describeRuntimeState, describeSuggestionSource } from "./lib/runtimeStatus";
-import { getEditorTextSurface, matchSuggestionByContext, resolveSuggestionMatch } from "./lib/textSurface";
 
-const INITIAL_TEXT = sampleFixtures[0]?.text ?? "à¦†à¦®à¦¿  à¦¬à¦¾à¦‚à¦²à¦¾ à¦²à¦¿à¦–à¦¿  à¥¤à¥¤ à¦¬à¦¾à¦‚à¦²à¦¾ à¦¬à¦¾à¦‚à¦²à¦¾ à¦­à¦¾à¦·à¦¾ à¦–à§à¦¬ à¦¸à§à¦¨à§à¦¦à¦° !!";
-const ANALYSIS_DEBOUNCE_MS = 550;
-const HOVER_HIDE_DELAY_MS = 180;
-const POST_ACCEPT_ANALYSIS_DELAY_MS = 80;
-const PERSONAL_DICTIONARY_STORAGE_KEY = "shuddho-personal-dictionary";
+import { SuggestionCard } from "./components/SuggestionCard";
+import {
+  analyzeText,
+  analyzeTone,
+  getApiBaseUrl,
+  getApiConfiguration,
+  getHealth,
+  getUserPreferences,
+  rewriteText,
+  saveUserPreferences,
+  sendFeedback,
+  setApiBaseUrlOverride,
+} from "./lib/api";
+import { analyzeTextLocally } from "./lib/localAnalysis";
+import { canAddSuggestionToDictionary, describeRuntimeState } from "./lib/runtimeStatus";
+
+const INITIAL_TEXT = sampleFixtures[0]?.text ?? "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
+const ANALYSIS_DEBOUNCE_MS = 450;
+const WEB_FALLBACK_LABEL = "Local fallback checks";
+const WEB_FALLBACK_DESCRIPTION = "Local fallback checks are active because contextual backend corrections are turned off.";
+
 type BackendMode = "checking" | "online" | "offline" | "misconfigured";
 
 export default function App() {
-  const [requestMode, setRequestMode] = useState<AnalyzeMode>("standard");
-  const [userId] = useState<string>(() => loadOrCreateLocalUserId());
-  const [personalDictionary, setPersonalDictionary] = useState<string[]>(() => loadPersonalDictionary());
+  const [text, setText] = useState(INITIAL_TEXT);
+  const [mode, setMode] = useState<AnalyzeMode>("standard");
+  const [userId, setUserId] = useState(loadOrCreateLocalUserId);
+  const [preferences, setPreferences] = useState<UserPreferences>(() => defaultPreferences(loadOrCreateLocalUserId()));
+  const [dictionaryDraft, setDictionaryDraft] = useState("");
   const [analysis, setAnalysis] = useState<AnalyzeResponse>(() => createEmptyAnalysis(INITIAL_TEXT, "standard"));
-  const [showStyleSuggestions, setShowStyleSuggestions] = useState(false);
-  const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
-  const [activeIssueId, setActiveIssueId] = useState<string | null>(null);
-  const [isPopupPinned, setIsPopupPinned] = useState(false);
-  const [cardAnchorRect, setCardAnchorRect] = useState<SuggestionCardAnchor | null>(null);
-  const [status, setStatus] = useState("Waiting for input");
+  const [tone, setTone] = useState<ToneAnalysisResponse | null>(null);
+  const [rewriteResult, setRewriteResult] = useState<RewriteResponse | null>(null);
+  const [selectedSuggestionId, setSelectedSuggestionId] = useState<string | null>(null);
+  const [status, setStatus] = useState("Ready");
   const [backendMode, setBackendMode] = useState<BackendMode>("checking");
-  const [backendMessage, setBackendMessage] = useState("Checking backend connection...");
   const [backendHealth, setBackendHealth] = useState<HealthDeepResponse | null>(null);
-  const [apiConfiguration, setApiConfiguration] = useState(() => getApiConfiguration());
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
+  const [apiConfiguration, setApiConfiguration] = useState(() => getApiConfiguration());
+  const [selection, setSelection] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
   const analysisTimerRef = useRef<number | null>(null);
-  const hoverCloseTimerRef = useRef<number | null>(null);
-  const latestAnalysisRequestRef = useRef(0);
-  const requestModeRef = useRef<AnalyzeMode>(requestMode);
-  const hoveredIssueIdRef = useRef<string | null>(null);
-  const activeIssueIdRef = useRef<string | null>(null);
-  const isPopupPinnedRef = useRef(false);
-  const isPopupHoveredRef = useRef(false);
-  const isPopupFocusedRef = useRef(false);
-  const popupAnchorElementRef = useRef<HTMLElement | null>(null);
-  const editorStageRef = useRef<HTMLDivElement | null>(null);
-  const suggestionListRef = useRef<HTMLDivElement | null>(null);
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const lastVisibleSuggestionRef = useRef<Suggestion | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: false, bulletList: false, orderedList: false }), IssueMark],
-    content: `<p>${INITIAL_TEXT}</p>`,
-    editorProps: {
-      attributes: {
-        class: "shuddho-editor"
-      }
-    },
-    onUpdate: ({ editor: currentEditor }) => {
-      const text = getEditorTextSurface(currentEditor).text;
-      setAnalysis((previous) => ({
-        ...previous,
-        text
-      }));
-
-      if (isPopupPinnedRef.current) {
-        syncPinnedPopupAnchor(currentEditor.view.dom);
-      } else {
-        clearHoverPreview();
-      }
-
-      scheduleAnalysis(text, ANALYSIS_DEBOUNCE_MS);
-    }
-  });
-
-  const visibleIssueId = isPopupPinned ? activeIssueId : hoveredIssueId;
-  const visibleSuggestion = useMemo(
-    () => analysis.suggestions.find((suggestion) => suggestion.id === visibleIssueId) ?? null,
-    [analysis.suggestions, visibleIssueId]
-  );
-  const visibleSuggestionIndex = useMemo(
-    () => (visibleSuggestion ? analysis.suggestions.findIndex((suggestion) => suggestion.id === visibleSuggestion.id) : -1),
-    [analysis.suggestions, visibleSuggestion]
-  );
-  const hardSuggestions = useMemo(
-    () => analysis.suggestions.filter((suggestion) => suggestion.category !== "style"),
-    [analysis.suggestions]
-  );
-  const optionalStyleSuggestions = useMemo(
-    () => analysis.suggestions.filter((suggestion) => suggestion.category === "style"),
-    [analysis.suggestions]
-  );
   const runtimeDescriptor = useMemo(
     () =>
       describeRuntimeState({
@@ -109,1229 +65,676 @@ export default function App() {
         health: backendHealth,
         hardWarning: apiConfiguration.hardWarning,
       }),
-    [analysis, backendHealth, backendMode, apiConfiguration.hardWarning]
+    [analysis, apiConfiguration.hardWarning, backendHealth, backendMode],
   );
-  const runtimeBanner = useMemo(
-    () => buildRuntimeBanner(runtimeDescriptor, analysis, backendHealth, apiConfiguration.hardWarning, apiBaseUrl),
-    [analysis, apiBaseUrl, apiConfiguration.hardWarning, backendHealth, runtimeDescriptor]
+
+  const selectedSuggestion = useMemo(
+    () => analysis.suggestions.find((suggestion) => suggestion.id === selectedSuggestionId) ?? null,
+    [analysis.suggestions, selectedSuggestionId],
   );
-  const isLocalFallbackActive = runtimeDescriptor.localOnly;
-  const visibleSuggestionMatch = useMemo(
-    () => (visibleSuggestion ? resolveSuggestionMatch(analysis.text, visibleSuggestion) : null),
-    [analysis.text, visibleSuggestion]
-  );
-  const visibleSuggestionIsStale = visibleSuggestionMatch?.status === "stale";
 
   useEffect(() => {
-    requestModeRef.current = requestMode;
-  }, [requestMode]);
-
-  useEffect(() => {
-    setShowStyleSuggestions(requestMode === "formal");
-  }, [requestMode]);
-
-  useEffect(() => {
-    window.localStorage.setItem(PERSONAL_DICTIONARY_STORAGE_KEY, JSON.stringify(personalDictionary));
-  }, [personalDictionary]);
+    window.localStorage.setItem(USER_PROFILE_ID_STORAGE_KEY, userId);
+  }, [userId]);
 
   useEffect(() => {
     void refreshBackendHealth();
   }, [apiBaseUrl, apiConfiguration.hardWarning]);
 
   useEffect(() => {
-    hoveredIssueIdRef.current = hoveredIssueId;
-  }, [hoveredIssueId]);
+    void loadPreferences(userId);
+  }, [userId, apiBaseUrl]);
 
   useEffect(() => {
-    activeIssueIdRef.current = activeIssueId;
-  }, [activeIssueId]);
-
-  useEffect(() => {
-    isPopupPinnedRef.current = isPopupPinned;
-  }, [isPopupPinned]);
-
-  useEffect(() => {
-    if (visibleSuggestion) {
-      lastVisibleSuggestionRef.current = visibleSuggestion;
-      return;
-    }
-    if (!visibleIssueId) {
-      lastVisibleSuggestionRef.current = null;
-    }
-  }, [visibleSuggestion, visibleIssueId]);
-
-  useEffect(() => {
-    if (!editor) {
-      return;
-    }
-    void runAnalysis(getEditorTextSurface(editor).text, requestMode);
-  }, [editor, requestMode, personalDictionary]);
-
-  useEffect(() => {
-    if (!editor) {
-      return;
-    }
-    applyIssueMarks(editor, analysis.suggestions);
-  }, [analysis.suggestions, editor]);
-
-  useEffect(() => {
-    if (!editor) {
-      return;
-    }
-
-    const issueElements = editor.view.dom.querySelectorAll<HTMLElement>("[data-issue-id]");
-    issueElements.forEach((element) => {
-      if (element.dataset.issueId === visibleIssueId) {
-        element.dataset.issueActive = "true";
-      } else {
-        delete element.dataset.issueActive;
-      }
-    });
-  }, [editor, visibleIssueId, analysis.suggestions]);
-
-  useEffect(() => {
-    if (!visibleIssueId) {
-      return;
-    }
-
-    const exactSuggestion = analysis.suggestions.find((suggestion) => suggestion.id === visibleIssueId);
-    if (exactSuggestion) {
-      return;
-    }
-
-    const matchedSuggestion = matchSuggestionByContext(lastVisibleSuggestionRef.current, analysis.suggestions);
-    if (!matchedSuggestion) {
-      if (isPopupPinnedRef.current) {
-        closePopup();
-      } else {
-        clearHoverPreview();
-      }
-      return;
-    }
-
-    popupAnchorElementRef.current = null;
-    if (isPopupPinnedRef.current) {
-      if (activeIssueIdRef.current !== matchedSuggestion.id) {
-        setActiveIssueId(matchedSuggestion.id);
-      }
-      if (hoveredIssueIdRef.current !== matchedSuggestion.id) {
-        setHoveredIssueId(matchedSuggestion.id);
-      }
-      return;
-    }
-
-    if (hoveredIssueIdRef.current !== matchedSuggestion.id) {
-      setHoveredIssueId(matchedSuggestion.id);
-    }
-  }, [analysis.suggestions, visibleIssueId]);
-
-  useEffect(() => {
-    if (!visibleIssueId) {
-      return;
-    }
-
-    const syncPopupAnchor = () => {
-      const anchorElement = resolveAnchorElement(visibleIssueId);
-      if (!anchorElement) {
-        if (!isPopupPinnedRef.current) {
-          clearHoverPreview();
-        }
-        return;
-      }
-      setCardAnchorRect(toCardAnchor(anchorElement));
-    };
-
-    syncPopupAnchor();
-    window.addEventListener("resize", syncPopupAnchor);
-    window.addEventListener("scroll", syncPopupAnchor, true);
+    scheduleAnalysis(text);
     return () => {
-      window.removeEventListener("resize", syncPopupAnchor);
-      window.removeEventListener("scroll", syncPopupAnchor, true);
-    };
-  }, [editor, visibleIssueId]);
-
-  useEffect(() => {
-    if (!isPopupPinned) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && (cardRef.current?.contains(target) || editorStageRef.current?.contains(target))) {
-        return;
-      }
-      closePopup();
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        closePopup();
+      if (analysisTimerRef.current) {
+        window.clearTimeout(analysisTimerRef.current);
       }
     };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isPopupPinned]);
-
-  useEffect(() => {
-    return () => {
-      clearAnalysisTimer();
-      clearHoverCloseTimer();
-    };
-  }, []);
-
-  async function runAnalysis(text: string, mode: AnalyzeMode = requestModeRef.current) {
-    const requestId = ++latestAnalysisRequestRef.current;
-
-    if (!text.trim()) {
-      setAnalysis(createEmptyAnalysis(text, mode));
-      closePopup();
-      setStatus("Empty input");
-      return;
-    }
-
-    if (!apiConfiguration.backendAllowed) {
-      const fallbackResponse = buildLocalFallbackResponse(text, mode, [apiConfiguration.hardWarning], personalDictionary);
-      setBackendMode("misconfigured");
-      setBackendHealth(null);
-      setBackendMessage(apiConfiguration.hardWarning ?? LOCAL_FALLBACK_DESCRIPTION);
-      setAnalysis(fallbackResponse);
-      setStatus(formatRuntimeSummaryStatus(fallbackResponse.suggestions, mode, fallbackResponse.runtime_source));
-      return;
-    }
-
-    setStatus("Analyzing...");
-    try {
-      const response = await analyzeText({ text, mode, personal_dictionary: personalDictionary, user_id: userId });
-      if (requestId !== latestAnalysisRequestRef.current) {
-        return;
-      }
-      if (editor && getEditorTextSurface(editor).text !== text) {
-        return;
-      }
-      setBackendMode("online");
-      setBackendMessage(formatBackendRuntimeMessage(response, backendHealth, apiBaseUrl));
-      setAnalysis(response);
-      setStatus(formatRuntimeSummaryStatus(response.suggestions, mode, response.runtime_source));
-    } catch (error) {
-      if (requestId !== latestAnalysisRequestRef.current) {
-        return;
-      }
-      if (editor && getEditorTextSurface(editor).text !== text) {
-        return;
-      }
-      const fallbackResponse = buildLocalFallbackResponse(text, mode, [
-        error instanceof Error ? error.message : LOCAL_FALLBACK_DESCRIPTION,
-      ], personalDictionary);
-      setBackendMode("offline");
-      setBackendHealth(null);
-      setBackendMessage(
-        `${LOCAL_FALLBACK_LABEL} are active because the backend request failed at ${apiBaseUrl}. ` +
-          `${error instanceof Error ? error.message : LOCAL_FALLBACK_DESCRIPTION}`
-      );
-      setAnalysis(fallbackResponse);
-      setStatus(formatRuntimeSummaryStatus(fallbackResponse.suggestions, mode, fallbackResponse.runtime_source));
-    }
-  }
-
-  async function handleAccept(selectedCandidate: Suggestion | SuggestionAlternative, replacement: string) {
-    if (!editor || !visibleSuggestion) {
-      return;
-    }
-
-    const suggestion = visibleSuggestion;
-    const feedbackText = analysis.text;
-    const applied = replaceSuggestion(editor, suggestion, replacement);
-
-    closePopup();
-    if (!applied) {
-      setStatus("Suggestion no longer anchors to the current text");
-      scheduleAnalysis(getEditorTextSurface(editor).text, POST_ACCEPT_ANALYSIS_DELAY_MS);
-      return;
-    }
-
-    setStatus("Suggestion accepted");
-    scheduleAnalysis(getEditorTextSurface(editor).text, POST_ACCEPT_ANALYSIS_DELAY_MS);
-
-    if (backendMode !== "online") {
-      setStatus("Suggestion accepted locally");
-      return;
-    }
-
-    try {
-      await sendFeedback({
-        suggestion_id: selectedCandidate.id,
-        action: "accepted",
-        text: feedbackText,
-        replacement,
-        feedback_key: selectedCandidate.feedback_key,
-        rule_id: selectedCandidate.rule_id,
-        subtype: selectedCandidate.subtype,
-        source: selectedCandidate.source,
-        original_text: suggestion.original_text,
-        user_id: userId,
-      });
-    } catch (error) {
-      setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
-    }
-  }
-
-  async function handleDismiss() {
-    if (!visibleSuggestion) {
-      return;
-    }
-
-    const suggestion = visibleSuggestion;
-    const feedbackText = analysis.text;
-
-    setAnalysis((previous) => ({
-      ...previous,
-      suggestions: previous.suggestions.filter((item) => item.id !== suggestion.id)
-    }));
-    closePopup();
-    setStatus("Suggestion dismissed");
-
-    if (backendMode !== "online") {
-      return;
-    }
-
-    try {
-      await sendFeedback({
-        suggestion_id: suggestion.id,
-        action: "dismissed",
-        text: feedbackText,
-        feedback_key: suggestion.feedback_key,
-        rule_id: suggestion.rule_id,
-        subtype: suggestion.subtype,
-        source: suggestion.source,
-        original_text: suggestion.original_text,
-        user_id: userId,
-      });
-    } catch (error) {
-      setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
-    }
-  }
-
-  async function handlePersistentFeedbackAction(
-    action: FeedbackAction,
-    { userDictionaryEntry }: { userDictionaryEntry?: string } = {}
-  ) {
-    if (!visibleSuggestion) {
-      return;
-    }
-
-    const suggestion = visibleSuggestion;
-    setAnalysis((previous) => ({
-      ...previous,
-      suggestions: previous.suggestions.filter((item) => item.id !== suggestion.id)
-    }));
-    closePopup();
-
-    if (action === "add_to_personal_dictionary") {
-      const nextEntry = (userDictionaryEntry ?? suggestion.original_text).trim();
-      if (nextEntry) {
-        setPersonalDictionary((previous) => {
-          const normalizedEntry = normalizeDictionaryEntry(nextEntry);
-          if (!normalizedEntry || previous.includes(normalizedEntry)) {
-            return previous;
-          }
-          return [...previous, normalizedEntry];
-        });
-      }
-      setStatus("Added to personal dictionary");
-    } else if (action === "ignore_forever") {
-      setStatus("Suggestion ignored forever");
-    } else {
-      setStatus("Marked as not wrong");
-    }
-
-    const currentText = editor ? getEditorTextSurface(editor).text : analysis.text;
-    scheduleAnalysis(currentText, POST_ACCEPT_ANALYSIS_DELAY_MS);
-
-    if (backendMode !== "online") {
-      return;
-    }
-
-    try {
-      await sendFeedback({
-        suggestion_id: suggestion.id,
-        action,
-        text: analysis.text,
-        replacement: suggestion.replacement_options[0] ?? null,
-        feedback_key: suggestion.feedback_key,
-        rule_id: suggestion.rule_id,
-        subtype: suggestion.subtype,
-        source: suggestion.source,
-        original_text: suggestion.original_text,
-        suppression_key: suggestion.suppression_key,
-        user_dictionary_entry: userDictionaryEntry ?? suggestion.original_text,
-        user_id: userId,
-      });
-    } catch (error) {
-      setStatus(error instanceof Error ? `Feedback failed: ${error.message}` : "Feedback failed");
-    }
-  }
-
-  function handleEditorMouseOver(event: ReactMouseEvent<HTMLDivElement>) {
-    if (isPopupPinnedRef.current) {
-      return;
-    }
-
-    const issueElement = findIssueElement(event.target);
-    const suggestionId = issueElement?.dataset.issueId;
-    if (!issueElement || !suggestionId) {
-      return;
-    }
-
-    clearHoverCloseTimer();
-    if (hoveredIssueIdRef.current === suggestionId && popupAnchorElementRef.current === issueElement) {
-      return;
-    }
-    showHoverPreview(suggestionId, issueElement);
-  }
-
-  function handleEditorMouseOut(event: ReactMouseEvent<HTMLDivElement>) {
-    if (isPopupPinnedRef.current) {
-      return;
-    }
-
-    const issueElement = findIssueElement(event.target);
-    if (!issueElement) {
-      return;
-    }
-
-    const relatedTarget = event.relatedTarget as Node | null;
-    if (relatedTarget && cardRef.current?.contains(relatedTarget)) {
-      return;
-    }
-
-    if (findIssueElement(event.relatedTarget)) {
-      return;
-    }
-
-    scheduleHoverClose();
-  }
-
-  function handleEditorClick(event: ReactMouseEvent<HTMLDivElement>) {
-    const issueElement = findIssueElement(event.target);
-    const suggestionId = issueElement?.dataset.issueId;
-
-    if (issueElement && suggestionId) {
-      pinIssue(suggestionId, issueElement);
-      return;
-    }
-
-    if (!isPopupPinnedRef.current) {
-      clearHoverPreview();
-    }
-  }
-
-  function handlePopupMouseEnter() {
-    isPopupHoveredRef.current = true;
-    clearHoverCloseTimer();
-  }
-
-  function handlePopupMouseLeave(event: ReactMouseEvent<HTMLDivElement>) {
-    isPopupHoveredRef.current = false;
-    if (isPopupPinnedRef.current || findIssueElement(event.relatedTarget)) {
-      return;
-    }
-    scheduleHoverClose();
-  }
-
-  function handlePopupFocusCapture() {
-    isPopupFocusedRef.current = true;
-    clearHoverCloseTimer();
-    if (!isPopupPinnedRef.current) {
-      pinVisibleIssue();
-    }
-  }
-
-  function handlePopupBlurCapture(event: ReactFocusEvent<HTMLDivElement>) {
-    const relatedTarget = event.relatedTarget as Node | null;
-    if (relatedTarget && cardRef.current?.contains(relatedTarget)) {
-      return;
-    }
-    isPopupFocusedRef.current = false;
-    if (!isPopupPinnedRef.current) {
-      scheduleHoverClose();
-    }
-  }
-
-  function handlePopupPointerDownCapture() {
-    if (!isPopupPinnedRef.current) {
-      pinVisibleIssue();
-    }
-  }
-
-  function navigateVisibleSuggestion(direction: -1 | 1) {
-    if (!analysis.suggestions.length) {
-      return;
-    }
-
-    const currentIndex = visibleSuggestionIndex >= 0 ? visibleSuggestionIndex : 0;
-    const nextIndex = (currentIndex + direction + analysis.suggestions.length) % analysis.suggestions.length;
-    const nextSuggestion = analysis.suggestions[nextIndex];
-    const anchorElement = resolveAnchorElement(nextSuggestion.id) ?? resolveSuggestionListAnchor(nextSuggestion.id);
-    if (!anchorElement) {
-      return;
-    }
-
-    anchorElement.scrollIntoView({ block: "nearest", inline: "nearest" });
-    pinIssue(nextSuggestion.id, anchorElement);
-  }
-
-  function showHoverPreview(suggestionId: string, anchorElement: HTMLElement) {
-    if (isPopupPinnedRef.current) {
-      return;
-    }
-    clearHoverCloseTimer();
-    popupAnchorElementRef.current = anchorElement;
-    setHoveredIssueId(suggestionId);
-    setCardAnchorRect(toCardAnchor(anchorElement));
-  }
-
-  function pinIssue(suggestionId: string, anchorElement: HTMLElement) {
-    clearHoverCloseTimer();
-    popupAnchorElementRef.current = anchorElement;
-    setHoveredIssueId(suggestionId);
-    setActiveIssueId(suggestionId);
-    setIsPopupPinned(true);
-    setCardAnchorRect(toCardAnchor(anchorElement));
-  }
-
-  function pinVisibleIssue() {
-    const suggestionId = hoveredIssueIdRef.current ?? activeIssueIdRef.current;
-    if (!suggestionId) {
-      return;
-    }
-
-    const anchorElement = resolveAnchorElement(suggestionId);
-    if (!anchorElement) {
-      return;
-    }
-
-    pinIssue(suggestionId, anchorElement);
-  }
-
-  function clearHoverPreview() {
-    if (isPopupPinnedRef.current) {
-      return;
-    }
-    clearHoverCloseTimer();
-    popupAnchorElementRef.current = null;
-    setHoveredIssueId(null);
-    setCardAnchorRect(null);
-  }
-
-  function closePopup() {
-    clearHoverCloseTimer();
-    isPopupHoveredRef.current = false;
-    isPopupFocusedRef.current = false;
-    popupAnchorElementRef.current = null;
-    setHoveredIssueId(null);
-    setActiveIssueId(null);
-    setIsPopupPinned(false);
-    setCardAnchorRect(null);
-  }
-
-  function scheduleHoverClose() {
-    if (isPopupPinnedRef.current) {
-      return;
-    }
-
-    clearHoverCloseTimer();
-    hoverCloseTimerRef.current = window.setTimeout(() => {
-      if (isPopupPinnedRef.current || isPopupHoveredRef.current || isPopupFocusedRef.current) {
-        return;
-      }
-      popupAnchorElementRef.current = null;
-      setHoveredIssueId(null);
-      setCardAnchorRect(null);
-      hoverCloseTimerRef.current = null;
-    }, HOVER_HIDE_DELAY_MS);
-  }
-
-  function clearHoverCloseTimer() {
-    if (hoverCloseTimerRef.current === null) {
-      return;
-    }
-    window.clearTimeout(hoverCloseTimerRef.current);
-    hoverCloseTimerRef.current = null;
-  }
-
-  function scheduleAnalysis(text: string, delayMs: number) {
-    clearAnalysisTimer();
-    analysisTimerRef.current = window.setTimeout(() => {
-      void runAnalysis(text, requestModeRef.current);
-    }, delayMs);
-  }
-
-  function clearAnalysisTimer() {
-    if (analysisTimerRef.current === null) {
-      return;
-    }
-    window.clearTimeout(analysisTimerRef.current);
-    analysisTimerRef.current = null;
-  }
-
-  function handleApiBaseUrlSave() {
-    const nextApiBaseUrl = setApiBaseUrlOverride(apiBaseUrlDraft);
-    setApiConfiguration(getApiConfiguration());
-    setApiBaseUrlDraft(nextApiBaseUrl);
-    setApiBaseUrl(nextApiBaseUrl);
-  }
+  }, [text, mode, preferences.personal_dictionary, userId]);
 
   async function refreshBackendHealth() {
     if (!apiConfiguration.backendAllowed) {
-      setBackendHealth(null);
       setBackendMode("misconfigured");
-      setBackendMessage(apiConfiguration.hardWarning ?? LOCAL_FALLBACK_DESCRIPTION);
+      setBackendHealth(null);
+      setStatus(apiConfiguration.hardWarning ?? WEB_FALLBACK_DESCRIPTION);
       return;
     }
-    setBackendMode("checking");
-    setBackendMessage(`Checking backend at ${apiBaseUrl}...`);
+
     try {
       const health = await getHealth();
       setBackendHealth(health);
       setBackendMode("online");
-      setBackendMessage(formatHealthRuntimeMessage(health, apiBaseUrl));
-    } catch (error) {
+    } catch {
       setBackendHealth(null);
       setBackendMode("offline");
-      setBackendMessage(
-        `${LOCAL_FALLBACK_LABEL} are active because the backend is unreachable at ${apiBaseUrl}. ${
-          error instanceof Error ? error.message : LOCAL_FALLBACK_DESCRIPTION
-        }`,
-      );
     }
   }
 
-  function syncPinnedPopupAnchor(editorRoot: ParentNode) {
-    const suggestionId = activeIssueIdRef.current;
-    if (!suggestionId) {
+  async function loadPreferences(nextUserId: string) {
+    if (!apiConfiguration.backendAllowed) {
+      setPreferences((current) => ({ ...current, user_id: nextUserId }));
       return;
     }
 
-    const currentAnchor = popupAnchorElementRef.current;
-    if (currentAnchor?.isConnected && currentAnchor.dataset.issueId === suggestionId) {
-      setCardAnchorRect(toCardAnchor(currentAnchor));
+    try {
+      const remotePreferences = await getUserPreferences(nextUserId);
+      setPreferences(remotePreferences);
+      setMode(modeFromWritingGoal(remotePreferences.writing_goal));
+    } catch {
+      setPreferences((current) => ({ ...current, user_id: nextUserId }));
+    }
+  }
+
+  function scheduleAnalysis(nextText: string) {
+    if (analysisTimerRef.current) {
+      window.clearTimeout(analysisTimerRef.current);
+    }
+    analysisTimerRef.current = window.setTimeout(() => {
+      void runAnalysis(nextText);
+    }, ANALYSIS_DEBOUNCE_MS);
+  }
+
+  async function runAnalysis(nextText: string) {
+    if (!nextText.trim()) {
+      setAnalysis(createEmptyAnalysis(nextText, mode));
+      setTone(null);
+      setRewriteResult(null);
       return;
     }
 
-    const issueAnchor = findIssueAnchor(editorRoot, suggestionId);
-    if (!issueAnchor) {
+    if (!apiConfiguration.backendAllowed) {
+      const fallback = buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary);
+      setAnalysis(fallback);
+      setBackendMode("misconfigured");
+      setStatus(apiConfiguration.hardWarning ?? WEB_FALLBACK_DESCRIPTION);
+      setTone(null);
       return;
     }
 
-    popupAnchorElementRef.current = issueAnchor;
-    setCardAnchorRect(toCardAnchor(issueAnchor));
+    try {
+      const response = await analyzeText({
+        text: nextText,
+        mode,
+        personal_dictionary: preferences.personal_dictionary,
+        user_id: userId,
+      });
+      setAnalysis(response);
+      setBackendMode("online");
+      setStatus(`${response.suggestions.length} suggestions ready`);
+      if (preferences.auto_show_tone && nextText.trim().length >= 20) {
+        void refreshTone(nextText);
+      } else {
+        setTone(null);
+      }
+    } catch (error) {
+      const fallback = buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary);
+      setAnalysis(fallback);
+      setBackendMode("offline");
+      setTone(null);
+      setStatus(error instanceof Error ? error.message : WEB_FALLBACK_DESCRIPTION);
+    }
   }
 
-  function resolveAnchorElement(suggestionId: string): HTMLElement | null {
-    const currentAnchor = popupAnchorElementRef.current;
-    if (currentAnchor?.isConnected && currentAnchor.dataset.issueId === suggestionId) {
-      return currentAnchor;
+  async function refreshTone(nextText: string) {
+    if (backendMode !== "online") {
+      setTone(null);
+      return;
     }
-
-    const issueAnchor = editor ? findIssueAnchor(editor.view.dom, suggestionId) : null;
-    if (issueAnchor) {
-      popupAnchorElementRef.current = issueAnchor;
-      return issueAnchor;
+    try {
+      const response = await analyzeTone({ text: nextText, user_id: userId });
+      setTone(response);
+    } catch {
+      setTone(null);
     }
-
-    if (currentAnchor?.isConnected) {
-      return currentAnchor;
-    }
-
-    return null;
   }
 
-  function resolveSuggestionListAnchor(suggestionId: string): HTMLElement | null {
-    if (!suggestionListRef.current) {
-      return null;
+  function handleSelectionChange() {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
     }
-    return findSuggestionListAnchor(suggestionListRef.current, suggestionId);
+    setSelection({
+      start: textarea.selectionStart ?? 0,
+      end: textarea.selectionEnd ?? 0,
+    });
   }
 
-  function renderSuggestionListItem(suggestion: Suggestion, deemphasized = false) {
-    const sourceBadge = describeSuggestionSource(suggestion, analysis);
-    return (
-      <button
-        key={suggestion.id}
-        type="button"
-        className="suggestion-list__item"
-        data-suggestion-id={suggestion.id}
-        data-suggestion-active={suggestion.id === visibleIssueId ? "true" : undefined}
-        style={deemphasized ? { opacity: 0.82 } : undefined}
-        onMouseEnter={(event) => {
-          if (!isPopupPinnedRef.current) {
-            showHoverPreview(suggestion.id, event.currentTarget);
-          }
-        }}
-        onFocus={(event) => {
-          if (!isPopupPinnedRef.current) {
-            showHoverPreview(suggestion.id, event.currentTarget);
-          }
-        }}
-        onBlur={() => {
-          if (!isPopupPinnedRef.current) {
-            scheduleHoverClose();
-          }
-        }}
-        onClick={(event) => pinIssue(suggestion.id, event.currentTarget)}
-      >
-        <span className="suggestion-list__badges">
-          <span className="suggestion-list__badge">{sourceBadge}</span>
-          {isLocalFallbackActive ? <span className="suggestion-list__badge">{LOCAL_FALLBACK_LABEL}</span> : null}
-        </span>
-        <strong>{suggestion.original_text}</strong>
-        {suggestion.replacement_options[0] ? (
-          <span className="suggestion-list__replacement">{suggestion.replacement_options[0]}</span>
-        ) : null}
-        <span>{suggestion.explanation_bn || suggestion.explanation_en}</span>
-        {suggestion.primary_reason ? <span>{suggestion.primary_reason}</span> : null}
-        {(suggestion.alternatives?.length ?? 0) > 0 ? (
-          <span>{suggestion.alternatives?.length} alternative{suggestion.alternatives?.length === 1 ? "" : "s"} on this span</span>
-        ) : null}
-      </button>
-    );
+  function handleApplySuggestion(candidate: Suggestion | SuggestionAlternative, replacement: string, suggestion: Suggestion) {
+    const nextText = replaceSpan(text, suggestion.span_start, suggestion.span_end, replacement);
+    setText(nextText);
+    dropSuggestion(suggestion.id);
+    setStatus("Suggestion applied");
+    void sendFeedbackIfOnline({
+      suggestion_id: candidate.id,
+      action: "accepted",
+      text,
+      replacement,
+      feedback_key: candidate.feedback_key,
+      rule_id: candidate.rule_id,
+      subtype: candidate.subtype,
+      source: candidate.source,
+      original_text: suggestion.original_text,
+      user_id: userId,
+    });
+  }
+
+  function handleDismissSuggestion(suggestion: Suggestion) {
+    dropSuggestion(suggestion.id);
+    setStatus("Suggestion dismissed");
+    void sendFeedbackIfOnline({
+      suggestion_id: suggestion.id,
+      action: "dismissed",
+      text,
+      feedback_key: suggestion.feedback_key,
+      rule_id: suggestion.rule_id,
+      subtype: suggestion.subtype,
+      source: suggestion.source,
+      original_text: suggestion.original_text,
+      user_id: userId,
+    });
+  }
+
+  function handleIgnoreForever(suggestion: Suggestion) {
+    setPreferences((current) => ({
+      ...current,
+      suppressed_rule_keys: upsertUnique(current.suppressed_rule_keys, `${suggestion.rule_id}:${suggestion.subtype}`),
+    }));
+    dropSuggestion(suggestion.id);
+    setStatus("Suggestion ignored forever");
+    void sendFeedbackIfOnline({
+      suggestion_id: suggestion.id,
+      action: "ignore_forever",
+      text,
+      replacement: suggestion.replacement_options[0] ?? null,
+      feedback_key: suggestion.feedback_key,
+      rule_id: suggestion.rule_id,
+      subtype: suggestion.subtype,
+      source: suggestion.source,
+      original_text: suggestion.original_text,
+      suppression_key: suggestion.suppression_key,
+      user_id: userId,
+    });
+  }
+
+  function handleAddToDictionary(suggestion: Suggestion) {
+    const entry = suggestion.original_text.trim();
+    if (!entry) {
+      return;
+    }
+    setPreferences((current) => ({
+      ...current,
+      personal_dictionary: upsertUnique(current.personal_dictionary, entry),
+    }));
+    dropSuggestion(suggestion.id);
+    setStatus("Added to personal dictionary");
+    void sendFeedbackIfOnline({
+      suggestion_id: suggestion.id,
+      action: "add_to_personal_dictionary",
+      text,
+      replacement: suggestion.replacement_options[0] ?? null,
+      feedback_key: suggestion.feedback_key,
+      rule_id: suggestion.rule_id,
+      subtype: suggestion.subtype,
+      source: suggestion.source,
+      original_text: suggestion.original_text,
+      user_dictionary_entry: entry,
+      user_id: userId,
+    });
+  }
+
+  async function handleRewrite(intent: RewriteIntent, suggestion?: Suggestion) {
+    if (!preferences.enable_rewrites) {
+      setStatus("Rewrites are disabled in preferences");
+      return;
+    }
+
+    const selectionStart = suggestion?.span_start ?? (selection.end > selection.start ? selection.start : null);
+    const selectionEnd = suggestion?.span_end ?? (selection.end > selection.start ? selection.end : null);
+
+    if (backendMode !== "online") {
+      setStatus("Backend rewrite is unavailable in fallback mode");
+      return;
+    }
+
+    try {
+      const response = await rewriteText({
+        text,
+        selection_start: selectionStart,
+        selection_end: selectionEnd,
+        intent,
+        user_id: userId,
+        writing_goal: preferences.writing_goal,
+        tone_goal: preferences.tone_goal,
+      });
+      setRewriteResult(response);
+      setStatus(response.options.length ? "Rewrite options ready" : response.warnings.join(" "));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Rewrite failed");
+    }
+  }
+
+  function applyRewriteOption(optionText: string) {
+    if (!rewriteResult) {
+      return;
+    }
+    const nextText =
+      rewriteResult.selection_start !== null && rewriteResult.selection_start !== undefined && rewriteResult.selection_end !== null && rewriteResult.selection_end !== undefined
+        ? replaceSpan(text, rewriteResult.selection_start, rewriteResult.selection_end, optionText)
+        : optionText;
+    setText(nextText);
+    setRewriteResult(null);
+    setStatus("Rewrite applied");
+    void sendFeedbackIfOnline({
+      suggestion_id: `rewrite:${rewriteResult.intent}`,
+      action: "rewrite_accepted",
+      text,
+      replacement: optionText,
+      original_text: rewriteResult.original_text,
+      user_id: userId,
+    });
+  }
+
+  function dismissRewrite() {
+    if (rewriteResult) {
+      void sendFeedbackIfOnline({
+        suggestion_id: `rewrite:${rewriteResult.intent}`,
+        action: "rewrite_dismissed",
+        text,
+        original_text: rewriteResult.original_text,
+        user_id: userId,
+      });
+    }
+    setRewriteResult(null);
+  }
+
+  async function savePreferencesToBackend() {
+    if (backendMode !== "online") {
+      setStatus("Preferences saved locally for this session");
+      return;
+    }
+
+    try {
+      const saved = await saveUserPreferences(userId, preferences);
+      setPreferences(saved);
+      setStatus("Preferences saved");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not save preferences");
+    }
+  }
+
+  function applyApiBaseUrl() {
+    const nextBaseUrl = setApiBaseUrlOverride(apiBaseUrlDraft);
+    setApiConfiguration(getApiConfiguration());
+    setApiBaseUrl(nextBaseUrl);
+    setStatus(`API base URL set to ${nextBaseUrl}`);
+  }
+
+  async function markToneFeedback(action: FeedbackAction) {
+    if (!tone) {
+      return;
+    }
+    await sendFeedbackIfOnline({
+      suggestion_id: "tone-analysis",
+      action,
+      text,
+      replacement: tone.primary_tone ?? null,
+      user_id: userId,
+    });
+  }
+
+  function dropSuggestion(suggestionId: string) {
+    setAnalysis((current) => ({
+      ...current,
+      suggestions: current.suggestions.filter((item) => item.id !== suggestionId),
+    }));
+    setSelectedSuggestionId((current) => (current === suggestionId ? null : current));
   }
 
   return (
     <main className="app-shell">
-      <section className="hero">
+      <section className="hero-band">
         <div>
           <p className="eyebrow">Shuddho</p>
           <h1>Bangla writing assistant</h1>
-          <p className="lede">
-            Type Bangla text and Shuddho will tell you plainly whether you are using the live backend or local fallback-only checks.
-          </p>
+          <p className="lede">Extension-first backend, with the web editor as the fastest place to test analysis, tone, rewrites, and preference learning.</p>
         </div>
-        <div className="status-panel">
-          <span
-            style={{
-              padding: "0.3rem 0.65rem",
-              borderRadius: "999px",
-              background:
-                backendMode === "online"
-                  ? "rgba(255, 255, 255, 0.16)"
-                  : backendMode === "offline" || backendMode === "misconfigured"
-                    ? "rgba(255, 244, 228, 0.22)"
-                    : "rgba(255, 255, 255, 0.12)",
-            }}
-          >
-            {runtimeDescriptor.label}
-          </span>
+        <div className="status-band">
+          <strong>{runtimeDescriptor.label}</strong>
           <span>{status}</span>
-          <strong>{hardSuggestions.length}</strong>
-          <span>{hardSuggestions.length === 1 ? "hard issue" : "hard issues"}</span>
-          {optionalStyleSuggestions.length > 0 ? (
-            <span>{optionalStyleSuggestions.length} optional style</span>
-          ) : null}
+          <span>{backendMode === "online" ? apiBaseUrl : WEB_FALLBACK_LABEL}</span>
         </div>
       </section>
 
-      <section className="editor-panel">
-        <div className="panel-header">
-          <div>
-            <h2>Web editor</h2>
-            <p>{backendMessage}</p>
+      <section className="workspace-grid">
+        <aside className="sidebar-panel">
+          <div className="panel-block">
+            <h2>Runtime</h2>
+            <div className="meta-list">
+              <span>Backend: {backendMode}</span>
+              <span>Detector: {analysis.used_detector ? "active" : "inactive"}</span>
+              <span>Corrector: {analysis.used_corrector ? "active" : "inactive"}</span>
+              <span>Lexicon: {analysis.lexicon_source}</span>
+            </div>
+            {analysis.runtime_warnings.length ? (
+              <div className="chip-row">
+                {analysis.runtime_warnings.map((warning) => (
+                  <span key={warning} className="chip chip-warning">
+                    {warning}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {backendHealth ? (
+              <div className="meta-list">
+                <span>Profile: {backendHealth.analysis_profile}</span>
+                <span>Backend version: {backendHealth.backend_version ?? "unknown"}</span>
+              </div>
+            ) : null}
           </div>
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "end", flexWrap: "wrap" }}>
-            <label style={{ display: "grid", gap: "0.35rem", color: "var(--muted)", fontSize: "0.9rem" }}>
-              <span>API URL</span>
-              <input
-                value={apiBaseUrlDraft}
-                onChange={(event) => setApiBaseUrlDraft(event.target.value)}
-                placeholder="http://127.0.0.1:8000"
-                style={{
-                  minWidth: "15rem",
-                  borderRadius: "999px",
-                  border: "1px solid var(--border)",
-                  padding: "0.7rem 0.9rem",
-                  background: "white",
-                  color: "var(--ink)"
-                }}
-              />
+
+          <div className="panel-block">
+            <h2>Preferences</h2>
+            <label>
+              User ID
+              <input value={userId} onChange={(event) => setUserId(event.target.value)} />
             </label>
-            <label style={{ display: "grid", gap: "0.35rem", color: "var(--muted)", fontSize: "0.9rem" }}>
-              <span>Request mode</span>
+            <label>
+              API base URL
+              <div className="row">
+                <input value={apiBaseUrlDraft} onChange={(event) => setApiBaseUrlDraft(event.target.value)} />
+                <button type="button" className="icon-button" onClick={applyApiBaseUrl}>
+                  Apply
+                </button>
+              </div>
+            </label>
+            <label>
+              Writing goal
               <select
-                value={requestMode}
-                onChange={(event) => setRequestMode(event.target.value as AnalyzeMode)}
-                style={{
-                  minWidth: "10rem",
-                  borderRadius: "999px",
-                  border: "1px solid var(--border)",
-                  padding: "0.7rem 0.9rem",
-                  background: "white",
-                  color: "var(--ink)"
+                value={preferences.writing_goal}
+                onChange={(event) => {
+                  const nextGoal = event.target.value as UserPreferences["writing_goal"];
+                  setPreferences((current) => ({ ...current, writing_goal: nextGoal }));
+                  setMode(modeFromWritingGoal(nextGoal));
                 }}
               >
-                <option value="standard">Standard</option>
-                <option value="strict">Strict</option>
+                <option value="general">General</option>
                 <option value="formal">Formal</option>
+                <option value="academic">Academic</option>
+                <option value="business">Business</option>
+                <option value="casual">Casual</option>
+                <option value="social">Social</option>
               </select>
             </label>
-            <button type="button" className="suggestion-card__dismiss" onClick={handleApiBaseUrlSave}>
-              Use API URL
+            <label>
+              Tone goal
+              <select
+                value={preferences.tone_goal}
+                onChange={(event) =>
+                  setPreferences((current) => ({ ...current, tone_goal: event.target.value as UserPreferences["tone_goal"] }))
+                }
+              >
+                <option value="neutral">Neutral</option>
+                <option value="friendly">Friendly</option>
+                <option value="professional">Professional</option>
+                <option value="concise">Concise</option>
+                <option value="confident">Confident</option>
+              </select>
+            </label>
+            <label>
+              Suggestion density
+              <select
+                value={preferences.suggestion_density}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    suggestion_density: event.target.value as UserPreferences["suggestion_density"],
+                  }))
+                }
+              >
+                <option value="low">Low</option>
+                <option value="balanced">Balanced</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={preferences.auto_show_tone}
+                onChange={(event) => setPreferences((current) => ({ ...current, auto_show_tone: event.target.checked }))}
+              />
+              <span>Auto-show tone</span>
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={preferences.enable_rewrites}
+                onChange={(event) => setPreferences((current) => ({ ...current, enable_rewrites: event.target.checked }))}
+              />
+              <span>Enable rewrites</span>
+            </label>
+            <button type="button" className="button-primary" onClick={() => void savePreferencesToBackend()}>
+              Save preferences
             </button>
-            <button type="button" className="suggestion-card__dismiss" onClick={() => void refreshBackendHealth()}>
-              Retry API
-            </button>
-            <button
-              type="button"
-              className="analyze-button"
-              onClick={() => editor && void runAnalysis(getEditorTextSurface(editor).text, requestMode)}
-            >
-              Analyze now
-            </button>
           </div>
-        </div>
-        {backendMode === "offline" || backendMode === "misconfigured" ? (
-          <div
-            role="status"
-            style={{
-              marginBottom: "0.9rem",
-              padding: "0.85rem 1rem",
-              borderRadius: "18px",
-              border: "1px solid rgba(187, 128, 48, 0.28)",
-              background: "rgba(255, 244, 228, 0.82)",
-              color: "var(--ink)"
-            }}
-          >
-            {runtimeBanner}
-          </div>
-        ) : runtimeBanner ? (
-          <div
-            role="status"
-            style={{
-              marginBottom: "0.9rem",
-              padding: "0.85rem 1rem",
-              borderRadius: "18px",
-              border: "1px solid rgba(15, 109, 98, 0.2)",
-              background: "rgba(240, 249, 247, 0.94)",
-              color: "var(--ink)"
-            }}
-          >
-            {runtimeBanner}
-          </div>
-        ) : null}
-        <div
-          style={{
-            marginBottom: "0.9rem",
-            padding: "0.85rem 1rem",
-            borderRadius: "18px",
-            border: "1px solid var(--border)",
-            background: "rgba(255, 255, 255, 0.82)",
-            display: "grid",
-            gap: "0.45rem"
-          }}
-        >
-          <strong>{runtimeDescriptor.label}</strong>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", color: "var(--muted)", fontSize: "0.9rem" }}>
-            <span>Detector used: {analysis.used_detector ? "yes" : "no"}</span>
-            <span>Corrector used: {analysis.used_corrector ? "yes" : "no"}</span>
-            <span>Local-only suggestions: {runtimeDescriptor.localOnly ? "yes" : "no"}</span>
-            <span>Lexicon: {analysis.lexicon_source}{analysis.lexicon_version ? ` (${analysis.lexicon_version})` : ""}</span>
-            {analysis.backend_version ? <span>Backend: {analysis.backend_version}</span> : null}
-          </div>
-          {runtimeDescriptor.warnings.length > 0 ? (
-            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-              {runtimeDescriptor.warnings.map((warning) => (
-                <span
-                  key={warning}
-                  style={{
-                    borderRadius: "999px",
-                    padding: "0.2rem 0.55rem",
-                    background: "rgba(184, 50, 74, 0.08)",
-                    color: "var(--danger)",
-                    fontSize: "0.85rem"
-                  }}
+
+          <div className="panel-block">
+            <h2>Personal dictionary</h2>
+            <div className="row">
+              <input value={dictionaryDraft} onChange={(event) => setDictionaryDraft(event.target.value)} />
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  if (!dictionaryDraft.trim()) {
+                    return;
+                  }
+                  setPreferences((current) => ({
+                    ...current,
+                    personal_dictionary: upsertUnique(current.personal_dictionary, dictionaryDraft),
+                  }));
+                  setDictionaryDraft("");
+                }}
+              >
+                Add
+              </button>
+            </div>
+            <div className="chip-row">
+              {preferences.personal_dictionary.map((entry) => (
+                <button
+                  key={entry}
+                  type="button"
+                  className="chip chip-action"
+                  onClick={() =>
+                    setPreferences((current) => ({
+                      ...current,
+                      personal_dictionary: current.personal_dictionary.filter((item) => item !== entry),
+                    }))
+                  }
                 >
-                  {warning}
-                </span>
+                  {entry}
+                </button>
               ))}
             </div>
-          ) : null}
-        </div>
-        <div
-          ref={editorStageRef}
-          className="editor-stage"
-          onMouseOver={handleEditorMouseOver}
-          onMouseOut={handleEditorMouseOut}
-          onClick={handleEditorClick}
-        >
-          <EditorContent editor={editor} />
-        </div>
-        {visibleSuggestion ? (
-          <SuggestionCard
-            ref={cardRef}
-            suggestion={visibleSuggestion}
-            anchorRect={cardAnchorRect}
-            mode={isPopupPinned ? "pinned" : "preview"}
-            runtimeLabel={runtimeDescriptor.label}
-            sourceLabel={describeSuggestionSource(visibleSuggestion, analysis)}
-            isStale={visibleSuggestionIsStale}
-            canAddToDictionary={canAddSuggestionToDictionary(visibleSuggestion)}
-            navigation={
-              analysis.suggestions.length > 1 && visibleSuggestionIndex >= 0
-                ? {
-                    current: visibleSuggestionIndex + 1,
-                    total: analysis.suggestions.length,
-                    onPrevious: () => navigateVisibleSuggestion(-1),
-                    onNext: () => navigateVisibleSuggestion(1)
-                  }
-                : null
-            }
-            onAccept={handleAccept}
-            onDismiss={handleDismiss}
-            onAddToDictionary={() => void handlePersistentFeedbackAction("add_to_personal_dictionary")}
-            onMouseEnter={handlePopupMouseEnter}
-            onMouseLeave={handlePopupMouseLeave}
-            onFocusCapture={handlePopupFocusCapture}
-            onBlurCapture={handlePopupBlurCapture}
-            onPointerDownCapture={handlePopupPointerDownCapture}
-          />
-        ) : null}
-        {visibleSuggestion ? (
-          <div
-            style={{
-              marginTop: "0.85rem",
-              padding: "0.85rem 1rem",
-              borderRadius: "18px",
-              border: "1px solid var(--border)",
-              background: "rgba(255, 255, 255, 0.82)"
-            }}
-          >
-            <div className="panel-header" style={{ marginBottom: "0.65rem" }}>
-              <div>
-                <h2 style={{ fontSize: "1.1rem" }}>Trust & adapt</h2>
-                <p style={{ margin: 0 }}>
-                  Tell Shuddho when this suggestion should be suppressed or treated as your preferred wording.
-                </p>
+          </div>
+        </aside>
+
+        <section className="editor-panel">
+          <div className="panel-block">
+            <div className="editor-toolbar">
+              <div className="chip-row">
+                <span className="chip">{analysis.suggestions.length} suggestions</span>
+                <span className="chip">{mode} mode</span>
+                <span className="chip">{analysis.sentence_count} sentences</span>
+              </div>
+              <div className="rewrite-toolbar">
+                {(["clarity", "formal", "concise", "friendly", "professional"] as RewriteIntent[]).map((intent) => (
+                  <button key={intent} type="button" className="icon-button" onClick={() => void handleRewrite(intent)}>
+                    {intent}
+                  </button>
+                ))}
               </div>
             </div>
-            <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="suggestion-card__dismiss"
-                onClick={() => void handlePersistentFeedbackAction("not_wrong")}
-              >
-                This is not wrong
-              </button>
-              <button
-                type="button"
-                className="suggestion-card__dismiss"
-                onClick={() => void handlePersistentFeedbackAction("ignore_forever")}
-              >
-                Ignore forever
-              </button>
+            <textarea
+              ref={textareaRef}
+              className="editor-textarea"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              onSelect={handleSelectionChange}
+            />
+            <div className="meta-list">
+              <span>Corrected preview: {analysis.corrected_text}</span>
             </div>
           </div>
-        ) : null}
+
+          {rewriteResult ? (
+            <div className="panel-block">
+              <h2>Rewrite options</h2>
+              <div className="compare-grid">
+                <div>
+                  <span className="suggestion-card__label">Original</span>
+                  <p>{rewriteResult.original_text}</p>
+                </div>
+                <div>
+                  <span className="suggestion-card__label">Suggested</span>
+                  <p>{rewriteResult.target_text}</p>
+                </div>
+              </div>
+              <div className="suggestion-list">
+                {rewriteResult.options.map((option) => (
+                  <article key={option.id} className="rewrite-option">
+                    <div className="suggestion-card__header">
+                      <h3>{option.label}</h3>
+                      <div className="suggestion-card__chips">
+                        <span>{Math.round(option.confidence * 100)}%</span>
+                        <span>{option.source}</span>
+                      </div>
+                    </div>
+                    <p>{option.rewritten_text}</p>
+                    <p className="muted-text">{option.explanation_bn || option.explanation_en}</p>
+                    <button type="button" className="button-primary" onClick={() => applyRewriteOption(option.rewritten_text)}>
+                      Accept rewrite
+                    </button>
+                  </article>
+                ))}
+              </div>
+              {rewriteResult.warnings.length ? (
+                <div className="chip-row">
+                  {rewriteResult.warnings.map((warning) => (
+                    <span key={warning} className="chip chip-warning">
+                      {warning}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <button type="button" className="button-secondary" onClick={dismissRewrite}>
+                Dismiss rewrite
+              </button>
+            </div>
+          ) : null}
+
+          {tone ? (
+            <div className="panel-block">
+              <div className="suggestion-card__header">
+                <div>
+                  <div className="suggestion-card__eyebrow">Tone</div>
+                  <h2>{tone.primary_tone ?? "neutral"}</h2>
+                </div>
+                <div className="suggestion-card__chips">
+                  <span>{Math.round(tone.confidence * 100)}%</span>
+                  {tone.detected_tones.map((toneLabel) => (
+                    <span key={toneLabel}>{toneLabel}</span>
+                  ))}
+                </div>
+              </div>
+              <p>{tone.explanation_bn || tone.explanation_en}</p>
+              <div className="chip-row">
+                {tone.suggestions.map((suggestion) => (
+                  <span key={suggestion} className="chip">
+                    {suggestion}
+                  </span>
+                ))}
+              </div>
+              <div className="row">
+                <button type="button" className="button-secondary" onClick={() => void markToneFeedback("tone_helpful")}>
+                  Helpful
+                </button>
+                <button type="button" className="button-secondary" onClick={() => void markToneFeedback("tone_not_helpful")}>
+                  Not helpful
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
       </section>
 
-      <section className="suggestions-panel">
-        <div className="panel-header">
+      <section className="panel-block">
+        <div className="suggestion-card__header">
           <div>
-            <h2>Open suggestions</h2>
-            <p>
-              {isLocalFallbackActive
-                ? "Local fallback checks are shown here. Backend contextual corrections are unavailable until the API reconnects."
-                : "Hard errors stay visible here. Optional style guidance is separated below and muted by default."}
-            </p>
-            <p style={{ marginTop: "0.35rem" }}>
-              {runtimeDescriptor.label}. Detector used: {analysis.used_detector ? "yes" : "no"}. Corrector used: {analysis.used_corrector ? "yes" : "no"}.
-            </p>
+            <div className="suggestion-card__eyebrow">Suggestions</div>
+            <h2>Review queue</h2>
           </div>
-          <pre className="panel-header__normalized">{analysis.normalized_text}</pre>
+          <div className="suggestion-card__chips">
+            <span>{runtimeDescriptor.label}</span>
+          </div>
         </div>
-        <div ref={suggestionListRef} className="suggestion-list">
-          {hardSuggestions.map((suggestion) => renderSuggestionListItem(suggestion))}
-          {hardSuggestions.length === 0 ? (
-            <p className="empty-state">
-              {isLocalFallbackActive
-                ? "No local fallback issues found. Contextual backend suggestions are unavailable in this degraded mode."
-                : optionalStyleSuggestions.length > 0
-                ? "No hard errors found. Optional style guidance is available below."
-                : "No issues found for this draft."}
-            </p>
-          ) : null}
-        </div>
-        {optionalStyleSuggestions.length > 0 ? (
-          <section
-            aria-label="Optional style suggestions"
-            style={{
-              marginTop: "1rem",
-              paddingTop: "1rem",
-              borderTop: "1px solid var(--border)",
-              opacity: requestMode === "formal" ? 1 : 0.9
-            }}
-          >
-            <div className="panel-header" style={{ marginBottom: "0.75rem" }}>
-              <div>
-                <h2 style={{ fontSize: "1.2rem" }}>Optional style & orthography suggestions</h2>
-                <p style={{ margin: 0 }}>
-                  {requestMode === "formal"
-                    ? "Formal mode opens style and register guidance automatically."
-                    : "Style suggestions stay collapsed by default so likely errors remain prominent."}
-                </p>
-              </div>
+
+        {analysis.suggestions.length ? (
+          <div className="suggestion-list">
+            {analysis.suggestions.map((suggestion) => (
               <button
+                key={suggestion.id}
                 type="button"
-                className="suggestion-card__dismiss"
-                onClick={() => setShowStyleSuggestions((current) => !current)}
+                className={`suggestion-row ${selectedSuggestionId === suggestion.id ? "suggestion-row--active" : ""}`}
+                onClick={() => setSelectedSuggestionId(suggestion.id)}
               >
-                {showStyleSuggestions ? "Hide style suggestions" : `Show style suggestions (${optionalStyleSuggestions.length})`}
+                <strong>{suggestion.short_title ?? suggestion.subtype}</strong>
+                <span>{suggestion.suggestion_reason_short_bn ?? suggestion.explanation_bn}</span>
               </button>
-            </div>
-            {showStyleSuggestions ? (
-              <div className="suggestion-list">
-                {optionalStyleSuggestions.map((suggestion) => renderSuggestionListItem(suggestion, true))}
-              </div>
-            ) : (
-              <p className="empty-state" style={{ margin: 0 }}>
-                Optional style guidance is hidden in {requestMode} mode.
-              </p>
-            )}
-          </section>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-state">
+            {backendMode === "online" ? "No suggestions in the current draft." : "Fallback checks did not find issues in the current draft."}
+          </p>
+        )}
+
+        {selectedSuggestion ? (
+          <SuggestionCard
+            suggestion={selectedSuggestion}
+            onApply={(candidate, replacement) => handleApplySuggestion(candidate, replacement, selectedSuggestion)}
+            onDismiss={() => handleDismissSuggestion(selectedSuggestion)}
+            onIgnoreForever={() => handleIgnoreForever(selectedSuggestion)}
+            onAddToDictionary={
+              canAddSuggestionToDictionary(selectedSuggestion) ? () => handleAddToDictionary(selectedSuggestion) : undefined
+            }
+            onRewrite={(intent) => void handleRewrite(intent, selectedSuggestion)}
+          />
         ) : null}
       </section>
     </main>
   );
 }
 
-function findIssueElement(target: EventTarget | null): HTMLElement | null {
-  const element = getElementFromTarget(target);
-  return element?.closest<HTMLElement>("[data-issue-id]") ?? null;
+function buildLocalFallbackResponse(text: string, mode: AnalyzeMode, personalDictionary: string[]): AnalyzeResponse {
+  return analyzeTextLocally({
+    text,
+    mode,
+    personal_dictionary: personalDictionary,
+  });
 }
 
-function getElementFromTarget(target: EventTarget | null): HTMLElement | null {
-  if (target instanceof HTMLElement) {
-    return target;
+async function sendFeedbackIfOnline(payload: Parameters<typeof sendFeedback>[0]) {
+  try {
+    await sendFeedback(payload);
+  } catch {
+    // Ignore feedback transport failures in the demo surface.
   }
-  if (target instanceof Text) {
-    return target.parentElement;
-  }
-  return null;
 }
 
-function findIssueAnchor(root: ParentNode, suggestionId: string): HTMLElement | null {
-  return Array.from(root.querySelectorAll<HTMLElement>("[data-issue-id]")).find(
-    (element) => element.dataset.issueId === suggestionId
-  ) ?? null;
-}
-
-function findSuggestionListAnchor(root: ParentNode, suggestionId: string): HTMLElement | null {
-  return Array.from(root.querySelectorAll<HTMLElement>("[data-suggestion-id]")).find(
-    (element) => element.dataset.suggestionId === suggestionId
-  ) ?? null;
-}
-
-function toCardAnchor(element: HTMLElement): SuggestionCardAnchor {
-  const rect = element.getBoundingClientRect();
-  return {
-    left: rect.left,
-    top: rect.top,
-    right: rect.right,
-    bottom: rect.bottom,
-    width: rect.width,
-    height: rect.height
-  };
-}
-
-function describeBackendStatus(backendMode: BackendMode, health: HealthResponse | null): string {
-  if (backendMode === "offline") {
-    return "Backend unreachable — local fallback only";
-  }
-  if (backendMode === "checking") {
-    return "Checking backend";
-  }
-  if (health && !health.detector.loaded) {
-    return "Backend live but detector disabled";
-  }
-  if (health && !health.corrector.loaded) {
-    return "Backend live but corrector unavailable";
-  }
-  return "Backend live";
-}
-
-function formatBackendMessage(health: HealthResponse, apiBaseUrl: string): string {
-  const details = [`Backend reached at ${apiBaseUrl}.`];
-  if (health.detector.loaded) {
-    details.push(`Detector ready at ${health.detector.checkpoint ?? "configured checkpoint"}.`);
-  } else {
-    details.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
-  }
-
-  if (health.corrector.loaded) {
-    details.push(`Corrector ready at ${health.corrector.checkpoint ?? "configured checkpoint"}.`);
-  } else {
-    details.push(`Corrector unavailable${health.corrector.reason ? `: ${health.corrector.reason}` : "."}`);
-  }
-
-  return details.join(" ");
-}
-
-function describeRuntimeBanner(
-  backendMode: BackendMode,
-  health: HealthResponse | null,
-  apiBaseUrl: string,
-): string | null {
-  if (backendMode === "offline") {
-    return `Local fallback checks only. The backend could not be reached at ${apiBaseUrl}, so contextual backend corrections are turned off in this session.`;
-  }
-  if (backendMode !== "online" || !health || health.analysis_profile === "full_local") {
-    return null;
-  }
-
-  const reasons: string[] = [];
-  if (!health.detector.loaded) {
-    reasons.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
-  }
-  if (!health.corrector.loaded) {
-    reasons.push(`Corrector unavailable${health.corrector.reason ? `: ${health.corrector.reason}` : "."}`);
-  }
-
-  if (!reasons.length) {
-    return null;
-  }
-
-  return `${describeBackendStatus("online", health)}. ${reasons.join(" ")} You are still getting backend rules and spelling checks, but not the full local stack.`;
-}
-
-export function formatAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
-  const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
-  const styleSuggestionCount = suggestions.length - hardIssueCount;
-  const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
-  const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
-
-  if (styleSuggestionCount === 0) {
-    return `${hardIssueCount} ${hardLabel} • ${mode} mode`;
-  }
-
-  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} • ${mode} mode`;
-}
-
-export function formatFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
-  const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
-  const styleSuggestionCount = suggestions.length - hardIssueCount;
-  const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
-  const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
-
-  if (styleSuggestionCount === 0) {
-    return `${hardIssueCount} ${hardLabel} • ${LOCAL_FALLBACK_LABEL.toLowerCase()} • ${mode} mode`;
-  }
-
-  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} • ${LOCAL_FALLBACK_LABEL.toLowerCase()} • ${mode} mode`;
-}
-
-function formatPreciseAnalysisStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
-  const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
-  const styleSuggestionCount = suggestions.length - hardIssueCount;
-  const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
-  const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
-
-  if (styleSuggestionCount === 0) {
-    return `${hardIssueCount} ${hardLabel} | ${mode} mode`;
-  }
-
-  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} | ${mode} mode`;
-}
-
-function formatPreciseFallbackStatus(suggestions: Suggestion[], mode: AnalyzeMode): string {
-  const hardIssueCount = suggestions.filter((suggestion) => suggestion.category !== "style").length;
-  const styleSuggestionCount = suggestions.length - hardIssueCount;
-  const hardLabel = hardIssueCount === 1 ? "hard issue" : "hard issues";
-  const styleLabel = styleSuggestionCount === 1 ? "optional style suggestion" : "optional style suggestions";
-
-  if (styleSuggestionCount === 0) {
-    return `${hardIssueCount} ${hardLabel} | ${LOCAL_FALLBACK_LABEL.toLowerCase()} | ${mode} mode`;
-  }
-
-  return `${hardIssueCount} ${hardLabel}, ${styleSuggestionCount} ${styleLabel} | ${LOCAL_FALLBACK_LABEL.toLowerCase()} | ${mode} mode`;
-}
-
-function formatHealthRuntimeMessage(health: HealthDeepResponse, apiBaseUrl: string): string {
-  const details = [`Backend reached at ${apiBaseUrl}.`, `${health.analysis_profile}.`];
-  if (health.backend_version) {
-    details.push(`Backend version ${health.backend_version}.`);
-  }
-  details.push(`Lexicon ${health.lexicon.runtime_source}${health.lexicon.version ? ` (${health.lexicon.version})` : ""}.`);
-  if (health.detector.loaded) {
-    details.push(`Detector ready at ${health.detector.checkpoint ?? "configured checkpoint"}.`);
-  } else {
-    details.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
-  }
-  if (health.corrector.loaded) {
-    details.push(`Corrector ready at ${health.corrector.checkpoint ?? "configured checkpoint"}.`);
-  } else {
-    details.push(`Corrector unavailable${health.corrector.reason ? `: ${health.corrector.reason}` : "."}`);
-  }
-  return details.join(" ");
-}
-
-function formatBackendRuntimeMessage(
-  analysis: AnalyzeResponse,
-  health: HealthDeepResponse | null,
-  apiBaseUrl: string,
-): string {
-  if (analysis.runtime_source === "frontend_local_fallback") {
-    return `${LOCAL_FALLBACK_LABEL} are active because backend analysis is unavailable at ${apiBaseUrl}.`;
-  }
-  if (health) {
-    formatBackendMessage(health, apiBaseUrl);
-    return formatHealthRuntimeMessage(health, apiBaseUrl);
-  }
-  return `${analysis.runtime_source}. Backend reached at ${apiBaseUrl}.`;
-}
-
-function buildRuntimeBanner(
-  runtimeDescriptor: ReturnType<typeof describeRuntimeState>,
-  analysis: AnalyzeResponse,
-  health: HealthDeepResponse | null,
-  hardWarning: string | null,
-  apiBaseUrl: string,
-): string | null {
-  if (hardWarning) {
-    return hardWarning;
-  }
-  if (analysis.runtime_source === "frontend_local_fallback") {
-    return `Local fallback checks only. The backend could not be reached at ${apiBaseUrl}, so contextual backend corrections are turned off in this session.`;
-  }
-  describeRuntimeBanner("online", health, apiBaseUrl);
-  if (runtimeDescriptor.label === "Full local Bangla analysis active" && !analysis.runtime_warnings.length) {
-    return null;
-  }
-  const reasons: string[] = [];
-  if (health && !health.detector.loaded) {
-    reasons.push(`Detector unavailable${health.detector.reason ? `: ${health.detector.reason}` : "."}`);
-  }
-  if (health && !health.corrector.loaded) {
-    reasons.push(`Corrector unavailable${health.corrector.reason ? `: ${health.corrector.reason}` : "."}`);
-  }
-  const warningText = [...reasons, ...analysis.runtime_warnings].join(" ");
-  if (!warningText) {
-    return runtimeDescriptor.label === "Full local Bangla analysis active" ? null : runtimeDescriptor.label;
-  }
-  return `${runtimeDescriptor.label}. ${warningText}`.trim();
-}
-
-function formatRuntimeSummaryStatus(
-  suggestions: Suggestion[],
-  mode: AnalyzeMode,
-  runtimeSource: AnalyzeResponse["runtime_source"],
-): string {
-  if (runtimeSource === "frontend_local_fallback") {
-    return formatPreciseFallbackStatus(suggestions, mode);
-  }
-  return formatPreciseAnalysisStatus(suggestions, mode);
+function replaceSpan(text: string, start: number, end: number, replacement: string): string {
+  return `${text.slice(0, start)}${replacement}${text.slice(end)}`;
 }
 
 function createEmptyAnalysis(text: string, mode: AnalyzeMode): AnalyzeResponse {
@@ -1353,74 +756,47 @@ function createEmptyAnalysis(text: string, mode: AnalyzeMode): AnalyzeResponse {
   };
 }
 
-function buildLocalFallbackResponse(
-  text: string,
-  mode: AnalyzeMode,
-  runtimeWarnings: Array<string | null | undefined>,
-  personalDictionary: string[],
-): AnalyzeResponse {
-  const response = analyzeTextLocally({
-    text,
-    mode,
-    personal_dictionary: personalDictionary,
-  });
+function defaultPreferences(userId: string): UserPreferences {
   return {
-    ...response,
-    runtime_warnings: [
-      ...new Set(
-        [response.runtime_warnings, runtimeWarnings]
-          .flat()
-          .filter((warning): warning is string => Boolean(warning && warning.trim()))
-      ),
-    ],
+    user_id: userId,
+    preferred_language_variant: "bangla",
+    writing_goal: "general",
+    tone_goal: "neutral",
+    suggestion_density: "balanced",
+    auto_show_tone: true,
+    enable_rewrites: true,
+    personal_dictionary: [],
+    suppressed_rule_keys: [],
+    disabled_sites: [],
   };
-}
-
-function loadPersonalDictionary(): string[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  const rawValue = window.localStorage.getItem(PERSONAL_DICTIONARY_STORAGE_KEY);
-  if (!rawValue) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .map((entry) => normalizeDictionaryEntry(String(entry)))
-      .filter((entry): entry is string => Boolean(entry));
-  } catch {
-    return [];
-  }
-}
-
-function normalizeDictionaryEntry(entry: string): string {
-  return entry.trim().replace(/\s+/g, " ");
 }
 
 function loadOrCreateLocalUserId(): string {
   if (typeof window === "undefined") {
     return "anonymous-web-editor";
   }
-
-  const existingUserId = window.localStorage.getItem(USER_PROFILE_ID_STORAGE_KEY);
-  if (existingUserId) {
-    return existingUserId;
+  const existing = window.localStorage.getItem(USER_PROFILE_ID_STORAGE_KEY);
+  if (existing) {
+    return existing;
   }
-
-  const generatedUserId = createLocalUserId();
-  window.localStorage.setItem(USER_PROFILE_ID_STORAGE_KEY, generatedUserId);
-  return generatedUserId;
+  const created = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `anon-${Date.now().toString(36)}`;
+  window.localStorage.setItem(USER_PROFILE_ID_STORAGE_KEY, created);
+  return created;
 }
 
-function createLocalUserId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
+function upsertUnique(items: string[], value: string): string[] {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized || items.includes(normalized)) {
+    return items;
   }
-  return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return [...items, normalized];
+}
+
+function modeFromWritingGoal(writingGoal: UserPreferences["writing_goal"]): AnalyzeMode {
+  if (writingGoal === "formal" || writingGoal === "academic" || writingGoal === "business") {
+    return "formal";
+  }
+  return "standard";
 }

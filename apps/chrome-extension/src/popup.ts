@@ -1,74 +1,140 @@
-import { getApiBaseUrl } from "./config";
+import { getExtensionSettings, getHostnameFromUrl, setSiteDisabled, updateExtensionSettings } from "./config";
+import type { ExtensionSettings } from "./types";
+
+const DETECTOR_UNAVAILABLE_COPY = "Backend live — detector unavailable";
+const CORRECTOR_UNAVAILABLE_COPY = "Backend live — corrector unavailable";
+const BACKEND_UNREACHABLE_COPY = "Backend unreachable — smart analysis paused";
 
 const statusElement = document.getElementById("status");
-const apiBaseUrl = getApiBaseUrl();
+const siteHostnameElement = document.getElementById("site-hostname");
+const toggleSiteButton = document.getElementById("toggle-site") as HTMLButtonElement | null;
+const backendUrlInput = document.getElementById("backend-url") as HTMLInputElement | null;
+const userIdInput = document.getElementById("user-id") as HTMLInputElement | null;
+const writingGoalSelect = document.getElementById("writing-goal") as HTMLSelectElement | null;
+const toneGoalSelect = document.getElementById("tone-goal") as HTMLSelectElement | null;
+const suggestionDensitySelect = document.getElementById("suggestion-density") as HTMLSelectElement | null;
+const rewritesEnabledInput = document.getElementById("rewrites-enabled") as HTMLInputElement | null;
+const autoShowToneInput = document.getElementById("auto-show-tone") as HTMLInputElement | null;
+const dictionaryTextarea = document.getElementById("dictionary") as HTMLTextAreaElement | null;
+const saveButton = document.getElementById("save-settings") as HTMLButtonElement | null;
 
-interface HealthResponse {
-  status: string;
-  detector_loaded: boolean;
-  detector_checkpoint: string | null;
-  corrector_loaded: boolean;
-  corrector_checkpoint: string | null;
-  allowed_origins: string[];
-  analysis_profile: string;
-  degraded_reasons: string[];
-  detector: {
-    loaded: boolean;
-    reason: string | null;
-  };
-  corrector: {
-    loaded: boolean;
-    reason: string | null;
-  };
+let settings: ExtensionSettings | null = null;
+let currentHostname: string | null = null;
+
+void initializePopup();
+
+async function initializePopup(): Promise<void> {
+  settings = await getExtensionSettings();
+  currentHostname = await resolveCurrentHostname();
+  renderSettings();
+  await refreshBackendStatus();
 }
 
-async function checkBackend(): Promise<void> {
-  if (!statusElement) {
+async function refreshBackendStatus(): Promise<void> {
+  if (!settings || !statusElement) {
     return;
   }
 
   try {
-    const response = await fetch(`${apiBaseUrl}/health`);
+    const response = await fetch(`${settings.backendBaseUrl}/health`);
     if (!response.ok) {
       throw new Error(String(response.status));
     }
-    const health = (await response.json()) as HealthResponse;
-    statusElement.textContent = describeBackendStatus(health, apiBaseUrl);
-    statusElement.title = buildHealthTitle(health);
+    const health = (await response.json()) as {
+      analysis_profile: string;
+      detector: { loaded: boolean; reason?: string | null };
+      corrector: { loaded: boolean; reason?: string | null };
+    };
+    const issues: string[] = [];
+    if (!health.detector.loaded) {
+      issues.push(DETECTOR_UNAVAILABLE_COPY);
+    }
+    if (!health.corrector.loaded) {
+      issues.push(CORRECTOR_UNAVAILABLE_COPY);
+    }
+    statusElement.textContent = issues.length
+      ? `${health.analysis_profile} (${issues.join(", ")})`
+      : `${health.analysis_profile}`;
   } catch {
-    statusElement.textContent = `Backend unreachable — smart analysis paused at ${apiBaseUrl}.`;
-    statusElement.title = "";
+    statusElement.textContent = `${BACKEND_UNREACHABLE_COPY} at ${settings.backendBaseUrl}`;
   }
 }
 
-void checkBackend();
+function renderSettings(): void {
+  if (!settings) {
+    return;
+  }
 
-function describeBackendStatus(health: HealthResponse, baseUrl: string): string {
-  if (!health.detector.loaded) {
-    return `Backend live — detector unavailable at ${baseUrl}.`;
+  if (backendUrlInput) {
+    backendUrlInput.value = settings.backendBaseUrl;
   }
-  if (!health.corrector.loaded) {
-    return `Backend live — corrector unavailable at ${baseUrl}.`;
+  if (userIdInput) {
+    userIdInput.value = settings.currentUserId;
   }
-  return `Full local Bangla analysis active at ${baseUrl}.`;
+  if (writingGoalSelect) {
+    writingGoalSelect.value = settings.writingGoal;
+  }
+  if (toneGoalSelect) {
+    toneGoalSelect.value = settings.toneGoal;
+  }
+  if (suggestionDensitySelect) {
+    suggestionDensitySelect.value = settings.suggestionDensity;
+  }
+  if (rewritesEnabledInput) {
+    rewritesEnabledInput.checked = settings.rewritesEnabled;
+  }
+  if (autoShowToneInput) {
+    autoShowToneInput.checked = settings.autoShowTone;
+  }
+  if (dictionaryTextarea) {
+    dictionaryTextarea.value = settings.localPersonalDictionaryMirror.join("\n");
+  }
+  if (siteHostnameElement) {
+    siteHostnameElement.textContent = currentHostname ?? "Unavailable";
+  }
+  if (toggleSiteButton) {
+    const disabled = Boolean(currentHostname && settings.disabledSites.includes(currentHostname));
+    toggleSiteButton.textContent = disabled ? "Enable site" : "Disable site";
+  }
 }
 
-function buildHealthTitle(health: HealthResponse): string {
-  const details = [`Allowed origins: ${health.allowed_origins.join(", ") || "none"}`];
-  if (health.detector_checkpoint) {
-    details.push(`Checkpoint: ${health.detector_checkpoint}`);
+saveButton?.addEventListener("click", async () => {
+  if (!backendUrlInput || !userIdInput || !writingGoalSelect || !toneGoalSelect || !suggestionDensitySelect || !rewritesEnabledInput || !autoShowToneInput || !dictionaryTextarea) {
+    return;
   }
-  if (health.corrector_checkpoint) {
-    details.push(`Corrector checkpoint: ${health.corrector_checkpoint}`);
+
+  settings = await updateExtensionSettings({
+    backendBaseUrl: backendUrlInput.value.trim(),
+    currentUserId: userIdInput.value.trim(),
+    writingGoal: writingGoalSelect.value as ExtensionSettings["writingGoal"],
+    toneGoal: toneGoalSelect.value as ExtensionSettings["toneGoal"],
+    suggestionDensity: suggestionDensitySelect.value as ExtensionSettings["suggestionDensity"],
+    rewritesEnabled: rewritesEnabledInput.checked,
+    autoShowTone: autoShowToneInput.checked,
+    localPersonalDictionaryMirror: normalizeDictionary(dictionaryTextarea.value),
+  });
+  renderSettings();
+  await refreshBackendStatus();
+});
+
+toggleSiteButton?.addEventListener("click", async () => {
+  if (!currentHostname || !settings) {
+    return;
   }
-  if (!health.detector.loaded && health.detector.reason) {
-    details.push(`Detector: ${health.detector.reason}`);
-  }
-  if (!health.corrector.loaded && health.corrector.reason) {
-    details.push(`Corrector: ${health.corrector.reason}`);
-  }
-  if (health.degraded_reasons.length) {
-    details.push(`Degraded reasons: ${health.degraded_reasons.join(", ")}`);
-  }
-  return details.join(" | ");
+  const disabled = !settings.disabledSites.includes(currentHostname);
+  settings = await setSiteDisabled(currentHostname, disabled);
+  renderSettings();
+});
+
+async function resolveCurrentHostname(): Promise<string | null> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return getHostnameFromUrl(tab?.url);
+}
+
+function normalizeDictionary(value: string): string[] {
+  const entries = value
+    .split(/\r?\n/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return [...new Set(entries)];
 }

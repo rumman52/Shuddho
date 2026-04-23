@@ -22,13 +22,72 @@ export type SuggestionKind =
   | "spacing_error"
   | "named_entity_or_user_word"
   | "no_suggestion";
+export type SuggestionUiGroup =
+  | "correctness"
+  | "clarity"
+  | "tone"
+  | "style"
+  | "punctuation";
+export type PreferredLanguageVariant = "bangla";
+export type WritingGoal =
+  | "general"
+  | "formal"
+  | "academic"
+  | "business"
+  | "casual"
+  | "social";
+export type ToneGoal =
+  | "neutral"
+  | "friendly"
+  | "professional"
+  | "concise"
+  | "confident";
+export type SuggestionDensity = "low" | "balanced" | "high";
+export type RewriteIntent =
+  | "clarity"
+  | "formal"
+  | "concise"
+  | "friendly"
+  | "professional";
+export type ToneLabel =
+  | "neutral"
+  | "friendly"
+  | "professional"
+  | "casual"
+  | "confident"
+  | "respectful"
+  | "urgent"
+  | "unclear";
 export type FeedbackAction =
   | "accepted"
   | "dismissed"
   | "suppressed"
   | "ignore_forever"
   | "add_to_personal_dictionary"
-  | "not_wrong";
+  | "not_wrong"
+  | "rewrite_accepted"
+  | "rewrite_dismissed"
+  | "tone_helpful"
+  | "tone_not_helpful";
+
+export interface SuggestionAlternative {
+  id: string;
+  rule_id: string;
+  category: SuggestionCategory;
+  subtype: string;
+  original_text: string;
+  replacement_options: string[];
+  confidence: number;
+  explanation_bn: string;
+  explanation_en: string;
+  source: SuggestionSource;
+  severity: SuggestionSeverity;
+  feedback_key?: string | null;
+  suggestion_kind?: SuggestionKind | null;
+  suppression_key?: string | null;
+  is_variant_only?: boolean;
+  source_trace?: string[] | null;
+}
 
 export interface Suggestion {
   id: string;
@@ -61,25 +120,16 @@ export interface Suggestion {
   is_primary?: boolean;
   primary_reason?: string | null;
   alternatives?: SuggestionAlternative[];
-}
-
-export interface SuggestionAlternative {
-  id: string;
-  rule_id: string;
-  category: SuggestionCategory;
-  subtype: string;
-  original_text: string;
-  replacement_options: string[];
-  confidence: number;
-  explanation_bn: string;
-  explanation_en: string;
-  source: SuggestionSource;
-  severity: SuggestionSeverity;
-  feedback_key?: string | null;
-  suggestion_kind?: SuggestionKind | null;
-  suppression_key?: string | null;
-  is_variant_only?: boolean;
-  source_trace?: string[] | null;
+  short_title?: string | null;
+  ui_group?: SuggestionUiGroup | null;
+  can_auto_apply?: boolean | null;
+  learnable?: boolean | null;
+  ranking_score?: number | null;
+  suggestion_reason_short_bn?: string | null;
+  suggestion_reason_short_en?: string | null;
+  action_hints?: string[];
+  rewrite_intents?: RewriteIntent[];
+  tone_labels?: ToneLabel[];
 }
 
 export interface AnalyzeRequest {
@@ -104,6 +154,63 @@ export interface AnalyzeResponse {
   backend_version?: string | null;
   sentence_count: number;
   request_mode_applied: AnalyzeMode;
+}
+
+export interface UserPreferences {
+  user_id: string;
+  preferred_language_variant: PreferredLanguageVariant;
+  writing_goal: WritingGoal;
+  tone_goal: ToneGoal;
+  suggestion_density: SuggestionDensity;
+  auto_show_tone: boolean;
+  enable_rewrites: boolean;
+  personal_dictionary: string[];
+  suppressed_rule_keys: string[];
+  disabled_sites: string[];
+}
+
+export interface RewriteRequest {
+  text: string;
+  selection_start?: number | null;
+  selection_end?: number | null;
+  intent: RewriteIntent;
+  user_id?: string | null;
+  writing_goal?: WritingGoal | null;
+  tone_goal?: ToneGoal | null;
+}
+
+export interface RewriteOption {
+  id: string;
+  label: string;
+  rewritten_text: string;
+  confidence: number;
+  explanation_bn: string;
+  explanation_en: string;
+  source: string;
+}
+
+export interface RewriteResponse {
+  original_text: string;
+  target_text: string;
+  selection_start?: number | null;
+  selection_end?: number | null;
+  intent: RewriteIntent;
+  options: RewriteOption[];
+  warnings: string[];
+}
+
+export interface ToneAnalysisRequest {
+  text: string;
+  user_id?: string | null;
+}
+
+export interface ToneAnalysisResponse {
+  detected_tones: ToneLabel[];
+  primary_tone?: ToneLabel | null;
+  confidence: number;
+  explanation_bn: string;
+  explanation_en: string;
+  suggestions: string[];
 }
 
 export interface DetectorHealth {

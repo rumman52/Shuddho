@@ -3,7 +3,7 @@
   "name": "Shuddho",
   "description": "Bangla writing assistant extension scaffold",
   "version": "0.1.0",
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
     "https://shuddho-api.onrender.com/*",
     "https://*.trycloudflare.com/*",

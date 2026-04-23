@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shared.schemas.python_models import FeedbackAction, FeedbackRecord, FeedbackRequest, Suggestion, SuggestionSource
+from shared.schemas.python_models import FeedbackAction, FeedbackRecord, FeedbackRequest, Suggestion, SuggestionSource, UserPreferences
 from shared.utils.suggestions import build_feedback_key
 
 
@@ -53,6 +54,7 @@ class FeedbackSignalIndex:
 @dataclass(frozen=True)
 class FeedbackPreferenceIndex:
     suppressed_keys: set[str]
+    suppressed_rule_keys: set[str]
     personal_dictionary: set[str]
 
 
@@ -78,6 +80,7 @@ class FeedbackStore:
                     source TEXT,
                     original_text TEXT,
                     suppression_key TEXT,
+                    rule_preference_key TEXT,
                     user_dictionary_entry TEXT,
                     user_id TEXT,
                     created_at TEXT NOT NULL
@@ -90,9 +93,27 @@ class FeedbackStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     action TEXT NOT NULL,
                     suppression_key TEXT,
+                    rule_preference_key TEXT,
                     user_dictionary_entry TEXT,
                     user_id TEXT,
                     created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    user_id TEXT PRIMARY KEY,
+                    preferred_language_variant TEXT NOT NULL,
+                    writing_goal TEXT NOT NULL,
+                    tone_goal TEXT NOT NULL,
+                    suggestion_density TEXT NOT NULL,
+                    auto_show_tone INTEGER NOT NULL,
+                    enable_rewrites INTEGER NOT NULL,
+                    personal_dictionary_json TEXT NOT NULL,
+                    suppressed_rule_keys_json TEXT NOT NULL,
+                    disabled_sites_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -102,9 +123,11 @@ class FeedbackStore:
             self._ensure_column(connection, "feedback", "source", "TEXT")
             self._ensure_column(connection, "feedback", "original_text", "TEXT")
             self._ensure_column(connection, "feedback", "suppression_key", "TEXT")
+            self._ensure_column(connection, "feedback", "rule_preference_key", "TEXT")
             self._ensure_column(connection, "feedback", "user_dictionary_entry", "TEXT")
             self._ensure_column(connection, "feedback", "user_id", "TEXT")
             self._ensure_column(connection, "feedback_preferences", "suppression_key", "TEXT")
+            self._ensure_column(connection, "feedback_preferences", "rule_preference_key", "TEXT")
             self._ensure_column(connection, "feedback_preferences", "user_dictionary_entry", "TEXT")
             self._ensure_column(connection, "feedback_preferences", "user_id", "TEXT")
             connection.commit()
@@ -113,6 +136,7 @@ class FeedbackStore:
         created_at = datetime.now(timezone.utc)
         feedback_key = self._resolve_feedback_key(payload)
         suppression_key = self._resolve_suppression_key(payload, feedback_key=feedback_key)
+        rule_preference_key = self._resolve_rule_preference_key(payload, suppression_key=suppression_key)
         user_dictionary_entry = self._resolve_user_dictionary_entry(payload)
 
         with sqlite3.connect(self.database_path) as connection:
@@ -129,11 +153,12 @@ class FeedbackStore:
                     source,
                     original_text,
                     suppression_key,
+                    rule_preference_key,
                     user_dictionary_entry,
                     user_id,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload.suggestion_id,
@@ -146,6 +171,7 @@ class FeedbackStore:
                     payload.source.value if payload.source else None,
                     payload.original_text,
                     suppression_key,
+                    rule_preference_key,
                     user_dictionary_entry,
                     payload.user_id,
                     created_at.isoformat(),
@@ -155,6 +181,7 @@ class FeedbackStore:
                 connection,
                 action=payload.action,
                 suppression_key=suppression_key,
+                rule_preference_key=rule_preference_key,
                 user_dictionary_entry=user_dictionary_entry,
                 user_id=payload.user_id,
                 created_at=created_at,
@@ -195,7 +222,7 @@ class FeedbackStore:
             if user_id:
                 rows = connection.execute(
                     """
-                    SELECT action, suppression_key, user_dictionary_entry
+                    SELECT action, suppression_key, rule_preference_key, user_dictionary_entry
                     FROM feedback_preferences
                     WHERE user_id IS NULL OR user_id = ?
                     ORDER BY id ASC
@@ -205,7 +232,7 @@ class FeedbackStore:
             else:
                 rows = connection.execute(
                     """
-                    SELECT action, suppression_key, user_dictionary_entry
+                    SELECT action, suppression_key, rule_preference_key, user_dictionary_entry
                     FROM feedback_preferences
                     WHERE user_id IS NULL
                     ORDER BY id ASC
@@ -214,24 +241,134 @@ class FeedbackStore:
 
         suppressed_keys = {
             str(suppression_key)
-            for action, suppression_key, _ in rows
+            for action, suppression_key, _, _ in rows
             if suppression_key and str(action) in SUPPRESSION_ACTIONS
+        }
+        suppressed_rule_keys = {
+            str(rule_preference_key)
+            for action, _, rule_preference_key, _ in rows
+            if rule_preference_key and str(action) in SUPPRESSION_ACTIONS
         }
         personal_dictionary = {
             str(entry)
-            for action, _, entry in rows
+            for action, _, _, entry in rows
             if entry and str(action) == FeedbackAction.ADD_TO_PERSONAL_DICTIONARY.value
         }
         return FeedbackPreferenceIndex(
             suppressed_keys=suppressed_keys,
+            suppressed_rule_keys=suppressed_rule_keys,
             personal_dictionary=personal_dictionary,
         )
 
     def load_suppressed_keys(self, user_id: str | None = None) -> set[str]:
         return self.load_preference_index(user_id=user_id).suppressed_keys
 
+    def load_suppressed_rule_keys(self, user_id: str | None = None) -> set[str]:
+        return self.load_preference_index(user_id=user_id).suppressed_rule_keys
+
     def load_personal_dictionary(self, user_id: str | None = None) -> list[str]:
         return sorted(self.load_preference_index(user_id=user_id).personal_dictionary)
+
+    def load_user_preferences(self, user_id: str) -> UserPreferences:
+        stored = self._load_stored_user_preferences(user_id)
+        feedback_preferences = self.load_preference_index(user_id=user_id)
+        return stored.model_copy(
+            update={
+                "personal_dictionary": _merge_ordered_strings(
+                    stored.personal_dictionary,
+                    sorted(feedback_preferences.personal_dictionary),
+                ),
+                "suppressed_rule_keys": _merge_ordered_strings(
+                    stored.suppressed_rule_keys,
+                    sorted(feedback_preferences.suppressed_rule_keys),
+                ),
+            }
+        )
+
+    def save_user_preferences(self, user_id: str, preferences: UserPreferences) -> UserPreferences:
+        payload = preferences.model_copy(update={"user_id": user_id})
+        updated_at = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO user_preferences (
+                    user_id,
+                    preferred_language_variant,
+                    writing_goal,
+                    tone_goal,
+                    suggestion_density,
+                    auto_show_tone,
+                    enable_rewrites,
+                    personal_dictionary_json,
+                    suppressed_rule_keys_json,
+                    disabled_sites_json,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    preferred_language_variant = excluded.preferred_language_variant,
+                    writing_goal = excluded.writing_goal,
+                    tone_goal = excluded.tone_goal,
+                    suggestion_density = excluded.suggestion_density,
+                    auto_show_tone = excluded.auto_show_tone,
+                    enable_rewrites = excluded.enable_rewrites,
+                    personal_dictionary_json = excluded.personal_dictionary_json,
+                    suppressed_rule_keys_json = excluded.suppressed_rule_keys_json,
+                    disabled_sites_json = excluded.disabled_sites_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    payload.user_id,
+                    payload.preferred_language_variant.value,
+                    payload.writing_goal.value,
+                    payload.tone_goal.value,
+                    payload.suggestion_density.value,
+                    1 if payload.auto_show_tone else 0,
+                    1 if payload.enable_rewrites else 0,
+                    json.dumps(payload.personal_dictionary, ensure_ascii=False),
+                    json.dumps(payload.suppressed_rule_keys, ensure_ascii=False),
+                    json.dumps(payload.disabled_sites, ensure_ascii=False),
+                    updated_at,
+                ),
+            )
+            connection.commit()
+        return self.load_user_preferences(user_id)
+
+    def _load_stored_user_preferences(self, user_id: str) -> UserPreferences:
+        with sqlite3.connect(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    preferred_language_variant,
+                    writing_goal,
+                    tone_goal,
+                    suggestion_density,
+                    auto_show_tone,
+                    enable_rewrites,
+                    personal_dictionary_json,
+                    suppressed_rule_keys_json,
+                    disabled_sites_json
+                FROM user_preferences
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+
+        if row is None:
+            return UserPreferences(user_id=user_id)
+
+        return UserPreferences(
+            user_id=user_id,
+            preferred_language_variant=row[0],
+            writing_goal=row[1],
+            tone_goal=row[2],
+            suggestion_density=row[3],
+            auto_show_tone=bool(row[4]),
+            enable_rewrites=bool(row[5]),
+            personal_dictionary=_loads_json_list(row[6]),
+            suppressed_rule_keys=_loads_json_list(row[7]),
+            disabled_sites=_loads_json_list(row[8]),
+        )
 
     def _load_grouped_stats(
         self,
@@ -277,6 +414,7 @@ class FeedbackStore:
         *,
         action: FeedbackAction,
         suppression_key: str | None,
+        rule_preference_key: str | None,
         user_dictionary_entry: str | None,
         user_id: str | None,
         created_at: datetime,
@@ -294,15 +432,17 @@ class FeedbackStore:
             INSERT INTO feedback_preferences (
                 action,
                 suppression_key,
+                rule_preference_key,
                 user_dictionary_entry,
                 user_id,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 action.value,
                 suppression_key,
+                rule_preference_key,
                 user_dictionary_entry,
                 user_id,
                 created_at.isoformat(),
@@ -332,6 +472,18 @@ class FeedbackStore:
             )
         return feedback_key
 
+    def _resolve_rule_preference_key(
+        self,
+        payload: FeedbackRequest,
+        *,
+        suppression_key: str | None,
+    ) -> str | None:
+        if payload.rule_id and payload.subtype:
+            return f"{payload.rule_id}:{payload.subtype}"
+        if payload.rule_id:
+            return payload.rule_id
+        return suppression_key
+
     def _resolve_user_dictionary_entry(self, payload: FeedbackRequest) -> str | None:
         if payload.user_dictionary_entry:
             return " ".join(payload.user_dictionary_entry.split())
@@ -347,6 +499,38 @@ class FeedbackStore:
         if column_name in existing_columns:
             return
         connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+
+def _loads_json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in parsed:
+        compact = " ".join(str(item).split())
+        if not compact or compact in seen:
+            continue
+        seen.add(compact)
+        normalized.append(compact)
+    return normalized
+
+
+def _merge_ordered_strings(primary: list[str], secondary: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in [*primary, *secondary]:
+        compact = " ".join(value.split())
+        if not compact or compact in seen:
+            continue
+        seen.add(compact)
+        merged.append(compact)
+    return merged
 
 
 def _stable_digest(prefix: str, payload: str) -> str:

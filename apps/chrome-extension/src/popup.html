@@ -8,34 +8,171 @@
       body {
         margin: 0;
         font-family: "Segoe UI", sans-serif;
-        background: #f3efe5;
-        color: #1f2a37;
+        background: #f5f7f8;
+        color: #18232d;
       }
       main {
-        width: 280px;
-        padding: 16px;
+        width: 360px;
+        padding: 14px;
+        display: grid;
+        gap: 12px;
+      }
+      section {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid #d7dfe3;
+        border-radius: 8px;
+        background: #fff;
+      }
+      h1,
+      h2,
+      p {
+        margin: 0;
       }
       h1 {
-        margin: 0 0 8px;
         font-size: 18px;
       }
-      p {
-        margin: 0 0 8px;
-        color: #5b6470;
+      h2 {
+        font-size: 14px;
       }
-      code {
-        display: block;
-        padding: 8px;
-        background: white;
-        border-radius: 12px;
+      label {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: #5b6772;
+      }
+      input,
+      select,
+      textarea,
+      button {
+        font: inherit;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border: 1px solid #d7dfe3;
+        border-radius: 8px;
+      }
+      textarea {
+        min-height: 72px;
+        resize: vertical;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .row > * {
+        flex: 1;
+      }
+      .row button {
+        flex: 0 0 auto;
+      }
+      .checkbox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .checkbox input {
+        width: auto;
+      }
+      button {
+        border: 1px solid #d7dfe3;
+        border-radius: 8px;
+        background: #fff;
+        color: #18232d;
+        padding: 8px 10px;
+        cursor: pointer;
+      }
+      .primary {
+        background: #0b6b63;
+        border-color: #0b6b63;
+        color: #fff;
+      }
+      .muted {
+        color: #5b6772;
+        font-size: 12px;
+      }
+      .status {
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: #eef3f4;
       }
     </style>
   </head>
   <body>
     <main>
-      <h1>Shuddho</h1>
-      <p>The content script watches textarea and contenteditable fields and sends debounced analyze requests to the configured API.</p>
-      <code id="status">Checking backend…</code>
+      <section>
+        <h1>Shuddho</h1>
+        <div id="status" class="status">Checking backend...</div>
+        <div class="row">
+          <div>
+            <h2 id="site-title">Current site</h2>
+            <p id="site-hostname" class="muted">Unavailable</p>
+          </div>
+          <button id="toggle-site" type="button">Disable site</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Settings</h2>
+        <label>
+          Backend URL
+          <input id="backend-url" />
+        </label>
+        <label>
+          User ID
+          <input id="user-id" />
+        </label>
+        <div class="row">
+          <label>
+            Writing goal
+            <select id="writing-goal">
+              <option value="general">General</option>
+              <option value="formal">Formal</option>
+              <option value="academic">Academic</option>
+              <option value="business">Business</option>
+              <option value="casual">Casual</option>
+              <option value="social">Social</option>
+            </select>
+          </label>
+          <label>
+            Tone goal
+            <select id="tone-goal">
+              <option value="neutral">Neutral</option>
+              <option value="friendly">Friendly</option>
+              <option value="professional">Professional</option>
+              <option value="concise">Concise</option>
+              <option value="confident">Confident</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Suggestion density
+          <select id="suggestion-density">
+            <option value="low">Low</option>
+            <option value="balanced">Balanced</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+        <label class="checkbox">
+          <input id="rewrites-enabled" type="checkbox" />
+          <span>Enable rewrites</span>
+        </label>
+        <label class="checkbox">
+          <input id="auto-show-tone" type="checkbox" />
+          <span>Auto-show tone</span>
+        </label>
+        <label>
+          Personal dictionary
+          <textarea id="dictionary"></textarea>
+        </label>
+        <button id="save-settings" type="button" class="primary">Save settings</button>
+      </section>
     </main>
     <script type="module" src="./src/popup.js"></script>
   </body>

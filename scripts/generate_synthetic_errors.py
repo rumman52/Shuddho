@@ -484,7 +484,7 @@ def _formal_informal_mismatch_records(text: str) -> list[SyntheticRecord]:
                         end=issue_end,
                         label="grammar",
                         subtype="formal_informal_mismatch",
-                        fine_label="mixed_register",
+                        fine_label="formal_informal_mismatch",
                         expected_text="",
                         observed_text=conflicting_pronoun,
                     ),

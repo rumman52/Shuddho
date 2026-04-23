@@ -53,6 +53,60 @@ class SuggestionKind(str, Enum):
     NO_SUGGESTION = "no_suggestion"
 
 
+class SuggestionUiGroup(str, Enum):
+    CORRECTNESS = "correctness"
+    CLARITY = "clarity"
+    TONE = "tone"
+    STYLE = "style"
+    PUNCTUATION = "punctuation"
+
+
+class PreferredLanguageVariant(str, Enum):
+    BANGLA = "bangla"
+
+
+class WritingGoal(str, Enum):
+    GENERAL = "general"
+    FORMAL = "formal"
+    ACADEMIC = "academic"
+    BUSINESS = "business"
+    CASUAL = "casual"
+    SOCIAL = "social"
+
+
+class ToneGoal(str, Enum):
+    NEUTRAL = "neutral"
+    FRIENDLY = "friendly"
+    PROFESSIONAL = "professional"
+    CONCISE = "concise"
+    CONFIDENT = "confident"
+
+
+class SuggestionDensity(str, Enum):
+    LOW = "low"
+    BALANCED = "balanced"
+    HIGH = "high"
+
+
+class RewriteIntent(str, Enum):
+    CLARITY = "clarity"
+    FORMAL = "formal"
+    CONCISE = "concise"
+    FRIENDLY = "friendly"
+    PROFESSIONAL = "professional"
+
+
+class ToneLabel(str, Enum):
+    NEUTRAL = "neutral"
+    FRIENDLY = "friendly"
+    PROFESSIONAL = "professional"
+    CASUAL = "casual"
+    CONFIDENT = "confident"
+    RESPECTFUL = "respectful"
+    URGENT = "urgent"
+    UNCLEAR = "unclear"
+
+
 class SuggestionAlternative(BaseModel):
     id: str
     rule_id: str
@@ -74,29 +128,14 @@ class SuggestionAlternative(BaseModel):
     @field_validator("replacement_options")
     @classmethod
     def normalize_replacement_options(cls, value: list[str]) -> list[str]:
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for option in value:
-            compact = _normalize_replacement_option(option)
-            if not compact or compact in seen:
-                continue
-            seen.add(compact)
-            normalized.append(compact)
-        return normalized
+        return _normalize_unique_strings(value, preserve_single_space=True)
 
     @field_validator("source_trace")
     @classmethod
     def normalize_source_trace(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return None
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in value:
-            compact = item.strip()
-            if not compact or compact in seen:
-                continue
-            seen.add(compact)
-            normalized.append(compact)
+        normalized = _normalize_unique_strings(value)
         return normalized or None
 
     @model_validator(mode="after")
@@ -158,46 +197,49 @@ class Suggestion(BaseModel):
     is_primary: bool = True
     primary_reason: str | None = None
     alternatives: list[SuggestionAlternative] = Field(default_factory=list)
+    short_title: str | None = None
+    ui_group: SuggestionUiGroup | None = None
+    can_auto_apply: bool | None = None
+    learnable: bool | None = None
+    ranking_score: float | None = None
+    suggestion_reason_short_bn: str | None = None
+    suggestion_reason_short_en: str | None = None
+    action_hints: list[str] = Field(default_factory=list)
+    rewrite_intents: list[RewriteIntent] = Field(default_factory=list)
+    tone_labels: list[ToneLabel] = Field(default_factory=list)
 
     @field_validator("replacement_options")
     @classmethod
     def normalize_replacement_options(cls, value: list[str]) -> list[str]:
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for option in value:
-            compact = _normalize_replacement_option(option)
-            if not compact or compact in seen:
-                continue
-            seen.add(compact)
-            normalized.append(compact)
-        return normalized
+        return _normalize_unique_strings(value, preserve_single_space=True)
 
     @field_validator("optional_mode_visibility")
     @classmethod
     def normalize_optional_mode_visibility(cls, value: list[AnalyzeMode]) -> list[AnalyzeMode]:
-        normalized: list[AnalyzeMode] = []
-        seen: set[AnalyzeMode] = set()
-        for mode in value:
-            if mode in seen:
-                continue
-            seen.add(mode)
-            normalized.append(mode)
-        return normalized
+        return _normalize_unique_enums(value)
 
     @field_validator("source_trace")
     @classmethod
     def normalize_source_trace(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return None
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in value:
-            compact = item.strip()
-            if not compact or compact in seen:
-                continue
-            seen.add(compact)
-            normalized.append(compact)
+        normalized = _normalize_unique_strings(value)
         return normalized or None
+
+    @field_validator("action_hints")
+    @classmethod
+    def normalize_action_hints(cls, value: list[str]) -> list[str]:
+        return _normalize_unique_strings(value)
+
+    @field_validator("rewrite_intents")
+    @classmethod
+    def normalize_rewrite_intents(cls, value: list[RewriteIntent]) -> list[RewriteIntent]:
+        return _normalize_unique_enums(value)
+
+    @field_validator("tone_labels")
+    @classmethod
+    def normalize_tone_labels(cls, value: list[ToneLabel]) -> list[ToneLabel]:
+        return _normalize_unique_enums(value)
 
     @model_validator(mode="after")
     def populate_precision_metadata(self) -> "Suggestion":
@@ -242,15 +284,7 @@ class AnalyzeRequest(BaseModel):
     @field_validator("personal_dictionary")
     @classmethod
     def normalize_personal_dictionary(cls, value: list[str]) -> list[str]:
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for entry in value:
-            compact = " ".join(entry.split())
-            if not compact or compact in seen:
-                continue
-            seen.add(compact)
-            normalized.append(compact)
-        return normalized
+        return _normalize_unique_entries(value)
 
 
 class AnalyzeResponse(BaseModel):
@@ -270,6 +304,93 @@ class AnalyzeResponse(BaseModel):
     request_mode_applied: AnalyzeMode = AnalyzeMode.STANDARD
 
 
+class UserPreferences(BaseModel):
+    user_id: str
+    preferred_language_variant: PreferredLanguageVariant = PreferredLanguageVariant.BANGLA
+    writing_goal: WritingGoal = WritingGoal.GENERAL
+    tone_goal: ToneGoal = ToneGoal.NEUTRAL
+    suggestion_density: SuggestionDensity = SuggestionDensity.BALANCED
+    auto_show_tone: bool = True
+    enable_rewrites: bool = True
+    personal_dictionary: list[str] = Field(default_factory=list)
+    suppressed_rule_keys: list[str] = Field(default_factory=list)
+    disabled_sites: list[str] = Field(default_factory=list)
+
+    @field_validator("personal_dictionary")
+    @classmethod
+    def normalize_personal_dictionary(cls, value: list[str]) -> list[str]:
+        return _normalize_unique_entries(value)
+
+    @field_validator("suppressed_rule_keys", "disabled_sites")
+    @classmethod
+    def normalize_string_lists(cls, value: list[str]) -> list[str]:
+        return _normalize_unique_strings(value)
+
+
+class RewriteRequest(BaseModel):
+    text: str
+    selection_start: int | None = Field(default=None, ge=0)
+    selection_end: int | None = Field(default=None, ge=0)
+    intent: RewriteIntent
+    user_id: str | None = None
+    writing_goal: WritingGoal | None = None
+    tone_goal: ToneGoal | None = None
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "RewriteRequest":
+        if self.selection_start is None and self.selection_end is None:
+            return self
+        if self.selection_start is None or self.selection_end is None:
+            raise ValueError("selection_start and selection_end must be provided together")
+        if self.selection_end < self.selection_start:
+            raise ValueError("selection_end must be greater than or equal to selection_start")
+        return self
+
+
+class RewriteOption(BaseModel):
+    id: str
+    label: str
+    rewritten_text: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    explanation_bn: str
+    explanation_en: str
+    source: str
+
+
+class RewriteResponse(BaseModel):
+    original_text: str
+    target_text: str
+    selection_start: int | None = Field(default=None, ge=0)
+    selection_end: int | None = Field(default=None, ge=0)
+    intent: RewriteIntent
+    options: list[RewriteOption] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ToneAnalysisRequest(BaseModel):
+    text: str
+    user_id: str | None = None
+
+
+class ToneAnalysisResponse(BaseModel):
+    detected_tones: list[ToneLabel] = Field(default_factory=list)
+    primary_tone: ToneLabel | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    explanation_bn: str
+    explanation_en: str
+    suggestions: list[str] = Field(default_factory=list)
+
+    @field_validator("detected_tones")
+    @classmethod
+    def normalize_detected_tones(cls, value: list[ToneLabel]) -> list[ToneLabel]:
+        return _normalize_unique_enums(value)
+
+    @field_validator("suggestions")
+    @classmethod
+    def normalize_suggestions(cls, value: list[str]) -> list[str]:
+        return _normalize_unique_strings(value)
+
+
 class FeedbackAction(str, Enum):
     ACCEPTED = "accepted"
     DISMISSED = "dismissed"
@@ -277,6 +398,10 @@ class FeedbackAction(str, Enum):
     IGNORE_FOREVER = "ignore_forever"
     ADD_TO_PERSONAL_DICTIONARY = "add_to_personal_dictionary"
     NOT_WRONG = "not_wrong"
+    REWRITE_ACCEPTED = "rewrite_accepted"
+    REWRITE_DISMISSED = "rewrite_dismissed"
+    TONE_HELPFUL = "tone_helpful"
+    TONE_NOT_HELPFUL = "tone_not_helpful"
 
 
 class FeedbackRequest(BaseModel):
@@ -459,3 +584,38 @@ def _normalize_replacement_option(option: str) -> str:
     if option.isspace():
         return " "
     return ""
+
+
+def _normalize_unique_strings(values: list[str], *, preserve_single_space: bool = False) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        compact = _normalize_replacement_option(value) if preserve_single_space else " ".join(value.split())
+        if not compact or compact in seen:
+            continue
+        seen.add(compact)
+        normalized.append(compact)
+    return normalized
+
+
+def _normalize_unique_entries(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        compact = " ".join(value.split())
+        if not compact or compact in seen:
+            continue
+        seen.add(compact)
+        normalized.append(compact)
+    return normalized
+
+
+def _normalize_unique_enums(values: list[Enum]) -> list[Enum]:
+    normalized: list[Enum] = []
+    seen: set[Enum] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
