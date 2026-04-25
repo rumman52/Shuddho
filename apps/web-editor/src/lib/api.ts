@@ -20,6 +20,7 @@ export interface ApiConfigurationState {
   targetsLocalhost: boolean;
   hardWarning: string | null;
   backendAllowed: boolean;
+  localFallbackEnabled: boolean;
 }
 
 let apiConfiguration = resolveApiConfiguration();
@@ -28,14 +29,16 @@ export function deriveApiConfiguration(args: {
   configuredBaseUrl?: string | null;
   storedBaseUrl?: string | null;
   browserHostname?: string | null;
+  enableLocalFallback?: boolean | null;
 }): ApiConfigurationState {
-  const { configuredBaseUrl, storedBaseUrl, browserHostname } = args;
+  const { configuredBaseUrl, storedBaseUrl, browserHostname, enableLocalFallback } = args;
   const isLocalOrigin = isLocalBrowserOrigin(browserHostname);
   const rawBaseUrl = storedBaseUrl?.trim() || configuredBaseUrl?.trim() || DEFAULT_LOCAL_API_BASE_URL;
   const source =
     storedBaseUrl?.trim() ? "override" : configuredBaseUrl?.trim() ? "environment" : "default_local";
   const apiBaseUrl = normalizeApiBaseUrl(rawBaseUrl);
   const targetsLocalhost = isLocalApiBaseUrl(apiBaseUrl);
+  const localFallbackEnabled = Boolean(enableLocalFallback);
   const hardWarning =
     !isLocalOrigin && targetsLocalhost
       ? `This deployed editor is still pointing to ${apiBaseUrl}. Set VITE_API_BASE_URL to a public backend URL; localhost is only valid from local browser sessions.`
@@ -48,6 +51,7 @@ export function deriveApiConfiguration(args: {
     targetsLocalhost,
     hardWarning,
     backendAllowed: hardWarning === null,
+    localFallbackEnabled,
   };
 }
 
@@ -153,6 +157,7 @@ export function setApiBaseUrlOverride(nextBaseUrl: string): string {
     configuredBaseUrl: readConfiguredBaseUrl(),
     storedBaseUrl: trimmedValue || null,
     browserHostname: readBrowserHostname(),
+    enableLocalFallback: readLocalFallbackFlag(),
   });
   return apiConfiguration.apiBaseUrl;
 }
@@ -162,6 +167,7 @@ function resolveApiConfiguration(): ApiConfigurationState {
     configuredBaseUrl: readConfiguredBaseUrl(),
     storedBaseUrl: readStoredApiBaseUrl(),
     browserHostname: readBrowserHostname(),
+    enableLocalFallback: readLocalFallbackFlag(),
   });
 }
 
@@ -169,6 +175,15 @@ function readConfiguredBaseUrl(): string | null {
   const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
   const configuredBaseUrl = importMetaEnv.VITE_API_BASE_URL ?? importMetaEnv.VITE_API_URL;
   return configuredBaseUrl?.trim() || null;
+}
+
+function readLocalFallbackFlag(): boolean {
+  const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+  const rawValue = importMetaEnv.VITE_ENABLE_LOCAL_FALLBACK;
+  if (!rawValue) {
+    return false;
+  }
+  return /^(1|true|yes|on)$/i.test(rawValue.trim());
 }
 
 function readBrowserHostname(): string | null {

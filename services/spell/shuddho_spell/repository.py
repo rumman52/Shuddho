@@ -18,6 +18,8 @@ class RuntimeLexiconSnapshot:
     accepted_words: tuple[str, ...]
     candidate_words: tuple[str, ...]
     correction_map: dict[str, str]
+    variant_map: dict[str, str]
+    protected_words: tuple[str, ...]
     runtime_source: str
     runtime_source_of_truth: str
     runtime_path: Path | None
@@ -57,7 +59,7 @@ class LexiconRepository:
 
     def _load_snapshot(self) -> RuntimeLexiconSnapshot:
         if self.clean_csv_path.exists():
-            accepted_words, candidate_words, correction_map = _load_runtime_lexicon_from_csv(self.clean_csv_path)
+            accepted_words, candidate_words, correction_map, variant_map, protected_words = _load_runtime_lexicon_from_csv(self.clean_csv_path)
             runtime_metadata = _load_runtime_metadata(self.runtime_metadata_path)
             checksum = _checksum_path(self.clean_csv_path)
             version = str(runtime_metadata.get("policy_version", "")) + ":" + checksum[:12] if runtime_metadata and checksum else (
@@ -67,6 +69,8 @@ class LexiconRepository:
                 accepted_words=accepted_words,
                 candidate_words=candidate_words,
                 correction_map=correction_map,
+                variant_map=variant_map,
+                protected_words=protected_words,
                 runtime_source=str(runtime_metadata.get("runtime_source", self.clean_csv_path.name)) if runtime_metadata else self.clean_csv_path.name,
                 runtime_source_of_truth=(
                     str(runtime_metadata.get("runtime_source_of_truth", "csv_runtime"))
@@ -79,7 +83,7 @@ class LexiconRepository:
                 checksum=checksum,
                 accepted_word_count=len(accepted_words),
                 candidate_word_count=len(candidate_words),
-                correction_map_count=len(correction_map),
+                correction_map_count=len(correction_map) + len(variant_map),
                 import_database_path=self.import_database_path,
                 import_database_exists=bool(self.import_database_path and self.import_database_path.exists()),
                 loaded_at=datetime.now(timezone.utc),
@@ -93,6 +97,8 @@ class LexiconRepository:
                 accepted_words=accepted_words,
                 candidate_words=accepted_words,
                 correction_map={},
+                variant_map={},
+                protected_words=(),
                 runtime_source="seed_fallback",
                 runtime_source_of_truth="seed_fallback",
                 runtime_path=self.fallback_seed_path,
@@ -110,12 +116,17 @@ class LexiconRepository:
         raise FileNotFoundError(f"Missing runtime lexicon source: {self.clean_csv_path}")
 
 
-def _load_runtime_lexicon_from_csv(clean_csv_path: Path) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
+def _load_runtime_lexicon_from_csv(
+    clean_csv_path: Path,
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str], dict[str, str], tuple[str, ...]]:
     accepted_words: list[str] = []
     candidate_words: list[str] = []
+    protected_words: list[str] = []
     seen_words: set[str] = set()
     seen_candidates: set[str] = set()
+    seen_protected: set[str] = set()
     correction_map: dict[str, str] = {}
+    variant_map: dict[str, str] = {}
 
     with clean_csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -136,23 +147,79 @@ def _load_runtime_lexicon_from_csv(clean_csv_path: Path) -> tuple[tuple[str, ...
 
             raw_word = _require_text(row, "word", clean_csv_path, row_index)
             canonical_word = _require_text(row, "normalized_word", clean_csv_path, row_index)
+            layer = (row.get("layer") or "").strip()
+            review_state = (row.get("review_state") or "").strip()
+            action = (row.get("action") or "").strip().lower()
+            correction_type = (row.get("correction_type") or "").strip().lower()
+            protected = _is_protected_runtime_row(action=action, correction_type=correction_type)
             if include_in_runtime and canonical_word not in seen_words:
                 seen_words.add(canonical_word)
                 accepted_words.append(canonical_word)
             if include_as_candidate and canonical_word not in seen_candidates:
                 seen_candidates.add(canonical_word)
                 candidate_words.append(canonical_word)
+            if protected:
+                if include_in_runtime and raw_word not in seen_words:
+                    seen_words.add(raw_word)
+                    accepted_words.append(raw_word)
+                if include_as_candidate and raw_word not in seen_candidates:
+                    seen_candidates.add(raw_word)
+                    candidate_words.append(raw_word)
+                if raw_word not in seen_protected:
+                    seen_protected.add(raw_word)
+                    protected_words.append(raw_word)
 
             if not include_in_runtime or raw_word == canonical_word:
                 continue
-            if raw_word in correction_map:
+            if raw_word in correction_map or raw_word in variant_map:
                 continue
 
-            correction_map[raw_word] = canonical_word
+            mapping_policy = _mapping_policy(
+                layer=layer,
+                review_state=review_state,
+                action=action,
+                correction_type=correction_type,
+            )
+            if mapping_policy == "variant":
+                variant_map[raw_word] = canonical_word
+            elif mapping_policy == "correction":
+                correction_map[raw_word] = canonical_word
 
     accepted = tuple(accepted_words)
     candidates = tuple(candidate_words or accepted_words)
-    return accepted, candidates, correction_map
+    return accepted, candidates, correction_map, variant_map, tuple(protected_words)
+
+
+def _looks_like_variant_mapping(*, layer: str, review_state: str) -> bool:
+    normalized_layer = layer.strip().lower()
+    normalized_review_state = review_state.strip().lower()
+    return (
+        normalized_layer == "accepted_variants"
+        or normalized_review_state == "normalized_surface_variant"
+    )
+
+
+def _mapping_policy(*, layer: str, review_state: str, action: str, correction_type: str) -> str:
+    if action == "suggest_variant":
+        return "variant"
+    if action == "safe_typo":
+        return "correction"
+    if action in {"accept", "review_only", "never_correct"}:
+        return "none"
+    if correction_type in {"variant", "orthographic_variant", "surface_variant"}:
+        return "variant"
+    if correction_type in {"typo", "safe_typo", "correction"}:
+        return "correction"
+    return "variant" if _looks_like_variant_mapping(layer=layer, review_state=review_state) else "correction"
+
+
+def _is_protected_runtime_row(*, action: str, correction_type: str) -> bool:
+    return action in {"review_only", "never_correct"} or correction_type in {
+        "named_entity",
+        "user_word",
+        "review_only",
+        "never_correct",
+    }
 
 
 def _load_seed_fallback(seed_path: Path) -> tuple[str, ...]:

@@ -515,6 +515,7 @@ def _infer_suggestion_kind(
         "space_after_punctuation",
         "genitive_spacing",
         "fused_postposition",
+        "number_unit_spacing",
     }:
         return SuggestionKind.SPACING_ERROR
     if category == SuggestionCategory.SPELLING:

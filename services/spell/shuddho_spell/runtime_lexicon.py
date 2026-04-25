@@ -12,6 +12,8 @@ class RuntimeLexicon:
     accepted_words: tuple[str, ...]
     candidate_words: tuple[str, ...]
     correction_map: dict[str, str]
+    variant_map: dict[str, str]
+    protected_words: tuple[str, ...]
     source: str
     version: str | None = None
     checksum: str | None = None
@@ -35,6 +37,8 @@ def load_runtime_lexicon(
         accepted_words=snapshot.accepted_words,
         candidate_words=snapshot.candidate_words,
         correction_map=snapshot.correction_map,
+        variant_map=snapshot.variant_map,
+        protected_words=snapshot.protected_words,
         source=snapshot.runtime_source,
         version=snapshot.version,
         checksum=snapshot.checksum,

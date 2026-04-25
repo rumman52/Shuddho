@@ -25,20 +25,20 @@ function buildAnalysis(overrides: Partial<AnalyzeResponse> = {}): AnalyzeRespons
   };
 }
 
-test("getRuntimeLabel returns the fixed runtime copy", () => {
-  assert.equal(getRuntimeLabel("full_local"), "Full local Bangla analysis active");
-  assert.equal(getRuntimeLabel("backend_rules_and_spell_only"), "Backend live — rules/spell only");
-  assert.equal(getRuntimeLabel("backend_without_detector"), "Backend live — detector unavailable");
-  assert.equal(getRuntimeLabel("backend_without_corrector"), "Backend live — corrector unavailable");
-  assert.equal(getRuntimeLabel("frontend_local_fallback"), "Backend unreachable — local fallback only");
+test("getRuntimeLabel returns explicit backend status copy", () => {
+  assert.equal(getRuntimeLabel("full_local"), "Online contextual backend");
+  assert.equal(getRuntimeLabel("backend_rules_and_spell_only"), "Backend online rules/spell only");
+  assert.equal(getRuntimeLabel("backend_without_detector"), "Backend online but detector missing");
+  assert.equal(getRuntimeLabel("backend_without_corrector"), "Backend online but corrector missing");
+  assert.equal(getRuntimeLabel("frontend_local_fallback"), "Dev-only browser fallback");
 });
 
-test("describeRuntimeState marks local fallback and exposes warnings", () => {
+test("describeRuntimeState marks offline backend with suggestions disabled by default", () => {
   const descriptor = describeRuntimeState({
     analysis: buildAnalysis({
       analysis_profile: "frontend_local_fallback",
       runtime_source: "frontend_local_fallback",
-      runtime_warnings: ["backend_unreachable_local_fallback"],
+      runtime_warnings: ["backend_offline_contextual_disabled"],
       used_detector: false,
       used_corrector: false,
     }),
@@ -46,10 +46,28 @@ test("describeRuntimeState marks local fallback and exposes warnings", () => {
     health: null,
   });
 
-  assert.equal(descriptor.label, "Backend unreachable — local fallback only");
+  assert.equal(descriptor.label, "Backend offline, suggestions disabled");
+  assert.equal(descriptor.localOnly, false);
+  assert.equal(descriptor.degraded, true);
+  assert.deepEqual(descriptor.warnings, ["backend_offline_contextual_disabled"]);
+});
+
+test("describeRuntimeState distinguishes dev-only local fallback from disabled backend mode", () => {
+  const descriptor = describeRuntimeState({
+    analysis: buildAnalysis({
+      analysis_profile: "frontend_local_fallback",
+      runtime_source: "frontend_local_fallback",
+      runtime_warnings: ["frontend_local_fallback_enabled"],
+      used_detector: false,
+      used_corrector: false,
+    }),
+    transport: "offline",
+    health: null,
+  });
+
+  assert.equal(descriptor.label, "Dev-only browser fallback");
   assert.equal(descriptor.localOnly, true);
   assert.equal(descriptor.degraded, true);
-  assert.deepEqual(descriptor.warnings, ["backend_unreachable_local_fallback"]);
 });
 
 test("describeRuntimeState marks deployed localhost backends as misconfigured", () => {
@@ -57,7 +75,7 @@ test("describeRuntimeState marks deployed localhost backends as misconfigured", 
     analysis: buildAnalysis({
       analysis_profile: "frontend_local_fallback",
       runtime_source: "frontend_local_fallback",
-      runtime_warnings: ["frontend_local_fallback"],
+      runtime_warnings: ["backend_misconfigured_contextual_disabled"],
       used_detector: false,
       used_corrector: false,
     }),
@@ -67,8 +85,8 @@ test("describeRuntimeState marks deployed localhost backends as misconfigured", 
       "This deployed editor is still pointing to http://127.0.0.1:8000. Set VITE_API_BASE_URL to a public backend URL; localhost is only valid from local browser sessions.",
   });
 
-  assert.equal(descriptor.label, "Backend misconfigured — localhost API blocked");
-  assert.equal(descriptor.localOnly, true);
+  assert.equal(descriptor.label, "Backend misconfigured - contextual correction disabled");
+  assert.equal(descriptor.localOnly, false);
   assert.equal(descriptor.degraded, true);
   assert.equal(descriptor.warnings[0]?.includes("VITE_API_BASE_URL"), true);
 });

@@ -177,3 +177,45 @@ def test_rule_engine_surfaces_exact_typos_as_spelling_errors() -> None:
 
     assert spellings
     assert all(suggestion.subtype == "spelling_error" for suggestion in spellings)
+
+
+def test_rule_engine_covers_requested_contextual_agreement_examples() -> None:
+    engine = RuleEngine()
+    examples = [
+        ("আমি স্কুলে যায়।", "যায়", "যাই", "কর্তা ‘আমি’ হলে ক্রিয়াটি ‘যাই’ হওয়া উচিত।"),
+        ("আমি ভাত খায়।", "খায়", "খাই", "কর্তা ‘আমি’ হলে ক্রিয়াটি ‘খাই’ হওয়া উচিত।"),
+        ("আমি বই পড়ে।", "পড়ে", "পড়ি", "কর্তা ‘আমি’ হলে ক্রিয়াটি ‘পড়ি’ হওয়া উচিত।"),
+        ("আমি কাজ করে।", "করে", "করি", "কর্তা ‘আমি’ হলে ক্রিয়াটি ‘করি’ হওয়া উচিত।"),
+        ("আমি কাল যাবেন।", "যাবেন", "যাব", "কর্তা ‘আমি’ হলে ক্রিয়াটি ‘যাব’ হওয়া উচিত।"),
+        ("সে স্কুলে যাই।", "যাই", "যায়", "কর্তা ‘সে’ হলে ক্রিয়াটি ‘যায়’ হওয়া উচিত।"),
+        ("সে ভাত খাই।", "খাই", "খায়", "কর্তা ‘সে’ হলে ক্রিয়াটি ‘খায়’ হওয়া উচিত।"),
+        ("সে বই পড়ি।", "পড়ি", "পড়ে", "কর্তা ‘সে’ হলে ক্রিয়াটি ‘পড়ে’ হওয়া উচিত।"),
+        ("সে কাজ করি।", "করি", "করে", "কর্তা ‘সে’ হলে ক্রিয়াটি ‘করে’ হওয়া উচিত।"),
+        ("তুমি স্কুলে যায়।", "যায়", "যাও", "কর্তা ‘তুমি’ হলে ক্রিয়াটি ‘যাও’ হওয়া উচিত।"),
+        ("তুমি বই পড়েন।", "পড়েন", "পড়ো", "কর্তা ‘তুমি’ হলে ক্রিয়াটি ‘পড়ো’ হওয়া উচিত।"),
+        ("আপনি স্কুলে যাও।", "যাও", "যান", "সম্বোধন ‘আপনি’ হলে সম্মানসূচক ক্রিয়া ‘যান’ ব্যবহার করা উচিত।"),
+        ("আপনি বই পড়ো।", "পড়ো", "পড়েন", "সম্বোধন ‘আপনি’ হলে সম্মানসূচক ক্রিয়া ‘পড়েন’ ব্যবহার করা উচিত।"),
+        ("তিনি কাজ করো।", "করো", "করেন", "কর্তা ‘তিনি’ হলে সম্মানসূচক ক্রিয়া ‘করেন’ ব্যবহার করা উচিত।"),
+    ]
+
+    for text, original, replacement, explanation in examples:
+        suggestions = engine.analyze(text)
+        match = next(suggestion for suggestion in suggestions if suggestion.original_text == original)
+        assert match.replacement_options == [replacement]
+        assert match.explanation_bn == explanation
+
+
+def test_rule_engine_keeps_valid_sentence_clean_when_agreement_is_correct() -> None:
+    engine = RuleEngine()
+
+    suggestions = engine.analyze("আমি আজ স্কুলে যাই।")
+
+    assert all(suggestion.category != "grammar" for suggestion in suggestions)
+
+
+def test_rule_engine_skips_quoted_agreement_text() -> None:
+    engine = RuleEngine()
+
+    suggestions = engine.analyze("সে বলল, “আমি স্কুলে যায়।”")
+
+    assert all(suggestion.original_text != "যায়" for suggestion in suggestions)

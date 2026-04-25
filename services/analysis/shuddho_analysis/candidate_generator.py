@@ -512,6 +512,7 @@ class CandidateGenerator:
             source=resolved_source,
             severity=finding.severity if actionable else max(finding.severity, SuggestionSeverity.LOW, key=_severity_rank),
             is_contextual=actionable or finding.source in {SuggestionSource.MODEL, SuggestionSource.HYBRID},
+            source_trace=["detector_contextual_support"] if actionable else ["model_runtime"],
         )
 
     def _build_explanation(
@@ -528,26 +529,26 @@ class CandidateGenerator:
         primary_replacement = replacement_options[0]
         if contextual_support > 0:
             return (
-                f"Detector context supports '{primary_replacement}' as the most grounded fix for this span.",
+                f"এই অংশের প্রাসঙ্গিক সংকেত মিলিয়ে এখানে '{primary_replacement}' সবচেয়ে নিরাপদ সংশোধন।",
                 f"Context around this detector span supports '{primary_replacement}' as the most grounded correction.",
             )
         if finding.category == SuggestionCategory.SPELLING:
             return (
-                f"Detector and spelling candidates both support '{primary_replacement}' as the best correction here.",
+                f"এখানে '{finding.original_text}' শব্দটির জন্য '{primary_replacement}'-ই সবচেয়ে নির্ভরযোগ্য বানান সংশোধন।",
                 f"Detector and spelling candidates both support '{primary_replacement}' as the best correction here.",
             )
         if finding.category == SuggestionCategory.GRAMMAR:
             return (
-                f"Replacing '{finding.original_text}' with '{primary_replacement}' makes this phrase more natural.",
+                f"এখানে '{finding.original_text}' এর বদলে '{primary_replacement}' ব্যবহার করলে বাক্যটি ব্যাকরণগতভাবে ঠিক হয়।",
                 f"Replacing '{finding.original_text}' with '{primary_replacement}' makes this phrase more natural.",
             )
         if finding.category == SuggestionCategory.PUNCTUATION:
             return (
-                f"Use '{primary_replacement}' instead of '{finding.original_text}' here.",
+                f"এখানে '{finding.original_text}' এর বদলে '{primary_replacement}' যতিচিহ্নটি ব্যবহার করা উচিত।",
                 f"Use '{primary_replacement}' instead of '{finding.original_text}' here.",
             )
         return (
-            f"Changing '{finding.original_text}' to '{primary_replacement}' makes this text clearer.",
+            f"এখানে '{finding.original_text}' এর বদলে '{primary_replacement}' ব্যবহার করলে অংশটি বেশি সুনির্দিষ্ট হয়।",
             f"Changing '{finding.original_text}' to '{primary_replacement}' makes this text clearer.",
         )
 
@@ -638,6 +639,8 @@ class CandidateGenerator:
         if not suggestion.source_trace:
             return False
         if "anchor_nearest_safe" in suggestion.source_trace and suggestion.confidence < 0.94:
+            return False
+        if "anchor_nearest_safe" in suggestion.source_trace:
             return False
         if suggestion.occurrence_index is None and not suggestion.anchor_before and not suggestion.anchor_after and "exact_unique_match" not in suggestion.source_trace:
             return False

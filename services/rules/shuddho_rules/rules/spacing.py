@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from shared.constants.bangla import COMMON_UNITS, PUNCTUATION_CHARS
+from shared.constants.bangla import PUNCTUATION_CHARS
 from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
 from shared.utils.text import stable_id
 
@@ -11,7 +11,11 @@ from .base import RuleDefinition, TOKEN_BOUNDARY_CHARS
 
 EXTRA_WHITESPACE_PATTERN = re.compile(rf"(?<=[{TOKEN_BOUNDARY_CHARS}])[^\S\r\n]{{2,}}(?=[{TOKEN_BOUNDARY_CHARS}])")
 WHITESPACE_BEFORE_PUNCTUATION_PATTERN = re.compile(rf"\s+([{re.escape(PUNCTUATION_CHARS)}])")
-NUMBER_UNIT_SPACING_PATTERN = re.compile(r"([0-9০-৯]+)(কেজি|কিমি|মিটার|ঘণ্টা|টাকা|জন)")
+NUMBER_UNIT_SPACING_UNITS = frozenset({"কেজি", "কিমি", "মিটার", "ঘণ্টা", "টাকা", "জন"})
+NUMBER_UNIT_SPACING_UNIT_PATTERN = "|".join(
+    re.escape(unit) for unit in sorted(NUMBER_UNIT_SPACING_UNITS, key=len, reverse=True)
+)
+NUMBER_UNIT_SPACING_PATTERN = re.compile(rf"([0-9\u09E6-\u09EF]+)({NUMBER_UNIT_SPACING_UNIT_PATTERN})")
 
 
 def extra_whitespace_rule(text: str) -> list[Suggestion]:
@@ -56,7 +60,7 @@ def whitespace_before_punctuation_rule(text: str) -> list[Suggestion]:
                 original_text=text[span_start:span_end],
                 replacement_options=[punctuation],
                 confidence=0.98,
-                explanation_bn=f"যতিচিহ্ন '{punctuation}' এর আগে অপ্রয়োজনীয় ফাঁকা আছে।",
+                explanation_bn=f"যতিচিহ্ন '{punctuation}'-এর আগে অপ্রয়োজনীয় ফাঁকা আছে।",
                 explanation_en=f"There is unnecessary whitespace before '{punctuation}'.",
                 source=SuggestionSource.RULE,
                 severity=SuggestionSeverity.LOW,
@@ -70,7 +74,7 @@ def number_unit_spacing_rule(text: str) -> list[Suggestion]:
     for match in NUMBER_UNIT_SPACING_PATTERN.finditer(text):
         number = match.group(1)
         unit = match.group(2)
-        if unit not in COMMON_UNITS:
+        if unit not in NUMBER_UNIT_SPACING_UNITS:
             continue
         suggestions.append(
             Suggestion(
@@ -82,8 +86,8 @@ def number_unit_spacing_rule(text: str) -> list[Suggestion]:
                 span_end=match.end(),
                 original_text=match.group(0),
                 replacement_options=[f"{number} {unit}"],
-                confidence=0.85,
-                explanation_bn=f"সংখ্যার পরে একক '{unit}' হলে সাধারণত একটি ফাঁকা থাকে।",
+                confidence=0.88,
+                explanation_bn=f"সংখ্যার পরে একক '{unit}' লিখলে সাধারণত একটি ফাঁকা রাখা হয়।",
                 explanation_en=f"A space is usually written before the unit '{unit}'.",
                 source=SuggestionSource.RULE,
                 severity=SuggestionSeverity.LOW,

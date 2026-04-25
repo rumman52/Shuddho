@@ -23,6 +23,11 @@ from .corrector_service import CorrectorService
 from .detector import DetectorService
 from .models import AnalysisArtifacts
 from .ranking import SuggestionRankingPipeline
+from .suggestion_validation import (
+    looks_generic_explanation,
+    minimum_confidence_for_suggestion,
+    validate_suggestions,
+)
 from .span_resolution import enrich_suggestions_with_text_context, split_sentences
 from .ui_enrichment import SuggestionUiEnricher
 
@@ -130,6 +135,7 @@ class AnalysisPipeline:
         )
         merged_suggestions = resolve_same_span_conflicts(merged_suggestions)
         merged_suggestions = enrich_suggestions_with_text_context(text, merged_suggestions)
+        merged_suggestions = validate_suggestions(text, merged_suggestions, mode=mode, logger=logger)
         merged_suggestions = self.ui_enricher.enrich(text, merged_suggestions)
 
         detector_runtime = self.detector_service.runtime_status()
@@ -198,56 +204,22 @@ def _mode_allows_visibility(suggestion: Suggestion, *, mode: AnalyzeMode) -> boo
 
 
 def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool:
-    base_thresholds = {
-        AnalyzeMode.STANDARD: {
-            SuggestionKind.TRUE_SPELLING_ERROR: 0.94,
-            SuggestionKind.GRAMMAR_ERROR: 0.82,
-            SuggestionKind.PUNCTUATION_ERROR: 0.84,
-            SuggestionKind.SPACING_ERROR: 0.84,
-            SuggestionKind.STYLE_SUGGESTION: 0.9,
-            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.95,
-        },
-        AnalyzeMode.STRICT: {
-            SuggestionKind.TRUE_SPELLING_ERROR: 0.92,
-            SuggestionKind.GRAMMAR_ERROR: 0.78,
-            SuggestionKind.PUNCTUATION_ERROR: 0.82,
-            SuggestionKind.SPACING_ERROR: 0.82,
-            SuggestionKind.STYLE_SUGGESTION: 0.82,
-            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.82,
-        },
-        AnalyzeMode.FORMAL: {
-            SuggestionKind.TRUE_SPELLING_ERROR: 0.92,
-            SuggestionKind.GRAMMAR_ERROR: 0.78,
-            SuggestionKind.PUNCTUATION_ERROR: 0.82,
-            SuggestionKind.SPACING_ERROR: 0.82,
-            SuggestionKind.STYLE_SUGGESTION: 0.78,
-            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.8,
-        },
-    }
-
-    threshold = base_thresholds[mode].get(suggestion.suggestion_kind, 0.95)
+    threshold = minimum_confidence_for_suggestion(suggestion, mode=mode)
     if suggestion.source == SuggestionSource.HYBRID:
-        threshold -= 0.02
+        threshold = max(threshold - 0.02, 0.0)
     if _is_high_precision_style_suggestion(suggestion):
         threshold -= {
             AnalyzeMode.STANDARD: 0.06,
             AnalyzeMode.STRICT: 0.04,
             AnalyzeMode.FORMAL: 0.02,
         }[mode]
-    if suggestion.source == SuggestionSource.MODEL and suggestion.suggestion_kind in {
-        SuggestionKind.STYLE_SUGGESTION,
-        SuggestionKind.ORTHOGRAPHY_VARIANT,
-    }:
-        threshold += 0.02 if mode == AnalyzeMode.STANDARD else 0.0
     if not suggestion.replacement_options:
         threshold += 0.08 if mode == AnalyzeMode.STANDARD else 0.03
-    if suggestion.is_variant_only and mode == AnalyzeMode.STANDARD:
-        threshold += 0.03
     if suggestion.severity == SuggestionSeverity.HIGH:
         threshold -= 0.03
     if suggestion.source == SuggestionSource.MODEL and _is_rewrite_like_suggestion(suggestion):
         threshold += 0.18
-    if suggestion.source == SuggestionSource.MODEL and _looks_generic_explanation(suggestion.explanation_bn, suggestion):
+    if suggestion.source == SuggestionSource.MODEL and looks_generic_explanation(suggestion.explanation_bn, suggestion):
         threshold += 0.08
     if suggestion.source == SuggestionSource.MODEL and suggestion.source_trace and "anchor_nearest_safe" in suggestion.source_trace:
         threshold += 0.04

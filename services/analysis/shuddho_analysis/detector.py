@@ -335,6 +335,13 @@ class DetectorService:
             checkpoint_exists,
             confidence_threshold,
         )
+        if (explicit_checkpoint is None or not explicit_checkpoint.strip()) and not checkpoint_exists:
+            logger.warning(
+                "%s is not set and the default detector artifact was not found at '%s'. Set %s or build the detector artifact before expecting contextual detector suggestions.",
+                DETECTOR_CHECKPOINT_ENV_VAR,
+                DEFAULT_CHECKPOINT_DISPLAY_PATH,
+                DETECTOR_CHECKPOINT_ENV_VAR,
+            )
 
         if enabled_mode == "false":
             logger.warning(
@@ -387,10 +394,12 @@ class DetectorService:
             )
         except FileNotFoundError as error:
             logger.warning(
-                "Detector checkpoint was not found or is incomplete at '%s' (%s); detector runtime is disabled and analyze requests will fall back to rules and spell checks only. Native checkpoints require %s.",
+                "Detector checkpoint was not found or is incomplete at '%s' (%s); detector runtime is disabled and analyze requests will fall back to rules and spell checks only. Native checkpoints require %s. Fix by setting %s to a valid artifact directory or creating '%s'.",
                 normalized_checkpoint_path,
                 error,
                 ", ".join(RUNTIME_CHECKPOINT_REQUIRED_FILES),
+                DETECTOR_CHECKPOINT_ENV_VAR,
+                DEFAULT_CHECKPOINT_DISPLAY_PATH,
             )
             return cls(
                 confidence_threshold=confidence_threshold,
@@ -402,9 +411,10 @@ class DetectorService:
             )
         except (OSError, RuntimeError, KeyError, ValueError) as error:
             logger.warning(
-                "Detector checkpoint at '%s' could not be loaded (%s); detector runtime is disabled and analyze requests will fall back to rules and spell checks only.",
+                "Detector checkpoint at '%s' could not be loaded (%s); detector runtime is disabled and analyze requests will fall back to rules and spell checks only. Fix the checkpoint contents or point %s to a valid detector artifact.",
                 normalized_checkpoint_path,
                 error,
+                DETECTOR_CHECKPOINT_ENV_VAR,
             )
             return cls(
                 confidence_threshold=confidence_threshold,

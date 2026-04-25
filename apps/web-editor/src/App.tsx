@@ -32,8 +32,9 @@ import { canAddSuggestionToDictionary, describeRuntimeState } from "./lib/runtim
 const INITIAL_TEXT = sampleFixtures[0]?.text ?? "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 const ANALYSIS_DEBOUNCE_MS = 450;
-const WEB_FALLBACK_LABEL = "Local fallback checks";
-const WEB_FALLBACK_DESCRIPTION = "Local fallback checks are active because contextual backend corrections are turned off.";
+const BACKEND_DISABLED_MESSAGE = "Backend is not connected. Contextual Bengali correction is disabled.";
+const DEV_LOCAL_FALLBACK_LABEL = "Dev-only browser fallback";
+const DEV_LOCAL_FALLBACK_DESCRIPTION = "Backend is not connected. Contextual Bengali correction is disabled. Dev-only local fallback is enabled.";
 
 type BackendMode = "checking" | "online" | "offline" | "misconfigured";
 
@@ -79,7 +80,7 @@ export default function App() {
 
   useEffect(() => {
     void refreshBackendHealth();
-  }, [apiBaseUrl, apiConfiguration.hardWarning]);
+  }, [apiBaseUrl, apiConfiguration.backendAllowed, apiConfiguration.hardWarning, apiConfiguration.localFallbackEnabled]);
 
   useEffect(() => {
     void loadPreferences(userId);
@@ -92,13 +93,17 @@ export default function App() {
         window.clearTimeout(analysisTimerRef.current);
       }
     };
-  }, [text, mode, preferences.personal_dictionary, userId]);
+  }, [apiBaseUrl, apiConfiguration.backendAllowed, apiConfiguration.localFallbackEnabled, text, mode, preferences.personal_dictionary, userId]);
 
   async function refreshBackendHealth() {
     if (!apiConfiguration.backendAllowed) {
       setBackendMode("misconfigured");
       setBackendHealth(null);
-      setStatus(apiConfiguration.hardWarning ?? WEB_FALLBACK_DESCRIPTION);
+      setStatus(
+        apiConfiguration.localFallbackEnabled
+          ? DEV_LOCAL_FALLBACK_DESCRIPTION
+          : BACKEND_DISABLED_MESSAGE,
+      );
       return;
     }
 
@@ -109,6 +114,11 @@ export default function App() {
     } catch {
       setBackendHealth(null);
       setBackendMode("offline");
+      setStatus(
+        apiConfiguration.localFallbackEnabled
+          ? DEV_LOCAL_FALLBACK_DESCRIPTION
+          : BACKEND_DISABLED_MESSAGE,
+      );
     }
   }
 
@@ -145,11 +155,19 @@ export default function App() {
     }
 
     if (!apiConfiguration.backendAllowed) {
-      const fallback = buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary);
-      setAnalysis(fallback);
+      setAnalysis(
+        apiConfiguration.localFallbackEnabled
+          ? buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary)
+          : createUnavailableAnalysis(nextText, mode, "backend_misconfigured_contextual_disabled"),
+      );
       setBackendMode("misconfigured");
-      setStatus(apiConfiguration.hardWarning ?? WEB_FALLBACK_DESCRIPTION);
+      setStatus(
+        apiConfiguration.localFallbackEnabled
+          ? DEV_LOCAL_FALLBACK_DESCRIPTION
+          : BACKEND_DISABLED_MESSAGE,
+      );
       setTone(null);
+      setRewriteResult(null);
       return;
     }
 
@@ -162,18 +180,26 @@ export default function App() {
       });
       setAnalysis(response);
       setBackendMode("online");
-      setStatus(`${response.suggestions.length} suggestions ready`);
+      setStatus(response.suggestions.length ? `${response.suggestions.length} suggestions ready` : "No high-confidence correction found.");
       if (preferences.auto_show_tone && nextText.trim().length >= 20) {
         void refreshTone(nextText);
       } else {
         setTone(null);
       }
-    } catch (error) {
-      const fallback = buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary);
-      setAnalysis(fallback);
+    } catch {
+      setAnalysis(
+        apiConfiguration.localFallbackEnabled
+          ? buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary)
+          : createUnavailableAnalysis(nextText, mode, "backend_offline_contextual_disabled"),
+      );
       setBackendMode("offline");
       setTone(null);
-      setStatus(error instanceof Error ? error.message : WEB_FALLBACK_DESCRIPTION);
+      setRewriteResult(null);
+      setStatus(
+        apiConfiguration.localFallbackEnabled
+          ? DEV_LOCAL_FALLBACK_DESCRIPTION
+          : BACKEND_DISABLED_MESSAGE,
+      );
     }
   }
 
@@ -294,7 +320,7 @@ export default function App() {
     const selectionEnd = suggestion?.span_end ?? (selection.end > selection.start ? selection.end : null);
 
     if (backendMode !== "online") {
-      setStatus("Backend rewrite is unavailable in fallback mode");
+      setStatus(BACKEND_DISABLED_MESSAGE);
       return;
     }
 
@@ -403,7 +429,7 @@ export default function App() {
         <div className="status-band">
           <strong>{runtimeDescriptor.label}</strong>
           <span>{status}</span>
-          <span>{backendMode === "online" ? apiBaseUrl : WEB_FALLBACK_LABEL}</span>
+          <span>{backendMode === "online" ? apiBaseUrl : apiConfiguration.localFallbackEnabled ? DEV_LOCAL_FALLBACK_LABEL : "Suggestions disabled"}</span>
         </div>
       </section>
 
@@ -696,7 +722,9 @@ export default function App() {
           </div>
         ) : (
           <p className="empty-state">
-            {backendMode === "online" ? "No suggestions in the current draft." : "Fallback checks did not find issues in the current draft."}
+            {backendMode === "online" || apiConfiguration.localFallbackEnabled
+              ? "No high-confidence correction found."
+              : BACKEND_DISABLED_MESSAGE}
           </p>
         )}
 
@@ -718,11 +746,15 @@ export default function App() {
 }
 
 function buildLocalFallbackResponse(text: string, mode: AnalyzeMode, personalDictionary: string[]): AnalyzeResponse {
-  return analyzeTextLocally({
+  const fallback = analyzeTextLocally({
     text,
     mode,
     personal_dictionary: personalDictionary,
   });
+  return {
+    ...fallback,
+    runtime_warnings: Array.from(new Set([...(fallback.runtime_warnings ?? []), "frontend_local_fallback_enabled"])),
+  };
 }
 
 async function sendFeedbackIfOnline(payload: Parameters<typeof sendFeedback>[0]) {
@@ -737,22 +769,33 @@ function replaceSpan(text: string, start: number, end: number, replacement: stri
   return `${text.slice(0, start)}${replacement}${text.slice(end)}`;
 }
 
-function createEmptyAnalysis(text: string, mode: AnalyzeMode): AnalyzeResponse {
+function createEmptyAnalysis(
+  text: string,
+  mode: AnalyzeMode,
+  profile: AnalyzeResponse["analysis_profile"] = "backend_rules_and_spell_only",
+): AnalyzeResponse {
   return {
     text,
     normalized_text: text,
     corrected_text: text,
     suggestions: [],
-    analysis_profile: "frontend_local_fallback",
-    runtime_source: "frontend_local_fallback",
+    analysis_profile: profile,
+    runtime_source: profile,
     runtime_warnings: [],
     used_detector: false,
     used_corrector: false,
     lexicon_source: "unknown",
     lexicon_version: null,
     backend_version: null,
-    sentence_count: 0,
+    sentence_count: approximateSentenceCount(text),
     request_mode_applied: mode,
+  };
+}
+
+function createUnavailableAnalysis(text: string, mode: AnalyzeMode, warning: string): AnalyzeResponse {
+  return {
+    ...createEmptyAnalysis(text, mode, "frontend_local_fallback"),
+    runtime_warnings: [warning],
   };
 }
 
@@ -799,4 +842,11 @@ function modeFromWritingGoal(writingGoal: UserPreferences["writing_goal"]): Anal
     return "formal";
   }
   return "standard";
+}
+
+function approximateSentenceCount(text: string): number {
+  return text
+    .split(/[.!?\u0964]+/u)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean).length;
 }

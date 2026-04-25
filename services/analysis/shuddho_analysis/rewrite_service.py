@@ -248,13 +248,15 @@ def _validate_rewrite(original_text: str, rewritten_text: str) -> tuple[bool, st
         return False, "Rewrite produced empty text."
     if rewritten_text == original_text:
         return False, None
+    if not re.search(r"[\u0980-\u09FF]", rewritten_text):
+        return False, "Rewrite must stay in Bengali."
     if re.search(r"\s{2,}", rewritten_text):
         return False, "Rewrite produced unstable spacing."
     if len(rewritten_text) > max(len(original_text) * 2.5, len(original_text) + 48):
         return False, "Rewrite changed the sentence too aggressively."
     if _important_ascii_tokens_missing(original_text, rewritten_text):
         return False, "Rewrite would drop named entities or critical tokens."
-    if _token_overlap_ratio(original_text, rewritten_text) < 0.35:
+    if _token_overlap_ratio(original_text, rewritten_text) < 0.45:
         return False, "Rewrite may distort the original meaning."
     return True, None
 

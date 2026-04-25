@@ -155,6 +155,13 @@ class CorrectorService:
             checkpoint_exists,
             confidence_threshold,
         )
+        if (explicit_checkpoint is None or not explicit_checkpoint.strip()) and not checkpoint_exists:
+            logger.warning(
+                "%s is not set and the default corrector artifact was not found at '%s'. Set %s or train the local corrector before expecting sentence-level correction.",
+                CORRECTOR_CHECKPOINT_ENV_VAR,
+                DEFAULT_CHECKPOINT_DISPLAY_PATH,
+                CORRECTOR_CHECKPOINT_ENV_VAR,
+            )
 
         if enabled_mode == "false":
             logger.warning(
@@ -207,10 +214,11 @@ class CorrectorService:
             )
         except FileNotFoundError as error:
             logger.warning(
-                "Corrector checkpoint was not found or is incomplete at '%s' (%s); corrector runtime is disabled and analyze requests will stay rule/spell/detector only. Native checkpoints require %s.",
+                "Corrector checkpoint was not found or is incomplete at '%s' (%s); corrector runtime is disabled and analyze requests will stay rule/spell/detector only. Native checkpoints require %s. Fix by setting %s to a valid artifact directory or by training with 'python -m ml.corrector.train --config ml/training/configs/corrector.base.json'.",
                 normalized_checkpoint_path,
                 error,
                 ", ".join(REQUIRED_CHECKPOINT_FILES),
+                CORRECTOR_CHECKPOINT_ENV_VAR,
             )
             return cls(
                 confidence_threshold=confidence_threshold,
@@ -222,9 +230,10 @@ class CorrectorService:
             )
         except (ImportError, OSError, RuntimeError, KeyError, ValueError) as error:
             logger.warning(
-                "Corrector checkpoint at '%s' could not be loaded (%s); corrector runtime is disabled and analyze requests will stay rule/spell/detector only.",
+                "Corrector checkpoint at '%s' could not be loaded (%s); corrector runtime is disabled and analyze requests will stay rule/spell/detector only. Fix the checkpoint contents or point %s to a valid corrector artifact.",
                 normalized_checkpoint_path,
                 error,
+                CORRECTOR_CHECKPOINT_ENV_VAR,
             )
             return cls(
                 confidence_threshold=confidence_threshold,

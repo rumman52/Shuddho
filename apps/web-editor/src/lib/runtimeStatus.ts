@@ -14,17 +14,17 @@ const BANGLA_LETTER_RE = /[\u0980-\u09ff]/u;
 export function getRuntimeLabel(profile: AnalysisProfile): string {
   switch (profile) {
     case "full_local":
-      return "Full local Bangla analysis active";
+      return "Online contextual backend";
     case "backend_without_detector":
-      return "Backend live — detector unavailable";
+      return "Backend online but detector missing";
     case "backend_without_corrector":
-      return "Backend live — corrector unavailable";
+      return "Backend online but corrector missing";
     case "backend_rules_and_spell_only":
-      return "Backend live — rules/spell only";
+      return "Backend online rules/spell only";
     case "frontend_local_fallback":
-      return "Backend unreachable — local fallback only";
+      return "Dev-only browser fallback";
     default:
-      return "Backend live — rules/spell only";
+      return "Backend online rules/spell only";
   }
 }
 
@@ -35,11 +35,12 @@ export function describeRuntimeState(args: {
   hardWarning?: string | null;
 }): RuntimeDescriptor {
   const { analysis, transport, health, hardWarning } = args;
+  const localFallbackEnabled = analysis.runtime_warnings.includes("frontend_local_fallback_enabled");
 
   if (transport === "misconfigured") {
     return {
-      label: "Backend misconfigured — localhost API blocked",
-      localOnly: true,
+      label: localFallbackEnabled ? "Backend misconfigured - dev-only browser fallback" : "Backend misconfigured - contextual correction disabled",
+      localOnly: localFallbackEnabled,
       degraded: true,
       warnings: compactWarnings([hardWarning, ...analysis.runtime_warnings]),
     };
@@ -47,8 +48,8 @@ export function describeRuntimeState(args: {
 
   if (transport === "offline") {
     return {
-      label: getRuntimeLabel("frontend_local_fallback"),
-      localOnly: true,
+      label: localFallbackEnabled ? getRuntimeLabel("frontend_local_fallback") : "Backend offline, suggestions disabled",
+      localOnly: localFallbackEnabled,
       degraded: true,
       warnings: compactWarnings(analysis.runtime_warnings),
     };
@@ -66,15 +67,15 @@ export function describeRuntimeState(args: {
   const profile = analysis.runtime_source || health?.analysis_profile || "backend_rules_and_spell_only";
   return {
     label: getRuntimeLabel(profile),
-    localOnly: profile === "frontend_local_fallback",
+    localOnly: profile === "frontend_local_fallback" && localFallbackEnabled,
     degraded: profile !== "full_local",
     warnings: compactWarnings(analysis.runtime_warnings),
   };
 }
 
 export function describeSuggestionSource(suggestion: Suggestion, analysis: AnalyzeResponse): string {
-  if (analysis.runtime_source === "frontend_local_fallback") {
-    return "local fallback";
+  if (analysis.runtime_source === "frontend_local_fallback" && analysis.runtime_warnings.includes("frontend_local_fallback_enabled")) {
+    return "dev-only local fallback";
   }
   return suggestion.source;
 }

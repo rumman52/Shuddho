@@ -160,3 +160,69 @@ OPENING_DELIMITERS: dict[str, str] = {
 }
 
 CLOSING_DELIMITERS = {closing: opening for opening, closing in OPENING_DELIMITERS.items()}
+
+AGREEMENT_SENTENCE_BREAKS = frozenset({"।", "!", "?", ",", ";", ":"})
+AGREEMENT_QUOTE_PAIRS = {
+    '"': '"',
+    "“": "”",
+    "‘": "’",
+}
+HONORIFIC_REQUEST_MARKERS = frozenset({"দয়া", "দয়া", "অনুগ্রহ", "একটু"})
+
+EXPLICIT_FIRST_PERSON_PRONOUNS = frozenset({"আমি"})
+EXPLICIT_SECOND_PERSON_PRONOUNS = frozenset({"তুমি"})
+EXPLICIT_HONORIFIC_PRONOUNS = frozenset({"আপনি", "তিনি"})
+EXPLICIT_THIRD_PERSON_PRONOUNS = frozenset({"সে"})
+
+FIRST_PERSON_CONTEXTUAL_VERB_MAP: dict[str, str] = {
+    "যায়": "যাই",
+    "খায়": "খাই",
+    "পড়ে": "পড়ি",
+    "করে": "করি",
+    "যাবেন": "যাব",
+    "খাবেন": "খাব",
+    "করবেন": "করব",
+    "পড়বেন": "পড়ব",
+}
+
+SECOND_PERSON_CONTEXTUAL_VERB_MAP: dict[str, str] = {
+    "যায়": "যাও",
+    "খায়": "খাও",
+    "পড়ে": "পড়ো",
+    "করে": "করো",
+    "যান": "যাও",
+    "পড়েন": "পড়ো",
+    "করেন": "করো",
+    "পড়ুন": "পড়ো",
+    "করুন": "করো",
+    "খান": "খাও",
+}
+
+THIRD_PERSON_CONTEXTUAL_VERB_MAP: dict[str, str] = {
+    "যাই": "যায়",
+    "খাই": "খায়",
+    "পড়ি": "পড়ে",
+    "করি": "করে",
+}
+
+HONORIFIC_DECLARATIVE_VERB_MAP: dict[str, str] = {
+    "যাও": "যান",
+    "যাই": "যান",
+    "যায়": "যান",
+    "খাও": "খান",
+    "খায়": "খান",
+    "পড়ো": "পড়েন",
+    "পড়ে": "পড়েন",
+    "করো": "করেন",
+    "করে": "করেন",
+}
+
+HONORIFIC_IMPERATIVE_VERB_MAP: dict[str, str] = {
+    "যাও": "যান",
+    "খাও": "খান",
+    "পড়ো": "পড়ুন",
+    "করো": "করুন",
+    "বলো": "বলুন",
+    "দেখো": "দেখুন",
+    "শোনো": "শুনুন",
+}

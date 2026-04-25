@@ -59,15 +59,15 @@ STARTUP_TIMESTAMP = datetime.now(timezone.utc)
 
 
 def _parse_allowed_origins(value: str | None) -> list[str]:
+    allowed_origins = list(DEFAULT_ALLOWED_ORIGINS)
     if value is None or not value.strip():
-        return list(DEFAULT_ALLOWED_ORIGINS)
+        return allowed_origins
 
-    allowed_origins: list[str] = []
     for raw_origin in value.split(","):
         origin = raw_origin.strip()
         if origin and origin not in allowed_origins:
             allowed_origins.append(origin)
-    return allowed_origins or list(DEFAULT_ALLOWED_ORIGINS)
+    return allowed_origins
 
 
 def _resolve_backend_version(base_version: str) -> str:
@@ -455,7 +455,7 @@ degraded_reasons = _derive_degraded_reasons(detector_runtime, corrector_runtime)
 
 logger.info(
     "Shuddho API startup env_file=%s detector_status=%s detector_reason=%s detector_checkpoint=%s detector_checkpoint_exists=%s "
-    "corrector_status=%s corrector_reason=%s corrector_checkpoint=%s analysis_profile=%s degraded_reasons=%s backend_version=%s",
+    "corrector_status=%s corrector_reason=%s corrector_checkpoint=%s corrector_checkpoint_exists=%s analysis_profile=%s degraded_reasons=%s allowed_origins=%s backend_version=%s",
     ENV_FILE_PATH,
     detector_runtime.status,
     detector_runtime.reason,
@@ -464,9 +464,16 @@ logger.info(
     corrector_runtime.status,
     corrector_runtime.reason,
     corrector_runtime.checkpoint,
+    corrector_runtime.checkpoint_exists,
     analysis_profile.value,
     degraded_reasons,
+    ALLOWED_ORIGINS,
     BACKEND_VERSION,
 )
 if degraded_reasons:
-    logger.warning("Shuddho API is running in degraded local analysis mode reasons=%s", degraded_reasons)
+    logger.warning(
+        "Shuddho API is running in degraded local analysis mode reasons=%s detector_fix=%s corrector_fix=%s",
+        degraded_reasons,
+        f"Set {DetectorService.__name__} checkpoint via SHUDDHO_DETECTOR_CHECKPOINT or create {DetectorService._configured_checkpoint_path(None)}",
+        "Set SHUDDHO_CORRECTOR_CHECKPOINT or train with 'python -m ml.corrector.train --config ml/training/configs/corrector.base.json'",
+    )

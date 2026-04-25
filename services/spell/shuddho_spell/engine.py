@@ -82,16 +82,21 @@ class SpellEngine:
             "correction_map": runtime_lexicon.correction_map_count,
         }
         self.lexicon = set(runtime_lexicon.accepted_words)
+        self.protected_words = set(runtime_lexicon.protected_words)
         self.curated_spelling_map = {
             source: target
             for source, target in SAFE_EXACT_TYPOS.items()
             if " " not in source and " " not in target
         }
+        self.runtime_variant_map = dict(runtime_lexicon.variant_map)
         self.spelling_error_map = {
             **runtime_lexicon.correction_map,
             **self.curated_spelling_map,
         }
-        self.orthography_variant_map = dict(CURATED_VARIANT_CORRECTIONS)
+        self.orthography_variant_map = {
+            **self.runtime_variant_map,
+            **CURATED_VARIANT_CORRECTIONS,
+        }
         self.correction_map = {**self.spelling_error_map, **self.orthography_variant_map}
         self.frequency_rank = {word: rank for rank, word in enumerate(runtime_lexicon.candidate_words)}
         self._candidate_index = self._build_candidate_index(runtime_lexicon.candidate_words)
@@ -128,6 +133,7 @@ class SpellEngine:
                         suggestion_kind=SuggestionKind.ORTHOGRAPHY_VARIANT,
                         optional_mode_visibility=[AnalyzeMode.STRICT, AnalyzeMode.FORMAL],
                         is_variant_only=True,
+                        source_trace=["spell_engine", "orthography_variant"],
                     )
                 )
                 continue
@@ -152,6 +158,7 @@ class SpellEngine:
                         source=SuggestionSource.SPELL,
                         severity=SuggestionSeverity.MEDIUM,
                         suggestion_kind=SuggestionKind.TRUE_SPELLING_ERROR,
+                        source_trace=["spell_engine", "exact_runtime_typo"],
                     )
                 )
                 continue
@@ -191,6 +198,7 @@ class SpellEngine:
                     source=SuggestionSource.SPELL,
                     severity=SuggestionSeverity.LOW,
                     suggestion_kind=SuggestionKind.TRUE_SPELLING_ERROR,
+                    source_trace=["spell_engine", "generic_high_margin"],
                 )
             )
 
@@ -198,6 +206,8 @@ class SpellEngine:
 
     def _should_skip_token(self, token: str, personal: set[str]) -> bool:
         if token in personal:
+            return True
+        if token in self.protected_words:
             return True
         if not BANGLA_LETTER_PATTERN.search(token):
             return True
@@ -235,6 +245,8 @@ class SpellEngine:
     ) -> bool:
         personal = self._expand_personal_dictionary(personal_dictionary)
         if token in personal:
+            return True
+        if token in self.protected_words:
             return True
         if self.looks_code_mixed_token(token):
             return True

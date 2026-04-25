@@ -167,6 +167,51 @@ def test_spell_engine_treats_curated_variant_override_as_optional_style_guidance
     assert suggestions[0].severity.value == "low"
 
 
+def test_spell_engine_treats_runtime_variant_metadata_as_optional_style_guidance(tmp_path: Path) -> None:
+    runtime_csv_path = _write_runtime_words_fixture(
+        tmp_path,
+        rows=[
+            (
+                "\u09af\u09be\u09df",
+                "\u09af\u09be\u09af\u09bc",
+                "fixture.csv",
+                "1",
+                "0",
+                "1",
+                "accepted_variants",
+                "1",
+                "1",
+                "normalized_surface_variant",
+            ),
+            (
+                "\u09af\u09be\u09af\u09bc",
+                "\u09af\u09be\u09af\u09bc",
+                "fixture.csv",
+                "1",
+                "1",
+                "1",
+                "core_formal_words",
+                "1",
+                "1",
+                "common_runtime_word",
+            ),
+        ],
+    )
+
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+    suggestions = engine.analyze("\u09b8\u09c7 \u09b8\u09cd\u0995\u09c1\u09b2\u09c7 \u09af\u09be\u09df")
+
+    assert len(suggestions) == 1
+    assert suggestions[0].rule_id == "SPELL_002"
+    assert suggestions[0].category == SuggestionCategory.STYLE
+    assert suggestions[0].subtype == "orthography_variant"
+    assert suggestions[0].suggestion_kind == SuggestionKind.ORTHOGRAPHY_VARIANT
+    assert suggestions[0].is_variant_only is True
+    assert suggestions[0].optional_mode_visibility == [AnalyzeMode.STRICT, AnalyzeMode.FORMAL]
+    assert suggestions[0].original_text == "\u09af\u09be\u09df"
+    assert suggestions[0].replacement_options == ["\u09af\u09be\u09af\u09bc"]
+
+
 def test_spell_engine_personal_dictionary_accepts_variant_and_canonical_forms(tmp_path: Path) -> None:
     runtime_csv_path = _write_clean_csv_fixture(
         tmp_path,
@@ -308,6 +353,42 @@ def test_spell_engine_personal_dictionary_protects_direct_runtime_corrections(tm
     assert engine.analyze("\u09ac\u09c7\u0999\u09cd\u0997\u09b2\u09be", personal_dictionary=["\u09ac\u09be\u0982\u09b2\u09be"]) == []
 
 
+def test_spell_engine_adds_source_trace_to_each_actionable_suggestion(tmp_path: Path) -> None:
+    runtime_csv_path = _write_clean_csv_fixture(
+        tmp_path,
+        rows=[
+            ("\u0995\u09bf\u09a8\u09cd\u09a4", "\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "fixture.csv", "1", "1", "1"),
+            ("\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "\u0995\u09bf\u09a8\u09cd\u09a4\u09c1", "fixture.csv", "1", "1", "1"),
+        ],
+    )
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    suggestions = engine.analyze("\u0995\u09bf\u09a8\u09cd\u09a4")
+
+    assert suggestions
+    assert suggestions[0].source_trace
+    assert suggestions[0].source_trace[0] == "spell_engine"
+
+
+def test_spell_engine_protects_runtime_review_only_words_from_random_correction(tmp_path: Path) -> None:
+    runtime_csv_path = tmp_path / "runtime_words.csv"
+    runtime_csv_path.write_text(
+        "\n".join(
+            [
+                "word,normalized_word,source,is_trusted,is_common,is_active,layer,include_in_runtime,include_as_candidate,review_state,action,correction_type",
+                "\u09b0\u09be\u09b9\u09c1\u09b2\u09b2,\u09b0\u09be\u09b9\u09c1\u09b2,fixture.csv,1,0,1,names,1,1,review,review_only,named_entity",
+                "\u09b0\u09be\u09b9\u09c1\u09b2,\u09b0\u09be\u09b9\u09c1\u09b2,fixture.csv,1,1,1,core,1,1,common_runtime_word,accept,accepted_word",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    engine = SpellEngine(runtime_csv_path=runtime_csv_path)
+
+    assert engine.analyze("\u09b0\u09be\u09b9\u09c1\u09b2\u09b2") == []
+
+
 def _write_clean_csv_fixture(
     base_dir: Path,
     *,
@@ -315,6 +396,20 @@ def _write_clean_csv_fixture(
 ) -> Path:
     runtime_csv_path = base_dir / "words_clean.csv"
     lines = ["word,normalized_word,source,is_trusted,is_common,is_active"]
+    lines.extend(",".join(row) for row in rows)
+    runtime_csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return runtime_csv_path
+
+
+def _write_runtime_words_fixture(
+    base_dir: Path,
+    *,
+    rows: list[tuple[str, str, str, str, str, str, str, str, str, str]],
+) -> Path:
+    runtime_csv_path = base_dir / "runtime_words.csv"
+    lines = [
+        "word,normalized_word,source,is_trusted,is_common,is_active,layer,include_in_runtime,include_as_candidate,review_state"
+    ]
     lines.extend(",".join(row) for row in rows)
     runtime_csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return runtime_csv_path

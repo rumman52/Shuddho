@@ -7,7 +7,7 @@ from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
-from shared.schemas.python_models import AnalyzeMode, SuggestionCategory, SuggestionKind, SuggestionSeverity, SuggestionSource
+from shared.schemas.python_models import AnalyzeMode, Suggestion, SuggestionCategory, SuggestionKind, SuggestionSeverity, SuggestionSource
 
 
 class StubDetectorService(DetectorService):
@@ -56,7 +56,7 @@ def test_analysis_pipeline_preserves_hard_errors_and_keeps_curated_hard_spelling
     assert standard_response.corrected_text == "\u0986\u09ae\u09bf \u0995\u09bf\u09a8\u09cd\u09a4\u09c1 \u09b8\u09cd\u0995\u09c1\u09b2\u09c7 \u09af\u09be\u0987\u0964"
 
 
-def test_analysis_pipeline_merges_detector_findings_without_breaking_response_ids(tmp_path: Path) -> None:
+def test_analysis_pipeline_drops_detector_findings_that_do_not_change_the_text(tmp_path: Path) -> None:
     runtime_csv_path = _write_clean_csv_fixture(
         tmp_path,
         rows=[
@@ -67,11 +67,7 @@ def test_analysis_pipeline_merges_detector_findings_without_breaking_response_id
 
     response = pipeline.analyze("\u09b6\u09c1\u09a6\u09cd\u09a7 \u09ac\u09be\u0982\u09b2\u09be", mode=AnalyzeMode.STRICT)
 
-    detector_suggestion = next(suggestion for suggestion in response.suggestions if suggestion.rule_id == "DET_001")
-    assert detector_suggestion.id.startswith("s_")
-    assert detector_suggestion.source == SuggestionSource.MODEL
-    assert detector_suggestion.original_text == "\u09b6\u09c1\u09a6\u09cd\u09a7"
-    assert detector_suggestion.replacement_options == ["\u09b6\u09c1\u09a6\u09cd\u09a7"]
+    assert all(suggestion.rule_id != "DET_001" for suggestion in response.suggestions)
     assert response.corrected_text == "\u09b6\u09c1\u09a6\u09cd\u09a7 \u09ac\u09be\u0982\u09b2\u09be"
 
 
@@ -151,6 +147,30 @@ def test_analysis_pipeline_strict_and_formal_modes_surface_variant_only_suggesti
     assert "orthography_variant" not in {suggestion.subtype for suggestion in standard_response.suggestions}
     assert "orthography_variant" in {suggestion.subtype for suggestion in strict_response.suggestions}
     assert "orthography_variant" in {suggestion.subtype for suggestion in formal_response.suggestions}
+
+
+def test_analysis_pipeline_hides_runtime_variant_normalization_in_standard_mode(tmp_path: Path) -> None:
+    runtime_csv_path = _write_runtime_words_fixture(
+        tmp_path,
+        rows=[
+            ("যায়", "যায়", "fixture.csv", "1", "0", "1", "accepted_variants", "1", "1", "normalized_surface_variant"),
+            ("যায়", "যায়", "fixture.csv", "1", "1", "1", "core_formal_words", "1", "1", "common_runtime_word"),
+            ("সে", "সে", "fixture.csv", "1", "1", "1", "core_formal_words", "1", "1", "common_runtime_word"),
+            ("স্কুলে", "স্কুলে", "fixture.csv", "1", "1", "1", "core_formal_words", "1", "1", "common_runtime_word"),
+        ],
+    )
+    pipeline = _build_pipeline(runtime_csv_path)
+    text = "সে স্কুলে যায়।"
+
+    standard_response = pipeline.analyze(text, mode=AnalyzeMode.STANDARD)
+    strict_response = pipeline.analyze(text, mode=AnalyzeMode.STRICT)
+
+    assert "orthography_variant" not in {suggestion.subtype for suggestion in standard_response.suggestions}
+    strict_variant = next(suggestion for suggestion in strict_response.suggestions if suggestion.subtype == "orthography_variant")
+    assert strict_variant.original_text == "যায়"
+    assert strict_variant.replacement_options == ["যায়"]
+    assert standard_response.corrected_text == text
+    assert strict_response.corrected_text == text
 
 
 def test_analysis_pipeline_returns_runtime_metadata_and_safe_corrected_text(tmp_path: Path) -> None:
@@ -245,13 +265,80 @@ def test_analysis_pipeline_keeps_localized_fixes_without_generic_rewrite(tmp_pat
     assert all((suggestion.span_end - suggestion.span_start) < len(response.text) for suggestion in response.suggestions if suggestion.replacement_options)
 
 
-def _build_pipeline(runtime_csv_path: Path, detector_service: DetectorService | None = None) -> AnalysisPipeline:
+def test_analysis_pipeline_returns_zero_corrections_for_valid_sentence(tmp_path: Path) -> None:
+    pipeline = _build_pipeline(_write_clean_csv_fixture(tmp_path, rows=_regression_runtime_rows()))
+
+    response = pipeline.analyze("আমি আজ স্কুলে যাই।", mode=AnalyzeMode.STANDARD)
+
+    assert response.corrected_text == "আমি আজ স্কুলে যাই।"
+    assert response.suggestions == []
+
+
+def test_analysis_pipeline_drops_model_suggestion_with_wrong_original_text_anchor(tmp_path: Path) -> None:
+    class StubCorrectorService:
+        def is_loaded(self) -> bool:
+            return True
+
+        def suggest(self, text: str, *, mode: AnalyzeMode, personal_dictionary=None) -> list[Suggestion]:
+            del text, mode, personal_dictionary
+            return [
+                Suggestion(
+                    id="cor_invalid",
+                    rule_id="COR_GRAM_001",
+                    category=SuggestionCategory.GRAMMAR,
+                    subtype="corrector_sentence_fix",
+                    span_start=0,
+                    span_end=3,
+                    original_text="তিনি",
+                    replacement_options=["আমি"],
+                    confidence=0.96,
+                    explanation_bn="কর্তা ‘আমি’ হলে এই স্থানে ‘আমি’ হওয়া উচিত।",
+                    explanation_en="",
+                    source=SuggestionSource.MODEL,
+                    severity=SuggestionSeverity.MEDIUM,
+                    source_trace=["corrector_seq2seq", "exact_unique_match"],
+                )
+            ]
+
+        def runtime_status(self):
+            return type(
+                "CorrectorStatus",
+                (),
+                {
+                    "enabled": True,
+                    "loaded": True,
+                    "status": "ready",
+                    "reason": None,
+                    "checkpoint": "artifacts/corrector/corrector-base",
+                    "checkpoint_exists": True,
+                    "backend_name": "stub_corrector",
+                    "threshold": 0.86,
+                },
+            )()
+
+    pipeline = _build_pipeline(
+        _write_clean_csv_fixture(tmp_path, rows=_regression_runtime_rows()),
+        corrector_service=StubCorrectorService(),
+    )
+
+    response = pipeline.analyze("আমি আজ স্কুলে যাই।", mode=AnalyzeMode.STANDARD)
+
+    assert response.corrected_text == "আমি আজ স্কুলে যাই।"
+    assert response.suggestions == []
+
+
+def _build_pipeline(
+    runtime_csv_path: Path,
+    detector_service: DetectorService | None = None,
+    corrector_service=None,
+) -> AnalysisPipeline:
     return AnalysisPipeline(
         normalizer=BanglaNormalizer(),
         spell_engine=SpellEngine(runtime_csv_path=runtime_csv_path),
         rule_engine=RuleEngine(),
         suggestion_manager=SuggestionManager(),
         detector_service=detector_service,
+        corrector_service=corrector_service,
     )
 
 
@@ -262,6 +349,20 @@ def _write_clean_csv_fixture(
 ) -> Path:
     runtime_csv_path = base_dir / "words_clean.csv"
     lines = ["word,normalized_word,source,is_trusted,is_common,is_active"]
+    lines.extend(",".join(row) for row in rows)
+    runtime_csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return runtime_csv_path
+
+
+def _write_runtime_words_fixture(
+    base_dir: Path,
+    *,
+    rows: list[tuple[str, str, str, str, str, str, str, str, str, str]],
+) -> Path:
+    runtime_csv_path = base_dir / "runtime_words.csv"
+    lines = [
+        "word,normalized_word,source,is_trusted,is_common,is_active,layer,include_in_runtime,include_as_candidate,review_state"
+    ]
     lines.extend(",".join(row) for row in rows)
     runtime_csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return runtime_csv_path

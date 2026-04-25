@@ -159,6 +159,7 @@ def test_parse_allowed_origins_can_include_production_frontend_origin() -> None:
 
     assert allowed_origins == [
         "http://127.0.0.1:5173",
+        "http://localhost:5173",
         "https://shuddho-web-editor.vercel.app",
     ]
 
@@ -169,7 +170,21 @@ def test_parse_allowed_origins_supports_trycloudflare_origin() -> None:
     )
 
     assert allowed_origins == [
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "https://shuddho-web-editor.vercel.app",
         "https://random-name.trycloudflare.com",
+    ]
+
+
+def test_parse_allowed_origins_keeps_default_frontend_origin_when_env_lists_only_local_hosts() -> None:
+    allowed_origins = _parse_allowed_origins(
+        "http://127.0.0.1:5173, http://localhost:5173"
+    )
+
+    assert allowed_origins == [
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
         "https://shuddho-web-editor.vercel.app",
     ]
 
