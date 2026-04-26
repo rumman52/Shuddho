@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from shared.constants.bangla import PUNCTUATION_CHARS
+from shared.constants.bangla import COMMON_UNITS, PUNCTUATION_CHARS
 from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
 from shared.utils.text import stable_id
 
@@ -11,7 +11,7 @@ from .base import RuleDefinition, TOKEN_BOUNDARY_CHARS
 
 EXTRA_WHITESPACE_PATTERN = re.compile(rf"(?<=[{TOKEN_BOUNDARY_CHARS}])[^\S\r\n]{{2,}}(?=[{TOKEN_BOUNDARY_CHARS}])")
 WHITESPACE_BEFORE_PUNCTUATION_PATTERN = re.compile(rf"\s+([{re.escape(PUNCTUATION_CHARS)}])")
-NUMBER_UNIT_SPACING_UNITS = frozenset({"কেজি", "কিমি", "মিটার", "ঘণ্টা", "টাকা", "জন"})
+NUMBER_UNIT_SPACING_UNITS = frozenset(COMMON_UNITS)
 NUMBER_UNIT_SPACING_UNIT_PATTERN = "|".join(
     re.escape(unit) for unit in sorted(NUMBER_UNIT_SPACING_UNITS, key=len, reverse=True)
 )
@@ -27,17 +27,18 @@ def extra_whitespace_rule(text: str) -> list[Suggestion]:
             Suggestion(
                 id=stable_id("rule", f"extra-space:{span_start}:{span_end}"),
                 rule_id="SPACE_001",
-                category=SuggestionCategory.GRAMMAR,
+                category=SuggestionCategory.SPACING,
                 subtype="extra_whitespace",
                 span_start=span_start,
                 span_end=span_end,
                 original_text=text[span_start:span_end],
                 replacement_options=[" "],
                 confidence=0.99,
-                explanation_bn="দুইটি শব্দের মাঝে অতিরিক্ত ফাঁকা আছে।",
-                explanation_en="There is extra whitespace between these words.",
+                explanation_bn="এখানে অতিরিক্ত ফাঁকা আছে।",
+                explanation_en="There is extra whitespace here.",
                 source=SuggestionSource.RULE,
                 severity=SuggestionSeverity.LOW,
+                source_trace=["rule_engine", "spacing_rule"],
             )
         )
     return suggestions
@@ -52,18 +53,19 @@ def whitespace_before_punctuation_rule(text: str) -> list[Suggestion]:
         suggestions.append(
             Suggestion(
                 id=stable_id("rule", f"spacing-before:{span_start}:{span_end}:{punctuation}"),
-                rule_id="PUNC_002",
-                category=SuggestionCategory.PUNCTUATION,
+                rule_id="SPACE_002",
+                category=SuggestionCategory.SPACING,
                 subtype="space_before_punctuation",
                 span_start=span_start,
                 span_end=span_end,
                 original_text=text[span_start:span_end],
                 replacement_options=[punctuation],
-                confidence=0.98,
+                confidence=0.99,
                 explanation_bn=f"যতিচিহ্ন '{punctuation}'-এর আগে অপ্রয়োজনীয় ফাঁকা আছে।",
                 explanation_en=f"There is unnecessary whitespace before '{punctuation}'.",
                 source=SuggestionSource.RULE,
                 severity=SuggestionSeverity.LOW,
+                source_trace=["rule_engine", "spacing_rule"],
             )
         )
     return suggestions
@@ -79,18 +81,19 @@ def number_unit_spacing_rule(text: str) -> list[Suggestion]:
         suggestions.append(
             Suggestion(
                 id=stable_id("rule", f"unit-spacing:{match.start()}:{match.end()}:{unit}"),
-                rule_id="STYLE_002",
-                category=SuggestionCategory.STYLE,
+                rule_id="SPACE_003",
+                category=SuggestionCategory.SPACING,
                 subtype="number_unit_spacing",
                 span_start=match.start(),
                 span_end=match.end(),
                 original_text=match.group(0),
                 replacement_options=[f"{number} {unit}"],
-                confidence=0.88,
-                explanation_bn=f"সংখ্যার পরে একক '{unit}' লিখলে সাধারণত একটি ফাঁকা রাখা হয়।",
-                explanation_en=f"A space is usually written before the unit '{unit}'.",
+                confidence=0.97,
+                explanation_bn=f"সংখ্যা ও একক '{unit}'-এর মাঝে একটি ফাঁকা রাখা উচিত।",
+                explanation_en=f"A space should separate the number and the unit '{unit}'.",
                 source=SuggestionSource.RULE,
                 severity=SuggestionSeverity.LOW,
+                source_trace=["rule_engine", "spacing_rule"],
             )
         )
     return suggestions

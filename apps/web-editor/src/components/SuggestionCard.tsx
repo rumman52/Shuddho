@@ -2,6 +2,7 @@ import type { RewriteIntent, Suggestion, SuggestionAlternative } from "@shared/s
 
 interface SuggestionCardProps {
   suggestion: Suggestion;
+  debugMode?: boolean;
   onApply: (candidate: Suggestion | SuggestionAlternative, replacement: string) => void;
   onDismiss: () => void;
   onIgnoreForever: () => void;
@@ -11,6 +12,7 @@ interface SuggestionCardProps {
 
 export function SuggestionCard({
   suggestion,
+  debugMode = false,
   onApply,
   onDismiss,
   onIgnoreForever,
@@ -33,9 +35,9 @@ export function SuggestionCard({
         </div>
         <div className="suggestion-card__chips">
           <span>{suggestion.category}</span>
-          <span>{Math.round(suggestion.confidence * 100)}%</span>
-          <span>{suggestion.source}</span>
-          <span>{suggestion.severity}</span>
+          {debugMode ? <span>{Math.round(suggestion.confidence * 100)}%</span> : null}
+          {debugMode ? <span>{suggestion.source}</span> : null}
+          {debugMode ? <span>{suggestion.severity}</span> : null}
         </div>
       </div>
 
@@ -111,7 +113,7 @@ export function SuggestionCard({
         <summary>Why this suggestion</summary>
         <p>{suggestion.explanation_bn || suggestion.explanation_en}</p>
         {secondaryExplanation ? <p>{secondaryExplanation}</p> : null}
-        {suggestion.source_trace?.length ? <p>source_trace: {suggestion.source_trace.join(" -> ")}</p> : null}
+        {debugMode && suggestion.source_trace?.length ? <p>source_trace: {suggestion.source_trace.join(" -> ")}</p> : null}
       </details>
 
       <div className="suggestion-card__footer">

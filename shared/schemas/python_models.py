@@ -12,7 +12,10 @@ class SuggestionCategory(str, Enum):
     SPELLING = "spelling"
     GRAMMAR = "grammar"
     PUNCTUATION = "punctuation"
-    STYLE = "style"
+    SPACING = "spacing"
+    REGISTER = "register"
+    CLARITY = "clarity"
+    REWRITE_ONLY = "rewrite_only"
 
 
 class SuggestionSource(str, Enum):
@@ -55,10 +58,10 @@ class SuggestionKind(str, Enum):
 
 class SuggestionUiGroup(str, Enum):
     CORRECTNESS = "correctness"
-    CLARITY = "clarity"
-    TONE = "tone"
-    STYLE = "style"
+    SPACING = "spacing"
     PUNCTUATION = "punctuation"
+    REGISTER = "register"
+    CLARITY = "clarity"
 
 
 class PreferredLanguageVariant(str, Enum):
@@ -297,6 +300,7 @@ class AnalyzeResponse(BaseModel):
     runtime_warnings: list[str] = Field(default_factory=list)
     used_detector: bool = False
     used_corrector: bool = False
+    backend_warning: str | None = None
     lexicon_source: str = "unknown"
     lexicon_version: str | None = None
     backend_version: str | None = None
@@ -487,6 +491,7 @@ class HealthResponse(BaseModel):
     corrector: CorrectorHealth
     analysis_profile: AnalysisProfile
     degraded_reasons: list[str] = Field(default_factory=list)
+    backend_warning: str | None = None
     mode_capabilities: dict[str, list[str]] = Field(default_factory=dict)
 
 
@@ -524,7 +529,12 @@ def _infer_suggestion_kind(
         return SuggestionKind.GRAMMAR_ERROR
     if category == SuggestionCategory.PUNCTUATION:
         return SuggestionKind.PUNCTUATION_ERROR
-    if category == SuggestionCategory.STYLE:
+    if category == SuggestionCategory.SPACING:
+        return SuggestionKind.SPACING_ERROR
+    if category in {
+        SuggestionCategory.REGISTER,
+        SuggestionCategory.CLARITY,
+    }:
         return SuggestionKind.STYLE_SUGGESTION
     return SuggestionKind.NO_SUGGESTION
 

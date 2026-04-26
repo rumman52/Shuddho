@@ -46,5 +46,6 @@ class AnalysisArtifacts:
     sentence_spans: list[SentenceSpan] = field(default_factory=list)
     used_detector: bool = False
     used_corrector: bool = False
+    backend_warning: str | None = None
     runtime_warnings: list[str] = field(default_factory=list)
     analysis_profile: AnalysisProfile = AnalysisProfile.BACKEND_RULES_AND_SPELL_ONLY

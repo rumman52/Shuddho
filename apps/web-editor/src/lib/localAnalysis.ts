@@ -1,9 +1,11 @@
 import type { AnalyzeMode, AnalyzeRequest, AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
 
 const BANGLA_WORD_PATTERN = /[\u0980-\u09FFA-Za-z]+/gu;
-export const LOCAL_FALLBACK_LABEL = "Local fallback checks";
+const ACCEPTED_REDUPLICATION = new Set(["ধীরে ধীরে", "মাঝে মাঝে", "দিন দিন", "বার বার"]);
+
+export const LOCAL_FALLBACK_LABEL = "Limited browser fallback";
 export const LOCAL_FALLBACK_DESCRIPTION =
-  "Browser-only safe checks are active. Backend contextual analysis is not available right now.";
+  "Only limited browser fallback checks are active: duplicate spaces, repeated words, duplicate punctuation, and exact typo map.";
 
 const SAFE_EXACT_REPLACEMENTS = new Map<string, string>([
   ["কিন্ত", "কিন্তু"],
@@ -32,11 +34,7 @@ export function analyzeTextLocally(
     ...buildRepeatedWordSuggestions(text),
     ...buildDuplicatePunctuationSuggestions(text),
     ...buildExtraWhitespaceSuggestions(text),
-    ...buildWhitespaceBeforePunctuationSuggestions(text),
-    ...buildBanglaFullStopSuggestions(text),
-    ...buildSpaceAfterTerminatorSuggestions(text),
     ...buildExactCorrectionSuggestions(text, payload.personal_dictionary ?? []),
-    ...buildVariantSuggestions(text, mode, payload.personal_dictionary ?? []),
   ]);
 
   return {
@@ -46,9 +44,10 @@ export function analyzeTextLocally(
     suggestions,
     analysis_profile: "frontend_local_fallback",
     runtime_source: "frontend_local_fallback",
-    runtime_warnings: ["frontend_local_fallback"],
+    runtime_warnings: ["frontend_local_fallback", "limited_browser_fallback"],
     used_detector: false,
     used_corrector: false,
+    backend_warning: "Limited browser fallback is active. Only duplicate spaces, repeated words, duplicate punctuation, and exact typo checks are available.",
     lexicon_source: "frontend_local_dictionary",
     lexicon_version: null,
     backend_version: null,
@@ -71,7 +70,13 @@ function buildRepeatedWordSuggestions(text: string): Suggestion[] {
     }
 
     const between = text.slice(previousToken.end, start);
-    if (previousToken.value === value && /\s+/u.test(between) && between.trim().length === 0 && value.length >= 2) {
+    if (
+      previousToken.value === value &&
+      /\s+/u.test(between) &&
+      between.trim().length === 0 &&
+      value.length >= 2 &&
+      !ACCEPTED_REDUPLICATION.has(`${value} ${value}`)
+    ) {
       suggestions.push(
         buildSuggestion({
           prefix: "local-repeat",
@@ -269,7 +274,7 @@ function buildVariantSuggestions(
       buildSuggestion({
         prefix: "local-variant",
         ruleId: "SPELL_002",
-        category: "style",
+        category: "spelling",
         subtype: "orthography_variant",
         start,
         end: start + originalText.length,
@@ -415,7 +420,7 @@ function applySafeCorrections(text: string, suggestions: Suggestion[]): string {
 }
 
 function isSafeAutoApplySuggestion(text: string, suggestion: Suggestion): boolean {
-  if (suggestion.category === "style") {
+  if (suggestion.category === "register" || suggestion.category === "clarity" || suggestion.category === "rewrite_only") {
     return false;
   }
   if (suggestion.replacement_options.length !== 1) {

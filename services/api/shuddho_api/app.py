@@ -292,6 +292,7 @@ def _build_health_response() -> HealthResponse:
     corrector_runtime = corrector_service.runtime_status()
     analysis_profile = _derive_analysis_profile(detector_runtime, corrector_runtime)
     degraded_reasons = _derive_degraded_reasons(detector_runtime, corrector_runtime)
+    backend_warning = _derive_backend_warning(detector_runtime, corrector_runtime)
     return HealthResponse(
         status="ok",
         backend_reachable=True,
@@ -313,6 +314,7 @@ def _build_health_response() -> HealthResponse:
         corrector=_build_corrector_health(corrector_runtime),
         analysis_profile=analysis_profile,
         degraded_reasons=degraded_reasons,
+        backend_warning=backend_warning,
         mode_capabilities=_build_mode_capabilities(detector_runtime, corrector_runtime),
     )
 
@@ -426,14 +428,31 @@ def _build_mode_capabilities(
 
     if detector_runtime.loaded:
         for capabilities in base_capabilities.values():
-            capabilities.append("detector_span_detection")
+            capabilities.append("detector_span_corroboration")
+    else:
+        for capabilities in base_capabilities.values():
+            capabilities.append("detector_not_loaded")
 
     if corrector_runtime.loaded:
         for capabilities in base_capabilities.values():
             capabilities.append("sentence_level_local_corrector")
             capabilities.append("inline_corrector_span_projection")
+    else:
+        for capabilities in base_capabilities.values():
+            capabilities.append("sentence_level_corrector_unavailable")
 
     return base_capabilities
+
+
+def _derive_backend_warning(
+    detector_runtime: DetectorRuntimeStatus,
+    corrector_runtime: CorrectorRuntimeStatus,
+) -> str | None:
+    if corrector_runtime.status != "ready":
+        return "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only."
+    if detector_runtime.status != "ready":
+        return "Detector is not loaded. Shuddho is using rules, spelling, and exact span anchors only."
+    return None
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:

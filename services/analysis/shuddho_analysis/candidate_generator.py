@@ -211,7 +211,7 @@ class CandidateGenerator:
                 Suggestion(
                     id=stable_id("curated", f"punctuation:{span_start}:{span_end}:{original_text}"),
                     rule_id="PUNC_001",
-                    category=SuggestionCategory.PUNCTUATION,
+                    category=SuggestionCategory.SPACING,
                     subtype="duplicate_punctuation",
                     span_start=span_start,
                     span_end=span_end,
@@ -242,7 +242,7 @@ class CandidateGenerator:
                 Suggestion(
                     id=stable_id("curated", f"space-before:{span_start}:{span_end}:{punctuation}"),
                     rule_id="PUNC_002",
-                    category=SuggestionCategory.PUNCTUATION,
+                    category=SuggestionCategory.SPACING,
                     subtype="space_before_punctuation",
                     span_start=span_start,
                     span_end=span_end,
@@ -390,10 +390,9 @@ class CandidateGenerator:
             return self._punctuation_replacements(finding.original_text, text=text)
         if finding.category == SuggestionCategory.GRAMMAR:
             return self._grammar_replacements(finding.original_text)
-        if finding.category == SuggestionCategory.STYLE:
-            spacing_replacements = self._spacing_replacements(finding.original_text)
-            if spacing_replacements:
-                return spacing_replacements
+        if finding.category == SuggestionCategory.SPACING:
+            return self._spacing_replacements(finding.original_text)
+        if finding.category in {SuggestionCategory.REGISTER, SuggestionCategory.CLARITY}:
             return []
         return []
 
@@ -494,6 +493,10 @@ class CandidateGenerator:
             contextual_support=contextual_support,
         )
 
+        source_trace = ["model_runtime"]
+        if actionable and contextual_support > 0:
+            source_trace = ["detector_contextual_support", "detector_exact_span_support"]
+
         return Suggestion(
             id=stable_id(
                 "detector",
@@ -512,7 +515,7 @@ class CandidateGenerator:
             source=resolved_source,
             severity=finding.severity if actionable else max(finding.severity, SuggestionSeverity.LOW, key=_severity_rank),
             is_contextual=actionable or finding.source in {SuggestionSource.MODEL, SuggestionSource.HYBRID},
-            source_trace=["detector_contextual_support"] if actionable else ["model_runtime"],
+            source_trace=source_trace,
         )
 
     def _build_explanation(
@@ -660,8 +663,15 @@ class CandidateGenerator:
                 return False
             return len(primary_replacement) <= max(int(len(normalized_original) * 2.5), len(normalized_original) + 8, 24)
 
-        if suggestion.category == SuggestionCategory.PUNCTUATION:
+        if suggestion.category in {SuggestionCategory.PUNCTUATION, SuggestionCategory.SPACING}:
             return len(primary_replacement) <= 12
+
+        if suggestion.category in {
+            SuggestionCategory.REGISTER,
+            SuggestionCategory.CLARITY,
+            SuggestionCategory.REWRITE_ONLY,
+        }:
+            return False
 
         return len(primary_replacement) <= max(int(len(normalized_original) * 2.5), len(normalized_original) + 8, 24)
 

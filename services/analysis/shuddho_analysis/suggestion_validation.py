@@ -15,6 +15,7 @@ GENERIC_EXPLANATION_MARKERS = {
     "আরও ভালো",
     "আরও পরিষ্কার",
     "আরও প্রাকৃতিক",
+    "make it better",
     "clearer",
     "more natural",
     "more useful",
@@ -29,10 +30,10 @@ SPECIFIC_EXPLANATION_MARKERS = {
     "বানান",
     "অভিধান",
     "পুনরাবৃত্তি",
-    "অপ্রয়োজনীয়",
-    "অপ্রয়োজনীয়",
     "মানক রূপ",
     "সম্মানসূচক",
+    "সংখ্যা",
+    "একক",
 }
 DETERMINISTIC_RULE_EXPLANATION_SUBTYPES = {
     "extra_whitespace",
@@ -41,11 +42,21 @@ DETERMINISTIC_RULE_EXPLANATION_SUBTYPES = {
     "duplicate_punctuation",
     "repeated_word",
     "number_unit_spacing",
-    "mixed_digit_style",
     "fused_postposition",
-    "genitive_spacing",
+    "duplicate_negation",
+    "first_person_verb_mismatch",
+    "third_person_verb_mismatch",
+    "casual_pronoun_verb_mismatch",
+    "honorific_pronoun_verb_mismatch",
+    "formal_lexical_replacement",
+    "formal_pronoun_replacement",
 }
-MODEL_REQUIRED_SOURCE_TRACE = {"exact_unique_match", "occurrence_index", "anchor_triplet"}
+MODEL_REQUIRED_SOURCE_TRACE = {
+    "exact_unique_match",
+    "occurrence_index",
+    "anchor_triplet",
+    "detector_exact_span_support",
+}
 
 
 def validate_suggestions(
@@ -96,11 +107,7 @@ def validate_suggestions(
             if validate_suggestion(text, alternative_suggestion, mode=mode) is None:
                 validated_alternatives.append(alternative)
 
-        validated.append(
-            suggestion.model_copy(
-                update={"alternatives": validated_alternatives}
-            )
-        )
+        validated.append(suggestion.model_copy(update={"alternatives": validated_alternatives}))
     return validated
 
 
@@ -110,6 +117,9 @@ def validate_suggestion(
     *,
     mode: AnalyzeMode,
 ) -> str | None:
+    if suggestion.category == SuggestionCategory.REWRITE_ONLY:
+        return "rewrite_only_not_allowed"
+
     if suggestion.span_start < 0 or suggestion.span_end > len(text) or suggestion.span_start >= suggestion.span_end:
         return "invalid_span"
 
@@ -145,11 +155,22 @@ def validate_suggestion(
     if looks_generic_explanation(suggestion.explanation_bn or suggestion.explanation_en, suggestion):
         return "generic_explanation"
 
-    if suggestion.source == SuggestionSource.MODEL:
+    if suggestion.source == SuggestionSource.SPELL and suggestion.rule_id == "SPELL_003":
+        if "generic_high_margin" not in suggestion.source_trace:
+            return "weak_lexicon_guess"
+
+    if suggestion.source == SuggestionSource.HYBRID and "detector_contextual_support" in suggestion.source_trace:
+        if "detector_exact_span_support" not in suggestion.source_trace:
+            return "hybrid_missing_exact_support"
+
+    if _depends_on_model_anchor(suggestion):
         if "anchor_nearest_safe" in suggestion.source_trace:
             return "model_nearest_anchor_rejected"
         if not any(marker in suggestion.source_trace for marker in MODEL_REQUIRED_SOURCE_TRACE):
             return "model_missing_exact_anchor"
+
+    if _replacement_changes_meaning_too_much(text, suggestion, primary_replacement, mode=mode):
+        return "meaning_shift_too_large"
 
     return None
 
@@ -162,9 +183,9 @@ def minimum_confidence_for_suggestion(
     thresholds = {
         AnalyzeMode.STANDARD: {
             SuggestionKind.TRUE_SPELLING_ERROR: 0.94,
-            SuggestionKind.GRAMMAR_ERROR: 0.84,
-            SuggestionKind.PUNCTUATION_ERROR: 0.84,
-            SuggestionKind.SPACING_ERROR: 0.84,
+            SuggestionKind.GRAMMAR_ERROR: 0.88,
+            SuggestionKind.PUNCTUATION_ERROR: 0.88,
+            SuggestionKind.SPACING_ERROR: 0.9,
             SuggestionKind.STYLE_SUGGESTION: 0.9,
             SuggestionKind.ORTHOGRAPHY_VARIANT: 0.95,
             SuggestionKind.NAMED_ENTITY_OR_USER_WORD: 1.0,
@@ -173,22 +194,22 @@ def minimum_confidence_for_suggestion(
         },
         AnalyzeMode.STRICT: {
             SuggestionKind.TRUE_SPELLING_ERROR: 0.92,
-            SuggestionKind.GRAMMAR_ERROR: 0.8,
-            SuggestionKind.PUNCTUATION_ERROR: 0.82,
-            SuggestionKind.SPACING_ERROR: 0.82,
-            SuggestionKind.STYLE_SUGGESTION: 0.82,
-            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.82,
+            SuggestionKind.GRAMMAR_ERROR: 0.84,
+            SuggestionKind.PUNCTUATION_ERROR: 0.84,
+            SuggestionKind.SPACING_ERROR: 0.84,
+            SuggestionKind.STYLE_SUGGESTION: 0.84,
+            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.84,
             SuggestionKind.NAMED_ENTITY_OR_USER_WORD: 1.0,
             SuggestionKind.NO_SUGGESTION: 1.0,
             None: 0.95,
         },
         AnalyzeMode.FORMAL: {
             SuggestionKind.TRUE_SPELLING_ERROR: 0.92,
-            SuggestionKind.GRAMMAR_ERROR: 0.8,
-            SuggestionKind.PUNCTUATION_ERROR: 0.82,
-            SuggestionKind.SPACING_ERROR: 0.82,
-            SuggestionKind.STYLE_SUGGESTION: 0.78,
-            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.8,
+            SuggestionKind.GRAMMAR_ERROR: 0.84,
+            SuggestionKind.PUNCTUATION_ERROR: 0.84,
+            SuggestionKind.SPACING_ERROR: 0.84,
+            SuggestionKind.STYLE_SUGGESTION: 0.82,
+            SuggestionKind.ORTHOGRAPHY_VARIANT: 0.84,
             SuggestionKind.NAMED_ENTITY_OR_USER_WORD: 1.0,
             SuggestionKind.NO_SUGGESTION: 1.0,
             None: 0.95,
@@ -197,9 +218,9 @@ def minimum_confidence_for_suggestion(
 
     threshold = thresholds[mode].get(suggestion.suggestion_kind, thresholds[mode][None])
     if suggestion.source == SuggestionSource.MODEL:
-        threshold += 0.04
+        threshold += 0.05
     elif suggestion.source == SuggestionSource.HYBRID and suggestion.suggestion_kind == SuggestionKind.GRAMMAR_ERROR:
-        threshold += 0.02
+        threshold += 0.03
     if suggestion.is_variant_only and mode == AnalyzeMode.STANDARD:
         threshold += 0.02
     return min(round(threshold, 2), 0.99)
@@ -228,7 +249,7 @@ def _replacement_preserves_local_boundaries(suggestion: Suggestion, replacement:
         return False
 
     original = suggestion.original_text
-    if suggestion.category == SuggestionCategory.PUNCTUATION or suggestion.suggestion_kind == SuggestionKind.SPACING_ERROR:
+    if suggestion.category in {SuggestionCategory.PUNCTUATION, SuggestionCategory.SPACING}:
         return len(replacement) <= max(len(original) + 3, 12)
 
     if replacement[:1].isspace() or replacement[-1:].isspace():
@@ -248,7 +269,7 @@ def _replacement_is_language_safe(suggestion: Suggestion, replacement: str) -> b
     if suggestion.subtype == "code_mixed_latin":
         return True
 
-    if suggestion.category == SuggestionCategory.PUNCTUATION or suggestion.suggestion_kind == SuggestionKind.SPACING_ERROR:
+    if suggestion.category in {SuggestionCategory.PUNCTUATION, SuggestionCategory.SPACING}:
         return all(
             character.isspace()
             or character in PUNCTUATION_CHARS
@@ -261,3 +282,52 @@ def _replacement_is_language_safe(suggestion: Suggestion, replacement: str) -> b
     if PUNCTUATION_OR_SPACE_RE.fullmatch(replacement):
         return False
     return bool(BANGLA_LETTER_PATTERN.search(replacement))
+
+
+def _depends_on_model_anchor(suggestion: Suggestion) -> bool:
+    if suggestion.source == SuggestionSource.MODEL:
+        return True
+    if suggestion.source != SuggestionSource.HYBRID:
+        return False
+    return any(
+        marker in (suggestion.source_trace or [])
+        for marker in {"detector_contextual_support", "corrector_seq2seq"}
+    )
+
+
+def _replacement_changes_meaning_too_much(
+    text: str,
+    suggestion: Suggestion,
+    replacement: str,
+    *,
+    mode: AnalyzeMode,
+) -> bool:
+    original = suggestion.original_text.strip()
+    replacement = replacement.strip()
+    if not original or not replacement:
+        return True
+    if suggestion.category in {SuggestionCategory.PUNCTUATION, SuggestionCategory.SPACING}:
+        return False
+    if replacement == text.strip() and original != text.strip():
+        return True
+
+    original_tokens = len(original.split())
+    replacement_tokens = len(replacement.split())
+    token_limit = 4 if suggestion.category == SuggestionCategory.REGISTER else 6
+    char_limit = (
+        max(int(len(original) * 2.1), len(original) + 6, 18)
+        if mode == AnalyzeMode.STANDARD
+        else max(int(len(original) * 2.4), len(original) + 8, 22)
+    )
+    if replacement_tokens > token_limit:
+        return True
+    if len(replacement) > char_limit:
+        return True
+    if original_tokens <= 2 and replacement_tokens >= original_tokens + 2:
+        return True
+    if suggestion.source in {SuggestionSource.MODEL, SuggestionSource.HYBRID}:
+        if replacement_tokens >= max(original_tokens + 2, 4):
+            return True
+        if len(replacement) >= max(len(original) * 2.4, len(original) + 12):
+            return True
+    return False

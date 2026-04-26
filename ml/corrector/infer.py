@@ -229,6 +229,8 @@ def _project_prediction_to_suggestions(
             continue
         if _looks_like_rewrite(original_text, replacement, mode=mode):
             continue
+        if _is_sentence_wide_edit(sentence.text, original_text, replacement):
+            continue
 
         category, subtype, severity = _classify_edit(original_text, replacement)
         confidence = _estimate_edit_confidence(prediction.confidence, original_text, replacement, mode=mode)
@@ -237,6 +239,17 @@ def _project_prediction_to_suggestions(
 
         anchor_before, anchor_after = build_anchor_context(sentence.text, original_start, original_end)
         occurrence_index = _resolve_occurrence_index(sentence.text, original_text, original_start, original_end)
+        source_trace = _build_source_trace(
+            sentence.text,
+            original_text,
+            original_start,
+            original_end,
+            occurrence_index=occurrence_index,
+            anchor_before=anchor_before,
+            anchor_after=anchor_after,
+        )
+        if len(source_trace) == 1:
+            continue
         suggestions.append(
             Suggestion(
                 id=stable_id(
@@ -262,7 +275,7 @@ def _project_prediction_to_suggestions(
                 occurrence_index=occurrence_index,
                 anchor_before=anchor_before,
                 anchor_after=anchor_after,
-                source_trace=["corrector_seq2seq", "exact_unique_match"],
+                source_trace=source_trace,
             )
         )
 
@@ -338,7 +351,7 @@ def _classify_edit(
     stripped_replacement = replacement.strip()
 
     if compact_original == compact_replacement and original_text != replacement:
-        return SuggestionCategory.PUNCTUATION, "spacing_error", SuggestionSeverity.LOW
+        return SuggestionCategory.SPACING, "spacing_error", SuggestionSeverity.LOW
     if PUNCTUATION_RE.fullmatch(original_text) or PUNCTUATION_RE.fullmatch(replacement):
         return SuggestionCategory.PUNCTUATION, "corrector_punctuation", SuggestionSeverity.LOW
     if _differs_only_by_attached_punctuation(stripped_original, stripped_replacement):
@@ -401,12 +414,75 @@ def _looks_like_rewrite(original_text: str, replacement: str, *, mode: AnalyzeMo
     return False
 
 
+def _is_sentence_wide_edit(sentence_text: str, original_text: str, replacement: str) -> bool:
+    if not sentence_text.strip():
+        return True
+    original_ratio = len(original_text.strip()) / max(len(sentence_text.strip()), 1)
+    replacement_ratio = len(replacement.strip()) / max(len(sentence_text.strip()), 1)
+    if original_ratio >= 0.6 or replacement_ratio >= 0.6:
+        return True
+    if len(replacement.split()) >= max(len(sentence_text.split()) - 1, 4):
+        return True
+    return False
+
+
 def _resolve_occurrence_index(sentence_text: str, original_text: str, start: int, end: int) -> int | None:
     matches = find_sentence_local_matches(sentence_text, original_text)
     for match in matches:
         if match.start == start and match.end == end:
             return match.occurrence_index
     return None
+
+
+def _build_source_trace(
+    sentence_text: str,
+    original_text: str,
+    start: int,
+    end: int,
+    *,
+    occurrence_index: int | None,
+    anchor_before: str | None,
+    anchor_after: str | None,
+) -> list[str]:
+    source_trace = ["corrector_seq2seq"]
+    matches = find_sentence_local_matches(sentence_text, original_text)
+    if len(matches) == 1:
+        return [*source_trace, "exact_unique_match"]
+    if occurrence_index is not None:
+        return [*source_trace, "occurrence_index"]
+    anchored_matches = [
+        match
+        for match in matches
+        if _matches_anchor_context(
+            sentence_text,
+            match.start,
+            match.end,
+            anchor_before=anchor_before,
+            anchor_after=anchor_after,
+        )
+    ]
+    if len(anchored_matches) == 1:
+        return [*source_trace, "anchor_triplet"]
+    if any(match.start == start and match.end == end for match in anchored_matches):
+        return [*source_trace, "anchor_triplet"]
+    return source_trace
+
+
+def _matches_anchor_context(
+    sentence_text: str,
+    start: int,
+    end: int,
+    *,
+    anchor_before: str | None,
+    anchor_after: str | None,
+) -> bool:
+    before_matches = True
+    after_matches = True
+    if anchor_before:
+        before_matches = sentence_text[max(0, start - len(anchor_before)) : start] == anchor_before
+    if anchor_after:
+        after_matches = sentence_text[end : end + len(anchor_after)] == anchor_after
+    return before_matches and after_matches
 
 
 def _looks_like_bangla_sentence(text: str) -> bool:
@@ -419,7 +495,7 @@ def _corrector_rule_id(category: SuggestionCategory) -> str:
         SuggestionCategory.SPELLING: "COR_SPELL_001",
         SuggestionCategory.GRAMMAR: "COR_GRAM_001",
         SuggestionCategory.PUNCTUATION: "COR_PUNC_001",
-        SuggestionCategory.STYLE: "COR_STYLE_001",
+        SuggestionCategory.SPACING: "COR_SPACE_001",
     }[category]
 
 

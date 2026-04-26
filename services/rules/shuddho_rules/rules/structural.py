@@ -13,6 +13,7 @@ REPEATED_WORD_PATTERN = re.compile(
     rf"(?<![{TOKEN_BOUNDARY_CHARS}])(?P<word>[\u0980-\u09FFA-Za-z]+)(?P<space>\s+)(?P=word)(?![{TOKEN_BOUNDARY_CHARS}])"
 )
 DUPLICATE_NEGATION_PATTERN = re.compile(r"(?<![\u0980-\u09FFA-Za-z])না(?P<space>\s+)না(?![\u0980-\u09FFA-Za-z])")
+FILLER_PATTERN = re.compile(r"(?<![\u0980-\u09FFA-Za-z])(?P<word>আসলে|মানে|মূলত)(?P<space>\s+)(?P=word)(?![\u0980-\u09FFA-Za-z])")
 
 
 def repeated_word_rule(text: str) -> list[Suggestion]:
@@ -25,7 +26,7 @@ def repeated_word_rule(text: str) -> list[Suggestion]:
 
         span_start = match.start()
         span_end = match.end()
-        confidence = 0.95 if word in {"আমি", "সে", "এই", "ওই", "যে", "না"} else 0.7
+        confidence = 0.97 if word in {"আমি", "সে", "এই", "ওই", "যে", "না"} else 0.92
         suggestions.append(
             Suggestion(
                 id=stable_id("rule", f"repeat:{span_start}:{span_end}:{word}"),
@@ -41,6 +42,7 @@ def repeated_word_rule(text: str) -> list[Suggestion]:
                 explanation_en=f"The word '{word}' appears twice in a row.",
                 source=SuggestionSource.RULE,
                 severity=SuggestionSeverity.MEDIUM,
+                source_trace=["rule_engine", "exact_repetition"],
             )
         )
     return suggestions
@@ -62,11 +64,12 @@ def duplicate_negation_rule(text: str) -> list[Suggestion]:
                 span_end=match.end(),
                 original_text=match.group(0),
                 replacement_options=["না"],
-                confidence=0.7,
-                explanation_bn="এখানে 'না' শব্দটি অপ্রয়োজনীয়ভাবে দুইবার এসেছে।",
-                explanation_en="The word 'না' appears twice here unnecessarily.",
+                confidence=0.9,
+                explanation_bn="এখানে 'না' শব্দটি অপ্রয়োজনীয়ভাবে দুইবার এসেছে।",
+                explanation_en="The word 'না' is repeated unnecessarily here.",
                 source=SuggestionSource.RULE,
                 severity=SuggestionSeverity.MEDIUM,
+                source_trace=["rule_engine", "exact_repetition"],
             )
         )
     return suggestions
@@ -85,21 +88,47 @@ def repeated_coordinator_rule(text: str) -> list[Suggestion]:
         suggestions.append(
             Suggestion(
                 id=stable_id("rule", f"coordinator-repeat:{left.start}:{right.end}:{left.text}"),
-                rule_id="GRAM_002",
-                category=SuggestionCategory.GRAMMAR,
+                rule_id="CLEAR_002",
+                category=SuggestionCategory.CLARITY,
                 subtype="repeated_coordinator",
                 span_start=left.start,
                 span_end=right.end,
                 original_text=text[left.start:right.end],
                 replacement_options=[left.text],
-                confidence=0.9,
+                confidence=0.91,
                 explanation_bn=f"সংযোজক '{left.text}' পরপর দুইবার এসেছে।",
-                explanation_en=f"The coordinator '{left.text}' appears twice in a row.",
+                explanation_en=f"The connector '{left.text}' appears twice in a row.",
                 source=SuggestionSource.RULE,
-                severity=SuggestionSeverity.MEDIUM,
+                severity=SuggestionSeverity.LOW,
+                source_trace=["rule_engine", "exact_repetition"],
             )
         )
 
+    return suggestions
+
+
+def repeated_filler_rule(text: str) -> list[Suggestion]:
+    suggestions: list[Suggestion] = []
+    for match in FILLER_PATTERN.finditer(text):
+        filler = match.group("word")
+        suggestions.append(
+            Suggestion(
+                id=stable_id("rule", f"filler-repeat:{match.start()}:{match.end()}:{filler}"),
+                rule_id="CLEAR_003",
+                category=SuggestionCategory.CLARITY,
+                subtype="repeated_filler",
+                span_start=match.start(),
+                span_end=match.end(),
+                original_text=match.group(0),
+                replacement_options=[filler],
+                confidence=0.9,
+                explanation_bn=f"ফিলার শব্দ '{filler}' পরপর দুইবার এসেছে।",
+                explanation_en=f"The filler word '{filler}' appears twice in a row.",
+                source=SuggestionSource.RULE,
+                severity=SuggestionSeverity.LOW,
+                source_trace=["rule_engine", "exact_repetition"],
+            )
+        )
     return suggestions
 
 
@@ -107,5 +136,6 @@ def build_rule_definitions() -> tuple[RuleDefinition, ...]:
     return (
         RuleDefinition("repeated_word", "Detect accidental repeated words.", repeated_word_rule),
         RuleDefinition("duplicate_negation", "Detect repeated negation.", duplicate_negation_rule),
-        RuleDefinition("repeated_coordinator", "Detect repeated coordinators.", repeated_coordinator_rule),
+        RuleDefinition("repeated_coordinator", "Detect repeated connectors.", repeated_coordinator_rule),
+        RuleDefinition("repeated_filler", "Detect repeated filler words.", repeated_filler_rule),
     )

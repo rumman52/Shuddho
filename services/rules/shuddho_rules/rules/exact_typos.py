@@ -9,9 +9,32 @@ from shared.utils.text import stable_id
 from .base import RuleDefinition, TOKEN_BOUNDARY_CHARS
 
 
+EXTRA_SAFE_EXACT_TYPOS = {
+    "অবশই": "অবশ্যই",
+    "নিশ্চই": "নিশ্চয়ই",
+    "ব্যাবসা": "ব্যবসা",
+    "অবস্তা": "অবস্থা",
+    "গুরুত্তপূর্ণ": "গুরুত্বপূর্ণ",
+    "সর্ম্পক": "সম্পর্ক",
+    "অভিজ্ঞ্যতা": "অভিজ্ঞতা",
+    "উদ্দ্যোগ": "উদ্যোগ",
+    "বাক্তি": "ব্যক্তি",
+    "বিদ্যলয়": "বিদ্যালয়",
+    "সম্বভ": "সম্ভব",
+    "দারুন": "দারুণ",
+    "সাহায্য্য": "সাহায্য",
+    "বংগালি": "বাঙালি",
+}
+
+ALL_SAFE_EXACT_TYPOS = {
+    **SAFE_EXACT_TYPOS,
+    **EXTRA_SAFE_EXACT_TYPOS,
+}
+
+
 def exact_typo_rule(text: str) -> list[Suggestion]:
     suggestions: list[Suggestion] = []
-    for typo, replacement in SAFE_EXACT_TYPOS.items():
+    for typo, replacement in ALL_SAFE_EXACT_TYPOS.items():
         typo_pattern = re.compile(rf"(?<![{TOKEN_BOUNDARY_CHARS}]){re.escape(typo)}(?![{TOKEN_BOUNDARY_CHARS}])")
         for match in typo_pattern.finditer(text):
             original_text = match.group(0)
@@ -31,6 +54,7 @@ def exact_typo_rule(text: str) -> list[Suggestion]:
                     explanation_en=f"Replace '{original_text}' with '{replacement}' here.",
                     source=SuggestionSource.RULE,
                     severity=SuggestionSeverity.MEDIUM if category == SuggestionCategory.SPELLING else SuggestionSeverity.LOW,
+                    source_trace=["rule_engine", "exact_typo_map"],
                 )
             )
     return suggestions

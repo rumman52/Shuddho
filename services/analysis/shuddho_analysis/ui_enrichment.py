@@ -39,14 +39,16 @@ class SuggestionUiEnricher:
 
 
 def _resolve_ui_group(suggestion: Suggestion) -> SuggestionUiGroup:
-    if suggestion.suggestion_kind in {SuggestionKind.PUNCTUATION_ERROR, SuggestionKind.SPACING_ERROR}:
+    if suggestion.suggestion_kind == SuggestionKind.PUNCTUATION_ERROR:
         return SuggestionUiGroup.PUNCTUATION
+    if suggestion.suggestion_kind == SuggestionKind.SPACING_ERROR:
+        return SuggestionUiGroup.SPACING
     if suggestion.subtype in {"repeated_word", "code_mixed_latin"}:
         return SuggestionUiGroup.CLARITY
-    if any(marker in suggestion.subtype for marker in {"honorific", "formal", "casual", "polite"}):
-        return SuggestionUiGroup.TONE
-    if suggestion.category == SuggestionCategory.STYLE:
-        return SuggestionUiGroup.STYLE
+    if suggestion.category == SuggestionCategory.REGISTER:
+        return SuggestionUiGroup.REGISTER
+    if suggestion.category == SuggestionCategory.CLARITY:
+        return SuggestionUiGroup.CLARITY
     return SuggestionUiGroup.CORRECTNESS
 
 
@@ -70,8 +72,10 @@ def _resolve_short_title(suggestion: Suggestion) -> str:
         return "Grammar suggestion"
     if suggestion.suggestion_kind == SuggestionKind.PUNCTUATION_ERROR:
         return "Punctuation suggestion"
+    if suggestion.suggestion_kind == SuggestionKind.SPACING_ERROR:
+        return "Spacing suggestion"
     if suggestion.suggestion_kind == SuggestionKind.STYLE_SUGGESTION:
-        return "Style suggestion"
+        return "Register suggestion" if suggestion.category == SuggestionCategory.REGISTER else "Clarity suggestion"
     return "Writing suggestion"
 
 
@@ -106,15 +110,20 @@ def _resolve_action_hints(
 
 def _resolve_rewrite_intents(suggestion: Suggestion, ui_group: SuggestionUiGroup) -> list[RewriteIntent]:
     intents: list[RewriteIntent] = []
-    if ui_group in {SuggestionUiGroup.CORRECTNESS, SuggestionUiGroup.PUNCTUATION, SuggestionUiGroup.CLARITY}:
+    if ui_group in {
+        SuggestionUiGroup.CORRECTNESS,
+        SuggestionUiGroup.PUNCTUATION,
+        SuggestionUiGroup.SPACING,
+        SuggestionUiGroup.CLARITY,
+    }:
         intents.append(RewriteIntent.CLARITY)
-    if ui_group in {SuggestionUiGroup.STYLE, SuggestionUiGroup.TONE}:
+    if ui_group == SuggestionUiGroup.REGISTER:
         intents.extend([RewriteIntent.CLARITY, RewriteIntent.CONCISE])
     if suggestion.subtype in {"orthography_variant", "honorific_pronoun_verb_mismatch"}:
         intents.extend([RewriteIntent.FORMAL, RewriteIntent.PROFESSIONAL])
     if "casual" in suggestion.subtype or "chatty" in suggestion.subtype:
         intents.extend([RewriteIntent.PROFESSIONAL, RewriteIntent.FORMAL])
-    if ui_group == SuggestionUiGroup.TONE:
+    if ui_group == SuggestionUiGroup.REGISTER:
         intents.append(RewriteIntent.FRIENDLY)
     return _dedupe_enum_values(intents)
 
@@ -132,7 +141,7 @@ def _can_add_to_dictionary(suggestion: Suggestion) -> bool:
     normalized = suggestion.original_text.strip()
     if not normalized or "\n" in normalized or len(normalized) > 40:
         return False
-    if suggestion.category == SuggestionCategory.PUNCTUATION:
+    if suggestion.category != SuggestionCategory.SPELLING:
         return False
     return len(normalized.split()) <= 3
 

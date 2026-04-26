@@ -66,12 +66,12 @@ def _apply_density(suggestions: list[Suggestion], density: SuggestionDensity) ->
     hard_suggestions = [
         suggestion
         for suggestion in suggestions
-        if suggestion.ui_group != "style" and suggestion.ui_group != "tone"
+        if suggestion.ui_group not in {"register", "clarity"}
     ]
     soft_candidates = [
         suggestion
         for suggestion in suggestions
-        if suggestion.ui_group in {"style", "tone"} or suggestion.category == "style"
+        if suggestion.ui_group in {"register", "clarity"} or suggestion.category in {"register", "clarity"}
     ]
     soft_candidates.sort(
         key=lambda suggestion: (

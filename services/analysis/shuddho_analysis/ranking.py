@@ -31,6 +31,7 @@ class SuggestionRankingPipeline:
         )
         ranked.sort(
             key=lambda item: (
+                _priority_bucket(item.suggestion),
                 _actionability_sort_bucket(item.suggestion),
                 -item.score,
                 _conservative_sort_bucket(item.suggestion),
@@ -47,6 +48,25 @@ class SuggestionRankingPipeline:
 
 def _actionability_sort_bucket(suggestion: Suggestion) -> int:
     return 0 if suggestion.replacement_options else 1
+
+
+def _priority_bucket(suggestion: Suggestion) -> int:
+    if suggestion.category == "rewrite_only":
+        return 6
+    if suggestion.source == SuggestionSource.RULE and suggestion.category in {"grammar", "punctuation", "spacing"}:
+        return 0
+    if suggestion.suggestion_kind == SuggestionKind.TRUE_SPELLING_ERROR and suggestion.source in {
+        SuggestionSource.RULE,
+        SuggestionSource.SPELL,
+    }:
+        return 1
+    if suggestion.source == SuggestionSource.HYBRID and "detector_exact_span_support" in (suggestion.source_trace or []):
+        return 2
+    if suggestion.source == SuggestionSource.MODEL and "corrector_seq2seq" in (suggestion.source_trace or []):
+        return 3
+    if suggestion.category in {"register", "clarity"} or suggestion.suggestion_kind == SuggestionKind.STYLE_SUGGESTION:
+        return 4
+    return 5
 
 
 def _conservative_sort_bucket(suggestion: Suggestion) -> tuple[int, int]:

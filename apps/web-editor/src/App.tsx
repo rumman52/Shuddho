@@ -32,9 +32,11 @@ import { canAddSuggestionToDictionary, describeRuntimeState } from "./lib/runtim
 const INITIAL_TEXT = sampleFixtures[0]?.text ?? "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 const ANALYSIS_DEBOUNCE_MS = 450;
-const BACKEND_DISABLED_MESSAGE = "Backend is not connected. Contextual Bengali correction is disabled.";
-const DEV_LOCAL_FALLBACK_LABEL = "Dev-only browser fallback";
-const DEV_LOCAL_FALLBACK_DESCRIPTION = "Backend is not connected. Contextual Bengali correction is disabled. Dev-only local fallback is enabled.";
+const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
+const BACKEND_OFFLINE_FALLBACK_MESSAGE = "Backend offline. Only limited local checks are available.";
+const SUGGESTIONS_DISABLED_MESSAGE = "Backend offline and browser fallback is disabled. Suggestions are unavailable.";
+const DEV_LOCAL_FALLBACK_LABEL = "Limited browser fallback";
+const DEV_LOCAL_FALLBACK_DESCRIPTION = BACKEND_OFFLINE_FALLBACK_MESSAGE;
 
 type BackendMode = "checking" | "online" | "offline" | "misconfigured";
 
@@ -49,6 +51,12 @@ export default function App() {
   const [rewriteResult, setRewriteResult] = useState<RewriteResponse | null>(null);
   const [selectedSuggestionId, setSelectedSuggestionId] = useState<string | null>(null);
   const [status, setStatus] = useState("Ready");
+  const [debugMode, setDebugMode] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.localStorage.getItem(DEBUG_MODE_STORAGE_KEY) === "1";
+  });
   const [backendMode, setBackendMode] = useState<BackendMode>("checking");
   const [backendHealth, setBackendHealth] = useState<HealthDeepResponse | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
@@ -79,6 +87,13 @@ export default function App() {
   }, [userId]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(DEBUG_MODE_STORAGE_KEY, debugMode ? "1" : "0");
+  }, [debugMode]);
+
+  useEffect(() => {
     void refreshBackendHealth();
   }, [apiBaseUrl, apiConfiguration.backendAllowed, apiConfiguration.hardWarning, apiConfiguration.localFallbackEnabled]);
 
@@ -102,7 +117,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : BACKEND_DISABLED_MESSAGE,
+          : SUGGESTIONS_DISABLED_MESSAGE,
       );
       return;
     }
@@ -117,7 +132,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : BACKEND_DISABLED_MESSAGE,
+          : SUGGESTIONS_DISABLED_MESSAGE,
       );
     }
   }
@@ -164,7 +179,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : BACKEND_DISABLED_MESSAGE,
+          : SUGGESTIONS_DISABLED_MESSAGE,
       );
       setTone(null);
       setRewriteResult(null);
@@ -198,7 +213,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : BACKEND_DISABLED_MESSAGE,
+          : SUGGESTIONS_DISABLED_MESSAGE,
       );
     }
   }
@@ -320,7 +335,7 @@ export default function App() {
     const selectionEnd = suggestion?.span_end ?? (selection.end > selection.start ? selection.end : null);
 
     if (backendMode !== "online") {
-      setStatus(BACKEND_DISABLED_MESSAGE);
+      setStatus(SUGGESTIONS_DISABLED_MESSAGE);
       return;
     }
 
@@ -439,10 +454,11 @@ export default function App() {
             <h2>Runtime</h2>
             <div className="meta-list">
               <span>Backend: {backendMode}</span>
-              <span>Detector: {analysis.used_detector ? "active" : "inactive"}</span>
-              <span>Corrector: {analysis.used_corrector ? "active" : "inactive"}</span>
+              <span>Detector: {backendHealth ? (backendHealth.detector.loaded ? "ready" : backendHealth.detector.status) : "unknown"}</span>
+              <span>Corrector: {backendHealth ? (backendHealth.corrector.loaded ? "ready" : backendHealth.corrector.status) : "unknown"}</span>
               <span>Lexicon: {analysis.lexicon_source}</span>
             </div>
+            {analysis.backend_warning ? <p className="muted-text">{analysis.backend_warning}</p> : null}
             {analysis.runtime_warnings.length ? (
               <div className="chip-row">
                 {analysis.runtime_warnings.map((warning) => (
@@ -458,6 +474,10 @@ export default function App() {
                 <span>Backend version: {backendHealth.backend_version ?? "unknown"}</span>
               </div>
             ) : null}
+            <label className="checkbox-row">
+              <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} />
+              <span>Debug details</span>
+            </label>
           </div>
 
           <div className="panel-block">
@@ -724,13 +744,14 @@ export default function App() {
           <p className="empty-state">
             {backendMode === "online" || apiConfiguration.localFallbackEnabled
               ? "No high-confidence correction found."
-              : BACKEND_DISABLED_MESSAGE}
+              : SUGGESTIONS_DISABLED_MESSAGE}
           </p>
         )}
 
         {selectedSuggestion ? (
           <SuggestionCard
             suggestion={selectedSuggestion}
+            debugMode={debugMode}
             onApply={(candidate, replacement) => handleApplySuggestion(candidate, replacement, selectedSuggestion)}
             onDismiss={() => handleDismissSuggestion(selectedSuggestion)}
             onIgnoreForever={() => handleIgnoreForever(selectedSuggestion)}
@@ -784,6 +805,7 @@ function createEmptyAnalysis(
     runtime_warnings: [],
     used_detector: false,
     used_corrector: false,
+    backend_warning: null,
     lexicon_source: "unknown",
     lexicon_version: null,
     backend_version: null,
@@ -796,6 +818,7 @@ function createUnavailableAnalysis(text: string, mode: AnalyzeMode, warning: str
   return {
     ...createEmptyAnalysis(text, mode, "frontend_local_fallback"),
     runtime_warnings: [warning],
+    backend_warning: "Suggestions are disabled because the backend is unavailable and browser fallback is off.",
   };
 }
 

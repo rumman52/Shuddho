@@ -27,7 +27,7 @@
     },
     "category": {
       "type": "string",
-      "enum": ["spelling", "grammar", "punctuation", "style"]
+      "enum": ["spelling", "grammar", "punctuation", "spacing", "register", "clarity", "rewrite_only"]
     },
     "subtype": {
       "type": "string"
@@ -102,7 +102,7 @@
           "rule_id": { "type": "string" },
           "category": {
             "type": "string",
-            "enum": ["spelling", "grammar", "punctuation", "style"]
+            "enum": ["spelling", "grammar", "punctuation", "spacing", "register", "clarity", "rewrite_only"]
           },
           "subtype": { "type": "string" },
           "original_text": { "type": "string" },

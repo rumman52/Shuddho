@@ -2,7 +2,10 @@ export type SuggestionCategory =
   | "spelling"
   | "grammar"
   | "punctuation"
-  | "style";
+  | "spacing"
+  | "register"
+  | "clarity"
+  | "rewrite_only";
 
 export type SuggestionSource = "rule" | "spell" | "model" | "hybrid";
 export type SuggestionSeverity = "low" | "medium" | "high";
@@ -24,10 +27,10 @@ export type SuggestionKind =
   | "no_suggestion";
 export type SuggestionUiGroup =
   | "correctness"
+  | "spacing"
+  | "punctuation"
+  | "register"
   | "clarity"
-  | "tone"
-  | "style"
-  | "punctuation";
 export type PreferredLanguageVariant = "bangla";
 export type WritingGoal =
   | "general"
@@ -149,6 +152,7 @@ export interface AnalyzeResponse {
   runtime_warnings: string[];
   used_detector: boolean;
   used_corrector: boolean;
+  backend_warning?: string | null;
   lexicon_source: string;
   lexicon_version?: string | null;
   backend_version?: string | null;
@@ -264,6 +268,7 @@ export interface HealthResponse {
   corrector: CorrectorHealth;
   analysis_profile: AnalysisProfile;
   degraded_reasons: string[];
+  backend_warning?: string | null;
   mode_capabilities: Record<string, string[]>;
 }
 

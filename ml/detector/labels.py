@@ -30,21 +30,21 @@ DETECTOR_UNK_TOKEN = "<unk>"
 
 DETECTOR_LABEL_TO_CATEGORY = {
     "spelling": SuggestionCategory.SPELLING,
-    "orthography_variant": SuggestionCategory.STYLE,
+    "orthography_variant": SuggestionCategory.SPELLING,
     "grammar": SuggestionCategory.GRAMMAR,
     "punctuation": SuggestionCategory.PUNCTUATION,
-    "spacing": SuggestionCategory.STYLE,
+    "spacing": SuggestionCategory.SPACING,
     "repeated_word": SuggestionCategory.GRAMMAR,
     "verb_agreement": SuggestionCategory.GRAMMAR,
     "pronoun_mismatch": SuggestionCategory.GRAMMAR,
     "suffix_error": SuggestionCategory.GRAMMAR,
-    "postposition_error": SuggestionCategory.GRAMMAR,
-    "mixed_register": SuggestionCategory.STYLE,
-    "code_mix": SuggestionCategory.STYLE,
+    "postposition_error": SuggestionCategory.SPACING,
+    "mixed_register": SuggestionCategory.REGISTER,
+    "code_mix": SuggestionCategory.CLARITY,
     "word_order": SuggestionCategory.GRAMMAR,
     "missing_word": SuggestionCategory.GRAMMAR,
     "extra_word": SuggestionCategory.GRAMMAR,
-    "mixed_digit_style": SuggestionCategory.STYLE,
+    "mixed_digit_style": SuggestionCategory.CLARITY,
 }
 
 DETECTOR_LABEL_ALIASES = {

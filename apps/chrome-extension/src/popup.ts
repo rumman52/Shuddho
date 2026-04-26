@@ -1,9 +1,11 @@
+import type { HealthDeepResponse } from "@shared/schemas/contracts";
+
 import { getExtensionSettings, getHostnameFromUrl, setSiteDisabled, updateExtensionSettings } from "./config";
 import type { ExtensionSettings } from "./types";
 
-const DETECTOR_UNAVAILABLE_COPY = "Backend live — detector unavailable";
-const CORRECTOR_UNAVAILABLE_COPY = "Backend live — corrector unavailable";
-const BACKEND_UNREACHABLE_COPY = "Backend unreachable — smart analysis paused";
+const DETECTOR_UNAVAILABLE_COPY = "Detector unavailable";
+const CORRECTOR_UNAVAILABLE_COPY = "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only.";
+const BACKEND_UNREACHABLE_COPY = "Backend offline. Only limited local checks are available.";
 
 const statusElement = document.getElementById("status");
 const siteHostnameElement = document.getElementById("site-hostname");
@@ -36,15 +38,11 @@ async function refreshBackendStatus(): Promise<void> {
   }
 
   try {
-    const response = await fetch(`${settings.backendBaseUrl}/health`);
+    const response = await fetch(`${settings.backendBaseUrl}/health/deep`);
     if (!response.ok) {
       throw new Error(String(response.status));
     }
-    const health = (await response.json()) as {
-      analysis_profile: string;
-      detector: { loaded: boolean; reason?: string | null };
-      corrector: { loaded: boolean; reason?: string | null };
-    };
+    const health = (await response.json()) as HealthDeepResponse;
     const issues: string[] = [];
     if (!health.detector.loaded) {
       issues.push(DETECTOR_UNAVAILABLE_COPY);
@@ -52,9 +50,7 @@ async function refreshBackendStatus(): Promise<void> {
     if (!health.corrector.loaded) {
       issues.push(CORRECTOR_UNAVAILABLE_COPY);
     }
-    statusElement.textContent = issues.length
-      ? `${health.analysis_profile} (${issues.join(", ")})`
-      : `${health.analysis_profile}`;
+    statusElement.textContent = health.backend_warning || (issues.length ? `${health.analysis_profile} (${issues.join(", ")})` : `${health.analysis_profile}`);
   } catch {
     statusElement.textContent = `${BACKEND_UNREACHABLE_COPY} at ${settings.backendBaseUrl}`;
   }

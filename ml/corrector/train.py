@@ -26,6 +26,7 @@ class CorrectorTrainingConfig:
     device: str
     train_path: Path
     validation_path: Path | None
+    test_path: Path | None
     validation_split: float
     output_dir: Path
     model: dict[str, int | float]
@@ -43,6 +44,8 @@ def load_training_config(config_path: str | Path) -> CorrectorTrainingConfig:
 
     validation_path_value = data_config.get("validation_path")
     validation_path = _resolve_repo_path(validation_path_value) if validation_path_value else None
+    test_path_value = data_config.get("test_path")
+    test_path = _resolve_repo_path(test_path_value) if test_path_value else None
 
     return CorrectorTrainingConfig(
         name=name,
@@ -56,6 +59,7 @@ def load_training_config(config_path: str | Path) -> CorrectorTrainingConfig:
         device=str(raw_config.get("device", "auto")),
         train_path=_resolve_repo_path(data_config["train_path"]),
         validation_path=validation_path,
+        test_path=test_path,
         validation_split=float(data_config.get("validation_split", 0.1)),
         output_dir=_resolve_repo_path(output_config.get("dir", f"artifacts/corrector/{name}")),
         model={
@@ -79,6 +83,7 @@ def build_training_artifacts(config: CorrectorTrainingConfig) -> dict[str, objec
             validation_ratio=config.validation_split,
             seed=config.seed,
         )
+    test_examples = load_corrector_examples(config.test_path) if config.test_path is not None else []
 
     tokenizer = CharacterTokenizer.train(
         [example.source_text for example in [*train_examples, *validation_examples]]
@@ -103,6 +108,7 @@ def build_training_artifacts(config: CorrectorTrainingConfig) -> dict[str, objec
     return {
         "train_examples": train_examples,
         "validation_examples": validation_examples,
+        "test_examples": test_examples,
         "tokenizer": tokenizer,
         "train_dataset": train_dataset,
         "validation_dataset": validation_dataset,
@@ -213,6 +219,7 @@ def train_corrector(config: CorrectorTrainingConfig) -> dict[str, object]:
         "history": history,
         "train_examples": len(artifacts["train_examples"]),
         "validation_examples": len(artifacts["validation_examples"]),
+        "test_examples": len(artifacts["test_examples"]),
     }
     _write_metadata(config=config, tokenizer=tokenizer, metrics=metrics)
     return metrics
@@ -466,6 +473,7 @@ def _config_to_dict(config: CorrectorTrainingConfig) -> dict[str, object]:
         "device": config.device,
         "train_path": str(config.train_path),
         "validation_path": str(config.validation_path) if config.validation_path else None,
+        "test_path": str(config.test_path) if config.test_path else None,
         "validation_split": config.validation_split,
         "output_dir": str(config.output_dir),
         "model": dict(config.model),

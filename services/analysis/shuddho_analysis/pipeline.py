@@ -77,6 +77,7 @@ class AnalysisPipeline:
             runtime_warnings=artifacts.runtime_warnings,
             used_detector=artifacts.used_detector,
             used_corrector=artifacts.used_corrector,
+            backend_warning=artifacts.backend_warning,
             lexicon_source=self.spell_engine.lexicon_source,
             lexicon_version=self.spell_engine.lexicon_version,
             sentence_count=len(artifacts.sentence_spans),
@@ -141,6 +142,7 @@ class AnalysisPipeline:
         detector_runtime = self.detector_service.runtime_status()
         corrector_runtime = self.corrector_service.runtime_status()
         analysis_profile = _derive_runtime_profile(detector_runtime.loaded, corrector_runtime.loaded)
+        backend_warning = _derive_backend_warning(detector_runtime, corrector_runtime)
         return AnalysisArtifacts(
             text=text,
             normalized=normalized,
@@ -152,8 +154,9 @@ class AnalysisPipeline:
             ranked_suggestions=ranked_suggestions,
             merged_suggestions=merged_suggestions,
             sentence_spans=sentence_spans,
-            used_detector=detector_runtime.loaded,
-            used_corrector=corrector_runtime.loaded and bool(corrector_suggestions),
+            used_detector=_used_detector_in_visible_output(merged_suggestions),
+            used_corrector=_used_corrector_in_visible_output(merged_suggestions),
+            backend_warning=backend_warning,
             runtime_warnings=_build_runtime_warnings(detector_runtime, corrector_runtime),
             analysis_profile=analysis_profile,
         )
@@ -171,8 +174,23 @@ def _apply_request_mode(suggestions: list[Suggestion], *, mode: AnalyzeMode) -> 
         if _passes_precision_gate(suggestion, mode=mode)
     ]
 
-    hard_suggestions = [suggestion for suggestion in gated_suggestions if suggestion.category != SuggestionCategory.STYLE]
-    style_suggestions = [suggestion for suggestion in gated_suggestions if suggestion.category == SuggestionCategory.STYLE]
+    hard_suggestions = [
+        suggestion
+        for suggestion in gated_suggestions
+        if suggestion.category not in {
+            SuggestionCategory.REGISTER,
+            SuggestionCategory.CLARITY,
+            SuggestionCategory.REWRITE_ONLY,
+        }
+    ]
+    style_suggestions = [
+        suggestion
+        for suggestion in gated_suggestions
+        if suggestion.category in {
+            SuggestionCategory.REGISTER,
+            SuggestionCategory.CLARITY,
+        }
+    ]
 
     if mode == AnalyzeMode.FORMAL:
         style_suggestions = sorted(style_suggestions, key=_formal_style_sort_key)
@@ -227,7 +245,11 @@ def _passes_precision_gate(suggestion: Suggestion, *, mode: AnalyzeMode) -> bool
 
 
 def _is_safe_auto_apply_suggestion(text: str, suggestion: Suggestion) -> bool:
-    if suggestion.category == SuggestionCategory.STYLE:
+    if suggestion.category in {
+        SuggestionCategory.REGISTER,
+        SuggestionCategory.CLARITY,
+        SuggestionCategory.REWRITE_ONLY,
+    }:
         return False
     if suggestion.rule_id.startswith("DET_"):
         return False
@@ -395,6 +417,29 @@ def _build_runtime_warnings(detector_runtime, corrector_runtime) -> list[str]:  
     if corrector_runtime.status != "ready":
         warnings.append(f"corrector_{corrector_runtime.status}")
     return warnings
+
+
+def _derive_backend_warning(detector_runtime, corrector_runtime) -> str | None:  # type: ignore[no-untyped-def]
+    if corrector_runtime.status != "ready":
+        return "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only."
+    if detector_runtime.status != "ready":
+        return "Detector is not loaded. Shuddho is using rules, spelling, and exact span anchors only."
+    return None
+
+
+def _used_detector_in_visible_output(suggestions: list[Suggestion]) -> bool:
+    for suggestion in suggestions:
+        if suggestion.rule_id.startswith("DET_"):
+            return True
+        if suggestion.source in {SuggestionSource.MODEL, SuggestionSource.HYBRID} and any(
+            trace.startswith("detector_") for trace in (suggestion.source_trace or [])
+        ):
+            return True
+    return False
+
+
+def _used_corrector_in_visible_output(suggestions: list[Suggestion]) -> bool:
+    return any("corrector_seq2seq" in (suggestion.source_trace or []) for suggestion in suggestions)
 
 
 def _derive_runtime_profile(detector_ready: bool, corrector_ready: bool) -> AnalysisProfile:

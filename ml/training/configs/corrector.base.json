@@ -18,6 +18,7 @@
   "data": {
     "train_path": "data/datasets/train/corrector.synthetic.jsonl",
     "validation_path": "data/datasets/valid/corrector.synthetic.jsonl",
+    "test_path": "data/datasets/test/corrector.synthetic.jsonl",
     "validation_split": 0.1
   },
   "output": {
