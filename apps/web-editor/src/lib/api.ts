@@ -7,8 +7,8 @@ import type {
   RewriteResponse,
   ToneAnalysisRequest,
   ToneAnalysisResponse,
-  UserPreferences,
 } from "@shared/schemas/contracts";
+import { DEFAULT_PREFERENCES, normalizePreferences, type ShuddhoPreferences } from "./preferences";
 
 const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:4000";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
@@ -169,7 +169,7 @@ export function sendFeedback(payload: FeedbackRequest): Promise<void> {
 }
 
 export function getHealth(): Promise<BackendHealthResponse> {
-  return request<BackendHealthResponse>("/health", {
+  return request<BackendHealthResponse>("/health/deep", {
     method: "GET",
   });
 }
@@ -225,17 +225,68 @@ export async function analyzeTone(payload: ToneAnalysisRequest): Promise<ToneAna
   return ("result" in response && response.result ? response.result : response) as ToneAnalysisResponse;
 }
 
-export function getUserPreferences(_userId: string): Promise<UserPreferences> {
-  return request<UserPreferences>("/api/preferences", {
-    method: "GET",
-  });
+async function safeJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
-export function saveUserPreferences(_userId: string, payload: UserPreferences): Promise<UserPreferences> {
-  return request<UserPreferences>("/api/preferences", {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
+export async function fetchPreferences(): Promise<ShuddhoPreferences> {
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/api/preferences`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      console.warn(`Preferences request failed with ${response.status}. Using defaults.`);
+      return DEFAULT_PREFERENCES;
+    }
+
+    const data = await safeJson(response);
+    return normalizePreferences(data as Partial<ShuddhoPreferences> | null | undefined);
+  } catch (error) {
+    console.warn("Preferences request failed. Using defaults.", error);
+    return DEFAULT_PREFERENCES;
+  }
+}
+
+export async function savePreferences(preferences: ShuddhoPreferences): Promise<ShuddhoPreferences> {
+  const normalized = normalizePreferences(preferences);
+
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/api/preferences`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(normalized),
+    });
+
+    if (!response.ok) {
+      console.warn(`Save preferences failed with ${response.status}.`);
+      return normalized;
+    }
+
+    const data = await safeJson(response);
+    return normalizePreferences(data as Partial<ShuddhoPreferences> | null | undefined);
+  } catch (error) {
+    console.warn("Save preferences failed.", error);
+    return normalized;
+  }
+}
+
+export function getUserPreferences(_userId: string): Promise<ShuddhoPreferences> {
+  return fetchPreferences();
+}
+
+export function saveUserPreferences(_userId: string, payload: ShuddhoPreferences): Promise<ShuddhoPreferences> {
+  return savePreferences(payload);
 }
 
 function gatewayCheckToAnalyzeResponse(response: GatewayCheckResponse, payload: AnalyzeRequest): AnalyzeResponse {

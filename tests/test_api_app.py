@@ -10,11 +10,16 @@ from services.api.shuddho_api.app import (
     detector_service,
     health,
     health_deep,
+    get_api_preferences,
+    put_api_preferences,
+    events_api,
+    check_canonical,
 )
 from shared.schemas.python_models import (
     AnalyzeMode,
     AnalyzeRequest,
     AnalyzeResponse,
+    CanonicalCheckRequest,
     Suggestion,
     SuggestionCategory,
     SuggestionSeverity,
@@ -23,6 +28,46 @@ from shared.schemas.python_models import (
 
 app_module = importlib.import_module("services.api.shuddho_api.app")
 
+
+
+def test_api_preferences_get_returns_defaults() -> None:
+    response = get_api_preferences("pytest-user")
+
+    assert response.language == "bn"
+    assert response.dialect == "standard"
+    assert "grammar" in response.enabledSuggestionTypes
+    assert response.disabledSuggestionTypes == []
+
+
+def test_api_preferences_put_stores_values() -> None:
+    payload = app_module.ApiPreferences(user_id="pytest-user", disabledSuggestionTypes=["tone"])
+
+    saved = put_api_preferences(payload, user_id="pytest-user")
+    loaded = get_api_preferences("pytest-user")
+
+    assert saved.disabledSuggestionTypes == ["tone"]
+    assert loaded.disabledSuggestionTypes == ["tone"]
+
+
+def test_api_events_returns_ok() -> None:
+    assert events_api({"type": "frontend_loaded"}) == {"ok": True}
+
+
+def test_api_check_compatibility_route_accepts_bangla_text(monkeypatch) -> None:
+    def stub_analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
+        assert payload.text == "আমি  আমি ভাত খাই।"
+        return AnalyzeResponse(text=payload.text, normalized_text=payload.text, corrected_text=payload.text, suggestions=[])
+
+    monkeypatch.setattr(app_module, "analyze", stub_analyze)
+
+    response = check_canonical(CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn"))
+
+    assert response.language == "bn"
+    assert response.normalizedText == "আমি  আমি ভাত খাই।"
+
+
+def test_cors_config_includes_vercel_frontend_origin() -> None:
+    assert "https://shuddho-web-editor.vercel.app" in ALLOWED_ORIGINS
 
 def test_health_reports_detector_and_corrector_status() -> None:
     response = health()

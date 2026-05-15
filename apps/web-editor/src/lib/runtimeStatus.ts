@@ -35,14 +35,15 @@ export function describeRuntimeState(args: {
   hardWarning?: string | null;
 }): RuntimeDescriptor {
   const { analysis, transport, health, hardWarning } = args;
-  const localFallbackEnabled = analysis.runtime_warnings.includes("frontend_local_fallback_enabled");
+  const runtimeWarnings = Array.isArray(analysis.runtime_warnings) ? analysis.runtime_warnings : [];
+  const localFallbackEnabled = runtimeWarnings.includes("frontend_local_fallback_enabled");
 
   if (transport === "misconfigured") {
     return {
       label: localFallbackEnabled ? "Dev-only browser fallback" : "Backend misconfigured - contextual correction disabled",
       localOnly: localFallbackEnabled,
       degraded: true,
-      warnings: compactWarnings([hardWarning, analysis.backend_warning, ...analysis.runtime_warnings]),
+      warnings: compactWarnings([hardWarning, analysis.backend_warning, ...runtimeWarnings]),
     };
   }
 
@@ -51,7 +52,7 @@ export function describeRuntimeState(args: {
       label: localFallbackEnabled ? "Dev-only browser fallback" : "Backend offline, suggestions disabled",
       localOnly: localFallbackEnabled,
       degraded: true,
-      warnings: compactWarnings([analysis.backend_warning, ...analysis.runtime_warnings]),
+      warnings: compactWarnings([analysis.backend_warning, ...runtimeWarnings]),
     };
   }
 
@@ -60,7 +61,7 @@ export function describeRuntimeState(args: {
       label: "Checking backend connection",
       localOnly: false,
       degraded: false,
-      warnings: compactWarnings(analysis.runtime_warnings),
+      warnings: compactWarnings(runtimeWarnings),
     };
   }
 
@@ -69,12 +70,13 @@ export function describeRuntimeState(args: {
     label: health?.backend_warning || analysis.backend_warning || getRuntimeLabel(profile),
     localOnly: profile === "frontend_local_fallback" && localFallbackEnabled,
     degraded: profile !== "full_local",
-    warnings: compactWarnings([health?.backend_warning, analysis.backend_warning, ...analysis.runtime_warnings]),
+    warnings: compactWarnings([health?.backend_warning, analysis.backend_warning, ...runtimeWarnings]),
   };
 }
 
 export function describeSuggestionSource(suggestion: Suggestion, analysis: AnalyzeResponse): string {
-  if (analysis.runtime_source === "frontend_local_fallback" && analysis.runtime_warnings.includes("frontend_local_fallback_enabled")) {
+  const runtimeWarnings = Array.isArray(analysis.runtime_warnings) ? analysis.runtime_warnings : [];
+  if (analysis.runtime_source === "frontend_local_fallback" && runtimeWarnings.includes("frontend_local_fallback_enabled")) {
     return "limited browser fallback";
   }
   return suggestion.source;

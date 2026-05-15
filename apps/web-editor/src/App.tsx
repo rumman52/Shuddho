@@ -10,7 +10,6 @@ import type {
   Suggestion,
   SuggestionAlternative,
   ToneAnalysisResponse,
-  UserPreferences,
 } from "@shared/schemas/contracts";
 
 import { SuggestionCard } from "./components/SuggestionCard";
@@ -28,6 +27,7 @@ import {
   setApiBaseUrlOverride,
 } from "./lib/api";
 import { analyzeTextLocally } from "./lib/localAnalysis";
+import { createDefaultPreferences, normalizePreferences, type ShuddhoPreferences } from "./lib/preferences";
 import { canAddSuggestionToDictionary, describeRuntimeState } from "./lib/runtimeStatus";
 
 const INITIAL_TEXT = sampleFixtures[0]?.text ?? "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!";
@@ -45,7 +45,8 @@ export default function App() {
   const [text, setText] = useState(INITIAL_TEXT);
   const [mode, setMode] = useState<AnalyzeMode>("standard");
   const [userId, setUserId] = useState(loadOrCreateLocalUserId);
-  const [preferences, setPreferences] = useState<UserPreferences>(() => defaultPreferences(loadOrCreateLocalUserId()));
+  const [preferences, setPreferences] = useState<ShuddhoPreferences>(() => createDefaultPreferences(userId));
+  const [preferencesWarning, setPreferencesWarning] = useState<string | null>(null);
   const [dictionaryDraft, setDictionaryDraft] = useState("");
   const [analysis, setAnalysis] = useState<AnalyzeResponse>(() => createEmptyAnalysis(INITIAL_TEXT, "standard"));
   const [tone, setTone] = useState<ToneAnalysisResponse | null>(null);
@@ -148,11 +149,13 @@ export default function App() {
     }
 
     try {
-      const remotePreferences = await getUserPreferences(nextUserId);
+      const remotePreferences = normalizePreferences({ ...(await getUserPreferences(nextUserId)), user_id: nextUserId });
       setPreferences(remotePreferences);
+      setPreferencesWarning(null);
       setMode(modeFromWritingGoal(remotePreferences.writing_goal));
     } catch {
-      setPreferences((current) => ({ ...current, user_id: nextUserId }));
+      setPreferences((current) => normalizePreferences({ ...current, user_id: nextUserId }));
+      setPreferencesWarning("Backend preferences could not be loaded. Using defaults.");
     }
   }
 
@@ -176,7 +179,7 @@ export default function App() {
     if (!apiConfiguration.backendAllowed) {
       setAnalysis(
         apiConfiguration.localFallbackEnabled
-          ? buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary)
+          ? buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary ?? [])
           : createUnavailableAnalysis(nextText, mode, "backend_misconfigured_contextual_disabled"),
       );
       setBackendMode("misconfigured");
@@ -194,7 +197,7 @@ export default function App() {
       const response = await analyzeText({
         text: nextText,
         mode,
-        personal_dictionary: preferences.personal_dictionary,
+        personal_dictionary: preferences.personal_dictionary ?? [],
         user_id: userId,
       });
       setAnalysis(response);
@@ -208,7 +211,7 @@ export default function App() {
     } catch {
       setAnalysis(
         apiConfiguration.localFallbackEnabled
-          ? buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary)
+          ? buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary ?? [])
           : createUnavailableAnalysis(nextText, mode, "backend_offline_contextual_disabled"),
       );
       setBackendMode("offline");
@@ -284,7 +287,7 @@ export default function App() {
   function handleIgnoreForever(suggestion: Suggestion) {
     setPreferences((current) => ({
       ...current,
-      suppressed_rule_keys: upsertUnique(current.suppressed_rule_keys, `${suggestion.rule_id}:${suggestion.subtype}`),
+      suppressed_rule_keys: upsertUnique(current.suppressed_rule_keys ?? [], `${suggestion.rule_id}:${suggestion.subtype}`),
     }));
     dropSuggestion(suggestion.id);
     setStatus("Suggestion ignored forever");
@@ -310,7 +313,7 @@ export default function App() {
     }
     setPreferences((current) => ({
       ...current,
-      personal_dictionary: upsertUnique(current.personal_dictionary, entry),
+      personal_dictionary: upsertUnique(current.personal_dictionary ?? [], entry),
     }));
     dropSuggestion(suggestion.id);
     setStatus("Added to personal dictionary");
@@ -402,7 +405,7 @@ export default function App() {
 
     try {
       const saved = await saveUserPreferences(userId, preferences);
-      setPreferences(saved);
+      setPreferences(normalizePreferences(saved));
       setStatus("Preferences saved");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not save preferences");
@@ -451,6 +454,12 @@ export default function App() {
           <span>{backendMode === "online" ? apiBaseUrl : apiConfiguration.localFallbackEnabled ? DEV_LOCAL_FALLBACK_LABEL : "Suggestions disabled"}</span>
         </div>
       </section>
+
+      {preferencesWarning ? (
+        <div className="warning-banner" role="status">
+          {preferencesWarning}
+        </div>
+      ) : null}
 
       <section className="workspace-grid">
         <aside className="sidebar-panel">
@@ -507,7 +516,7 @@ export default function App() {
               <select
                 value={preferences.writing_goal}
                 onChange={(event) => {
-                  const nextGoal = event.target.value as UserPreferences["writing_goal"];
+                  const nextGoal = event.target.value as ShuddhoPreferences["writing_goal"];
                   setPreferences((current) => ({ ...current, writing_goal: nextGoal }));
                   setMode(modeFromWritingGoal(nextGoal));
                 }}
@@ -525,7 +534,7 @@ export default function App() {
               <select
                 value={preferences.tone_goal}
                 onChange={(event) =>
-                  setPreferences((current) => ({ ...current, tone_goal: event.target.value as UserPreferences["tone_goal"] }))
+                  setPreferences((current) => ({ ...current, tone_goal: event.target.value as ShuddhoPreferences["tone_goal"] }))
                 }
               >
                 <option value="neutral">Neutral</option>
@@ -542,7 +551,7 @@ export default function App() {
                 onChange={(event) =>
                   setPreferences((current) => ({
                     ...current,
-                    suggestion_density: event.target.value as UserPreferences["suggestion_density"],
+                    suggestion_density: event.target.value as ShuddhoPreferences["suggestion_density"],
                   }))
                 }
               >
@@ -585,7 +594,7 @@ export default function App() {
                   }
                   setPreferences((current) => ({
                     ...current,
-                    personal_dictionary: upsertUnique(current.personal_dictionary, dictionaryDraft),
+                    personal_dictionary: upsertUnique(current.personal_dictionary ?? [], dictionaryDraft),
                   }));
                   setDictionaryDraft("");
                 }}
@@ -594,7 +603,7 @@ export default function App() {
               </button>
             </div>
             <div className="chip-row">
-              {preferences.personal_dictionary.map((entry) => (
+              {(preferences.personal_dictionary ?? []).map((entry) => (
                 <button
                   key={entry}
                   type="button"
@@ -602,7 +611,7 @@ export default function App() {
                   onClick={() =>
                     setPreferences((current) => ({
                       ...current,
-                      personal_dictionary: current.personal_dictionary.filter((item) => item !== entry),
+                      personal_dictionary: (current.personal_dictionary ?? []).filter((item) => item !== entry),
                     }))
                   }
                 >
@@ -655,7 +664,7 @@ export default function App() {
                 </div>
               </div>
               <div className="suggestion-list">
-                {rewriteResult.options.map((option) => (
+                {(rewriteResult.options ?? []).map((option) => (
                   <article key={option.id} className="rewrite-option">
                     <div className="suggestion-card__header">
                       <h3>{option.label}</h3>
@@ -672,9 +681,9 @@ export default function App() {
                   </article>
                 ))}
               </div>
-              {rewriteResult.warnings.length ? (
+              {(rewriteResult.warnings ?? []).length ? (
                 <div className="chip-row">
-                  {rewriteResult.warnings.map((warning) => (
+                  {(rewriteResult.warnings ?? []).map((warning) => (
                     <span key={warning} className="chip chip-warning">
                       {warning}
                     </span>
@@ -696,14 +705,14 @@ export default function App() {
                 </div>
                 <div className="suggestion-card__chips">
                   <span>{Math.round(tone.confidence * 100)}%</span>
-                  {tone.detected_tones.map((toneLabel) => (
+                  {(tone.detected_tones ?? []).map((toneLabel) => (
                     <span key={toneLabel}>{toneLabel}</span>
                   ))}
                 </div>
               </div>
               <p>{tone.explanation_bn || tone.explanation_en}</p>
               <div className="chip-row">
-                {tone.suggestions.map((suggestion) => (
+                {(tone.suggestions ?? []).map((suggestion) => (
                   <span key={suggestion} className="chip">
                     {suggestion}
                   </span>
@@ -777,7 +786,7 @@ function buildLocalFallbackResponse(text: string, mode: AnalyzeMode, personalDic
   const fallback = analyzeTextLocally({
     text,
     mode,
-    personal_dictionary: personalDictionary,
+    personal_dictionary: personalDictionary ?? [],
   });
   return {
     ...fallback,
@@ -829,21 +838,6 @@ function createUnavailableAnalysis(text: string, mode: AnalyzeMode, warning: str
   };
 }
 
-function defaultPreferences(userId: string): UserPreferences {
-  return {
-    user_id: userId,
-    preferred_language_variant: "bangla",
-    writing_goal: "general",
-    tone_goal: "neutral",
-    suggestion_density: "balanced",
-    auto_show_tone: true,
-    enable_rewrites: true,
-    personal_dictionary: [],
-    suppressed_rule_keys: [],
-    disabled_sites: [],
-  };
-}
-
 function loadOrCreateLocalUserId(): string {
   if (typeof window === "undefined") {
     return "anonymous-web-editor";
@@ -859,15 +853,16 @@ function loadOrCreateLocalUserId(): string {
   return created;
 }
 
-function upsertUnique(items: string[], value: string): string[] {
+function upsertUnique(items: string[] | null | undefined, value: string): string[] {
   const normalized = value.trim().replace(/\s+/g, " ");
-  if (!normalized || items.includes(normalized)) {
-    return items;
+  const safeItems = Array.isArray(items) ? items : [];
+  if (!normalized || safeItems.includes(normalized)) {
+    return safeItems;
   }
-  return [...items, normalized];
+  return [...safeItems, normalized];
 }
 
-function modeFromWritingGoal(writingGoal: UserPreferences["writing_goal"]): AnalyzeMode {
+function modeFromWritingGoal(writingGoal: ShuddhoPreferences["writing_goal"]): AnalyzeMode {
   if (writingGoal === "formal" || writingGoal === "academic" || writingGoal === "business") {
     return "formal";
   }

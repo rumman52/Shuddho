@@ -24,7 +24,12 @@ export function SuggestionCard({
     suggestion.explanation_en && suggestion.explanation_en !== suggestion.explanation_bn
       ? suggestion.explanation_en
       : null;
-  const alternatives = suggestion.alternatives ?? [];
+  const replacementOptions = Array.isArray(suggestion.replacement_options) ? suggestion.replacement_options : [];
+  const alternatives = Array.isArray(suggestion.alternatives) ? suggestion.alternatives : [];
+  const toneLabels = Array.isArray(suggestion.tone_labels) ? suggestion.tone_labels : [];
+  const actionHints = Array.isArray(suggestion.action_hints) ? suggestion.action_hints : [];
+  const rewriteIntents = Array.isArray(suggestion.rewrite_intents) ? suggestion.rewrite_intents : [];
+  const sourceTrace = Array.isArray(suggestion.source_trace) ? suggestion.source_trace : [];
 
   return (
     <article className="suggestion-card">
@@ -46,26 +51,26 @@ export function SuggestionCard({
         <strong>{suggestion.original_text}</strong>
       </div>
 
-      {suggestion.replacement_options[0] ? (
+      {replacementOptions[0] ? (
         <div className="suggestion-card__issue">
           <span className="suggestion-card__label">Primary replacement</span>
-          <strong>{suggestion.replacement_options[0]}</strong>
+          <strong>{replacementOptions[0]}</strong>
         </div>
       ) : null}
 
       <p className="suggestion-card__summary">{primaryExplanation}</p>
 
       <div className="suggestion-card__chips suggestion-card__chips--soft">
-        {suggestion.tone_labels?.map((toneLabel) => (
+        {toneLabels.map((toneLabel) => (
           <span key={toneLabel}>{toneLabel}</span>
         ))}
-        {suggestion.action_hints?.map((hint) => (
+        {actionHints.map((hint) => (
           <span key={hint}>{hint.replaceAll("_", " ")}</span>
         ))}
       </div>
 
       <div className="suggestion-card__options">
-        {suggestion.replacement_options.map((option, index) => (
+        {replacementOptions.map((option, index) => (
           <button
             key={`${suggestion.id}:${option}`}
             type="button"
@@ -82,7 +87,7 @@ export function SuggestionCard({
           {alternatives.map((alternative) => (
             <div key={alternative.id} className="suggestion-card__alternative">
               <div className="suggestion-card__options">
-                {alternative.replacement_options.map((option) => (
+                {(alternative.replacement_options ?? []).map((option) => (
                   <button
                     key={`${alternative.id}:${option}`}
                     type="button"
@@ -99,9 +104,9 @@ export function SuggestionCard({
         </div>
       ) : null}
 
-      {suggestion.rewrite_intents?.length ? (
+      {rewriteIntents.length ? (
         <div className="suggestion-card__rewrite-row">
-          {suggestion.rewrite_intents.map((intent) => (
+          {rewriteIntents.map((intent) => (
             <button key={intent} type="button" className="icon-button" onClick={() => onRewrite(intent)} aria-label={intent}>
               {rewriteIntentLabel(intent)}
             </button>
@@ -113,7 +118,7 @@ export function SuggestionCard({
         <summary>Why this suggestion</summary>
         <p>{suggestion.explanation_bn || suggestion.explanation_en}</p>
         {secondaryExplanation ? <p>{secondaryExplanation}</p> : null}
-        {debugMode && suggestion.source_trace?.length ? <p>source_trace: {suggestion.source_trace.join(" -> ")}</p> : null}
+        {debugMode && sourceTrace.length ? <p>source_trace: {sourceTrace.join(" -> ")}</p> : null}
       </details>
 
       <div className="suggestion-card__footer">
