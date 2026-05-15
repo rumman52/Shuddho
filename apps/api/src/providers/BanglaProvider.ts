@@ -5,4 +5,6 @@ export interface BanglaSuggestionProvider {
   rewrite?(text: string, options?: unknown): Promise<unknown>;
   tone?(text: string, options?: unknown): Promise<unknown>;
   ready?(): Promise<boolean>;
+  healthDeep?(): Promise<unknown>;
 }
+

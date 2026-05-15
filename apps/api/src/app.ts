@@ -68,6 +68,10 @@ export function createApp(deps: AppDeps = { orchestrator: new SuggestionOrchestr
       const url = new URL(req.url ?? '/', 'http://localhost');
       const path = url.pathname;
       if (req.method === 'GET' && path === '/health') return send(req, res, 200, { ok: true, service: 'shuddho-api', provider: deps.orchestrator.providerName() }, requestId);
+      if (req.method === 'GET' && path === '/health/deep') {
+        const providerHealth = await deps.orchestrator.healthDeep();
+        return send(req, res, 200, { ...(providerHealth && typeof providerHealth === 'object' ? providerHealth : { provider_health: providerHealth }), ok: true, service: 'shuddho-api', provider: deps.orchestrator.providerName() }, requestId);
+      }
       if (req.method === 'GET' && path === '/ready') {
         const providerReady = await deps.orchestrator.ready();
         return send(req, res, providerReady ? 200 : 503, { ok: providerReady, provider: deps.orchestrator.providerName() }, requestId);
