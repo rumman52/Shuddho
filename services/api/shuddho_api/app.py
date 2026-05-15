@@ -5,9 +5,11 @@ import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
@@ -53,11 +55,8 @@ ENV_FILE_PATH = REPO_ROOT / ".env"
 ENV_FILE_LOADED = load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
 ALLOWED_ORIGINS_ENV_VAR = "SHUDDHO_ALLOWED_ORIGINS"
 DEFAULT_ALLOWED_ORIGINS = [
-    "http://localhost:4000",
-    "http://127.0.0.1:4000",
-    "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://localhost:3000",
+    "http://localhost:5173",
     "https://shuddho-web-editor.vercel.app",
 ]
 ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
@@ -115,9 +114,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=ALLOWED_ORIGIN_REGEX,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 normalizer = BanglaNormalizer()
@@ -145,6 +144,39 @@ tone_analyzer = ToneAnalyzer()
 analyze_cache: ContentHashCache[AnalyzeResponse] = ContentHashCache(ttl_seconds=8.0, max_entries=128)
 rewrite_cache: ContentHashCache[RewriteResponse] = ContentHashCache(ttl_seconds=20.0, max_entries=64)
 tone_cache: ContentHashCache[ToneAnalysisResponse] = ContentHashCache(ttl_seconds=20.0, max_entries=64)
+
+class ApiPreferences(BaseModel):
+    user_id: str = "demo-user"
+    preferred_language_variant: str = "bangla"
+    writing_goal: str = "general"
+    tone_goal: str = "neutral"
+    suggestion_density: str = "balanced"
+    auto_show_tone: bool = True
+    enable_rewrites: bool = True
+    personal_dictionary: list[str] = Field(default_factory=list)
+    suppressed_rule_keys: list[str] = Field(default_factory=list)
+    disabled_sites: list[str] = Field(default_factory=list)
+    language: Literal["bn"] = "bn"
+    dialect: str = "standard"
+    enabledSuggestionTypes: list[str] = Field(
+        default_factory=lambda: [
+            "grammar",
+            "spelling",
+            "punctuation",
+            "spacing",
+            "style",
+            "tone",
+            "rewrite",
+        ]
+    )
+    disabledSuggestionTypes: list[str] = Field(default_factory=list)
+    ignoredRuleIds: list[str] = Field(default_factory=list)
+    ignoredSuggestionIds: list[str] = Field(default_factory=list)
+    ignoredSuppressionKeys: list[str] = Field(default_factory=list)
+    productImprovementConsent: bool = False
+
+
+_preferences_store: dict[str, ApiPreferences] = {}
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -215,6 +247,19 @@ def feedback(payload: FeedbackRequest) -> FeedbackRecord:
     return feedback_store.save(payload)
 
 
+
+
+@app.get("/api/preferences", response_model=ApiPreferences)
+def get_api_preferences(user_id: str = "demo-user") -> ApiPreferences:
+    return _preferences_store.get(user_id, ApiPreferences(user_id=user_id))
+
+
+@app.put("/api/preferences", response_model=ApiPreferences)
+def put_api_preferences(payload: ApiPreferences, user_id: str = "demo-user") -> ApiPreferences:
+    stored = payload.model_copy(update={"user_id": payload.user_id or user_id})
+    _preferences_store[user_id] = stored
+    return stored
+
 @app.post("/api/check", response_model=CanonicalCheckResponse)
 def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
     legacy = analyze(AnalyzeRequest(text=payload.text, user_id=payload.userId))
@@ -258,6 +303,21 @@ def analyze_tone(payload: ToneAnalysisRequest) -> ToneAnalysisResponse:
         cache_key,
         lambda: tone_analyzer.analyze(payload.text),
     )
+
+
+@app.post("/api/rewrite", response_model=RewriteResponse)
+def rewrite_api(payload: RewriteRequest) -> RewriteResponse:
+    return rewrite(payload)
+
+
+@app.post("/api/tone", response_model=ToneAnalysisResponse)
+def tone_api(payload: ToneAnalysisRequest) -> ToneAnalysisResponse:
+    return analyze_tone(payload)
+
+
+@app.post("/api/events")
+def events_api(payload: dict) -> dict[str, bool]:
+    return {"ok": True}
 
 
 @app.get("/preferences/{user_id}", response_model=UserPreferences)

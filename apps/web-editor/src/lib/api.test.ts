@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { analyzeText, deriveApiConfiguration, setApiBaseUrlOverride } from "./api";
+import { analyzeText, deriveApiConfiguration, fetchPreferences, setApiBaseUrlOverride } from "./api";
+import { DEFAULT_PREFERENCES } from "./preferences";
 
 test("deriveApiConfiguration defaults local development to the TypeScript gateway", () => {
   const localConfig = deriveApiConfiguration({
@@ -85,4 +86,23 @@ test("deriveApiConfiguration keeps local fallback behind an explicit dev flag", 
 
   assert.equal(config.backendAllowed, true);
   assert.equal(config.localFallbackEnabled, true);
+});
+
+
+test("fetchPreferences returns DEFAULT_PREFERENCES when /api/preferences returns 404", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ detail: "Not found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+  try {
+    const preferences = await fetchPreferences();
+    assert.deepEqual(preferences, DEFAULT_PREFERENCES);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
 });
