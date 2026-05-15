@@ -31,7 +31,7 @@ export type SuggestionUiGroup =
   | "spacing"
   | "punctuation"
   | "register"
-  | "clarity"
+  | "clarity";
 export type PreferredLanguageVariant = "bangla";
 export type WritingGoal =
   | "general"
@@ -297,9 +297,23 @@ export interface FeedbackRequest {
 }
 
 // Canonical Shuddho gateway contract. Legacy AnalyzeResponse remains above for old consumers.
-export type CanonicalSuggestionType = "grammar" | "spelling" | "punctuation" | "spacing" | "style" | "tone" | "rewrite";
+export type CanonicalSuggestionType =
+  | "grammar"
+  | "spelling"
+  | "punctuation"
+  | "spacing"
+  | "style"
+  | "tone"
+  | "rewrite";
 export type CanonicalSuggestionSeverity = "low" | "medium" | "high";
-export type CanonicalSuggestionSource = "rule" | "spell" | "grammar" | "tone" | "rewrite" | "ml" | "hybrid";
+export type CanonicalSuggestionSource =
+  | "rule"
+  | "spell"
+  | "grammar"
+  | "tone"
+  | "rewrite"
+  | "ml"
+  | "hybrid";
 export interface TextSpan {
   startIndex: number;
   endIndex: number;
@@ -334,8 +348,17 @@ export interface CheckRequest {
   language: "bn";
   dialect?: "standard" | "west_bengal" | "bangladesh" | "mixed";
   userId?: string;
-  client?: { surface: "web" | "extension" | "desktop" | "mobile" | "api"; version?: string };
-  options?: { includeGrammar?: boolean; includeSpelling?: boolean; includeStyle?: boolean; includeTone?: boolean; includeRewrite?: boolean };
+  client?: {
+    surface: "web" | "extension" | "desktop" | "mobile" | "api";
+    version?: string;
+  };
+  options?: {
+    includeGrammar?: boolean;
+    includeSpelling?: boolean;
+    includeStyle?: boolean;
+    includeTone?: boolean;
+    includeRewrite?: boolean;
+  };
 }
 export interface CheckResponse {
   requestId: string;

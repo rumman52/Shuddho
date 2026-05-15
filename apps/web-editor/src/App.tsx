@@ -25,16 +25,27 @@ import {
   saveUserPreferences,
   sendFeedback,
   setApiBaseUrlOverride,
+  clearApiBaseUrlOverride,
 } from "./lib/api";
+import { createEmptyAnalysis, normalizeAnalyzeResponse } from "./lib/analysis";
 import { analyzeTextLocally } from "./lib/localAnalysis";
-import { createDefaultPreferences, normalizePreferences, type ShuddhoPreferences } from "./lib/preferences";
-import { canAddSuggestionToDictionary, describeRuntimeState } from "./lib/runtimeStatus";
+import {
+  createDefaultPreferences,
+  normalizePreferences,
+  type ShuddhoPreferences,
+} from "./lib/preferences";
+import {
+  canAddSuggestionToDictionary,
+  describeRuntimeState,
+} from "./lib/runtimeStatus";
 
-const INITIAL_TEXT = sampleFixtures[0]?.text ?? "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!";
+const INITIAL_TEXT =
+  sampleFixtures[0]?.text ?? "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 const ANALYSIS_DEBOUNCE_MS = 450;
 const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
-const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED = "Backend is not connected. Contextual Bengali correction is disabled.";
+const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED =
+  "Backend is not connected. Contextual Bengali correction is disabled.";
 const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED;
 const DEV_LOCAL_FALLBACK_LABEL = "Dev-only browser fallback";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
@@ -45,13 +56,23 @@ export default function App() {
   const [text, setText] = useState(INITIAL_TEXT);
   const [mode, setMode] = useState<AnalyzeMode>("standard");
   const [userId, setUserId] = useState(loadOrCreateLocalUserId);
-  const [preferences, setPreferences] = useState<ShuddhoPreferences>(() => createDefaultPreferences(userId));
-  const [preferencesWarning, setPreferencesWarning] = useState<string | null>(null);
+  const [preferences, setPreferences] = useState<ShuddhoPreferences>(() =>
+    createDefaultPreferences(userId),
+  );
+  const [preferencesWarning, setPreferencesWarning] = useState<string | null>(
+    null,
+  );
   const [dictionaryDraft, setDictionaryDraft] = useState("");
-  const [analysis, setAnalysis] = useState<AnalyzeResponse>(() => createEmptyAnalysis(INITIAL_TEXT, "standard"));
+  const [analysis, setAnalysis] = useState<AnalyzeResponse>(() =>
+    createEmptyAnalysis(INITIAL_TEXT, "standard"),
+  );
   const [tone, setTone] = useState<ToneAnalysisResponse | null>(null);
-  const [rewriteResult, setRewriteResult] = useState<RewriteResponse | null>(null);
-  const [selectedSuggestionId, setSelectedSuggestionId] = useState<string | null>(null);
+  const [rewriteResult, setRewriteResult] = useState<RewriteResponse | null>(
+    null,
+  );
+  const [selectedSuggestionId, setSelectedSuggestionId] = useState<
+    string | null
+  >(null);
   const [status, setStatus] = useState("Ready");
   const [debugMode, setDebugMode] = useState(() => {
     if (typeof window === "undefined") {
@@ -60,28 +81,60 @@ export default function App() {
     return window.localStorage.getItem(DEBUG_MODE_STORAGE_KEY) === "1";
   });
   const [backendMode, setBackendMode] = useState<BackendMode>("checking");
-  const [backendHealth, setBackendHealth] = useState<BackendHealthResponse | null>(null);
+  const [backendHealth, setBackendHealth] =
+    useState<BackendHealthResponse | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
-  const [apiConfiguration, setApiConfiguration] = useState(() => getApiConfiguration());
-  const [selection, setSelection] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
+  const [apiConfiguration, setApiConfiguration] = useState(() =>
+    getApiConfiguration(),
+  );
+  const [selection, setSelection] = useState<{ start: number; end: number }>({
+    start: 0,
+    end: 0,
+  });
   const analysisTimerRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const normalizedAnalysis = useMemo(
+    () => normalizeAnalyzeResponse(analysis, text, mode),
+    [analysis, mode, text],
+  );
 
   const runtimeDescriptor = useMemo(
     () =>
       describeRuntimeState({
-        analysis,
+        analysis: normalizedAnalysis,
         transport: backendMode,
-        health: backendHealth?.detector ? (backendHealth as HealthDeepResponse) : null,
+        health: backendHealth?.detector
+          ? (backendHealth as HealthDeepResponse)
+          : null,
         hardWarning: apiConfiguration.hardWarning,
       }),
-    [analysis, apiConfiguration.hardWarning, backendHealth, backendMode],
+    [
+      normalizedAnalysis,
+      apiConfiguration.hardWarning,
+      backendHealth,
+      backendMode,
+    ],
   );
 
+  const suggestions = Array.isArray(normalizedAnalysis.suggestions)
+    ? normalizedAnalysis.suggestions
+    : [];
+  const runtimeWarnings = Array.isArray(normalizedAnalysis.runtime_warnings)
+    ? normalizedAnalysis.runtime_warnings
+    : [];
+  const sentenceCount =
+    typeof normalizedAnalysis.sentence_count === "number"
+      ? normalizedAnalysis.sentence_count
+      : 0;
+
   const selectedSuggestion = useMemo(
-    () => analysis.suggestions.find((suggestion) => suggestion.id === selectedSuggestionId) ?? null,
-    [analysis.suggestions, selectedSuggestionId],
+    () =>
+      suggestions.find(
+        (suggestion) => suggestion.id === selectedSuggestionId,
+      ) ?? null,
+    [suggestions, selectedSuggestionId],
   );
 
   useEffect(() => {
@@ -97,7 +150,12 @@ export default function App() {
 
   useEffect(() => {
     void refreshBackendHealth();
-  }, [apiBaseUrl, apiConfiguration.backendAllowed, apiConfiguration.hardWarning, apiConfiguration.localFallbackEnabled]);
+  }, [
+    apiBaseUrl,
+    apiConfiguration.backendAllowed,
+    apiConfiguration.hardWarning,
+    apiConfiguration.localFallbackEnabled,
+  ]);
 
   useEffect(() => {
     void loadPreferences(userId);
@@ -110,7 +168,15 @@ export default function App() {
         window.clearTimeout(analysisTimerRef.current);
       }
     };
-  }, [apiBaseUrl, apiConfiguration.backendAllowed, apiConfiguration.localFallbackEnabled, text, mode, preferences.personal_dictionary, userId]);
+  }, [
+    apiBaseUrl,
+    apiConfiguration.backendAllowed,
+    apiConfiguration.localFallbackEnabled,
+    text,
+    mode,
+    preferences.personal_dictionary,
+    userId,
+  ]);
 
   async function refreshBackendHealth() {
     if (!apiConfiguration.backendAllowed) {
@@ -149,13 +215,20 @@ export default function App() {
     }
 
     try {
-      const remotePreferences = normalizePreferences({ ...(await getUserPreferences(nextUserId)), user_id: nextUserId });
+      const remotePreferences = normalizePreferences({
+        ...(await getUserPreferences(nextUserId)),
+        user_id: nextUserId,
+      });
       setPreferences(remotePreferences);
       setPreferencesWarning(null);
       setMode(modeFromWritingGoal(remotePreferences.writing_goal));
     } catch {
-      setPreferences((current) => normalizePreferences({ ...current, user_id: nextUserId }));
-      setPreferencesWarning("Backend preferences could not be loaded. Using defaults.");
+      setPreferences((current) =>
+        normalizePreferences({ ...current, user_id: nextUserId }),
+      );
+      setPreferencesWarning(
+        "Backend preferences could not be loaded. Using defaults.",
+      );
     }
   }
 
@@ -179,8 +252,16 @@ export default function App() {
     if (!apiConfiguration.backendAllowed) {
       setAnalysis(
         apiConfiguration.localFallbackEnabled
-          ? buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary ?? [])
-          : createUnavailableAnalysis(nextText, mode, "backend_misconfigured_contextual_disabled"),
+          ? buildLocalFallbackResponse(
+              nextText,
+              mode,
+              preferences.personal_dictionary ?? [],
+            )
+          : createUnavailableAnalysis(
+              nextText,
+              mode,
+              "backend_misconfigured_contextual_disabled",
+            ),
       );
       setBackendMode("misconfigured");
       setStatus(
@@ -200,9 +281,21 @@ export default function App() {
         personal_dictionary: preferences.personal_dictionary ?? [],
         user_id: userId,
       });
-      setAnalysis(response);
+      const normalizedResponse = normalizeAnalyzeResponse(
+        response,
+        nextText,
+        mode,
+      );
+      const responseSuggestions = Array.isArray(normalizedResponse.suggestions)
+        ? normalizedResponse.suggestions
+        : [];
+      setAnalysis(normalizedResponse);
       setBackendMode("online");
-      setStatus(response.suggestions.length ? `${response.suggestions.length} suggestions ready` : "No high-confidence correction found.");
+      setStatus(
+        responseSuggestions.length
+          ? `${responseSuggestions.length} suggestions ready`
+          : "No high-confidence correction found.",
+      );
       if (preferences.auto_show_tone && nextText.trim().length >= 20) {
         void refreshTone(nextText);
       } else {
@@ -211,8 +304,16 @@ export default function App() {
     } catch {
       setAnalysis(
         apiConfiguration.localFallbackEnabled
-          ? buildLocalFallbackResponse(nextText, mode, preferences.personal_dictionary ?? [])
-          : createUnavailableAnalysis(nextText, mode, "backend_offline_contextual_disabled"),
+          ? buildLocalFallbackResponse(
+              nextText,
+              mode,
+              preferences.personal_dictionary ?? [],
+            )
+          : createUnavailableAnalysis(
+              nextText,
+              mode,
+              "backend_offline_contextual_disabled",
+            ),
       );
       setBackendMode("offline");
       setTone(null);
@@ -249,8 +350,17 @@ export default function App() {
     });
   }
 
-  function handleApplySuggestion(candidate: Suggestion | SuggestionAlternative, replacement: string, suggestion: Suggestion) {
-    const nextText = replaceSpan(text, suggestion.span_start, suggestion.span_end, replacement);
+  function handleApplySuggestion(
+    candidate: Suggestion | SuggestionAlternative,
+    replacement: string,
+    suggestion: Suggestion,
+  ) {
+    const nextText = replaceSpan(
+      text,
+      suggestion.span_start,
+      suggestion.span_end,
+      replacement,
+    );
     setText(nextText);
     dropSuggestion(suggestion.id);
     setStatus("Suggestion applied");
@@ -287,7 +397,10 @@ export default function App() {
   function handleIgnoreForever(suggestion: Suggestion) {
     setPreferences((current) => ({
       ...current,
-      suppressed_rule_keys: upsertUnique(current.suppressed_rule_keys ?? [], `${suggestion.rule_id}:${suggestion.subtype}`),
+      suppressed_rule_keys: upsertUnique(
+        current.suppressed_rule_keys ?? [],
+        `${suggestion.rule_id}:${suggestion.subtype}`,
+      ),
     }));
     dropSuggestion(suggestion.id);
     setStatus("Suggestion ignored forever");
@@ -313,7 +426,10 @@ export default function App() {
     }
     setPreferences((current) => ({
       ...current,
-      personal_dictionary: upsertUnique(current.personal_dictionary ?? [], entry),
+      personal_dictionary: upsertUnique(
+        current.personal_dictionary ?? [],
+        entry,
+      ),
     }));
     dropSuggestion(suggestion.id);
     setStatus("Added to personal dictionary");
@@ -338,8 +454,12 @@ export default function App() {
       return;
     }
 
-    const selectionStart = suggestion?.span_start ?? (selection.end > selection.start ? selection.start : null);
-    const selectionEnd = suggestion?.span_end ?? (selection.end > selection.start ? selection.end : null);
+    const selectionStart =
+      suggestion?.span_start ??
+      (selection.end > selection.start ? selection.start : null);
+    const selectionEnd =
+      suggestion?.span_end ??
+      (selection.end > selection.start ? selection.end : null);
 
     if (backendMode !== "online") {
       setStatus(SUGGESTIONS_DISABLED_MESSAGE);
@@ -356,8 +476,22 @@ export default function App() {
         writing_goal: preferences.writing_goal,
         tone_goal: preferences.tone_goal,
       });
-      setRewriteResult(response);
-      setStatus(response.options.length ? "Rewrite options ready" : response.warnings.join(" "));
+      const rewriteOptions = Array.isArray(response.options)
+        ? response.options
+        : [];
+      const rewriteWarnings = Array.isArray(response.warnings)
+        ? response.warnings
+        : [];
+      setRewriteResult({
+        ...response,
+        options: rewriteOptions,
+        warnings: rewriteWarnings,
+      });
+      setStatus(
+        rewriteOptions.length
+          ? "Rewrite options ready"
+          : rewriteWarnings.join(" "),
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Rewrite failed");
     }
@@ -368,8 +502,16 @@ export default function App() {
       return;
     }
     const nextText =
-      rewriteResult.selection_start !== null && rewriteResult.selection_start !== undefined && rewriteResult.selection_end !== null && rewriteResult.selection_end !== undefined
-        ? replaceSpan(text, rewriteResult.selection_start, rewriteResult.selection_end, optionText)
+      rewriteResult.selection_start !== null &&
+      rewriteResult.selection_start !== undefined &&
+      rewriteResult.selection_end !== null &&
+      rewriteResult.selection_end !== undefined
+        ? replaceSpan(
+            text,
+            rewriteResult.selection_start,
+            rewriteResult.selection_end,
+            optionText,
+          )
         : optionText;
     setText(nextText);
     setRewriteResult(null);
@@ -408,7 +550,9 @@ export default function App() {
       setPreferences(normalizePreferences(saved));
       setStatus("Preferences saved");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not save preferences");
+      setStatus(
+        error instanceof Error ? error.message : "Could not save preferences",
+      );
     }
   }
 
@@ -416,7 +560,17 @@ export default function App() {
     const nextBaseUrl = setApiBaseUrlOverride(apiBaseUrlDraft);
     setApiConfiguration(getApiConfiguration());
     setApiBaseUrl(nextBaseUrl);
+    setApiBaseUrlDraft(nextBaseUrl);
     setStatus(`API base URL set to ${nextBaseUrl}`);
+  }
+
+  function resetApiBaseUrl() {
+    const nextBaseUrl = clearApiBaseUrlOverride();
+    setApiConfiguration(getApiConfiguration());
+    setApiBaseUrl(nextBaseUrl);
+    setApiBaseUrlDraft(nextBaseUrl);
+    setStatus(`API base URL reset to ${nextBaseUrl}`);
+    void refreshBackendHealth();
   }
 
   async function markToneFeedback(action: FeedbackAction) {
@@ -435,9 +589,14 @@ export default function App() {
   function dropSuggestion(suggestionId: string) {
     setAnalysis((current) => ({
       ...current,
-      suggestions: current.suggestions.filter((item) => item.id !== suggestionId),
+      suggestions: (Array.isArray(current.suggestions)
+        ? current.suggestions
+        : []
+      ).filter((item) => item.id !== suggestionId),
     }));
-    setSelectedSuggestionId((current) => (current === suggestionId ? null : current));
+    setSelectedSuggestionId((current) =>
+      current === suggestionId ? null : current,
+    );
   }
 
   return (
@@ -446,12 +605,21 @@ export default function App() {
         <div>
           <p className="eyebrow">Shuddho</p>
           <h1>Bangla writing assistant</h1>
-          <p className="lede">Extension-first backend, with the web editor as the fastest place to test analysis, tone, rewrites, and preference learning.</p>
+          <p className="lede">
+            Extension-first backend, with the web editor as the fastest place to
+            test analysis, tone, rewrites, and preference learning.
+          </p>
         </div>
         <div className="status-band">
           <strong>{runtimeDescriptor.label}</strong>
           <span>{status}</span>
-          <span>{backendMode === "online" ? apiBaseUrl : apiConfiguration.localFallbackEnabled ? DEV_LOCAL_FALLBACK_LABEL : "Suggestions disabled"}</span>
+          <span>
+            {backendMode === "online"
+              ? apiBaseUrl
+              : apiConfiguration.localFallbackEnabled
+                ? DEV_LOCAL_FALLBACK_LABEL
+                : "Suggestions disabled"}
+          </span>
         </div>
       </section>
 
@@ -467,17 +635,36 @@ export default function App() {
             <h2>Runtime</h2>
             <div className="meta-list">
               <span>Backend: {backendMode}</span>
-              <span>Detector: {backendHealth?.detector ? (backendHealth.detector.loaded ? "ready" : backendHealth.detector.status) : "unknown"}</span>
-              <span>Corrector: {backendHealth?.corrector ? (backendHealth.corrector.loaded ? "ready" : backendHealth.corrector.status) : "unknown"}</span>
-              <span>Lexicon: {analysis.lexicon_source}</span>
+              <span>
+                Detector:{" "}
+                {backendHealth?.detector
+                  ? backendHealth.detector.loaded
+                    ? "ready"
+                    : backendHealth.detector.status
+                  : "unknown"}
+              </span>
+              <span>
+                Corrector:{" "}
+                {backendHealth?.corrector
+                  ? backendHealth.corrector.loaded
+                    ? "ready"
+                    : backendHealth.corrector.status
+                  : "unknown"}
+              </span>
+              <span>Lexicon: {normalizedAnalysis.lexicon_source}</span>
             </div>
             {backendMode === "offline" || backendMode === "misconfigured" ? (
-              <p className="muted-text">Backend is not reachable. Check VITE_API_BASE_URL and make sure your local tunnel is running.</p>
+              <p className="muted-text">
+                Backend is not reachable. Check VITE_API_BASE_URL and make sure
+                your local tunnel is running.
+              </p>
             ) : null}
-            {analysis.backend_warning ? <p className="muted-text">{analysis.backend_warning}</p> : null}
-            {analysis.runtime_warnings.length ? (
+            {normalizedAnalysis.backend_warning ? (
+              <p className="muted-text">{normalizedAnalysis.backend_warning}</p>
+            ) : null}
+            {runtimeWarnings.length ? (
               <div className="chip-row">
-                {analysis.runtime_warnings.map((warning) => (
+                {runtimeWarnings.map((warning) => (
                   <span key={warning} className="chip chip-warning">
                     {warning}
                   </span>
@@ -486,12 +673,24 @@ export default function App() {
             ) : null}
             {backendHealth ? (
               <div className="meta-list">
-                <span>Profile: {backendHealth.analysis_profile ?? backendHealth.provider ?? backendHealth.service ?? "gateway"}</span>
-                <span>Backend version: {backendHealth.backend_version ?? "unknown"}</span>
+                <span>
+                  Profile:{" "}
+                  {backendHealth.analysis_profile ??
+                    backendHealth.provider ??
+                    backendHealth.service ??
+                    "gateway"}
+                </span>
+                <span>
+                  Backend version: {backendHealth.backend_version ?? "unknown"}
+                </span>
               </div>
             ) : null}
             <label className="checkbox-row">
-              <input type="checkbox" checked={debugMode} onChange={(event) => setDebugMode(event.target.checked)} />
+              <input
+                type="checkbox"
+                checked={debugMode}
+                onChange={(event) => setDebugMode(event.target.checked)}
+              />
               <span>Debug details</span>
             </label>
           </div>
@@ -500,14 +699,31 @@ export default function App() {
             <h2>Preferences</h2>
             <label>
               User ID
-              <input value={userId} onChange={(event) => setUserId(event.target.value)} />
+              <input
+                value={userId}
+                onChange={(event) => setUserId(event.target.value)}
+              />
             </label>
             <label>
               API base URL
               <div className="row">
-                <input value={apiBaseUrlDraft} onChange={(event) => setApiBaseUrlDraft(event.target.value)} />
-                <button type="button" className="icon-button" onClick={applyApiBaseUrl}>
+                <input
+                  value={apiBaseUrlDraft}
+                  onChange={(event) => setApiBaseUrlDraft(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={applyApiBaseUrl}
+                >
                   Apply
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={resetApiBaseUrl}
+                >
+                  Reset API URL
                 </button>
               </div>
             </label>
@@ -516,8 +732,12 @@ export default function App() {
               <select
                 value={preferences.writing_goal}
                 onChange={(event) => {
-                  const nextGoal = event.target.value as ShuddhoPreferences["writing_goal"];
-                  setPreferences((current) => ({ ...current, writing_goal: nextGoal }));
+                  const nextGoal = event.target
+                    .value as ShuddhoPreferences["writing_goal"];
+                  setPreferences((current) => ({
+                    ...current,
+                    writing_goal: nextGoal,
+                  }));
                   setMode(modeFromWritingGoal(nextGoal));
                 }}
               >
@@ -534,7 +754,11 @@ export default function App() {
               <select
                 value={preferences.tone_goal}
                 onChange={(event) =>
-                  setPreferences((current) => ({ ...current, tone_goal: event.target.value as ShuddhoPreferences["tone_goal"] }))
+                  setPreferences((current) => ({
+                    ...current,
+                    tone_goal: event.target
+                      .value as ShuddhoPreferences["tone_goal"],
+                  }))
                 }
               >
                 <option value="neutral">Neutral</option>
@@ -551,7 +775,8 @@ export default function App() {
                 onChange={(event) =>
                   setPreferences((current) => ({
                     ...current,
-                    suggestion_density: event.target.value as ShuddhoPreferences["suggestion_density"],
+                    suggestion_density: event.target
+                      .value as ShuddhoPreferences["suggestion_density"],
                   }))
                 }
               >
@@ -564,7 +789,12 @@ export default function App() {
               <input
                 type="checkbox"
                 checked={preferences.auto_show_tone}
-                onChange={(event) => setPreferences((current) => ({ ...current, auto_show_tone: event.target.checked }))}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    auto_show_tone: event.target.checked,
+                  }))
+                }
               />
               <span>Auto-show tone</span>
             </label>
@@ -572,11 +802,20 @@ export default function App() {
               <input
                 type="checkbox"
                 checked={preferences.enable_rewrites}
-                onChange={(event) => setPreferences((current) => ({ ...current, enable_rewrites: event.target.checked }))}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    enable_rewrites: event.target.checked,
+                  }))
+                }
               />
               <span>Enable rewrites</span>
             </label>
-            <button type="button" className="button-primary" onClick={() => void savePreferencesToBackend()}>
+            <button
+              type="button"
+              className="button-primary"
+              onClick={() => void savePreferencesToBackend()}
+            >
               Save preferences
             </button>
           </div>
@@ -584,7 +823,10 @@ export default function App() {
           <div className="panel-block">
             <h2>Personal dictionary</h2>
             <div className="row">
-              <input value={dictionaryDraft} onChange={(event) => setDictionaryDraft(event.target.value)} />
+              <input
+                value={dictionaryDraft}
+                onChange={(event) => setDictionaryDraft(event.target.value)}
+              />
               <button
                 type="button"
                 className="icon-button"
@@ -594,7 +836,10 @@ export default function App() {
                   }
                   setPreferences((current) => ({
                     ...current,
-                    personal_dictionary: upsertUnique(current.personal_dictionary ?? [], dictionaryDraft),
+                    personal_dictionary: upsertUnique(
+                      current.personal_dictionary ?? [],
+                      dictionaryDraft,
+                    ),
                   }));
                   setDictionaryDraft("");
                 }}
@@ -611,7 +856,9 @@ export default function App() {
                   onClick={() =>
                     setPreferences((current) => ({
                       ...current,
-                      personal_dictionary: (current.personal_dictionary ?? []).filter((item) => item !== entry),
+                      personal_dictionary: (
+                        current.personal_dictionary ?? []
+                      ).filter((item) => item !== entry),
                     }))
                   }
                 >
@@ -626,13 +873,26 @@ export default function App() {
           <div className="panel-block">
             <div className="editor-toolbar">
               <div className="chip-row">
-                <span className="chip">{analysis.suggestions.length} suggestions</span>
+                <span className="chip">{suggestions.length} suggestions</span>
                 <span className="chip">{mode} mode</span>
-                <span className="chip">{analysis.sentence_count} sentences</span>
+                <span className="chip">{sentenceCount} sentences</span>
               </div>
               <div className="rewrite-toolbar">
-                {(["clarity", "formal", "concise", "friendly", "professional"] as RewriteIntent[]).map((intent) => (
-                  <button key={intent} type="button" className="icon-button" onClick={() => void handleRewrite(intent)}>
+                {(
+                  [
+                    "clarity",
+                    "formal",
+                    "concise",
+                    "friendly",
+                    "professional",
+                  ] as RewriteIntent[]
+                ).map((intent) => (
+                  <button
+                    key={intent}
+                    type="button"
+                    className="icon-button"
+                    onClick={() => void handleRewrite(intent)}
+                  >
                     {intent}
                   </button>
                 ))}
@@ -646,7 +906,9 @@ export default function App() {
               onSelect={handleSelectionChange}
             />
             <div className="meta-list">
-              <span>Corrected preview: {analysis.corrected_text}</span>
+              <span>
+                Corrected preview: {normalizedAnalysis.corrected_text}
+              </span>
             </div>
           </div>
 
@@ -674,8 +936,14 @@ export default function App() {
                       </div>
                     </div>
                     <p>{option.rewritten_text}</p>
-                    <p className="muted-text">{option.explanation_bn || option.explanation_en}</p>
-                    <button type="button" className="button-primary" onClick={() => applyRewriteOption(option.rewritten_text)}>
+                    <p className="muted-text">
+                      {option.explanation_bn || option.explanation_en}
+                    </p>
+                    <button
+                      type="button"
+                      className="button-primary"
+                      onClick={() => applyRewriteOption(option.rewritten_text)}
+                    >
                       Accept rewrite
                     </button>
                   </article>
@@ -690,7 +958,11 @@ export default function App() {
                   ))}
                 </div>
               ) : null}
-              <button type="button" className="button-secondary" onClick={dismissRewrite}>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={dismissRewrite}
+              >
                 Dismiss rewrite
               </button>
             </div>
@@ -719,10 +991,18 @@ export default function App() {
                 ))}
               </div>
               <div className="row">
-                <button type="button" className="button-secondary" onClick={() => void markToneFeedback("tone_helpful")}>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => void markToneFeedback("tone_helpful")}
+                >
                   Helpful
                 </button>
-                <button type="button" className="button-secondary" onClick={() => void markToneFeedback("tone_not_helpful")}>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => void markToneFeedback("tone_not_helpful")}
+                >
                   Not helpful
                 </button>
               </div>
@@ -742,9 +1022,9 @@ export default function App() {
           </div>
         </div>
 
-        {analysis.suggestions.length ? (
+        {suggestions.length ? (
           <div className="suggestion-list">
-            {analysis.suggestions.map((suggestion) => (
+            {suggestions.map((suggestion) => (
               <button
                 key={suggestion.id}
                 type="button"
@@ -752,7 +1032,10 @@ export default function App() {
                 onClick={() => setSelectedSuggestionId(suggestion.id)}
               >
                 <strong>{suggestion.short_title ?? suggestion.subtype}</strong>
-                <span>{suggestion.suggestion_reason_short_bn ?? suggestion.explanation_bn}</span>
+                <span>
+                  {suggestion.suggestion_reason_short_bn ??
+                    suggestion.explanation_bn}
+                </span>
               </button>
             ))}
           </div>
@@ -768,13 +1051,19 @@ export default function App() {
           <SuggestionCard
             suggestion={selectedSuggestion}
             debugMode={debugMode}
-            onApply={(candidate, replacement) => handleApplySuggestion(candidate, replacement, selectedSuggestion)}
+            onApply={(candidate, replacement) =>
+              handleApplySuggestion(candidate, replacement, selectedSuggestion)
+            }
             onDismiss={() => handleDismissSuggestion(selectedSuggestion)}
             onIgnoreForever={() => handleIgnoreForever(selectedSuggestion)}
             onAddToDictionary={
-              canAddSuggestionToDictionary(selectedSuggestion) ? () => handleAddToDictionary(selectedSuggestion) : undefined
+              canAddSuggestionToDictionary(selectedSuggestion)
+                ? () => handleAddToDictionary(selectedSuggestion)
+                : undefined
             }
-            onRewrite={(intent) => void handleRewrite(intent, selectedSuggestion)}
+            onRewrite={(intent) =>
+              void handleRewrite(intent, selectedSuggestion)
+            }
           />
         ) : null}
       </section>
@@ -782,7 +1071,11 @@ export default function App() {
   );
 }
 
-function buildLocalFallbackResponse(text: string, mode: AnalyzeMode, personalDictionary: string[]): AnalyzeResponse {
+function buildLocalFallbackResponse(
+  text: string,
+  mode: AnalyzeMode,
+  personalDictionary: string[],
+): AnalyzeResponse {
   const fallback = analyzeTextLocally({
     text,
     mode,
@@ -790,11 +1083,18 @@ function buildLocalFallbackResponse(text: string, mode: AnalyzeMode, personalDic
   });
   return {
     ...fallback,
-    runtime_warnings: Array.from(new Set([...(fallback.runtime_warnings ?? []), "frontend_local_fallback_enabled"])),
+    runtime_warnings: Array.from(
+      new Set([
+        ...(fallback.runtime_warnings ?? []),
+        "frontend_local_fallback_enabled",
+      ]),
+    ),
   };
 }
 
-async function sendFeedbackIfOnline(payload: Parameters<typeof sendFeedback>[0]) {
+async function sendFeedbackIfOnline(
+  payload: Parameters<typeof sendFeedback>[0],
+) {
   try {
     await sendFeedback(payload);
   } catch {
@@ -802,39 +1102,25 @@ async function sendFeedbackIfOnline(payload: Parameters<typeof sendFeedback>[0])
   }
 }
 
-function replaceSpan(text: string, start: number, end: number, replacement: string): string {
+function replaceSpan(
+  text: string,
+  start: number,
+  end: number,
+  replacement: string,
+): string {
   return `${text.slice(0, start)}${replacement}${text.slice(end)}`;
 }
 
-function createEmptyAnalysis(
+function createUnavailableAnalysis(
   text: string,
   mode: AnalyzeMode,
-  profile: AnalyzeResponse["analysis_profile"] = "backend_rules_and_spell_only",
+  warning: string,
 ): AnalyzeResponse {
-  return {
-    text,
-    normalized_text: text,
-    corrected_text: text,
-    suggestions: [],
-    analysis_profile: profile,
-    runtime_source: profile,
-    runtime_warnings: [],
-    used_detector: false,
-    used_corrector: false,
-    backend_warning: null,
-    lexicon_source: "unknown",
-    lexicon_version: null,
-    backend_version: null,
-    sentence_count: approximateSentenceCount(text),
-    request_mode_applied: mode,
-  };
-}
-
-function createUnavailableAnalysis(text: string, mode: AnalyzeMode, warning: string): AnalyzeResponse {
   return {
     ...createEmptyAnalysis(text, mode, "frontend_local_fallback"),
     runtime_warnings: [warning],
-    backend_warning: "Suggestions are disabled because the backend is unavailable and browser fallback is off.",
+    backend_warning:
+      "Suggestions are disabled because the backend is unavailable and browser fallback is off.",
   };
 }
 
@@ -846,14 +1132,18 @@ function loadOrCreateLocalUserId(): string {
   if (existing) {
     return existing;
   }
-  const created = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `anon-${Date.now().toString(36)}`;
+  const created =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `anon-${Date.now().toString(36)}`;
   window.localStorage.setItem(USER_PROFILE_ID_STORAGE_KEY, created);
   return created;
 }
 
-function upsertUnique(items: string[] | null | undefined, value: string): string[] {
+function upsertUnique(
+  items: string[] | null | undefined,
+  value: string,
+): string[] {
   const normalized = value.trim().replace(/\s+/g, " ");
   const safeItems = Array.isArray(items) ? items : [];
   if (!normalized || safeItems.includes(normalized)) {
@@ -862,16 +1152,15 @@ function upsertUnique(items: string[] | null | undefined, value: string): string
   return [...safeItems, normalized];
 }
 
-function modeFromWritingGoal(writingGoal: ShuddhoPreferences["writing_goal"]): AnalyzeMode {
-  if (writingGoal === "formal" || writingGoal === "academic" || writingGoal === "business") {
+function modeFromWritingGoal(
+  writingGoal: ShuddhoPreferences["writing_goal"],
+): AnalyzeMode {
+  if (
+    writingGoal === "formal" ||
+    writingGoal === "academic" ||
+    writingGoal === "business"
+  ) {
     return "formal";
   }
   return "standard";
-}
-
-function approximateSentenceCount(text: string): number {
-  return text
-    .split(/[.!?\u0964]+/u)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean).length;
 }

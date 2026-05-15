@@ -8,6 +8,10 @@
     },
     "types": ["vite/client"]
   },
-  "include": ["src", "../../shared/schemas/contracts.ts", "../../shared/fixtures/bangla_samples.json"],
-  "exclude": ["src/**/*.test.ts"]
+  "include": [
+    "src",
+    "../../shared/schemas/contracts.ts",
+    "../../shared/fixtures/bangla_samples.json"
+  ],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

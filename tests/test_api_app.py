@@ -2,6 +2,7 @@ import importlib
 import re
 
 from services.api.shuddho_api.app import (
+    app,
     ALLOWED_ORIGIN_REGEX,
     ALLOWED_ORIGINS,
     _parse_allowed_origins,
@@ -29,6 +30,49 @@ from shared.schemas.python_models import (
 app_module = importlib.import_module("services.api.shuddho_api.app")
 
 
+def test_api_preferences_route_returns_full_shape() -> None:
+    response = get_api_preferences("pytest-http-user")
+    payload = response.model_dump()
+
+    assert payload["user_id"] == "pytest-http-user"
+    assert payload["language"] == "bn"
+    assert payload["personal_dictionary"] == []
+    assert payload["enabledSuggestionTypes"] == [
+        "grammar",
+        "spelling",
+        "punctuation",
+        "spacing",
+        "style",
+        "tone",
+        "rewrite",
+    ]
+
+
+def test_api_check_route_returns_suggestions_and_warnings_arrays() -> None:
+    response = check_canonical(
+        CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
+    )
+    payload = response.model_dump()
+
+    assert payload["language"] == "bn"
+    assert isinstance(payload["suggestions"], list)
+    assert isinstance(payload["warnings"], list)
+
+
+def test_health_deep_route_returns_backend_reachable() -> None:
+    response = health_deep()
+
+    assert response.backend_reachable is True
+    assert response.backend_version
+
+
+def test_api_events_route_returns_ok() -> None:
+    assert events_api({"type": "editor_loaded", "language": "bn"}) == {"ok": True}
+
+
+def test_cors_configuration_includes_vercel_origin() -> None:
+    assert "https://shuddho-web-editor.vercel.app" in ALLOWED_ORIGINS
+
 
 def test_api_preferences_get_returns_defaults() -> None:
     response = get_api_preferences("pytest-user")
@@ -40,7 +84,9 @@ def test_api_preferences_get_returns_defaults() -> None:
 
 
 def test_api_preferences_put_stores_values() -> None:
-    payload = app_module.ApiPreferences(user_id="pytest-user", disabledSuggestionTypes=["tone"])
+    payload = app_module.ApiPreferences(
+        user_id="pytest-user", disabledSuggestionTypes=["tone"]
+    )
 
     saved = put_api_preferences(payload, user_id="pytest-user")
     loaded = get_api_preferences("pytest-user")
@@ -56,11 +102,18 @@ def test_api_events_returns_ok() -> None:
 def test_api_check_compatibility_route_accepts_bangla_text(monkeypatch) -> None:
     def stub_analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
         assert payload.text == "আমি  আমি ভাত খাই।"
-        return AnalyzeResponse(text=payload.text, normalized_text=payload.text, corrected_text=payload.text, suggestions=[])
+        return AnalyzeResponse(
+            text=payload.text,
+            normalized_text=payload.text,
+            corrected_text=payload.text,
+            suggestions=[],
+        )
 
     monkeypatch.setattr(app_module, "analyze", stub_analyze)
 
-    response = check_canonical(CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn"))
+    response = check_canonical(
+        CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
+    )
 
     assert response.language == "bn"
     assert response.normalizedText == "আমি  আমি ভাত খাই।"
@@ -68,6 +121,7 @@ def test_api_check_compatibility_route_accepts_bangla_text(monkeypatch) -> None:
 
 def test_cors_config_includes_vercel_frontend_origin() -> None:
     assert "https://shuddho-web-editor.vercel.app" in ALLOWED_ORIGINS
+
 
 def test_health_reports_detector_and_corrector_status() -> None:
     response = health()
@@ -116,7 +170,10 @@ def test_health_reports_detector_and_corrector_status() -> None:
         "backend_without_corrector",
         "backend_rules_and_spell_only",
     }
-    assert all(reason.startswith(("detector_", "corrector_")) for reason in response.degraded_reasons)
+    assert all(
+        reason.startswith(("detector_", "corrector_"))
+        for reason in response.degraded_reasons
+    )
     assert set(response.mode_capabilities) == {"standard", "strict", "formal"}
     assert "rules" in response.mode_capabilities["standard"]
     assert "spell" in response.mode_capabilities["strict"]
@@ -174,10 +231,20 @@ def test_health_exposes_degraded_runtime_reasons(monkeypatch) -> None:
 
     assert response.analysis_profile == "backend_rules_and_spell_only"
     assert response.backend_reachable is True
-    assert response.degraded_reasons == ["detector_disabled", "corrector_missing_checkpoint"]
-    assert response.detector.reason == "SHUDDHO_DETECTOR_ENABLED=false disabled detector startup."
-    assert response.corrector.reason.startswith("Corrector checkpoint could not be loaded")
-    assert "sentence_level_local_corrector" not in response.mode_capabilities["standard"]
+    assert response.degraded_reasons == [
+        "detector_disabled",
+        "corrector_missing_checkpoint",
+    ]
+    assert (
+        response.detector.reason
+        == "SHUDDHO_DETECTOR_ENABLED=false disabled detector startup."
+    )
+    assert response.corrector.reason.startswith(
+        "Corrector checkpoint could not be loaded"
+    )
+    assert (
+        "sentence_level_local_corrector" not in response.mode_capabilities["standard"]
+    )
 
 
 def test_cors_allows_extension_origin() -> None:
@@ -222,7 +289,9 @@ def test_parse_allowed_origins_supports_trycloudflare_origin() -> None:
     ]
 
 
-def test_parse_allowed_origins_keeps_default_frontend_origin_when_env_lists_only_local_hosts() -> None:
+def test_parse_allowed_origins_keeps_default_frontend_origin_when_env_lists_only_local_hosts() -> (
+    None
+):
     allowed_origins = _parse_allowed_origins(
         "http://127.0.0.1:5173, http://localhost:5173"
     )
@@ -238,11 +307,15 @@ def test_analyze_route_forwards_mode_to_analysis_pipeline(monkeypatch) -> None:
     recorded_call: dict[str, object] = {}
 
     class StubPipeline:
-        def analyze(self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode) -> AnalyzeResponse:
+        def analyze(
+            self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode
+        ) -> AnalyzeResponse:
             recorded_call["text"] = text
             recorded_call["personal_dictionary"] = personal_dictionary
             recorded_call["mode"] = mode
-            return AnalyzeResponse(text=text, normalized_text=text, corrected_text=text, suggestions=[])
+            return AnalyzeResponse(
+                text=text, normalized_text=text, corrected_text=text, suggestions=[]
+            )
 
     class StubFeedbackStore:
         def load_personal_dictionary(self, user_id: str | None = None) -> list[str]:
@@ -273,11 +346,15 @@ def test_analyze_route_forwards_mode_to_analysis_pipeline(monkeypatch) -> None:
     assert response.corrected_text == "বাংলা"
 
 
-def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions(monkeypatch) -> None:
+def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions(
+    monkeypatch,
+) -> None:
     recorded_call: dict[str, object] = {}
 
     class StubPipeline:
-        def analyze(self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode) -> AnalyzeResponse:
+        def analyze(
+            self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode
+        ) -> AnalyzeResponse:
             recorded_call["text"] = text
             recorded_call["personal_dictionary"] = personal_dictionary
             recorded_call["mode"] = mode
@@ -286,8 +363,17 @@ def test_analyze_route_merges_user_dictionary_and_filters_suppressed_suggestions
                 normalized_text=text,
                 corrected_text="আমি।",
                 suggestions=[
-                    _suggestion("REP_001", "আমি আমি", ["আমি"], suppression_key="sup_hidden"),
-                    _suggestion("PUNC_001", "।।", ["।"], category=SuggestionCategory.PUNCTUATION, suppression_key="sup_visible", span_start=7),
+                    _suggestion(
+                        "REP_001", "আমি আমি", ["আমি"], suppression_key="sup_hidden"
+                    ),
+                    _suggestion(
+                        "PUNC_001",
+                        "।।",
+                        ["।"],
+                        category=SuggestionCategory.PUNCTUATION,
+                        suppression_key="sup_visible",
+                        span_start=7,
+                    ),
                 ],
             )
 
@@ -329,7 +415,11 @@ def test_health_deep_reports_runtime_lexicon_metadata() -> None:
     assert response.backend_version
     assert response.env_file_path
     assert response.lexicon.runtime_source
-    assert response.lexicon.runtime_source_of_truth in {"csv_runtime", "built_runtime_csv", "seed_fallback"}
+    assert response.lexicon.runtime_source_of_truth in {
+        "csv_runtime",
+        "built_runtime_csv",
+        "seed_fallback",
+    }
     assert response.lexicon.accepted_word_count >= 0
     assert response.lexicon.candidate_word_count >= 0
     assert response.lexicon.correction_map_count >= 0
@@ -338,7 +428,9 @@ def test_health_deep_reports_runtime_lexicon_metadata() -> None:
 
 def test_analyze_route_preserves_runtime_metadata_from_pipeline(monkeypatch) -> None:
     class StubPipeline:
-        def analyze(self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode) -> AnalyzeResponse:
+        def analyze(
+            self, text: str, personal_dictionary: list[str] | None, mode: AnalyzeMode
+        ) -> AnalyzeResponse:
             assert personal_dictionary == ["নিজস্ব"]
             assert mode == AnalyzeMode.STANDARD
             return AnalyzeResponse(
