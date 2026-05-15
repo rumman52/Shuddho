@@ -292,7 +292,6 @@ def _build_health_response() -> HealthResponse:
     corrector_runtime = corrector_service.runtime_status()
     analysis_profile = _derive_analysis_profile(detector_runtime, corrector_runtime)
     degraded_reasons = _derive_degraded_reasons(detector_runtime, corrector_runtime)
-    backend_warning = _derive_backend_warning(detector_runtime, corrector_runtime)
     return HealthResponse(
         status="ok",
         backend_reachable=True,
@@ -314,7 +313,6 @@ def _build_health_response() -> HealthResponse:
         corrector=_build_corrector_health(corrector_runtime),
         analysis_profile=analysis_profile,
         degraded_reasons=degraded_reasons,
-        backend_warning=backend_warning,
         mode_capabilities=_build_mode_capabilities(detector_runtime, corrector_runtime),
     )
 
@@ -324,6 +322,7 @@ def _build_health_deep_response() -> HealthDeepResponse:
     snapshot = spell_engine.repository.snapshot
     return HealthDeepResponse(
         **shallow.model_dump(),
+        backend_warning=_derive_backend_warning(detector_service.runtime_status(), corrector_service.runtime_status()),
         backend_version=BACKEND_VERSION,
         env_file_path=str(ENV_FILE_PATH),
         env_file_loaded=ENV_FILE_LOADED,

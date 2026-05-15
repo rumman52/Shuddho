@@ -53,8 +53,8 @@ def whitespace_before_punctuation_rule(text: str) -> list[Suggestion]:
         suggestions.append(
             Suggestion(
                 id=stable_id("rule", f"spacing-before:{span_start}:{span_end}:{punctuation}"),
-                rule_id="SPACE_002",
-                category=SuggestionCategory.SPACING,
+                rule_id="PUNC_002",
+                category=SuggestionCategory.PUNCTUATION,
                 subtype="space_before_punctuation",
                 span_start=span_start,
                 span_end=span_end,

@@ -16,15 +16,15 @@ export function getRuntimeLabel(profile: AnalysisProfile): string {
     case "full_local":
       return "Online contextual backend";
     case "backend_without_detector":
-      return "Backend online, detector unavailable";
+      return "Backend online but detector missing";
     case "backend_without_corrector":
-      return "Backend online, corrector unavailable";
+      return "Backend online but corrector missing";
     case "backend_rules_and_spell_only":
-      return "Backend online, rules and spelling only";
+      return "Backend online rules/spell only";
     case "frontend_local_fallback":
-      return "Limited browser fallback";
+      return "Dev-only browser fallback";
     default:
-      return "Backend online, rules and spelling only";
+      return "Backend online rules/spell only";
   }
 }
 
@@ -38,7 +38,7 @@ export function describeRuntimeState(args: {
   const localFallbackEnabled = analysis.runtime_warnings.includes("frontend_local_fallback_enabled");
 
   if (transport === "misconfigured") {
-    const label = hardWarning ?? (localFallbackEnabled ? "Backend misconfigured. Only limited local checks are available." : "Backend misconfigured. Suggestions are disabled.");
+    const label = hardWarning ?? (localFallbackEnabled ? "Dev-only browser fallback" : "Backend misconfigured - contextual correction disabled");
     return {
       label,
       localOnly: localFallbackEnabled,
@@ -49,7 +49,7 @@ export function describeRuntimeState(args: {
 
   if (transport === "offline") {
     return {
-      label: localFallbackEnabled ? "Backend offline. Only limited local checks are available." : "Backend offline, suggestions disabled",
+      label: localFallbackEnabled ? "Dev-only browser fallback" : "Backend offline, suggestions disabled",
       localOnly: localFallbackEnabled,
       degraded: true,
       warnings: compactWarnings([analysis.backend_warning, ...analysis.runtime_warnings]),

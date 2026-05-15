@@ -6,9 +6,13 @@
     "moduleResolution": "Bundler",
     "lib": ["DOM", "ES2022"],
     "outDir": "dist",
-    "rootDir": ".",
+    "rootDir": "../..",
+    "baseUrl": "../..",
+    "paths": {
+      "@shared/*": ["shared/*"]
+    },
     "types": ["chrome"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "../../shared/schemas/contracts.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

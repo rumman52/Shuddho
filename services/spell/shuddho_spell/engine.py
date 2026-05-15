@@ -119,7 +119,7 @@ class SpellEngine:
                     Suggestion(
                         id=stable_id("spell", f"{match.start()}:{match.end()}:{token}:{variant_candidate}"),
                         rule_id="SPELL_002",
-                        category=SuggestionCategory.SPELLING,
+                        category=SuggestionCategory.STYLE,
                         subtype="orthography_variant",
                         span_start=match.start(),
                         span_end=match.end(),

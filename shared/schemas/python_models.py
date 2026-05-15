@@ -15,6 +15,7 @@ class SuggestionCategory(str, Enum):
     SPACING = "spacing"
     REGISTER = "register"
     CLARITY = "clarity"
+    STYLE = "style"
     REWRITE_ONLY = "rewrite_only"
 
 
@@ -491,11 +492,11 @@ class HealthResponse(BaseModel):
     corrector: CorrectorHealth
     analysis_profile: AnalysisProfile
     degraded_reasons: list[str] = Field(default_factory=list)
-    backend_warning: str | None = None
     mode_capabilities: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class HealthDeepResponse(HealthResponse):
+    backend_warning: str | None = None
     backend_version: str | None = None
     env_file_path: str | None = None
     env_file_loaded: bool = False
@@ -534,6 +535,7 @@ def _infer_suggestion_kind(
     if category in {
         SuggestionCategory.REGISTER,
         SuggestionCategory.CLARITY,
+        SuggestionCategory.STYLE,
     }:
         return SuggestionKind.STYLE_SUGGESTION
     return SuggestionKind.NO_SUGGESTION

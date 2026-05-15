@@ -302,12 +302,12 @@ def _replacement_changes_meaning_too_much(
     *,
     mode: AnalyzeMode,
 ) -> bool:
+    if suggestion.category in {SuggestionCategory.PUNCTUATION, SuggestionCategory.SPACING}:
+        return False
     original = suggestion.original_text.strip()
     replacement = replacement.strip()
     if not original or not replacement:
         return True
-    if suggestion.category in {SuggestionCategory.PUNCTUATION, SuggestionCategory.SPACING}:
-        return False
     if replacement == text.strip() and original != text.strip():
         return True
 

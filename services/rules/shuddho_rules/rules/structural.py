@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from shared.constants.bangla import COORDINATORS, REDUPLICATION_WHITELIST
+from shared.constants.bangla import CLOSING_DELIMITERS, COORDINATORS, OPENING_DELIMITERS, REDUPLICATION_WHITELIST
 from shared.schemas.python_models import Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
 from shared.utils.text import stable_id
 
@@ -132,10 +132,66 @@ def repeated_filler_rule(text: str) -> list[Suggestion]:
     return suggestions
 
 
+def unbalanced_delimiter_rule(text: str) -> list[Suggestion]:
+    stack: list[tuple[str, int]] = []
+    for index, character in enumerate(text):
+        if character in OPENING_DELIMITERS:
+            stack.append((character, index))
+            continue
+        if character not in CLOSING_DELIMITERS:
+            continue
+        expected_opening = CLOSING_DELIMITERS[character]
+        if stack and stack[-1][0] == expected_opening:
+            stack.pop()
+            continue
+        return [
+            Suggestion(
+                id=stable_id("rule", f"unbalanced-delimiter-close:{index}:{character}"),
+                rule_id="PUNC_005",
+                category=SuggestionCategory.PUNCTUATION,
+                subtype="unbalanced_delimiter",
+                span_start=index,
+                span_end=index + 1,
+                original_text=character,
+                replacement_options=[],
+                confidence=0.88,
+                explanation_bn="এখানে বন্ধনী বা উদ্ধৃতিচিহ্নের জোড়া ঠিক নেই।",
+                explanation_en="A bracket or quotation delimiter is unbalanced here.",
+                source=SuggestionSource.RULE,
+                severity=SuggestionSeverity.MEDIUM,
+                source_trace=["rule_engine", "delimiter_balance"],
+            )
+        ]
+
+    if not stack:
+        return []
+    opening, index = stack[-1]
+    closing = OPENING_DELIMITERS[opening]
+    return [
+        Suggestion(
+            id=stable_id("rule", f"unbalanced-delimiter-open:{index}:{opening}"),
+            rule_id="PUNC_005",
+            category=SuggestionCategory.PUNCTUATION,
+            subtype="unbalanced_delimiter",
+            span_start=index,
+            span_end=index + 1,
+            original_text=opening,
+            replacement_options=[f"{opening}{closing}"],
+            confidence=0.88,
+            explanation_bn=f"'{opening}' চিহ্নটির জন্য মিল থাকা '{closing}' দরকার।",
+            explanation_en=f"The '{opening}' delimiter needs a matching '{closing}'.",
+            source=SuggestionSource.RULE,
+            severity=SuggestionSeverity.MEDIUM,
+            source_trace=["rule_engine", "delimiter_balance"],
+        )
+    ]
+
+
 def build_rule_definitions() -> tuple[RuleDefinition, ...]:
     return (
         RuleDefinition("repeated_word", "Detect accidental repeated words.", repeated_word_rule),
         RuleDefinition("duplicate_negation", "Detect repeated negation.", duplicate_negation_rule),
         RuleDefinition("repeated_coordinator", "Detect repeated connectors.", repeated_coordinator_rule),
         RuleDefinition("repeated_filler", "Detect repeated filler words.", repeated_filler_rule),
+        RuleDefinition("unbalanced_delimiter", "Detect unbalanced brackets and quotation marks.", unbalanced_delimiter_rule),
     )
