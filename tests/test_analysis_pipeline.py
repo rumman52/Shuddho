@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from services.analysis.shuddho_analysis.corrector_service import CorrectorService
 from services.analysis.shuddho_analysis.detector import DetectorService
 from services.analysis.shuddho_analysis.models import DetectorFinding
 from services.analysis.shuddho_analysis.pipeline import AnalysisPipeline
@@ -332,6 +333,12 @@ def _build_pipeline(
     detector_service: DetectorService | None = None,
     corrector_service=None,
 ) -> AnalysisPipeline:
+    if corrector_service is None:
+        corrector_service = CorrectorService(
+            enabled=False,
+            status="disabled",
+            reason="disabled in analysis pipeline unit test fixture",
+        )
     return AnalysisPipeline(
         normalizer=BanglaNormalizer(),
         spell_engine=SpellEngine(runtime_csv_path=runtime_csv_path),

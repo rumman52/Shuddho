@@ -59,16 +59,17 @@ The trainer writes checkpoints and metadata under:
 
 Expected files include:
 
-- `metadata.json`
-- `best_model.pt`
-- `last_model.pt`
-- `metrics.json`
+- `artifacts/corrector/corrector-base/metadata.json`
+- `artifacts/corrector/corrector-base/best_model.pt`
+- `artifacts/corrector/corrector-base/last_model.pt`
+- `artifacts/corrector/corrector-base/metrics.json`
 
 ## Use The Artifact
 
 Set the runtime environment variable if you want a non-default path:
 
 ```bash
+set SHUDDHO_CORRECTOR_ENABLED=true
 set SHUDDHO_CORRECTOR_CHECKPOINT=artifacts/corrector/corrector-base
 ```
 
@@ -86,3 +87,7 @@ Runtime behavior:
 - sentence predictions are diffed into minimal inline edits
 - weakly anchored or rewrite-like diffs are dropped
 - only exact anchored spans survive validation and ranking
+
+## Render deployment note
+
+The Render Docker image copies `artifacts/` into the image. Full contextual correction still requires the trained corrector files above to exist in `artifacts/corrector/corrector-base` before the Render build runs. Add `best_model.pt` and `last_model.pt` with Git LFS from a developer machine rather than committing raw PyTorch binaries from automation. If the directory is missing, the backend intentionally stays online with rules + spelling fallback and `/health/deep` reports `corrector.status = missing_checkpoint`.

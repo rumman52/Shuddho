@@ -10,6 +10,20 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:20]
 
 
+def _canonical_warnings(response: AnalyzeResponse) -> list[str]:
+    warnings: list[str] = []
+    for warning in getattr(response, 'warnings', []) or []:
+        if warning and warning not in warnings:
+            warnings.append(warning)
+    for warning in getattr(response, 'runtime_warnings', []) or []:
+        if warning and warning not in warnings:
+            warnings.append(warning)
+    backend_warning = getattr(response, 'backend_warning', None)
+    if backend_warning and backend_warning not in warnings:
+        warnings.append(backend_warning)
+    return warnings
+
+
 def analyze_to_check_response(response: AnalyzeResponse, *, request_id: str, text: str, document_id: str | None = None, revision: int | None = None) -> CanonicalCheckResponse:
     suggestions: list[CanonicalSuggestion] = []
     for item in response.suggestions:
@@ -35,4 +49,4 @@ def analyze_to_check_response(response: AnalyzeResponse, *, request_id: str, tex
             provider=provider,
             metadata={'legacyId': item.id, 'subtype': item.subtype},
         ))
-    return CanonicalCheckResponse(requestId=request_id, documentId=document_id, revision=revision, language='bn', normalizedText=getattr(response, 'normalized_text', None), suggestions=suggestions, warnings=getattr(response, 'warnings', []))
+    return CanonicalCheckResponse(requestId=request_id, documentId=document_id, revision=revision, language='bn', normalizedText=getattr(response, 'normalized_text', None), suggestions=suggestions, warnings=_canonical_warnings(response))
