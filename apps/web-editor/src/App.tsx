@@ -16,6 +16,7 @@ import type {
 import { SuggestionCard } from "./components/SuggestionCard";
 import {
   analyzeText,
+  type BackendHealthResponse,
   analyzeTone,
   getApiBaseUrl,
   getApiConfiguration,
@@ -58,7 +59,7 @@ export default function App() {
     return window.localStorage.getItem(DEBUG_MODE_STORAGE_KEY) === "1";
   });
   const [backendMode, setBackendMode] = useState<BackendMode>("checking");
-  const [backendHealth, setBackendHealth] = useState<HealthDeepResponse | null>(null);
+  const [backendHealth, setBackendHealth] = useState<BackendHealthResponse | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
   const [apiConfiguration, setApiConfiguration] = useState(() => getApiConfiguration());
@@ -71,7 +72,7 @@ export default function App() {
       describeRuntimeState({
         analysis,
         transport: backendMode,
-        health: backendHealth,
+        health: backendHealth?.detector ? (backendHealth as HealthDeepResponse) : null,
         hardWarning: apiConfiguration.hardWarning,
       }),
     [analysis, apiConfiguration.hardWarning, backendHealth, backendMode],
@@ -126,7 +127,10 @@ export default function App() {
       const health = await getHealth();
       setBackendHealth(health);
       setBackendMode("online");
-    } catch {
+    } catch (error) {
+      if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
+        console.debug("Backend health check failed", error);
+      }
       setBackendHealth(null);
       setBackendMode("offline");
       setStatus(
@@ -454,10 +458,13 @@ export default function App() {
             <h2>Runtime</h2>
             <div className="meta-list">
               <span>Backend: {backendMode}</span>
-              <span>Detector: {backendHealth ? (backendHealth.detector.loaded ? "ready" : backendHealth.detector.status) : "unknown"}</span>
-              <span>Corrector: {backendHealth ? (backendHealth.corrector.loaded ? "ready" : backendHealth.corrector.status) : "unknown"}</span>
+              <span>Detector: {backendHealth?.detector ? (backendHealth.detector.loaded ? "ready" : backendHealth.detector.status) : "unknown"}</span>
+              <span>Corrector: {backendHealth?.corrector ? (backendHealth.corrector.loaded ? "ready" : backendHealth.corrector.status) : "unknown"}</span>
               <span>Lexicon: {analysis.lexicon_source}</span>
             </div>
+            {backendMode === "offline" || backendMode === "misconfigured" ? (
+              <p className="muted-text">Backend is not reachable. Check VITE_API_BASE_URL and make sure your local tunnel is running.</p>
+            ) : null}
             {analysis.backend_warning ? <p className="muted-text">{analysis.backend_warning}</p> : null}
             {analysis.runtime_warnings.length ? (
               <div className="chip-row">
@@ -470,7 +477,7 @@ export default function App() {
             ) : null}
             {backendHealth ? (
               <div className="meta-list">
-                <span>Profile: {backendHealth.analysis_profile}</span>
+                <span>Profile: {backendHealth.analysis_profile ?? backendHealth.provider ?? backendHealth.service ?? "gateway"}</span>
                 <span>Backend version: {backendHealth.backend_version ?? "unknown"}</span>
               </div>
             ) : null}

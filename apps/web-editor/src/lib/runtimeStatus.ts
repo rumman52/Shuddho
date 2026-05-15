@@ -38,9 +38,8 @@ export function describeRuntimeState(args: {
   const localFallbackEnabled = analysis.runtime_warnings.includes("frontend_local_fallback_enabled");
 
   if (transport === "misconfigured") {
-    const label = hardWarning ?? (localFallbackEnabled ? "Dev-only browser fallback" : "Backend misconfigured - contextual correction disabled");
     return {
-      label,
+      label: localFallbackEnabled ? "Dev-only browser fallback" : "Backend misconfigured - contextual correction disabled",
       localOnly: localFallbackEnabled,
       degraded: true,
       warnings: compactWarnings([hardWarning, analysis.backend_warning, ...analysis.runtime_warnings]),
