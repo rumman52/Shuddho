@@ -5,13 +5,25 @@ from services.analysis.shuddho_analysis.pipeline import AnalysisPipeline
 from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
-from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
-from shared.schemas.python_models import AnalyzeMode, Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
+from services.suggestion_manager.shuddho_suggestion_manager.manager import (
+    SuggestionManager,
+)
+from shared.schemas.python_models import (
+    AnalyzeMode,
+    Suggestion,
+    SuggestionCategory,
+    SuggestionSeverity,
+    SuggestionSource,
+)
 
 
-def test_corrector_service_missing_checkpoint_falls_back_without_crashing(tmp_path: Path) -> None:
+def test_corrector_service_missing_checkpoint_falls_back_without_crashing(
+    tmp_path: Path,
+) -> None:
     missing_checkpoint = tmp_path / "missing-corrector"
-    service = CorrectorService.from_environment({"SHUDDHO_CORRECTOR_CHECKPOINT": str(missing_checkpoint)})
+    service = CorrectorService.from_environment(
+        {"SHUDDHO_CORRECTOR_CHECKPOINT": str(missing_checkpoint)}
+    )
     status = service.runtime_status()
 
     assert service.is_loaded() is False
@@ -28,7 +40,9 @@ def test_corrector_service_can_be_disabled_explicitly() -> None:
     assert service.is_loaded() is False
     assert service.is_enabled() is False
     assert status.status == "disabled"
-    assert status.reason == "SHUDDHO_CORRECTOR_ENABLED=false disabled corrector startup."
+    assert (
+        status.reason == "SHUDDHO_CORRECTOR_ENABLED=false disabled corrector startup."
+    )
 
 
 def test_analysis_pipeline_accepts_local_corrector_suggestions(tmp_path: Path) -> None:
@@ -48,6 +62,34 @@ def test_analysis_pipeline_accepts_local_corrector_suggestions(tmp_path: Path) -
     assert response.used_detector is True
     assert response.used_corrector is True
     assert "COR_001" in rule_ids
+
+
+def test_analysis_pipeline_degrades_without_corrector_checkpoint(
+    tmp_path: Path,
+) -> None:
+    corrector_service = CorrectorService.from_environment(
+        {"SHUDDHO_CORRECTOR_CHECKPOINT": str(tmp_path / "missing-corrector")}
+    )
+    pipeline = AnalysisPipeline(
+        normalizer=BanglaNormalizer(),
+        spell_engine=SpellEngine(runtime_csv_path=_write_clean_csv_fixture(tmp_path)),
+        rule_engine=RuleEngine(),
+        suggestion_manager=SuggestionManager(),
+        detector_service=StubReadyDetectorService(),
+        corrector_service=corrector_service,
+    )
+
+    response = pipeline.analyze("আমি বাংলা লিখি", mode=AnalyzeMode.STANDARD)
+
+    assert response.analysis_profile == "backend_without_corrector"
+    assert response.used_detector is True
+    assert response.used_corrector is False
+    assert response.runtime_warnings == ["corrector_missing_checkpoint"]
+    assert (
+        response.backend_warning
+        == "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only."
+    )
+    assert isinstance(response.suggestions, list)
 
 
 class StubReadyDetectorService:

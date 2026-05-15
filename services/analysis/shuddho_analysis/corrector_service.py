@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,7 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.86
 CORRECTOR_ENABLED_ENV_VAR = "SHUDDHO_CORRECTOR_ENABLED"
 CORRECTOR_CHECKPOINT_ENV_VAR = "SHUDDHO_CORRECTOR_CHECKPOINT"
 CORRECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_CORRECTOR_THRESHOLD"
+CORRECTOR_MODEL_URL_ENV_VAR = "SHUDDHO_CORRECTOR_MODEL_URL"
 LEGACY_CORRECTOR_THRESHOLD_ENV_VAR = "SHUDDHO_CORRECTOR_CONFIDENCE_THRESHOLD"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CHECKPOINT_RELATIVE_PATH = Path("artifacts") / "corrector" / "corrector-base"
@@ -47,8 +50,7 @@ class CorrectorBackend(Protocol):
         mode: AnalyzeMode,
         *,
         personal_dictionary: list[str] | None = None,
-    ) -> list[Suggestion]:
-        ...
+    ) -> list[Suggestion]: ...
 
 
 class CorrectorService:
@@ -68,8 +70,12 @@ class CorrectorService:
         self.checkpoint_path = checkpoint_path.strip() if checkpoint_path else None
         self.enabled = self.backend is not None if enabled is None else enabled
         if checkpoint_exists is None:
-            _, resolved_checkpoint_path = self._resolve_checkpoint_path(self.checkpoint_path)
-            checkpoint_exists = bool(resolved_checkpoint_path and resolved_checkpoint_path.exists())
+            _, resolved_checkpoint_path = self._resolve_checkpoint_path(
+                self.checkpoint_path
+            )
+            checkpoint_exists = bool(
+                resolved_checkpoint_path and resolved_checkpoint_path.exists()
+            )
         self.checkpoint_exists = checkpoint_exists
         if self.backend is not None and status is None:
             status = "ready"
@@ -143,10 +149,20 @@ class CorrectorService:
             threshold_value,
             env_var_name=threshold_env_var,
         )
-        enabled_mode = cls._resolve_enabled_mode(environment.get(CORRECTOR_ENABLED_ENV_VAR))
+        enabled_mode = cls._resolve_enabled_mode(
+            environment.get(CORRECTOR_ENABLED_ENV_VAR)
+        )
         configured_checkpoint = cls._configured_checkpoint_path(explicit_checkpoint)
-        normalized_checkpoint_path, resolved_checkpoint_path = cls._resolve_checkpoint_path(configured_checkpoint)
-        checkpoint_exists = bool(resolved_checkpoint_path and resolved_checkpoint_path.exists())
+        normalized_checkpoint_path, resolved_checkpoint_path = (
+            cls._resolve_checkpoint_path(configured_checkpoint)
+        )
+        cls._download_optional_model(
+            environment.get(CORRECTOR_MODEL_URL_ENV_VAR),
+            resolved_checkpoint_path,
+        )
+        checkpoint_exists = bool(
+            resolved_checkpoint_path and resolved_checkpoint_path.exists()
+        )
 
         logger.info(
             "Corrector environment initialization enabled_mode=%s checkpoint=%s checkpoint_exists=%s threshold=%.2f",
@@ -155,7 +171,9 @@ class CorrectorService:
             checkpoint_exists,
             confidence_threshold,
         )
-        if (explicit_checkpoint is None or not explicit_checkpoint.strip()) and not checkpoint_exists:
+        if (
+            explicit_checkpoint is None or not explicit_checkpoint.strip()
+        ) and not checkpoint_exists:
             logger.warning(
                 "%s is not set and the default corrector artifact was not found at '%s'. Set %s or train the local corrector before expecting sentence-level correction.",
                 CORRECTOR_CHECKPOINT_ENV_VAR,
@@ -192,8 +210,12 @@ class CorrectorService:
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
         enabled: bool = True,
     ) -> "CorrectorService":
-        normalized_checkpoint_path, resolved_checkpoint_path = cls._resolve_checkpoint_path(checkpoint_path)
-        checkpoint_exists = bool(resolved_checkpoint_path and resolved_checkpoint_path.exists())
+        normalized_checkpoint_path, resolved_checkpoint_path = (
+            cls._resolve_checkpoint_path(checkpoint_path)
+        )
+        checkpoint_exists = bool(
+            resolved_checkpoint_path and resolved_checkpoint_path.exists()
+        )
         if not normalized_checkpoint_path or resolved_checkpoint_path is None:
             logger.warning(
                 "No corrector checkpoint path could be resolved; corrector-backed suggestions will be skipped.",
@@ -268,7 +290,9 @@ class CorrectorService:
 
         missing_files = cls._missing_checkpoint_files(checkpoint_dir)
         if missing_files:
-            raise FileNotFoundError(f"missing required corrector checkpoint files: {', '.join(missing_files)}")
+            raise FileNotFoundError(
+                f"missing required corrector checkpoint files: {', '.join(missing_files)}"
+            )
 
         from ml.corrector.infer import load_corrector_backend
 
@@ -319,7 +343,9 @@ class CorrectorService:
         return DEFAULT_CHECKPOINT_DISPLAY_PATH
 
     @staticmethod
-    def _resolve_checkpoint_path(checkpoint_path: str | None) -> tuple[str | None, Path | None]:
+    def _resolve_checkpoint_path(
+        checkpoint_path: str | None,
+    ) -> tuple[str | None, Path | None]:
         if checkpoint_path is None or not checkpoint_path.strip():
             return None, None
 
@@ -328,6 +354,40 @@ class CorrectorService:
         if not resolved_checkpoint_path.is_absolute():
             resolved_checkpoint_path = REPO_ROOT / resolved_checkpoint_path
         return normalized_checkpoint_path, resolved_checkpoint_path
+
+    @staticmethod
+    def _download_optional_model(
+        model_url: str | None, checkpoint_dir: Path | None
+    ) -> None:
+        if checkpoint_dir is None:
+            return
+        if model_url is None or not model_url.strip():
+            return
+
+        model_path = checkpoint_dir / "best_model.pt"
+        if model_path.exists():
+            return
+
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        temporary_path = model_path.with_suffix(".pt.tmp")
+        try:
+            logger.info(
+                "Downloading optional corrector model from %s to %s because %s is set.",
+                model_url,
+                model_path,
+                CORRECTOR_MODEL_URL_ENV_VAR,
+            )
+            urllib.request.urlretrieve(
+                model_url.strip(), temporary_path
+            )  # noqa: S310 - operator-provided model URL
+            temporary_path.replace(model_path)
+        except (OSError, ValueError, urllib.error.URLError) as error:
+            temporary_path.unlink(missing_ok=True)
+            logger.warning(
+                "Could not download optional corrector model from %s (%s); continuing without the sentence-level corrector.",
+                model_url,
+                error,
+            )
 
     @staticmethod
     def _resolve_enabled_mode(value: str | None) -> str:

@@ -75,16 +75,51 @@ Do not set npm options such as `omit=optional`, `optional=false`, or `ignore-scr
 
 ## Render FastAPI backend
 
-The Render backend should be configured with the checked-in model artifact paths:
+The Render backend can deploy without the optional sentence-level corrector checkpoint. Use `auto` so the backend loads a checkpoint only when the files are actually present:
 
 ```dotenv
-SHUDDHO_CORRECTOR_ENABLED=true
+SHUDDHO_CORRECTOR_ENABLED=auto
 SHUDDHO_CORRECTOR_CHECKPOINT=artifacts/corrector/corrector-base
-SHUDDHO_DETECTOR_ENABLED=true
+SHUDDHO_DETECTOR_ENABLED=auto
 SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
 SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
 SHUDDHO_LOG_RAW_TEXT=false
 ```
+
+If the corrector checkpoint is missing, `/health/deep` reports `corrector.status = missing_checkpoint`, analysis runs in `backend_without_corrector` mode when the detector is ready, and Shuddho stays online with rules + spelling suggestions. After merging a deployment fix, redeploy Render with **Manual Deploy → Clear build cache & deploy**.
+
+### Corrector checkpoint deployment
+
+Option A: run without corrector:
+
+- No `.pt` files are needed.
+- The app uses rules + spelling, and the detector if a valid detector artifact is available.
+- Render deploy works because there are no broken Git LFS pointers to smudge during clone.
+
+Option B: use Git LFS manually from a developer machine that has the real checkpoint files:
+
+```bash
+git lfs install
+git lfs track "*.pt"
+git add .gitattributes
+git add artifacts/corrector/corrector-base/best_model.pt
+git add artifacts/corrector/corrector-base/last_model.pt
+git commit -m "Add corrector model checkpoints"
+git push origin main
+git lfs push --all origin main
+```
+
+Then redeploy Render with **Manual Deploy → Clear build cache & deploy**. Do not skip `git lfs push --all origin main`; otherwise Render may clone a pointer whose object is missing from GitHub LFS storage.
+
+Option C: use external storage, recommended for production:
+
+- Hugging Face Hub
+- AWS S3
+- Cloudflare R2
+- GitHub Releases
+- Google Cloud Storage
+
+Store the model externally and download it during build or startup. The backend supports an optional `SHUDDHO_CORRECTOR_MODEL_URL` that downloads `best_model.pt` into `artifacts/corrector/corrector-base/best_model.pt` if that file is missing; metadata must still exist at the checkpoint path.
 
 Train the sentence-level Bangla corrector before deploying full contextual correction mode:
 
@@ -92,7 +127,7 @@ Train the sentence-level Bangla corrector before deploying full contextual corre
 python -m ml.corrector.train --config ml/training/configs/corrector.base.json
 ```
 
-This produces `artifacts/corrector/corrector-base/metadata.json`, `best_model.pt`, `last_model.pt`, and `metrics.json`. Add the `.pt` files with Git LFS from a developer machine before redeploying Render. If that artifact is missing, `/health/deep` reports `corrector.status = missing_checkpoint` and Shuddho remains online in rules + spelling degraded mode. See [deployment](docs/DEPLOYMENT.md) and [corrector training](docs/train-corrector.md).
+This produces `artifacts/corrector/corrector-base/metadata.json`, `best_model.pt`, `last_model.pt`, and `metrics.json`. Do not commit generated binary checkpoint files from automation. See [deployment](docs/DEPLOYMENT.md) and [corrector training](docs/train-corrector.md).
 
 ## Architecture docs
 
