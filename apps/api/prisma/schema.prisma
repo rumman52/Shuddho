@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  displayName String?
+  createdAt   DateTime @default(now())
+  documents   Document[]
+  preferences UserPreference?
+}
+
+model Document {
+  id        String   @id @default(uuid())
+  ownerId   String
+  title     String
+  plainText String
+  revision  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  owner     User     @relation(fields: [ownerId], references: [id])
+  revisions DocumentRevision[]
+  suggestions Suggestion[]
+}
+
+model DocumentRevision {
+  id         String   @id @default(uuid())
+  documentId String
+  revision   Int
+  operation  Json
+  snapshot   String
+  createdAt  DateTime @default(now())
+  document   Document @relation(fields: [documentId], references: [id])
+
+  @@unique([documentId, revision])
+}
+
+model Suggestion {
+  id             String   @id
+  documentId     String?
+  type           String
+  severity       String
+  originalText   String
+  suggestedText  String
+  explanation    String
+  startIndex     Int
+  endIndex       Int
+  confidence     Float
+  sourceProvider String
+  status         String   @default("open")
+  createdAt      DateTime @default(now())
+  document       Document? @relation(fields: [documentId], references: [id])
+}
+
+model UserPreference {
+  userId                  String  @id
+  locale                  String  @default("en-US")
+  formality               String  @default("neutral")
+  enabledSuggestionTypes  String[]
+  allowProductImprovement Boolean @default(false)
+  user                    User    @relation(fields: [userId], references: [id])
+}
+
+model ProductEvent {
+  id           String   @id @default(uuid())
+  userId       String?
+  tenantId     String?
+  type         String
+  documentId   String?
+  suggestionId String?
+  metadata     Json
+  occurredAt   DateTime @default(now())
+}
+
+model TeamSetting {
+  id        String   @id @default(uuid())
+  tenantId  String
+  key       String
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, key])
+}

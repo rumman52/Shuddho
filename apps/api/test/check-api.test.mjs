@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { createApp } from '../dist/app.js';
+const server = createServer(createApp()).listen(0);
+await new Promise((resolve) => server.once('listening', resolve));
+const { port } = server.address();
+const response = await fetch(`http://127.0.0.1:${port}/api/check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'I has teh draft  due to the fact that you are wrong.', goals: ['grammar', 'spelling', 'style', 'tone'] }) });
+assert.equal(response.status, 200);
+const body = await response.json();
+assert.ok(body.requestId);
+assert.ok(body.suggestions.some((s) => s.suggestedText === 'the'));
+assert.ok(body.suggestions.some((s) => s.type === 'tone'));
+await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+console.log('API check tests passed');
