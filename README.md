@@ -59,6 +59,19 @@ npm test --workspace @shuddho/api
 .venv/bin/python -m pytest -m "not slow"
 ```
 
+## Vercel deployment (apps/web-editor)
+
+Use these Vercel project settings for the Vite web editor deployment:
+
+- Framework Preset: Vite
+- Root Directory: repo root
+- Install Command: `npm install --include=optional`
+- Build Command: `npm run build --workspace @shuddho/web-editor`
+- Output Directory: `apps/web-editor/dist`
+
+Keep optional dependencies enabled so Vite/esbuild can install the native binary for the Vercel Linux build environment.
+Do not set npm options such as `omit=optional`, `optional=false`, or `ignore-scripts=true` for this deployment.
+
 ## Architecture docs
 
 - [Architecture](docs/ARCHITECTURE.md)
