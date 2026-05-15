@@ -30,6 +30,45 @@ export type BackendHealthResponse = Partial<HealthDeepResponse> & {
   provider?: string;
 };
 
+type GatewaySuggestion = {
+  id?: string;
+  ruleId?: string;
+  rule_id?: string;
+  type?: string;
+  category?: string;
+  subtype?: string;
+  span?: {
+    startIndex?: number;
+    endIndex?: number;
+    codePointStartIndex?: number;
+    codePointEndIndex?: number;
+  };
+  span_start?: number;
+  span_end?: number;
+  originalText?: string;
+  original_text?: string;
+  suggestedText?: string;
+  suggested_text?: string;
+  replacementOptions?: string[];
+  replacement_options?: string[];
+  confidence?: number;
+  explanationBn?: string;
+  explanation_bn?: string;
+  explanationEn?: string;
+  explanation_en?: string;
+  source?: string;
+  severity?: string;
+  suppressionKey?: string;
+  suppression_key?: string;
+};
+
+type GatewayCheckResponse = {
+  normalizedText?: string;
+  normalized_text?: string;
+  suggestions?: GatewaySuggestion[];
+  warnings?: string[];
+};
+
 let apiConfiguration = resolveApiConfiguration();
 
 export function deriveApiConfiguration(args: {
@@ -73,7 +112,7 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
     throw new Error(apiConfiguration.hardWarning ?? "Backend analysis is disabled by frontend API configuration.");
   }
 
-  const url = `${apiConfiguration.apiBaseUrl}${path}`;
+  const url = `${getApiBaseUrl()}${path}`;
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
 
@@ -103,34 +142,23 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
 
 export async function analyzeText(payload: AnalyzeRequest): Promise<AnalyzeResponse> {
   const useGateway = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_USE_GATEWAY ?? "true") !== "false";
+  const path = useGateway ? "/api/check" : "/analyze";
+
   if (!useGateway) {
-    return request<AnalyzeResponse>("/analyze", { method: "POST", body: JSON.stringify(payload) });
+    return request<AnalyzeResponse>(path, { method: "POST", body: JSON.stringify(payload) });
   }
-  const response = await request<any>("/api/check", {
+
+  const response = await request<GatewayCheckResponse>(path, {
     method: "POST",
-    body: JSON.stringify({ text: payload.text, language: "bn", userId: payload.user_id, client: { surface: "web", version: "vite-editor" } }),
+    body: JSON.stringify({
+      text: payload.text,
+      language: "bn",
+      userId: payload.user_id,
+      client: { surface: "web", version: "vite-editor" },
+    }),
   });
-  return {
-    text: payload.text,
-    corrected_text: response.normalizedText ?? payload.text,
-    analysis_profile: "frontend_local_fallback",
-    runtime_source: "gateway",
-    runtime_source_path: null,
-    runtime_lexicon_version: null,
-    runtime_lexicon_checksum: null,
-    detector_enabled: false,
-    corrector_enabled: false,
-    degraded_reasons: response.warnings ?? [],
-    normalized_text: response.normalizedText,
-    suggestions: response.suggestions.map((s: any) => ({
-      id: s.id, rule_id: s.ruleId, category: s.type, subtype: s.ruleId,
-      span_start: s.span.codePointStartIndex ?? s.span.startIndex, span_end: s.span.codePointEndIndex ?? s.span.endIndex,
-      original_text: s.originalText, replacement_options: s.replacementOptions, confidence: s.confidence,
-      explanation_bn: s.explanationBn, explanation_en: s.explanationEn ?? "", source: s.source, severity: s.severity,
-      suppression_key: s.suppressionKey,
-    })),
-    warnings: response.warnings ?? [],
-  } as unknown as AnalyzeResponse;
+
+  return gatewayCheckToAnalyzeResponse(response, payload);
 }
 
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {
@@ -144,6 +172,41 @@ export function getHealth(): Promise<BackendHealthResponse> {
   return request<BackendHealthResponse>("/health", {
     method: "GET",
   });
+}
+
+export async function checkBackendHealth(): Promise<{
+  ok: boolean;
+  message?: string;
+}> {
+  if (!apiConfiguration.backendAllowed) {
+    return {
+      ok: false,
+      message: apiConfiguration.hardWarning ?? "Backend health checks are disabled by frontend API configuration.",
+    };
+  }
+
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/health`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: `Backend health check failed with status ${response.status}`,
+      };
+    }
+
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      message: "Backend is not reachable. Check VITE_API_BASE_URL and make sure your tunnel is running.",
+    };
+  }
 }
 
 export async function rewriteText(payload: RewriteRequest): Promise<RewriteResponse> {
@@ -173,6 +236,42 @@ export function saveUserPreferences(_userId: string, payload: UserPreferences): 
     method: "PUT",
     body: JSON.stringify(payload),
   });
+}
+
+function gatewayCheckToAnalyzeResponse(response: GatewayCheckResponse, payload: AnalyzeRequest): AnalyzeResponse {
+  const normalizedText = response.normalizedText ?? response.normalized_text ?? payload.text;
+  const suggestions = Array.isArray(response.suggestions) ? response.suggestions : [];
+
+  return {
+    text: payload.text,
+    corrected_text: normalizedText,
+    analysis_profile: "gateway",
+    runtime_source: "gateway",
+    runtime_source_path: null,
+    runtime_lexicon_version: null,
+    runtime_lexicon_checksum: null,
+    detector_enabled: false,
+    corrector_enabled: false,
+    degraded_reasons: response.warnings ?? [],
+    normalized_text: normalizedText,
+    suggestions: suggestions.map((suggestion) => ({
+      id: suggestion.id,
+      rule_id: suggestion.ruleId ?? suggestion.rule_id,
+      category: suggestion.type ?? suggestion.category,
+      subtype: suggestion.subtype ?? suggestion.ruleId ?? suggestion.rule_id,
+      span_start: suggestion.span?.codePointStartIndex ?? suggestion.span?.startIndex ?? suggestion.span_start ?? 0,
+      span_end: suggestion.span?.codePointEndIndex ?? suggestion.span?.endIndex ?? suggestion.span_end ?? 0,
+      original_text: suggestion.originalText ?? suggestion.original_text ?? "",
+      replacement_options: suggestion.replacementOptions ?? suggestion.replacement_options ?? [],
+      confidence: suggestion.confidence ?? 0,
+      explanation_bn: suggestion.explanationBn ?? suggestion.explanation_bn ?? "",
+      explanation_en: suggestion.explanationEn ?? suggestion.explanation_en ?? "",
+      source: suggestion.source,
+      severity: suggestion.severity,
+      suppression_key: suggestion.suppressionKey ?? suggestion.suppression_key,
+    })),
+    warnings: response.warnings ?? [],
+  } as unknown as AnalyzeResponse;
 }
 
 export function getApiBaseUrl(): string {
