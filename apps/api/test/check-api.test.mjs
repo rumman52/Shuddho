@@ -26,6 +26,22 @@ const pythonServer = await listen((req, res) => {
     res.end(JSON.stringify({ ok: true }));
     return;
   }
+  if (req.url === '/health/deep') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      backend_reachable: true,
+      detector_loaded: true,
+      detector_checkpoint: 'artifacts/detector/detector-base',
+      corrector_loaded: false,
+      corrector_checkpoint: 'artifacts/corrector/corrector-base',
+      detector: { loaded: true, status: 'ready' },
+      corrector: { loaded: false, status: 'missing_checkpoint' },
+      analysis_profile: 'backend_without_corrector',
+      degraded_reasons: ['corrector_missing_checkpoint'],
+    }));
+    return;
+  }
   if (req.url === '/analyze' && req.method === 'POST') {
     let raw = '';
     req.on('data', (chunk) => { raw += chunk; });
@@ -63,6 +79,17 @@ assert.equal(response.status, 200);
 body = await response.json();
 assert.equal(body.ok, true);
 
+response = await fetch(`http://127.0.0.1:${port}/health/deep`);
+assert.equal(response.status, 200);
+body = await response.json();
+assert.equal(body.ok, true);
+assert.equal(body.service, 'shuddho-api');
+assert.equal(body.provider, 'python-bangla');
+assert.equal(body.backend_reachable, true);
+assert.equal(body.analysis_profile, 'backend_without_corrector');
+assert.equal(body.detector.status, 'ready');
+assert.equal(body.corrector.status, 'missing_checkpoint');
+
 response = await fetch(`http://127.0.0.1:${port}/api/check`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', origin: 'https://shuddho-web-editor.vercel.app' },
@@ -94,6 +121,14 @@ response = await fetch(`http://127.0.0.1:${port}/ready`);
 assert.equal(response.status, 503);
 body = await response.json();
 assert.equal(body.ok, false);
+
+response = await fetch(`http://127.0.0.1:${port}/health/deep`);
+assert.equal(response.status, 200);
+body = await response.json();
+assert.equal(body.ok, true);
+assert.equal(body.backend_reachable, false);
+assert.equal(body.analysis_profile, 'frontend_local_fallback');
+assert.ok(body.degraded_reasons.some((reason) => String(reason).includes('primary_provider_unreachable:python-bangla')));
 
 response = await fetch(`http://127.0.0.1:${port}/api/check`, {
   method: 'POST',

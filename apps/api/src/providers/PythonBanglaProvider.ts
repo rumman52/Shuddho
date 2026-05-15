@@ -9,6 +9,12 @@ export class PythonBanglaProvider implements BanglaSuggestionProvider {
     try { const res = await fetch(`${this.baseUrl}/health`); return res.ok; } catch { return false; }
   }
 
+  async healthDeep(): Promise<unknown> {
+    const res = await fetch(`${this.baseUrl}/health/deep`, { headers: { accept: 'application/json' } });
+    if (!res.ok) throw new Error(`python_health_deep_${res.status}`);
+    return res.json();
+  }
+
   async check(request: CheckRequest, requestId: string): Promise<CheckResponse> {
     const started = Date.now();
     const res = await fetch(`${this.baseUrl}/analyze`, {

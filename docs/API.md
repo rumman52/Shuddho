@@ -20,7 +20,8 @@ Response uses `CheckResponse`: request ID, Bangla language, optional normalized 
 
 ## Other MVP endpoints
 
-- `GET /health` process health.
+- `GET /health` gateway process health.
+- `GET /health/deep` gateway-safe deep health. The gateway proxies Python `/health/deep` when reachable so the web editor can show detector/corrector status, and returns a degraded fallback payload instead of a 404 when Python is down.
 - `GET /ready` provider readiness, including Python provider readiness when configured.
 - `POST /api/rewrite` gateway rewrite proxy to Python when available.
 - `POST /api/tone` gateway tone proxy to Python when available.

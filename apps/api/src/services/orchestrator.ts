@@ -14,6 +14,35 @@ export class SuggestionOrchestrator {
   providerName(): string { return this.primary.name; }
   async ready(): Promise<boolean> { return this.primary.ready ? this.primary.ready() : true; }
 
+  async healthDeep(): Promise<unknown> {
+    if (this.primary.healthDeep) {
+      try {
+        return await this.primary.healthDeep();
+      } catch (error) {
+        logger.warn({ provider: this.primary.name, error: error instanceof Error ? error.message : 'unknown' }, 'primary bangla provider deep health failed');
+      }
+    }
+
+    return {
+      status: this.fallback ? 'degraded' : 'unavailable',
+      backend_reachable: false,
+      provider: this.primary.name,
+      fallback_provider: this.fallback?.name ?? null,
+      detector_loaded: false,
+      detector_checkpoint: null,
+      corrector_loaded: false,
+      corrector_checkpoint: null,
+      detector: { enabled: false, loaded: false, status: 'unavailable', reason: `Primary provider ${this.primary.name} is not reachable from the gateway.`, checkpoint: null, checkpoint_exists: false, backend_name: 'unavailable', threshold: 0 },
+      corrector: { enabled: false, loaded: false, status: 'unavailable', reason: `Primary provider ${this.primary.name} is not reachable from the gateway.`, checkpoint: null, checkpoint_exists: false, backend_name: 'unavailable', threshold: 0 },
+      analysis_profile: this.fallback ? 'frontend_local_fallback' : 'backend_rules_and_spell_only',
+      degraded_reasons: [`primary_provider_unreachable:${this.primary.name}`],
+      backend_warning: this.fallback
+        ? `Python backend is not reachable at the gateway; using ${this.fallback.name} rules-only fallback.`
+        : 'Python backend is not reachable and local fallback is disabled.',
+      mode_capabilities: { standard: ['gateway_online', this.fallback ? 'local_fallback_rules' : 'provider_unavailable'] },
+    };
+  }
+
   async check(input: CheckRequest, requestId: string): Promise<CheckResponse> {
     const { safeText } = applyDlpPlaceholder(input.text);
     const safeRequest = { ...input, text: safeText };
