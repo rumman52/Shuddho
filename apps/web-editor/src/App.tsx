@@ -33,8 +33,8 @@ const INITIAL_TEXT = sampleFixtures[0]?.text ?? "আমি বাংলা ল�
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 const ANALYSIS_DEBOUNCE_MS = 450;
 const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
-const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED = "Backend is not connected. Contextual Bengali correction is disabled.";
-const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED;
+const BACKEND_UNREACHABLE_MESSAGE = "Backend is not reachable. Check VITE_API_BASE_URL and make sure your tunnel is running.";
+const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_UNREACHABLE_MESSAGE;
 const DEV_LOCAL_FALLBACK_LABEL = "Dev-only browser fallback";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
 
@@ -66,6 +66,7 @@ export default function App() {
   const analysisTimerRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  const runtimeWarnings = analysis.runtime_warnings ?? [];
   const runtimeDescriptor = useMemo(
     () =>
       describeRuntimeState({
@@ -448,20 +449,27 @@ export default function App() {
         </div>
       </section>
 
+      {backendMode !== "online" ? (
+        <section className="warning-banner" role="status">
+          <strong>{BACKEND_UNREACHABLE_MESSAGE}</strong>
+          <span>The editor shell is still available; analysis, tone, rewrites, and remote preferences will resume when the backend responds.</span>
+        </section>
+      ) : null}
+
       <section className="workspace-grid">
         <aside className="sidebar-panel">
           <div className="panel-block">
             <h2>Runtime</h2>
             <div className="meta-list">
               <span>Backend: {backendMode}</span>
-              <span>Detector: {backendHealth ? (backendHealth.detector.loaded ? "ready" : backendHealth.detector.status) : "unknown"}</span>
-              <span>Corrector: {backendHealth ? (backendHealth.corrector.loaded ? "ready" : backendHealth.corrector.status) : "unknown"}</span>
+              <span>Detector: {backendHealth?.detector ? (backendHealth.detector.loaded ? "ready" : backendHealth.detector.status) : "unknown"}</span>
+              <span>Corrector: {backendHealth?.corrector ? (backendHealth.corrector.loaded ? "ready" : backendHealth.corrector.status) : "unknown"}</span>
               <span>Lexicon: {analysis.lexicon_source}</span>
             </div>
             {analysis.backend_warning ? <p className="muted-text">{analysis.backend_warning}</p> : null}
-            {analysis.runtime_warnings.length ? (
+            {runtimeWarnings.length ? (
               <div className="chip-row">
-                {analysis.runtime_warnings.map((warning) => (
+                {runtimeWarnings.map((warning) => (
                   <span key={warning} className="chip chip-warning">
                     {warning}
                   </span>

@@ -10,7 +10,9 @@ import type {
   UserPreferences,
 } from "@shared/schemas/contracts";
 
-const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:4000";
+const API_BASE_URL =
+  ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_API_BASE_URL?.trim() ||
+    "http://127.0.0.1:4000");
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
 
 export interface ApiConfigurationState {
@@ -33,7 +35,7 @@ export function deriveApiConfiguration(args: {
 }): ApiConfigurationState {
   const { configuredBaseUrl, storedBaseUrl, browserHostname, enableLocalFallback } = args;
   const isLocalOrigin = isLocalBrowserOrigin(browserHostname);
-  const rawBaseUrl = storedBaseUrl?.trim() || configuredBaseUrl?.trim() || DEFAULT_LOCAL_API_BASE_URL;
+  const rawBaseUrl = storedBaseUrl?.trim() || configuredBaseUrl?.trim() || API_BASE_URL;
   const source =
     storedBaseUrl?.trim() ? "override" : configuredBaseUrl?.trim() ? "environment" : "default_local";
   const apiBaseUrl = normalizeApiBaseUrl(rawBaseUrl);
@@ -76,7 +78,12 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
   }
 
   if (!response.ok) {
-    const responseText = await response.text();
+    let responseText = "";
+    try {
+      responseText = await response.text();
+    } catch {
+      responseText = "";
+    }
     const detail = responseText.trim() || response.statusText;
     throw new Error(`Request failed for ${url} with ${response.status}: ${detail}`);
   }
@@ -85,7 +92,12 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
     return undefined as TResponse;
   }
 
-  return response.json() as Promise<TResponse>;
+  try {
+    return (await response.json()) as TResponse;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown JSON parse error";
+    throw new Error(`Could not parse JSON response for ${url}: ${message}`);
+  }
 }
 
 export async function analyzeText(payload: AnalyzeRequest): Promise<AnalyzeResponse> {
@@ -97,26 +109,47 @@ export async function analyzeText(payload: AnalyzeRequest): Promise<AnalyzeRespo
     method: "POST",
     body: JSON.stringify({ text: payload.text, language: "bn", userId: payload.user_id, client: { surface: "web", version: "vite-editor" } }),
   });
+  const gatewaySuggestions = Array.isArray(response?.suggestions) ? response.suggestions : [];
+  const warnings = Array.isArray(response?.warnings) ? response.warnings : [];
+
   return {
     text: payload.text,
-    corrected_text: response.normalizedText ?? payload.text,
+    corrected_text: response?.normalizedText ?? payload.text,
     analysis_profile: "frontend_local_fallback",
     runtime_source: "gateway",
     runtime_source_path: null,
     runtime_lexicon_version: null,
     runtime_lexicon_checksum: null,
+    runtime_warnings: warnings,
     detector_enabled: false,
     corrector_enabled: false,
-    degraded_reasons: response.warnings ?? [],
-    normalized_text: response.normalizedText,
-    suggestions: response.suggestions.map((s: any) => ({
-      id: s.id, rule_id: s.ruleId, category: s.type, subtype: s.ruleId,
-      span_start: s.span.codePointStartIndex ?? s.span.startIndex, span_end: s.span.codePointEndIndex ?? s.span.endIndex,
-      original_text: s.originalText, replacement_options: s.replacementOptions, confidence: s.confidence,
-      explanation_bn: s.explanationBn, explanation_en: s.explanationEn ?? "", source: s.source, severity: s.severity,
+    degraded_reasons: warnings,
+    normalized_text: response?.normalizedText ?? payload.text,
+    suggestions: gatewaySuggestions.map((s: any) => ({
+      id: s.id,
+      rule_id: s.ruleId,
+      category: s.type,
+      subtype: s.ruleId,
+      span_start: s.span?.codePointStartIndex ?? s.span?.startIndex ?? 0,
+      span_end: s.span?.codePointEndIndex ?? s.span?.endIndex ?? 0,
+      original_text: s.originalText ?? "",
+      replacement_options: Array.isArray(s.replacementOptions) ? s.replacementOptions : [],
+      confidence: s.confidence ?? 0,
+      explanation_bn: s.explanationBn ?? "",
+      explanation_en: s.explanationEn ?? "",
+      source: s.source ?? "gateway",
+      severity: s.severity ?? "info",
       suppression_key: s.suppressionKey,
     })),
-    warnings: response.warnings ?? [],
+    warnings,
+    used_detector: false,
+    used_corrector: false,
+    backend_warning: null,
+    lexicon_source: "gateway",
+    lexicon_version: null,
+    backend_version: null,
+    sentence_count: 0,
+    request_mode_applied: payload.mode,
   } as unknown as AnalyzeResponse;
 }
 
@@ -246,7 +279,7 @@ export function isLocalApiBaseUrl(baseUrl: string): boolean {
 function normalizeApiBaseUrl(rawBaseUrl: string): string {
   const trimmedValue = rawBaseUrl.trim();
   if (!trimmedValue) {
-    return DEFAULT_LOCAL_API_BASE_URL;
+    return API_BASE_URL;
   }
 
   if (/^[a-z]+:\/\//i.test(trimmedValue) || trimmedValue.startsWith("/")) {

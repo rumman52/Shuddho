@@ -61,13 +61,25 @@ npm test --workspace @shuddho/api
 
 ## Vercel deployment (apps/web-editor)
 
-Use these Vercel project settings for the Vite web editor deployment:
+Set this environment variable in Vercel so the deployed editor can reach a public backend instead of the local development default:
+
+```text
+VITE_API_BASE_URL=https://your-public-backend-tunnel-url
+```
+
+If Vercel **Root Directory** is the repository root:
 
 - Framework Preset: Vite
-- Root Directory: repo root
 - Install Command: `npm install --include=optional`
 - Build Command: `npm run build --workspace @shuddho/web-editor`
 - Output Directory: `apps/web-editor/dist`
+
+If Vercel **Root Directory** is `apps/web-editor`:
+
+- Framework Preset: Vite
+- Install Command: `npm install --include=optional`
+- Build Command: `npm run build`
+- Output Directory: `dist`
 
 Keep optional dependencies enabled so Vite/esbuild can install the native binary for the Vercel Linux build environment.
 Do not set npm options such as `omit=optional`, `optional=false`, or `ignore-scripts=true` for this deployment.
