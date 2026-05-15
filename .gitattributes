@@ -1,1 +1,2 @@
-*.pt filter=lfs diff=lfs merge=lfs -text
+# Model checkpoint binaries are intentionally not tracked by Git LFS in this repo.
+# See docs/DEPLOYMENT.md for safe checkpoint deployment options.

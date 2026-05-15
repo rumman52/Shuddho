@@ -16,3 +16,14 @@ apps/chrome-extension/apps/
 apps/web-editor/dist/
 data/corpus/cleaned/*.txt
 test-artifacts/
+# Model checkpoint binaries are intentionally excluded from normal commits.
+# Use documented Git LFS or external storage flows for production checkpoints.
+*.pt
+*.pth
+*.bin
+*.onnx
+*.safetensors
+!artifacts/**/metadata.json
+!artifacts/**/metrics.json
+!artifacts/**/README.md
+!artifacts/**/.gitkeep

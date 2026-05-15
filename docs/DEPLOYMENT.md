@@ -38,17 +38,54 @@ Do not use a blanket wildcard in production. If preview URLs must be dynamic, im
 Set these Render environment variables for `https://shuddho-api.onrender.com`:
 
 ```dotenv
-SHUDDHO_CORRECTOR_ENABLED=true
+SHUDDHO_CORRECTOR_ENABLED=auto
 SHUDDHO_CORRECTOR_CHECKPOINT=artifacts/corrector/corrector-base
-SHUDDHO_DETECTOR_ENABLED=true
+SHUDDHO_DETECTOR_ENABLED=auto
 SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
 SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
 SHUDDHO_LOG_RAW_TEXT=false
 ```
 
-The Docker image copies `artifacts/` into `/app/artifacts`, so Render can load checked-in detector and corrector artifacts from the relative checkpoint paths above. The detector artifact is currently expected at `artifacts/detector/detector-base`. The sentence-level corrector artifact is expected at `artifacts/corrector/corrector-base`; if it is absent or incomplete, `/health/deep` reports `corrector.status = missing_checkpoint`, `analysis_profile = backend_without_corrector` when the detector is ready, and Shuddho stays online in degraded rules + spelling mode.
+The Docker image copies `artifacts/` into `/app/artifacts` when the directory exists in the repository. The sentence-level corrector is optional: if `artifacts/corrector/corrector-base/best_model.pt` is absent or incomplete, `/health/deep` reports `corrector.status = missing_checkpoint`, analysis uses `backend_without_corrector` when the detector is ready, and Shuddho stays online with rules + spelling suggestions. The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.
 
-The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.
+After merging a fix that removes broken LFS pointers, redeploy Render with **Manual Deploy → Clear build cache & deploy**.
+
+## Corrector checkpoint deployment
+
+### Option A: run without corrector
+
+- No `.pt` files are needed.
+- The app uses rules + spelling, and the detector if a valid detector artifact is available.
+- Render deploy works because there are no broken Git LFS pointers to download during clone.
+
+### Option B: use Git LFS manually
+
+Only use this from a developer machine that has the real checkpoint files and can upload to GitHub LFS:
+
+```bash
+git lfs install
+git lfs track "*.pt"
+git add .gitattributes
+git add artifacts/corrector/corrector-base/best_model.pt
+git add artifacts/corrector/corrector-base/last_model.pt
+git commit -m "Add corrector model checkpoints"
+git push origin main
+git lfs push --all origin main
+```
+
+Then redeploy Render with **Manual Deploy → Clear build cache & deploy**. The `git lfs push --all origin main` step is required; if the Git LFS pointer exists but the object was not uploaded, Render fails during checkout with a smudge error.
+
+### Option C: use external storage
+
+Recommended for production:
+
+- Hugging Face Hub
+- AWS S3
+- Cloudflare R2
+- GitHub Releases
+- Google Cloud Storage
+
+Store the model outside the Git repository and download it during build or startup. The backend supports optional `SHUDDHO_CORRECTOR_MODEL_URL`; when set, startup downloads the URL to `artifacts/corrector/corrector-base/best_model.pt` if that file is missing. The checkpoint metadata must still exist at `artifacts/corrector/corrector-base/metadata.json`.
 
 ## Training the sentence-level corrector
 
@@ -67,7 +104,7 @@ artifacts/corrector/corrector-base/last_model.pt
 artifacts/corrector/corrector-base/metrics.json
 ```
 
-Include those artifact files in the Render build context before redeploying. Do not commit raw PyTorch `.pt` binaries directly from automation; add `best_model.pt` and `last_model.pt` from a developer machine with Git LFS enabled. Without the LFS-backed `.pt` files, copying `artifacts/` is not enough for full contextual correction because the backend has no sentence-level corrector checkpoint to load.
+Do not commit raw PyTorch `.pt` binaries directly from automation. For full contextual correction, add `best_model.pt` and `last_model.pt` with the Git LFS flow above or publish them to external model storage. Without a loadable `.pt` checkpoint, copying `artifacts/` is still safe, but the backend runs without the sentence-level corrector.
 
 ## Manual smoke tests
 

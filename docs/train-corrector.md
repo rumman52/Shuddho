@@ -90,4 +90,4 @@ Runtime behavior:
 
 ## Render deployment note
 
-The Render Docker image copies `artifacts/` into the image. Full contextual correction still requires the trained corrector files above to exist in `artifacts/corrector/corrector-base` before the Render build runs. Add `best_model.pt` and `last_model.pt` with Git LFS from a developer machine rather than committing raw PyTorch binaries from automation. If the directory is missing, the backend intentionally stays online with rules + spelling fallback and `/health/deep` reports `corrector.status = missing_checkpoint`.
+The Render Docker image copies `artifacts/` into the image when artifacts exist in the repository. Full contextual correction still requires `metadata.json` and `best_model.pt` in `artifacts/corrector/corrector-base`; if the checkpoint is missing, the backend intentionally stays online with rules + spelling fallback and `/health/deep` reports `corrector.status = missing_checkpoint`. Do not commit generated `.pt` binaries from automation. Use the Git LFS flow or external storage options in `docs/DEPLOYMENT.md`, and always verify Git LFS objects were uploaded before redeploying Render.

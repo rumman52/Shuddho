@@ -66,6 +66,30 @@ def test_health_deep_route_returns_backend_reachable() -> None:
     assert response.backend_version
 
 
+def test_routes_survive_missing_corrector_checkpoint() -> None:
+    health_response = health()
+    assert health_response.status == "ok"
+
+    deep_response = health_deep()
+    assert deep_response.backend_reachable is True
+    assert deep_response.corrector.status in {
+        "missing_checkpoint",
+        "disabled",
+        "load_failed",
+    }
+
+    check_response = check_canonical(
+        CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
+    )
+    assert isinstance(check_response.suggestions, list)
+    assert isinstance(check_response.warnings, list)
+    if deep_response.corrector.status != "ready":
+        assert (
+            "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only."
+            in check_response.warnings
+        )
+
+
 def test_api_events_route_returns_ok() -> None:
     assert events_api({"type": "editor_loaded", "language": "bn"}) == {"ok": True}
 
@@ -254,7 +278,9 @@ def test_health_exposes_degraded_runtime_reasons(monkeypatch) -> None:
     )
 
 
-def test_health_deep_reports_full_profile_when_mock_corrector_loaded(monkeypatch) -> None:
+def test_health_deep_reports_full_profile_when_mock_corrector_loaded(
+    monkeypatch,
+) -> None:
     class StubDetectorService:
         checkpoint_path = "artifacts/detector/detector-base"
 
@@ -309,6 +335,7 @@ def test_health_deep_reports_full_profile_when_mock_corrector_loaded(monkeypatch
     assert response.analysis_profile == "full_local"
     assert response.degraded_reasons == []
     assert "sentence_level_local_corrector" in response.mode_capabilities["standard"]
+
 
 def test_cors_allows_extension_origin() -> None:
     origin = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
