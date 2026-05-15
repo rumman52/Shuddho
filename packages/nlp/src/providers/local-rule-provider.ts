@@ -1,86 +1,41 @@
-import type { Suggestion } from '@shuddho/shared';
-import type { SuggestionContext, SuggestionProvider } from './types.js';
+import { makeStableSuggestionId, makeSuppressionKey, snapSpanToGraphemeBoundary, type CheckRequest, type CheckResponse, type Suggestion, type SuggestionType } from '@shuddho/shared';
+import type { BanglaSuggestionProvider } from './types.js';
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const makeId = (requestId: string, type: string, start: number, text: string) => `${requestId}:${type}:${start}:${text}`;
-
-function literalSuggestions(text: string, requestId: string, original: string, suggested: string, type: Suggestion['type'], explanation: string): Suggestion[] {
-  const results: Suggestion[] = [];
-  const regex = new RegExp(`\\b${escapeRegExp(original)}\\b`, 'gi');
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    results.push({
-      id: makeId(requestId, type, match.index, original),
-      type,
-      severity: type === 'spelling' ? 'high' : 'medium',
-      originalText: match[0],
-      suggestedText: suggested,
-      explanation,
-      startIndex: match.index,
-      endIndex: match.index + match[0].length,
-      confidence: 0.94,
-      sourceProvider: 'LocalRuleProvider',
-    });
-  }
-  return results;
+function createSuggestion(request: CheckRequest, provider: string, ruleId: string, type: SuggestionType, start: number, end: number, suggestedText: string, explanationBn: string, confidence = 0.86): Suggestion {
+  const span = snapSpanToGraphemeBoundary(request.text, start, end);
+  const originalText = request.text.slice(span.startIndex, span.endIndex);
+  return {
+    id: makeStableSuggestionId({ documentId: request.documentId, ruleId, type, startIndex: span.startIndex, endIndex: span.endIndex, originalText, suggestedText, provider }),
+    suppressionKey: makeSuppressionKey({ ruleId, originalText, suggestedText, type }),
+    ruleId, type,
+    severity: type === 'spelling' ? 'high' : 'medium',
+    originalText, suggestedText, replacementOptions: [suggestedText], explanationBn,
+    explanationEn: 'Deterministic Bangla fallback suggestion.', span, confidence,
+    source: type === 'spelling' ? 'spell' : 'rule', provider,
+  };
 }
 
-export class LocalRuleProvider implements SuggestionProvider {
-  readonly name = 'LocalRuleProvider';
-
-  async check(text: string, context: SuggestionContext): Promise<Suggestion[]> {
-    const requestId = context.requestId;
-    const suggestions: Suggestion[] = [
-      ...literalSuggestions(text, requestId, 'teh', 'the', 'spelling', 'Common transposition typo.'),
-      ...literalSuggestions(text, requestId, 'recieve', 'receive', 'spelling', 'Use “receive” with i before e after c.'),
-      ...literalSuggestions(text, requestId, 'I has', 'I have', 'grammar', 'Use “have” with the subject “I”.'),
-      ...literalSuggestions(text, requestId, 'in order to', 'to', 'style', 'Prefer concise wording when the meaning is unchanged.'),
-      ...literalSuggestions(text, requestId, 'due to the fact that', 'because', 'style', 'Replace wordy phrasing with a direct connector.'),
-    ];
-
-    const repeatedSpaces = / {2,}/g;
-    let spaceMatch: RegExpExecArray | null;
-    while ((spaceMatch = repeatedSpaces.exec(text)) !== null) {
-      suggestions.push({
-        id: makeId(requestId, 'style', spaceMatch.index, 'spaces'),
-        type: 'style',
-        severity: 'low',
-        originalText: spaceMatch[0],
-        suggestedText: ' ',
-        explanation: 'Use a single space for consistent readability.',
-        startIndex: spaceMatch.index,
-        endIndex: spaceMatch.index + spaceMatch[0].length,
-        confidence: 0.98,
-        sourceProvider: this.name,
-      });
+export class LocalRuleProvider implements BanglaSuggestionProvider {
+  readonly name = 'local-bangla-fallback';
+  async check(request: CheckRequest, requestId = `local-${Date.now()}`): Promise<CheckResponse> {
+    const suggestions: Suggestion[] = [];
+    const text = request.text;
+    for (const match of text.matchAll(/ {2,}/g)) {
+      suggestions.push(createSuggestion(request, this.name, 'bn.spacing.repeated_spaces', 'spacing', match.index ?? 0, (match.index ?? 0) + match[0].length, ' ', 'একাধিক স্পেসের বদলে একটি স্পেস ব্যবহার করুন।', 0.98));
     }
-
-    const passive = /\\b(was|were|is|are|been|being)\\s+([a-z]+ed)\\b/gi;
-    let passiveMatch: RegExpExecArray | null;
-    while ((passiveMatch = passive.exec(text)) !== null) {
-      suggestions.push({
-        id: makeId(requestId, 'style', passiveMatch.index, 'passive'),
-        type: 'style',
-        severity: 'info',
-        originalText: passiveMatch[0],
-        suggestedText: passiveMatch[0],
-        explanation: 'Consider active voice if the actor is known.',
-        startIndex: passiveMatch.index,
-        endIndex: passiveMatch.index + passiveMatch[0].length,
-        confidence: 0.62,
-        sourceProvider: this.name,
-      });
+    for (const match of text.matchAll(/(^|[\s।!?])([\u0980-\u09FF]+)\s+\2(?=$|[\s।!?])/gu)) {
+      const start = (match.index ?? 0) + match[1].length;
+      suggestions.push(createSuggestion(request, this.name, 'bn.grammar.duplicate_word', 'grammar', start, start + match[2].length * 2 + 1, match[2], 'একই শব্দ পরপর এসেছে; একটি শব্দ রাখাই যথেষ্ট হতে পারে।', 0.82));
     }
-
-    const harshPhrases = [
-      { phrase: 'you are wrong', replacement: 'I see it differently', note: 'Softening this phrase can make the tone more collaborative.' },
-      { phrase: 'this is terrible', replacement: 'this needs improvement', note: 'A more constructive tone may help the reader act on the feedback.' },
-      { phrase: 'obviously', replacement: 'clearly', note: 'This can sound dismissive; consider a neutral wording.' },
-    ];
-    for (const item of harshPhrases) {
-      suggestions.push(...literalSuggestions(text, requestId, item.phrase, item.replacement, 'tone', item.note));
+    for (const match of text.matchAll(/\s+।/g)) {
+      suggestions.push(createSuggestion(request, this.name, 'bn.punctuation.space_before_dari', 'punctuation', match.index ?? 0, (match.index ?? 0) + match[0].length, '।', 'দাঁড়ির আগে স্পেস নয়।', 0.95));
     }
-
-    return suggestions.sort((a, b) => a.startIndex - b.startIndex || b.confidence - a.confidence);
+    for (const match of text.matchAll(/।(?=[\u0980-\u09FF])/gu)) {
+      suggestions.push(createSuggestion(request, this.name, 'bn.punctuation.space_after_dari', 'punctuation', (match.index ?? 0), (match.index ?? 0) + 1, '। ', 'দাঁড়ির পরে সাধারণত একটি স্পেস দিন।', 0.88));
+    }
+    if (/^[\u0980-\u09FF\s,;:]+$/u.test(text.trim()) && !/[।!?]$/u.test(text.trim()) && text.trim().length > 12) {
+      suggestions.push(createSuggestion(request, this.name, 'bn.punctuation.missing_sentence_end', 'punctuation', text.length, text.length, '।', 'বাংলা বাক্যের শেষে দাঁড়ি ব্যবহার করা যায়।', 0.66));
+    }
+    return { requestId, documentId: request.documentId, revision: request.revision, language: 'bn', normalizedText: text.normalize('NFC'), suggestions: suggestions.sort((a, b) => a.span.startIndex - b.span.startIndex), timings: { 'provider.local-bangla-fallback': 0 }, warnings: ['python_provider_unavailable_using_local_fallback'] };
   }
 }

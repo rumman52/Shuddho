@@ -1,149 +1,120 @@
-# Shuddho Draft Lab Architecture
+# Shuddho repaired architecture
 
-Shuddho Draft Lab is an original AI writing assistant foundation that uses a hybrid client-edge-cloud architecture. The MVP ships a Next.js editor, an Express API gateway, a suggestion orchestration layer, rule-based NLP providers, mock LLM rewrite providers, WebSocket document sync scaffolding, PostgreSQL schema, Redis-ready cache boundaries, privacy hooks, and observability primitives.
+Shuddho is an original Bangla writing assistant. The repaired architecture keeps the existing Python Bangla NLP app as the linguistic source of truth and makes the TypeScript API a common gateway for web, extension, and future clients.
 
-## High-level system overview
+## Current repaired architecture
 
 ```mermaid
-flowchart LR
-  Web[Next.js Web Editor] --> Gateway[API Gateway]
-  Extension[Future Browser Extension] -.-> Gateway
-  Desktop[Future Desktop Wrapper] -.-> Gateway
-  Mobile[Future Mobile Keyboard] -.-> Gateway
-  Gateway --> Auth[Auth + Policy + DLP]
-  Gateway --> Orchestrator[Suggestion Orchestrator]
-  Orchestrator --> Rules[LocalRuleProvider]
-  Orchestrator --> Mock[MockLLMProvider]
-  Orchestrator -.-> OpenAI[FutureOpenAIProvider]
-  Orchestrator -.-> Device[FutureOnDeviceProvider]
-  Gateway --> Events[Event Ingestion]
-  Gateway --> Docs[Document Service]
-  Docs --> Postgres[(PostgreSQL)]
-  Events --> Postgres
-  Gateway --> Redis[(Redis cache/rate/session)]
-  Web <-->|/ws/docs/:id| Sync[WebSocket Sync]
-  Sync --> Docs
+flowchart TD
+  WebEditor[Web Editor / Vite] --> Gateway[Common TypeScript API Gateway]
+  Next[Next App MVP] --> Gateway
+  Extension[Chrome Extension] --> Gateway
+  Future[Future Desktop/Mobile/API Clients] --> Gateway
+  Gateway --> Prefs[Preferences Store MVP]
+  Gateway --> Docs[Document Store MVP]
+  Gateway --> Events[Privacy-safe Event Sink]
+  Gateway --> Sync[WebSocket Document Sync]
+  Gateway --> Privacy[Privacy / DLP Preprocessor]
+  Privacy --> Provider{Bangla Provider}
+  Provider --> Python[Python FastAPI Bangla Engine]
+  Provider --> Fallback[Conservative Bangla Local Fallback]
+  Python --> Pipeline[Normalizer + Sentence Splitter + Tokenizer + Rule + Spell + Grammar + Tone + Rewrite]
+  Pipeline --> Canonical[Canonical CheckResponse]
+  Fallback --> Canonical
 ```
 
-## Client layer
-
-The first client is `apps/web`, a Next.js application with a content-editable rich writing surface, local document state in Zustand, debounced suggestion requests, inline underlines, suggestion cards, and accept/reject flows. The client is intentionally API-driven so the same contracts can be reused by a browser extension, desktop wrapper, mobile keyboard, or on-device inference client.
-
-## API gateway/common endpoint
-
-`apps/api` exposes common entry points:
-
-- `POST /api/check`
-- `POST /api/rewrite`
-- `POST /api/tone`
-- `GET /api/preferences`
-- `POST /api/events`
-- `GET /health`
-- `GET /metrics`
-- `WebSocket /ws/docs/:documentId`
-
-The gateway validates payloads with shared TypeScript validation helpers, attaches request IDs, routes text through privacy hooks, calls the suggestion orchestrator, and emits product events without logging raw full text. Rate limiting and stronger auth are represented as explicit production-readiness extension points.
-
-## Suggestion orchestration
-
-The `SuggestionOrchestrator` coordinates multiple providers through clean `SuggestionProvider` interfaces. Providers return normalized `Suggestion` objects with type, severity, original text, suggested text, span indexes, confidence, and source provider metadata.
+## Check request flow
 
 ```mermaid
 sequenceDiagram
   participant Client
   participant Gateway
   participant Privacy
-  participant Orchestrator
-  participant RuleProvider
-  participant MockLLM
+  participant Python as Python Bangla API
+  participant Fallback as Local Bangla Fallback
   participant Events
-  Client->>Gateway: POST /api/check {text, documentId, revision}
-  Gateway->>Gateway: authenticate + validate + rate limit
-  Gateway->>Privacy: DLP/policy preprocessing
-  Gateway->>Orchestrator: check(safeText)
-  par rule checks
-    Orchestrator->>RuleProvider: grammar/spelling/style/tone
-    RuleProvider-->>Orchestrator: suggestions[]
-  and mock rewrite
-    Orchestrator->>MockLLM: optional rewrite goal
-    MockLLM-->>Orchestrator: suggestions[]
+  Client->>Gateway: POST /api/check {text, language: bn, revision}
+  Gateway->>Gateway: validate size/language and assign requestId
+  Gateway->>Privacy: redact/log policy hook
+  Gateway->>Python: POST /analyze
+  alt Python available
+    Python-->>Gateway: legacy AnalyzeResponse
+    Gateway->>Gateway: adapt to canonical suggestions + UTF-16 spans
+  else Python unavailable and fallback enabled
+    Gateway->>Fallback: run conservative Bangla rules
+    Fallback-->>Gateway: canonical CheckResponse + warning
   end
-  Orchestrator-->>Gateway: normalized + timed suggestions
-  Gateway->>Events: suggestion_generated
+  Gateway->>Events: suggestion_generated without raw text
   Gateway-->>Client: CheckResponse
 ```
 
-## NLP/AI provider abstraction
+## Bangla NLP pipeline
 
-Provider classes include:
+```mermaid
+flowchart LR
+  Text[Bangla text] --> NFC[NFC normalization]
+  NFC --> Split[Bangla sentence splitter]
+  Split --> Tokens[Tokenizer / grapheme span mapper]
+  Tokens --> Rules[Rule engine]
+  Tokens --> Spell[Spell engine]
+  Tokens --> Grammar[Grammar checks]
+  Tokens --> Tone[Tone engine]
+  Tokens --> Rewrite[Rewrite engine]
+  Rules --> Rank[Rank + dedupe]
+  Spell --> Rank
+  Grammar --> Rank
+  Tone --> Rank
+  Rewrite --> Rank
+  Rank --> Suggestions[Normalized Suggestion Response]
+```
 
-- `LocalRuleProvider`: deterministic MVP checks such as `teh`, `recieve`, `I has`, repeated spaces, wordy phrases, passive voice hints, and harsh tone phrases.
-- `MockLLMProvider`: no-cost rewrite adapter that simulates future model behavior.
-- `FutureOpenAIProvider`: placeholder adapter for a hosted model provider.
-- `FutureOnDeviceProvider`: placeholder for local lightweight inference.
-
-The application does not depend directly on any single AI vendor.
-
-## Document sync service
-
-The document sync foundation defines a delta/edit operation format containing `documentId`, `baseRevision`, `clientOperationId`, and an operation. The in-memory `DocumentStore` applies server-authoritative revision checks, while the current WebSocket upgrade hook is a placeholder that marks the boundary for a full WebSocket transport. This is intentionally ready for operational transformation or CRDT integration later.
+## WebSocket document sync flow
 
 ```mermaid
 sequenceDiagram
-  participant Editor
-  participant WS as WebSocket /ws/docs/:id
-  participant Store as DocumentStore
-  Editor->>WS: connect
-  WS-->>Editor: hello {document, revision}
-  Editor->>WS: delta {baseRevision, op}
-  WS->>Store: applyDelta(delta)
+  participant ClientA
+  participant WS as /ws/docs/:documentId
+  participant Store as InMemory DocumentStore
+  ClientA->>WS: client_hello
+  WS-->>ClientA: server_hello {document, revision}
+  ClientA->>WS: edit {baseRevision, text/op}
+  WS->>Store: applyDelta
   alt revision matches
-    Store-->>WS: accepted document revision+1
-    WS-->>Editor: ack + authoritative snapshot
-  else revision mismatch
-    Store-->>WS: current authoritative document
-    WS-->>Editor: conflict + current snapshot
+    Store-->>WS: document revision+1
+    WS-->>ClientA: ack + latest document
+  else mismatch
+    Store-->>WS: authoritative document
+    WS-->>ClientA: resync_required
   end
 ```
 
-## Data storage
+The MVP sync protocol is intentionally not OT/CRDT; it is a server-authoritative revision skeleton that can evolve into full collaborative editing.
 
-PostgreSQL is modeled with Prisma for users, documents, document revisions, suggestions, user preferences, product events, and team settings. Redis is reserved for suggestion caching, rate limiting, sessions, and ephemeral collaboration state. The MVP includes an in-memory fallback for local development and tests.
-
-## Event pipeline
-
-The event ingestion API accepts typed events for user typing, suggestions generated/accepted/rejected, rewrite requests, latency metrics, and errors. MVP storage can be PostgreSQL. The `EventSink` interface is designed so Kafka, Kinesis, or another streaming system can replace the simple sink without changing route handlers.
-
-## Security/privacy controls
-
-- Request IDs on every response.
-- Auth middleware/bearer-token placeholder for production hardening.
-- JSON body limits and rate-limiting extension point.
-- Shared validation helpers and max text sizes.
-- DLP preprocessing placeholder masks email addresses before provider calls.
-- Consent fields for product improvement/training.
-- Tenant/team policy placeholder in request context.
-- Structured log redaction avoids raw text and sensitive headers.
-
-## Observability
-
-The API includes structured JSON logs, request latency timing, provider latency measurement, `/health`, `/metrics`, and error logging. Suggestion pipeline timings are returned in API responses for debugging and can later be exported to OpenTelemetry.
-
-## Deployment model
-
-Dockerfiles are provided for the frontend and backend. `infra/docker-compose.yml` starts Next.js, the TypeScript API, PostgreSQL, and Redis for local development.
-
-## Future hybrid on-device/cloud inference flow
+## Future hybrid on-device/cloud architecture
 
 ```mermaid
 flowchart TD
-  Client[Client editor/extension/mobile] --> LocalPolicy{Can local model handle?}
-  LocalPolicy -- yes --> OnDevice[On-device lightweight provider]
-  OnDevice --> Merge[Merge + rank suggestions]
-  LocalPolicy -- no / low confidence --> Edge[API Gateway]
-  Edge --> Cloud[Cloud orchestration]
-  Cloud --> Providers[Rule, enterprise, hosted AI providers]
-  Providers --> Merge
-  Merge --> UI[Inline highlights + suggestion cards]
-  UI --> Events[Privacy-aware event stream]
+  Client[Client] --> LocalPolicy{Can local model handle privately?}
+  LocalPolicy -- yes --> OnDevice[On-device Bangla provider]
+  LocalPolicy -- no / low confidence --> Gateway[API Gateway]
+  Gateway --> Policy[Enterprise/privacy policy]
+  Policy --> Cloud[Cloud Bangla orchestrator]
+  Cloud --> Python[Python rule/spell/grammar]
+  Cloud --> ML[Future ML/LLM adapter]
+  OnDevice --> Merge[Merge + rank]
+  Python --> Merge
+  ML --> Merge
+  Merge --> UI[Suggestion UI]
+  UI --> Events[Consent-aware feedback]
 ```
+
+## Decisions
+
+- Python Bangla engine remains the source of linguistic truth.
+- TypeScript API is the common gateway and provider orchestrator.
+- Frontends should call `/api/check` and receive canonical `CheckResponse`.
+- Suggestion IDs and suppression keys are stable hashes, never request IDs.
+- Python code point offsets are converted to browser UTF-16 offsets; grapheme snapping avoids splitting Bangla clusters.
+- The Next MVP uses a textarea and side-panel cards instead of mutating `contentEditable` HTML every render.
+- Events are privacy-safe and do not store raw full user text.
+- Postgres and Redis are prepared for durable production mode; local dev can use memory mode.

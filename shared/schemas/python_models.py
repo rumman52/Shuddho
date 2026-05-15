@@ -4,6 +4,7 @@ import hashlib
 import re
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -632,3 +633,53 @@ def _normalize_unique_enums(values: list[Enum]) -> list[Enum]:
         seen.add(value)
         normalized.append(value)
     return normalized
+
+# Canonical Shuddho API contract used by the TypeScript gateway and future clients.
+class TextSpan(BaseModel):
+    startIndex: int = Field(ge=0)
+    endIndex: int = Field(ge=0)
+    utf16StartIndex: int | None = Field(default=None, ge=0)
+    utf16EndIndex: int | None = Field(default=None, ge=0)
+    codePointStartIndex: int | None = Field(default=None, ge=0)
+    codePointEndIndex: int | None = Field(default=None, ge=0)
+    graphemeStartIndex: int | None = Field(default=None, ge=0)
+    graphemeEndIndex: int | None = Field(default=None, ge=0)
+
+
+class CanonicalSuggestion(BaseModel):
+    id: str
+    suppressionKey: str
+    ruleId: str
+    type: str
+    severity: str
+    originalText: str
+    suggestedText: str
+    replacementOptions: list[str] = Field(default_factory=list)
+    explanationBn: str
+    explanationEn: str | None = None
+    span: TextSpan
+    confidence: float = Field(ge=0.0, le=1.0)
+    source: str
+    provider: str
+    metadata: dict[str, Any] | None = None
+
+
+class CanonicalCheckRequest(BaseModel):
+    text: str
+    documentId: str | None = None
+    revision: int | None = Field(default=None, ge=0)
+    language: str = 'bn'
+    dialect: str | None = 'standard'
+    userId: str | None = None
+    options: dict[str, bool] | None = None
+
+
+class CanonicalCheckResponse(BaseModel):
+    requestId: str
+    documentId: str | None = None
+    revision: int | None = Field(default=None, ge=0)
+    language: str = 'bn'
+    normalizedText: str | None = None
+    suggestions: list[CanonicalSuggestion] = Field(default_factory=list)
+    timings: dict[str, float] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)

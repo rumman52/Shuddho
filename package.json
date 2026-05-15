@@ -2,7 +2,9 @@
   "name": "shuddho",
   "private": true,
   "version": "0.1.0",
-  "engines": { "node": ">=18.18.0" },
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "workspaces": [
     "apps/web",
     "apps/api",
@@ -17,6 +19,9 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build:web-editor": "npm run build --workspace apps/web-editor",
-    "build:extension": "npm run build --workspace apps/chrome-extension"
+    "build:extension": "npm run build --workspace apps/chrome-extension",
+    "dev:web-editor": "npm run dev --workspace @shuddho/web-editor",
+    "dev:python-api": "python -m uvicorn services.api.shuddho_api.app:app --host 127.0.0.1 --port 8000 --reload",
+    "dev:all": "npm run dev:api & npm run dev:web-editor"
   }
 }

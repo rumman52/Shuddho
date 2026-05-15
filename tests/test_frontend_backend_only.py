@@ -18,7 +18,7 @@ def test_frontend_uses_backend_only_calls() -> None:
         assert fragment not in combined_source
 
     assert '"/analyze"' in api_source
-    assert '"/feedback"' in api_source
+    assert '"/api/events"' in api_source
     assert '"/health/deep"' in api_source
 
 

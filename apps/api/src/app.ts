@@ -2,7 +2,6 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { parseCheckRequest, parseEventRequest, parseRewriteRequest, parseToneRequest } from '@shuddho/shared';
 import { logger } from '@shuddho/observability';
-import { MockLLMProvider } from '@shuddho/nlp';
 import { SuggestionOrchestrator } from './services/orchestrator.js';
 import { InMemoryEventSink } from './services/events.js';
 import { DocumentStore } from './services/documents.js';
@@ -36,26 +35,29 @@ export function createApp(deps: AppDeps = { orchestrator: new SuggestionOrchestr
       const url = new URL(req.url ?? '/', 'http://localhost');
       const path = url.pathname;
       if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true, service: 'shuddho-api' }, requestId);
+      if (req.method === 'GET' && path === '/ready') return send(res, (await deps.orchestrator.ready()) ? 200 : 503, { ok: await deps.orchestrator.ready(), provider: deps.orchestrator.providerName() }, requestId);
       if (req.method === 'GET' && path === '/metrics') { res.statusCode = 200; res.setHeader('content-type', 'text/plain'); return res.end('# metrics placeholder\nshuddho_api_up 1\n'); }
 
       if (req.method === 'POST' && path === '/api/check') {
         const input = parseCheckRequest(await readJson(req));
         const response = await deps.orchestrator.check(input, requestId);
-        await deps.events.record([{ type: 'suggestion_generated', documentId: input.documentId, metadata: { count: response.suggestions.length, requestId } }], { requestId, userId: 'demo-user' });
+        await deps.events.record([{ type: 'suggestion_generated', language: 'bn', documentId: input.documentId, metadata: { count: response.suggestions.length, textLength: input.text.length, provider: deps.orchestrator.providerName() } }], { requestId, userId: 'demo-user' });
         return send(res, 200, response, requestId);
       }
       if (req.method === 'POST' && path === '/api/rewrite') {
         const input = parseRewriteRequest(await readJson(req));
-        const [suggestion] = await new MockLLMProvider().rewrite(input.text, input.instruction);
-        await deps.events.record([{ type: 'rewrite_requested', metadata: { requestId } }], { requestId, userId: 'demo-user' });
-        return send(res, 200, { requestId, suggestion }, requestId);
+        const result = await deps.orchestrator.rewrite(input.text, input);
+        await deps.events.record([{ type: 'rewrite_requested', language: 'bn', metadata: { textLength: input.text.length } }], { requestId, userId: 'demo-user' });
+        return send(res, 200, { requestId, result }, requestId);
       }
       if (req.method === 'POST' && path === '/api/tone') {
         const input = parseToneRequest(await readJson(req));
-        const harsh = /you are wrong|this is terrible|obviously/i.test(input.text);
-        return send(res, 200, { requestId, tone: harsh ? 'direct' : 'neutral', notes: harsh ? ['Consider a more collaborative phrasing.'] : [] }, requestId);
+        const result = await deps.orchestrator.tone(input.text);
+        await deps.events.record([{ type: 'tone_requested', language: 'bn', metadata: { textLength: input.text.length } }], { requestId, userId: 'demo-user' });
+        return send(res, 200, { requestId, result }, requestId);
       }
-      if (req.method === 'GET' && path === '/api/preferences') return send(res, 200, { userId: 'demo-user', locale: 'en-US', formality: 'neutral', enabledSuggestionTypes: ['grammar', 'spelling', 'style', 'tone'], allowProductImprovement: false }, requestId);
+      if (req.method === 'GET' && path === '/api/preferences') return send(res, 200, { userId: 'demo-user', language: 'bn', dialect: 'standard', enabledSuggestionTypes: ['grammar', 'spelling', 'spacing', 'punctuation', 'style', 'tone'], productImprovementConsent: false }, requestId);
+      if (req.method === 'PUT' && path === '/api/preferences') { const body = await readJson(req) as Record<string, unknown>; return send(res, 200, { ...body, language: 'bn', saved: true }, requestId); }
       if (req.method === 'POST' && path === '/api/events') {
         const input = parseEventRequest(await readJson(req));
         await deps.events.record(input.events, { requestId, userId: 'demo-user' });
@@ -68,7 +70,7 @@ export function createApp(deps: AppDeps = { orchestrator: new SuggestionOrchestr
       }
       if (docMatch && req.method === 'PUT') {
         const body = await readJson(req) as Record<string, unknown>;
-        const document = deps.documents.save({ id: decodeURIComponent(docMatch[1]), ownerId: 'demo-user', title: String(body.title ?? 'Untitled draft').slice(0, 120), plainText: String(body.plainText ?? '').slice(0, 50000), revision: Number(body.revision ?? 0) + 1, updatedAt: new Date().toISOString() });
+        const document = deps.documents.save({ id: decodeURIComponent(docMatch[1]), ownerId: 'demo-user', title: String(body.title ?? 'Untitled draft').slice(0, 120), text: String(body.text ?? body.plainText ?? '').slice(0, 50000), plainText: String(body.text ?? body.plainText ?? '').slice(0, 50000), revision: Number(body.revision ?? 0) + 1, updatedAt: new Date().toISOString() });
         return send(res, 200, { requestId, document }, requestId);
       }
       return send(res, 404, { error: 'not_found', requestId }, requestId);

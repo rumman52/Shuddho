@@ -1,84 +1,69 @@
 # Shuddho
 
-Shuddho is an original AI writing assistant monorepo. The new Draft Lab foundation adds a production-shaped hybrid client-cloud architecture while preserving the existing Bangla assistant code and extension assets.
+Shuddho is an original Bangla grammar, spelling, rewriting, and writing-assistant app. The repaired monorepo now uses a hybrid architecture: clients call a common TypeScript API gateway, and the gateway routes Bangla linguistic work to the existing Python FastAPI Bangla engine with a conservative Bangla-only fallback.
 
-## New AI writing assistant foundation
+## Folder structure
 
 ```text
-apps/
-  api/                 TypeScript API gateway, orchestration, WebSocket sync boundary
-  web/                 Next.js writing editor MVP
-  chrome-extension/    Existing extension surface
-  web-editor/          Existing Vite editor surface
-packages/
-  shared/              Shared TypeScript schemas and contracts
-  nlp/                 Rule-based and mock AI provider abstractions
-  observability/       Structured logs and timing helpers
-  config/              Environment config schemas
-docs/                  Architecture, API, data flow, security, roadmap
-infra/                 Docker Compose and deployment notes
+apps/api/                 TypeScript API gateway, providers, stores, WebSocket sync
+apps/web/                 Experimental Next editor MVP
+apps/web-editor/          Existing Vite Bangla editor, now gateway-aware
+apps/chrome-extension/    Existing extension, now gateway-aware
+packages/shared/          Canonical contracts, adapters, Unicode/span utilities
+packages/nlp/             Bangla fallback provider abstraction
+services/api/             Existing Python FastAPI Bangla API
+services/analysis/        Existing Bangla analysis pipeline
+services/rules/           Existing Bangla rule engine
+services/spell/           Existing Bangla spell engine
+shared/schemas/           Legacy and canonical Python/TS schemas
+infra/                    Docker Compose with Postgres and Redis
 ```
 
-## Features in the Draft Lab MVP
+## Install
 
-- Rich web writing surface with local document state.
-- Debounced `POST /api/check` requests.
-- Inline underlines and suggestion cards.
-- Accept/reject suggestion actions with event tracking.
-- Rule-based grammar, spelling, style, spacing, passive-voice, and tone suggestions.
-- Mock rewrite provider with a clean provider interface for future hosted or on-device AI.
-- API gateway endpoints for check, rewrite, tone, preferences, events, documents, health, metrics, and WebSocket sync.
-- PostgreSQL Prisma schema and migration for users, documents, revisions, suggestions, preferences, events, and team settings.
-- Redis-ready cache/rate/session placeholder and Docker Compose stack.
-- Privacy hooks, request IDs, rate limiting, validation, and structured log redaction.
+```bash
+npm install --include=optional
+```
 
 ## Run locally
 
-### One-command container stack
+Start Python Bangla API:
 
 ```bash
-docker compose -f infra/docker-compose.yml up --build
+python -m uvicorn services.api.shuddho_api.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Then open:
-
-- Web app: http://localhost:3000
-- API health: http://localhost:4000/health
-
-### Local development
+Start TypeScript gateway:
 
 ```bash
-npm install
-npm run dev
+npm run dev --workspace @shuddho/api
 ```
 
-The root `npm run dev` starts the API on port 4000 and the Next.js web app on port 3000.
-
-Useful commands:
+Start Vite web editor:
 
 ```bash
-npm run dev:api
-npm run dev:web
-npm test
-npm run build
+npm run dev --workspace @shuddho/web-editor
 ```
 
-## Sample text to try
+Optional Next app:
 
-```text
-I has teh first draft.  This is terrible due to the fact that it was created in order to test recieve suggestions.
+```bash
+npm run dev --workspace @shuddho/web
 ```
 
-The app should detect examples such as `teh` → `the`, `recieve` → `receive`, `I has` → `I have`, repeated spaces, wordy phrasing, passive-voice hints, and harsh tone.
+## Test
+
+```bash
+npm test --workspace @shuddho/shared
+npm test --workspace @shuddho/api
+.venv/bin/python -m pytest -m "not slow"
+```
 
 ## Architecture docs
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [API](docs/API.md)
-- [Data flow](docs/DATA_FLOW.md)
-- [Security](docs/SECURITY.md)
+- [Bangla NLP](docs/BANGLA_NLP.md)
+- [Local development](docs/LOCAL_DEV.md)
+- [Security and privacy](docs/SECURITY_PRIVACY.md)
 - [Roadmap](docs/ROADMAP.md)
-
-## Existing Python/Bangla stack
-
-The repository still includes the prior FastAPI, Python NLP, datasets, and extension code. Those components remain available for existing tests and future integration with the new TypeScript gateway.

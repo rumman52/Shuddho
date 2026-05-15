@@ -67,12 +67,16 @@ def test_ml_modules_used_by_backend_startup_are_importable() -> None:
     assert importlib.import_module("ml.corrector.model").__name__ == "ml.corrector.model"
 
 
-def test_root_workspace_is_limited_to_web_and_extension_apps() -> None:
+def test_root_workspace_includes_gateway_web_and_packages() -> None:
     root_package = json.loads(Path("package.json").read_text(encoding="utf-8"))
 
     assert root_package["workspaces"] == [
+        "apps/web",
+        "apps/api",
         "apps/web-editor",
         "apps/chrome-extension",
+        "packages/*",
     ]
+    assert "dev:python-api" in root_package["scripts"]
     assert "build:agent" not in root_package["scripts"]
     assert "start:agent" not in root_package["scripts"]

@@ -1,36 +1,30 @@
-# API
+# Shuddho API
 
-Base URL: `http://localhost:4000`.
+The canonical client contract is the TypeScript gateway `POST /api/check`. Legacy Python `/analyze`, `/rewrite`, and `/tone/analyze` remain available for direct local development.
 
-## POST /api/check
+## `POST /api/check`
 
-Validates text and returns normalized suggestions.
+Request:
 
 ```json
 {
+  "text": "আমি  আমি ভাত খাই ।",
+  "language": "bn",
   "documentId": "demo-document",
-  "text": "I has teh draft",
-  "revision": 1,
-  "goals": ["grammar", "spelling", "style", "tone", "rewrite"]
+  "revision": 3,
+  "client": { "surface": "web", "version": "mvp" }
 }
 ```
 
-## POST /api/rewrite
+Response uses `CheckResponse`: request ID, Bangla language, optional normalized text, timings, warnings, and canonical suggestions with stable `id`, reusable `suppressionKey`, `ruleId`, Bangla explanation, provider, source, confidence, and span offsets.
 
-Returns a mock rewrite suggestion without calling paid AI services.
+## Other MVP endpoints
 
-## POST /api/tone
-
-Returns tone labels and notes.
-
-## GET /api/preferences
-
-Returns current user writing preferences and product-improvement consent state.
-
-## POST /api/events
-
-Ingests product and telemetry events.
-
-## WebSocket /ws/docs/:documentId
-
-Accepts `delta` messages with server-authoritative revision checks.
+- `GET /health` process health.
+- `GET /ready` provider readiness, including Python provider readiness when configured.
+- `POST /api/rewrite` gateway rewrite proxy to Python when available.
+- `POST /api/tone` gateway tone proxy to Python when available.
+- `GET /api/preferences`, `PUT /api/preferences` in-memory preference placeholder.
+- `POST /api/events` privacy-safe event ingestion; raw full text is stripped from metadata.
+- `GET /api/documents/:documentId`, `PUT /api/documents/:documentId` in-memory document store.
+- `WebSocket /ws/docs/:documentId` MVP revision-based sync.

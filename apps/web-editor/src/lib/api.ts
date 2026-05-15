@@ -10,7 +10,7 @@ import type {
   UserPreferences,
 } from "@shared/schemas/contracts";
 
-const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
+const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:4000";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
 
 export interface ApiConfigurationState {
@@ -88,17 +88,42 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
   return response.json() as Promise<TResponse>;
 }
 
-export function analyzeText(payload: AnalyzeRequest): Promise<AnalyzeResponse> {
-  return request<AnalyzeResponse>("/analyze", {
+export async function analyzeText(payload: AnalyzeRequest): Promise<AnalyzeResponse> {
+  const useGateway = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_USE_GATEWAY ?? "true") !== "false";
+  if (!useGateway) {
+    return request<AnalyzeResponse>("/analyze", { method: "POST", body: JSON.stringify(payload) });
+  }
+  const response = await request<any>("/api/check", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ text: payload.text, language: "bn", userId: payload.user_id, client: { surface: "web", version: "vite-editor" } }),
   });
+  return {
+    text: payload.text,
+    corrected_text: response.normalizedText ?? payload.text,
+    analysis_profile: "frontend_local_fallback",
+    runtime_source: "gateway",
+    runtime_source_path: null,
+    runtime_lexicon_version: null,
+    runtime_lexicon_checksum: null,
+    detector_enabled: false,
+    corrector_enabled: false,
+    degraded_reasons: response.warnings ?? [],
+    normalized_text: response.normalizedText,
+    suggestions: response.suggestions.map((s: any) => ({
+      id: s.id, rule_id: s.ruleId, category: s.type, subtype: s.ruleId,
+      span_start: s.span.codePointStartIndex ?? s.span.startIndex, span_end: s.span.codePointEndIndex ?? s.span.endIndex,
+      original_text: s.originalText, replacement_options: s.replacementOptions, confidence: s.confidence,
+      explanation_bn: s.explanationBn, explanation_en: s.explanationEn ?? "", source: s.source, severity: s.severity,
+      suppression_key: s.suppressionKey,
+    })),
+    warnings: response.warnings ?? [],
+  } as unknown as AnalyzeResponse;
 }
 
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {
-  return request<void>("/feedback", {
+  return request<void>("/api/events", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ type: "suggestion_accepted", language: "bn", suggestionId: payload.suggestion_id, metadata: { action: payload.action, ruleId: payload.feedback_key } }),
   });
 }
 
@@ -109,14 +134,14 @@ export function getHealth(): Promise<HealthDeepResponse> {
 }
 
 export function rewriteText(payload: RewriteRequest): Promise<RewriteResponse> {
-  return request<RewriteResponse>("/rewrite", {
+  return request<RewriteResponse>("/api/rewrite", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export function analyzeTone(payload: ToneAnalysisRequest): Promise<ToneAnalysisResponse> {
-  return request<ToneAnalysisResponse>("/tone/analyze", {
+  return request<ToneAnalysisResponse>("/api/tone", {
     method: "POST",
     body: JSON.stringify(payload),
   });

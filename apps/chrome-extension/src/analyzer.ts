@@ -1,4 +1,3 @@
-import { modeFromWritingGoal } from "./config";
 import type { AnalyzeResponse, ExtensionSettings, FeedbackRequest, RewriteIntent, RewriteResponse, SuggestionRange, ToneAnalysisResponse } from "./types";
 
 export class DebouncedAnalyzer {
@@ -31,7 +30,7 @@ export class DebouncedAnalyzer {
     intent: RewriteIntent,
     settings: ExtensionSettings,
   ): Promise<RewriteResponse> {
-    const response = await fetch(`${settings.backendBaseUrl}/rewrite`, {
+    const response = await fetch(`${settings.backendBaseUrl}/api/rewrite`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -53,12 +52,12 @@ export class DebouncedAnalyzer {
   }
 
   async sendFeedback(payload: FeedbackRequest, settings: ExtensionSettings): Promise<void> {
-    const response = await fetch(`${settings.backendBaseUrl}/feedback`, {
+    const response = await fetch(`${settings.backendBaseUrl}/api/events`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ type: payload.action === "dismissed" ? "suggestion_rejected" : "suggestion_accepted", language: "bn", suggestionId: payload.suggestion_id, suppressionKey: payload.feedback_key, metadata: { action: payload.action } }),
     });
 
     if (!response.ok) {
@@ -76,22 +75,23 @@ export class DebouncedAnalyzer {
     this.activeController = new AbortController();
 
     try {
-      const analyzeResponsePromise = fetch(`${settings.backendBaseUrl}/analyze`, {
+      const analyzeResponsePromise = fetch(`${settings.backendBaseUrl}/api/check`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           text,
-          mode: modeFromWritingGoal(settings.writingGoal),
-          personal_dictionary: settings.localPersonalDictionaryMirror,
-          user_id: settings.currentUserId,
+          language: "bn",
+          userId: settings.currentUserId,
+          client: { surface: "extension", version: "mvp" },
+          options: { includeGrammar: true, includeSpelling: true, includeStyle: true, includeTone: settings.autoShowTone },
         }),
         signal: this.activeController.signal,
       });
 
       const toneResponsePromise = settings.autoShowTone && text.trim().length >= 30
-        ? fetch(`${settings.backendBaseUrl}/tone/analyze`, {
+        ? fetch(`${settings.backendBaseUrl}/api/tone`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -114,7 +114,38 @@ export class DebouncedAnalyzer {
         tone = (await toneResponse.json()) as ToneAnalysisResponse;
       }
 
-      onSuccess((await analyzeResponse.json()) as AnalyzeResponse, tone);
+      const gatewayBody = await analyzeResponse.json();
+      const adaptedAnalyzeResponse = {
+        text,
+        corrected_text: gatewayBody.normalizedText ?? text,
+        analysis_profile: "frontend_local_fallback",
+        runtime_source: "gateway",
+        runtime_source_path: null,
+        runtime_lexicon_version: null,
+        runtime_lexicon_checksum: null,
+        detector_enabled: false,
+        corrector_enabled: false,
+        degraded_reasons: gatewayBody.warnings ?? [],
+        normalized_text: gatewayBody.normalizedText,
+        suggestions: (gatewayBody.suggestions ?? []).map((suggestion: any) => ({
+          id: suggestion.id,
+          rule_id: suggestion.ruleId,
+          category: suggestion.type,
+          subtype: suggestion.ruleId,
+          span_start: suggestion.span?.codePointStartIndex ?? suggestion.span?.startIndex ?? 0,
+          span_end: suggestion.span?.codePointEndIndex ?? suggestion.span?.endIndex ?? 0,
+          original_text: suggestion.originalText,
+          replacement_options: suggestion.replacementOptions ?? [suggestion.suggestedText],
+          confidence: suggestion.confidence,
+          explanation_bn: suggestion.explanationBn,
+          explanation_en: suggestion.explanationEn ?? "",
+          source: suggestion.source,
+          severity: suggestion.severity,
+          suppression_key: suggestion.suppressionKey,
+        })),
+        warnings: gatewayBody.warnings ?? [],
+      } as unknown as AnalyzeResponse;
+      onSuccess(adaptedAnalyzeResponse, tone);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
