@@ -9,14 +9,15 @@ from services.suggestion_manager.shuddho_suggestion_manager.manager import Sugge
 from shared.schemas.python_models import AnalyzeMode, Suggestion, SuggestionCategory, SuggestionSeverity, SuggestionSource
 
 
-def test_corrector_service_missing_checkpoint_falls_back_without_crashing() -> None:
-    service = CorrectorService.from_environment({})
+def test_corrector_service_missing_checkpoint_falls_back_without_crashing(tmp_path: Path) -> None:
+    missing_checkpoint = tmp_path / "missing-corrector"
+    service = CorrectorService.from_environment({"SHUDDHO_CORRECTOR_CHECKPOINT": str(missing_checkpoint)})
     status = service.runtime_status()
 
     assert service.is_loaded() is False
     assert service.is_enabled() is True
     assert status.status == "missing_checkpoint"
-    assert status.checkpoint == "artifacts/corrector/corrector-base"
+    assert status.checkpoint == str(missing_checkpoint)
     assert service.suggest("আমি বাংলা লিখি।", mode=AnalyzeMode.STANDARD) == []
 
 

@@ -72,6 +72,28 @@ Use these Vercel project settings for the Vite web editor deployment:
 Keep optional dependencies enabled so Vite/esbuild can install the native binary for the Vercel Linux build environment.
 Do not set npm options such as `omit=optional`, `optional=false`, or `ignore-scripts=true` for this deployment.
 
+
+## Render FastAPI backend
+
+The Render backend should be configured with the checked-in model artifact paths:
+
+```dotenv
+SHUDDHO_CORRECTOR_ENABLED=true
+SHUDDHO_CORRECTOR_CHECKPOINT=artifacts/corrector/corrector-base
+SHUDDHO_DETECTOR_ENABLED=true
+SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
+SHUDDHO_LOG_RAW_TEXT=false
+```
+
+Train the sentence-level Bangla corrector before deploying full contextual correction mode:
+
+```bash
+python -m ml.corrector.train --config ml/training/configs/corrector.base.json
+```
+
+This produces `artifacts/corrector/corrector-base/metadata.json`, `best_model.pt`, `last_model.pt`, and `metrics.json`. Add the `.pt` files with Git LFS from a developer machine before redeploying Render. If that artifact is missing, `/health/deep` reports `corrector.status = missing_checkpoint` and Shuddho remains online in rules + spelling degraded mode. See [deployment](docs/DEPLOYMENT.md) and [corrector training](docs/train-corrector.md).
+
 ## Architecture docs
 
 - [Architecture](docs/ARCHITECTURE.md)

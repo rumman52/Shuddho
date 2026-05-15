@@ -107,6 +107,8 @@ def test_api_check_compatibility_route_accepts_bangla_text(monkeypatch) -> None:
             normalized_text=payload.text,
             corrected_text=payload.text,
             suggestions=[],
+            runtime_warnings=["corrector_missing_checkpoint"],
+            backend_warning="Sentence-level corrector is not loaded. Shuddho is running rules + spelling only.",
         )
 
     monkeypatch.setattr(app_module, "analyze", stub_analyze)
@@ -117,6 +119,11 @@ def test_api_check_compatibility_route_accepts_bangla_text(monkeypatch) -> None:
 
     assert response.language == "bn"
     assert response.normalizedText == "আমি  আমি ভাত খাই।"
+    assert response.suggestions == []
+    assert response.warnings == [
+        "corrector_missing_checkpoint",
+        "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only.",
+    ]
 
 
 def test_cors_config_includes_vercel_frontend_origin() -> None:
@@ -246,6 +253,62 @@ def test_health_exposes_degraded_runtime_reasons(monkeypatch) -> None:
         "sentence_level_local_corrector" not in response.mode_capabilities["standard"]
     )
 
+
+def test_health_deep_reports_full_profile_when_mock_corrector_loaded(monkeypatch) -> None:
+    class StubDetectorService:
+        checkpoint_path = "artifacts/detector/detector-base"
+
+        def is_loaded(self) -> bool:
+            return True
+
+        def runtime_status(self):
+            return type(
+                "DetectorStatus",
+                (),
+                {
+                    "enabled": True,
+                    "loaded": True,
+                    "status": "ready",
+                    "reason": None,
+                    "checkpoint": self.checkpoint_path,
+                    "checkpoint_exists": True,
+                    "backend_name": "stub_detector",
+                    "threshold": 0.92,
+                },
+            )()
+
+    class StubCorrectorService:
+        checkpoint_path = "artifacts/corrector/corrector-base"
+
+        def is_loaded(self) -> bool:
+            return True
+
+        def runtime_status(self):
+            return type(
+                "CorrectorStatus",
+                (),
+                {
+                    "enabled": True,
+                    "loaded": True,
+                    "status": "ready",
+                    "reason": None,
+                    "checkpoint": self.checkpoint_path,
+                    "checkpoint_exists": True,
+                    "backend_name": "stub_corrector",
+                    "threshold": 0.86,
+                },
+            )()
+
+    monkeypatch.setattr(app_module, "detector_service", StubDetectorService())
+    monkeypatch.setattr(app_module, "corrector_service", StubCorrectorService())
+
+    response = app_module.health_deep()
+
+    assert response.corrector.status == "ready"
+    assert response.corrector.loaded is True
+    assert response.analysis_profile == "full_local"
+    assert response.degraded_reasons == []
+    assert "sentence_level_local_corrector" in response.mode_capabilities["standard"]
 
 def test_cors_allows_extension_origin() -> None:
     origin = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

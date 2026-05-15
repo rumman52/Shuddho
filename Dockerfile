@@ -10,6 +10,7 @@ COPY services ./services
 COPY shared ./shared
 COPY ml ./ml
 COPY data ./data
+COPY artifacts ./artifacts
 
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
