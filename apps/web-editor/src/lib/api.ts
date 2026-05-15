@@ -8,10 +8,16 @@ import type {
   ToneAnalysisRequest,
   ToneAnalysisResponse,
 } from "@shared/schemas/contracts";
-import { DEFAULT_PREFERENCES, normalizePreferences, type ShuddhoPreferences } from "./preferences";
+import {
+  DEFAULT_PREFERENCES,
+  normalizePreferences,
+  type ShuddhoPreferences,
+} from "./preferences";
+import { approximateSentenceCount, normalizeAnalyzeResponse } from "./analysis";
 
 const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:4000";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
+const PRODUCTION_API_BASE_URL = "https://shuddho-api.onrender.com";
 
 export interface ApiConfigurationState {
   apiBaseUrl: string;
@@ -30,7 +36,7 @@ export type BackendHealthResponse = Partial<HealthDeepResponse> & {
   provider?: string;
 };
 
-type GatewaySuggestion = {
+export type GatewaySuggestion = {
   id?: string;
   ruleId?: string;
   rule_id?: string;
@@ -62,7 +68,7 @@ type GatewaySuggestion = {
   suppression_key?: string;
 };
 
-type GatewayCheckResponse = {
+export type GatewayCheckResponse = {
   normalizedText?: string;
   normalized_text?: string;
   suggestions?: GatewaySuggestion[];
@@ -78,13 +84,37 @@ export function deriveApiConfiguration(args: {
   enableLocalFallback?: boolean | null;
   isProductionBuild?: boolean | null;
 }): ApiConfigurationState {
-  const { configuredBaseUrl, storedBaseUrl, browserHostname, enableLocalFallback, isProductionBuild } = args;
+  const {
+    configuredBaseUrl,
+    storedBaseUrl,
+    browserHostname,
+    enableLocalFallback,
+    isProductionBuild,
+  } = args;
   const isLocalOrigin = isLocalBrowserOrigin(browserHostname);
   const isProd = Boolean(isProductionBuild);
-  const hasConfiguredBaseUrl = Boolean(configuredBaseUrl?.trim() || storedBaseUrl?.trim());
-  const rawBaseUrl = storedBaseUrl?.trim() || configuredBaseUrl?.trim() || DEFAULT_LOCAL_API_BASE_URL;
-  const source =
-    storedBaseUrl?.trim() ? "override" : configuredBaseUrl?.trim() ? "environment" : "default_local";
+  const configuredValue =
+    configuredBaseUrl?.trim() || (isProd ? PRODUCTION_API_BASE_URL : null);
+  const storedValue = storedBaseUrl?.trim() || null;
+  const normalizedStoredValue = storedValue
+    ? normalizeApiBaseUrl(storedValue)
+    : null;
+  const storedValueCanOverride = Boolean(
+    normalizedStoredValue &&
+    !(isLocalApiBaseUrl(normalizedStoredValue) && !isLocalOrigin) &&
+    (!isProd || isNonLocalHttpsApiBaseUrl(normalizedStoredValue)),
+  );
+  const hasConfiguredBaseUrl = Boolean(
+    configuredValue || storedValueCanOverride,
+  );
+  const rawBaseUrl = storedValueCanOverride
+    ? storedValue!
+    : (configuredValue ?? DEFAULT_LOCAL_API_BASE_URL);
+  const source = storedValueCanOverride
+    ? "override"
+    : configuredValue
+      ? "environment"
+      : "default_local";
   const apiBaseUrl = normalizeApiBaseUrl(rawBaseUrl);
   const targetsLocalhost = isLocalApiBaseUrl(apiBaseUrl);
   const localFallbackEnabled = Boolean(enableLocalFallback);
@@ -107,9 +137,15 @@ export function deriveApiConfiguration(args: {
   };
 }
 
-async function request<TResponse>(path: string, init: RequestInit): Promise<TResponse> {
+async function request<TResponse>(
+  path: string,
+  init: RequestInit,
+): Promise<TResponse> {
   if (!apiConfiguration.backendAllowed) {
-    throw new Error(apiConfiguration.hardWarning ?? "Backend analysis is disabled by frontend API configuration.");
+    throw new Error(
+      apiConfiguration.hardWarning ??
+        "Backend analysis is disabled by frontend API configuration.",
+    );
   }
 
   const url = `${getApiBaseUrl()}${path}`;
@@ -123,14 +159,17 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
       headers,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown network error";
+    const message =
+      error instanceof Error ? error.message : "Unknown network error";
     throw new Error(`Network request failed for ${url}: ${message}`);
   }
 
   if (!response.ok) {
     const responseText = await response.text();
     const detail = responseText.trim() || response.statusText;
-    throw new Error(`Request failed for ${url} with ${response.status}: ${detail}`);
+    throw new Error(
+      `Request failed for ${url} with ${response.status}: ${detail}`,
+    );
   }
 
   if (response.status === 204) {
@@ -140,12 +179,24 @@ async function request<TResponse>(path: string, init: RequestInit): Promise<TRes
   return response.json() as Promise<TResponse>;
 }
 
-export async function analyzeText(payload: AnalyzeRequest): Promise<AnalyzeResponse> {
-  const useGateway = ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_USE_GATEWAY ?? "true") !== "false";
+export async function analyzeText(
+  payload: AnalyzeRequest,
+): Promise<AnalyzeResponse> {
+  const useGateway =
+    ((import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+      .env?.VITE_USE_GATEWAY ?? "true") !== "false";
   const path = useGateway ? "/api/check" : "/analyze";
 
   if (!useGateway) {
-    return request<AnalyzeResponse>(path, { method: "POST", body: JSON.stringify(payload) });
+    const response = await request<Partial<AnalyzeResponse>>(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return normalizeAnalyzeResponse(
+      response,
+      payload.text,
+      payload.mode ?? "standard",
+    );
   }
 
   const response = await request<GatewayCheckResponse>(path, {
@@ -164,7 +215,12 @@ export async function analyzeText(payload: AnalyzeRequest): Promise<AnalyzeRespo
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {
   return request<void>("/api/events", {
     method: "POST",
-    body: JSON.stringify({ type: "suggestion_accepted", language: "bn", suggestionId: payload.suggestion_id, metadata: { action: payload.action, ruleId: payload.feedback_key } }),
+    body: JSON.stringify({
+      type: "suggestion_accepted",
+      language: "bn",
+      suggestionId: payload.suggestion_id,
+      metadata: { action: payload.action, ruleId: payload.feedback_key },
+    }),
   });
 }
 
@@ -181,7 +237,9 @@ export async function checkBackendHealth(): Promise<{
   if (!apiConfiguration.backendAllowed) {
     return {
       ok: false,
-      message: apiConfiguration.hardWarning ?? "Backend health checks are disabled by frontend API configuration.",
+      message:
+        apiConfiguration.hardWarning ??
+        "Backend health checks are disabled by frontend API configuration.",
     };
   }
 
@@ -204,25 +262,38 @@ export async function checkBackendHealth(): Promise<{
   } catch {
     return {
       ok: false,
-      message: "Backend is not reachable. Check VITE_API_BASE_URL and make sure your tunnel is running.",
+      message:
+        "Backend is not reachable. Check VITE_API_BASE_URL and make sure your tunnel is running.",
     };
   }
 }
 
-export async function rewriteText(payload: RewriteRequest): Promise<RewriteResponse> {
-  const response = await request<{ result?: RewriteResponse } | RewriteResponse>("/api/rewrite", {
+export async function rewriteText(
+  payload: RewriteRequest,
+): Promise<RewriteResponse> {
+  const response = await request<
+    { result?: RewriteResponse } | RewriteResponse
+  >("/api/rewrite", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  return ("result" in response && response.result ? response.result : response) as RewriteResponse;
+  return (
+    "result" in response && response.result ? response.result : response
+  ) as RewriteResponse;
 }
 
-export async function analyzeTone(payload: ToneAnalysisRequest): Promise<ToneAnalysisResponse> {
-  const response = await request<{ result?: ToneAnalysisResponse } | ToneAnalysisResponse>("/api/tone", {
+export async function analyzeTone(
+  payload: ToneAnalysisRequest,
+): Promise<ToneAnalysisResponse> {
+  const response = await request<
+    { result?: ToneAnalysisResponse } | ToneAnalysisResponse
+  >("/api/tone", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  return ("result" in response && response.result ? response.result : response) as ToneAnalysisResponse;
+  return (
+    "result" in response && response.result ? response.result : response
+  ) as ToneAnalysisResponse;
 }
 
 async function safeJson(response: Response): Promise<unknown> {
@@ -243,19 +314,25 @@ export async function fetchPreferences(): Promise<ShuddhoPreferences> {
     });
 
     if (!response.ok) {
-      console.warn(`Preferences request failed with ${response.status}. Using defaults.`);
+      console.warn(
+        `Preferences request failed with ${response.status}. Using defaults.`,
+      );
       return DEFAULT_PREFERENCES;
     }
 
     const data = await safeJson(response);
-    return normalizePreferences(data as Partial<ShuddhoPreferences> | null | undefined);
+    return normalizePreferences(
+      data as Partial<ShuddhoPreferences> | null | undefined,
+    );
   } catch (error) {
     console.warn("Preferences request failed. Using defaults.", error);
     return DEFAULT_PREFERENCES;
   }
 }
 
-export async function savePreferences(preferences: ShuddhoPreferences): Promise<ShuddhoPreferences> {
+export async function savePreferences(
+  preferences: ShuddhoPreferences,
+): Promise<ShuddhoPreferences> {
   const normalized = normalizePreferences(preferences);
 
   try {
@@ -274,55 +351,118 @@ export async function savePreferences(preferences: ShuddhoPreferences): Promise<
     }
 
     const data = await safeJson(response);
-    return normalizePreferences(data as Partial<ShuddhoPreferences> | null | undefined);
+    return normalizePreferences(
+      data as Partial<ShuddhoPreferences> | null | undefined,
+    );
   } catch (error) {
     console.warn("Save preferences failed.", error);
     return normalized;
   }
 }
 
-export function getUserPreferences(_userId: string): Promise<ShuddhoPreferences> {
+export function getUserPreferences(
+  _userId: string,
+): Promise<ShuddhoPreferences> {
   return fetchPreferences();
 }
 
-export function saveUserPreferences(_userId: string, payload: ShuddhoPreferences): Promise<ShuddhoPreferences> {
+export function saveUserPreferences(
+  _userId: string,
+  payload: ShuddhoPreferences,
+): Promise<ShuddhoPreferences> {
   return savePreferences(payload);
 }
 
-function gatewayCheckToAnalyzeResponse(response: GatewayCheckResponse, payload: AnalyzeRequest): AnalyzeResponse {
-  const normalizedText = response.normalizedText ?? response.normalized_text ?? payload.text;
-  const suggestions = Array.isArray(response.suggestions) ? response.suggestions : [];
+export function gatewayCheckToAnalyzeResponse(
+  response: GatewayCheckResponse,
+  payload: AnalyzeRequest,
+): AnalyzeResponse {
+  const normalizedText =
+    response.normalizedText ?? response.normalized_text ?? payload.text;
+  const suggestions = Array.isArray(response.suggestions)
+    ? response.suggestions
+    : [];
+  const mode = payload.mode ?? "standard";
 
-  return {
+  const mapped = {
     text: payload.text,
     corrected_text: normalizedText,
+    normalized_text: normalizedText,
     analysis_profile: "gateway",
     runtime_source: "gateway",
-    runtime_source_path: null,
-    runtime_lexicon_version: null,
-    runtime_lexicon_checksum: null,
-    detector_enabled: false,
-    corrector_enabled: false,
-    degraded_reasons: response.warnings ?? [],
-    normalized_text: normalizedText,
-    suggestions: suggestions.map((suggestion) => ({
-      id: suggestion.id,
-      rule_id: suggestion.ruleId ?? suggestion.rule_id,
-      category: suggestion.type ?? suggestion.category,
-      subtype: suggestion.subtype ?? suggestion.ruleId ?? suggestion.rule_id,
-      span_start: suggestion.span?.codePointStartIndex ?? suggestion.span?.startIndex ?? suggestion.span_start ?? 0,
-      span_end: suggestion.span?.codePointEndIndex ?? suggestion.span?.endIndex ?? suggestion.span_end ?? 0,
+    runtime_warnings: Array.isArray(response.warnings) ? response.warnings : [],
+    warnings: Array.isArray(response.warnings) ? response.warnings : [],
+    used_detector: false,
+    used_corrector: false,
+    backend_warning: null,
+    lexicon_source: "gateway",
+    lexicon_version: null,
+    backend_version: null,
+    sentence_count: approximateSentenceCount(payload.text),
+    request_mode_applied: mode,
+    suggestions: suggestions.map((suggestion, index) => ({
+      id:
+        suggestion.id ??
+        `${suggestion.ruleId ?? suggestion.rule_id ?? "suggestion"}-${index}`,
+      rule_id: suggestion.ruleId ?? suggestion.rule_id ?? "unknown_rule",
+      category: suggestion.type ?? suggestion.category ?? "grammar",
+      subtype:
+        suggestion.subtype ??
+        suggestion.ruleId ??
+        suggestion.rule_id ??
+        "suggestion",
+      span_start:
+        suggestion.span?.codePointStartIndex ??
+        suggestion.span?.startIndex ??
+        suggestion.span_start ??
+        0,
+      span_end:
+        suggestion.span?.codePointEndIndex ??
+        suggestion.span?.endIndex ??
+        suggestion.span_end ??
+        0,
       original_text: suggestion.originalText ?? suggestion.original_text ?? "",
-      replacement_options: suggestion.replacementOptions ?? suggestion.replacement_options ?? [],
+      replacement_options: Array.isArray(suggestion.replacementOptions)
+        ? suggestion.replacementOptions
+        : Array.isArray(suggestion.replacement_options)
+          ? suggestion.replacement_options
+          : suggestion.suggestedText || suggestion.suggested_text
+            ? [suggestion.suggestedText ?? suggestion.suggested_text ?? ""]
+            : [],
       confidence: suggestion.confidence ?? 0,
-      explanation_bn: suggestion.explanationBn ?? suggestion.explanation_bn ?? "",
-      explanation_en: suggestion.explanationEn ?? suggestion.explanation_en ?? "",
-      source: suggestion.source,
-      severity: suggestion.severity,
-      suppression_key: suggestion.suppressionKey ?? suggestion.suppression_key,
+      explanation_bn:
+        suggestion.explanationBn ?? suggestion.explanation_bn ?? "",
+      explanation_en:
+        suggestion.explanationEn ?? suggestion.explanation_en ?? "",
+      source: normalizeGatewaySuggestionSource(suggestion.source),
+      severity: suggestion.severity ?? "low",
+      suppression_key:
+        suggestion.suppressionKey ?? suggestion.suppression_key ?? "",
     })),
-    warnings: response.warnings ?? [],
-  } as unknown as AnalyzeResponse;
+  };
+
+  return normalizeAnalyzeResponse(
+    mapped as Partial<AnalyzeResponse>,
+    payload.text,
+    mode,
+  );
+}
+
+function normalizeGatewaySuggestionSource(
+  source: string | undefined,
+): "rule" | "spell" | "model" | "hybrid" {
+  if (
+    source === "rule" ||
+    source === "spell" ||
+    source === "model" ||
+    source === "hybrid"
+  ) {
+    return source;
+  }
+  if (source === "ml") {
+    return "model";
+  }
+  return "rule";
 }
 
 export function getApiBaseUrl(): string {
@@ -344,15 +484,25 @@ export function setApiBaseUrlOverride(nextBaseUrl: string): string {
     } else {
       window.localStorage.removeItem(API_BASE_URL_STORAGE_KEY);
     }
+    apiConfiguration = resolveApiConfiguration();
+  } else {
+    apiConfiguration = deriveApiConfiguration({
+      configuredBaseUrl: readConfiguredBaseUrl(),
+      storedBaseUrl: trimmedValue || null,
+      browserHostname: readBrowserHostname(),
+      enableLocalFallback: readLocalFallbackFlag(),
+      isProductionBuild: readProductionFlag(),
+    });
+  }
+  return apiConfiguration.apiBaseUrl;
+}
+
+export function clearApiBaseUrlOverride(): string {
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(API_BASE_URL_STORAGE_KEY);
   }
 
-  apiConfiguration = deriveApiConfiguration({
-    configuredBaseUrl: readConfiguredBaseUrl(),
-    storedBaseUrl: trimmedValue || null,
-    browserHostname: readBrowserHostname(),
-    enableLocalFallback: readLocalFallbackFlag(),
-    isProductionBuild: readProductionFlag(),
-  });
+  apiConfiguration = resolveApiConfiguration();
   return apiConfiguration.apiBaseUrl;
 }
 
@@ -367,18 +517,28 @@ function resolveApiConfiguration(): ApiConfigurationState {
 }
 
 function readConfiguredBaseUrl(): string | null {
-  const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
-  const configuredBaseUrl = importMetaEnv.VITE_API_BASE_URL ?? importMetaEnv.VITE_API_URL;
+  const importMetaEnv =
+    (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+      .env ?? {};
+  const configuredBaseUrl =
+    importMetaEnv.VITE_API_BASE_URL ?? importMetaEnv.VITE_API_URL;
   return configuredBaseUrl?.trim() || null;
 }
 
 function readProductionFlag(): boolean {
-  const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env ?? {};
+  const importMetaEnv =
+    (
+      import.meta as ImportMeta & {
+        env?: Record<string, string | boolean | undefined>;
+      }
+    ).env ?? {};
   return importMetaEnv.PROD === true || String(importMetaEnv.PROD) === "true";
 }
 
 function readLocalFallbackFlag(): boolean {
-  const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
+  const importMetaEnv =
+    (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+      .env ?? {};
   const rawValue = importMetaEnv.VITE_ENABLE_LOCAL_FALLBACK;
   if (!rawValue) {
     return false;
@@ -393,7 +553,7 @@ function readBrowserHostname(): string | null {
   return window.location.hostname;
 }
 
-function readStoredApiBaseUrl(): string | null {
+export function readStoredApiBaseUrl(): string | null {
   if (typeof window === "undefined") {
     return null;
   }
@@ -404,10 +564,24 @@ function readStoredApiBaseUrl(): string | null {
   }
 
   const trimmedValue = storedValue.trim();
-  return trimmedValue || null;
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const normalized = normalizeApiBaseUrl(trimmedValue);
+  const browserHostname = readBrowserHostname();
+
+  if (!isLocalBrowserOrigin(browserHostname) && isLocalApiBaseUrl(normalized)) {
+    window.localStorage.removeItem(API_BASE_URL_STORAGE_KEY);
+    return null;
+  }
+
+  return trimmedValue;
 }
 
-export function isLocalBrowserOrigin(hostname: string | null | undefined): boolean {
+export function isLocalBrowserOrigin(
+  hostname: string | null | undefined,
+): boolean {
   if (!hostname) {
     return false;
   }
@@ -416,6 +590,10 @@ export function isLocalBrowserOrigin(hostname: string | null | undefined): boole
 
 export function isLocalApiBaseUrl(baseUrl: string): boolean {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(baseUrl);
+}
+
+function isNonLocalHttpsApiBaseUrl(baseUrl: string): boolean {
+  return /^https:\/\//i.test(baseUrl) && !isLocalApiBaseUrl(baseUrl);
 }
 
 function normalizeApiBaseUrl(rawBaseUrl: string): string {

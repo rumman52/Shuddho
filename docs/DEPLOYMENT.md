@@ -2,7 +2,7 @@
 
 ## Vercel web editor
 
-Set these Vercel environment variables for `https://shuddho-web-editor.vercel.app`:
+Set these Vercel environment variables for `https://shuddho-web-editor.vercel.app` in **Production, Preview, and Development**:
 
 ```dotenv
 VITE_API_BASE_URL=https://shuddho-api.onrender.com
@@ -30,14 +30,17 @@ Set these Render environment variables for `https://shuddho-api.onrender.com`:
 ```dotenv
 SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
 SHUDDHO_LOG_RAW_TEXT=false
+SHUDDHO_DETECTOR_ENABLED=auto
+SHUDDHO_CORRECTOR_ENABLED=auto
 ```
 
-The FastAPI backend must expose `/health`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly.
+The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.
 
 ## Manual smoke tests
 
 ```bash
 curl https://shuddho-api.onrender.com/health
+curl https://shuddho-api.onrender.com/health/deep
 curl https://shuddho-api.onrender.com/api/preferences
 curl -X POST https://shuddho-api.onrender.com/api/check \
   -H "Content-Type: application/json" \
@@ -48,6 +51,7 @@ PowerShell:
 
 ```powershell
 curl.exe https://shuddho-api.onrender.com/health
+curl.exe https://shuddho-api.onrender.com/health/deep
 curl.exe https://shuddho-api.onrender.com/api/preferences
 curl.exe -X POST https://shuddho-api.onrender.com/api/check `
   -H "Content-Type: application/json" `

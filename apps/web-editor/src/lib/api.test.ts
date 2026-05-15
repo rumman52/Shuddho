@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { analyzeText, deriveApiConfiguration, fetchPreferences, setApiBaseUrlOverride } from "./api";
+import {
+  analyzeText,
+  deriveApiConfiguration,
+  fetchPreferences,
+  gatewayCheckToAnalyzeResponse,
+  readStoredApiBaseUrl,
+  setApiBaseUrlOverride,
+} from "./api";
 import { DEFAULT_PREFERENCES } from "./preferences";
 
 test("deriveApiConfiguration defaults local development to the TypeScript gateway", () => {
@@ -29,7 +36,7 @@ test("deriveApiConfiguration uses VITE_API_BASE_URL and normalizes trailing slas
   assert.equal(config.hardWarning, null);
 });
 
-test("deriveApiConfiguration warns when production is missing VITE_API_BASE_URL", () => {
+test("deriveApiConfiguration falls back to Render when production VITE_API_BASE_URL is missing", () => {
   const config = deriveApiConfiguration({
     browserHostname: "shuddho-web-editor.vercel.app",
     configuredBaseUrl: null,
@@ -37,8 +44,9 @@ test("deriveApiConfiguration warns when production is missing VITE_API_BASE_URL"
     isProductionBuild: true,
   });
 
-  assert.equal(config.backendAllowed, false);
-  assert.match(config.hardWarning ?? "", /VITE_API_BASE_URL is not set|public HTTPS tunnel/);
+  assert.equal(config.backendAllowed, true);
+  assert.equal(config.apiBaseUrl, "https://shuddho-api.onrender.com");
+  assert.equal(config.hardWarning, null);
 });
 
 test("deriveApiConfiguration rejects localhost for deployed browser origins", () => {
@@ -58,15 +66,32 @@ test("analyzeText calls /api/check on configured gateway base URL", async () => 
   const calls: Array<{ url: string; body: any }> = [];
   setApiBaseUrlOverride("https://abc123.ngrok-free.app/");
   globalThis.fetch = (async (url, init) => {
-    calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
-    return new Response(JSON.stringify({ requestId: "req-1", language: "bn", normalizedText: "আমি ভাত খাই।", suggestions: [], warnings: [] }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")),
     });
+    return new Response(
+      JSON.stringify({
+        requestId: "req-1",
+        language: "bn",
+        normalizedText: "আমি ভাত খাই।",
+        suggestions: [],
+        warnings: [],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
   }) as typeof fetch;
 
   try {
-    await analyzeText({ text: "আমি ভাত খাই।", mode: "standard", personal_dictionary: [], user_id: "u1" });
+    await analyzeText({
+      text: "আমি ভাত খাই।",
+      mode: "standard",
+      personal_dictionary: [],
+      user_id: "u1",
+    });
   } finally {
     globalThis.fetch = originalFetch;
     setApiBaseUrlOverride("");
@@ -88,7 +113,6 @@ test("deriveApiConfiguration keeps local fallback behind an explicit dev flag", 
   assert.equal(config.localFallbackEnabled, true);
 });
 
-
 test("fetchPreferences returns DEFAULT_PREFERENCES when /api/preferences returns 404", async () => {
   const originalFetch = globalThis.fetch;
   setApiBaseUrlOverride("https://api.example.test");
@@ -104,5 +128,72 @@ test("fetchPreferences returns DEFAULT_PREFERENCES when /api/preferences returns
   } finally {
     globalThis.fetch = originalFetch;
     setApiBaseUrlOverride("");
+  }
+});
+
+test("gatewayCheckToAnalyzeResponse fills runtime_warnings from backend warnings", () => {
+  const response = gatewayCheckToAnalyzeResponse(
+    {
+      requestId: "req-1",
+      language: "bn",
+      normalizedText: "আমি ভাত খাই।",
+      warnings: ["corrector_missing"],
+    } as never,
+    {
+      text: "আমি ভাত খাই।",
+      mode: "standard",
+      personal_dictionary: [],
+      user_id: "u1",
+    },
+  );
+
+  assert.deepEqual(response.runtime_warnings, ["corrector_missing"]);
+  assert.equal(response.sentence_count, 1);
+});
+
+test("gatewayCheckToAnalyzeResponse uses empty arrays when warnings and suggestions are missing", () => {
+  const response = gatewayCheckToAnalyzeResponse(
+    {
+      requestId: "req-1",
+      language: "bn",
+      normalizedText: "আমি ভাত খাই।",
+    } as never,
+    {
+      text: "আমি ভাত খাই।",
+      mode: "standard",
+      personal_dictionary: [],
+      user_id: "u1",
+    },
+  );
+
+  assert.deepEqual(response.runtime_warnings, []);
+  assert.deepEqual(response.suggestions, []);
+});
+
+test("readStoredApiBaseUrl ignores localhost override on deployed host", () => {
+  const originalWindow = globalThis.window;
+  const store = new Map<string, string>([
+    ["shuddho-api-base-url", "http://127.0.0.1:4000"],
+  ]);
+  Object.defineProperty(globalThis, "window", {
+    value: {
+      location: { hostname: "shuddho-web-editor.vercel.app" },
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+        removeItem: (key: string) => store.delete(key),
+      },
+    },
+    configurable: true,
+  });
+
+  try {
+    assert.equal(readStoredApiBaseUrl(), null);
+    assert.equal(store.has("shuddho-api-base-url"), false);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      value: originalWindow,
+      configurable: true,
+    });
   }
 });
