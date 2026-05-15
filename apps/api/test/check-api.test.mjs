@@ -1,20 +1,111 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createApp } from '../dist/app.js';
-const server = createServer(createApp()).listen(0);
-await new Promise((resolve) => server.once('listening', resolve));
-const { port } = server.address();
+
+const originalEnv = { ...process.env };
+process.env.SHUDDHO_NLP_PROVIDER = 'python';
+process.env.SHUDDHO_ENABLE_LOCAL_FALLBACK = 'true';
+process.env.SHUDDHO_ALLOWED_ORIGINS = 'http://localhost:5173,http://127.0.0.1:5173,https://shuddho-web-editor.vercel.app';
+process.env.SHUDDHO_ALLOW_VERCEL_PREVIEWS = 'false';
+process.env.NODE_ENV = 'production';
+
+const { createApp } = await import('../dist/app.js');
+
+function listen(handler) {
+  const server = createServer(handler).listen(0);
+  return new Promise((resolve) => server.once('listening', () => resolve(server)));
+}
+
+function close(server) {
+  return new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+}
+
+const analyzeRequests = [];
+const pythonServer = await listen((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+  if (req.url === '/analyze' && req.method === 'POST') {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      const body = JSON.parse(raw || '{}');
+      analyzeRequests.push(body);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        text: body.text,
+        normalized_text: body.text,
+        corrected_text: body.text,
+        suggestions: [],
+        warnings: [],
+      }));
+    });
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+});
+const pythonPort = pythonServer.address().port;
+process.env.SHUDDHO_PYTHON_API_URL = `http://127.0.0.1:${pythonPort}`;
+
+let server = await listen(createApp());
+let port = server.address().port;
+
 let response = await fetch(`http://127.0.0.1:${port}/health`);
 assert.equal(response.status, 200);
-response = await fetch(`http://127.0.0.1:${port}/api/check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'আমি  আমি ভাত খাই ।বাংলা ভাষা সুন্দর', language: 'bn', revision: 1, client: { surface: 'api' } }) });
+let body = await response.json();
+assert.equal(body.ok, true);
+assert.equal(body.provider, 'python-bangla');
+
+response = await fetch(`http://127.0.0.1:${port}/ready`);
 assert.equal(response.status, 200);
-const body = await response.json();
-assert.ok(body.requestId);
+body = await response.json();
+assert.equal(body.ok, true);
+
+response = await fetch(`http://127.0.0.1:${port}/api/check`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', origin: 'https://shuddho-web-editor.vercel.app' },
+  body: JSON.stringify({ text: 'আমি  আমি ভাত খাই।', language: 'bn', revision: 1, client: { surface: 'api' } }),
+});
+assert.equal(response.status, 200);
+assert.equal(response.headers.get('access-control-allow-origin'), 'https://shuddho-web-editor.vercel.app');
+body = await response.json();
+assert.equal(body.requestId.length > 0, true);
 assert.equal(body.language, 'bn');
+assert.equal(analyzeRequests.length, 1);
+assert.equal(analyzeRequests[0].text, 'আমি  আমি ভাত খাই।');
+assert.equal(analyzeRequests[0].mode, 'standard');
+
+response = await fetch(`http://127.0.0.1:${port}/api/check`, {
+  method: 'OPTIONS',
+  headers: { origin: 'https://shuddho-web-editor.vercel.app', 'access-control-request-method': 'POST' },
+});
+assert.equal(response.status, 204);
+assert.equal(response.headers.get('access-control-allow-origin'), 'https://shuddho-web-editor.vercel.app');
+
+await close(server);
+await close(pythonServer);
+
+process.env.SHUDDHO_PYTHON_API_URL = 'http://127.0.0.1:1';
+server = await listen(createApp());
+port = server.address().port;
+response = await fetch(`http://127.0.0.1:${port}/ready`);
+assert.equal(response.status, 503);
+body = await response.json();
+assert.equal(body.ok, false);
+
+response = await fetch(`http://127.0.0.1:${port}/api/check`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ text: 'আমি  আমি ভাত খাই ।বাংলা ভাষা সুন্দর', language: 'bn', revision: 1, client: { surface: 'api' } }),
+});
+assert.equal(response.status, 200);
+body = await response.json();
 assert.ok(body.suggestions.some((s) => s.ruleId === 'bn.spacing.repeated_spaces'));
 assert.ok(body.suggestions.some((s) => s.ruleId === 'bn.grammar.duplicate_word'));
-assert.ok(body.warnings.some((w) => String(w).includes('fallback')));
-response = await fetch(`http://127.0.0.1:${port}/api/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'suggestion_accepted', language: 'bn', suggestionId: body.suggestions[0].id, metadata: { text: 'গোপন লেখা', textLength: 8 } }) });
-assert.equal(response.status, 202);
-await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-console.log('API check tests passed');
+assert.ok(body.warnings.some((w) => String(w).includes('primary_provider_failed:python-bangla')));
+
+await close(server);
+process.env = originalEnv;
+console.log('API gateway tests passed');

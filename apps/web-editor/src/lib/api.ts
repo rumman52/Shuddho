@@ -17,11 +17,18 @@ export interface ApiConfigurationState {
   apiBaseUrl: string;
   source: "default_local" | "environment" | "override";
   isLocalBrowserOrigin: boolean;
+  isProductionBuild: boolean;
   targetsLocalhost: boolean;
   hardWarning: string | null;
   backendAllowed: boolean;
   localFallbackEnabled: boolean;
 }
+
+export type BackendHealthResponse = Partial<HealthDeepResponse> & {
+  ok?: boolean;
+  service?: string;
+  provider?: string;
+};
 
 let apiConfiguration = resolveApiConfiguration();
 
@@ -30,9 +37,12 @@ export function deriveApiConfiguration(args: {
   storedBaseUrl?: string | null;
   browserHostname?: string | null;
   enableLocalFallback?: boolean | null;
+  isProductionBuild?: boolean | null;
 }): ApiConfigurationState {
-  const { configuredBaseUrl, storedBaseUrl, browserHostname, enableLocalFallback } = args;
+  const { configuredBaseUrl, storedBaseUrl, browserHostname, enableLocalFallback, isProductionBuild } = args;
   const isLocalOrigin = isLocalBrowserOrigin(browserHostname);
+  const isProd = Boolean(isProductionBuild);
+  const hasConfiguredBaseUrl = Boolean(configuredBaseUrl?.trim() || storedBaseUrl?.trim());
   const rawBaseUrl = storedBaseUrl?.trim() || configuredBaseUrl?.trim() || DEFAULT_LOCAL_API_BASE_URL;
   const source =
     storedBaseUrl?.trim() ? "override" : configuredBaseUrl?.trim() ? "environment" : "default_local";
@@ -41,13 +51,16 @@ export function deriveApiConfiguration(args: {
   const localFallbackEnabled = Boolean(enableLocalFallback);
   const hardWarning =
     !isLocalOrigin && targetsLocalhost
-      ? `This deployed editor is still pointing to ${apiBaseUrl}. Set VITE_API_BASE_URL to a public backend URL; localhost is only valid from local browser sessions.`
-      : null;
+      ? `This deployed editor is still pointing to ${apiBaseUrl}. Set VITE_API_BASE_URL to a public HTTPS tunnel URL; localhost is only valid from local browser sessions.`
+      : isProd && !hasConfiguredBaseUrl
+        ? "VITE_API_BASE_URL is not set. Deployed frontend cannot call local backend without a public HTTPS tunnel."
+        : null;
 
   return {
     apiBaseUrl,
     source,
     isLocalBrowserOrigin: isLocalOrigin,
+    isProductionBuild: isProd,
     targetsLocalhost,
     hardWarning,
     backendAllowed: hardWarning === null,
@@ -127,40 +140,45 @@ export function sendFeedback(payload: FeedbackRequest): Promise<void> {
   });
 }
 
-export function getHealth(): Promise<HealthDeepResponse> {
-  return request<HealthDeepResponse>("/health/deep", {
+export function getHealth(): Promise<BackendHealthResponse> {
+  return request<BackendHealthResponse>("/health", {
     method: "GET",
   });
 }
 
-export function rewriteText(payload: RewriteRequest): Promise<RewriteResponse> {
-  return request<RewriteResponse>("/api/rewrite", {
+export async function rewriteText(payload: RewriteRequest): Promise<RewriteResponse> {
+  const response = await request<{ result?: RewriteResponse } | RewriteResponse>("/api/rewrite", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  return ("result" in response && response.result ? response.result : response) as RewriteResponse;
 }
 
-export function analyzeTone(payload: ToneAnalysisRequest): Promise<ToneAnalysisResponse> {
-  return request<ToneAnalysisResponse>("/api/tone", {
+export async function analyzeTone(payload: ToneAnalysisRequest): Promise<ToneAnalysisResponse> {
+  const response = await request<{ result?: ToneAnalysisResponse } | ToneAnalysisResponse>("/api/tone", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  return ("result" in response && response.result ? response.result : response) as ToneAnalysisResponse;
 }
 
-export function getUserPreferences(userId: string): Promise<UserPreferences> {
-  return request<UserPreferences>(`/preferences/${encodeURIComponent(userId)}`, {
+export function getUserPreferences(_userId: string): Promise<UserPreferences> {
+  return request<UserPreferences>("/api/preferences", {
     method: "GET",
   });
 }
 
-export function saveUserPreferences(userId: string, payload: UserPreferences): Promise<UserPreferences> {
-  return request<UserPreferences>(`/preferences/${encodeURIComponent(userId)}`, {
-    method: "POST",
+export function saveUserPreferences(_userId: string, payload: UserPreferences): Promise<UserPreferences> {
+  return request<UserPreferences>("/api/preferences", {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }
 
 export function getApiBaseUrl(): string {
+  if (apiConfiguration.isProductionBuild && apiConfiguration.hardWarning) {
+    console.warn(apiConfiguration.hardWarning);
+  }
   return apiConfiguration.apiBaseUrl;
 }
 
@@ -183,6 +201,7 @@ export function setApiBaseUrlOverride(nextBaseUrl: string): string {
     storedBaseUrl: trimmedValue || null,
     browserHostname: readBrowserHostname(),
     enableLocalFallback: readLocalFallbackFlag(),
+    isProductionBuild: readProductionFlag(),
   });
   return apiConfiguration.apiBaseUrl;
 }
@@ -193,6 +212,7 @@ function resolveApiConfiguration(): ApiConfigurationState {
     storedBaseUrl: readStoredApiBaseUrl(),
     browserHostname: readBrowserHostname(),
     enableLocalFallback: readLocalFallbackFlag(),
+    isProductionBuild: readProductionFlag(),
   });
 }
 
@@ -200,6 +220,11 @@ function readConfiguredBaseUrl(): string | null {
   const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env ?? {};
   const configuredBaseUrl = importMetaEnv.VITE_API_BASE_URL ?? importMetaEnv.VITE_API_URL;
   return configuredBaseUrl?.trim() || null;
+}
+
+function readProductionFlag(): boolean {
+  const importMetaEnv = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env ?? {};
+  return importMetaEnv.PROD === true || String(importMetaEnv.PROD) === "true";
 }
 
 function readLocalFallbackFlag(): boolean {

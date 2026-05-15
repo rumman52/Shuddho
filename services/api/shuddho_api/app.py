@@ -53,8 +53,11 @@ ENV_FILE_PATH = REPO_ROOT / ".env"
 ENV_FILE_LOADED = load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
 ALLOWED_ORIGINS_ENV_VAR = "SHUDDHO_ALLOWED_ORIGINS"
 DEFAULT_ALLOWED_ORIGINS = [
-    "http://127.0.0.1:5173",
+    "http://localhost:4000",
+    "http://127.0.0.1:4000",
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
     "https://shuddho-web-editor.vercel.app",
 ]
 ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"

@@ -80,3 +80,22 @@ Do not set npm options such as `omit=optional`, `optional=false`, or `ignore-scr
 - [Local development](docs/LOCAL_DEV.md)
 - [Security and privacy](docs/SECURITY_PRIVACY.md)
 - [Roadmap](docs/ROADMAP.md)
+
+### Alternate Vercel root directory
+
+If Vercel Root Directory is set to `apps/web-editor` instead of the repository root, use:
+
+- Framework Preset: `Vite`
+- Install Command: `npm install --include=optional`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+
+### Deployed Vercel frontend with a local backend
+
+The deployed frontend must not call `http://localhost:4000` or `http://localhost:8000`. In a browser, `localhost` means the visitor's machine, not the developer computer running Shuddho. For local-backend testing, expose only the TypeScript gateway (`localhost:4000`) through a public HTTPS tunnel and set this Vercel environment variable:
+
+```bash
+VITE_API_BASE_URL=https://your-public-backend-tunnel-url
+```
+
+See [Run the Shuddho backend locally behind a Vercel frontend](docs/LOCAL_BACKEND_WITH_VERCEL.md) for ngrok, Cloudflare Tunnel, CORS, and manual `curl` test commands.

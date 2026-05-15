@@ -1,39 +1,78 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deriveApiConfiguration } from "./api";
+import { analyzeText, deriveApiConfiguration, setApiBaseUrlOverride } from "./api";
 
-test("deriveApiConfiguration allows localhost only for local browser origins", () => {
+test("deriveApiConfiguration defaults local development to the TypeScript gateway", () => {
   const localConfig = deriveApiConfiguration({
     browserHostname: "localhost",
     configuredBaseUrl: null,
     storedBaseUrl: null,
   });
-  const deployedConfig = deriveApiConfiguration({
-    browserHostname: "shuddho-web-editor.vercel.app",
-    configuredBaseUrl: "http://127.0.0.1:8000",
-    storedBaseUrl: null,
-  });
 
   assert.equal(localConfig.backendAllowed, true);
-  assert.equal(localConfig.apiBaseUrl, "http://127.0.0.1:8000");
+  assert.equal(localConfig.apiBaseUrl, "http://127.0.0.1:4000");
   assert.equal(localConfig.localFallbackEnabled, false);
-  assert.equal(deployedConfig.backendAllowed, false);
-  assert.match(deployedConfig.hardWarning ?? "", /VITE_API_BASE_URL/);
-  assert.equal(deployedConfig.localFallbackEnabled, false);
 });
 
-test("deriveApiConfiguration accepts a public backend URL for deployed origins", () => {
+test("deriveApiConfiguration uses VITE_API_BASE_URL and normalizes trailing slashes", () => {
   const config = deriveApiConfiguration({
     browserHostname: "shuddho-web-editor.vercel.app",
-    configuredBaseUrl: "https://api.shuddho.example",
+    configuredBaseUrl: "https://api.shuddho.example/",
     storedBaseUrl: null,
+    isProductionBuild: true,
   });
 
   assert.equal(config.backendAllowed, true);
   assert.equal(config.apiBaseUrl, "https://api.shuddho.example");
   assert.equal(config.hardWarning, null);
-  assert.equal(config.localFallbackEnabled, false);
+});
+
+test("deriveApiConfiguration warns when production is missing VITE_API_BASE_URL", () => {
+  const config = deriveApiConfiguration({
+    browserHostname: "shuddho-web-editor.vercel.app",
+    configuredBaseUrl: null,
+    storedBaseUrl: null,
+    isProductionBuild: true,
+  });
+
+  assert.equal(config.backendAllowed, false);
+  assert.match(config.hardWarning ?? "", /VITE_API_BASE_URL is not set|public HTTPS tunnel/);
+});
+
+test("deriveApiConfiguration rejects localhost for deployed browser origins", () => {
+  const deployedConfig = deriveApiConfiguration({
+    browserHostname: "shuddho-web-editor.vercel.app",
+    configuredBaseUrl: "http://127.0.0.1:4000",
+    storedBaseUrl: null,
+  });
+
+  assert.equal(deployedConfig.backendAllowed, false);
+  assert.match(deployedConfig.hardWarning ?? "", /VITE_API_BASE_URL/);
+  assert.equal(deployedConfig.localFallbackEnabled, false);
+});
+
+test("analyzeText calls /api/check on configured gateway base URL", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: any }> = [];
+  setApiBaseUrlOverride("https://abc123.ngrok-free.app/");
+  globalThis.fetch = (async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
+    return new Response(JSON.stringify({ requestId: "req-1", language: "bn", normalizedText: "আমি ভাত খাই।", suggestions: [], warnings: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    await analyzeText({ text: "আমি ভাত খাই।", mode: "standard", personal_dictionary: [], user_id: "u1" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+
+  assert.equal(calls[0]?.url, "https://abc123.ngrok-free.app/api/check");
+  assert.equal(calls[0]?.body.language, "bn");
 });
 
 test("deriveApiConfiguration keeps local fallback behind an explicit dev flag", () => {
