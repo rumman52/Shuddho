@@ -33,10 +33,10 @@ const INITIAL_TEXT = sampleFixtures[0]?.text ?? "আমি বাংলা ল�
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 const ANALYSIS_DEBOUNCE_MS = 450;
 const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
-const BACKEND_OFFLINE_FALLBACK_MESSAGE = "Backend offline. Only limited local checks are available.";
-const SUGGESTIONS_DISABLED_MESSAGE = "Backend offline and browser fallback is disabled. Suggestions are unavailable.";
-const DEV_LOCAL_FALLBACK_LABEL = "Limited browser fallback";
-const DEV_LOCAL_FALLBACK_DESCRIPTION = BACKEND_OFFLINE_FALLBACK_MESSAGE;
+const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED = "Backend is not connected. Contextual Bengali correction is disabled.";
+const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED;
+const DEV_LOCAL_FALLBACK_LABEL = "Dev-only browser fallback";
+const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
 
 type BackendMode = "checking" | "online" | "offline" | "misconfigured";
 

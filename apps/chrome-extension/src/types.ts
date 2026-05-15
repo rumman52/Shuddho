@@ -1,4 +1,5 @@
 import type {
+  AnalyzeMode,
   AnalyzeResponse,
   FeedbackRequest,
   RewriteIntent,
@@ -7,7 +8,7 @@ import type {
   ToneAnalysisResponse,
 } from "@shared/schemas/contracts";
 
-export type { AnalyzeResponse, FeedbackRequest, RewriteIntent, RewriteResponse, Suggestion, ToneAnalysisResponse };
+export type { AnalyzeMode, AnalyzeResponse, FeedbackRequest, RewriteIntent, RewriteResponse, Suggestion, ToneAnalysisResponse };
 
 export interface SuggestionRange {
   suggestion: Suggestion;

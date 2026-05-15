@@ -3,9 +3,9 @@ import type { HealthDeepResponse } from "@shared/schemas/contracts";
 import { getExtensionSettings, getHostnameFromUrl, setSiteDisabled, updateExtensionSettings } from "./config";
 import type { ExtensionSettings } from "./types";
 
-const DETECTOR_UNAVAILABLE_COPY = "Detector unavailable";
-const CORRECTOR_UNAVAILABLE_COPY = "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only.";
-const BACKEND_UNREACHABLE_COPY = "Backend offline. Only limited local checks are available.";
+const DETECTOR_UNAVAILABLE_COPY = "detector unavailable";
+const CORRECTOR_UNAVAILABLE_COPY = "corrector unavailable";
+const BACKEND_UNREACHABLE_COPY = "smart analysis paused";
 
 const statusElement = document.getElementById("status");
 const siteHostnameElement = document.getElementById("site-hostname");
@@ -50,7 +50,7 @@ async function refreshBackendStatus(): Promise<void> {
     if (!health.corrector.loaded) {
       issues.push(CORRECTOR_UNAVAILABLE_COPY);
     }
-    statusElement.textContent = health.backend_warning || (issues.length ? `${health.analysis_profile} (${issues.join(", ")})` : `${health.analysis_profile}`);
+    statusElement.textContent = health.backend_warning || (issues.length ? `Backend live (${issues.join(", ")})` : "Backend live");
   } catch {
     statusElement.textContent = `${BACKEND_UNREACHABLE_COPY} at ${settings.backendBaseUrl}`;
   }

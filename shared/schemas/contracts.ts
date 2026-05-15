@@ -5,6 +5,7 @@ export type SuggestionCategory =
   | "spacing"
   | "register"
   | "clarity"
+  | "style"
   | "rewrite_only";
 
 export type SuggestionSource = "rule" | "spell" | "model" | "hybrid";

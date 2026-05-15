@@ -34,6 +34,10 @@ export function analyzeTextLocally(
     ...buildRepeatedWordSuggestions(text),
     ...buildDuplicatePunctuationSuggestions(text),
     ...buildExtraWhitespaceSuggestions(text),
+    ...buildWhitespaceBeforePunctuationSuggestions(text),
+    ...buildBanglaFullStopSuggestions(text),
+    ...buildSpaceAfterTerminatorSuggestions(text),
+    ...buildVariantSuggestions(text, mode, payload.personal_dictionary ?? []),
     ...buildExactCorrectionSuggestions(text, payload.personal_dictionary ?? []),
   ]);
 
@@ -139,7 +143,7 @@ function buildExtraWhitespaceSuggestions(text: string): Suggestion[] {
       buildSuggestion({
         prefix: "local-space-extra",
         ruleId: "SPACE_001",
-        category: "grammar",
+        category: "spacing",
         subtype: "extra_whitespace",
         start,
         end: start + originalText.length,
@@ -274,7 +278,7 @@ function buildVariantSuggestions(
       buildSuggestion({
         prefix: "local-variant",
         ruleId: "SPELL_002",
-        category: "spelling",
+        category: "style",
         subtype: "orthography_variant",
         start,
         end: start + originalText.length,
