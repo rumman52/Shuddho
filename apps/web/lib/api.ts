@@ -2,11 +2,12 @@ import type { CheckResponse, Suggestion } from '@shuddho/shared';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 
-export async function checkText(text: string, documentId: string, revision: number): Promise<CheckResponse> {
+export async function checkText(text: string, documentId: string, revision: number, signal?: AbortSignal): Promise<CheckResponse> {
   const response = await fetch(`${API_BASE}/api/check`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ documentId, text, revision, goals: ['grammar', 'spelling', 'style', 'tone', 'rewrite'] }),
+    body: JSON.stringify({ documentId, text, revision, language: 'bn', client: { surface: 'web', version: 'next-mvp' }, options: { includeGrammar: true, includeSpelling: true, includeStyle: true, includeTone: true, includeRewrite: true } }),
+    signal,
   });
   if (!response.ok) throw new Error(`check failed: ${response.status}`);
   return response.json();
@@ -16,6 +17,6 @@ export async function trackSuggestion(type: 'suggestion_accepted' | 'suggestion_
   await fetch(`${API_BASE}/api/events`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ events: [{ type, documentId, suggestionId: suggestion.id, metadata: { suggestionType: suggestion.type } }] }),
+    body: JSON.stringify({ events: [{ type, documentId, suggestionId: suggestion.id, language: 'bn', suppressionKey: suggestion.suppressionKey, metadata: { suggestionType: suggestion.type, ruleId: suggestion.ruleId } }] }),
   }).catch(() => undefined);
 }

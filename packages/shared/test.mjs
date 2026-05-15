@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { makeStableSuggestionId, makeSuppressionKey, toCodePointOffsets, toUtf16Offsets, snapSpanToGraphemeBoundary, legacyAnalyzeToCheckResponse } from './dist/index.js';
+const id1 = makeStableSuggestionId({ ruleId: 'bn.spacing', type: 'spacing', startIndex: 3, endIndex: 5, originalText: '  ', suggestedText: ' ', provider: 'test' });
+const id2 = makeStableSuggestionId({ ruleId: 'bn.spacing', type: 'spacing', startIndex: 3, endIndex: 5, originalText: '  ', suggestedText: ' ', provider: 'test' });
+assert.equal(id1, id2);
+assert.equal(makeSuppressionKey({ ruleId: 'r', type: 'grammar', originalText: 'আমি', suggestedText: 'আমি' }), makeSuppressionKey({ ruleId: 'r', type: 'grammar', originalText: 'আমি', suggestedText: 'আমি' }));
+const text = 'আমি 😀 ভাত খাই।';
+const cp = toCodePointOffsets(text, 4, 6);
+const utf = toUtf16Offsets(text, cp.codePointStartIndex, cp.codePointEndIndex);
+assert.deepEqual(utf, { utf16StartIndex: 4, utf16EndIndex: 6 });
+const span = snapSpanToGraphemeBoundary('বাংলা ভাষা সুন্দর।', 0, 5);
+assert.equal('বাংলা ভাষা সুন্দর।'.slice(span.startIndex, span.endIndex), 'বাংলা');
+const adapted = legacyAnalyzeToCheckResponse({ suggestions: [{ rule_id: 'bn.spacing', category: 'spacing', span_start: 3, span_end: 5, original_text: '  ', replacement_options: [' '], confidence: 1, explanation_bn: 'স্পেস', source: 'rule', severity: 'low' }] }, { requestId: 'r1', text: 'আমি  ভাত', revision: 1 });
+assert.equal(adapted.suggestions[0].span.codePointStartIndex, 3);
+console.log('shared tests passed');

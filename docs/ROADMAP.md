@@ -1,18 +1,8 @@
 # Roadmap
 
-## Near term
-- Persist API services to Prisma/PostgreSQL instead of in-memory stores.
-- Add Redis-backed suggestion cache and distributed rate limits.
-- Add robust TipTap/Lexical editor decorations.
-- Add Playwright browser tests.
-
-## Mid term
-- Browser extension integration with the shared API.
-- Operational transform or CRDT collaboration.
-- OpenTelemetry traces and dashboards.
-- Enterprise policy admin surface.
-
-## Long term
-- On-device lightweight inference.
-- Pluggable hosted AI provider adapters.
-- Team style guides and shared dictionaries.
+1. Replace MVP WebSocket revision sync with OT or CRDT collaboration.
+2. Add durable DB-backed preferences, documents, feedback, and events using Prisma models.
+3. Add Redis rate limiting, session cache, and suggestion cache.
+4. Expand high-precision Bangla grammar coverage with gold-data evaluation.
+5. Add future ML/LLM provider adapters behind privacy policy and consent gates.
+6. Add extension store packaging and production auth.

@@ -9,81 +9,78 @@ datasource db {
 
 model User {
   id          String   @id @default(uuid())
-  email       String   @unique
+  email       String?  @unique
   displayName String?
   createdAt   DateTime @default(now())
   documents   Document[]
   preferences UserPreference?
+  feedback    SuggestionFeedback[]
+  events      Event[]
+}
+
+model UserPreference {
+  id                        String   @id @default(uuid())
+  userId                    String?  @unique
+  language                  String   @default("bn")
+  dialect                   String   @default("standard")
+  enabledSuggestionTypes    String[]
+  productImprovementConsent Boolean  @default(false)
+  updatedAt                 DateTime @updatedAt
+  user                      User?    @relation(fields: [userId], references: [id])
 }
 
 model Document {
   id        String   @id @default(uuid())
-  ownerId   String
-  title     String
-  plainText String
+  ownerId   String?
+  title     String   @default("Untitled draft")
+  text      String   @default("")
   revision  Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  owner     User     @relation(fields: [ownerId], references: [id])
+  owner     User?    @relation(fields: [ownerId], references: [id])
   revisions DocumentRevision[]
-  suggestions Suggestion[]
+  feedback  SuggestionFeedback[]
+  events    Event[]
 }
 
 model DocumentRevision {
   id         String   @id @default(uuid())
   documentId String
   revision   Int
-  operation  Json
-  snapshot   String
+  text       String
+  operation  Json?
   createdAt  DateTime @default(now())
   document   Document @relation(fields: [documentId], references: [id])
 
   @@unique([documentId, revision])
 }
 
-model Suggestion {
-  id             String   @id
+model SuggestionFeedback {
+  id             String   @id @default(uuid())
+  userId         String?
   documentId     String?
-  type           String
-  severity       String
-  originalText   String
-  suggestedText  String
-  explanation    String
-  startIndex     Int
-  endIndex       Int
-  confidence     Float
-  sourceProvider String
-  status         String   @default("open")
+  suggestionId   String?
+  suppressionKey String?
+  ruleId         String?
+  type           String?
+  action         String
+  metadata       Json?
   createdAt      DateTime @default(now())
+  user           User?     @relation(fields: [userId], references: [id])
   document       Document? @relation(fields: [documentId], references: [id])
 }
 
-model UserPreference {
-  userId                  String  @id
-  locale                  String  @default("en-US")
-  formality               String  @default("neutral")
-  enabledSuggestionTypes  String[]
-  allowProductImprovement Boolean @default(false)
-  user                    User    @relation(fields: [userId], references: [id])
-}
-
-model ProductEvent {
-  id           String   @id @default(uuid())
-  userId       String?
-  tenantId     String?
-  type         String
-  documentId   String?
-  suggestionId String?
-  metadata     Json
-  occurredAt   DateTime @default(now())
-}
-
-model TeamSetting {
-  id        String   @id @default(uuid())
-  tenantId  String
-  key       String
-  value     Json
-  updatedAt DateTime @updatedAt
-
-  @@unique([tenantId, key])
+model Event {
+  id             String   @id @default(uuid())
+  type           String
+  timestamp      DateTime @default(now())
+  requestId      String?
+  documentId     String?
+  userId         String?
+  suggestionId   String?
+  suppressionKey String?
+  language       String   @default("bn")
+  metadata       Json?
+  user           User?     @relation(fields: [userId], references: [id])
+  document       Document? @relation(fields: [documentId], references: [id])
 }

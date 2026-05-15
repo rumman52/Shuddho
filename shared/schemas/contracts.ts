@@ -295,3 +295,55 @@ export interface FeedbackRequest {
   user_dictionary_entry?: string | null;
   user_id?: string | null;
 }
+
+// Canonical Shuddho gateway contract. Legacy AnalyzeResponse remains above for old consumers.
+export type CanonicalSuggestionType = "grammar" | "spelling" | "punctuation" | "spacing" | "style" | "tone" | "rewrite";
+export type CanonicalSuggestionSeverity = "low" | "medium" | "high";
+export type CanonicalSuggestionSource = "rule" | "spell" | "grammar" | "tone" | "rewrite" | "ml" | "hybrid";
+export interface TextSpan {
+  startIndex: number;
+  endIndex: number;
+  utf16StartIndex?: number;
+  utf16EndIndex?: number;
+  codePointStartIndex?: number;
+  codePointEndIndex?: number;
+  graphemeStartIndex?: number;
+  graphemeEndIndex?: number;
+}
+export interface CanonicalSuggestion {
+  id: string;
+  suppressionKey: string;
+  ruleId: string;
+  type: CanonicalSuggestionType;
+  severity: CanonicalSuggestionSeverity;
+  originalText: string;
+  suggestedText: string;
+  replacementOptions: string[];
+  explanationBn: string;
+  explanationEn?: string;
+  span: TextSpan;
+  confidence: number;
+  source: CanonicalSuggestionSource;
+  provider: string;
+  metadata?: Record<string, unknown>;
+}
+export interface CheckRequest {
+  text: string;
+  documentId?: string;
+  revision?: number;
+  language: "bn";
+  dialect?: "standard" | "west_bengal" | "bangladesh" | "mixed";
+  userId?: string;
+  client?: { surface: "web" | "extension" | "desktop" | "mobile" | "api"; version?: string };
+  options?: { includeGrammar?: boolean; includeSpelling?: boolean; includeStyle?: boolean; includeTone?: boolean; includeRewrite?: boolean };
+}
+export interface CheckResponse {
+  requestId: string;
+  documentId?: string;
+  revision?: number;
+  language: "bn";
+  normalizedText?: string;
+  suggestions: CanonicalSuggestion[];
+  timings?: Record<string, number>;
+  warnings?: string[];
+}

@@ -24,6 +24,7 @@ from services.normalizer.shuddho_normalizer.normalizer import BanglaNormalizer
 from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
+from services.api.shuddho_api.adapters import analyze_to_check_response
 from shared.schemas.python_models import (
     AnalysisProfile,
     AnalyzeRequest,
@@ -41,6 +42,8 @@ from shared.schemas.python_models import (
     ToneAnalysisRequest,
     ToneAnalysisResponse,
     UserPreferences,
+    CanonicalCheckRequest,
+    CanonicalCheckResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,6 +210,12 @@ def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
 @app.post("/feedback", response_model=FeedbackRecord)
 def feedback(payload: FeedbackRequest) -> FeedbackRecord:
     return feedback_store.save(payload)
+
+
+@app.post("/api/check", response_model=CanonicalCheckResponse)
+def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
+    legacy = analyze(AnalyzeRequest(text=payload.text, user_id=payload.userId))
+    return analyze_to_check_response(legacy, request_id=datetime.now(timezone.utc).isoformat(), text=payload.text, document_id=payload.documentId, revision=payload.revision)
 
 
 @app.post("/rewrite", response_model=RewriteResponse)
