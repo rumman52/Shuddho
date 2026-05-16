@@ -66,7 +66,7 @@ export class IssueOverlay {
         .root {
           position: fixed;
           pointer-events: none;
-          font-family: "Segoe UI", sans-serif;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Noto Sans Mono", "Noto Sans Bengali", monospace;
         }
         .badge {
           pointer-events: auto;
