@@ -27,8 +27,6 @@ export function SuggestionCard({
   onIgnoreForever,
   onAddToDictionary,
   onRewrite,
-  position,
-  total,
 }: SuggestionCardProps) {
   const primaryExplanation =
     suggestion.suggestion_reason_short_bn ??
@@ -52,14 +50,9 @@ export function SuggestionCard({
     <article className="suggestion-card">
       <div className="suggestion-card__header">
         <span className="suggestion-card__type">
-          <span aria-hidden="true">●</span>
+          <span className="issue-dot" aria-hidden="true" />
           {displaySuggestionType(suggestion)}
         </span>
-        {position && total ? (
-          <span className="suggestion-card__position">
-            {position} of {total}
-          </span>
-        ) : null}
       </div>
 
       <div className="suggestion-card__change">
@@ -86,6 +79,23 @@ export function SuggestionCard({
         <details className="explain-details">
           <summary>Explain</summary>
           <p>{suggestion.explanation_bn || suggestion.explanation_en}</p>
+        </details>
+        <details className="suggestion-menu">
+          <summary aria-label="More options">•••</summary>
+          <div className="suggestion-menu__content">
+            <button type="button" className="text-button" onClick={onIgnoreForever}>
+              Ignore forever
+            </button>
+            {onAddToDictionary ? (
+              <button
+                type="button"
+                className="text-button"
+                onClick={onAddToDictionary}
+              >
+                Add to dictionary
+              </button>
+            ) : null}
+          </div>
         </details>
       </div>
 
@@ -134,20 +144,6 @@ export function SuggestionCard({
         </div>
       ) : null}
 
-      <div className="suggestion-card__secondary-actions">
-        <button type="button" className="text-button" onClick={onIgnoreForever}>
-          Ignore forever
-        </button>
-        {onAddToDictionary ? (
-          <button
-            type="button"
-            className="text-button"
-            onClick={onAddToDictionary}
-          >
-            Add to dictionary
-          </button>
-        ) : null}
-      </div>
 
       {debugMode ? (
         <details className="suggestion-card__details">

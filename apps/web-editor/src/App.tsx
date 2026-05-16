@@ -696,27 +696,20 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-lockup" aria-label="Shuddho home">
-          <span className="brand-mark" aria-hidden="true">
-            ✨
-          </span>
-          <div className="brand-text">
-            <strong>Shuddho</strong>
-            <span>AI Bangla Writing Assistant</span>
-          </div>
+        <div className="brand-text" aria-label="Shuddho home">
+          <strong>Shuddho</strong>
+          <span>AI Bangla Writing Assistant</span>
         </div>
         <nav className="header-actions" aria-label="Top navigation">
-          <button type="button" className="nav-link nav-link--boxed">
-            <span aria-hidden="true">📖</span>
+          <button type="button" className="ghost-button">
             Dictionary
           </button>
-          <button type="button" className="nav-link">
-            <span aria-hidden="true">⚙️</span>
+          <button type="button" className="ghost-button">
             Settings
           </button>
           <button
             type="button"
-            className="user-avatar"
+            className="avatar-button"
             aria-label="User profile"
           >
             {userId.slice(0, 1).toUpperCase() || "S"}
@@ -733,97 +726,76 @@ export default function App() {
       <section className="product-shell" aria-label="Bangla writing assistant workspace">
         <aside className="left-nav" aria-label="Primary navigation">
           <div className="left-nav__main">
-            {[
-              ["Write", "✍️"],
-              ["Review", "☆"],
-              ["Dictionary", "📖"],
-              ["History", "◷"],
-            ].map(([item, icon]) => (
+            {["Write", "Review", "Dictionary", "History"].map((item) => (
               <button
                 key={item}
                 type="button"
                 className={`left-nav__item ${item === "Write" ? "left-nav__item--active" : ""}`}
               >
-                <span aria-hidden="true">{icon}</span>
                 {item}
               </button>
             ))}
           </div>
           <div className="left-nav__footer">
             <button type="button" className="left-nav__item left-nav__item--quiet">
-              <span aria-hidden="true">?</span>
               Help
             </button>
             <button type="button" className="left-nav__item left-nav__item--quiet">
-              <span aria-hidden="true">☾</span>
-              Dark mode
+              Theme
             </button>
           </div>
         </aside>
 
         <section className="editor-column">
-          <div className="workspace-controls" aria-label="Writing controls">
-            <label className="control-card">
-              <span className="control-card__icon" aria-hidden="true">
-                ◎
-              </span>
-              <span>
-                <span className="control-card__label">Writing goal</span>
-                <select
-                  value={preferences.writing_goal}
-                  onChange={(event) => {
-                    const nextGoal = event.target
-                      .value as ShuddhoPreferences["writing_goal"];
-                    setPreferences((current) => ({
-                      ...current,
-                      writing_goal: nextGoal,
-                    }));
-                    setMode(modeFromWritingGoal(nextGoal));
-                  }}
-                >
-                  <option value="general">General</option>
-                  <option value="formal">Formal</option>
-                  <option value="academic">Academic</option>
-                  <option value="business">Business</option>
-                  <option value="casual">Casual</option>
-                  <option value="social">Social</option>
-                </select>
-              </span>
+          <div className="context-bar" aria-label="Writing context">
+            <label className="context-item">
+              <span>Writing goal</span>
+              <select
+                value={preferences.writing_goal}
+                onChange={(event) => {
+                  const nextGoal = event.target
+                    .value as ShuddhoPreferences["writing_goal"];
+                  setPreferences((current) => ({
+                    ...current,
+                    writing_goal: nextGoal,
+                  }));
+                  setMode(modeFromWritingGoal(nextGoal));
+                }}
+              >
+                <option value="general">General</option>
+                <option value="formal">Formal</option>
+                <option value="academic">Academic</option>
+                <option value="business">Business</option>
+                <option value="casual">Casual</option>
+                <option value="social">Social</option>
+              </select>
             </label>
-            <label className="control-card control-card--tone">
-              <span className="control-card__icon" aria-hidden="true">
-                ☺
-              </span>
-              <span>
-                <span className="control-card__label">Tone</span>
-                <select
-                  value={preferences.tone_goal}
-                  onChange={(event) =>
-                    setPreferences((current) => ({
-                      ...current,
-                      tone_goal: event.target
-                        .value as ShuddhoPreferences["tone_goal"],
-                    }))
-                  }
-                >
-                  <option value="neutral">Neutral</option>
-                  <option value="friendly">Friendly</option>
-                  <option value="professional">Professional</option>
-                  <option value="concise">Concise</option>
-                  <option value="confident">Confident</option>
-                </select>
-              </span>
+            <label className="context-item">
+              <span>Tone</span>
+              <select
+                value={preferences.tone_goal}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    tone_goal: event.target
+                      .value as ShuddhoPreferences["tone_goal"],
+                  }))
+                }
+              >
+                <option value="neutral">Neutral</option>
+                <option value="friendly">Friendly</option>
+                <option value="professional">Professional</option>
+                <option value="concise">Concise</option>
+                <option value="confident">Confident</option>
+              </select>
             </label>
-            <div className="insight-card" aria-label="Current document insights">
-              <div>
-                <span>Suggestions</span>
-                <strong>{suggestions.length}</strong>
-              </div>
-              <div>
-                <span>Dictionary</span>
-                <strong>{preferences.personal_dictionary?.length ?? 0}</strong>
-                <small>words</small>
-              </div>
+            <div className="context-item" aria-label="Suggestion count">
+              <span>Suggestions</span>
+              <strong>{suggestions.length}</strong>
+            </div>
+            <div className="context-item" aria-label="Dictionary word count">
+              <span>Dictionary</span>
+              <strong>{preferences.personal_dictionary?.length ?? 0} words</strong>
             </div>
           </div>
 
@@ -839,11 +811,10 @@ export default function App() {
               <button type="button" aria-label="Underline">
                 <u>U</u>
               </button>
-              <button type="button" aria-label="Bulleted list">☷</button>
-              <button type="button" aria-label="Numbered list">☰</button>
+              <button type="button" aria-label="Bulleted list">• List</button>
               <span className="toolbar-spacer" />
-              <button type="button" aria-label="Undo">↶</button>
-              <button type="button" aria-label="Redo">↷</button>
+              <button type="button" aria-label="Undo">Undo</button>
+              <button type="button" aria-label="Redo">Redo</button>
             </div>
 
             <div className="editor-frame">
@@ -858,12 +829,20 @@ export default function App() {
                   return (
                     <span
                       key={segment.key}
-                      className="inline-issue"
+                      className={`inline-issue ${displaySuggestionType(suggestion).toLowerCase()}`}
                       data-issue-type={displaySuggestionType(suggestion)}
-                      onMouseEnter={() =>
-                        setActiveInlineSuggestionId(suggestion.id)
-                      }
-                      onFocus={() => setActiveInlineSuggestionId(suggestion.id)}
+                      onMouseEnter={() => {
+                        setActiveInlineSuggestionId(suggestion.id);
+                        setSelectedSuggestionId(suggestion.id);
+                      }}
+                      onClick={() => {
+                        setActiveInlineSuggestionId(suggestion.id);
+                        setSelectedSuggestionId(suggestion.id);
+                      }}
+                      onFocus={() => {
+                        setActiveInlineSuggestionId(suggestion.id);
+                        setSelectedSuggestionId(suggestion.id);
+                      }}
                       tabIndex={0}
                     >
                       {segment.text}
@@ -878,7 +857,7 @@ export default function App() {
                             ×
                           </button>
                           <span className="correction-type">
-                            <span aria-hidden="true">●</span>
+                            <span className="issue-dot" aria-hidden="true" />
                             {displaySuggestionType(suggestion)}
                           </span>
                           <span className="correction-change">
@@ -951,18 +930,14 @@ export default function App() {
                 className="button-primary check-writing-button"
                 onClick={handleCheckWriting}
               >
-                <span aria-hidden="true">✧</span>
-                Check Writing
+Check Writing
               </button>
             </div>
           </div>
 
           <section className="ai-actions" aria-label="AI Actions">
             <div>
-              <h2>
-                <span aria-hidden="true">✧</span>
-                AI Actions
-              </h2>
+              <h2>AI Actions</h2>
             </div>
             <div className="ai-actions__buttons">
               {(
@@ -985,8 +960,7 @@ export default function App() {
               ))}
             </div>
             <p className="ai-actions__tip">
-              <span aria-hidden="true">💡</span>
-              Tip: Select a sentence to see AI suggestions for improvement.
+              Select a sentence to see focused AI suggestions for improvement.
             </p>
           </section>
 
@@ -1060,17 +1034,13 @@ export default function App() {
           <span className="sr-only">Review queue</span>
           <div className="review-panel__header">
             <div>
-              <h2>
-                <span aria-hidden="true">✦</span>
-                AI Review
-              </h2>
-              <p className="review-panel__status">{status}</p>
+              <h2>AI Review</h2>
+              <p className="review-count">{suggestions.length} suggestions</p>
             </div>
           </div>
 
-          <p className="review-success">
-            <span aria-hidden="true">✓</span>
-            {suggestions.length} suggestions found
+          <p className="review-panel__status">
+            Review spelling, grammar, and clarity suggestions.
           </p>
 
           <div className="review-tabs" role="tablist" aria-label="Suggestion filters">
@@ -1109,8 +1079,6 @@ export default function App() {
                   <SuggestionCard
                     suggestion={suggestion}
                     debugMode={debugMode}
-                    position={suggestions.findIndex((item) => item.id === suggestion.id) + 1}
-                    total={suggestions.length}
                     onApply={(candidate, replacement) =>
                       handleApplySuggestion(candidate, replacement, suggestion)
                     }
@@ -1154,7 +1122,7 @@ export default function App() {
           </div>
 
           <details className="advanced-settings">
-            <summary>Preferences & advanced settings</summary>
+            <summary>Advanced settings for developers</summary>
             <div className="advanced-settings__body">
               <strong>{runtimeDescriptor.label}</strong>
               <span>{status}</span>
@@ -1289,7 +1257,6 @@ export default function App() {
       </section>
 
       <footer className="trust-footer">
-        <span aria-hidden="true">🔒</span>
         Your text is private and secure. <strong>Shuddho</strong> does not store
         your content.
       </footer>
