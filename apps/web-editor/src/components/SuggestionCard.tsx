@@ -1,9 +1,16 @@
-import type { RewriteIntent, Suggestion, SuggestionAlternative } from "@shared/schemas/contracts";
+import type {
+  RewriteIntent,
+  Suggestion,
+  SuggestionAlternative,
+} from "@shared/schemas/contracts";
 
 interface SuggestionCardProps {
   suggestion: Suggestion;
   debugMode?: boolean;
-  onApply: (candidate: Suggestion | SuggestionAlternative, replacement: string) => void;
+  onApply: (
+    candidate: Suggestion | SuggestionAlternative,
+    replacement: string,
+  ) => void;
   onDismiss: () => void;
   onIgnoreForever: () => void;
   onAddToDictionary?: () => void;
@@ -19,123 +26,151 @@ export function SuggestionCard({
   onAddToDictionary,
   onRewrite,
 }: SuggestionCardProps) {
-  const primaryExplanation = suggestion.suggestion_reason_short_bn ?? suggestion.explanation_bn ?? suggestion.explanation_en;
-  const secondaryExplanation =
-    suggestion.explanation_en && suggestion.explanation_en !== suggestion.explanation_bn
-      ? suggestion.explanation_en
-      : null;
-  const replacementOptions = Array.isArray(suggestion.replacement_options) ? suggestion.replacement_options : [];
-  const alternatives = Array.isArray(suggestion.alternatives) ? suggestion.alternatives : [];
-  const toneLabels = Array.isArray(suggestion.tone_labels) ? suggestion.tone_labels : [];
-  const actionHints = Array.isArray(suggestion.action_hints) ? suggestion.action_hints : [];
-  const rewriteIntents = Array.isArray(suggestion.rewrite_intents) ? suggestion.rewrite_intents : [];
-  const sourceTrace = Array.isArray(suggestion.source_trace) ? suggestion.source_trace : [];
+  const primaryExplanation =
+    suggestion.suggestion_reason_short_bn ??
+    suggestion.explanation_bn ??
+    suggestion.explanation_en;
+  const replacementOptions = Array.isArray(suggestion.replacement_options)
+    ? suggestion.replacement_options
+    : [];
+  const alternatives = Array.isArray(suggestion.alternatives)
+    ? suggestion.alternatives
+    : [];
+  const rewriteIntents = Array.isArray(suggestion.rewrite_intents)
+    ? suggestion.rewrite_intents
+    : [];
+  const sourceTrace = Array.isArray(suggestion.source_trace)
+    ? suggestion.source_trace
+    : [];
+  const primaryReplacement = replacementOptions[0] ?? "";
 
   return (
     <article className="suggestion-card">
       <div className="suggestion-card__header">
-        <div>
-          <div className="suggestion-card__eyebrow">{suggestion.ui_group ?? suggestion.category}</div>
-          <h3>{suggestion.short_title ?? "Writing suggestion"}</h3>
-        </div>
-        <div className="suggestion-card__chips">
-          <span>{suggestion.category}</span>
-          {debugMode ? <span>{Math.round(suggestion.confidence * 100)}%</span> : null}
-          {debugMode ? <span>{suggestion.source}</span> : null}
-          {debugMode ? <span>{suggestion.severity}</span> : null}
-        </div>
+        <span className="suggestion-card__type">
+          {displaySuggestionType(suggestion)}
+        </span>
       </div>
 
-      <div className="suggestion-card__issue">
-        <span className="suggestion-card__label">Issue</span>
-        <strong>{suggestion.original_text}</strong>
+      <div className="suggestion-card__change">
+        <span>{suggestion.original_text}</span>
+        {primaryReplacement ? <span aria-hidden="true">→</span> : null}
+        {primaryReplacement ? <strong>{primaryReplacement}</strong> : null}
       </div>
-
-      {replacementOptions[0] ? (
-        <div className="suggestion-card__issue">
-          <span className="suggestion-card__label">Primary replacement</span>
-          <strong>{replacementOptions[0]}</strong>
-        </div>
-      ) : null}
 
       <p className="suggestion-card__summary">{primaryExplanation}</p>
 
-      <div className="suggestion-card__chips suggestion-card__chips--soft">
-        {toneLabels.map((toneLabel) => (
-          <span key={toneLabel}>{toneLabel}</span>
-        ))}
-        {actionHints.map((hint) => (
-          <span key={hint}>{hint.replaceAll("_", " ")}</span>
-        ))}
-      </div>
-
-      <div className="suggestion-card__options">
-        {replacementOptions.map((option, index) => (
+      <div className="suggestion-card__footer">
+        {primaryReplacement ? (
           <button
-            key={`${suggestion.id}:${option}`}
             type="button"
-            className={index === 0 ? "button-primary" : "button-secondary"}
-            onClick={() => onApply(suggestion, option)}
+            className="button-primary"
+            onClick={() => onApply(suggestion, primaryReplacement)}
           >
-            {option}
+            Apply
           </button>
-        ))}
+        ) : null}
+        <button type="button" className="button-secondary" onClick={onDismiss}>
+          Ignore
+        </button>
+        <details className="explain-details">
+          <summary>Explain</summary>
+          <p>{suggestion.explanation_bn || suggestion.explanation_en}</p>
+        </details>
       </div>
 
       {alternatives.length > 0 ? (
-        <div className="suggestion-card__alternatives">
-          {alternatives.map((alternative) => (
-            <div key={alternative.id} className="suggestion-card__alternative">
-              <div className="suggestion-card__options">
-                {(alternative.replacement_options ?? []).map((option) => (
-                  <button
-                    key={`${alternative.id}:${option}`}
-                    type="button"
-                    className="button-secondary"
-                    onClick={() => onApply(alternative, option)}
-                  >
-                    {option}
-                  </button>
-                ))}
+        <details className="suggestion-card__details">
+          <summary>Other replacements</summary>
+          <div className="suggestion-card__alternatives">
+            {alternatives.map((alternative) => (
+              <div
+                key={alternative.id}
+                className="suggestion-card__alternative"
+              >
+                <div className="suggestion-card__options">
+                  {(alternative.replacement_options ?? []).map((option) => (
+                    <button
+                      key={`${alternative.id}:${option}`}
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => onApply(alternative, option)}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+                <p>
+                  {alternative.explanation_bn || alternative.explanation_en}
+                </p>
               </div>
-              <p>{alternative.explanation_bn || alternative.explanation_en}</p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </details>
       ) : null}
 
       {rewriteIntents.length ? (
         <div className="suggestion-card__rewrite-row">
           {rewriteIntents.map((intent) => (
-            <button key={intent} type="button" className="icon-button" onClick={() => onRewrite(intent)} aria-label={intent}>
+            <button
+              key={intent}
+              type="button"
+              className="button-secondary button-compact"
+              onClick={() => onRewrite(intent)}
+            >
               {rewriteIntentLabel(intent)}
             </button>
           ))}
         </div>
       ) : null}
 
-      <details className="suggestion-card__details">
-        <summary>Why this suggestion</summary>
-        <p>{suggestion.explanation_bn || suggestion.explanation_en}</p>
-        {secondaryExplanation ? <p>{secondaryExplanation}</p> : null}
-        {debugMode && sourceTrace.length ? <p>source_trace: {sourceTrace.join(" -> ")}</p> : null}
-      </details>
-
-      <div className="suggestion-card__footer">
-        <button type="button" className="button-secondary" onClick={onDismiss}>
-          Dismiss
-        </button>
-        <button type="button" className="button-secondary" onClick={onIgnoreForever}>
+      <div className="suggestion-card__secondary-actions">
+        <button type="button" className="text-button" onClick={onIgnoreForever}>
           Ignore forever
         </button>
         {onAddToDictionary ? (
-          <button type="button" className="button-secondary" onClick={onAddToDictionary}>
+          <button
+            type="button"
+            className="text-button"
+            onClick={onAddToDictionary}
+          >
             Add to dictionary
           </button>
         ) : null}
       </div>
+
+      {debugMode ? (
+        <details className="suggestion-card__details">
+          <summary>Debug details</summary>
+          <p>confidence: {Math.round(suggestion.confidence * 100)}%</p>
+          <p>source: {suggestion.source}</p>
+          <p>severity: {suggestion.severity}</p>
+          <p>
+            span: {suggestion.span_start}–{suggestion.span_end}
+          </p>
+          {sourceTrace.length ? (
+            <p>source_trace: {sourceTrace.join(" → ")}</p>
+          ) : null}
+        </details>
+      ) : null}
     </article>
   );
+}
+
+function displaySuggestionType(suggestion: Suggestion): string {
+  const value =
+    `${suggestion.ui_group ?? suggestion.category ?? suggestion.subtype}`.toLowerCase();
+  if (value.includes("grammar")) {
+    return "Grammar";
+  }
+  if (
+    value.includes("clarity") ||
+    value.includes("style") ||
+    value.includes("tone")
+  ) {
+    return "Clarity";
+  }
+  return "Spelling";
 }
 
 function rewriteIntentLabel(intent: RewriteIntent): string {
@@ -147,7 +182,7 @@ function rewriteIntentLabel(intent: RewriteIntent): string {
     case "concise":
       return "Shorter";
     case "friendly":
-      return "Friendlier";
+      return "Simpler";
     case "professional":
       return "Professional";
     default:

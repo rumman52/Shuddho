@@ -47,7 +47,6 @@ const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
 const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED =
   "Backend is not connected. Contextual Bengali correction is disabled.";
 const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED;
-const DEV_LOCAL_FALLBACK_LABEL = "Dev-only browser fallback";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
 
 type BackendMode = "checking" | "online" | "offline" | "misconfigured";
@@ -71,6 +70,9 @@ export default function App() {
     null,
   );
   const [selectedSuggestionId, setSelectedSuggestionId] = useState<
+    string | null
+  >(null);
+  const [activeInlineSuggestionId, setActiveInlineSuggestionId] = useState<
     string | null
   >(null);
   const [status, setStatus] = useState("Ready");
@@ -124,17 +126,9 @@ export default function App() {
   const runtimeWarnings = Array.isArray(normalizedAnalysis.runtime_warnings)
     ? normalizedAnalysis.runtime_warnings
     : [];
-  const sentenceCount =
-    typeof normalizedAnalysis.sentence_count === "number"
-      ? normalizedAnalysis.sentence_count
-      : 0;
-
-  const selectedSuggestion = useMemo(
-    () =>
-      suggestions.find(
-        (suggestion) => suggestion.id === selectedSuggestionId,
-      ) ?? null,
-    [suggestions, selectedSuggestionId],
+  const inlineSegments = useMemo(
+    () => buildInlineSegments(text, suggestions),
+    [suggestions, text],
   );
 
   useEffect(() => {
@@ -344,10 +338,32 @@ export default function App() {
     if (!textarea) {
       return;
     }
-    setSelection({
+    const nextSelection = {
       start: textarea.selectionStart ?? 0,
       end: textarea.selectionEnd ?? 0,
-    });
+    };
+    setSelection(nextSelection);
+    const focusedSuggestion = suggestions.find(
+      (suggestion) =>
+        nextSelection.start >= suggestion.span_start &&
+        nextSelection.start <= suggestion.span_end,
+    );
+    if (focusedSuggestion) {
+      setActiveInlineSuggestionId(focusedSuggestion.id);
+      setSelectedSuggestionId(focusedSuggestion.id);
+    }
+  }
+
+  function handleEditorScroll() {
+    const textarea = textareaRef.current;
+    const highlightLayer = document.querySelector<HTMLDivElement>(
+      ".editor-highlight-layer",
+    );
+    if (!textarea || !highlightLayer) {
+      return;
+    }
+    highlightLayer.scrollTop = textarea.scrollTop;
+    highlightLayer.scrollLeft = textarea.scrollLeft;
   }
 
   function handleApplySuggestion(
@@ -597,31 +613,34 @@ export default function App() {
     setSelectedSuggestionId((current) =>
       current === suggestionId ? null : current,
     );
+    setActiveInlineSuggestionId((current) =>
+      current === suggestionId ? null : current,
+    );
   }
 
   return (
     <main className="app-shell">
-      <section className="hero-band">
-        <div>
-          <p className="eyebrow">Shuddho</p>
-          <h1>Bangla writing assistant</h1>
-          <p className="lede">
-            Extension-first backend, with the web editor as the fastest place to
-            test analysis, tone, rewrites, and preference learning.
-          </p>
+      <header className="app-header">
+        <div className="brand-text">
+          <strong>Shuddho</strong>
+          <span>AI Bangla Writing Assistant</span>
         </div>
-        <div className="status-band">
-          <strong>{runtimeDescriptor.label}</strong>
-          <span>{status}</span>
-          <span>
-            {backendMode === "online"
-              ? apiBaseUrl
-              : apiConfiguration.localFallbackEnabled
-                ? DEV_LOCAL_FALLBACK_LABEL
-                : "Suggestions disabled"}
-          </span>
-        </div>
-      </section>
+        <nav className="header-actions" aria-label="Top navigation">
+          <button type="button" className="nav-link">
+            Dictionary
+          </button>
+          <button type="button" className="nav-link">
+            Settings
+          </button>
+          <button
+            type="button"
+            className="user-avatar"
+            aria-label="User profile"
+          >
+            {userId.slice(0, 1).toUpperCase() || "S"}
+          </button>
+        </nav>
+      </header>
 
       {preferencesWarning ? (
         <div className="warning-banner" role="status">
@@ -629,287 +648,154 @@ export default function App() {
         </div>
       ) : null}
 
-      <section className="workspace-grid">
-        <aside className="sidebar-panel">
-          <div className="panel-block">
-            <h2>Runtime</h2>
-            <div className="meta-list">
-              <span>Backend: {backendMode}</span>
-              <span>
-                Detector:{" "}
-                {backendHealth?.detector
-                  ? backendHealth.detector.loaded
-                    ? "ready"
-                    : backendHealth.detector.status
-                  : "unknown"}
-              </span>
-              <span>
-                Corrector:{" "}
-                {backendHealth?.corrector
-                  ? backendHealth.corrector.loaded
-                    ? "ready"
-                    : backendHealth.corrector.status
-                  : "unknown"}
-              </span>
-              <span>Lexicon: {normalizedAnalysis.lexicon_source}</span>
-            </div>
-            {backendMode === "offline" || backendMode === "misconfigured" ? (
-              <p className="muted-text">
-                Backend is not reachable. Check VITE_API_BASE_URL and make sure
-                your local tunnel is running.
-              </p>
-            ) : null}
-            {normalizedAnalysis.backend_warning ? (
-              <p className="muted-text">{normalizedAnalysis.backend_warning}</p>
-            ) : null}
-            {runtimeWarnings.length ? (
-              <div className="chip-row">
-                {runtimeWarnings.map((warning) => (
-                  <span key={warning} className="chip chip-warning">
-                    {warning}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            {backendHealth ? (
-              <div className="meta-list">
-                <span>
-                  Profile:{" "}
-                  {backendHealth.analysis_profile ??
-                    backendHealth.provider ??
-                    backendHealth.service ??
-                    "gateway"}
-                </span>
-                <span>
-                  Backend version: {backendHealth.backend_version ?? "unknown"}
-                </span>
-              </div>
-            ) : null}
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={debugMode}
-                onChange={(event) => setDebugMode(event.target.checked)}
-              />
-              <span>Debug details</span>
-            </label>
-          </div>
-
-          <div className="panel-block">
-            <h2>Preferences</h2>
-            <label>
-              User ID
-              <input
-                value={userId}
-                onChange={(event) => setUserId(event.target.value)}
-              />
-            </label>
-            <label>
-              API base URL
-              <div className="row">
-                <input
-                  value={apiBaseUrlDraft}
-                  onChange={(event) => setApiBaseUrlDraft(event.target.value)}
-                />
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={applyApiBaseUrl}
-                >
-                  Apply
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={resetApiBaseUrl}
-                >
-                  Reset API URL
-                </button>
-              </div>
-            </label>
-            <label>
-              Writing goal
-              <select
-                value={preferences.writing_goal}
-                onChange={(event) => {
-                  const nextGoal = event.target
-                    .value as ShuddhoPreferences["writing_goal"];
-                  setPreferences((current) => ({
-                    ...current,
-                    writing_goal: nextGoal,
-                  }));
-                  setMode(modeFromWritingGoal(nextGoal));
-                }}
-              >
-                <option value="general">General</option>
-                <option value="formal">Formal</option>
-                <option value="academic">Academic</option>
-                <option value="business">Business</option>
-                <option value="casual">Casual</option>
-                <option value="social">Social</option>
-              </select>
-            </label>
-            <label>
-              Tone goal
-              <select
-                value={preferences.tone_goal}
-                onChange={(event) =>
-                  setPreferences((current) => ({
-                    ...current,
-                    tone_goal: event.target
-                      .value as ShuddhoPreferences["tone_goal"],
-                  }))
-                }
-              >
-                <option value="neutral">Neutral</option>
-                <option value="friendly">Friendly</option>
-                <option value="professional">Professional</option>
-                <option value="concise">Concise</option>
-                <option value="confident">Confident</option>
-              </select>
-            </label>
-            <label>
-              Suggestion density
-              <select
-                value={preferences.suggestion_density}
-                onChange={(event) =>
-                  setPreferences((current) => ({
-                    ...current,
-                    suggestion_density: event.target
-                      .value as ShuddhoPreferences["suggestion_density"],
-                  }))
-                }
-              >
-                <option value="low">Low</option>
-                <option value="balanced">Balanced</option>
-                <option value="high">High</option>
-              </select>
-            </label>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={preferences.auto_show_tone}
-                onChange={(event) =>
-                  setPreferences((current) => ({
-                    ...current,
-                    auto_show_tone: event.target.checked,
-                  }))
-                }
-              />
-              <span>Auto-show tone</span>
-            </label>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={preferences.enable_rewrites}
-                onChange={(event) =>
-                  setPreferences((current) => ({
-                    ...current,
-                    enable_rewrites: event.target.checked,
-                  }))
-                }
-              />
-              <span>Enable rewrites</span>
-            </label>
+      <section className="product-shell" aria-label="Writing workspace">
+        <aside className="left-nav" aria-label="Primary navigation">
+          {["Write", "Review", "Dictionary", "History"].map((item) => (
             <button
+              key={item}
               type="button"
-              className="button-primary"
-              onClick={() => void savePreferencesToBackend()}
+              className={`left-nav__item ${item === "Write" ? "left-nav__item--active" : ""}`}
             >
-              Save preferences
+              {item}
             </button>
-          </div>
-
-          <div className="panel-block">
-            <h2>Personal dictionary</h2>
-            <div className="row">
-              <input
-                value={dictionaryDraft}
-                onChange={(event) => setDictionaryDraft(event.target.value)}
-              />
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => {
-                  if (!dictionaryDraft.trim()) {
-                    return;
-                  }
-                  setPreferences((current) => ({
-                    ...current,
-                    personal_dictionary: upsertUnique(
-                      current.personal_dictionary ?? [],
-                      dictionaryDraft,
-                    ),
-                  }));
-                  setDictionaryDraft("");
-                }}
-              >
-                Add
-              </button>
-            </div>
-            <div className="chip-row">
-              {(preferences.personal_dictionary ?? []).map((entry) => (
-                <button
-                  key={entry}
-                  type="button"
-                  className="chip chip-action"
-                  onClick={() =>
-                    setPreferences((current) => ({
-                      ...current,
-                      personal_dictionary: (
-                        current.personal_dictionary ?? []
-                      ).filter((item) => item !== entry),
-                    }))
-                  }
-                >
-                  {entry}
-                </button>
-              ))}
-            </div>
-          </div>
+          ))}
         </aside>
 
-        <section className="editor-panel">
-          <div className="panel-block">
-            <div className="editor-toolbar">
-              <div className="chip-row">
-                <span className="chip">{suggestions.length} suggestions</span>
-                <span className="chip">{mode} mode</span>
-                <span className="chip">{sentenceCount} sentences</span>
+        <section className="editor-column">
+          <div className="editor-card">
+            <div className="editor-card__header">
+              <div>
+                <p className="eyebrow">Write in Bangla</p>
+                <h1>Compose with focused AI review</h1>
               </div>
-              <div className="rewrite-toolbar">
+              <div className="status-pill" role="status">
+                <strong>{suggestions.length}</strong>
+                <span>suggestions</span>
+              </div>
+            </div>
+
+            <div className="editor-frame">
+              <div className="editor-highlight-layer">
+                {inlineSegments.map((segment) => {
+                  if (!segment.suggestion) {
+                    return <span key={segment.key}>{segment.text}</span>;
+                  }
+                  const suggestion = segment.suggestion;
+                  const replacement = suggestion.replacement_options[0] ?? "";
+                  const isActive = activeInlineSuggestionId === suggestion.id;
+                  return (
+                    <span
+                      key={segment.key}
+                      className="inline-issue"
+                      data-issue-type={displaySuggestionType(suggestion)}
+                      onMouseEnter={() =>
+                        setActiveInlineSuggestionId(suggestion.id)
+                      }
+                      onFocus={() => setActiveInlineSuggestionId(suggestion.id)}
+                      tabIndex={0}
+                    >
+                      {segment.text}
+                      {isActive ? (
+                        <span className="correction-popover" role="dialog">
+                          <button
+                            type="button"
+                            className="popover-close"
+                            aria-label="Dismiss correction popover"
+                            onClick={() => setActiveInlineSuggestionId(null)}
+                          >
+                            ×
+                          </button>
+                          <span className="correction-type">
+                            {displaySuggestionType(suggestion)}
+                          </span>
+                          <span className="correction-change">
+                            <span>{suggestion.original_text}</span>
+                            {replacement ? <span>→</span> : null}
+                            {replacement ? (
+                              <strong>{replacement}</strong>
+                            ) : null}
+                          </span>
+                          <span className="correction-copy">
+                            {suggestion.suggestion_reason_short_bn ??
+                              suggestion.explanation_bn ??
+                              "এই অংশটি সংশোধন করলে লেখা আরও পরিষ্কার হবে।"}
+                          </span>
+                          <span className="correction-actions">
+                            {replacement ? (
+                              <button
+                                type="button"
+                                className="button-primary button-compact"
+                                onClick={() =>
+                                  handleApplySuggestion(
+                                    suggestion,
+                                    replacement,
+                                    suggestion,
+                                  )
+                                }
+                              >
+                                Apply
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="button-secondary button-compact"
+                              onClick={() =>
+                                handleDismissSuggestion(suggestion)
+                              }
+                            >
+                              Ignore
+                            </button>
+                          </span>
+                        </span>
+                      ) : null}
+                    </span>
+                  );
+                })}
+              </div>
+              <textarea
+                ref={textareaRef}
+                className="editor-textarea"
+                aria-label="Bangla editor"
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                onSelect={handleSelectionChange}
+                onKeyUp={handleSelectionChange}
+                onClick={handleSelectionChange}
+                onScroll={handleEditorScroll}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setActiveInlineSuggestionId(null);
+                  }
+                }}
+              />
+            </div>
+
+            <section className="ai-actions" aria-label="AI Actions">
+              <div>
+                <h2>AI Actions</h2>
+                <p>Quickly reshape the selected text or the full draft.</p>
+              </div>
+              <div className="ai-actions__buttons">
                 {(
                   [
-                    "clarity",
-                    "formal",
-                    "concise",
-                    "friendly",
-                    "professional",
-                  ] as RewriteIntent[]
-                ).map((intent) => (
+                    ["clarity", "Improve clarity"],
+                    ["formal", "Make formal"],
+                    ["friendly", "Make simpler"],
+                    ["concise", "Shorten"],
+                    ["professional", "Professional tone"],
+                  ] as [RewriteIntent, string][]
+                ).map(([intent, label]) => (
                   <button
                     key={intent}
                     type="button"
-                    className="icon-button"
+                    className="button-secondary"
                     onClick={() => void handleRewrite(intent)}
                   >
-                    {intent}
+                    {label}
                   </button>
                 ))}
               </div>
-            </div>
-            <textarea
-              ref={textareaRef}
-              className="editor-textarea"
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              onSelect={handleSelectionChange}
-            />
-            <div className="meta-list">
-              <span>
-                Corrected preview: {normalizedAnalysis.corrected_text}
-              </span>
-            </div>
+            </section>
           </div>
 
           {rewriteResult ? (
@@ -928,13 +814,7 @@ export default function App() {
               <div className="suggestion-list">
                 {(rewriteResult.options ?? []).map((option) => (
                   <article key={option.id} className="rewrite-option">
-                    <div className="suggestion-card__header">
-                      <h3>{option.label}</h3>
-                      <div className="suggestion-card__chips">
-                        <span>{Math.round(option.confidence * 100)}%</span>
-                        <span>{option.source}</span>
-                      </div>
-                    </div>
+                    <h3>{option.label}</h3>
                     <p>{option.rewritten_text}</p>
                     <p className="muted-text">
                       {option.explanation_bn || option.explanation_en}
@@ -944,20 +824,11 @@ export default function App() {
                       className="button-primary"
                       onClick={() => applyRewriteOption(option.rewritten_text)}
                     >
-                      Accept rewrite
+                      Apply rewrite
                     </button>
                   </article>
                 ))}
               </div>
-              {(rewriteResult.warnings ?? []).length ? (
-                <div className="chip-row">
-                  {(rewriteResult.warnings ?? []).map((warning) => (
-                    <span key={warning} className="chip chip-warning">
-                      {warning}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
               <button
                 type="button"
                 className="button-secondary"
@@ -970,26 +841,9 @@ export default function App() {
 
           {tone ? (
             <div className="panel-block">
-              <div className="suggestion-card__header">
-                <div>
-                  <div className="suggestion-card__eyebrow">Tone</div>
-                  <h2>{tone.primary_tone ?? "neutral"}</h2>
-                </div>
-                <div className="suggestion-card__chips">
-                  <span>{Math.round(tone.confidence * 100)}%</span>
-                  {(tone.detected_tones ?? []).map((toneLabel) => (
-                    <span key={toneLabel}>{toneLabel}</span>
-                  ))}
-                </div>
-              </div>
+              <div className="suggestion-card__eyebrow">Tone</div>
+              <h2>{tone.primary_tone ?? "neutral"}</h2>
               <p>{tone.explanation_bn || tone.explanation_en}</p>
-              <div className="chip-row">
-                {(tone.suggestions ?? []).map((suggestion) => (
-                  <span key={suggestion} className="chip">
-                    {suggestion}
-                  </span>
-                ))}
-              </div>
               <div className="row">
                 <button
                   type="button"
@@ -1009,66 +863,307 @@ export default function App() {
             </div>
           ) : null}
         </section>
-      </section>
 
-      <section className="panel-block">
-        <div className="suggestion-card__header">
-          <div>
-            <div className="suggestion-card__eyebrow">Suggestions</div>
-            <h2>Review queue</h2>
+        <aside className="review-panel" aria-label="AI Review suggestions">
+          <div className="review-panel__header">
+            <div>
+              <p className="eyebrow">AI Review</p>
+              <h2>Suggestions</h2>
+            </div>
+            <span className="review-count">{suggestions.length}</span>
           </div>
-          <div className="suggestion-card__chips">
-            <span>{runtimeDescriptor.label}</span>
-          </div>
-        </div>
 
-        {suggestions.length ? (
-          <div className="suggestion-list">
-            {suggestions.map((suggestion) => (
-              <button
-                key={suggestion.id}
-                type="button"
-                className={`suggestion-row ${selectedSuggestionId === suggestion.id ? "suggestion-row--active" : ""}`}
-                onClick={() => setSelectedSuggestionId(suggestion.id)}
-              >
-                <strong>{suggestion.short_title ?? suggestion.subtype}</strong>
-                <span>
-                  {suggestion.suggestion_reason_short_bn ??
-                    suggestion.explanation_bn}
+          {suggestions.length ? (
+            <div className="suggestion-list">
+              {suggestions.map((suggestion) => (
+                <div
+                  key={suggestion.id}
+                  className={
+                    selectedSuggestionId === suggestion.id
+                      ? "review-suggestion review-suggestion--active"
+                      : "review-suggestion"
+                  }
+                >
+                  <SuggestionCard
+                    suggestion={suggestion}
+                    debugMode={debugMode}
+                    onApply={(candidate, replacement) =>
+                      handleApplySuggestion(candidate, replacement, suggestion)
+                    }
+                    onDismiss={() => handleDismissSuggestion(suggestion)}
+                    onIgnoreForever={() => handleIgnoreForever(suggestion)}
+                    onAddToDictionary={
+                      canAddSuggestionToDictionary(suggestion)
+                        ? () => handleAddToDictionary(suggestion)
+                        : undefined
+                    }
+                    onRewrite={(intent) =>
+                      void handleRewrite(intent, suggestion)
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-state">
+              {backendMode === "online" || apiConfiguration.localFallbackEnabled
+                ? "No high-confidence correction found."
+                : SUGGESTIONS_DISABLED_MESSAGE}
+            </p>
+          )}
+
+          <details className="advanced-settings">
+            <summary>Advanced settings</summary>
+            <div className="advanced-settings__body">
+              <strong>{runtimeDescriptor.label}</strong>
+              <span>{status}</span>
+              <span>Backend: {backendMode}</span>
+              <span>Lexicon: {normalizedAnalysis.lexicon_source}</span>
+              {runtimeWarnings.map((warning) => (
+                <span key={warning} className="chip chip-warning">
+                  {warning}
                 </span>
+              ))}
+              <label>
+                User ID
+                <input
+                  value={userId}
+                  onChange={(event) => setUserId(event.target.value)}
+                />
+              </label>
+              <label>
+                API base URL
+                <div className="row">
+                  <input
+                    value={apiBaseUrlDraft}
+                    onChange={(event) => setApiBaseUrlDraft(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={applyApiBaseUrl}
+                  >
+                    Apply
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={resetApiBaseUrl}
+                  >
+                    Reset
+                  </button>
+                </div>
+              </label>
+              <label>
+                Writing goal
+                <select
+                  value={preferences.writing_goal}
+                  onChange={(event) => {
+                    const nextGoal = event.target
+                      .value as ShuddhoPreferences["writing_goal"];
+                    setPreferences((current) => ({
+                      ...current,
+                      writing_goal: nextGoal,
+                    }));
+                    setMode(modeFromWritingGoal(nextGoal));
+                  }}
+                >
+                  <option value="general">General</option>
+                  <option value="formal">Formal</option>
+                  <option value="academic">Academic</option>
+                  <option value="business">Business</option>
+                  <option value="casual">Casual</option>
+                  <option value="social">Social</option>
+                </select>
+              </label>
+              <label>
+                Tone goal
+                <select
+                  value={preferences.tone_goal}
+                  onChange={(event) =>
+                    setPreferences((current) => ({
+                      ...current,
+                      tone_goal: event.target
+                        .value as ShuddhoPreferences["tone_goal"],
+                    }))
+                  }
+                >
+                  <option value="neutral">Neutral</option>
+                  <option value="friendly">Friendly</option>
+                  <option value="professional">Professional</option>
+                  <option value="concise">Concise</option>
+                  <option value="confident">Confident</option>
+                </select>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={preferences.auto_show_tone}
+                  onChange={(event) =>
+                    setPreferences((current) => ({
+                      ...current,
+                      auto_show_tone: event.target.checked,
+                    }))
+                  }
+                />
+                <span>Auto-show tone</span>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={preferences.enable_rewrites}
+                  onChange={(event) =>
+                    setPreferences((current) => ({
+                      ...current,
+                      enable_rewrites: event.target.checked,
+                    }))
+                  }
+                />
+                <span>Enable rewrites</span>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={debugMode}
+                  onChange={(event) => setDebugMode(event.target.checked)}
+                />
+                <span>Show debug details</span>
+              </label>
+              <button
+                type="button"
+                className="button-primary"
+                onClick={() => void savePreferencesToBackend()}
+              >
+                Save preferences
               </button>
-            ))}
-          </div>
-        ) : (
-          <p className="empty-state">
-            {backendMode === "online" || apiConfiguration.localFallbackEnabled
-              ? "No high-confidence correction found."
-              : SUGGESTIONS_DISABLED_MESSAGE}
-          </p>
-        )}
-
-        {selectedSuggestion ? (
-          <SuggestionCard
-            suggestion={selectedSuggestion}
-            debugMode={debugMode}
-            onApply={(candidate, replacement) =>
-              handleApplySuggestion(candidate, replacement, selectedSuggestion)
-            }
-            onDismiss={() => handleDismissSuggestion(selectedSuggestion)}
-            onIgnoreForever={() => handleIgnoreForever(selectedSuggestion)}
-            onAddToDictionary={
-              canAddSuggestionToDictionary(selectedSuggestion)
-                ? () => handleAddToDictionary(selectedSuggestion)
-                : undefined
-            }
-            onRewrite={(intent) =>
-              void handleRewrite(intent, selectedSuggestion)
-            }
-          />
-        ) : null}
+              <div className="dictionary-box">
+                <h3>Personal dictionary</h3>
+                <div className="row">
+                  <input
+                    value={dictionaryDraft}
+                    onChange={(event) => setDictionaryDraft(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => {
+                      if (!dictionaryDraft.trim()) {
+                        return;
+                      }
+                      setPreferences((current) => ({
+                        ...current,
+                        personal_dictionary: upsertUnique(
+                          current.personal_dictionary ?? [],
+                          dictionaryDraft,
+                        ),
+                      }));
+                      setDictionaryDraft("");
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+                <div className="chip-row">
+                  {(preferences.personal_dictionary ?? []).map((entry) => (
+                    <button
+                      key={entry}
+                      type="button"
+                      className="chip chip-action"
+                      onClick={() =>
+                        setPreferences((current) => ({
+                          ...current,
+                          personal_dictionary: (
+                            current.personal_dictionary ?? []
+                          ).filter((item) => item !== entry),
+                        }))
+                      }
+                    >
+                      {entry}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </details>
+        </aside>
       </section>
+
+      <footer className="trust-footer">
+        Your text is private and secure. <strong>Shuddho</strong> does not store
+        your content.
+      </footer>
     </main>
   );
+}
+
+interface InlineSegment {
+  key: string;
+  text: string;
+  suggestion: Suggestion | null;
+}
+
+function buildInlineSegments(
+  text: string,
+  suggestions: Suggestion[],
+): InlineSegment[] {
+  const ordered = suggestions
+    .filter(
+      (suggestion) =>
+        Number.isInteger(suggestion.span_start) &&
+        Number.isInteger(suggestion.span_end) &&
+        suggestion.span_start >= 0 &&
+        suggestion.span_end > suggestion.span_start &&
+        suggestion.span_end <= text.length,
+    )
+    .sort((a, b) => a.span_start - b.span_start || a.span_end - b.span_end);
+
+  const segments: InlineSegment[] = [];
+  let cursor = 0;
+
+  ordered.forEach((suggestion) => {
+    if (suggestion.span_start < cursor) {
+      return;
+    }
+    if (suggestion.span_start > cursor) {
+      segments.push({
+        key: `text:${cursor}:${suggestion.span_start}`,
+        text: text.slice(cursor, suggestion.span_start),
+        suggestion: null,
+      });
+    }
+    segments.push({
+      key: `issue:${suggestion.id}`,
+      text: text.slice(suggestion.span_start, suggestion.span_end),
+      suggestion,
+    });
+    cursor = suggestion.span_end;
+  });
+
+  if (cursor < text.length || segments.length === 0) {
+    segments.push({
+      key: `text:${cursor}:end`,
+      text: text.slice(cursor),
+      suggestion: null,
+    });
+  }
+
+  return segments;
+}
+
+function displaySuggestionType(suggestion: Suggestion): string {
+  const value =
+    `${suggestion.ui_group ?? suggestion.category ?? suggestion.subtype}`.toLowerCase();
+  if (value.includes("grammar")) {
+    return "Grammar";
+  }
+  if (
+    value.includes("clarity") ||
+    value.includes("style") ||
+    value.includes("tone")
+  ) {
+    return "Clarity";
+  }
+  return "Spelling";
 }
 
 function buildLocalFallbackResponse(
