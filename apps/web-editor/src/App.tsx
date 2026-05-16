@@ -75,6 +75,9 @@ export default function App() {
   const [activeInlineSuggestionId, setActiveInlineSuggestionId] = useState<
     string | null
   >(null);
+  const [reviewFilter, setReviewFilter] = useState<
+    "all" | "spelling" | "grammar" | "clarity"
+  >("all");
   const [status, setStatus] = useState("Ready");
   const [debugMode, setDebugMode] = useState(() => {
     if (typeof window === "undefined") {
@@ -129,6 +132,34 @@ export default function App() {
   const inlineSegments = useMemo(
     () => buildInlineSegments(text, suggestions),
     [suggestions, text],
+  );
+
+
+  const wordCount = useMemo(() => countWords(text), [text]);
+  const characterCount = text.length;
+  const suggestionCounts = useMemo(
+    () => ({
+      spelling: suggestions.filter(
+        (suggestion) => displaySuggestionType(suggestion) === "Spelling",
+      ).length,
+      grammar: suggestions.filter(
+        (suggestion) => displaySuggestionType(suggestion) === "Grammar",
+      ).length,
+      clarity: suggestions.filter(
+        (suggestion) => displaySuggestionType(suggestion) === "Clarity",
+      ).length,
+    }),
+    [suggestions],
+  );
+  const filteredSuggestions = useMemo(
+    () =>
+      reviewFilter === "all"
+        ? suggestions
+        : suggestions.filter(
+            (suggestion) =>
+              displaySuggestionType(suggestion).toLowerCase() === reviewFilter,
+          ),
+    [reviewFilter, suggestions],
   );
 
   useEffect(() => {
@@ -602,6 +633,50 @@ export default function App() {
     });
   }
 
+
+  function handleCheckWriting() {
+    setStatus("Checking your writing…");
+    void runAnalysis(text);
+  }
+
+  function handleAcceptAll() {
+    const applicableSuggestions = suggestions
+      .filter((suggestion) => (suggestion.replacement_options[0] ?? "").length > 0)
+      .sort((a, b) => b.span_start - a.span_start);
+
+    if (!applicableSuggestions.length) {
+      setStatus("No suggestions available to apply");
+      return;
+    }
+
+    const nextText = applicableSuggestions.reduce(
+      (draft, suggestion) =>
+        replaceSpan(
+          draft,
+          suggestion.span_start,
+          suggestion.span_end,
+          suggestion.replacement_options[0] ?? "",
+        ),
+      text,
+    );
+    setText(nextText);
+    setAnalysis((current) => ({ ...current, suggestions: [] }));
+    setSelectedSuggestionId(null);
+    setActiveInlineSuggestionId(null);
+    setStatus(`${applicableSuggestions.length} suggestions applied`);
+  }
+
+  function handleDismissAll() {
+    if (!suggestions.length) {
+      setStatus("No suggestions to dismiss");
+      return;
+    }
+    setAnalysis((current) => ({ ...current, suggestions: [] }));
+    setSelectedSuggestionId(null);
+    setActiveInlineSuggestionId(null);
+    setStatus("All suggestions dismissed");
+  }
+
   function dropSuggestion(suggestionId: string) {
     setAnalysis((current) => ({
       ...current,
@@ -621,15 +696,22 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-text">
-          <strong>Shuddho</strong>
-          <span>AI Bangla Writing Assistant</span>
+        <div className="brand-lockup" aria-label="Shuddho home">
+          <span className="brand-mark" aria-hidden="true">
+            ✨
+          </span>
+          <div className="brand-text">
+            <strong>Shuddho</strong>
+            <span>AI Bangla Writing Assistant</span>
+          </div>
         </div>
         <nav className="header-actions" aria-label="Top navigation">
-          <button type="button" className="nav-link">
+          <button type="button" className="nav-link nav-link--boxed">
+            <span aria-hidden="true">📖</span>
             Dictionary
           </button>
           <button type="button" className="nav-link">
+            <span aria-hidden="true">⚙️</span>
             Settings
           </button>
           <button
@@ -648,30 +730,120 @@ export default function App() {
         </div>
       ) : null}
 
-      <section className="product-shell" aria-label="Writing workspace">
+      <section className="product-shell" aria-label="Bangla writing assistant workspace">
         <aside className="left-nav" aria-label="Primary navigation">
-          {["Write", "Review", "Dictionary", "History"].map((item) => (
-            <button
-              key={item}
-              type="button"
-              className={`left-nav__item ${item === "Write" ? "left-nav__item--active" : ""}`}
-            >
-              {item}
+          <div className="left-nav__main">
+            {[
+              ["Write", "✍️"],
+              ["Review", "☆"],
+              ["Dictionary", "📖"],
+              ["History", "◷"],
+            ].map(([item, icon]) => (
+              <button
+                key={item}
+                type="button"
+                className={`left-nav__item ${item === "Write" ? "left-nav__item--active" : ""}`}
+              >
+                <span aria-hidden="true">{icon}</span>
+                {item}
+              </button>
+            ))}
+          </div>
+          <div className="left-nav__footer">
+            <button type="button" className="left-nav__item left-nav__item--quiet">
+              <span aria-hidden="true">?</span>
+              Help
             </button>
-          ))}
+            <button type="button" className="left-nav__item left-nav__item--quiet">
+              <span aria-hidden="true">☾</span>
+              Dark mode
+            </button>
+          </div>
         </aside>
 
         <section className="editor-column">
-          <div className="editor-card">
-            <div className="editor-card__header">
+          <div className="workspace-controls" aria-label="Writing controls">
+            <label className="control-card">
+              <span className="control-card__icon" aria-hidden="true">
+                ◎
+              </span>
+              <span>
+                <span className="control-card__label">Writing goal</span>
+                <select
+                  value={preferences.writing_goal}
+                  onChange={(event) => {
+                    const nextGoal = event.target
+                      .value as ShuddhoPreferences["writing_goal"];
+                    setPreferences((current) => ({
+                      ...current,
+                      writing_goal: nextGoal,
+                    }));
+                    setMode(modeFromWritingGoal(nextGoal));
+                  }}
+                >
+                  <option value="general">General</option>
+                  <option value="formal">Formal</option>
+                  <option value="academic">Academic</option>
+                  <option value="business">Business</option>
+                  <option value="casual">Casual</option>
+                  <option value="social">Social</option>
+                </select>
+              </span>
+            </label>
+            <label className="control-card control-card--tone">
+              <span className="control-card__icon" aria-hidden="true">
+                ☺
+              </span>
+              <span>
+                <span className="control-card__label">Tone</span>
+                <select
+                  value={preferences.tone_goal}
+                  onChange={(event) =>
+                    setPreferences((current) => ({
+                      ...current,
+                      tone_goal: event.target
+                        .value as ShuddhoPreferences["tone_goal"],
+                    }))
+                  }
+                >
+                  <option value="neutral">Neutral</option>
+                  <option value="friendly">Friendly</option>
+                  <option value="professional">Professional</option>
+                  <option value="concise">Concise</option>
+                  <option value="confident">Confident</option>
+                </select>
+              </span>
+            </label>
+            <div className="insight-card" aria-label="Current document insights">
               <div>
-                <p className="eyebrow">Write in Bangla</p>
-                <h1>Compose with focused AI review</h1>
-              </div>
-              <div className="status-pill" role="status">
+                <span>Suggestions</span>
                 <strong>{suggestions.length}</strong>
-                <span>suggestions</span>
               </div>
+              <div>
+                <span>Dictionary</span>
+                <strong>{preferences.personal_dictionary?.length ?? 0}</strong>
+                <small>words</small>
+              </div>
+            </div>
+          </div>
+
+          <div className="editor-card">
+            <div className="editor-toolbar" aria-label="Editor formatting toolbar">
+              <button type="button">Normal</button>
+              <button type="button" aria-label="Bold">
+                <strong>B</strong>
+              </button>
+              <button type="button" aria-label="Italic">
+                <em>I</em>
+              </button>
+              <button type="button" aria-label="Underline">
+                <u>U</u>
+              </button>
+              <button type="button" aria-label="Bulleted list">☷</button>
+              <button type="button" aria-label="Numbered list">☰</button>
+              <span className="toolbar-spacer" />
+              <button type="button" aria-label="Undo">↶</button>
+              <button type="button" aria-label="Redo">↷</button>
             </div>
 
             <div className="editor-frame">
@@ -706,6 +878,7 @@ export default function App() {
                             ×
                           </button>
                           <span className="correction-type">
+                            <span aria-hidden="true">●</span>
                             {displaySuggestionType(suggestion)}
                           </span>
                           <span className="correction-change">
@@ -770,33 +943,52 @@ export default function App() {
               />
             </div>
 
-            <section className="ai-actions" aria-label="AI Actions">
-              <div>
-                <h2>AI Actions</h2>
-                <p>Quickly reshape the selected text or the full draft.</p>
-              </div>
-              <div className="ai-actions__buttons">
-                {(
-                  [
-                    ["clarity", "Improve clarity"],
-                    ["formal", "Make formal"],
-                    ["friendly", "Make simpler"],
-                    ["concise", "Shorten"],
-                    ["professional", "Professional tone"],
-                  ] as [RewriteIntent, string][]
-                ).map(([intent, label]) => (
-                  <button
-                    key={intent}
-                    type="button"
-                    className="button-secondary"
-                    onClick={() => void handleRewrite(intent)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </section>
+            <div className="editor-statusbar">
+              <span>Words: {wordCount}</span>
+              <span>Characters: {characterCount}</span>
+              <button
+                type="button"
+                className="button-primary check-writing-button"
+                onClick={handleCheckWriting}
+              >
+                <span aria-hidden="true">✧</span>
+                Check Writing
+              </button>
+            </div>
           </div>
+
+          <section className="ai-actions" aria-label="AI Actions">
+            <div>
+              <h2>
+                <span aria-hidden="true">✧</span>
+                AI Actions
+              </h2>
+            </div>
+            <div className="ai-actions__buttons">
+              {(
+                [
+                  ["clarity", "Improve clarity"],
+                  ["formal", "Make formal"],
+                  ["friendly", "Make simpler"],
+                  ["concise", "Shorten"],
+                  ["professional", "Professional tone"],
+                ] as [RewriteIntent, string][]
+              ).map(([intent, label]) => (
+                <button
+                  key={intent}
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => void handleRewrite(intent)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="ai-actions__tip">
+              <span aria-hidden="true">💡</span>
+              Tip: Select a sentence to see AI suggestions for improvement.
+            </p>
+          </section>
 
           {rewriteResult ? (
             <div className="panel-block">
@@ -865,17 +1057,47 @@ export default function App() {
         </section>
 
         <aside className="review-panel" aria-label="AI Review suggestions">
+          <span className="sr-only">Review queue</span>
           <div className="review-panel__header">
             <div>
-              <p className="eyebrow">AI Review</p>
-              <h2>Suggestions</h2>
+              <h2>
+                <span aria-hidden="true">✦</span>
+                AI Review
+              </h2>
+              <p className="review-panel__status">{status}</p>
             </div>
-            <span className="review-count">{suggestions.length}</span>
           </div>
 
-          {suggestions.length ? (
+          <p className="review-success">
+            <span aria-hidden="true">✓</span>
+            {suggestions.length} suggestions found
+          </p>
+
+          <div className="review-tabs" role="tablist" aria-label="Suggestion filters">
+            {(
+              [
+                ["all", "All", suggestions.length],
+                ["spelling", "Spelling", suggestionCounts.spelling],
+                ["grammar", "Grammar", suggestionCounts.grammar],
+                ["clarity", "Clarity", suggestionCounts.clarity],
+              ] as const
+            ).map(([filter, label, count]) => (
+              <button
+                key={filter}
+                type="button"
+                role="tab"
+                aria-selected={reviewFilter === filter}
+                className={reviewFilter === filter ? "review-tab review-tab--active" : "review-tab"}
+                onClick={() => setReviewFilter(filter)}
+              >
+                {label} <strong>{count}</strong>
+              </button>
+            ))}
+          </div>
+
+          {filteredSuggestions.length ? (
             <div className="suggestion-list">
-              {suggestions.map((suggestion) => (
+              {filteredSuggestions.map((suggestion) => (
                 <div
                   key={suggestion.id}
                   className={
@@ -887,6 +1109,8 @@ export default function App() {
                   <SuggestionCard
                     suggestion={suggestion}
                     debugMode={debugMode}
+                    position={suggestions.findIndex((item) => item.id === suggestion.id) + 1}
+                    total={suggestions.length}
                     onApply={(candidate, replacement) =>
                       handleApplySuggestion(candidate, replacement, suggestion)
                     }
@@ -907,13 +1131,30 @@ export default function App() {
           ) : (
             <p className="empty-state">
               {backendMode === "online" || apiConfiguration.localFallbackEnabled
-                ? "No high-confidence correction found."
+                ? "No high-confidence correction found in this filter."
                 : SUGGESTIONS_DISABLED_MESSAGE}
             </p>
           )}
 
+          <div className="review-actions">
+            <button
+              type="button"
+              className="button-primary"
+              onClick={handleAcceptAll}
+            >
+              Accept All
+            </button>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={handleDismissAll}
+            >
+              Dismiss All
+            </button>
+          </div>
+
           <details className="advanced-settings">
-            <summary>Advanced settings</summary>
+            <summary>Preferences & advanced settings</summary>
             <div className="advanced-settings__body">
               <strong>{runtimeDescriptor.label}</strong>
               <span>{status}</span>
@@ -953,47 +1194,6 @@ export default function App() {
                     Reset
                   </button>
                 </div>
-              </label>
-              <label>
-                Writing goal
-                <select
-                  value={preferences.writing_goal}
-                  onChange={(event) => {
-                    const nextGoal = event.target
-                      .value as ShuddhoPreferences["writing_goal"];
-                    setPreferences((current) => ({
-                      ...current,
-                      writing_goal: nextGoal,
-                    }));
-                    setMode(modeFromWritingGoal(nextGoal));
-                  }}
-                >
-                  <option value="general">General</option>
-                  <option value="formal">Formal</option>
-                  <option value="academic">Academic</option>
-                  <option value="business">Business</option>
-                  <option value="casual">Casual</option>
-                  <option value="social">Social</option>
-                </select>
-              </label>
-              <label>
-                Tone goal
-                <select
-                  value={preferences.tone_goal}
-                  onChange={(event) =>
-                    setPreferences((current) => ({
-                      ...current,
-                      tone_goal: event.target
-                        .value as ShuddhoPreferences["tone_goal"],
-                    }))
-                  }
-                >
-                  <option value="neutral">Neutral</option>
-                  <option value="friendly">Friendly</option>
-                  <option value="professional">Professional</option>
-                  <option value="concise">Concise</option>
-                  <option value="confident">Confident</option>
-                </select>
               </label>
               <label className="checkbox-row">
                 <input
@@ -1089,6 +1289,7 @@ export default function App() {
       </section>
 
       <footer className="trust-footer">
+        <span aria-hidden="true">🔒</span>
         Your text is private and secure. <strong>Shuddho</strong> does not store
         your content.
       </footer>
@@ -1195,6 +1396,10 @@ async function sendFeedbackIfOnline(
   } catch {
     // Ignore feedback transport failures in the demo surface.
   }
+}
+
+function countWords(value: string): number {
+  return value.trim() ? value.trim().split(/\s+/u).length : 0;
 }
 
 function replaceSpan(
