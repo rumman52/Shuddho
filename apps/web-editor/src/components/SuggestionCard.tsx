@@ -15,6 +15,8 @@ interface SuggestionCardProps {
   onIgnoreForever: () => void;
   onAddToDictionary?: () => void;
   onRewrite: (intent: RewriteIntent) => void;
+  position?: number;
+  total?: number;
 }
 
 export function SuggestionCard({
@@ -25,6 +27,8 @@ export function SuggestionCard({
   onIgnoreForever,
   onAddToDictionary,
   onRewrite,
+  position,
+  total,
 }: SuggestionCardProps) {
   const primaryExplanation =
     suggestion.suggestion_reason_short_bn ??
@@ -48,8 +52,14 @@ export function SuggestionCard({
     <article className="suggestion-card">
       <div className="suggestion-card__header">
         <span className="suggestion-card__type">
+          <span aria-hidden="true">●</span>
           {displaySuggestionType(suggestion)}
         </span>
+        {position && total ? (
+          <span className="suggestion-card__position">
+            {position} of {total}
+          </span>
+        ) : null}
       </div>
 
       <div className="suggestion-card__change">
