@@ -66,6 +66,7 @@ LLM_PROVIDER_ENV_VAR = "SHUDDHO_LLM_PROVIDER"
 LLM_ENABLED_ENV_VAR = "SHUDDHO_ENABLE_LLM"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
 OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
+LOG_RAW_TEXT_ENV_VAR = "SHUDDHO_LOG_RAW_TEXT"
 DEFAULT_OPENROUTER_MODEL = "baidu/cobuddy:free"
 MAX_AI_CHECK_CHARS = int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000"))
 
@@ -441,6 +442,10 @@ def _llm_config() -> tuple[bool, str, str, str | None]:
     return enabled, provider, model, api_key
 
 
+def _log_raw_text_enabled() -> bool:
+    return os.environ.get(LOG_RAW_TEXT_ENV_VAR, "false").strip().lower() == "true"
+
+
 def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
     enabled, provider, model, api_key = _llm_config()
     if not enabled:
@@ -470,7 +475,7 @@ def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
     logger.info(
         "ai_check_complete request_id=%s text_length=%s provider=%s model=%s suggestion_count=%s",
         request_id,
-        len(text),
+        len(text) if not _log_raw_text_enabled() else f"{len(text)} chars",
         provider,
         model,
         len(parsed.suggestions),

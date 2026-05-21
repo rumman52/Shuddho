@@ -8,19 +8,21 @@ from typing import Any
 
 import httpx
 
-_ALLOWED_TYPES = {"grammar", "spelling", "style", "tone", "rewrite", "punctuation", "spacing"}
+_ALLOWED_TYPES = {"spelling", "grammar", "punctuation", "spacing", "style", "tone"}
 
-PROMPT_TEMPLATE = """You are Shuddho, a Bangla writing assistant.
-Return corrections for Bangla writing only.
-Return strict JSON only with this exact top-level shape:
-{"suggestions":[{"type":"grammar","message":"...","original":"...","replacement":"...","start":null,"end":null,"confidence":0.85,"source":"openrouter"}]}
+PROMPT_TEMPLATE = """Analyze this Bangla text and return correction suggestions as strict JSON only.
+Return exactly this shape:
+{"suggestions":[{"type":"grammar","message":"কথ্য রূপের পরিবর্তে মানক রূপ ব্যবহার করুন।","original":"গেছিলাম","replacement":"গিয়েছিলাম","start":null,"end":null,"confidence":0.85,"source":"openrouter"}]}
 Rules:
+- Return JSON only.
 - No markdown.
-- No extra keys outside the JSON object.
-- Focus on grammar, spelling, punctuation, spacing, style.
-- Keep meaning unchanged.
-- If no correction is needed return {"suggestions":[]}.
-User text:
+- No explanation outside JSON.
+- suggestions must be an array.
+- type must be one of: spelling, grammar, punctuation, spacing, style, tone.
+- source must be openrouter.
+- If no issues found, return {"suggestions":[]}.
+- If exact character offsets are uncertain, use null for start/end.
+Text:
 {{TEXT}}"""
 
 
@@ -63,24 +65,34 @@ def call_openrouter(*, text: str, api_key: str, model: str, timeout_seconds: flo
                 json={
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": "You only correct Bangla writing and return strict JSON."},
+                        {"role": "system", "content": "You are Shuddho, a Bangla writing correction engine. Return strict JSON only. Do not use markdown."},
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.2,
+                    "max_tokens": 800,
                 },
             )
             if response.status_code >= 400:
                 status_map = {
                     400: "openrouter_http_400_bad_request",
                     401: "openrouter_http_401_invalid_key",
+                    402: "openrouter_http_402_payment_required",
                     403: "openrouter_http_403_key_or_permission",
                     404: "openrouter_http_404_model_not_found",
+                    408: "openrouter_http_408_timeout",
                     429: "openrouter_http_429_quota_or_rate_limit",
+                    500: "openrouter_http_500_server_error",
+                    502: "openrouter_http_502_bad_gateway",
+                    503: "openrouter_http_503_unavailable",
                 }
                 return "", status_map.get(response.status_code, "openrouter_request_failed")
             payload = response.json()
             content = (((payload.get("choices") or [{}])[0].get("message") or {}).get("content"))
-            return content if isinstance(content, str) else "", None
+            if not isinstance(content, str) or not content.strip():
+                return "", "openrouter_empty_response"
+            return content, None
+    except httpx.TimeoutException:
+        return "", "openrouter_http_408_timeout"
     except httpx.HTTPError:
         return "", "openrouter_request_failed"
     except Exception:
@@ -123,6 +135,11 @@ def parse_and_normalize(*, user_text: str, raw_text: str) -> OpenRouterResult:
             "rule_id": "openrouter_smart_correction",
             "category": suggestion_type,
             "type": suggestion_type,
+            "message": message,
+            "original": original,
+            "replacement": suggested,
+            "start": start,
+            "end": end,
             "originalText": original,
             "suggestedText": suggested,
             "explanationBn": message,
