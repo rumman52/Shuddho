@@ -15,6 +15,7 @@ from services.api.shuddho_api.app import (
     put_api_preferences,
     events_api,
     check_canonical,
+    ai_check,
 )
 from shared.schemas.python_models import (
     AnalyzeMode,
@@ -26,6 +27,7 @@ from shared.schemas.python_models import (
     SuggestionSeverity,
     SuggestionSource,
 )
+from services.api.shuddho_api.llm_gemini import parse_and_normalize
 
 app_module = importlib.import_module("services.api.shuddho_api.app")
 
@@ -64,6 +66,28 @@ def test_health_deep_route_returns_backend_reachable() -> None:
 
     assert response.backend_reachable is True
     assert response.backend_version
+    assert isinstance(response.llm, dict)
+
+
+def test_ai_check_returns_warning_when_llm_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "false")
+    response = ai_check(app_module.AiCheckRequest(text="আমি আজ স্কুলে গেছিলাম।", language="bn"))
+    assert response.llm_enabled is False
+    assert "llm_disabled" in response.warnings
+
+
+def test_ai_check_warns_when_api_key_missing(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemini")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    response = ai_check(app_module.AiCheckRequest(text="আমি আজ স্কুলে গেছিলাম।", language="bn"))
+    assert "gemini_api_key_missing" in response.warnings
+
+
+def test_parse_and_normalize_handles_invalid_json() -> None:
+    response = parse_and_normalize(user_text="আমি আজ স্কুলে গেছিলাম।", raw_text="not json")
+    assert response.suggestions == []
+    assert "gemini_invalid_json" in response.warnings
 
 
 def test_routes_survive_missing_corrector_checkpoint() -> None:

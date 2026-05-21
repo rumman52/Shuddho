@@ -9,7 +9,7 @@ from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
@@ -27,6 +27,7 @@ from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from services.api.shuddho_api.adapters import analyze_to_check_response
+from services.api.shuddho_api.llm_gemini import call_gemini, parse_and_normalize
 from shared.schemas.python_models import (
     AnalysisProfile,
     AnalyzeRequest,
@@ -61,6 +62,34 @@ DEFAULT_ALLOWED_ORIGINS = [
 ]
 ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
 STARTUP_TIMESTAMP = datetime.now(timezone.utc)
+LLM_PROVIDER_ENV_VAR = "SHUDDHO_LLM_PROVIDER"
+LLM_ENABLED_ENV_VAR = "SHUDDHO_ENABLE_LLM"
+GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY"
+GEMINI_MODEL_ENV_VAR = "GEMINI_MODEL"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+MAX_AI_CHECK_CHARS = int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000"))
+
+
+class AiCheckRequest(BaseModel):
+    text: str
+    language: Literal["bn"] = "bn"
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("text must not be empty")
+        if len(value) > MAX_AI_CHECK_CHARS:
+            raise ValueError(f"text too large; max {MAX_AI_CHECK_CHARS} chars")
+        return value
+
+
+class AiCheckResponse(BaseModel):
+    suggestions: list[dict] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    provider: str = "gemini"
+    model: str = DEFAULT_GEMINI_MODEL
+    llm_enabled: bool = False
 
 
 def _parse_allowed_origins(value: str | None) -> list[str]:
@@ -262,8 +291,57 @@ def put_api_preferences(payload: ApiPreferences, user_id: str = "demo-user") -> 
 
 @app.post("/api/check", response_model=CanonicalCheckResponse)
 def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
+    request_id = datetime.now(timezone.utc).isoformat()
     legacy = analyze(AnalyzeRequest(text=payload.text, user_id=payload.userId))
-    return analyze_to_check_response(legacy, request_id=datetime.now(timezone.utc).isoformat(), text=payload.text, document_id=payload.documentId, revision=payload.revision)
+    response = analyze_to_check_response(
+        legacy,
+        request_id=request_id,
+        text=payload.text,
+        document_id=payload.documentId,
+        revision=payload.revision,
+    )
+    ai = _run_ai_check(payload.text, request_id)
+    response_payload = response.model_dump(mode="json")
+    seen = {
+        (
+            item.get("originalText"),
+            item.get("suggestedText"),
+            (item.get("span") or {}).get("startIndex"),
+        )
+        for item in response_payload["suggestions"]
+    }
+    for item in ai.suggestions:
+        key = (item["originalText"], item["suggestedText"], item["span_start"])
+        if key in seen:
+            continue
+        seen.add(key)
+        response_payload["suggestions"].append(
+            {
+                "id": item["id"],
+                "suppressionKey": f"gemini:{item['id']}",
+                "ruleId": item["rule_id"],
+                "type": item["type"],
+                "severity": "medium",
+                "originalText": item["originalText"],
+                "suggestedText": item["suggestedText"],
+                "replacementOptions": item["replacement_options"],
+                "explanationBn": item["explanationBn"],
+                "explanationEn": None,
+                "span": {"startIndex": item["span_start"], "endIndex": item["span_end"]},
+                "confidence": item["confidence"],
+                "source": "model",
+                "provider": "gemini",
+                "metadata": {"source": "gemini"},
+            }
+        )
+    response_payload["warnings"] = _dedupe_strings([*response_payload["warnings"], *ai.warnings])
+    return CanonicalCheckResponse(**response_payload)
+
+
+@app.post("/api/ai/check", response_model=AiCheckResponse)
+def ai_check(payload: AiCheckRequest) -> AiCheckResponse:
+    request_id = datetime.now(timezone.utc).isoformat()
+    return _run_ai_check(payload.text, request_id)
 
 
 @app.post("/rewrite", response_model=RewriteResponse)
@@ -355,6 +433,51 @@ def _preferences_service() -> UserPreferencesService:
     return UserPreferencesService(feedback_store)
 
 
+def _llm_config() -> tuple[bool, str, str, str | None]:
+    enabled = os.environ.get(LLM_ENABLED_ENV_VAR, "false").lower() == "true"
+    provider = os.environ.get(LLM_PROVIDER_ENV_VAR, "gemini").strip().lower() or "gemini"
+    model = os.environ.get(GEMINI_MODEL_ENV_VAR, DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+    api_key = os.environ.get(GEMINI_API_KEY_ENV_VAR)
+    return enabled, provider, model, api_key
+
+
+def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
+    enabled, provider, model, api_key = _llm_config()
+    if not enabled:
+        return AiCheckResponse(warnings=["llm_disabled"], provider=provider, model=model, llm_enabled=False)
+    if provider != "gemini":
+        return AiCheckResponse(warnings=["unsupported_llm_provider"], provider=provider, model=model, llm_enabled=True)
+    if not api_key:
+        return AiCheckResponse(warnings=["gemini_api_key_missing"], provider=provider, model=model, llm_enabled=True)
+    raw_text, call_error = call_gemini(text=text, api_key=api_key, model=model)
+    if call_error:
+        logger.warning(
+            "ai_check_failed request_id=%s text_length=%s provider=%s model=%s error_type=%s",
+            request_id,
+            len(text),
+            provider,
+            model,
+            call_error,
+        )
+        return AiCheckResponse(warnings=[call_error], provider=provider, model=model, llm_enabled=True)
+    parsed = parse_and_normalize(user_text=text, raw_text=raw_text)
+    logger.info(
+        "ai_check_complete request_id=%s text_length=%s provider=%s model=%s suggestion_count=%s",
+        request_id,
+        len(text),
+        provider,
+        model,
+        len(parsed.suggestions),
+    )
+    return AiCheckResponse(
+        suggestions=parsed.suggestions,
+        warnings=_dedupe_strings(parsed.warnings),
+        provider=provider,
+        model=model,
+        llm_enabled=True,
+    )
+
+
 def _rewrite_service() -> RewriteService:
     return RewriteService(analysis_pipeline)
 
@@ -399,6 +522,12 @@ def _build_health_deep_response() -> HealthDeepResponse:
         env_file_path=str(ENV_FILE_PATH),
         env_file_loaded=ENV_FILE_LOADED,
         last_startup_timestamp=STARTUP_TIMESTAMP,
+        llm={
+            "enabled": _llm_config()[0],
+            "provider": _llm_config()[1],
+            "model": _llm_config()[2],
+            "configured": bool(_llm_config()[3]),
+        },
         lexicon=LexiconHealth(
             runtime_source_of_truth=snapshot.runtime_source_of_truth,
             runtime_source=spell_engine.lexicon_source,
