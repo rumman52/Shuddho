@@ -17,10 +17,13 @@ Rules:
 - Return JSON only.
 - No markdown.
 - No explanation outside JSON.
+- original must be an exact substring from the input text.
+- Do not invent or paraphrase original text.
 - suggestions must be an array.
 - type must be one of: spelling, grammar, punctuation, spacing, style, tone.
 - source must be openrouter.
 - If no issues found, return {"suggestions":[]}.
+- If no exact substring exists for a candidate, return {"suggestions":[]}.
 - If exact character offsets are uncertain, use null for start/end.
 Text:
 {{TEXT}}"""
@@ -107,6 +110,7 @@ def parse_and_normalize(*, user_text: str, raw_text: str) -> OpenRouterResult:
     warnings: list[str] = []
     for index, item in enumerate(parsed.get("suggestions") or []):
         if not isinstance(item, dict):
+            warnings.append("openrouter_invalid_suggestion_shape")
             continue
         suggestion_type = str(item.get("type") or "style").strip().lower()
         if suggestion_type not in _ALLOWED_TYPES:
