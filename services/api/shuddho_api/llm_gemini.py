@@ -90,18 +90,23 @@ def _parse_json_object(raw: str) -> tuple[dict[str, Any] | None, str | None]:
 def call_gemini(*, text: str, api_key: str, model: str, timeout_seconds: float = 20.0) -> tuple[str, str | None]:
     prompt = PROMPT_TEMPLATE.replace("{{TEXT}}", text)
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    with httpx.Client(timeout=timeout_seconds) as client:
-        response = client.post(
-            url,
-            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2, "topP": 0.8, "maxOutputTokens": 2048},
-            },
-        )
-        if response.status_code >= 400:
-            return "", f"gemini_http_{response.status_code}"
-        return _extract_text(response.json()), None
+    try:
+        with httpx.Client(timeout=timeout_seconds) as client:
+            response = client.post(
+                url,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.2, "topP": 0.8, "maxOutputTokens": 2048},
+                },
+            )
+            if response.status_code >= 400:
+                return "", f"gemini_http_{response.status_code}"
+            return _extract_text(response.json()), None
+    except httpx.HTTPError:
+        return "", "gemini_request_failed"
+    except Exception:
+        return "", "gemini_request_failed"
 
 
 def parse_and_normalize(*, user_text: str, raw_text: str) -> GeminiResult:

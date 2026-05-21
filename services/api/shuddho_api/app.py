@@ -459,7 +459,13 @@ def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
             model,
             call_error,
         )
-        return AiCheckResponse(warnings=[call_error], provider=provider, model=model, llm_enabled=True)
+        return AiCheckResponse(
+            suggestions=[],
+            warnings=["Gemini request failed"],
+            provider=provider,
+            model=model,
+            llm_enabled=True,
+        )
     parsed = parse_and_normalize(user_text=text, raw_text=raw_text)
     logger.info(
         "ai_check_complete request_id=%s text_length=%s provider=%s model=%s suggestion_count=%s",
