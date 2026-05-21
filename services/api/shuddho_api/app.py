@@ -312,7 +312,18 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         for item in response_payload["suggestions"]
     }
     for item in ai.suggestions:
-        key = (item["originalText"], item["suggestedText"], item["span_start"])
+        if not isinstance(item, dict):
+            response_payload["warnings"].append("openrouter_invalid_suggestion_shape")
+            continue
+        span_start = item.get("span_start")
+        span_end = item.get("span_end")
+        if not isinstance(span_start, int) or not isinstance(span_end, int):
+            response_payload["warnings"].append("openrouter_suggestion_missing_span")
+            continue
+        if span_start < 0 or span_end <= span_start or span_end > len(payload.text):
+            response_payload["warnings"].append("openrouter_suggestion_invalid_span")
+            continue
+        key = (item["originalText"], item["suggestedText"], span_start)
         if key in seen:
             continue
         seen.add(key)
@@ -328,7 +339,7 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
                 "replacementOptions": item["replacement_options"],
                 "explanationBn": item["explanationBn"],
                 "explanationEn": None,
-                "span": {"startIndex": item["span_start"], "endIndex": item["span_end"]},
+                "span": {"startIndex": span_start, "endIndex": span_end},
                 "confidence": item["confidence"],
                 "source": "model",
                 "provider": "openrouter",
@@ -472,17 +483,24 @@ def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
             llm_enabled=True,
         )
     parsed = parse_and_normalize(user_text=text, raw_text=raw_text)
+    suggestions: list[dict] = []
+    warnings = list(parsed.warnings)
+    for suggestion in parsed.suggestions:
+        if not isinstance(suggestion, dict):
+            warnings.append("openrouter_invalid_suggestion_shape")
+            continue
+        suggestions.append(suggestion)
     logger.info(
         "ai_check_complete request_id=%s text_length=%s provider=%s model=%s suggestion_count=%s",
         request_id,
         len(text) if not _log_raw_text_enabled() else f"{len(text)} chars",
         provider,
         model,
-        len(parsed.suggestions),
+        len(suggestions),
     )
     return AiCheckResponse(
-        suggestions=parsed.suggestions,
-        warnings=_dedupe_strings(parsed.warnings),
+        suggestions=suggestions,
+        warnings=_dedupe_strings(warnings),
         provider=provider,
         model=model,
         llm_enabled=True,

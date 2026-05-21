@@ -316,10 +316,15 @@ export default function App() {
         : [];
       setAnalysis(normalizedResponse);
       setBackendMode("online");
+      const responseWarnings = Array.isArray(normalizedResponse.runtime_warnings)
+        ? normalizedResponse.runtime_warnings.filter(Boolean)
+        : [];
       setStatus(
         responseSuggestions.length
           ? `${responseSuggestions.length} suggestions ready`
-          : "No high-confidence correction found.",
+          : responseWarnings.length
+            ? `No high-confidence correction found. Backend warnings: ${responseWarnings.join(", ")}`
+            : "No high-confidence correction found.",
       );
       if (preferences.auto_show_tone && nextText.trim().length >= 20) {
         void refreshTone(nextText);
