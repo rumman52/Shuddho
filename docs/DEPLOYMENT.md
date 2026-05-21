@@ -45,9 +45,10 @@ SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
 SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
 SHUDDHO_LOG_RAW_TEXT=false
 SHUDDHO_ENABLE_LLM=true
-SHUDDHO_LLM_PROVIDER=gemini
-GEMINI_API_KEY=your_key
-GEMINI_MODEL=gemini-3.5-flash
+SHUDDHO_LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_key
+OPENROUTER_MODEL=baidu/cobuddy:free
+SHUDDHO_LOG_RAW_TEXT=false
 ```
 
 The Docker image copies `artifacts/` into `/app/artifacts` when the directory exists in the repository. The sentence-level corrector is optional: if `artifacts/corrector/corrector-base/best_model.pt` is absent or incomplete, `/health/deep` reports `corrector.status = missing_checkpoint`, analysis uses `backend_without_corrector` when the detector is ready, and Shuddho stays online with rules + spelling suggestions. The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.

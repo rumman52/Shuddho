@@ -27,7 +27,7 @@ from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from services.api.shuddho_api.adapters import analyze_to_check_response
-from services.api.shuddho_api.llm_gemini import call_gemini, parse_and_normalize
+from services.api.shuddho_api.llm_openrouter import call_openrouter, parse_and_normalize
 from shared.schemas.python_models import (
     AnalysisProfile,
     AnalyzeRequest,
@@ -64,9 +64,9 @@ ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\
 STARTUP_TIMESTAMP = datetime.now(timezone.utc)
 LLM_PROVIDER_ENV_VAR = "SHUDDHO_LLM_PROVIDER"
 LLM_ENABLED_ENV_VAR = "SHUDDHO_ENABLE_LLM"
-GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY"
-GEMINI_MODEL_ENV_VAR = "GEMINI_MODEL"
-DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
+OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
+DEFAULT_OPENROUTER_MODEL = "baidu/cobuddy:free"
 MAX_AI_CHECK_CHARS = int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000"))
 
 
@@ -87,8 +87,8 @@ class AiCheckRequest(BaseModel):
 class AiCheckResponse(BaseModel):
     suggestions: list[dict] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-    provider: str = "gemini"
-    model: str = DEFAULT_GEMINI_MODEL
+    provider: str = "openrouter"
+    model: str = DEFAULT_OPENROUTER_MODEL
     llm_enabled: bool = False
 
 
@@ -318,7 +318,7 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         response_payload["suggestions"].append(
             {
                 "id": item["id"],
-                "suppressionKey": f"gemini:{item['id']}",
+                "suppressionKey": f"openrouter:{item['id']}",
                 "ruleId": item["rule_id"],
                 "type": item["type"],
                 "severity": "medium",
@@ -330,8 +330,8 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
                 "span": {"startIndex": item["span_start"], "endIndex": item["span_end"]},
                 "confidence": item["confidence"],
                 "source": "model",
-                "provider": "gemini",
-                "metadata": {"source": "gemini"},
+                "provider": "openrouter",
+                "metadata": {"source": "openrouter"},
             }
         )
     response_payload["warnings"] = _dedupe_strings([*response_payload["warnings"], *ai.warnings])
@@ -435,9 +435,9 @@ def _preferences_service() -> UserPreferencesService:
 
 def _llm_config() -> tuple[bool, str, str, str | None]:
     enabled = os.environ.get(LLM_ENABLED_ENV_VAR, "false").lower() == "true"
-    provider = os.environ.get(LLM_PROVIDER_ENV_VAR, "gemini").strip().lower() or "gemini"
-    model = os.environ.get(GEMINI_MODEL_ENV_VAR, DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
-    api_key = os.environ.get(GEMINI_API_KEY_ENV_VAR)
+    provider = os.environ.get(LLM_PROVIDER_ENV_VAR, "openrouter").strip().lower() or "openrouter"
+    model = os.environ.get(OPENROUTER_MODEL_ENV_VAR, DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
+    api_key = os.environ.get(OPENROUTER_API_KEY_ENV_VAR)
     return enabled, provider, model, api_key
 
 
@@ -445,11 +445,11 @@ def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
     enabled, provider, model, api_key = _llm_config()
     if not enabled:
         return AiCheckResponse(warnings=["llm_disabled"], provider=provider, model=model, llm_enabled=False)
-    if provider != "gemini":
+    if provider != "openrouter":
         return AiCheckResponse(warnings=["unsupported_llm_provider"], provider=provider, model=model, llm_enabled=True)
     if not api_key:
-        return AiCheckResponse(warnings=["gemini_api_key_missing"], provider=provider, model=model, llm_enabled=True)
-    raw_text, call_error = call_gemini(text=text, api_key=api_key, model=model)
+        return AiCheckResponse(warnings=["openrouter_api_key_missing"], provider=provider, model=model, llm_enabled=True)
+    raw_text, call_error = call_openrouter(text=text, api_key=api_key, model=model)
     if call_error:
         logger.warning(
             "ai_check_failed request_id=%s text_length=%s provider=%s model=%s error_type=%s",
@@ -461,7 +461,7 @@ def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
         )
         return AiCheckResponse(
             suggestions=[],
-            warnings=["Gemini request failed"],
+            warnings=[call_error],
             provider=provider,
             model=model,
             llm_enabled=True,

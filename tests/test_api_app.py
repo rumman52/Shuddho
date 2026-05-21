@@ -27,7 +27,7 @@ from shared.schemas.python_models import (
     SuggestionSeverity,
     SuggestionSource,
 )
-from services.api.shuddho_api.llm_gemini import parse_and_normalize
+from services.api.shuddho_api.llm_openrouter import parse_and_normalize
 
 app_module = importlib.import_module("services.api.shuddho_api.app")
 
@@ -78,16 +78,16 @@ def test_ai_check_returns_warning_when_llm_disabled(monkeypatch) -> None:
 
 def test_ai_check_warns_when_api_key_missing(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemini")
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     response = ai_check(app_module.AiCheckRequest(text="আমি আজ স্কুলে গেছিলাম।", language="bn"))
-    assert "gemini_api_key_missing" in response.warnings
+    assert "openrouter_api_key_missing" in response.warnings
 
 
 def test_parse_and_normalize_handles_invalid_json() -> None:
     response = parse_and_normalize(user_text="আমি আজ স্কুলে গেছিলাম।", raw_text="not json")
     assert response.suggestions == []
-    assert "gemini_invalid_json" in response.warnings
+    assert "openrouter_invalid_json" in response.warnings
 
 
 def test_routes_survive_missing_corrector_checkpoint() -> None:
