@@ -278,6 +278,12 @@ export interface HealthDeepResponse extends HealthResponse {
   env_file_path?: string | null;
   env_file_loaded: boolean;
   last_startup_timestamp: string;
+  llm?: {
+    enabled: boolean;
+    provider: string;
+    model: string;
+    configured: boolean;
+  };
   lexicon: LexiconHealth;
 }
 

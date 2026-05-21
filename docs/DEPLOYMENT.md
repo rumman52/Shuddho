@@ -44,6 +44,10 @@ SHUDDHO_DETECTOR_ENABLED=auto
 SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
 SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
 SHUDDHO_LOG_RAW_TEXT=false
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_key
+GEMINI_MODEL=gemini-3.5-flash
 ```
 
 The Docker image copies `artifacts/` into `/app/artifacts` when the directory exists in the repository. The sentence-level corrector is optional: if `artifacts/corrector/corrector-base/best_model.pt` is absent or incomplete, `/health/deep` reports `corrector.status = missing_checkpoint`, analysis uses `backend_without_corrector` when the detector is ready, and Shuddho stays online with rules + spelling suggestions. The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.
@@ -115,6 +119,9 @@ curl https://shuddho-api.onrender.com/api/preferences
 curl -X POST https://shuddho-api.onrender.com/api/check \
   -H "Content-Type: application/json" \
   -d '{"text":"আমি  আমি ভাত খাই।","language":"bn"}'
+curl -X POST https://shuddho-api.onrender.com/api/ai/check \
+  -H "Content-Type: application/json" \
+  -d '{"text":"আমি আজ স্কুলে গেছিলাম।","language":"bn"}'
 ```
 
 Verify full mode with:
@@ -143,4 +150,7 @@ curl.exe https://shuddho-api.onrender.com/api/preferences
 curl.exe -X POST https://shuddho-api.onrender.com/api/check `
   -H "Content-Type: application/json" `
   -d "{\"text\":\"আমি  আমি ভাত খাই।\",\"language\":\"bn\"}"
+curl.exe -X POST https://shuddho-api.onrender.com/api/ai/check `
+  -H "Content-Type: application/json" `
+  -d "{\"text\":\"আমি আজ স্কুলে গেছিলাম।\",\"language\":\"bn\"}"
 ```

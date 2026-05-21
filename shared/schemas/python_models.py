@@ -502,6 +502,7 @@ class HealthDeepResponse(HealthResponse):
     env_file_path: str | None = None
     env_file_loaded: bool = False
     last_startup_timestamp: datetime
+    llm: dict[str, Any] = Field(default_factory=dict)
     lexicon: LexiconHealth
 
 
