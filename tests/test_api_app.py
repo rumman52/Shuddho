@@ -14,6 +14,7 @@ from services.api.shuddho_api.app import (
     get_api_preferences,
     put_api_preferences,
     events_api,
+    feedback,
     check_canonical,
     ai_check,
 )
@@ -26,6 +27,8 @@ from shared.schemas.python_models import (
     SuggestionCategory,
     SuggestionSeverity,
     SuggestionSource,
+    FeedbackRequest,
+    FeedbackRecord,
 )
 from services.api.shuddho_api.llm_openrouter import parse_and_normalize
 
@@ -145,6 +148,49 @@ def test_api_preferences_put_stores_values() -> None:
 
 def test_api_events_returns_ok() -> None:
     assert events_api({"type": "frontend_loaded"}) == {"ok": True}
+
+
+def test_feedback_route_persists_record_via_store(monkeypatch) -> None:
+    captured: list[FeedbackRequest] = []
+
+    class StubFeedbackStore:
+        def save(self, payload: FeedbackRequest) -> FeedbackRecord:
+            captured.append(payload)
+            return FeedbackRecord(
+                id=1,
+                suggestion_id=payload.suggestion_id,
+                action=payload.action,
+                text=payload.text,
+                replacement=payload.replacement,
+                feedback_key=payload.feedback_key,
+                rule_id=payload.rule_id,
+                subtype=payload.subtype,
+                source=payload.source,
+                original_text=payload.original_text,
+                suppression_key=payload.suppression_key,
+                user_dictionary_entry=payload.user_dictionary_entry,
+                user_id=payload.user_id,
+                created_at=app_module.STARTUP_TIMESTAMP,
+            )
+
+    monkeypatch.setattr(app_module, "feedback_store", StubFeedbackStore())
+    payload = FeedbackRequest(
+        suggestion_id="SUGG_1",
+        action="accepted",
+        text="আমি ভাত খাই",
+        replacement="খাই।",
+        feedback_key="fbk-1",
+        rule_id="bn.rule",
+        subtype="grammar",
+        source="rule",
+        original_text="খাই",
+        user_id="u-1",
+    )
+    result = feedback(payload)
+
+    assert len(captured) == 1
+    assert captured[0].model_dump() == payload.model_dump()
+    assert result.id == 1
 
 
 def test_api_check_compatibility_route_accepts_bangla_text(monkeypatch) -> None:

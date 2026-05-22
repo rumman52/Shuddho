@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   analyzeText,
   deriveApiConfiguration,
+  sendFeedback,
   fetchPreferences,
   gatewayCheckToAnalyzeResponse,
   readStoredApiBaseUrl,
@@ -99,6 +100,43 @@ test("analyzeText calls /api/check on configured gateway base URL", async () => 
 
   assert.equal(calls[0]?.url, "https://abc123.ngrok-free.app/api/check");
   assert.equal(calls[0]?.body.language, "bn");
+});
+
+test("sendFeedback posts full payload to /api/feedback (not /api/events)", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: unknown }> = [];
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")),
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  const payload = {
+    suggestion_id: "SUGG_42",
+    action: "accepted",
+    text: "আমি ভাত খাই",
+    replacement: "খাই।",
+    feedback_key: "fbk-1",
+    rule_id: "bn.rule",
+    subtype: "grammar_error",
+    source: "rule" as const,
+    original_text: "খাই",
+    user_id: "u-1",
+  };
+  try {
+    await sendFeedback(payload);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.url, "https://api.example.test/api/feedback");
+  assert.deepEqual(calls[0]?.body, payload);
 });
 
 test("deriveApiConfiguration keeps local fallback behind an explicit dev flag", () => {

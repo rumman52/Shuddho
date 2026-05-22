@@ -52,12 +52,12 @@ export class DebouncedAnalyzer {
   }
 
   async sendFeedback(payload: FeedbackRequest, settings: ExtensionSettings): Promise<void> {
-    const response = await fetch(`${settings.backendBaseUrl}/api/events`, {
+    const response = await fetch(`${settings.backendBaseUrl}/api/feedback`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ type: payload.action === "dismissed" ? "suggestion_rejected" : "suggestion_accepted", language: "bn", suggestionId: payload.suggestion_id, suppressionKey: payload.feedback_key, metadata: { action: payload.action } }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {

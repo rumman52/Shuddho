@@ -25,7 +25,8 @@ Response uses `CheckResponse`: request ID, Bangla language, optional normalized 
 - `GET /ready` provider readiness, including Python provider readiness when configured.
 - `POST /api/rewrite` gateway rewrite proxy to Python when available.
 - `POST /api/tone` gateway tone proxy to Python when available.
+- `POST /api/feedback` durable suggestion feedback path. The gateway forwards the full payload to Python `POST /feedback` using `SHUDDHO_PYTHON_API_URL` (default `http://127.0.0.1:8000`) and propagates upstream failures.
 - `GET /api/preferences`, `PUT /api/preferences` in-memory preference placeholder.
-- `POST /api/events` privacy-safe event ingestion; raw full text is stripped from metadata.
+- `POST /api/events` privacy-safe analytics/event ingestion only; raw full text is stripped from metadata.
 - `GET /api/documents/:documentId`, `PUT /api/documents/:documentId` in-memory document store.
 - `WebSocket /ws/docs/:documentId` MVP revision-based sync.

@@ -213,14 +213,9 @@ export async function analyzeText(
 }
 
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {
-  return request<void>("/api/events", {
+  return request<void>("/api/feedback", {
     method: "POST",
-    body: JSON.stringify({
-      type: "suggestion_accepted",
-      language: "bn",
-      suggestionId: payload.suggestion_id,
-      metadata: { action: payload.action, ruleId: payload.feedback_key },
-    }),
+    body: JSON.stringify(payload),
   });
 }
 
