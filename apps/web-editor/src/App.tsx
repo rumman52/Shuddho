@@ -1365,8 +1365,8 @@ async function sendFeedbackIfOnline(
 ) {
   try {
     await sendFeedback(payload);
-  } catch {
-    // Ignore feedback transport failures in the demo surface.
+  } catch (error) {
+    console.warn("Shuddho feedback request failed", error);
   }
 }
 

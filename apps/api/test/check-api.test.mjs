@@ -20,6 +20,7 @@ function close(server) {
 }
 
 const analyzeRequests = [];
+const feedbackRequests = [];
 const pythonServer = await listen((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -56,6 +57,22 @@ const pythonServer = await listen((req, res) => {
         suggestions: [],
         warnings: [],
       }));
+    });
+    return;
+  }
+  if (req.url === '/feedback' && req.method === 'POST') {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      const body = JSON.parse(raw || '{}');
+      feedbackRequests.push(body);
+      if (body.action === 'dismissed') {
+        res.writeHead(422, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_feedback' }));
+        return;
+      }
+      res.writeHead(201, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 42, ...body }));
     });
     return;
   }
@@ -103,6 +120,38 @@ assert.equal(body.language, 'bn');
 assert.equal(analyzeRequests.length, 1);
 assert.equal(analyzeRequests[0].text, 'আমি  আমি ভাত খাই।');
 assert.equal(analyzeRequests[0].mode, 'standard');
+
+const fullFeedbackPayload = {
+  suggestion_id: 'SUGG_1',
+  action: 'accepted',
+  text: 'আমি ভাত খাই',
+  replacement: 'খাই।',
+  feedback_key: 'fbk-1',
+  rule_id: 'bn.rule',
+  subtype: 'spelling',
+  source: 'rule',
+  original_text: 'খাই',
+  user_id: 'u-1',
+};
+response = await fetch(`http://127.0.0.1:${port}/api/feedback`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(fullFeedbackPayload),
+});
+assert.equal(response.status, 201);
+body = await response.json();
+assert.equal(body.suggestion_id, 'SUGG_1');
+assert.deepEqual(feedbackRequests[0], fullFeedbackPayload);
+
+response = await fetch(`http://127.0.0.1:${port}/api/feedback`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ ...fullFeedbackPayload, action: 'dismissed' }),
+});
+assert.equal(response.status, 422);
+body = await response.json();
+assert.equal(body.error, 'feedback_forward_failed');
+assert.equal(body.upstreamStatus, 422);
 
 response = await fetch(`http://127.0.0.1:${port}/api/check`, {
   method: 'OPTIONS',

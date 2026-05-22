@@ -59,6 +59,10 @@ function send(req: IncomingMessage, res: ServerResponse, status: number, body: u
   res.end(status === 204 ? undefined : JSON.stringify(body));
 }
 
+function pythonApiBaseUrl(): string {
+  return process.env.SHUDDHO_PYTHON_API_URL ?? 'http://127.0.0.1:8000';
+}
+
 export function createApp(deps: AppDeps = { orchestrator: new SuggestionOrchestrator(), events: new InMemoryEventSink(), documents: new DocumentStore() }): ShuddhoHandler {
   const handler = (async (req: IncomingMessage, res: ServerResponse) => {
     const requestId = req.headers['x-request-id']?.toString() ?? randomUUID();
@@ -102,6 +106,32 @@ export function createApp(deps: AppDeps = { orchestrator: new SuggestionOrchestr
         const input = parseEventRequest(await readJson(req));
         await deps.events.record(input.events, { requestId, userId: 'demo-user' });
         return send(req, res, 202, { requestId, accepted: input.events.length }, requestId);
+      }
+      if (req.method === 'POST' && path === '/api/feedback') {
+        const payload = await readJson(req);
+        const response = await fetch(`${pythonApiBaseUrl()}/feedback`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const bodyText = await response.text();
+        let parsedBody: unknown = null;
+        if (bodyText.trim().length > 0) {
+          try {
+            parsedBody = JSON.parse(bodyText);
+          } catch {
+            parsedBody = { detail: bodyText };
+          }
+        }
+        if (!response.ok) {
+          return send(req, res, response.status, {
+            error: 'feedback_forward_failed',
+            requestId,
+            upstreamStatus: response.status,
+            upstreamBody: parsedBody,
+          }, requestId);
+        }
+        return send(req, res, 201, parsedBody ?? { ok: true }, requestId);
       }
       const docMatch = path.match(/^\/api\/documents\/([^/]+)$/);
       if (docMatch && req.method === 'GET') {
