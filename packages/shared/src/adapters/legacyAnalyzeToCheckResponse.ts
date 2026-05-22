@@ -12,7 +12,13 @@ export function legacyAnalyzeToCheckResponse(input: unknown, opts: { requestId: 
   const body = (input ?? {}) as Record<string, any>;
   const raw = Array.isArray(body.suggestions) ? body.suggestions as LegacySuggestion[] : [];
   const suggestions: Suggestion[] = raw.map((item) => legacySuggestionToCanonical(item, opts.text, opts));
-  return { requestId: opts.requestId, documentId: opts.documentId, revision: opts.revision, language: 'bn', normalizedText: body.normalized_text ?? body.normalizedText, suggestions, timings: {}, warnings: body.warnings ?? [] };
+  const warningParts = [
+    ...(Array.isArray(body.warnings) ? body.warnings : []),
+    ...(Array.isArray(body.runtime_warnings) ? body.runtime_warnings : []),
+    ...(typeof body.backend_warning === 'string' ? [body.backend_warning] : []),
+  ].filter((value): value is string => typeof value === 'string');
+  const warnings = Array.from(new Set(warningParts.map((value) => value.trim()).filter(Boolean)));
+  return { requestId: opts.requestId, documentId: opts.documentId, revision: opts.revision, language: 'bn', normalizedText: body.normalized_text ?? body.normalizedText, suggestions, timings: {}, warnings };
 }
 
 export function legacySuggestionToCanonical(item: LegacySuggestion, text: string, opts: { documentId?: string; provider?: string }): Suggestion {
