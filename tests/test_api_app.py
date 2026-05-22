@@ -30,7 +30,6 @@ from shared.schemas.python_models import (
     FeedbackRequest,
     FeedbackRecord,
 )
-from services.api.shuddho_api.llm_openrouter import parse_and_normalize
 
 app_module = importlib.import_module("services.api.shuddho_api.app")
 
@@ -86,11 +85,6 @@ def test_ai_check_warns_when_api_key_missing(monkeypatch) -> None:
     response = ai_check(app_module.AiCheckRequest(text="আমি আজ স্কুলে গেছিলাম।", language="bn"))
     assert "openrouter_api_key_missing" in response.warnings
 
-
-def test_parse_and_normalize_handles_invalid_json() -> None:
-    response = parse_and_normalize(user_text="আমি আজ স্কুলে গেছিলাম।", raw_text="not json")
-    assert response.suggestions == []
-    assert "openrouter_invalid_json" in response.warnings
 
 
 def test_routes_survive_missing_corrector_checkpoint() -> None:
@@ -666,3 +660,52 @@ def _suggestion(
         severity=SuggestionSeverity.MEDIUM,
         suppression_key=suppression_key,
     )
+
+
+def test_llm_auto_enabled_when_key_set_and_unset_enable(monkeypatch) -> None:
+    monkeypatch.delenv("SHUDDHO_ENABLE_LLM", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+    enabled, _, _, _ = app_module._llm_config()
+    assert enabled is True
+
+
+def test_llm_auto_disabled_without_key(monkeypatch) -> None:
+    monkeypatch.delenv("SHUDDHO_ENABLE_LLM", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    enabled, _, _, _ = app_module._llm_config()
+    assert enabled is False
+
+
+def test_llm_false_overrides_key(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+    enabled, _, _, _ = app_module._llm_config()
+    assert enabled is False
+
+
+def test_health_deep_openrouter_details(monkeypatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    resp = health_deep().model_dump()
+    assert resp["llm"]["provider"] == "openrouter"
+    assert resp["llm"]["model"] == "openai/gpt-oss-120b:free"
+    assert resp["llm"]["configured"] is True
+
+
+def test_ai_check_invalid_json_warning(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+    def stub(**kwargs):
+        return {"suggestions": [], "warnings": ["openrouter_invalid_json"], "provider": "openrouter", "model": "openai/gpt-oss-120b:free", "raw_used": False}
+    monkeypatch.setattr(app_module, "run_openrouter_check", stub)
+    response = ai_check(app_module.AiCheckRequest(text="আমি আজ স্কুলে গেছিলাম।", language="bn"))
+    assert "openrouter_invalid_json" in response.warnings
+
+
+def test_api_check_returns_local_when_openrouter_fails(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+    monkeypatch.setattr(app_module, "run_openrouter_check", lambda **kwargs: {"suggestions": [], "warnings": ["openrouter_request_failed"], "provider": "openrouter", "model": "openai/gpt-oss-120b:free", "raw_used": False})
+    response = check_canonical(CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn"))
+    assert isinstance(response.suggestions, list)
+    assert "openrouter_request_failed" in response.warnings

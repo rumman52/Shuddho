@@ -27,3 +27,6 @@ test-artifacts/
 !artifacts/**/metrics.json
 !artifacts/**/README.md
 !artifacts/**/.gitkeep
+
+apps/web-editor/.env.local
+apps/web-editor/.env.*.local

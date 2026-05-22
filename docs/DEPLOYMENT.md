@@ -47,7 +47,7 @@ SHUDDHO_LOG_RAW_TEXT=false
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=your_key
-OPENROUTER_MODEL=baidu/cobuddy:free
+OPENROUTER_MODEL=openai/gpt-oss-120b:free
 SHUDDHO_LOG_RAW_TEXT=false
 ```
 

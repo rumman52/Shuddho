@@ -27,7 +27,7 @@ from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from services.api.shuddho_api.adapters import analyze_to_check_response
-from services.api.shuddho_api.llm_openrouter import call_openrouter, parse_and_normalize
+from services.api.shuddho_api.llm_openrouter import DEFAULT_OPENROUTER_MODEL, run_openrouter_check
 from shared.schemas.python_models import (
     AnalysisProfile,
     AnalyzeRequest,
@@ -67,7 +67,7 @@ LLM_ENABLED_ENV_VAR = "SHUDDHO_ENABLE_LLM"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
 OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
 LOG_RAW_TEXT_ENV_VAR = "SHUDDHO_LOG_RAW_TEXT"
-DEFAULT_OPENROUTER_MODEL = "baidu/cobuddy:free"
+DEFAULT_OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
 MAX_AI_CHECK_CHARS = int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000"))
 
 
@@ -449,10 +449,15 @@ def _preferences_service() -> UserPreferencesService:
 
 
 def _llm_config() -> tuple[bool, str, str, str | None]:
-    enabled = os.environ.get(LLM_ENABLED_ENV_VAR, "false").lower() == "true"
     provider = os.environ.get(LLM_PROVIDER_ENV_VAR, "openrouter").strip().lower() or "openrouter"
     model = os.environ.get(OPENROUTER_MODEL_ENV_VAR, DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
-    api_key = os.environ.get(OPENROUTER_API_KEY_ENV_VAR)
+    raw_api_key = os.environ.get(OPENROUTER_API_KEY_ENV_VAR)
+    api_key = raw_api_key.strip() if raw_api_key else None
+    raw_enabled = os.environ.get(LLM_ENABLED_ENV_VAR)
+    if raw_enabled is None or raw_enabled.strip().lower() in {"", "auto"}:
+        enabled = bool(api_key)
+    else:
+        enabled = raw_enabled.strip().lower() in {"1", "true", "yes", "on"}
     return enabled, provider, model, api_key
 
 
@@ -463,48 +468,18 @@ def _log_raw_text_enabled() -> bool:
 def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
     enabled, provider, model, api_key = _llm_config()
     if not enabled:
-        return AiCheckResponse(warnings=["llm_disabled"], provider=provider, model=model, llm_enabled=False)
+        return AiCheckResponse(warnings=["llm_disabled"], provider="openrouter", model=model, llm_enabled=False)
     if provider != "openrouter":
-        return AiCheckResponse(warnings=["unsupported_llm_provider"], provider=provider, model=model, llm_enabled=True)
+        return AiCheckResponse(warnings=["unsupported_llm_provider"], provider="openrouter", model=model, llm_enabled=True)
     if not api_key:
-        return AiCheckResponse(warnings=["openrouter_api_key_missing"], provider=provider, model=model, llm_enabled=True)
-    raw_text, call_error = call_openrouter(text=text, api_key=api_key, model=model)
-    if call_error:
-        logger.warning(
-            "ai_check_failed request_id=%s text_length=%s provider=%s model=%s error_type=%s",
-            request_id,
-            len(text),
-            provider,
-            model,
-            call_error,
-        )
-        return AiCheckResponse(
-            suggestions=[],
-            warnings=[call_error],
-            provider=provider,
-            model=model,
-            llm_enabled=True,
-        )
-    parsed = parse_and_normalize(user_text=text, raw_text=raw_text)
-    suggestions: list[dict] = []
-    warnings = list(parsed.warnings)
-    for suggestion in parsed.suggestions:
-        if not isinstance(suggestion, dict):
-            warnings.append("openrouter_invalid_suggestion_shape")
-            continue
-        suggestions.append(suggestion)
-    logger.info(
-        "ai_check_complete request_id=%s text_length=%s provider=%s model=%s suggestion_count=%s",
-        request_id,
-        len(text) if not _log_raw_text_enabled() else f"{len(text)} chars",
-        provider,
-        model,
-        len(suggestions),
-    )
+        return AiCheckResponse(warnings=["openrouter_api_key_missing"], provider="openrouter", model=model, llm_enabled=True)
+    timeout_seconds = float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35") or "35")
+    result = run_openrouter_check(text=text, model=model, api_key=api_key, timeout_seconds=timeout_seconds)
+    logger.info("ai_check_complete request_id=%s text_length=%s warnings=%s suggestion_count=%s", request_id, len(text), len(result.get("warnings", [])), len(result.get("suggestions", [])))
     return AiCheckResponse(
-        suggestions=suggestions,
-        warnings=_dedupe_strings(warnings),
-        provider=provider,
+        suggestions=result.get("suggestions", []),
+        warnings=_dedupe_strings(result.get("warnings", [])),
+        provider="openrouter",
         model=model,
         llm_enabled=True,
     )
