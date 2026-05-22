@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -53,18 +54,44 @@ def _parse_json_object(raw: str) -> tuple[dict[str, Any] | None, str | None]:
     return None, "openrouter_invalid_json"
 
 
+OPENROUTER_HTTP_REFERER_ENV_VAR = "OPENROUTER_HTTP_REFERER"
+OPENROUTER_APP_TITLE_ENV_VAR = "OPENROUTER_APP_TITLE"
+DEFAULT_OPENROUTER_HTTP_REFERER = "https://shuddho-web-editor.vercel.app"
+DEFAULT_OPENROUTER_APP_TITLE = "Shuddho"
+
+
+def _openrouter_headers(api_key: str) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    http_referer = os.environ.get(
+        OPENROUTER_HTTP_REFERER_ENV_VAR,
+        DEFAULT_OPENROUTER_HTTP_REFERER,
+    ).strip()
+
+    app_title = os.environ.get(
+        OPENROUTER_APP_TITLE_ENV_VAR,
+        DEFAULT_OPENROUTER_APP_TITLE,
+    ).strip()
+
+    if http_referer:
+        headers["HTTP-Referer"] = http_referer
+
+    if app_title:
+        headers["X-OpenRouter-Title"] = app_title
+
+    return headers
+
+
 def call_openrouter(*, text: str, api_key: str, model: str, timeout_seconds: float = 20.0) -> tuple[str, str | None]:
     prompt = PROMPT_TEMPLATE.replace("{{TEXT}}", text)
     try:
         with httpx.Client(timeout=timeout_seconds) as client:
             response = client.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://shuddho-web-editor.vercel.app",
-                    "X-Title": "Shuddho",
-                },
+                headers=_openrouter_headers(api_key),
                 json={
                     "model": model,
                     "messages": [
@@ -72,7 +99,7 @@ def call_openrouter(*, text: str, api_key: str, model: str, timeout_seconds: flo
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.2,
-                    "max_tokens": 800,
+                    "max_completion_tokens": 800,
                 },
             )
             if response.status_code >= 400:
