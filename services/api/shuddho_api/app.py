@@ -346,7 +346,10 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
                 "metadata": {"source": "openrouter"},
             }
         )
-    response_payload["warnings"] = _dedupe_strings([*response_payload["warnings"], *ai.warnings])
+    ai_warnings = list(ai.warnings)
+    if "llm_disabled" in ai_warnings and not _llm_config()[0]:
+        ai_warnings = [warning for warning in ai_warnings if warning != "llm_disabled"]
+    response_payload["warnings"] = _dedupe_strings([*response_payload["warnings"], *ai_warnings])
     return CanonicalCheckResponse(**response_payload)
 
 
