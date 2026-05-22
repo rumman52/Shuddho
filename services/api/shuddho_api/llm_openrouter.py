@@ -1,185 +1,69 @@
 from __future__ import annotations
-
-import hashlib
-import json
-import os
-import re
-from dataclasses import dataclass
+import json, os, re, httpx
 from typing import Any
-
-import httpx
-
-_ALLOWED_TYPES = {"spelling", "grammar", "punctuation", "spacing", "style", "tone"}
-
-PROMPT_TEMPLATE = """Analyze this Bangla text and return correction suggestions as strict JSON only.
-Return exactly this shape:
-{"suggestions":[{"type":"grammar","message":"কথ্য রূপের পরিবর্তে মানক রূপ ব্যবহার করুন।","original":"গেছিলাম","replacement":"গিয়েছিলাম","start":null,"end":null,"confidence":0.85,"source":"openrouter"}]}
-Rules:
-- Return JSON only.
-- No markdown.
-- No explanation outside JSON.
-- original must be an exact substring from the input text.
-- Do not invent or paraphrase original text.
-- suggestions must be an array.
-- type must be one of: spelling, grammar, punctuation, spacing, style, tone.
-- source must be openrouter.
-- If no issues found, return {"suggestions":[]}.
-- If no exact substring exists for a candidate, return {"suggestions":[]}.
-- If exact character offsets are uncertain, use null for start/end.
-Text:
-{{TEXT}}"""
-
-
-@dataclass
-class OpenRouterResult:
-    suggestions: list[dict[str, Any]]
-    warnings: list[str]
-
-
-def _parse_json_object(raw: str) -> tuple[dict[str, Any] | None, str | None]:
-    candidates = [raw.strip()]
-    fenced = re.sub(r"^```json\s*|```$", "", raw.strip(), flags=re.IGNORECASE | re.MULTILINE).strip()
-    if fenced and fenced not in candidates:
-        candidates.append(fenced)
-    match = re.search(r"\{[\s\S]*\}", raw)
-    if match:
-        candidates.append(match.group(0))
-    for item in candidates:
-        try:
-            parsed = json.loads(item)
-            if isinstance(parsed, dict):
-                return parsed, None
-        except json.JSONDecodeError:
-            continue
-    return None, "openrouter_invalid_json"
-
-
-OPENROUTER_HTTP_REFERER_ENV_VAR = "OPENROUTER_HTTP_REFERER"
-OPENROUTER_APP_TITLE_ENV_VAR = "OPENROUTER_APP_TITLE"
-DEFAULT_OPENROUTER_HTTP_REFERER = "https://shuddho-web-editor.vercel.app"
-DEFAULT_OPENROUTER_APP_TITLE = "Shuddho"
-
-
-def _openrouter_headers(api_key: str) -> dict[str, str]:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    http_referer = os.environ.get(
-        OPENROUTER_HTTP_REFERER_ENV_VAR,
-        DEFAULT_OPENROUTER_HTTP_REFERER,
-    ).strip()
-
-    app_title = os.environ.get(
-        OPENROUTER_APP_TITLE_ENV_VAR,
-        DEFAULT_OPENROUTER_APP_TITLE,
-    ).strip()
-
-    if http_referer:
-        headers["HTTP-Referer"] = http_referer
-
-    if app_title:
-        headers["X-OpenRouter-Title"] = app_title
-
-    return headers
-
-
-def call_openrouter(*, text: str, api_key: str, model: str, timeout_seconds: float = 20.0) -> tuple[str, str | None]:
-    prompt = PROMPT_TEMPLATE.replace("{{TEXT}}", text)
+OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
+ALLOWED_TYPES = {"spelling", "grammar", "punctuation", "style", "fluency"}
+SYSTEM_PROMPT = "You are Shuddho, a Bangla writing correction engine. Return strict JSON only. Do not use markdown. Do not explain. Do not include reasoning. Do not rewrite the whole text unless asked. Only return correction suggestions for exact spans from the input."
+def _build_prompt(text: str) -> str:
+    return f"""You are correcting Bangla writing for Shuddho.\n\nInput text:\n<<<TEXT\n{text}\nTEXT\n\nReturn strict JSON only in this exact shape:\n\n{{\"suggestions\":[{{\"type\":\"grammar\",\"message\":\"short Bangla or English explanation\",\"original\":\"exact substring from the input\",\"replacement\":\"corrected text\",\"start\":null,\"end\":null,\"confidence\":0.85,\"source\":\"openrouter\"}}]}}\n\nRules:\n- Return only JSON.\n- No markdown.\n- No explanation outside JSON.\n- If there are no problems, return {{\"suggestions\":[]}}.\n- \"original\" must be an exact substring from the input text.\n- Do not invent text that is not present.\n- Do not rewrite the whole paragraph.\n- Prefer short precise corrections.\n- Allowed types: spelling, grammar, punctuation, style, fluency.\n- confidence must be between 0 and 1.\n- source must be \"openrouter\"."""
+def _strip_fences(content: str) -> str:
+    cleaned = content.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip()
+def _map_http(status: int) -> str:
+    return {401:"openrouter_http_401_invalid_key",402:"openrouter_http_402_payment_required",403:"openrouter_http_403_forbidden",404:"openrouter_http_404_model_not_found",408:"openrouter_http_408_timeout",413:"openrouter_http_413_content_too_large",429:"openrouter_http_429_quota_or_rate_limit",500:"openrouter_provider_or_server_error",502:"openrouter_provider_or_server_error",503:"openrouter_provider_or_server_error",504:"openrouter_provider_or_server_error"}.get(status,"openrouter_http_error")
+def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list): return []
+    seen, out = set(), []
+    for item in items:
+        if not isinstance(item, dict): continue
+        original, replacement = item.get("original"), item.get("replacement")
+        if not isinstance(original, str) or not isinstance(replacement, str): continue
+        if not original or not replacement: continue
+        start, end = item.get("start"), item.get("end")
+        if not isinstance(start, int) or not isinstance(end, int) or end <= start:
+            start = input_text.find(original); end = start + len(original) if start >= 0 else -1
+        if start < 0 or input_text[start:end] != original: continue
+        stype = item.get("type") if isinstance(item.get("type"), str) else "grammar"
+        stype = stype if stype in ALLOWED_TYPES else "grammar"
+        try: conf = float(item.get("confidence", 0.75))
+        except (TypeError, ValueError): conf = 0.75
+        conf = conf if 0 <= conf <= 1 else 0.75
+        key = (original, replacement, start, end)
+        if key in seen: continue
+        seen.add(key)
+        out.append({"type": stype,"message": str(item.get("message") or "Correction suggestion"),"original": original,"replacement": replacement,"start": start,"end": end,"confidence": conf,"source": "openrouter"})
+    return out
+def run_openrouter_check(text: str, model: str, api_key: str, language: str = "bn", timeout_seconds: float = 35.0) -> dict[str, Any]:
+    del language
+    model = (model or DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
+    if not api_key or not api_key.strip():
+        return {"suggestions": [], "warnings": ["openrouter_api_key_missing"], "provider": "openrouter", "model": model, "raw_used": False}
+    headers = {"Authorization": f"Bearer {api_key.strip()}", "Content-Type": "application/json"}
+    if os.environ.get("OPENROUTER_HTTP_REFERER", "").strip(): headers["HTTP-Referer"] = os.environ["OPENROUTER_HTTP_REFERER"].strip()
+    if os.environ.get("OPENROUTER_APP_TITLE", "").strip(): headers["X-OpenRouter-Title"] = os.environ["OPENROUTER_APP_TITLE"].strip()
+    payload = {"model": model,"messages":[{"role":"system","content":SYSTEM_PROMPT},{"role":"user","content":_build_prompt(text)}],"temperature":0.1,"max_completion_tokens":900,"stream":False}
     try:
         with httpx.Client(timeout=timeout_seconds) as client:
-            response = client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=_openrouter_headers(api_key),
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": "You are Shuddho, a Bangla writing correction engine. Return strict JSON only. Do not use markdown."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": 0.2,
-                    "max_completion_tokens": 800,
-                },
-            )
-            if response.status_code >= 400:
-                status_map = {
-                    400: "openrouter_http_400_bad_request",
-                    401: "openrouter_http_401_invalid_key",
-                    402: "openrouter_http_402_payment_required",
-                    403: "openrouter_http_403_key_or_permission",
-                    404: "openrouter_http_404_model_not_found",
-                    408: "openrouter_http_408_timeout",
-                    429: "openrouter_http_429_quota_or_rate_limit",
-                    500: "openrouter_http_500_server_error",
-                    502: "openrouter_http_502_bad_gateway",
-                    503: "openrouter_http_503_unavailable",
-                }
-                return "", status_map.get(response.status_code, "openrouter_request_failed")
-            payload = response.json()
-            content = (((payload.get("choices") or [{}])[0].get("message") or {}).get("content"))
-            if not isinstance(content, str) or not content.strip():
-                return "", "openrouter_empty_response"
-            return content, None
+            resp = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
     except httpx.TimeoutException:
-        return "", "openrouter_http_408_timeout"
-    except httpx.HTTPError:
-        return "", "openrouter_request_failed"
-    except Exception:
-        return "", "openrouter_request_failed"
-
-
-def parse_and_normalize(*, user_text: str, raw_text: str) -> OpenRouterResult:
-    parsed, parse_warning = _parse_json_object(raw_text)
-    if not parsed:
-        return OpenRouterResult(suggestions=[], warnings=[parse_warning or "openrouter_invalid_json"])
-    out: list[dict[str, Any]] = []
-    warnings: list[str] = []
-    for index, item in enumerate(parsed.get("suggestions") or []):
-        if not isinstance(item, dict):
-            warnings.append("openrouter_invalid_suggestion_shape")
-            continue
-        suggestion_type = str(item.get("type") or "style").strip().lower()
-        if suggestion_type not in _ALLOWED_TYPES:
-            suggestion_type = "style"
-        original = str(item.get("original") or item.get("originalText") or "").strip()
-        suggested = str(item.get("replacement") or item.get("suggestedText") or "").strip()
-        if not original or not suggested:
-            continue
-        start = item.get("start")
-        end = item.get("end")
-        if not isinstance(start, int) or not isinstance(end, int):
-            idx = user_text.find(original)
-            if idx >= 0:
-                start, end = idx, idx + len(original)
-            else:
-                start, end = None, None
-        confidence = item.get("confidence", 0.7)
-        try:
-            confidence_num = max(0.0, min(1.0, float(confidence)))
-        except Exception:
-            confidence_num = 0.7
-        message = str(item.get("message") or "ওপেনরাউটার প্রস্তাবিত সংশোধন।").strip()
-        stable_id = hashlib.sha1(f"openrouter|{original}|{suggested}|{index}".encode("utf-8")).hexdigest()[:16]
-        out.append({
-            "id": stable_id,
-            "rule_id": "openrouter_smart_correction",
-            "category": suggestion_type,
-            "type": suggestion_type,
-            "message": message,
-            "original": original,
-            "replacement": suggested,
-            "start": start,
-            "end": end,
-            "originalText": original,
-            "suggestedText": suggested,
-            "explanationBn": message,
-            "confidence": confidence_num,
-            "source": "openrouter",
-            "span_start": start,
-            "span_end": end,
-            "replacement_options": [suggested],
-        })
-    if parse_warning:
-        warnings.append(parse_warning)
-    return OpenRouterResult(suggestions=out, warnings=list(dict.fromkeys(warnings)))
+        return {"suggestions": [], "warnings": ["openrouter_http_408_timeout"], "provider": "openrouter", "model": model, "raw_used": False}
+    except httpx.RequestError:
+        return {"suggestions": [], "warnings": ["openrouter_request_failed"], "provider": "openrouter", "model": model, "raw_used": False}
+    if resp.status_code >= 400:
+        return {"suggestions": [], "warnings": [_map_http(resp.status_code)], "provider": "openrouter", "model": model, "raw_used": False}
+    try:
+        outer = resp.json()
+    except json.JSONDecodeError:
+        return {"suggestions": [], "warnings": ["openrouter_invalid_json"], "provider": "openrouter", "model": model, "raw_used": False}
+    content = ((((outer.get("choices") or [{}])[0]).get("message") or {}).get("content"))
+    if not isinstance(content, str) or not content.strip():
+        return {"suggestions": [], "warnings": ["openrouter_empty_response"], "provider": "openrouter", "model": model, "raw_used": False}
+    try:
+        parsed = json.loads(_strip_fences(content))
+    except json.JSONDecodeError:
+        return {"suggestions": [], "warnings": ["openrouter_invalid_json"], "provider": "openrouter", "model": model, "raw_used": False}
+    suggestions = _normalize_suggestions(text, parsed.get("suggestions") if isinstance(parsed, dict) else None)
+    return {"suggestions": suggestions, "warnings": [], "provider": "openrouter", "model": model, "raw_used": False}
