@@ -138,7 +138,6 @@ export default function App() {
     [suggestions, text],
   );
 
-
   const wordCount = useMemo(() => countWords(text), [text]);
   const characterCount = text.length;
   const suggestionCounts = useMemo(
@@ -679,7 +678,6 @@ export default function App() {
       user_id: userId,
     });
   }
-
 
   function handleCheckWriting() {
     if (isChecking) {
