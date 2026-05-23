@@ -100,6 +100,7 @@ export default function App() {
   const analysisTimerRef = useRef<number | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const analysisRequestIdRef = useRef(0);
+  const manualAnalysisInFlightRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
 
@@ -261,19 +262,35 @@ export default function App() {
   }
 
   function scheduleAnalysis(nextText: string) {
+    if (manualAnalysisInFlightRef.current) {
+      return;
+    }
+
     if (analysisTimerRef.current) {
       window.clearTimeout(analysisTimerRef.current);
     }
     analysisTimerRef.current = window.setTimeout(() => {
+      if (manualAnalysisInFlightRef.current) {
+        return;
+      }
       void runAnalysis(nextText, false);
     }, ANALYSIS_DEBOUNCE_MS);
   }
 
   async function runAnalysis(nextText: string, includeLLM: boolean) {
+    if (includeLLM) {
+      manualAnalysisInFlightRef.current = true;
+      setIsChecking(true);
+    }
+
     if (!nextText.trim()) {
       setAnalysis(createEmptyAnalysis(nextText, mode));
       setTone(null);
       setRewriteResult(null);
+      if (includeLLM) {
+        manualAnalysisInFlightRef.current = false;
+        setIsChecking(false);
+      }
       return;
     }
 
@@ -299,6 +316,10 @@ export default function App() {
       );
       setTone(null);
       setRewriteResult(null);
+      if (includeLLM) {
+        manualAnalysisInFlightRef.current = false;
+        setIsChecking(false);
+      }
       return;
     }
 
@@ -371,6 +392,7 @@ export default function App() {
       );
     } finally {
       if (includeLLM) {
+        manualAnalysisInFlightRef.current = false;
         setIsChecking(false);
       }
     }
@@ -660,7 +682,16 @@ export default function App() {
 
 
   function handleCheckWriting() {
-    if (isChecking) return;
+    if (isChecking) {
+      return;
+    }
+
+    if (analysisTimerRef.current) {
+      window.clearTimeout(analysisTimerRef.current);
+      analysisTimerRef.current = null;
+    }
+
+    analysisAbortRef.current?.abort();
     setIsChecking(true);
     setStatus("Checking your writing…");
     void runAnalysis(text, true);
