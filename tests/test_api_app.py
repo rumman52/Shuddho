@@ -61,6 +61,52 @@ def test_api_check_route_returns_suggestions_and_warnings_arrays() -> None:
     assert payload["language"] == "bn"
     assert isinstance(payload["suggestions"], list)
     assert isinstance(payload["warnings"], list)
+    assert payload["llm_requested"] is False
+    assert payload["llm_used"] is False
+
+
+def test_api_check_without_include_llm_does_not_call_openrouter(monkeypatch) -> None:
+    called = {"value": False}
+
+    def fail_if_called(*args, **kwargs):  # type: ignore[no-untyped-def]
+        called["value"] = True
+        raise AssertionError("run_openrouter_check should not be called")
+
+    monkeypatch.setattr(app_module, "run_openrouter_check", fail_if_called)
+    response = check_canonical(CanonicalCheckRequest(text="আমি ভাত খাই।", language="bn"))
+    assert called["value"] is False
+    assert response.llm_requested is False
+    assert response.llm_used is False
+
+
+def test_api_check_with_include_llm_calls_openrouter(monkeypatch) -> None:
+    called = {"value": False}
+
+    def stub_openrouter_check(*args, **kwargs):  # type: ignore[no-untyped-def]
+        called["value"] = True
+        return {
+            "suggestions": [],
+            "warnings": ["openrouter_http_429_quota_or_rate_limit"],
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-120b:free",
+            "llm_enabled": True,
+        }
+
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(app_module, "run_openrouter_check", stub_openrouter_check)
+    response = check_canonical(
+        CanonicalCheckRequest(
+            text="আমি ভাত খাই।",
+            language="bn",
+            options={"includeLLM": True},
+        )
+    )
+    assert called["value"] is True
+    assert response.llm_requested is True
+    assert response.llm_used is True
+    assert "openrouter_http_429_quota_or_rate_limit" in response.warnings
 
 
 def test_health_deep_route_returns_backend_reachable() -> None:

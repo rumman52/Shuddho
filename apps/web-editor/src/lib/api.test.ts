@@ -100,6 +100,44 @@ test("analyzeText calls /api/check on configured gateway base URL", async () => 
 
   assert.equal(calls[0]?.url, "https://abc123.ngrok-free.app/api/check");
   assert.equal(calls[0]?.body.language, "bn");
+  assert.equal(calls[0]?.body.options?.includeLLM, false);
+});
+
+test("analyzeText can request LLM for manual checks", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: any }> = [];
+  setApiBaseUrlOverride("https://abc123.ngrok-free.app/");
+  globalThis.fetch = (async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")),
+    });
+    return new Response(
+      JSON.stringify({
+        requestId: "req-2",
+        language: "bn",
+        normalizedText: "আমি ভাত খাই।",
+        suggestions: [],
+        warnings: [],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    await analyzeText(
+      {
+        text: "আমি ভাত খাই।",
+        mode: "standard",
+        personal_dictionary: [],
+        user_id: "u1",
+      },
+      { includeLLM: true },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+  assert.equal(calls[0]?.body.options?.includeLLM, true);
 });
 
 test("sendFeedback posts full payload to /api/feedback (not /api/events)", async () => {

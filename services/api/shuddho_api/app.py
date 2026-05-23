@@ -301,7 +301,14 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         document_id=payload.documentId,
         revision=payload.revision,
     )
-    ai = _run_ai_check(payload.text, request_id)
+    llm_requested = _should_run_llm(payload)
+    ai = _run_ai_check(payload.text, request_id) if llm_requested else AiCheckResponse(
+        suggestions=[],
+        warnings=[],
+        provider="openrouter",
+        model=_llm_config()[2],
+        llm_enabled=_llm_config()[0],
+    )
     response_payload = response.model_dump(mode="json")
     seen = {
         (
@@ -347,9 +354,11 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
             }
         )
     ai_warnings = list(ai.warnings)
-    if "llm_disabled" in ai_warnings and not _llm_config()[0]:
+    if "llm_disabled" in ai_warnings and not llm_requested:
         ai_warnings = [warning for warning in ai_warnings if warning != "llm_disabled"]
     response_payload["warnings"] = _dedupe_strings([*response_payload["warnings"], *ai_warnings])
+    response_payload["llm_requested"] = llm_requested
+    response_payload["llm_used"] = bool(llm_requested and ai.llm_enabled and ai.provider == "openrouter")
     return CanonicalCheckResponse(**response_payload)
 
 
@@ -459,6 +468,20 @@ def _llm_config() -> tuple[bool, str, str, str | None]:
     else:
         enabled = raw_enabled.strip().lower() in {"1", "true", "yes", "on"}
     return enabled, provider, model, api_key
+
+
+def _should_run_llm(payload: object) -> bool:
+    options = getattr(payload, "options", None) or {}
+    if not isinstance(options, dict):
+        return False
+
+    return bool(
+        options.get("includeLLM")
+        or options.get("includeAi")
+        or options.get("includeAI")
+        or options.get("ai")
+        or options.get("llm")
+    )
 
 
 def _log_raw_text_enabled() -> bool:

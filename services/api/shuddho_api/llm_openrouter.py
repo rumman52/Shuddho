@@ -128,11 +128,12 @@ def _structured_response_format() -> dict[str, Any]:
     }
 
 
-def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
+def _normalize_suggestions(input_text: str, items: Any) -> tuple[list[dict[str, Any]], list[str]]:
     if not isinstance(items, list):
-        return []
+        return [], []
     seen: set[tuple[str, str, int, int]] = set()
     out: list[dict[str, Any]] = []
+    warnings: list[str] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -150,6 +151,7 @@ def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
         else:
             found = input_text.find(original)
             if found < 0:
+                warnings.append("openrouter_original_not_found")
                 continue
             span_start, span_end = found, found + len(original)
 
@@ -162,6 +164,7 @@ def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
             confidence = 0.75
         if confidence < 0 or confidence > 1:
             confidence = 0.75
+        confidence = max(0.75, min(confidence, 1.0))
 
         key = (original, replacement, span_start, span_end)
         if key in seen:
@@ -177,14 +180,18 @@ def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
                 "originalText": original,
                 "suggestedText": replacement,
                 "replacement_options": [replacement],
+                "replacementOptions": [replacement],
                 "span_start": span_start,
                 "span_end": span_end,
+                "spanStart": span_start,
+                "spanEnd": span_end,
                 "explanationBn": str(item.get("message") or "প্রস্তাবিত সংশোধন"),
                 "confidence": confidence,
                 "source": "openrouter",
+                "provider": "openrouter",
             }
         )
-    return out
+    return out, warnings
 
 
 def _extract_content(response_json: dict[str, Any]) -> str | None:
@@ -268,7 +275,10 @@ def run_openrouter_check(
         warnings.append("openrouter_invalid_json")
         return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True}
 
-    suggestions = _normalize_suggestions(text, parsed.get("suggestions") if isinstance(parsed, dict) else None)
+    suggestions, normalization_warnings = _normalize_suggestions(
+        text, parsed.get("suggestions") if isinstance(parsed, dict) else None
+    )
+    warnings.extend(normalization_warnings)
     return {
         "suggestions": suggestions,
         "warnings": warnings,

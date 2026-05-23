@@ -73,6 +73,13 @@ export type GatewayCheckResponse = {
   normalized_text?: string;
   suggestions?: GatewaySuggestion[];
   warnings?: string[];
+  llm_requested?: boolean;
+  llm_used?: boolean;
+};
+
+type AnalyzeGatewayOptions = {
+  includeLLM?: boolean;
+  signal?: AbortSignal;
 };
 
 let apiConfiguration = resolveApiConfiguration();
@@ -181,6 +188,7 @@ async function request<TResponse>(
 
 export async function analyzeText(
   payload: AnalyzeRequest,
+  options: AnalyzeGatewayOptions = {},
 ): Promise<AnalyzeResponse> {
   const useGateway =
     ((import.meta as ImportMeta & { env?: Record<string, string | undefined> })
@@ -201,10 +209,14 @@ export async function analyzeText(
 
   const response = await request<GatewayCheckResponse>(path, {
     method: "POST",
+    signal: options.signal,
     body: JSON.stringify({
       text: payload.text,
       language: "bn",
       userId: payload.user_id,
+      options: {
+        includeLLM: Boolean(options.includeLLM),
+      },
       client: { surface: "web", version: "vite-editor" },
     }),
   });
