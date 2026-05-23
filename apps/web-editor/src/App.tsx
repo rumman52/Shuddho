@@ -42,7 +42,7 @@ import {
 const INITIAL_TEXT =
   sampleFixtures[0]?.text ?? "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
-const ANALYSIS_DEBOUNCE_MS = 450;
+const ANALYSIS_DEBOUNCE_MS = 1200;
 const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
 const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED =
   "Backend is not connected. Contextual Bengali correction is disabled.";
@@ -98,7 +98,10 @@ export default function App() {
     end: 0,
   });
   const analysisTimerRef = useRef<number | null>(null);
+  const analysisAbortRef = useRef<AbortController | null>(null);
+  const analysisRequestIdRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
 
   const normalizedAnalysis = useMemo(
     () => normalizeAnalyzeResponse(analysis, text, mode),
@@ -262,11 +265,11 @@ export default function App() {
       window.clearTimeout(analysisTimerRef.current);
     }
     analysisTimerRef.current = window.setTimeout(() => {
-      void runAnalysis(nextText);
+      void runAnalysis(nextText, false);
     }, ANALYSIS_DEBOUNCE_MS);
   }
 
-  async function runAnalysis(nextText: string) {
+  async function runAnalysis(nextText: string, includeLLM: boolean) {
     if (!nextText.trim()) {
       setAnalysis(createEmptyAnalysis(nextText, mode));
       setTone(null);
@@ -300,12 +303,22 @@ export default function App() {
     }
 
     try {
+      analysisAbortRef.current?.abort();
+      const controller = new AbortController();
+      analysisAbortRef.current = controller;
+      const requestId = ++analysisRequestIdRef.current;
       const response = await analyzeText({
         text: nextText,
         mode,
         personal_dictionary: preferences.personal_dictionary ?? [],
         user_id: userId,
+      }, {
+        includeLLM,
+        signal: controller.signal,
       });
+      if (requestId !== analysisRequestIdRef.current) {
+        return;
+      }
       const normalizedResponse = normalizeAnalyzeResponse(
         response,
         nextText,
@@ -332,6 +345,9 @@ export default function App() {
         setTone(null);
       }
     } catch {
+      if (analysisAbortRef.current?.signal.aborted) {
+        return;
+      }
       setAnalysis(
         apiConfiguration.localFallbackEnabled
           ? buildLocalFallbackResponse(
@@ -353,6 +369,10 @@ export default function App() {
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
           : SUGGESTIONS_DISABLED_MESSAGE,
       );
+    } finally {
+      if (includeLLM) {
+        setIsChecking(false);
+      }
     }
   }
 
@@ -640,8 +660,10 @@ export default function App() {
 
 
   function handleCheckWriting() {
+    if (isChecking) return;
+    setIsChecking(true);
     setStatus("Checking your writing…");
-    void runAnalysis(text);
+    void runAnalysis(text, true);
   }
 
   function handleAcceptAll() {
@@ -934,8 +956,9 @@ export default function App() {
                 type="button"
                 className="button-primary check-writing-button"
                 onClick={handleCheckWriting}
+                disabled={isChecking}
               >
-Check Writing
+{isChecking ? "Checking..." : "Check Writing"}
               </button>
             </div>
           </div>
@@ -1207,7 +1230,7 @@ Check Writing
                 className="button-primary"
                 onClick={() => void savePreferencesToBackend()}
               >
-                Save preferences
+                Save Preferences
               </button>
               <div className="dictionary-box">
                 <h3>Personal dictionary</h3>
