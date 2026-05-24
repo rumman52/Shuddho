@@ -28,6 +28,7 @@ from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from services.api.shuddho_api.adapters import analyze_to_check_response
 from services.api.shuddho_api.llm_openrouter import DEFAULT_OPENROUTER_MODEL, run_openrouter_check
+from services.api.shuddho_api.llm_openai import DEFAULT_OPENAI_MODEL, run_openai_check
 from shared.schemas.python_models import (
     AnalysisProfile,
     AnalyzeRequest,
@@ -65,6 +66,8 @@ STARTUP_TIMESTAMP = datetime.now(timezone.utc)
 LLM_PROVIDER_ENV_VAR = "SHUDDHO_LLM_PROVIDER"
 LLM_ENABLED_ENV_VAR = "SHUDDHO_ENABLE_LLM"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
+OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
+OPENAI_MODEL_ENV_VAR = "OPENAI_MODEL"
 OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
 LOG_RAW_TEXT_ENV_VAR = "SHUDDHO_LOG_RAW_TEXT"
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
@@ -366,6 +369,12 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         and "llm_requested_but_not_successful" not in response_payload["warnings"]
     )
     response_payload["llm_model"] = ai.model
+    response_payload["llm_status"] = "completed" if ai.suggestions else ("skipped" if not llm_requested else "failed")
+    response_payload["llm_provider"] = ai.provider
+    response_payload["llm_response_mode"] = None
+    response_payload["correctedText"] = payload.text
+    response_payload["documentAssessment"] = {}
+    response_payload["diagnostics"] = {"llm": {"status": response_payload["llm_status"], "provider": ai.provider, "model": ai.model}, "local": {"local_engine_mode": os.environ.get("SHUDDHO_LOCAL_ENGINE_MODE", "fallback")}}
     response_payload["local_suggestion_count"] = len(response.suggestions)
     response_payload["ai_suggestion_count"] = len(ai.suggestions)
     return CanonicalCheckResponse(**response_payload)
@@ -467,30 +476,23 @@ def _preferences_service() -> UserPreferencesService:
 
 
 def _llm_config() -> tuple[bool, str, str, str | None]:
-    provider = os.environ.get(LLM_PROVIDER_ENV_VAR, "openrouter").strip().lower() or "openrouter"
-    model = os.environ.get(OPENROUTER_MODEL_ENV_VAR, DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
-    raw_api_key = os.environ.get(OPENROUTER_API_KEY_ENV_VAR)
+    provider = os.environ.get(LLM_PROVIDER_ENV_VAR, "openai").strip().lower() or "openai"
+    model = os.environ.get(OPENAI_MODEL_ENV_VAR, DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
+    raw_api_key = os.environ.get(OPENAI_API_KEY_ENV_VAR)
+    if provider == "openrouter":
+        model = os.environ.get(OPENROUTER_MODEL_ENV_VAR, DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
+        raw_api_key = os.environ.get(OPENROUTER_API_KEY_ENV_VAR)
     api_key = raw_api_key.strip() if raw_api_key else None
     raw_enabled = os.environ.get(LLM_ENABLED_ENV_VAR)
-    if raw_enabled is None or raw_enabled.strip().lower() in {"", "auto"}:
-        enabled = bool(api_key)
-    else:
-        enabled = raw_enabled.strip().lower() in {"1", "true", "yes", "on"}
+    enabled = bool(api_key) if raw_enabled is None or raw_enabled.strip().lower() in {"", "auto"} else raw_enabled.strip().lower() in {"1", "true", "yes", "on"}
     return enabled, provider, model, api_key
 
 
 def _should_run_llm(payload: object) -> bool:
     options = getattr(payload, "options", None) or {}
-    if not isinstance(options, dict):
-        return False
-
-    return bool(
-        options.get("includeLLM")
-        or options.get("includeAi")
-        or options.get("includeAI")
-        or options.get("ai")
-        or options.get("llm")
-    )
+    if isinstance(options, dict) and "includeLLM" in options:
+        return bool(options.get("includeLLM"))
+    return os.environ.get("SHUDDHO_CHECK_STRATEGY", "").strip().lower() == "ai_first"
 
 
 def _log_raw_text_enabled() -> bool:
@@ -500,21 +502,16 @@ def _log_raw_text_enabled() -> bool:
 def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
     enabled, provider, model, api_key = _llm_config()
     if not enabled:
-        return AiCheckResponse(warnings=["llm_disabled"], provider="openrouter", model=model, llm_enabled=False)
-    if provider != "openrouter":
-        return AiCheckResponse(warnings=["unsupported_llm_provider"], provider="openrouter", model=model, llm_enabled=True)
-    if not api_key:
-        return AiCheckResponse(warnings=["openrouter_api_key_missing"], provider="openrouter", model=model, llm_enabled=True)
+        return AiCheckResponse(warnings=["llm_disabled"], provider=provider, model=model, llm_enabled=False)
     timeout_seconds = float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35") or "35")
-    result = run_openrouter_check(text=text, model=model, api_key=api_key, timeout_seconds=timeout_seconds)
-    logger.info("ai_check_complete request_id=%s text_length=%s warnings=%s suggestion_count=%s", request_id, len(text), len(result.get("warnings", [])), len(result.get("suggestions", [])))
-    return AiCheckResponse(
-        suggestions=result.get("suggestions", []),
-        warnings=_dedupe_strings(result.get("warnings", [])),
-        provider="openrouter",
-        model=model,
-        llm_enabled=True,
-    )
+    if provider == "openai":
+        result = run_openai_check(text=text, model=model, api_key=api_key or "", timeout_seconds=timeout_seconds)
+    elif provider == "openrouter":
+        result = run_openrouter_check(text=text, model=model, api_key=api_key or "", timeout_seconds=timeout_seconds)
+    else:
+        result = {"suggestions": [], "warnings": ["unsupported_llm_provider"], "provider": provider, "model": model, "llm_enabled": True, "correctedText":"", "documentAssessment":{}}
+    logger.info("ai_check_complete request_id=%s provider=%s text_length=%s warnings=%s", request_id, provider, len(text), len(result.get("warnings", [])))
+    return AiCheckResponse(suggestions=result.get("suggestions", []), warnings=_dedupe_strings(result.get("warnings", [])), provider=provider, model=model, llm_enabled=True)
 
 
 def _rewrite_service() -> RewriteService:
