@@ -74,7 +74,11 @@ export type GatewayCheckResponse = {
   suggestions?: GatewaySuggestion[];
   warnings?: string[];
   llm_requested?: boolean;
+  llm_attempted?: boolean;
   llm_used?: boolean;
+  llm_model?: string;
+  local_suggestion_count?: number;
+  ai_suggestion_count?: number;
 };
 
 type AnalyzeGatewayOptions = {

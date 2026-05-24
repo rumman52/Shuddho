@@ -358,7 +358,16 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         ai_warnings = [warning for warning in ai_warnings if warning != "llm_disabled"]
     response_payload["warnings"] = _dedupe_strings([*response_payload["warnings"], *ai_warnings])
     response_payload["llm_requested"] = llm_requested
-    response_payload["llm_used"] = bool(llm_requested and ai.llm_enabled and ai.provider == "openrouter")
+    response_payload["llm_attempted"] = bool(llm_requested)
+    response_payload["llm_used"] = bool(
+        llm_requested
+        and ai.llm_enabled
+        and ai.provider == "openrouter"
+        and "llm_requested_but_not_successful" not in response_payload["warnings"]
+    )
+    response_payload["llm_model"] = ai.model
+    response_payload["local_suggestion_count"] = len(response.suggestions)
+    response_payload["ai_suggestion_count"] = len(ai.suggestions)
     return CanonicalCheckResponse(**response_payload)
 
 
