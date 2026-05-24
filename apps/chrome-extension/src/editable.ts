@@ -69,6 +69,23 @@ export function isSupportedEditable(target: EventTarget | null): target is Suppo
   return target.isContentEditable;
 }
 
+export function resolveEditableRoot(target: EventTarget | null): SupportedEditable | null {
+  let current: HTMLElement | null = target instanceof HTMLElement ? target : null;
+  while (current) {
+    if (current instanceof HTMLTextAreaElement) {
+      return current;
+    }
+    if (current instanceof HTMLInputElement && SUPPORTED_INPUT_TYPES.has(current.type)) {
+      return current;
+    }
+    if (current.isContentEditable) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
 export function extractEditableText(target: SupportedEditable): string {
   if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
     return target.value;
