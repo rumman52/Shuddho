@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 
 const extensionRoot = resolve(process.cwd());
 const distRoot = resolve(extensionRoot, "dist");
-const defaultApiBaseUrl = "http://127.0.0.1:8000";
+const defaultApiBaseUrl = "http://127.0.0.1:4000";
 const apiBaseUrl = resolveApiBaseUrl(
   process.env.SHUDDHO_EXTENSION_API_BASE_URL ?? process.env.SHUDDHO_API_BASE_URL ?? defaultApiBaseUrl
 );

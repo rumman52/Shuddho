@@ -2,7 +2,7 @@ import type { AnalyzeMode } from "./types";
 import type { ExtensionSettings } from "./types";
 
 const API_BASE_URL_TOKEN = "__SHUDDHO_EXTENSION_API_BASE_URL__";
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:4000";
 export const EXTENSION_SETTINGS_STORAGE_KEY = "shuddho-extension-settings";
 
 export function getDefaultApiBaseUrl(): string {

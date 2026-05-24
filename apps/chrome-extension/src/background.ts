@@ -14,7 +14,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-async function handleMessage(message: unknown): Promise<ExtensionSettings> {
+async function handleMessage(message: unknown): Promise<ExtensionSettings | unknown> {
   if (!message || typeof message !== "object" || !("type" in message)) {
     throw new Error("Unsupported background message");
   }
@@ -24,6 +24,9 @@ async function handleMessage(message: unknown): Promise<ExtensionSettings> {
     patch?: Partial<ExtensionSettings>;
     hostname?: string;
     disabled?: boolean;
+    endpoint?: string;
+    method?: string;
+    body?: unknown;
   };
 
   switch (typedMessage.type) {
@@ -36,9 +39,32 @@ async function handleMessage(message: unknown): Promise<ExtensionSettings> {
         throw new Error("Missing hostname");
       }
       return toggleSite(typedMessage.hostname, Boolean(typedMessage.disabled));
+    case "api:request":
+      return sendApiRequest(typedMessage.endpoint, typedMessage.method, typedMessage.body) as unknown as ExtensionSettings;
     default:
       throw new Error(`Unsupported background message: ${typedMessage.type}`);
   }
+}
+
+async function sendApiRequest(endpoint: string | undefined, method = "POST", body?: unknown): Promise<unknown> {
+  if (!endpoint) {
+    throw new Error("Missing endpoint");
+  }
+  const settings = await ensureSettings();
+  const response = await fetch(`${settings.backendBaseUrl}${endpoint}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed with ${response.status}`);
+  }
+  if (response.status === 204) {
+    return null;
+  }
+  return response.json();
 }
 
 async function ensureSettings(): Promise<ExtensionSettings> {

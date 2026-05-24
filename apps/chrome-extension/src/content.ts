@@ -5,8 +5,8 @@ import {
   extractEditableText,
   isAnalyzableText,
   supportsDirectApply,
-  isSupportedEditable,
   isSupportedEditor,
+  resolveEditableRoot,
   type SupportedEditable,
 } from "./editable";
 import { IssueOverlay } from "./overlay";
@@ -66,16 +66,17 @@ function updateTarget(target: EventTarget | null): void {
     return;
   }
 
-  if (!isSupportedEditable(target) || !isSupportedEditor(target)) {
+  const editableRoot = resolveEditableRoot(target);
+  if (!editableRoot || !isSupportedEditor(editableRoot)) {
     overlay.hide();
     detachTargetScrollListener();
     activeTarget = null;
     return;
   }
 
-  activeTarget = target;
-  attachTargetScrollListener(target);
-  scheduleAnalyze(target);
+  activeTarget = editableRoot;
+  attachTargetScrollListener(editableRoot);
+  scheduleAnalyze(editableRoot);
 }
 
 function scheduleAnalyze(target: SupportedEditable): void {
@@ -301,7 +302,7 @@ async function sendFeedback(payload: FeedbackRequest): Promise<void> {
     return;
   }
   try {
-    await analyzer.sendFeedback(payload, settings);
+    await analyzer.sendFeedback(payload);
   } catch (error) {
     console.warn("Shuddho feedback request failed", error);
   }

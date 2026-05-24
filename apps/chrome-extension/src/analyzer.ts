@@ -30,12 +30,9 @@ export class DebouncedAnalyzer {
     intent: RewriteIntent,
     settings: ExtensionSettings,
   ): Promise<RewriteResponse> {
-    const response = await fetch(`${settings.backendBaseUrl}/api/rewrite`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    return (await sendBackgroundApiRequest<RewriteResponse>({
+      endpoint: "/api/rewrite",
+      body: {
         text,
         selection_start: range.start,
         selection_end: range.end,
@@ -43,26 +40,12 @@ export class DebouncedAnalyzer {
         user_id: settings.currentUserId,
         writing_goal: settings.writingGoal,
         tone_goal: settings.toneGoal,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`Rewrite failed with ${response.status}`);
-    }
-    return (await response.json()) as RewriteResponse;
+      },
+    })) as RewriteResponse;
   }
 
-  async sendFeedback(payload: FeedbackRequest, settings: ExtensionSettings): Promise<void> {
-    const response = await fetch(`${settings.backendBaseUrl}/api/feedback`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Feedback failed with ${response.status}`);
-    }
+  async sendFeedback(payload: FeedbackRequest): Promise<void> {
+    await sendBackgroundApiRequest({ endpoint: "/api/feedback", body: payload });
   }
 
   private async execute(
@@ -75,46 +58,35 @@ export class DebouncedAnalyzer {
     this.activeController = new AbortController();
 
     try {
-      const analyzeResponsePromise = fetch(`${settings.backendBaseUrl}/api/check`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const analyzeResponsePromise = sendBackgroundApiRequest({
+        endpoint: "/api/check",
+        body: {
           text,
           language: "bn",
           userId: settings.currentUserId,
           client: { surface: "extension", version: "mvp" },
-          options: { includeGrammar: true, includeSpelling: true, includeStyle: true, includeTone: settings.autoShowTone },
-        }),
-        signal: this.activeController.signal,
+          options: {
+            includeGrammar: true,
+            includeSpelling: true,
+            includeStyle: true,
+            includeTone: settings.autoShowTone,
+          },
+        },
       });
 
       const toneResponsePromise = settings.autoShowTone && text.trim().length >= 30
-        ? fetch(`${settings.backendBaseUrl}/api/tone`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
+        ? sendBackgroundApiRequest<ToneAnalysisResponse>({
+            endpoint: "/api/tone",
+            body: {
               text,
               user_id: settings.currentUserId,
-            }),
-            signal: this.activeController.signal,
+            },
           })
         : Promise.resolve(null);
 
       const [analyzeResponse, toneResponse] = await Promise.all([analyzeResponsePromise, toneResponsePromise]);
-      if (!analyzeResponse.ok) {
-        throw new Error(`Analyze failed with ${analyzeResponse.status}`);
-      }
-
-      let tone: ToneAnalysisResponse | null = null;
-      if (toneResponse && toneResponse.ok) {
-        tone = (await toneResponse.json()) as ToneAnalysisResponse;
-      }
-
-      const gatewayBody = await analyzeResponse.json();
+      const tone = toneResponse ?? null;
+      const gatewayBody = analyzeResponse as any;
       const adaptedAnalyzeResponse = {
         text,
         corrected_text: gatewayBody.normalizedText ?? text,
@@ -153,4 +125,32 @@ export class DebouncedAnalyzer {
       onError(error);
     }
   }
+}
+
+interface ApiRequestMessage {
+  type: "api:request";
+  endpoint: string;
+  method?: string;
+  body?: unknown;
+}
+
+function sendBackgroundApiRequest<TResponse>(message: Omit<ApiRequestMessage, "type">): Promise<TResponse> {
+  return new Promise((resolve, reject) => {
+    if (!chrome.runtime?.id) {
+      reject(new Error("Extension runtime is unavailable"));
+      return;
+    }
+    chrome.runtime.sendMessage({ type: "api:request", ...message }, (response: TResponse | { error?: string }) => {
+      const runtimeError = chrome.runtime.lastError;
+      if (runtimeError) {
+        reject(new Error(runtimeError.message));
+        return;
+      }
+      if (response && typeof response === "object" && "error" in response && response.error) {
+        reject(new Error(response.error));
+        return;
+      }
+      resolve(response as TResponse);
+    });
+  });
 }
