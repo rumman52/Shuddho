@@ -685,4 +685,8 @@ class CanonicalCheckResponse(BaseModel):
     timings: dict[str, float] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     llm_requested: bool = False
+    llm_attempted: bool = False
     llm_used: bool = False
+    llm_model: str | None = None
+    local_suggestion_count: int = Field(default=0, ge=0)
+    ai_suggestion_count: int = Field(default=0, ge=0)
