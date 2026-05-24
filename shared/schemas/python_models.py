@@ -681,12 +681,18 @@ class CanonicalCheckResponse(BaseModel):
     revision: int | None = Field(default=None, ge=0)
     language: str = 'bn'
     normalizedText: str | None = None
+    correctedText: str | None = None
+    documentAssessment: dict[str, Any] = Field(default_factory=dict)
     suggestions: list[CanonicalSuggestion] = Field(default_factory=list)
     timings: dict[str, float] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     llm_requested: bool = False
     llm_attempted: bool = False
     llm_used: bool = False
+    llm_status: str | None = None
+    llm_provider: str | None = None
     llm_model: str | None = None
+    llm_response_mode: str | None = None
     local_suggestion_count: int = Field(default=0, ge=0)
     ai_suggestion_count: int = Field(default=0, ge=0)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)

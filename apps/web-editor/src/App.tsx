@@ -987,7 +987,7 @@ export default function App() {
                 onClick={handleCheckWriting}
                 disabled={isChecking}
               >
-{isChecking ? "Checking..." : "Check Writing"}
+{isChecking ? "Checking with AI..." : "Deep AI Review"}
               </button>
             </div>
           </div>
