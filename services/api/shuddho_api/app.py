@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel, Field, field_validator
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,9 +57,26 @@ from shared.schemas.python_models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _load_dotenv_file(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    loaded = False
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip('"').strip("'")
+        loaded = True
+    return loaded
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENV_FILE_PATH = REPO_ROOT / ".env"
-ENV_FILE_LOADED = load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
+ENV_FILE_LOADED = _load_dotenv_file(ENV_FILE_PATH)
 ALLOWED_ORIGINS_ENV_VAR = "SHUDDHO_ALLOWED_ORIGINS"
 DEFAULT_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
