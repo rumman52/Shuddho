@@ -253,6 +253,15 @@ def root() -> dict[str, str]:
     return {"message": "Shuddho API is running"}
 
 
+@app.get("/version")
+def version() -> dict[str, str]:
+    return {
+        "commit": _git_short_sha() or "unknown",
+        "build_time": STARTUP_TIMESTAMP.isoformat(),
+        "llm_pipeline_version": "async-review-v1",
+    }
+
+
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
     preferences_service = _preferences_service()
@@ -321,8 +330,23 @@ def put_api_preferences(payload: ApiPreferences, user_id: str = "demo-user") -> 
 
 @app.post("/api/check", response_model=CanonicalCheckResponse)
 def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
+    started_at = time.time()
     request_id = datetime.now(timezone.utc).isoformat()
+    options = getattr(payload, "options", None) or {}
+    include_llm = _should_run_llm(payload)
+    async_llm = bool(options.get("asyncLLM", True)) if isinstance(options, dict) else False
+    llm_mode = options.get("llmMode", "review_candidates") if isinstance(options, dict) else "review_candidates"
+    logger.info(
+        "CHECK_START request_id=%s text_length=%s includeLLM=%s asyncLLM=%s mode=%s",
+        request_id, len(payload.text), include_llm, async_llm, llm_mode
+    )
+    local_started = time.time()
     legacy = analyze(AnalyzeRequest(text=payload.text, user_id=payload.userId))
+    local_ms = int((time.time() - local_started) * 1000)
+    logger.info(
+        "LOCAL_ENGINE_DONE request_id=%s local_suggestions=%s local_ms=%s",
+        request_id, len(legacy.suggestions), local_ms
+    )
     response = analyze_to_check_response(
         legacy,
         request_id=request_id,
@@ -330,19 +354,20 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         document_id=payload.documentId,
         revision=payload.revision,
     )
-    options = getattr(payload, "options", None) or {}
-    llm_requested = bool(options.get("includeLLM")) if isinstance(options, dict) else False
-    async_llm = bool(options.get("asyncLLM", True)) if isinstance(options, dict) else False
+    llm_requested = include_llm
     mode = (options.get("mode") or ("smart" if llm_requested else "fast")) if isinstance(options, dict) else "fast"
     ai = AiCheckResponse(suggestions=[], warnings=[], provider=_llm_config()[1], model=_llm_config()[2], llm_enabled=_llm_config()[0])
-    llm_block: dict = {"requested": llm_requested, "mode": options.get("llmMode", "review_candidates") if isinstance(options, dict) else "review_candidates", "status": "skipped", "used": False, "cache_hit": False, "provider": _llm_config()[1], "model": _llm_config()[2]}
+    llm_block: dict = {"requested": llm_requested, "used": False, "status": "skipped", "provider": _llm_config()[1], "model": _llm_config()[2], "job_id": None, "warnings": [], "error": None, "cache_hit": False, "mode": llm_mode}
     if llm_requested:
         if async_llm:
             job = _create_llm_review_job(payload.text, payload.language, response.model_dump(mode="json").get("suggestions", []), llm_block["mode"], request_id=request_id)
-            llm_block.update({"status": "queued", "job_id": job["job_id"]})
+            llm_block.update({"status": "queued", "job_id": job["job_id"], "used": True})
+            logger.info("LLM_JOB_QUEUED request_id=%s job_id=%s provider=%s model=%s candidates=%s", request_id, job["job_id"], llm_block["provider"], llm_block["model"], job.get("candidate_count", 0))
         else:
             ai = _run_ai_check(payload.text, request_id)
-            llm_block.update({"status": "completed" if ai.suggestions else "failed", "used": bool(ai.suggestions)})
+            llm_block.update({"status": "succeeded" if ai.suggestions else "failed", "used": True, "warnings": list(ai.warnings)})
+    else:
+        logger.info("LLM_SKIPPED request_id=%s reason=%s", request_id, "includeLLM_false")
     response_payload = response.model_dump(mode="json")
     seen = {
         (
@@ -403,7 +428,7 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
     response_payload["llm_status"] = llm_block["status"]
     response_payload["llm_provider"] = llm_block["provider"]
     response_payload["llm_response_mode"] = llm_block["mode"]
-    response_payload["timings"] = {"local_ms": 0, "total_ms": 0}
+    response_payload["timings"] = {"local_ms": local_ms, "llm_ms": None, "total_ms": int((time.time() - started_at) * 1000)}
     response_payload["runtime_warnings"] = []
     response_payload["llm"] = llm_block
     response_payload["correctedText"] = payload.text
@@ -549,9 +574,15 @@ def _llm_config() -> tuple[bool, str, str, str | None]:
 
 def _should_run_llm(payload: object) -> bool:
     options = getattr(payload, "options", None) or {}
-    if isinstance(options, dict) and "includeLLM" in options:
-        return bool(options.get("includeLLM"))
-    return os.environ.get("SHUDDHO_CHECK_STRATEGY", "").strip().lower() == "ai_first"
+    if not isinstance(options, dict):
+        return False
+    return bool(
+        options.get("includeLLM")
+        or options.get("includeAi")
+        or options.get("includeAI")
+        or options.get("ai")
+        or options.get("llm")
+    )
 
 
 def _log_raw_text_enabled() -> bool:
@@ -579,7 +610,7 @@ def _create_llm_review_job(text: str, language: str, local_suggestions: list[dic
     candidates = build_llm_candidates(text, local_suggestions, max_sentences=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")), max_chars=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")))
     llm_jobs[job_id] = {"job_id": job_id, "status": "queued", "suggestions": [], "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": [], "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "timings": {"queue_ms": 0, "llm_ms": 0, "total_ms": 0}, "created_at": time.time()}
     threading.Thread(target=_run_llm_job, args=(job_id, text, candidates, local_suggestions, request_id), daemon=True).start()
-    return {"job_id": job_id, "status": "queued", "estimated_seconds": 3}
+    return {"job_id": job_id, "status": "queued", "estimated_seconds": 3, "candidate_count": len(candidates)}
 
 
 def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestions: list[dict], request_id: str) -> None:
