@@ -233,7 +233,10 @@ export async function analyzeText(
   return gatewayCheckToAnalyzeResponse(response, payload);
 }
 
-function buildCheckRequestBody(text: string, options: AnalyzeOptions = {}) {
+export function buildCheckRequestBody(
+  text: string,
+  options: AnalyzeOptions = {},
+) {
   const includeLLM = Boolean(options.includeLLM);
   const asyncLLM = Boolean(options.asyncLLM);
   return {
