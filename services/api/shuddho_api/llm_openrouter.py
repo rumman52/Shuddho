@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
+import logging
 from typing import Any
 
 import httpx
+logger = logging.getLogger(__name__)
 
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
@@ -243,6 +246,9 @@ def run_openrouter_check(
     }
 
     payload = {**base_payload, "response_format": _structured_response_format()}
+    prompt = base_payload["messages"][1]["content"]
+    started = time.time()
+    logger.info("OPENROUTER_HTTP_START request_id=%s model=%s endpoint=%s prompt_chars=%s", os.environ.get("SHUDDHO_REQUEST_ID","unknown"), model, OPENROUTER_CHAT_COMPLETIONS_URL, len(prompt))
 
     try:
         with httpx.Client(timeout=timeout_seconds) as client:
@@ -250,25 +256,27 @@ def run_openrouter_check(
             if response.status_code == 400:
                 warnings.append("openrouter_structured_output_fallback_used")
                 response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=base_payload)
+            latency_ms = int((time.time() - started) * 1000)
+            logger.info("OPENROUTER_HTTP_DONE request_id=%s status=%s latency_ms=%s model=%s", os.environ.get("SHUDDHO_REQUEST_ID","unknown"), response.status_code, latency_ms, model)
     except httpx.TimeoutException:
-        return {"suggestions": [], "warnings": ["openrouter_http_408_timeout"], "provider": "openrouter", "model": model, "llm_enabled": True}
+        return {"suggestions": [], "warnings": ["openrouter_timeout"], "provider": "openrouter", "model": model, "llm_enabled": True, "called": True}
     except httpx.RequestError:
-        return {"suggestions": [], "warnings": ["openrouter_request_failed"], "provider": "openrouter", "model": model, "llm_enabled": True}
+        return {"suggestions": [], "warnings": ["openrouter_request_failed"], "provider": "openrouter", "model": model, "llm_enabled": True, "called": True}
 
     if response.status_code >= 400:
         warnings.append(_map_http(response.status_code))
-        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True}
+        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True, "called": True, "http_status": response.status_code}
 
     try:
         response_json = response.json()
     except json.JSONDecodeError:
         warnings.append("openrouter_invalid_json")
-        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True}
+        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True, "called": True, "http_status": response.status_code}
 
     content = _extract_content(response_json)
     if content is None:
         warnings.append("openrouter_empty_response")
-        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True}
+        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True, "called": True, "http_status": response.status_code}
 
     try:
         parsed = json.loads(_strip_fences(content))
@@ -279,10 +287,17 @@ def run_openrouter_check(
     raw = _normalize_suggestions(text, parsed.get("suggestions") if isinstance(parsed, dict) else None, model)
     warnings.extend([item["_warning"] for item in raw if isinstance(item, dict) and "_warning" in item])
     suggestions = [item for item in raw if isinstance(item, dict) and "_warning" not in item]
+    parsed_ok = isinstance(parsed, dict) and isinstance(parsed.get("suggestions"), list)
+    logger.info("OPENROUTER_PARSE_DONE request_id=%s parsed=%s suggestions=%s warnings=%s content_chars=%s", os.environ.get("SHUDDHO_REQUEST_ID","unknown"), parsed_ok, len(suggestions), warnings, len(content))
     return {
         "suggestions": suggestions,
         "warnings": warnings,
         "provider": "openrouter",
         "model": model,
         "llm_enabled": True,
+        "called": True,
+        "http_status": response.status_code,
+        "parsed": parsed_ok,
+        "usage": response_json.get("usage") if isinstance(response_json, dict) else {},
+        "timings": {"llm_ms": int((time.time() - started) * 1000)},
     }

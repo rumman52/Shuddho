@@ -119,6 +119,12 @@ class AiCheckResponse(BaseModel):
     provider: str = "openrouter"
     model: str = DEFAULT_OPENROUTER_MODEL
     llm_enabled: bool = False
+    configured: bool = False
+    called: bool = False
+    parsed: bool = False
+    http_status: int | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    timings: dict[str, float] = Field(default_factory=dict)
 
 
 class ApiCheckRequest(BaseModel):
@@ -347,7 +353,7 @@ def version() -> dict[str, str]:
     return {
         "commit": commit,
         "build_time": build_time,
-        "llm_pipeline_version": "validation-fix-v1",
+        "llm_pipeline_version": "direct-ai-check-v1",
     }
 
 
@@ -466,12 +472,14 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         document_id=canonical_payload.documentId,
         revision=canonical_payload.revision,
     )
+    llm_allowed, llm_reason = _llm_allowed_on_check(include_llm)
     llm_requested = include_llm
     mode = str(options.get("mode") or ("smart" if llm_requested else "fast"))
     ai = AiCheckResponse(suggestions=[], warnings=[], provider=_llm_config()[1], model=_llm_config()[2], llm_enabled=_llm_config()[0])
     llm_ms: float | None = None
-    llm_block: dict = {"requested": llm_requested, "used": False, "status": "skipped", "provider": _llm_config()[1], "model": _llm_config()[2], "job_id": None, "warnings": [], "error": None, "cache_hit": False, "mode": llm_mode, "llm_ms": None}
-    if llm_requested:
+    llm_block: dict = {"requested": llm_requested, "used": False, "status": "skipped", "provider": _llm_config()[1], "model": _llm_config()[2], "job_id": None, "warnings": [], "error": None, "cache_hit": False, "mode": llm_mode, "llm_ms": None, "skip_reason": None}
+    if llm_allowed:
+        logger.info("LLM_REQUESTED request_id=%s provider=%s model=%s text_length=%s mode=%s", request_id, llm_block["provider"], llm_block["model"], len(canonical_payload.text), llm_mode)
         if async_llm:
             job = _create_llm_review_job(canonical_payload.text, canonical_payload.language, response.model_dump(mode="json").get("suggestions", []), llm_block["mode"], request_id=request_id)
             llm_block.update({"status": "queued", "job_id": job["job_id"], "used": True})
@@ -488,7 +496,8 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
                 "llm_ms": llm_ms,
             })
     else:
-        logger.info("LLM_SKIPPED request_id=%s reason=%s", request_id, "includeLLM_false")
+        llm_block["skip_reason"] = llm_reason
+        logger.info("LLM_SKIPPED request_id=%s reason=%s on_check=%s includeLLM=%s", request_id, llm_reason, os.environ.get("SHUDDHO_LLM_ON_CHECK"), include_llm)
     response_payload = response.model_dump(mode="json")
     seen = {
         (
@@ -560,6 +569,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["diagnostics"] = {"llm": {"status": response_payload["llm_status"], "provider": ai.provider, "model": ai.model}, "local": {"local_engine_mode": os.environ.get("SHUDDHO_LOCAL_ENGINE_MODE", "fallback")}}
     response_payload["local_suggestion_count"] = len(response.suggestions)
     response_payload["ai_suggestion_count"] = len(ai.suggestions)
+    logger.info("LLM_MERGE_DONE request_id=%s local_count=%s llm_count=%s total_count=%s warnings=%s", request_id, len(response.suggestions), len(ai.suggestions), len(response_payload["suggestions"]), response_payload["warnings"])
     response_payload["timings"] = _safe_timings(response_payload.get("timings"))
     try:
         return CanonicalCheckResponse(**response_payload)
@@ -585,6 +595,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
 @app.post("/api/ai/check", response_model=AiCheckResponse)
 def ai_check(payload: AiCheckRequest) -> AiCheckResponse:
     request_id = datetime.now(timezone.utc).isoformat()
+    logger.info("CHECK_START request_id=%s text_length=%s includeLLM=%s asyncLLM=%s mode=%s", request_id, len(payload.text), True, False, "review_candidates")
     return _run_ai_check(payload.text, request_id)
 
 
@@ -615,6 +626,7 @@ def llm_debug() -> dict:
         "provider": provider,
         "model": model,
         "configured": bool(api_key),
+        "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
         "endpoint": "https://openrouter.ai/api/v1/chat/completions" if provider == "openrouter" else "https://api.openai.com/v1/chat/completions",
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "12")),
@@ -766,6 +778,17 @@ def _llm_mode(options: dict[str, Any], include_llm: bool) -> str:
     return "smart" if include_llm else "fast"
 
 
+def _llm_allowed_on_check(include_llm: bool) -> tuple[bool, str]:
+    mode = os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower()
+    if mode in {"never", "off", "false"}:
+        return False, "env_never"
+    if mode in {"always", "true"}:
+        return True, "env_always"
+    if mode == "manual":
+        return bool(include_llm), "manual_requested" if include_llm else "manual_not_requested"
+    return bool(include_llm), "default_manual"
+
+
 def _normalize_api_check_payload(payload: ApiCheckRequest) -> dict[str, Any]:
     options = dict(payload.options or {})
     extra = getattr(payload, "__pydantic_extra__", None) or {}
@@ -815,7 +838,10 @@ def _log_raw_text_enabled() -> bool:
 def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
     enabled, provider, model, api_key = _llm_config()
     if not enabled:
-        return AiCheckResponse(warnings=["llm_disabled"], provider=provider, model=model, llm_enabled=False)
+        return AiCheckResponse(warnings=["llm_disabled"], provider=provider, model=model, llm_enabled=False, configured=bool(api_key), called=False)
+    if not api_key:
+        return AiCheckResponse(warnings=["openrouter_api_key_missing"], provider=provider, model=model, llm_enabled=True, configured=False, called=False)
+    os.environ["SHUDDHO_REQUEST_ID"] = request_id
     timeout_seconds = float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35") or "35")
     if provider == "openai":
         result = run_openai_check(text=text, model=model, api_key=api_key or "", timeout_seconds=timeout_seconds)
@@ -824,7 +850,7 @@ def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
     else:
         result = {"suggestions": [], "warnings": ["unsupported_llm_provider"], "provider": provider, "model": model, "llm_enabled": True, "correctedText":"", "documentAssessment":{}}
     logger.info("ai_check_complete request_id=%s provider=%s text_length=%s warnings=%s", request_id, provider, len(text), len(result.get("warnings", [])))
-    return AiCheckResponse(suggestions=result.get("suggestions", []), warnings=_dedupe_strings(result.get("warnings", [])), provider=provider, model=model, llm_enabled=True)
+    return AiCheckResponse(suggestions=result.get("suggestions", []), warnings=_dedupe_strings(result.get("warnings", [])), provider=provider, model=model, llm_enabled=True, configured=True, called=bool(result.get("called")), parsed=bool(result.get("parsed")), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings=_safe_timings(result.get("timings")))
 
 
 def _create_llm_review_job(text: str, language: str, local_suggestions: list[dict], mode: str, request_id: str | None = None) -> dict:

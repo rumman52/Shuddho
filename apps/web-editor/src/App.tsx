@@ -21,6 +21,7 @@ import {
   getHealth,
   getUserPreferences,
   rewriteText,
+  runAiCheck,
   saveUserPreferences,
   sendFeedback,
   setApiBaseUrlOverride,
@@ -100,6 +101,7 @@ export default function App() {
   const analysisAbortRef = useRef<AbortController | null>(null);
   const analysisRequestIdRef = useRef(0);
   const manualAnalysisInFlightRef = useRef(false);
+  const aiReviewInFlightRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
 
@@ -260,7 +262,7 @@ export default function App() {
   }
 
   function scheduleAnalysis(nextText: string) {
-    if (manualAnalysisInFlightRef.current) {
+    if (manualAnalysisInFlightRef.current || aiReviewInFlightRef.current) {
       return;
     }
 
@@ -268,7 +270,7 @@ export default function App() {
       window.clearTimeout(analysisTimerRef.current);
     }
     analysisTimerRef.current = window.setTimeout(() => {
-      if (manualAnalysisInFlightRef.current) {
+      if (manualAnalysisInFlightRef.current || aiReviewInFlightRef.current) {
         return;
       }
       void runAnalysis(nextText, false);
@@ -683,8 +685,49 @@ export default function App() {
 
     analysisAbortRef.current?.abort();
     setIsChecking(true);
-    setStatus("Checking your writing…");
-    void runAnalysis(text, true);
+    aiReviewInFlightRef.current = true;
+    setStatus("AI reviewing...");
+    void (async () => {
+      try {
+        await runAnalysis(text, false);
+        const ai = await runAiCheck(text);
+        const aiSuggestions = Array.isArray(ai.suggestions) ? ai.suggestions : [];
+        const aiWarnings = Array.isArray(ai.warnings) ? ai.warnings : [];
+        setAnalysis((current) => {
+          const localSuggestions = Array.isArray(current.suggestions) ? [...current.suggestions] : [];
+          const seen = new Set(localSuggestions.map((s) => `${s.span_start}:${s.span_end}:${s.replacement_options?.[0] ?? ""}`));
+          for (const raw of aiSuggestions) {
+            const spanStart = raw.span?.startIndex ?? raw.span_start;
+            const spanEnd = raw.span?.endIndex ?? raw.span_end;
+            const suggestedText = raw.suggestedText ?? raw.suggested_text;
+            const originalText = raw.originalText ?? raw.original_text;
+            if (typeof spanStart !== "number" || typeof spanEnd !== "number" || !suggestedText || !originalText) continue;
+            const key = `${spanStart}:${spanEnd}:${suggestedText}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            localSuggestions.push({
+              id: String(raw.id ?? `llm-${key}`),
+              rule_id: String(raw.ruleId ?? raw.rule_id ?? "llm_grammar"),
+              category: "grammar",
+              subtype: String(raw.type ?? "grammar"),
+              severity: "medium",
+              original_text: String(originalText),
+              replacement_options: Array.isArray(raw.replacementOptions) ? raw.replacementOptions : [String(suggestedText)],
+              span_start: spanStart,
+              span_end: spanEnd,
+              confidence: Number(raw.confidence ?? 0.75),
+              explanation_bn: String(raw.explanationBn ?? raw.explanation_bn ?? "AI suggestion"),
+              explanation_en: "",
+              source: "model",
+            });
+          }
+          return { ...current, suggestions: localSuggestions, runtime_warnings: [...(current.runtime_warnings ?? []), ...aiWarnings] };
+        });
+      } finally {
+        aiReviewInFlightRef.current = false;
+        setIsChecking(false);
+      }
+    })();
   }
 
   function handleAcceptAll() {

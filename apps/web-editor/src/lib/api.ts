@@ -92,6 +92,15 @@ type AnalyzeGatewayOptions = {
   mode?: string;
   signal?: AbortSignal;
 };
+export type AiCheckApiResponse = {
+  suggestions?: GatewaySuggestion[];
+  warnings?: string[];
+  provider?: string;
+  model?: string;
+  called?: boolean;
+  llm_enabled?: boolean;
+  llm_status?: string;
+};
 type AnalyzeOptions = Pick<
   AnalyzeGatewayOptions,
   "includeLLM" | "asyncLLM" | "llmMode" | "mode"
@@ -258,6 +267,17 @@ export function buildCheckRequestBody(
       mode: options.mode ?? (includeLLM ? "smart" : "fast"),
     },
   };
+}
+
+export async function runAiCheck(
+  text: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<AiCheckApiResponse> {
+  return request<AiCheckApiResponse>("/api/ai/check", {
+    method: "POST",
+    signal: options.signal,
+    body: JSON.stringify({ text, language: "bn" }),
+  });
 }
 
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {
