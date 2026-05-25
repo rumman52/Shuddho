@@ -3,6 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
+import time
+import hashlib
+import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -29,6 +34,7 @@ from services.suggestion_manager.shuddho_suggestion_manager.manager import Sugge
 from services.api.shuddho_api.adapters import analyze_to_check_response
 from services.api.shuddho_api.llm_openrouter import DEFAULT_OPENROUTER_MODEL, run_openrouter_check
 from services.api.shuddho_api.llm_openai import DEFAULT_OPENAI_MODEL, run_openai_check
+from services.api.shuddho_api.llm_candidates import build_llm_candidates
 from shared.schemas.python_models import (
     AnalysisProfile,
     AnalyzeRequest,
@@ -177,6 +183,10 @@ tone_analyzer = ToneAnalyzer()
 analyze_cache: ContentHashCache[AnalyzeResponse] = ContentHashCache(ttl_seconds=8.0, max_entries=128)
 rewrite_cache: ContentHashCache[RewriteResponse] = ContentHashCache(ttl_seconds=20.0, max_entries=64)
 tone_cache: ContentHashCache[ToneAnalysisResponse] = ContentHashCache(ttl_seconds=20.0, max_entries=64)
+llm_jobs: dict[str, dict] = {}
+llm_cache: dict[str, dict] = {}
+llm_failures: dict[str, list[float]] = {}
+llm_circuit_until: dict[str, float] = {}
 
 class ApiPreferences(BaseModel):
     user_id: str = "demo-user"
@@ -304,14 +314,19 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         document_id=payload.documentId,
         revision=payload.revision,
     )
-    llm_requested = _should_run_llm(payload)
-    ai = _run_ai_check(payload.text, request_id) if llm_requested else AiCheckResponse(
-        suggestions=[],
-        warnings=[],
-        provider="openrouter",
-        model=_llm_config()[2],
-        llm_enabled=_llm_config()[0],
-    )
+    options = getattr(payload, "options", None) or {}
+    llm_requested = bool(options.get("includeLLM")) if isinstance(options, dict) else False
+    async_llm = bool(options.get("asyncLLM", True)) if isinstance(options, dict) else False
+    mode = (options.get("mode") or ("smart" if llm_requested else "fast")) if isinstance(options, dict) else "fast"
+    ai = AiCheckResponse(suggestions=[], warnings=[], provider=_llm_config()[1], model=_llm_config()[2], llm_enabled=_llm_config()[0])
+    llm_block: dict = {"requested": llm_requested, "mode": options.get("llmMode", "review_candidates") if isinstance(options, dict) else "review_candidates", "status": "skipped", "used": False, "cache_hit": False, "provider": _llm_config()[1], "model": _llm_config()[2]}
+    if llm_requested:
+        if async_llm:
+            job = _create_llm_review_job(payload.text, payload.language, response.model_dump(mode="json").get("suggestions", []), llm_block["mode"], request_id=request_id)
+            llm_block.update({"status": "queued", "job_id": job["job_id"]})
+        else:
+            ai = _run_ai_check(payload.text, request_id)
+            llm_block.update({"status": "completed" if ai.suggestions else "failed", "used": bool(ai.suggestions)})
     response_payload = response.model_dump(mode="json")
     seen = {
         (
@@ -369,9 +384,12 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         and "llm_requested_but_not_successful" not in response_payload["warnings"]
     )
     response_payload["llm_model"] = ai.model
-    response_payload["llm_status"] = "completed" if ai.suggestions else ("skipped" if not llm_requested else "failed")
-    response_payload["llm_provider"] = ai.provider
-    response_payload["llm_response_mode"] = None
+    response_payload["llm_status"] = llm_block["status"]
+    response_payload["llm_provider"] = llm_block["provider"]
+    response_payload["llm_response_mode"] = llm_block["mode"]
+    response_payload["timings"] = {"local_ms": 0, "total_ms": 0}
+    response_payload["runtime_warnings"] = []
+    response_payload["llm"] = llm_block
     response_payload["correctedText"] = payload.text
     response_payload["documentAssessment"] = {}
     response_payload["diagnostics"] = {"llm": {"status": response_payload["llm_status"], "provider": ai.provider, "model": ai.model}, "local": {"local_engine_mode": os.environ.get("SHUDDHO_LOCAL_ENGINE_MODE", "fallback")}}
@@ -384,6 +402,31 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
 def ai_check(payload: AiCheckRequest) -> AiCheckResponse:
     request_id = datetime.now(timezone.utc).isoformat()
     return _run_ai_check(payload.text, request_id)
+
+
+class LlmReviewRequest(BaseModel):
+    text: str
+    language: Literal["bn"] = "bn"
+    local_suggestions: list[dict] = Field(default_factory=list)
+    mode: str = "review_candidates"
+    request_id: str | None = None
+
+
+@app.post("/api/llm/review")
+def create_llm_review(payload: LlmReviewRequest) -> dict:
+    return _create_llm_review_job(payload.text, payload.language, payload.local_suggestions, payload.mode, payload.request_id)
+
+
+@app.get("/api/llm/review/{job_id}")
+def get_llm_review(job_id: str) -> dict:
+    _cleanup_llm_jobs()
+    return llm_jobs.get(job_id, {"job_id": job_id, "status": "failed", "suggestions": [], "warnings": ["llm_job_not_found"]})
+
+
+@app.get("/api/llm/debug")
+def llm_debug() -> dict:
+    enabled, provider, model, api_key = _llm_config()
+    return {"enabled": enabled, "provider": provider, "model": model, "configured": bool(api_key), "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")), "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "12")), "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "35")), "circuit_open": _is_circuit_open(provider, model), "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")), "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200"))}
 
 
 @app.post("/rewrite", response_model=RewriteResponse)
@@ -514,6 +557,69 @@ def _run_ai_check(text: str, request_id: str) -> AiCheckResponse:
     return AiCheckResponse(suggestions=result.get("suggestions", []), warnings=_dedupe_strings(result.get("warnings", [])), provider=provider, model=model, llm_enabled=True)
 
 
+def _create_llm_review_job(text: str, language: str, local_suggestions: list[dict], mode: str, request_id: str | None = None) -> dict:
+    request_id = request_id or datetime.now(timezone.utc).isoformat()
+    job_id = f"llm_{uuid.uuid4().hex[:12]}"
+    candidates = build_llm_candidates(text, local_suggestions, max_sentences=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")), max_chars=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")))
+    llm_jobs[job_id] = {"job_id": job_id, "status": "queued", "suggestions": [], "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": [], "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "timings": {"queue_ms": 0, "llm_ms": 0, "total_ms": 0}, "created_at": time.time()}
+    threading.Thread(target=_run_llm_job, args=(job_id, text, candidates, local_suggestions, request_id), daemon=True).start()
+    return {"job_id": job_id, "status": "queued", "estimated_seconds": 3}
+
+
+def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestions: list[dict], request_id: str) -> None:
+    started = time.time()
+    job = llm_jobs[job_id]
+    job["status"] = "running"
+    enabled, provider, model, _ = _llm_config()
+    if not enabled or _is_circuit_open(provider, model):
+        job.update({"status": "failed", "warnings": ["llm_circuit_open" if _is_circuit_open(provider, model) else "llm_disabled"]})
+        return
+    key = _cache_key(text, local_suggestions, candidates, provider, model)
+    cached = llm_cache.get(key)
+    ttl = int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400"))
+    if cached and time.time() - cached.get("created_at", 0) < ttl:
+        job.update(cached | {"job_id": job_id, "status": "succeeded"})
+        return
+    ai = _run_ai_check(text, request_id)
+    if ai.warnings:
+        _record_llm_failure(provider, model, ai.warnings)
+        job.update({"status": "failed", "warnings": ai.warnings, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}})
+        return
+    payload = {"suggestions": ai.suggestions, "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": [], "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}, "created_at": time.time()}
+    llm_cache[key] = payload
+    job.update(payload | {"status": "succeeded"})
+
+
+def _cache_key(text: str, local_suggestions: list[dict], candidates: list[dict], provider: str, model: str) -> str:
+    normalized = " ".join(text.split())
+    blob = normalized + json.dumps(local_suggestions, sort_keys=True, ensure_ascii=False) + json.dumps(candidates, sort_keys=True, ensure_ascii=False) + provider + model + "v1"
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _record_llm_failure(provider: str, model: str, warnings: list[str]) -> None:
+    failure_markers = ("timeout", "rate", "server", "invalid_json", "failed", "network")
+    if not any(any(marker in warning for marker in failure_markers) for warning in warnings):
+        return
+    key = f"{provider}:{model}"
+    now = time.time()
+    window = int(os.environ.get("SHUDDHO_LLM_CIRCUIT_WINDOW_SECONDS", "300"))
+    llm_failures[key] = [t for t in llm_failures.get(key, []) if now - t <= window] + [now]
+    if len(llm_failures[key]) >= int(os.environ.get("SHUDDHO_LLM_CIRCUIT_FAILURE_LIMIT", "5")):
+        llm_circuit_until[key] = now + int(os.environ.get("SHUDDHO_LLM_CIRCUIT_COOLDOWN_SECONDS", "180"))
+
+
+def _is_circuit_open(provider: str, model: str) -> bool:
+    return time.time() < llm_circuit_until.get(f"{provider}:{model}", 0)
+
+
+def _cleanup_llm_jobs() -> None:
+    ttl = 1800
+    now = time.time()
+    for key in list(llm_jobs.keys()):
+        if now - llm_jobs[key].get("created_at", now) > ttl:
+            llm_jobs.pop(key, None)
+
+
 def _rewrite_service() -> RewriteService:
     return RewriteService(analysis_pipeline)
 
@@ -563,6 +669,8 @@ def _build_health_deep_response() -> HealthDeepResponse:
             "provider": _llm_config()[1],
             "model": _llm_config()[2],
             "configured": bool(_llm_config()[3]),
+            "cache_enabled": True,
+            "circuit_open": _is_circuit_open(_llm_config()[1], _llm_config()[2]),
         },
         lexicon=LexiconHealth(
             runtime_source_of_truth=snapshot.runtime_source_of_truth,
