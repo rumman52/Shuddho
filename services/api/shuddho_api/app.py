@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from fastapi.middleware.cors import CORSMiddleware
@@ -165,6 +166,22 @@ def _parse_allowed_origins(value: str | None) -> list[str]:
         if origin and origin not in allowed_origins:
             allowed_origins.append(origin)
     return allowed_origins
+
+
+def _safe_timings(timings: dict | None) -> dict[str, float]:
+    clean: dict[str, float] = {}
+    if not isinstance(timings, dict):
+        return clean
+
+    for key, value in timings.items():
+        if value is None:
+            continue
+        try:
+            clean[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+
+    return clean
 
 
 def _resolve_backend_version(base_version: str) -> str:
@@ -452,15 +469,24 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     llm_requested = include_llm
     mode = str(options.get("mode") or ("smart" if llm_requested else "fast"))
     ai = AiCheckResponse(suggestions=[], warnings=[], provider=_llm_config()[1], model=_llm_config()[2], llm_enabled=_llm_config()[0])
-    llm_block: dict = {"requested": llm_requested, "used": False, "status": "skipped", "provider": _llm_config()[1], "model": _llm_config()[2], "job_id": None, "warnings": [], "error": None, "cache_hit": False, "mode": llm_mode}
+    llm_ms: float | None = None
+    llm_block: dict = {"requested": llm_requested, "used": False, "status": "skipped", "provider": _llm_config()[1], "model": _llm_config()[2], "job_id": None, "warnings": [], "error": None, "cache_hit": False, "mode": llm_mode, "llm_ms": None}
     if llm_requested:
         if async_llm:
             job = _create_llm_review_job(canonical_payload.text, canonical_payload.language, response.model_dump(mode="json").get("suggestions", []), llm_block["mode"], request_id=request_id)
             llm_block.update({"status": "queued", "job_id": job["job_id"], "used": True})
             logger.info("LLM_JOB_QUEUED request_id=%s job_id=%s provider=%s model=%s candidates=%s", request_id, job["job_id"], llm_block["provider"], llm_block["model"], job.get("candidate_count", 0))
         else:
+            llm_started = time.time()
             ai = _run_ai_check(canonical_payload.text, request_id)
-            llm_block.update({"status": "succeeded" if ai.suggestions else "failed", "used": True, "warnings": list(ai.warnings)})
+            llm_ms = float(int((time.time() - llm_started) * 1000))
+            llm_block.update({
+                "status": "succeeded" if ai.suggestions else "failed",
+                "used": True,
+                "warnings": list(ai.warnings),
+                "error": ai.warnings[0] if ai.warnings else None,
+                "llm_ms": llm_ms,
+            })
     else:
         logger.info("LLM_SKIPPED request_id=%s reason=%s", request_id, "includeLLM_false")
     response_payload = response.model_dump(mode="json")
@@ -523,7 +549,10 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["llm_status"] = llm_block["status"]
     response_payload["llm_provider"] = llm_block["provider"]
     response_payload["llm_response_mode"] = mode
-    response_payload["timings"] = {"local_ms": local_ms, "llm_ms": None, "total_ms": int((time.time() - started_at) * 1000)}
+    timings: dict[str, int | float] = {"local_ms": local_ms, "total_ms": int((time.time() - started_at) * 1000)}
+    if isinstance(llm_ms, (int, float)):
+        timings["llm_ms"] = llm_ms
+    response_payload["timings"] = _safe_timings(timings)
     response_payload["runtime_warnings"] = []
     response_payload["llm"] = llm_block
     response_payload["correctedText"] = canonical_payload.text
@@ -531,7 +560,26 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["diagnostics"] = {"llm": {"status": response_payload["llm_status"], "provider": ai.provider, "model": ai.model}, "local": {"local_engine_mode": os.environ.get("SHUDDHO_LOCAL_ENGINE_MODE", "fallback")}}
     response_payload["local_suggestion_count"] = len(response.suggestions)
     response_payload["ai_suggestion_count"] = len(ai.suggestions)
-    return CanonicalCheckResponse(**response_payload)
+    response_payload["timings"] = _safe_timings(response_payload.get("timings"))
+    try:
+        return CanonicalCheckResponse(**response_payload)
+    except ValidationError as exc:
+        logger.error(
+            "CANONICAL_RESPONSE_VALIDATION_ERROR errors=%s response_keys=%s timings=%s llm=%s",
+            exc.errors(),
+            list(response_payload.keys()),
+            response_payload.get("timings"),
+            response_payload.get("llm"),
+        )
+        fallback_payload = {
+            **response_payload,
+            "timings": _safe_timings(response_payload.get("timings")),
+            "warnings": _dedupe_strings([
+                *(response_payload.get("warnings") or []),
+                "canonical_response_validation_error",
+            ]),
+        }
+        return JSONResponse(status_code=200, content=jsonable_encoder(fallback_payload))
 
 
 @app.post("/api/ai/check", response_model=AiCheckResponse)

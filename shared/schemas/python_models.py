@@ -693,6 +693,7 @@ class CanonicalCheckResponse(BaseModel):
     llm_provider: str | None = None
     llm_model: str | None = None
     llm_response_mode: str | None = None
+    llm: dict[str, Any] | None = None
     local_suggestion_count: int = Field(default=0, ge=0)
     ai_suggestion_count: int = Field(default=0, ge=0)
     diagnostics: dict[str, Any] = Field(default_factory=dict)

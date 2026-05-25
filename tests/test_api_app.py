@@ -262,6 +262,71 @@ def test_api_check_accepts_smart_review_candidates_payload() -> None:
     assert payload["llm"]["requested"] is True
 
 
+def test_api_check_fast_timings_has_no_none() -> None:
+    response = client.post(
+        "/api/check",
+        json={
+            "text": "আমি ভাত খাই।",
+            "language": "bn",
+            "options": {"includeLLM": False, "asyncLLM": False, "mode": "fast", "llmMode": "none"},
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "timings" in data
+    assert all(value is not None for value in data["timings"].values())
+    assert all(isinstance(value, (int, float)) for value in data["timings"].values())
+    assert data["llm"]["status"] == "skipped"
+
+
+def test_api_check_async_llm_timings_has_no_none() -> None:
+    response = client.post(
+        "/api/check",
+        json={
+            "text": "গত মাসে আমি চিড়িয়াখানায় যাবে।",
+            "language": "bn",
+            "options": {"includeLLM": True, "asyncLLM": True, "mode": "smart", "llmMode": "review_candidates"},
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert all(value is not None for value in data["timings"].values())
+    assert all(isinstance(value, (int, float)) for value in data["timings"].values())
+    if "llm_ms" in data["timings"]:
+        assert isinstance(data["timings"]["llm_ms"], (int, float))
+    assert isinstance(data.get("llm"), dict)
+
+
+def test_api_check_response_validation_fallback_when_payload_invalid(monkeypatch) -> None:
+    original_model = app_module.CanonicalCheckResponse
+
+    class _BoomModel:
+        def __init__(self, **_: object) -> None:
+            raise ValidationError.from_exception_data("CanonicalCheckResponse", [])
+
+    monkeypatch.setattr(app_module, "CanonicalCheckResponse", _BoomModel)
+    response = client.post("/api/check", json={"text": "আমি ভাত খাই।", "language": "bn"})
+    monkeypatch.setattr(app_module, "CanonicalCheckResponse", original_model)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "canonical_response_validation_error" in (payload.get("warnings") or [])
+    assert all(value is not None for value in payload.get("timings", {}).values())
+
+
+def test_api_check_mode_and_llmmode_strings_do_not_crash() -> None:
+    response = client.post(
+        "/api/check",
+        json={
+            "text": "আমি ভাত খাই।",
+            "language": "bn",
+            "options": {"includeLLM": True, "asyncLLM": True, "mode": "smart", "llmMode": "review_candidates"},
+        },
+    )
+    assert response.status_code == 200
+    assert isinstance(response.json().get("llm"), dict)
+
+
 def test_api_check_validation_returns_json_422_not_asgi_500() -> None:
     response = client.post("/api/check", json={"text": ""})
     assert response.status_code == 422
