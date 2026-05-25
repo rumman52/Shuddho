@@ -83,6 +83,8 @@ export type GatewayCheckResponse = {
 
 type AnalyzeGatewayOptions = {
   includeLLM?: boolean;
+  asyncLLM?: boolean;
+  llmMode?: string;
   signal?: AbortSignal;
 };
 
@@ -220,6 +222,8 @@ export async function analyzeText(
       userId: payload.user_id,
       options: {
         includeLLM: Boolean(options.includeLLM),
+        asyncLLM: Boolean(options.asyncLLM),
+        llmMode: options.llmMode ?? "review_candidates",
       },
       client: { surface: "web", version: "vite-editor" },
     }),

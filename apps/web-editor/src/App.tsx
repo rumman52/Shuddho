@@ -16,7 +16,6 @@ import { SuggestionCard } from "./components/SuggestionCard";
 import {
   analyzeText,
   type BackendHealthResponse,
-  analyzeTone,
   getApiBaseUrl,
   getApiConfiguration,
   getHealth,
@@ -334,6 +333,8 @@ export default function App() {
         user_id: userId,
       }, {
         includeLLM,
+        asyncLLM: includeLLM,
+        llmMode: "review_candidates",
         signal: controller.signal,
       });
       if (requestId !== analysisRequestIdRef.current) {
@@ -359,11 +360,7 @@ export default function App() {
             ? `No high-confidence correction found. Backend warnings: ${responseWarnings.join(", ")}`
             : "No high-confidence correction found.",
       );
-      if (preferences.auto_show_tone && nextText.trim().length >= 20) {
-        void refreshTone(nextText);
-      } else {
-        setTone(null);
-      }
+      setTone(null);
     } catch {
       if (analysisAbortRef.current?.signal.aborted) {
         return;
@@ -394,19 +391,6 @@ export default function App() {
         manualAnalysisInFlightRef.current = false;
         setIsChecking(false);
       }
-    }
-  }
-
-  async function refreshTone(nextText: string) {
-    if (backendMode !== "online") {
-      setTone(null);
-      return;
-    }
-    try {
-      const response = await analyzeTone({ text: nextText, user_id: userId });
-      setTone(response);
-    } catch {
-      setTone(null);
     }
   }
 
