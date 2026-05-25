@@ -18,6 +18,7 @@ from services.api.shuddho_api.app import (
     feedback,
     check_canonical,
     ai_check,
+    ApiCheckRequest,
 )
 from shared.schemas.python_models import (
     AnalyzeMode,
@@ -56,7 +57,7 @@ def test_api_preferences_route_returns_full_shape() -> None:
 
 def test_api_check_route_returns_suggestions_and_warnings_arrays() -> None:
     response = check_canonical(
-        CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
+        ApiCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
     )
     payload = response.model_dump()
 
@@ -102,7 +103,7 @@ def test_routes_survive_missing_corrector_checkpoint() -> None:
     }
 
     check_response = check_canonical(
-        CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
+        ApiCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
     )
     assert isinstance(check_response.suggestions, list)
     assert isinstance(check_response.warnings, list)
@@ -204,7 +205,7 @@ def test_api_check_compatibility_route_accepts_bangla_text(monkeypatch) -> None:
     monkeypatch.setattr(app_module, "analyze", stub_analyze)
 
     response = check_canonical(
-        CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
+        ApiCheckRequest(text="আমি  আমি ভাত খাই।", language="bn")
     )
 
     assert response.language == "bn"
@@ -214,6 +215,58 @@ def test_api_check_compatibility_route_accepts_bangla_text(monkeypatch) -> None:
         "corrector_missing_checkpoint",
         "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only.",
     ]
+
+
+def test_api_check_accepts_minimal_payload() -> None:
+    response = client.post("/api/check", json={"text": "আমি ভাত খাই।"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm"]["status"] == "skipped"
+
+
+def test_api_check_accepts_fast_mode_without_bool_parsing_errors() -> None:
+    response = client.post(
+        "/api/check",
+        json={
+            "text": "গত মাসে আমি চিড়িয়াখানায় যাবে।",
+            "language": "bn",
+            "options": {
+                "includeLLM": False,
+                "asyncLLM": False,
+                "llmMode": "none",
+                "mode": "fast",
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm"]["status"] == "skipped"
+
+
+def test_api_check_accepts_smart_review_candidates_payload() -> None:
+    response = client.post(
+        "/api/check",
+        json={
+            "text": "গত মাসে আমি চিড়িয়াখানায় যাবে।",
+            "language": "bn",
+            "options": {
+                "includeLLM": True,
+                "asyncLLM": True,
+                "llmMode": "review_candidates",
+                "mode": "smart",
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm"]["requested"] is True
+
+
+def test_api_check_validation_returns_json_422_not_asgi_500() -> None:
+    response = client.post("/api/check", json={"text": ""})
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["error"] == "request_validation_error"
 
 
 def test_cors_config_includes_vercel_frontend_origin() -> None:

@@ -15,7 +15,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
@@ -403,13 +403,34 @@ def put_api_preferences(payload: ApiPreferences, user_id: str = "demo-user") -> 
 @app.post("/api/check", response_model=CanonicalCheckResponse)
 def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     normalized = _normalize_api_check_payload(payload)
-    canonical_payload = CanonicalCheckRequest(**normalized)
+    all_options = normalized.get("options") or {}
+    include_llm = _should_run_llm(all_options)
+    async_llm = _should_run_async_llm(all_options)
+    llm_mode = _llm_mode(all_options, include_llm)
+    canonical_normalized = {
+        **normalized,
+        "options": _canonical_bool_options(all_options),
+    }
+    try:
+        canonical_payload = CanonicalCheckRequest(**canonical_normalized)
+    except ValidationError as exc:
+        logger.error(
+            "CANONICAL_PAYLOAD_VALIDATION_ERROR errors=%s normalized_keys=%s option_keys=%s",
+            exc.errors(),
+            list(canonical_normalized.keys()),
+            list((canonical_normalized.get("options") or {}).keys()),
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "canonical_payload_validation_error",
+                "message": "Normalized request still failed internal schema validation.",
+                "detail": exc.errors(),
+            },
+        )
     started_at = time.time()
     request_id = datetime.now(timezone.utc).isoformat()
-    options = normalized["options"]
-    include_llm = _should_run_llm(options)
-    async_llm = _should_run_async_llm(options)
-    llm_mode = _llm_mode(options)
+    options = all_options
     logger.info(
         "CHECK_START request_id=%s text_length=%s includeLLM=%s asyncLLM=%s mode=%s",
         request_id, len(canonical_payload.text), include_llm, async_llm, llm_mode
@@ -656,28 +677,45 @@ def _llm_config() -> tuple[bool, str, str, str | None]:
     return enabled, provider, model, api_key
 
 
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return False
+
+
 def _should_run_llm(options: dict[str, Any]) -> bool:
     if not isinstance(options, dict):
         return False
     return bool(
-        options.get("includeLLM")
-        or options.get("includeAi")
-        or options.get("includeAI")
-        or options.get("ai")
-        or options.get("llm")
+        _as_bool(options.get("includeLLM"))
+        or _as_bool(options.get("includeAi"))
+        or _as_bool(options.get("includeAI"))
+        or _as_bool(options.get("ai"))
+        or _as_bool(options.get("llm"))
     )
 
 
 def _should_run_async_llm(options: dict[str, Any]) -> bool:
     if not isinstance(options, dict):
         return False
-    return bool(options.get("asyncLLM") or options.get("asyncAi") or options.get("asyncAI"))
+    return bool(
+        _as_bool(options.get("asyncLLM"))
+        or _as_bool(options.get("asyncAi"))
+        or _as_bool(options.get("asyncAI"))
+    )
 
 
-def _llm_mode(options: dict[str, Any]) -> str:
+def _llm_mode(options: dict[str, Any], include_llm: bool) -> str:
     if not isinstance(options, dict):
-        return "fast"
-    return str(options.get("llmMode") or options.get("mode") or "fast")
+        return "smart" if include_llm else "fast"
+    value = options.get("llmMode") or options.get("mode")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "smart" if include_llm else "fast"
 
 
 def _normalize_api_check_payload(payload: ApiCheckRequest) -> dict[str, Any]:
@@ -697,6 +735,29 @@ def _normalize_api_check_payload(payload: ApiCheckRequest) -> dict[str, Any]:
         "consent": payload.consent,
         "options": options,
     }
+
+
+def _canonical_bool_options(options: dict[str, Any]) -> dict[str, bool]:
+    if not isinstance(options, dict):
+        return {}
+    cleaned: dict[str, bool] = {}
+    for key, value in options.items():
+        if key in {"mode", "llmMode"}:
+            continue
+        if isinstance(value, bool):
+            cleaned[key] = value
+        elif isinstance(value, str) and value.strip().lower() in {
+            "true",
+            "false",
+            "1",
+            "0",
+            "yes",
+            "no",
+            "on",
+            "off",
+        }:
+            cleaned[key] = _as_bool(value)
+    return cleaned
 
 
 def _log_raw_text_enabled() -> bool:
