@@ -77,6 +77,10 @@ export type GatewayCheckResponse = {
   llm_attempted?: boolean;
   llm_used?: boolean;
   llm_model?: string;
+  llm_status?: string;
+  llm?: Record<string, unknown> | null;
+  timings?: Record<string, number>;
+  diagnostics?: Record<string, unknown>;
   local_suggestion_count?: number;
   ai_suggestion_count?: number;
 };
@@ -183,9 +187,12 @@ async function request<TResponse>(
   }
 
   if (response.status === 422 || response.status === 500) {
-    const detail = await response.json().catch(() => null);
+    const detailJson = await response.json().catch(() => null);
+    const detailText =
+      detailJson === null ? (await response.text().catch(() => "")).trim() : "";
+    const detail = detailJson ?? detailText ?? response.statusText;
     throw new Error(
-      `Backend failed: HTTP ${response.status} ${JSON.stringify(detail)}`,
+      `Backend error: check response validation failed (HTTP ${response.status}) ${typeof detail === "string" ? detail : JSON.stringify(detail)}`,
     );
   }
 
@@ -426,11 +433,16 @@ export function gatewayCheckToAnalyzeResponse(
     normalized_text: normalizedText,
     analysis_profile: "gateway",
     runtime_source: "gateway",
-    runtime_warnings: Array.isArray(response.warnings) ? response.warnings : [],
+    runtime_warnings: Array.isArray(response.warnings)
+      ? response.warnings
+      : [],
     warnings: Array.isArray(response.warnings) ? response.warnings : [],
     used_detector: false,
     used_corrector: false,
-    backend_warning: null,
+    backend_warning:
+      typeof response.llm_status === "string" && response.llm_status !== "succeeded"
+        ? `LLM status: ${response.llm_status}`
+        : null,
     lexicon_source: "gateway",
     lexicon_version: null,
     backend_version: null,
