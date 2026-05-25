@@ -334,7 +334,7 @@ export default function App() {
       }, {
         includeLLM,
         asyncLLM: includeLLM,
-        llmMode: "review_candidates",
+        llmMode: includeLLM ? "review_candidates" : "none",
         mode: includeLLM ? "smart" : "fast",
         signal: controller.signal,
       });
@@ -371,6 +371,7 @@ export default function App() {
         setStatus(
           "Backend validation failed. Request payload does not match /api/check schema.",
         );
+        return;
       }
       setAnalysis(
         apiConfiguration.localFallbackEnabled

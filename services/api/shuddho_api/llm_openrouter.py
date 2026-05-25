@@ -11,9 +11,8 @@ OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
 ALLOWED_TYPES = {"spelling", "grammar", "punctuation", "style", "fluency"}
 SYSTEM_PROMPT = (
-    "You are Shuddho, a Bangla writing correction engine. Return strict JSON only. "
-    "Do not use markdown. Do not explain. Do not include reasoning. "
-    "Only suggest corrections for exact substrings from the input."
+    "You are Shuddho AI Reviewer. Return strict JSON only. Do not use markdown. "
+    "Do not explain outside JSON. Only suggest corrections for exact substrings from the input."
 )
 
 
@@ -65,12 +64,12 @@ def _strip_fences(content: str) -> str:
 
 def _map_http(status: int) -> str:
     return {
-        400: "openrouter_http_400_bad_request",
+        400: "openrouter_http_error",
         401: "openrouter_http_401_invalid_key",
         402: "openrouter_http_402_payment_required",
         403: "openrouter_http_403_forbidden",
         404: "openrouter_http_404_model_not_found",
-        408: "openrouter_http_408_timeout",
+        408: "openrouter_timeout",
         413: "openrouter_http_413_content_too_large",
         429: "openrouter_http_429_quota_or_rate_limit",
         500: "openrouter_provider_or_server_error",
@@ -128,7 +127,7 @@ def _structured_response_format() -> dict[str, Any]:
     }
 
 
-def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
+def _normalize_suggestions(input_text: str, items: Any, model: str) -> list[dict[str, Any]]:
     if not isinstance(items, list):
         return []
     seen: set[tuple[str, str, int, int]] = set()
@@ -150,6 +149,7 @@ def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
         else:
             found = input_text.find(original)
             if found < 0:
+                out.append({"_warning": "openrouter_original_not_found"})
                 continue
             span_start, span_end = found, found + len(original)
 
@@ -160,8 +160,10 @@ def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
             confidence = float(item.get("confidence", 0.75))
         except (TypeError, ValueError):
             confidence = 0.75
-        if confidence < 0 or confidence > 1:
+        if confidence < 0.75 or confidence > 1:
             confidence = 0.75
+        if original.strip() == input_text.strip():
+            continue
 
         key = (original, replacement, span_start, span_end)
         if key in seen:
@@ -177,11 +179,17 @@ def _normalize_suggestions(input_text: str, items: Any) -> list[dict[str, Any]]:
                 "originalText": original,
                 "suggestedText": replacement,
                 "replacement_options": [replacement],
+                "replacementOptions": [replacement],
                 "span_start": span_start,
                 "span_end": span_end,
+                "spanStart": span_start,
+                "spanEnd": span_end,
                 "explanationBn": str(item.get("message") or "প্রস্তাবিত সংশোধন"),
                 "confidence": confidence,
-                "source": "openrouter",
+                "source": "model",
+                "provider": "openrouter",
+                "model": model,
+                "metadata": {"llm": True},
             }
         )
     return out
@@ -268,7 +276,9 @@ def run_openrouter_check(
         warnings.append("openrouter_invalid_json")
         return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True}
 
-    suggestions = _normalize_suggestions(text, parsed.get("suggestions") if isinstance(parsed, dict) else None)
+    raw = _normalize_suggestions(text, parsed.get("suggestions") if isinstance(parsed, dict) else None, model)
+    warnings.extend([item["_warning"] for item in raw if isinstance(item, dict) and "_warning" in item])
+    suggestions = [item for item in raw if isinstance(item, dict) and "_warning" not in item]
     return {
         "suggestions": suggestions,
         "warnings": warnings,
