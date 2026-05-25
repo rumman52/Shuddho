@@ -10,10 +10,12 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from fastapi import FastAPI
-from pydantic import BaseModel, Field, field_validator
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.analysis.shuddho_analysis.candidate_generator import CandidateGenerator
@@ -118,6 +120,41 @@ class AiCheckResponse(BaseModel):
     llm_enabled: bool = False
 
 
+class ApiCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    text: str = Field(..., min_length=1)
+    language: str = "bn"
+    documentId: str | None = None
+    document_id: str | None = None
+    revision: int | None = None
+    dialect: str | None = None
+    userId: str | None = None
+    user_id: str | None = None
+    client: dict[str, Any] | None = None
+    consent: dict[str, Any] | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, value: Any) -> str:
+        if value is None or value == "":
+            return "bn"
+        normalized = str(value).lower()
+        if normalized in {"bangla", "bengali", "bn-bd", "bn_bd", "bn-in", "bn_in"}:
+            return "bn"
+        return normalized
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def normalize_options(cls, value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        return {}
+
+
 def _parse_allowed_origins(value: str | None) -> list[str]:
     allowed_origins = list(DEFAULT_ALLOWED_ORIGINS)
     if value is None or not value.strip():
@@ -165,6 +202,33 @@ ALLOWED_ORIGINS = _parse_allowed_origins(os.environ.get(ALLOWED_ORIGINS_ENV_VAR)
 
 app = FastAPI(title="Shuddho API", version="0.1.0")
 BACKEND_VERSION = _resolve_backend_version(app.version)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    log_raw_text = os.environ.get("SHUDDHO_LOG_RAW_TEXT", "false").lower() == "true"
+    body_info = "<hidden>"
+    if log_raw_text:
+        try:
+            raw_body = await request.body()
+            body_info = raw_body.decode("utf-8", errors="replace")[:2000]
+        except Exception:
+            body_info = "<unavailable>"
+    logger.error(
+        "REQUEST_VALIDATION_ERROR path=%s method=%s errors=%s body=%s",
+        request.url.path,
+        request.method,
+        exc.errors(),
+        body_info,
+    )
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "request_validation_error",
+            "message": "Request body did not match backend schema.",
+            "detail": exc.errors(),
+        },
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -255,10 +319,18 @@ def root() -> dict[str, str]:
 
 @app.get("/version")
 def version() -> dict[str, str]:
+    commit = (
+        os.environ.get("RENDER_GIT_COMMIT")
+        or os.environ.get("VERCEL_GIT_COMMIT_SHA")
+        or os.environ.get("SOURCE_VERSION")
+        or _git_short_sha()
+        or "unknown"
+    )
+    build_time = os.environ.get("BUILD_TIME") or STARTUP_TIMESTAMP.isoformat()
     return {
-        "commit": _git_short_sha() or "unknown",
-        "build_time": STARTUP_TIMESTAMP.isoformat(),
-        "llm_pipeline_version": "async-review-v1",
+        "commit": commit,
+        "build_time": build_time,
+        "llm_pipeline_version": "validation-fix-v1",
     }
 
 
@@ -329,19 +401,21 @@ def put_api_preferences(payload: ApiPreferences, user_id: str = "demo-user") -> 
     return stored
 
 @app.post("/api/check", response_model=CanonicalCheckResponse)
-def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
+def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
+    normalized = _normalize_api_check_payload(payload)
+    canonical_payload = CanonicalCheckRequest(**normalized)
     started_at = time.time()
     request_id = datetime.now(timezone.utc).isoformat()
-    options = getattr(payload, "options", None) or {}
-    include_llm = _should_run_llm(payload)
-    async_llm = bool(options.get("asyncLLM", True)) if isinstance(options, dict) else False
-    llm_mode = options.get("llmMode", "review_candidates") if isinstance(options, dict) else "review_candidates"
+    options = normalized["options"]
+    include_llm = _should_run_llm(options)
+    async_llm = _should_run_async_llm(options)
+    llm_mode = _llm_mode(options)
     logger.info(
         "CHECK_START request_id=%s text_length=%s includeLLM=%s asyncLLM=%s mode=%s",
-        request_id, len(payload.text), include_llm, async_llm, llm_mode
+        request_id, len(canonical_payload.text), include_llm, async_llm, llm_mode
     )
     local_started = time.time()
-    legacy = analyze(AnalyzeRequest(text=payload.text, user_id=payload.userId))
+    legacy = analyze(AnalyzeRequest(text=canonical_payload.text, user_id=canonical_payload.userId))
     local_ms = int((time.time() - local_started) * 1000)
     logger.info(
         "LOCAL_ENGINE_DONE request_id=%s local_suggestions=%s local_ms=%s",
@@ -350,21 +424,21 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
     response = analyze_to_check_response(
         legacy,
         request_id=request_id,
-        text=payload.text,
-        document_id=payload.documentId,
-        revision=payload.revision,
+        text=canonical_payload.text,
+        document_id=canonical_payload.documentId,
+        revision=canonical_payload.revision,
     )
     llm_requested = include_llm
-    mode = (options.get("mode") or ("smart" if llm_requested else "fast")) if isinstance(options, dict) else "fast"
+    mode = str(options.get("mode") or ("smart" if llm_requested else "fast"))
     ai = AiCheckResponse(suggestions=[], warnings=[], provider=_llm_config()[1], model=_llm_config()[2], llm_enabled=_llm_config()[0])
     llm_block: dict = {"requested": llm_requested, "used": False, "status": "skipped", "provider": _llm_config()[1], "model": _llm_config()[2], "job_id": None, "warnings": [], "error": None, "cache_hit": False, "mode": llm_mode}
     if llm_requested:
         if async_llm:
-            job = _create_llm_review_job(payload.text, payload.language, response.model_dump(mode="json").get("suggestions", []), llm_block["mode"], request_id=request_id)
+            job = _create_llm_review_job(canonical_payload.text, canonical_payload.language, response.model_dump(mode="json").get("suggestions", []), llm_block["mode"], request_id=request_id)
             llm_block.update({"status": "queued", "job_id": job["job_id"], "used": True})
             logger.info("LLM_JOB_QUEUED request_id=%s job_id=%s provider=%s model=%s candidates=%s", request_id, job["job_id"], llm_block["provider"], llm_block["model"], job.get("candidate_count", 0))
         else:
-            ai = _run_ai_check(payload.text, request_id)
+            ai = _run_ai_check(canonical_payload.text, request_id)
             llm_block.update({"status": "succeeded" if ai.suggestions else "failed", "used": True, "warnings": list(ai.warnings)})
     else:
         logger.info("LLM_SKIPPED request_id=%s reason=%s", request_id, "includeLLM_false")
@@ -386,7 +460,7 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
         if not isinstance(span_start, int) or not isinstance(span_end, int):
             response_payload["warnings"].append("openrouter_suggestion_missing_span")
             continue
-        if span_start < 0 or span_end <= span_start or span_end > len(payload.text):
+        if span_start < 0 or span_end <= span_start or span_end > len(canonical_payload.text):
             response_payload["warnings"].append("openrouter_suggestion_invalid_span")
             continue
         key = (item["originalText"], item["suggestedText"], span_start)
@@ -427,11 +501,11 @@ def check_canonical(payload: CanonicalCheckRequest) -> CanonicalCheckResponse:
     response_payload["llm_model"] = ai.model
     response_payload["llm_status"] = llm_block["status"]
     response_payload["llm_provider"] = llm_block["provider"]
-    response_payload["llm_response_mode"] = llm_block["mode"]
+    response_payload["llm_response_mode"] = mode
     response_payload["timings"] = {"local_ms": local_ms, "llm_ms": None, "total_ms": int((time.time() - started_at) * 1000)}
     response_payload["runtime_warnings"] = []
     response_payload["llm"] = llm_block
-    response_payload["correctedText"] = payload.text
+    response_payload["correctedText"] = canonical_payload.text
     response_payload["documentAssessment"] = {}
     response_payload["diagnostics"] = {"llm": {"status": response_payload["llm_status"], "provider": ai.provider, "model": ai.model}, "local": {"local_engine_mode": os.environ.get("SHUDDHO_LOCAL_ENGINE_MODE", "fallback")}}
     response_payload["local_suggestion_count"] = len(response.suggestions)
@@ -467,7 +541,17 @@ def get_llm_review(job_id: str) -> dict:
 @app.get("/api/llm/debug")
 def llm_debug() -> dict:
     enabled, provider, model, api_key = _llm_config()
-    return {"enabled": enabled, "provider": provider, "model": model, "configured": bool(api_key), "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")), "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "12")), "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "35")), "circuit_open": _is_circuit_open(provider, model), "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")), "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200"))}
+    return {
+        "enabled": enabled,
+        "provider": provider,
+        "model": model,
+        "configured": bool(api_key),
+        "endpoint": "https://openrouter.ai/api/v1/chat/completions" if provider == "openrouter" else "https://api.openai.com/v1/chat/completions",
+        "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
+        "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "12")),
+        "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "35")),
+        "circuit_open": _is_circuit_open(provider, model),
+    }
 
 
 @app.post("/rewrite", response_model=RewriteResponse)
@@ -572,8 +656,7 @@ def _llm_config() -> tuple[bool, str, str, str | None]:
     return enabled, provider, model, api_key
 
 
-def _should_run_llm(payload: object) -> bool:
-    options = getattr(payload, "options", None) or {}
+def _should_run_llm(options: dict[str, Any]) -> bool:
     if not isinstance(options, dict):
         return False
     return bool(
@@ -583,6 +666,37 @@ def _should_run_llm(payload: object) -> bool:
         or options.get("ai")
         or options.get("llm")
     )
+
+
+def _should_run_async_llm(options: dict[str, Any]) -> bool:
+    if not isinstance(options, dict):
+        return False
+    return bool(options.get("asyncLLM") or options.get("asyncAi") or options.get("asyncAI"))
+
+
+def _llm_mode(options: dict[str, Any]) -> str:
+    if not isinstance(options, dict):
+        return "fast"
+    return str(options.get("llmMode") or options.get("mode") or "fast")
+
+
+def _normalize_api_check_payload(payload: ApiCheckRequest) -> dict[str, Any]:
+    options = dict(payload.options or {})
+    extra = getattr(payload, "__pydantic_extra__", None) or {}
+    for key in ["includeLLM", "includeAi", "includeAI", "asyncLLM", "asyncAi", "asyncAI", "llmMode", "mode", "ai", "llm"]:
+        if key in extra and key not in options:
+            options[key] = extra[key]
+    return {
+        "text": payload.text,
+        "language": payload.language or "bn",
+        "document_id": payload.document_id or payload.documentId,
+        "revision": payload.revision,
+        "dialect": payload.dialect,
+        "user_id": payload.user_id or payload.userId,
+        "client": payload.client,
+        "consent": payload.consent,
+        "options": options,
+    }
 
 
 def _log_raw_text_enabled() -> bool:

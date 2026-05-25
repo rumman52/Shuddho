@@ -335,6 +335,7 @@ export default function App() {
         includeLLM,
         asyncLLM: includeLLM,
         llmMode: "review_candidates",
+        mode: includeLLM ? "smart" : "fast",
         signal: controller.signal,
       });
       if (requestId !== analysisRequestIdRef.current) {
@@ -361,9 +362,15 @@ export default function App() {
             : "No high-confidence correction found.",
       );
       setTone(null);
-    } catch {
+    } catch (error) {
       if (analysisAbortRef.current?.signal.aborted) {
         return;
+      }
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("Backend validation failed:")) {
+        setStatus(
+          "Backend validation failed. Request payload does not match /api/check schema.",
+        );
       }
       setAnalysis(
         apiConfiguration.localFallbackEnabled

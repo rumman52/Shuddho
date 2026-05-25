@@ -1,5 +1,6 @@
 import importlib
 import re
+from fastapi.testclient import TestClient
 
 from services.api.shuddho_api.app import (
     app,
@@ -32,6 +33,7 @@ from shared.schemas.python_models import (
 )
 
 app_module = importlib.import_module("services.api.shuddho_api.app")
+client = TestClient(app)
 
 
 def test_api_preferences_route_returns_full_shape() -> None:
@@ -709,3 +711,43 @@ def test_api_check_returns_local_when_openrouter_fails(monkeypatch) -> None:
     response = check_canonical(CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn"))
     assert isinstance(response.suggestions, list)
     assert "openrouter_request_failed" in response.warnings
+
+def test_api_check_accepts_minimal_payload() -> None:
+    response = client.post("/api/check", json={"text": "আমি ভাত খাই।"})
+    assert response.status_code == 200
+    assert response.json()["llm"]["status"] == "skipped"
+
+
+def test_api_check_accepts_fast_local_payload() -> None:
+    response = client.post("/api/check", json={"text": "গত মাসে আমি চিড়িয়াখানায় যাবে।", "language": "bn", "options": {"includeLLM": False, "mode": "fast"}})
+    assert response.status_code == 200
+    assert response.json()["llm"]["requested"] is False
+
+
+def test_api_check_accepts_deep_ai_review_payload() -> None:
+    response = client.post("/api/check", json={"text": "গত মাসে আমি চিড়িয়াখানায় যাবে।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": True, "llmMode": "review_candidates", "mode": "smart"}})
+    assert response.status_code == 200
+    assert response.json()["llm"]["requested"] is True
+
+
+def test_api_check_accepts_camel_case() -> None:
+    response = client.post("/api/check", json={"text": "আমি ভাত খাই।", "documentId": "doc1", "userId": "user1", "language": "bn-BD"})
+    assert response.status_code == 200
+
+
+def test_invalid_request_returns_request_validation_error() -> None:
+    response = client.post("/api/check", json={})
+    assert response.status_code == 422
+    assert response.json()["error"] == "request_validation_error"
+
+
+def test_api_llm_debug_never_returns_api_key(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "secret-token")
+    payload = client.get("/api/llm/debug").json()
+    assert "secret-token" not in str(payload)
+
+
+def test_version_returns_validation_fix_version() -> None:
+    payload = client.get("/version").json()
+    assert payload["llm_pipeline_version"] == "validation-fix-v1"

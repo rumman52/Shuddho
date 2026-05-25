@@ -85,8 +85,13 @@ type AnalyzeGatewayOptions = {
   includeLLM?: boolean;
   asyncLLM?: boolean;
   llmMode?: string;
+  mode?: string;
   signal?: AbortSignal;
 };
+type AnalyzeOptions = Pick<
+  AnalyzeGatewayOptions,
+  "includeLLM" | "asyncLLM" | "llmMode" | "mode"
+>;
 
 let apiConfiguration = resolveApiConfiguration();
 
@@ -177,6 +182,11 @@ async function request<TResponse>(
     throw new Error(`Network request failed for ${url}: ${message}`);
   }
 
+  if (response.status === 422) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(`Backend validation failed: ${JSON.stringify(detail)}`);
+  }
+
   if (!response.ok) {
     const responseText = await response.text();
     const detail = responseText.trim() || response.statusText;
@@ -213,23 +223,29 @@ export async function analyzeText(
     );
   }
 
+  const body = buildCheckRequestBody(payload.text, options);
   const response = await request<GatewayCheckResponse>(path, {
     method: "POST",
     signal: options.signal,
-    body: JSON.stringify({
-      text: payload.text,
-      language: "bn",
-      userId: payload.user_id,
-      options: {
-        includeLLM: Boolean(options.includeLLM),
-        asyncLLM: Boolean(options.asyncLLM),
-        llmMode: options.llmMode ?? "review_candidates",
-      },
-      client: { surface: "web", version: "vite-editor" },
-    }),
+    body: JSON.stringify(body),
   });
 
   return gatewayCheckToAnalyzeResponse(response, payload);
+}
+
+function buildCheckRequestBody(text: string, options: AnalyzeOptions = {}) {
+  const includeLLM = Boolean(options.includeLLM);
+  const asyncLLM = Boolean(options.asyncLLM);
+  return {
+    text: String(text ?? ""),
+    language: "bn",
+    options: {
+      includeLLM,
+      asyncLLM,
+      llmMode: options.llmMode ?? (includeLLM ? "review_candidates" : "none"),
+      mode: options.mode ?? (includeLLM ? "smart" : "fast"),
+    },
+  };
 }
 
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {
