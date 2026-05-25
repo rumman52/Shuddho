@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   analyzeText,
+  buildCheckRequestBody,
   deriveApiConfiguration,
   sendFeedback,
   fetchPreferences,
@@ -100,6 +101,70 @@ test("analyzeText calls /api/check on configured gateway base URL", async () => 
 
   assert.equal(calls[0]?.url, "https://abc123.ngrok-free.app/api/check");
   assert.equal(calls[0]?.body.language, "bn");
+  assert.deepEqual(calls[0]?.body.options, {
+    includeLLM: false,
+    asyncLLM: false,
+    llmMode: "none",
+    mode: "fast",
+  });
+});
+
+test("buildCheckRequestBody returns clean JSON payload", () => {
+  const quick = buildCheckRequestBody("আমি ভাত খাই।", {
+    includeLLM: false,
+    asyncLLM: false,
+    mode: "fast",
+    llmMode: "none",
+  });
+  assert.deepEqual(quick, {
+    text: "আমি ভাত খাই।",
+    language: "bn",
+    options: {
+      includeLLM: false,
+      asyncLLM: false,
+      llmMode: "none",
+      mode: "fast",
+    },
+  });
+
+  const deep = buildCheckRequestBody("আমি ভাত খাই।", {
+    includeLLM: true,
+    asyncLLM: true,
+    mode: "smart",
+    llmMode: "review_candidates",
+  });
+  assert.equal(deep.options.mode, "smart");
+  assert.equal(deep.options.llmMode, "review_candidates");
+});
+
+test("analyzeText surfaces backend 422/500 detail payloads", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        error: "canonical_payload_validation_error",
+      }),
+      {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      },
+    )) as typeof fetch;
+  try {
+    await assert.rejects(
+      () =>
+        analyzeText({
+          text: "আমি ভাত খাই।",
+          mode: "standard",
+          personal_dictionary: [],
+          user_id: "u1",
+        }),
+      /Backend failed: HTTP 422/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
 });
 
 test("sendFeedback posts full payload to /api/feedback (not /api/events)", async () => {

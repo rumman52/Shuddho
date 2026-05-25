@@ -182,9 +182,11 @@ async function request<TResponse>(
     throw new Error(`Network request failed for ${url}: ${message}`);
   }
 
-  if (response.status === 422) {
+  if (response.status === 422 || response.status === 500) {
     const detail = await response.json().catch(() => null);
-    throw new Error(`Backend validation failed: ${JSON.stringify(detail)}`);
+    throw new Error(
+      `Backend failed: HTTP ${response.status} ${JSON.stringify(detail)}`,
+    );
   }
 
   if (!response.ok) {
