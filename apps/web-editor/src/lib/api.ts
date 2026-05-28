@@ -71,6 +71,9 @@ export type GatewaySuggestion = {
 export type GatewayCheckResponse = {
   normalizedText?: string;
   normalized_text?: string;
+  correctedText?: string;
+  corrected_text?: string;
+  documentAssessment?: Record<string, unknown>;
   suggestions?: GatewaySuggestion[];
   warnings?: string[];
   llm_requested?: boolean;
@@ -201,7 +204,7 @@ async function request<TResponse>(
       detailJson === null ? (await response.text().catch(() => "")).trim() : "";
     const detail = detailJson ?? detailText ?? response.statusText;
     throw new Error(
-      `Backend error: check response validation failed (HTTP ${response.status}) ${typeof detail === "string" ? detail : JSON.stringify(detail)}`,
+      `Backend failed: HTTP ${response.status}; check response validation failed. ${typeof detail === "string" ? detail : JSON.stringify(detail)}`,
     );
   }
 
@@ -442,6 +445,8 @@ export function gatewayCheckToAnalyzeResponse(
 ): AnalyzeResponse {
   const normalizedText =
     response.normalizedText ?? response.normalized_text ?? payload.text;
+  const correctedText =
+    response.correctedText ?? response.corrected_text ?? normalizedText;
   const suggestions = Array.isArray(response.suggestions)
     ? response.suggestions
     : [];
@@ -449,7 +454,7 @@ export function gatewayCheckToAnalyzeResponse(
 
   const mapped = {
     text: payload.text,
-    corrected_text: normalizedText,
+    corrected_text: correctedText,
     normalized_text: normalizedText,
     analysis_profile: "gateway",
     runtime_source: "gateway",
@@ -459,10 +464,7 @@ export function gatewayCheckToAnalyzeResponse(
     warnings: Array.isArray(response.warnings) ? response.warnings : [],
     used_detector: false,
     used_corrector: false,
-    backend_warning:
-      typeof response.llm_status === "string" && response.llm_status !== "succeeded"
-        ? `LLM status: ${response.llm_status}`
-        : null,
+    backend_warning: friendlyLlmWarning(response),
     lexicon_source: "gateway",
     lexicon_version: null,
     backend_version: null,
@@ -514,6 +516,23 @@ export function gatewayCheckToAnalyzeResponse(
     payload.text,
     mode,
   );
+}
+
+function friendlyLlmWarning(response: GatewayCheckResponse): string | null {
+  const status = response.llm_status;
+  if (!status || status === "completed" || status === "completed_empty" || status === "skipped") {
+    return null;
+  }
+  if (status === "timeout") {
+    return "AI review timed out, showing local suggestions.";
+  }
+  if (["missing_key", "unsupported_provider", "provider_error", "network_error", "rate_limited", "invalid_json", "invalid_schema", "failed"].includes(status)) {
+    return "AI review unavailable, showing local suggestions.";
+  }
+  if (status === "queued" || status === "attempted") {
+    return "Reviewing with AI.";
+  }
+  return `LLM status: ${status}`;
 }
 
 function normalizeGatewaySuggestionSource(

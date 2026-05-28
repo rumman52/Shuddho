@@ -1,206 +1,78 @@
 from __future__ import annotations
 
 import json
-import os
-import re
-import time
 import logging
+import os
+import time
 from typing import Any
 
 import httpx
-logger = logging.getLogger(__name__)
 
-OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
-ALLOWED_TYPES = {"spelling", "grammar", "punctuation", "style", "fluency"}
-SYSTEM_PROMPT = (
-    "You are Shuddho AI Reviewer. Return strict JSON only. Do not use markdown. "
-    "Do not explain outside JSON. Only suggest corrections for exact substrings from the input."
+from services.api.shuddho_api.ai_review_schema import (
+    build_review_messages,
+    extract_json_payload,
+    required_output_schema,
+    validate_ai_review_payload,
 )
+from services.api.shuddho_api.llm_candidates import split_bangla_sentences
+from services.api.shuddho_api.llm_provider import DEFAULT_OPENROUTER_MODEL, LlmProviderResult
 
-
-def _build_prompt(text: str) -> str:
-    return f"""You are correcting Bangla writing for Shuddho.
-
-Input text:
-<<<TEXT
-{text}
-TEXT
-
-Return strict JSON only in this exact shape:
-
-{{
-  "suggestions": [
-    {{
-      "type": "grammar",
-      "message": "short Bangla or English explanation",
-      "original": "exact substring from the input",
-      "replacement": "corrected text",
-      "start": null,
-      "end": null,
-      "confidence": 0.85,
-      "source": "openrouter"
-    }}
-  ]
-}}
-
-Rules:
-- Return only JSON.
-- No markdown.
-- No explanation outside JSON.
-- If there are no problems, return {{"suggestions":[]}}.
-- "original" must be an exact substring from the input text.
-- Do not invent text that is not present.
-- Do not rewrite the whole paragraph.
-- Prefer short precise corrections.
-- Find grammar, spelling, punctuation, style, and fluency problems.
-- If offsets are uncertain, use null for start and end.
-- source must be "openrouter"."""
-
-
-def _strip_fences(content: str) -> str:
-    cleaned = content.strip()
-    cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\\s*```$", "", cleaned)
-    return cleaned.strip()
-
-
-def _map_http(status: int) -> str:
-    return {
-        400: "openrouter_http_error",
-        401: "openrouter_http_401_invalid_key",
-        402: "openrouter_http_402_payment_required",
-        403: "openrouter_http_403_forbidden",
-        404: "openrouter_http_404_model_not_found",
-        408: "openrouter_timeout",
-        413: "openrouter_http_413_content_too_large",
-        429: "openrouter_http_429_quota_or_rate_limit",
-        500: "openrouter_provider_or_server_error",
-        502: "openrouter_provider_or_server_error",
-        503: "openrouter_provider_or_server_error",
-        504: "openrouter_provider_or_server_error",
-    }.get(status, "openrouter_http_error")
+logger = logging.getLogger(__name__)
+OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
 def _structured_response_format() -> dict[str, Any]:
     return {
         "type": "json_schema",
         "json_schema": {
-            "name": "shuddho_corrections",
+            "name": "shuddho_ai_review",
             "strict": True,
-            "schema": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "suggestions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": {
-                                "type": {"type": "string", "enum": sorted(ALLOWED_TYPES)},
-                                "message": {"type": "string"},
-                                "original": {"type": "string"},
-                                "replacement": {"type": "string"},
-                                "start": {"type": ["integer", "null"]},
-                                "end": {"type": ["integer", "null"]},
-                                "confidence": {
-                                    "type": "number",
-                                    "minimum": 0,
-                                    "maximum": 1,
-                                },
-                                "source": {"type": "string", "enum": ["openrouter"]},
-                            },
-                            "required": [
-                                "type",
-                                "message",
-                                "original",
-                                "replacement",
-                                "start",
-                                "end",
-                                "confidence",
-                                "source",
-                            ],
-                        },
-                    }
-                },
-                "required": ["suggestions"],
-            },
+            "schema": required_output_schema(),
         },
     }
 
 
-def _normalize_suggestions(input_text: str, items: Any, model: str) -> list[dict[str, Any]]:
-    if not isinstance(items, list):
-        return []
-    seen: set[tuple[str, str, int, int]] = set()
-    out: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        original = item.get("original")
-        replacement = item.get("replacement")
-        if not isinstance(original, str) or not isinstance(replacement, str):
-            continue
-        if not original.strip() or not replacement.strip():
-            continue
-
-        start = item.get("start")
-        end = item.get("end")
-        if isinstance(start, int) and isinstance(end, int) and end > start and input_text[start:end] == original:
-            span_start, span_end = start, end
-        else:
-            found = input_text.find(original)
-            if found < 0:
-                out.append({"_warning": "openrouter_original_not_found"})
-                continue
-            span_start, span_end = found, found + len(original)
-
-        kind = item.get("type") if isinstance(item.get("type"), str) else "grammar"
-        kind = kind if kind in ALLOWED_TYPES else "grammar"
-
-        try:
-            confidence = float(item.get("confidence", 0.75))
-        except (TypeError, ValueError):
-            confidence = 0.75
-        if confidence < 0.75 or confidence > 1:
-            confidence = 0.75
-        if original.strip() == input_text.strip():
-            continue
-
-        key = (original, replacement, span_start, span_end)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(
-            {
-                "id": f"openrouter-{span_start}-{span_end}-{len(out)}",
-                "rule_id": f"openrouter.{kind}",
-                "category": kind,
-                "type": kind,
-                "severity": "medium",
-                "originalText": original,
-                "suggestedText": replacement,
-                "replacement_options": [replacement],
-                "replacementOptions": [replacement],
-                "span_start": span_start,
-                "span_end": span_end,
-                "spanStart": span_start,
-                "spanEnd": span_end,
-                "explanationBn": str(item.get("message") or "প্রস্তাবিত সংশোধন"),
-                "confidence": confidence,
-                "source": "model",
-                "provider": "openrouter",
-                "model": model,
-                "metadata": {"llm": True},
-            }
-        )
-    return out
+def _status_for_http(status: int) -> tuple[str, str]:
+    if status == 429:
+        return "rate_limited", "openrouter_http_429_quota_or_rate_limit"
+    if status in {408, 504}:
+        return "timeout", "openrouter_timeout"
+    if status in {401, 403}:
+        return "provider_error", f"openrouter_http_{status}_auth_or_forbidden"
+    if status == 404:
+        return "provider_error", "openrouter_http_404_model_not_found"
+    if status >= 500:
+        return "provider_error", "openrouter_provider_or_server_error"
+    return "provider_error", "openrouter_http_error"
 
 
 def _extract_content(response_json: dict[str, Any]) -> str | None:
-    content = ((((response_json.get("choices") or [{}])[0]).get("message") or {}).get("content"))
-    return content if isinstance(content, str) and content.strip() else None
+    choices = response_json.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content.strip() or None
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                value = part.get("text") or part.get("content")
+                if isinstance(value, str):
+                    parts.append(value)
+            elif isinstance(part, str):
+                parts.append(part)
+        joined = "".join(parts).strip()
+        return joined or None
+    return None
+
+
+def _sentences_for_prompt(text: str) -> list[dict[str, Any]]:
+    return [
+        {"sentenceId": f"s_{idx}", "text": sentence.text, "start": sentence.start, "end": sentence.end}
+        for idx, sentence in enumerate(split_bangla_sentences(text))
+    ] or [{"sentenceId": "s_0", "text": text, "start": 0, "end": len(text)}]
 
 
 def run_openrouter_check(
@@ -209,95 +81,91 @@ def run_openrouter_check(
     api_key: str,
     language: str = "bn",
     timeout_seconds: float = 35.0,
+    *,
+    request_id: str = "",
+    sentences: list[dict[str, Any]] | None = None,
+    local_suggestions: list[dict[str, Any]] | None = None,
+    candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     del language
+    rid = request_id or os.environ.get("SHUDDHO_REQUEST_ID", "unknown")
     model = (model or DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
-    warnings: list[str] = []
-
     if not api_key or not api_key.strip():
-        return {
-            "suggestions": [],
-            "warnings": ["openrouter_api_key_missing"],
-            "provider": "openrouter",
-            "model": model,
-            "llm_enabled": True,
-        }
+        return LlmProviderResult(
+            provider="openrouter", model=model, configured=False, status="missing_key",
+            warnings=["openrouter_api_key_missing"], response_mode="json_schema",
+        ).model_dump()
 
-    headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
-        "Content-Type": "application/json",
-    }
-    http_referer = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
-    app_title = os.environ.get("OPENROUTER_APP_TITLE", "").strip()
-    if http_referer:
-        headers["HTTP-Referer"] = http_referer
-    if app_title:
-        headers["X-OpenRouter-Title"] = app_title
-
-    base_payload: dict[str, Any] = {
+    messages = build_review_messages(
+        request_id=rid,
+        full_text=text,
+        sentences=sentences or _sentences_for_prompt(text),
+        local_suggestions=local_suggestions or [],
+        candidate_sentences=candidates or [],
+    )
+    headers = {"Authorization": f"Bearer {api_key.strip()}", "Content-Type": "application/json"}
+    if os.environ.get("OPENROUTER_HTTP_REFERER", "").strip():
+        headers["HTTP-Referer"] = os.environ["OPENROUTER_HTTP_REFERER"].strip()
+    if os.environ.get("OPENROUTER_APP_TITLE", "").strip():
+        headers["X-OpenRouter-Title"] = os.environ["OPENROUTER_APP_TITLE"].strip()
+    base_payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _build_prompt(text)},
-        ],
+        "messages": messages,
         "temperature": 0.1,
-        "max_completion_tokens": 900,
+        "max_completion_tokens": 1400,
         "stream": False,
     }
-
     payload = {**base_payload, "response_format": _structured_response_format()}
-    prompt = base_payload["messages"][1]["content"]
+    warnings: list[str] = []
+    response_mode = "json_schema"
     started = time.time()
-    logger.info("OPENROUTER_HTTP_START request_id=%s model=%s endpoint=%s prompt_chars=%s", os.environ.get("SHUDDHO_REQUEST_ID","unknown"), model, OPENROUTER_CHAT_COMPLETIONS_URL, len(prompt))
-
+    http_status: int | None = None
     try:
         with httpx.Client(timeout=timeout_seconds) as client:
             response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
+            http_status = response.status_code
             if response.status_code == 400:
                 warnings.append("openrouter_structured_output_fallback_used")
+                response_mode = "strict_json_prompt"
                 response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=base_payload)
-            latency_ms = int((time.time() - started) * 1000)
-            logger.info("OPENROUTER_HTTP_DONE request_id=%s status=%s latency_ms=%s model=%s", os.environ.get("SHUDDHO_REQUEST_ID","unknown"), response.status_code, latency_ms, model)
+                http_status = response.status_code
     except httpx.TimeoutException:
-        return {"suggestions": [], "warnings": ["openrouter_timeout"], "provider": "openrouter", "model": model, "llm_enabled": True, "called": True}
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="timeout", response_mode=response_mode, warnings=["openrouter_timeout"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     except httpx.RequestError:
-        return {"suggestions": [], "warnings": ["openrouter_request_failed"], "provider": "openrouter", "model": model, "llm_enabled": True, "called": True}
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="network_error", response_mode=response_mode, warnings=["openrouter_request_failed"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
 
-    if response.status_code >= 400:
-        warnings.append(_map_http(response.status_code))
-        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True, "called": True, "http_status": response.status_code}
-
+    if http_status is not None and http_status >= 400:
+        status, warning = _status_for_http(http_status)
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status=status, response_mode=response_mode, http_status=http_status, warnings=[*warnings, warning], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     try:
         response_json = response.json()
     except json.JSONDecodeError:
-        warnings.append("openrouter_invalid_json")
-        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True, "called": True, "http_status": response.status_code}
-
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="invalid_json", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_invalid_json"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     content = _extract_content(response_json)
     if content is None:
-        warnings.append("openrouter_empty_response")
-        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True, "called": True, "http_status": response.status_code}
-
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="invalid_schema", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_empty_choices"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     try:
-        parsed = json.loads(_strip_fences(content))
-    except json.JSONDecodeError:
-        warnings.append("openrouter_invalid_json")
-        return {"suggestions": [], "warnings": warnings, "provider": "openrouter", "model": model, "llm_enabled": True}
-
-    raw = _normalize_suggestions(text, parsed.get("suggestions") if isinstance(parsed, dict) else None, model)
-    warnings.extend([item["_warning"] for item in raw if isinstance(item, dict) and "_warning" in item])
-    suggestions = [item for item in raw if isinstance(item, dict) and "_warning" not in item]
-    parsed_ok = isinstance(parsed, dict) and isinstance(parsed.get("suggestions"), list)
-    logger.info("OPENROUTER_PARSE_DONE request_id=%s parsed=%s suggestions=%s warnings=%s content_chars=%s", os.environ.get("SHUDDHO_REQUEST_ID","unknown"), parsed_ok, len(suggestions), warnings, len(content))
-    return {
-        "suggestions": suggestions,
-        "warnings": warnings,
-        "provider": "openrouter",
-        "model": model,
-        "llm_enabled": True,
-        "called": True,
-        "http_status": response.status_code,
-        "parsed": parsed_ok,
-        "usage": response_json.get("usage") if isinstance(response_json, dict) else {},
-        "timings": {"llm_ms": int((time.time() - started) * 1000)},
-    }
+        parsed = extract_json_payload(content)
+    except Exception:
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="invalid_json", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_invalid_json"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    try:
+        review = validate_ai_review_payload(parsed, rid, text)
+    except Exception:
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, parsed=True, status="invalid_schema", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_invalid_schema"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    status = "completed" if review.suggestions else "completed_empty"
+    return LlmProviderResult(
+        suggestions=[s.model_dump() for s in review.suggestions],
+        correctedText=review.correctedText,
+        documentAssessment=review.documentAssessment.model_dump(),
+        warnings=warnings,
+        provider="openrouter",
+        model=model,
+        called=True,
+        configured=True,
+        parsed=True,
+        status=status,
+        response_mode=response_mode,
+        http_status=http_status,
+        usage=response_json.get("usage") or {},
+        timings={"llm_ms": int((time.time()-started)*1000)},
+    ).model_dump()
