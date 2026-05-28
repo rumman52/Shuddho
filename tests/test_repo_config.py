@@ -38,6 +38,15 @@ def test_frontend_source_omits_direct_hosted_model_calls() -> None:
             assert fragment not in content, f"unexpected hosted-model reference in {path}"
 
 
+def test_vercel_config_deploys_web_editor_spa_from_repo_root() -> None:
+    config = json.loads(Path("vercel.json").read_text(encoding="utf-8"))
+
+    assert config["version"] == 2
+    assert config["installCommand"] == "npm install"
+    assert config["buildCommand"] == "npm run build:web-editor"
+    assert config["outputDirectory"] == "apps/web-editor/dist"
+    assert config["rewrites"] == [{"source": "/(.*)", "destination": "/index.html"}]
+
 def test_windows_backend_script_uses_repo_root_before_starting_uvicorn() -> None:
     script = Path("run_backend_windows.bat").read_text(encoding="utf-8")
 

@@ -174,8 +174,10 @@ def _parse_allowed_origins(value: str | None) -> list[str]:
         return allowed_origins
 
     for raw_origin in value.split(","):
-        origin = raw_origin.strip()
-        if origin and origin not in allowed_origins:
+        origin = raw_origin.strip().rstrip("/")
+        if not origin or origin == "*":
+            continue
+        if origin not in allowed_origins:
             allowed_origins.append(origin)
     return allowed_origins
 

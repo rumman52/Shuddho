@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build:web-editor",
+  "outputDirectory": "apps/web-editor/dist",
+  "installCommand": "npm install",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

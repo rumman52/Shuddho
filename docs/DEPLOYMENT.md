@@ -2,36 +2,56 @@
 
 ## Vercel web editor
 
-Set these Vercel environment variables for `https://shuddho-web-editor.vercel.app` in **Production, Preview, and Development**:
+The web editor is a static Vite SPA in `apps/web-editor`. Deploy it from the repository root so Vercel uses the checked-in `vercel.json` rewrite and output settings. The editor must render before any backend, Render, OpenAI, or OpenRouter call succeeds. If the backend is down or `VITE_API_BASE_URL` is missing, the page still loads and shows a non-blocking setup or backend-unavailable banner.
 
-```dotenv
-VITE_API_BASE_URL=https://shuddho-api.onrender.com
-VITE_USE_GATEWAY=true
-```
-
-Recommended Vercel settings when the root directory is the repository root:
+### Required Vercel project settings
 
 - Framework Preset: Vite
 - Root Directory: repository root
-- Install Command: `npm install --include=optional`
-- Build Command: `npm run build --workspace @shuddho/web-editor`
+- Install Command: `npm install`
+- Build Command: `npm run build:web-editor`
 - Output Directory: `apps/web-editor/dist`
 
-If the Vercel Root Directory is `apps/web-editor` instead:
+The root `vercel.json` should remain aligned with those settings and includes this SPA fallback so deep links return `index.html` instead of 404s:
 
-- Install Command: `npm install --include=optional`
-- Build Command: `npm run build`
-- Output Directory: `dist`
+```json
+{
+  "version": 2,
+  "buildCommand": "npm run build:web-editor",
+  "outputDirectory": "apps/web-editor/dist",
+  "installCommand": "npm install",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+```
+
+### Frontend Vercel environment variables
+
+Set these on the Vercel frontend project in **Production, Preview, and Development**:
+
+```dotenv
+VITE_API_BASE_URL=https://YOUR_BACKEND_URL
+VITE_USE_GATEWAY=true
+VITE_ENABLE_LOCAL_FALLBACK=true
+```
+
+`VITE_API_BASE_URL` must be the Shuddho backend origin, such as `https://shuddho-api.onrender.com`. It must not be an OpenAI or OpenRouter URL. If it is missing, the deployed frontend intentionally disables server AI review, renders the editor, and shows: “API URL is not configured. Set VITE_API_BASE_URL in Vercel.”
+
+Security note: do **not** add `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or other private backend secrets to Vercel frontend variables. Browser code must only use public `VITE_*` values and must send AI review requests through the backend.
 
 ### Vercel preview deployments and CORS
 
 Render only allows browser origins listed in `SHUDDHO_ALLOWED_ORIGINS` plus the safe local/extension regex built into the FastAPI app. If you test a Vercel preview URL, add that exact preview origin to `SHUDDHO_ALLOWED_ORIGINS`, for example:
 
 ```dotenv
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://your-preview-url.vercel.app
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://your-preview-url.vercel.app,http://localhost:5173
 ```
 
-Do not use a blanket wildcard in production. If preview URLs must be dynamic, implement safe Vercel preview CORS handling that restricts origins to trusted Shuddho preview hostnames.
+Do not use a blanket wildcard in production. The backend uses credentials-capable CORS, so `*` is ignored by origin parsing. If preview URLs must be dynamic, implement safe Vercel preview CORS handling that restricts origins to trusted Shuddho preview hostnames.
 
 ## Render FastAPI backend
 
@@ -42,13 +62,12 @@ SHUDDHO_CORRECTOR_ENABLED=auto
 SHUDDHO_CORRECTOR_CHECKPOINT=artifacts/corrector/corrector-base
 SHUDDHO_DETECTOR_ENABLED=auto
 SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173
 SHUDDHO_LOG_RAW_TEXT=false
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=your_key
+OPENROUTER_API_KEY=your_key_here
 OPENROUTER_MODEL=openai/gpt-oss-120b:free
-SHUDDHO_LOG_RAW_TEXT=false
 ```
 
 The Docker image copies `artifacts/` into `/app/artifacts` when the directory exists in the repository. The sentence-level corrector is optional: if `artifacts/corrector/corrector-base/best_model.pt` is absent or incomplete, `/health/deep` reports `corrector.status = missing_checkpoint`, analysis uses `backend_without_corrector` when the detector is ready, and Shuddho stays online with rules + spelling suggestions. The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.

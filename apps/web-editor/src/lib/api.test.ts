@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   analyzeText,
@@ -7,6 +9,7 @@ import {
   deriveApiConfiguration,
   sendFeedback,
   fetchPreferences,
+  fetchWithTimeout,
   gatewayCheckToAnalyzeResponse,
   readStoredApiBaseUrl,
   setApiBaseUrlOverride,
@@ -38,7 +41,7 @@ test("deriveApiConfiguration uses VITE_API_BASE_URL and normalizes trailing slas
   assert.equal(config.hardWarning, null);
 });
 
-test("deriveApiConfiguration falls back to Render when production VITE_API_BASE_URL is missing", () => {
+test("deriveApiConfiguration disables backend when production VITE_API_BASE_URL is missing", () => {
   const config = deriveApiConfiguration({
     browserHostname: "shuddho-web-editor.vercel.app",
     configuredBaseUrl: null,
@@ -46,9 +49,9 @@ test("deriveApiConfiguration falls back to Render when production VITE_API_BASE_
     isProductionBuild: true,
   });
 
-  assert.equal(config.backendAllowed, true);
-  assert.equal(config.apiBaseUrl, "https://shuddho-api.onrender.com");
-  assert.equal(config.hardWarning, null);
+  assert.equal(config.backendAllowed, false);
+  assert.equal(config.apiBaseUrl, "");
+  assert.equal(config.hardWarning, "API URL is not configured. Set VITE_API_BASE_URL in Vercel.");
 });
 
 test("deriveApiConfiguration rejects localhost for deployed browser origins", () => {
@@ -107,6 +110,43 @@ test("analyzeText calls /api/check on configured gateway base URL", async () => 
     llmMode: "none",
     mode: "fast",
   });
+});
+
+test("fetchWithTimeout rejects with friendly timeout error", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+        once: true,
+      });
+    })) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () => fetchWithTimeout("https://api.example.test/health", {}, 1),
+      /Request timed out. Please try again or check backend deployment./,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("frontend source does not reference private LLM API key variable names", () => {
+  const files = [
+    "src/App.tsx",
+    "src/main.tsx",
+    "src/lib/api.ts",
+    "vite.config.ts",
+  ];
+
+  for (const file of files) {
+    const path = existsSync(join(process.cwd(), file))
+      ? join(process.cwd(), file)
+      : join(process.cwd(), "apps/web-editor", file);
+    const contents = readFileSync(path, "utf8");
+    const privateKeyPattern = new RegExp(`${"OPENAI"}_API_KEY|${"OPENROUTER"}_API_KEY`);
+    assert.doesNotMatch(contents, privateKeyPattern);
+  }
 });
 
 test("buildCheckRequestBody returns clean JSON payload", () => {

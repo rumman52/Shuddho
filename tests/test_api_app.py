@@ -327,6 +327,43 @@ def test_api_check_mode_and_llmmode_strings_do_not_crash() -> None:
     assert isinstance(response.json().get("llm"), dict)
 
 
+
+def test_health_route_returns_fast_ok_without_llm_keys(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["service"] == "shuddho-api"
+    assert "llm" not in payload
+
+
+def test_health_deep_does_not_call_llm_provider(monkeypatch) -> None:
+    def fail_llm_config() -> tuple[bool, str, str, str | None]:
+        raise AssertionError("health/deep must not initialize or call an LLM provider")
+
+    monkeypatch.setattr(app_module, "_llm_config", fail_llm_config)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+
+
+def test_cors_preflight_allows_vercel_frontend_origin() -> None:
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "https://shuddho-web-editor.vercel.app",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://shuddho-web-editor.vercel.app"
+
 def test_api_check_validation_returns_json_422_not_asgi_500() -> None:
     response = client.post("/api/check", json={"text": ""})
     assert response.status_code == 422
@@ -344,6 +381,8 @@ def test_health_reports_detector_and_corrector_status() -> None:
     detector_runtime = detector_service.runtime_status()
     corrector_runtime = corrector_service.runtime_status()
 
+    assert response.ok is True
+    assert response.service == "shuddho-api"
     assert response.status == "ok"
     assert response.backend_reachable is True
     assert response.detector_loaded is detector_service.is_loaded()
@@ -352,6 +391,8 @@ def test_health_reports_detector_and_corrector_status() -> None:
     assert response.corrector_checkpoint == corrector_service.checkpoint_path
     assert response.allowed_origins == ALLOWED_ORIGINS
     assert set(payload) == {
+        "ok",
+        "service",
         "status",
         "backend_reachable",
         "detector_loaded",
