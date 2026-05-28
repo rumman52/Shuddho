@@ -21,7 +21,6 @@ import {
   getHealth,
   getUserPreferences,
   rewriteText,
-  runAiCheck,
   saveUserPreferences,
   sendFeedback,
   setApiBaseUrlOverride,
@@ -335,7 +334,7 @@ export default function App() {
         user_id: userId,
       }, {
         includeLLM,
-        asyncLLM: includeLLM,
+        asyncLLM: false,
         llmMode: includeLLM ? "review_candidates" : "none",
         mode: includeLLM ? "smart" : "fast",
         signal: controller.signal,
@@ -357,11 +356,19 @@ export default function App() {
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
       setStatus(
-        responseSuggestions.length
-          ? `${responseSuggestions.length} suggestions ready`
-          : responseWarnings.length
-            ? `No high-confidence correction found. Backend warnings: ${responseWarnings.join(", ")}`
-            : "No high-confidence correction found.",
+        includeLLM
+          ? responseWarnings.some((warning) => String(warning).includes("timeout"))
+            ? "AI review timed out, showing local suggestions"
+            : responseWarnings.some((warning) => String(warning).includes("api_key") || String(warning).includes("provider") || String(warning).includes("invalid_json"))
+              ? "AI review unavailable, showing local suggestions"
+              : responseSuggestions.length
+                ? "AI review complete"
+                : "AI review complete: no high-confidence correction found"
+          : responseSuggestions.length
+            ? `${responseSuggestions.length} local suggestions ready`
+            : responseWarnings.length
+              ? `No high-confidence correction found. Backend warnings: ${responseWarnings.join(", ")}`
+              : "No high-confidence correction found.",
       );
       setTone(null);
     } catch (error) {
@@ -684,51 +691,13 @@ export default function App() {
     }
 
     analysisAbortRef.current?.abort();
-    setIsChecking(true);
     aiReviewInFlightRef.current = true;
-    setStatus("AI reviewing...");
-    void (async () => {
-      try {
-        await runAnalysis(text, false);
-        const ai = await runAiCheck(text);
-        const aiSuggestions = Array.isArray(ai.suggestions) ? ai.suggestions : [];
-        const aiWarnings = Array.isArray(ai.warnings) ? ai.warnings : [];
-        setAnalysis((current) => {
-          const localSuggestions = Array.isArray(current.suggestions) ? [...current.suggestions] : [];
-          const seen = new Set(localSuggestions.map((s) => `${s.span_start}:${s.span_end}:${s.replacement_options?.[0] ?? ""}`));
-          for (const raw of aiSuggestions) {
-            const spanStart = raw.span?.startIndex ?? raw.span_start;
-            const spanEnd = raw.span?.endIndex ?? raw.span_end;
-            const suggestedText = raw.suggestedText ?? raw.suggested_text;
-            const originalText = raw.originalText ?? raw.original_text;
-            if (typeof spanStart !== "number" || typeof spanEnd !== "number" || !suggestedText || !originalText) continue;
-            const key = `${spanStart}:${spanEnd}:${suggestedText}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            localSuggestions.push({
-              id: String(raw.id ?? `llm-${key}`),
-              rule_id: String(raw.ruleId ?? raw.rule_id ?? "llm_grammar"),
-              category: "grammar",
-              subtype: String(raw.type ?? "grammar"),
-              severity: "medium",
-              original_text: String(originalText),
-              replacement_options: Array.isArray(raw.replacementOptions) ? raw.replacementOptions : [String(suggestedText)],
-              span_start: spanStart,
-              span_end: spanEnd,
-              confidence: Number(raw.confidence ?? 0.75),
-              explanation_bn: String(raw.explanationBn ?? raw.explanation_bn ?? "AI suggestion"),
-              explanation_en: "",
-              source: "model",
-            });
-          }
-          return { ...current, suggestions: localSuggestions, runtime_warnings: [...(current.runtime_warnings ?? []), ...aiWarnings] };
-        });
-      } finally {
-        aiReviewInFlightRef.current = false;
-        setIsChecking(false);
-      }
-    })();
+    setStatus("Reviewing with AI");
+    void runAnalysis(text, true).finally(() => {
+      aiReviewInFlightRef.current = false;
+    });
   }
+
 
   function handleAcceptAll() {
     const applicableSuggestions = suggestions

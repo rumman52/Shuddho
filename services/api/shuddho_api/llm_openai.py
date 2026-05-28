@@ -1,46 +1,151 @@
 from __future__ import annotations
-import json, os, re
+
+import json
+import time
 from typing import Any
+
 import httpx
 
+from services.api.shuddho_api.ai_review_schema import (
+    build_review_messages,
+    extract_json_payload,
+    required_output_schema,
+    validate_ai_review_payload,
+)
+from services.api.shuddho_api.llm_candidates import split_bangla_sentences
+from services.api.shuddho_api.llm_provider import DEFAULT_OPENAI_MODEL, LlmProviderResult
+
 OPENAI_URL = "https://api.openai.com/v1/responses"
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-SYSTEM_PROMPT = "You are Shuddho, a professional Bangla writing assistant. Review the entire user text with full context before suggesting corrections. Do not check only isolated words. Find spelling, grammar, punctuation, spacing, word choice, clarity, fluency, style, and meaning/context problems. Preserve the user's intended meaning. Prefer natural modern Bangla. Do not change names, numbers, URLs, emails, code, or quoted text unless clearly wrong. Return only structured JSON that matches the required schema. For every inline suggestion, provide the exact original substring from the user's text, the replacement, category, severity, confidence, and a short explanation. If a correction cannot be attached to an exact original substring, put it in documentAssessment instead of inventing an offset. Always include correctedText for the whole reviewed text."
 
 
-def _extract_json(text:str)->Any:
-    text=text.strip()
-    text=re.sub(r"^```(?:json)?\\s*","",text,flags=re.I)
-    text=re.sub(r"\\s*```$","",text)
-    try:return json.loads(text)
-    except Exception:pass
-    m=re.search(r"\{[\s\S]*\}",text)
-    if m:return json.loads(m.group(0))
-    raise json.JSONDecodeError("bad",text,0)
+def _extract_output_text(response_json: dict[str, Any]) -> str | None:
+    value = response_json.get("output_text")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    output = response_json.get("output")
+    if isinstance(output, list):
+        parts: list[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    text = block.get("text") or block.get("content")
+                    if isinstance(text, str):
+                        parts.append(text)
+                    parsed = block.get("parsed")
+                    if isinstance(parsed, dict):
+                        return json.dumps(parsed, ensure_ascii=False)
+            parsed = item.get("parsed")
+            if isinstance(parsed, dict):
+                return json.dumps(parsed, ensure_ascii=False)
+        joined = "".join(parts).strip()
+        if joined:
+            return joined
+    parsed = response_json.get("parsed")
+    if isinstance(parsed, dict):
+        return json.dumps(parsed, ensure_ascii=False)
+    return None
 
 
-def run_openai_check(text:str, model:str, api_key:str, timeout_seconds:float=35.0)->dict[str,Any]:
-    model=(model or DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
-    if not api_key:
-        return {"suggestions":[],"correctedText":"","documentAssessment":{},"warnings":["openai_api_key_missing"],"provider":"openai","model":model,"llm_enabled":True,"status":"failed","response_mode":"json_schema","finish_reasons":[],"diagnostics":{}}
-    payload={"model":model,"input":[{"role":"system","content":SYSTEM_PROMPT},{"role":"user","content":text}],"text":{"format":{"type":"json_object"}},"max_output_tokens":1200}
+def _sentences_for_prompt(text: str) -> list[dict[str, Any]]:
+    return [
+        {"sentenceId": f"s_{idx}", "text": sentence.text, "start": sentence.start, "end": sentence.end}
+        for idx, sentence in enumerate(split_bangla_sentences(text))
+    ] or [{"sentenceId": "s_0", "text": text, "start": 0, "end": len(text)}]
+
+
+def _status_for_http(status: int) -> tuple[str, str]:
+    if status == 429:
+        return "rate_limited", "openai_http_429_quota_or_rate_limit"
+    if status in {408, 504}:
+        return "timeout", "openai_timeout"
+    if status in {401, 403}:
+        return "provider_error", f"openai_http_{status}_auth_or_forbidden"
+    if status >= 500:
+        return "provider_error", "openai_server_error"
+    return "provider_error", "openai_http_error"
+
+
+def run_openai_check(
+    text: str,
+    model: str,
+    api_key: str,
+    timeout_seconds: float = 35.0,
+    *,
+    request_id: str = "",
+    sentences: list[dict[str, Any]] | None = None,
+    local_suggestions: list[dict[str, Any]] | None = None,
+    candidates: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    rid = request_id or "unknown"
+    model = (model or DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
+    if "/" in model or ":free" in model:
+        return LlmProviderResult(provider="openai", model=model, configured=False, status="unsupported_provider", response_mode="json_schema", warnings=["openai_model_id_suspicious_use_openrouter_provider"]).model_dump()
+    if not api_key or not api_key.strip():
+        return LlmProviderResult(provider="openai", model=model, configured=False, status="missing_key", response_mode="json_schema", warnings=["openai_api_key_missing"]).model_dump()
+    messages = build_review_messages(
+        request_id=rid,
+        full_text=text,
+        sentences=sentences or _sentences_for_prompt(text),
+        local_suggestions=local_suggestions or [],
+        candidate_sentences=candidates or [],
+    )
+    payload = {
+        "model": model,
+        "input": messages,
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "shuddho_ai_review",
+                "strict": True,
+                "schema": required_output_schema(),
+            }
+        },
+        "max_output_tokens": 1600,
+    }
+    started = time.time()
     try:
-        with httpx.Client(timeout=timeout_seconds) as c:
-            r=c.post(OPENAI_URL,headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"},json=payload)
+        with httpx.Client(timeout=timeout_seconds) as client:
+            response = client.post(OPENAI_URL, headers={"Authorization": f"Bearer {api_key.strip()}", "Content-Type": "application/json"}, json=payload)
     except httpx.TimeoutException:
-        return {"suggestions":[],"correctedText":"","documentAssessment":{},"warnings":["openai_timeout"],"provider":"openai","model":model,"llm_enabled":True,"status":"timeout","response_mode":"json_object","finish_reasons":[],"diagnostics":{}}
-    if r.status_code==401: w=["openai_http_401_invalid_key"]
-    elif r.status_code==402: w=["openai_http_402_payment_required"]
-    elif r.status_code==429: w=["openai_http_429_quota_or_rate_limit"]
-    elif r.status_code>=400: w=["openai_unexpected_error"]
-    else: w=[]
-    if w:
-        return {"suggestions":[],"correctedText":"","documentAssessment":{},"warnings":w,"provider":"openai","model":model,"llm_enabled":True,"status":"failed","response_mode":"json_object","finish_reasons":[],"diagnostics":{"status_code":r.status_code}}
-    data=r.json()
-    out=(data.get("output_text") or "").strip()
-    try: parsed=_extract_json(out)
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="timeout", response_mode="json_schema", warnings=["openai_timeout"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    except httpx.RequestError:
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="network_error", response_mode="json_schema", warnings=["openai_request_failed"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    if response.status_code >= 400:
+        status, warning = _status_for_http(response.status_code)
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status=status, response_mode="json_schema", http_status=response.status_code, warnings=[warning], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    try:
+        response_json = response.json()
+    except json.JSONDecodeError:
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_json", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_json"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    content = _extract_output_text(response_json)
+    if content is None:
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_schema", response_mode="json_schema", http_status=response.status_code, warnings=["openai_empty_output"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    try:
+        parsed = extract_json_payload(content)
     except Exception:
-        return {"suggestions":[],"correctedText":"","documentAssessment":{},"warnings":["openai_invalid_json"],"provider":"openai","model":model,"llm_enabled":True,"status":"invalid_json","response_mode":"plain_json","finish_reasons":[],"diagnostics":{}}
-    sugs=parsed.get("suggestions") or parsed.get("corrections") or parsed.get("issues") or parsed.get("edits") or ([] if not isinstance(parsed,list) else parsed)
-    if not isinstance(sugs,list): sugs=[]
-    return {"suggestions":sugs,"correctedText":parsed.get("correctedText","") if isinstance(parsed,dict) else "","documentAssessment":parsed.get("documentAssessment",{}) if isinstance(parsed,dict) else {},"warnings":[],"provider":"openai","model":model,"llm_enabled":True,"status":"completed","response_mode":"json_object","finish_reasons":[],"diagnostics":{}}
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_json", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_json"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    try:
+        review = validate_ai_review_payload(parsed, rid, text)
+    except Exception:
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, parsed=True, status="invalid_schema", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_schema"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    return LlmProviderResult(
+        suggestions=[s.model_dump() for s in review.suggestions],
+        correctedText=review.correctedText,
+        documentAssessment=review.documentAssessment.model_dump(),
+        warnings=[],
+        provider="openai",
+        model=model,
+        called=True,
+        configured=True,
+        parsed=True,
+        status="completed" if review.suggestions else "completed_empty",
+        response_mode="json_schema",
+        http_status=response.status_code,
+        usage=response_json.get("usage") or {},
+        timings={"llm_ms": int((time.time()-started)*1000)},
+    ).model_dump()

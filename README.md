@@ -59,6 +59,39 @@ npm test --workspace @shuddho/api
 .venv/bin/python -m pytest -m "not slow"
 ```
 
+
+## LLM provider configuration
+
+Shuddho always runs the local spelling/rule/dictionary engine first. When LLM review is enabled, the backend sends the full text, sentence spans, local suggestions, and candidate incorrect sentences to the configured provider, validates exact spans, then merges AI and local suggestions. If the provider is unavailable, times out, or returns invalid JSON, local suggestions still return with a non-blocking diagnostic warning.
+
+Use OpenRouter for OpenRouter model IDs such as `openai/gpt-oss-120b:free`:
+
+```dotenv
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openai/gpt-oss-120b:free
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+```
+
+Use the official OpenAI provider only with official OpenAI model IDs:
+
+```dotenv
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_LLM_PROVIDER=openai
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
+```
+
+Operational safeguards:
+
+- Keep `OPENROUTER_API_KEY` and `OPENAI_API_KEY` only in backend environment variables.
+- Never use `VITE_*` variables for private provider keys because Vite exposes them to browser code.
+- Free OpenRouter models can be slower, unavailable, or rate-limited; Shuddho's local fallback must always remain enabled.
+- `SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=4` keeps editor review responsive, while `SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=35` allows queued background reviews more time.
+- Set `SHUDDHO_MAX_AI_TEXT_CHARS=5000` and `SHUDDHO_LLM_CACHE_TTL_SECONDS=86400` to bound request size and avoid repeated unchanged reviews.
+
 ## Vercel deployment (apps/web-editor)
 
 Use these Vercel project settings for the Vite web editor deployment:
