@@ -482,6 +482,8 @@ class LexiconHealth(BaseModel):
 
 
 class HealthResponse(BaseModel):
+    ok: bool = True
+    service: str = "shuddho-api"
     status: str
     backend_reachable: bool = True
     detector_loaded: bool

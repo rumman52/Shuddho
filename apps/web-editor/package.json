@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "node test/run-tests.mjs"
+    "test": "node test/run-tests.mjs",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@tiptap/core": "^2.10.0",

@@ -258,6 +258,8 @@ export interface LexiconHealth {
 }
 
 export interface HealthResponse {
+  ok: boolean;
+  service: string;
   status: string;
   backend_reachable: boolean;
   detector_loaded: boolean;

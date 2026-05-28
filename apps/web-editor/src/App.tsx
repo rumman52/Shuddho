@@ -46,6 +46,12 @@ const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
 const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED =
   "Backend is not connected. Contextual Bengali correction is disabled.";
 const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED;
+const BACKEND_UNAVAILABLE_MESSAGE =
+  "Backend is unavailable. You can still use local checks. AI review will be disabled until the server is reachable.";
+const REQUEST_TIMEOUT_MESSAGE =
+  "Request timed out. Please try again or check backend deployment.";
+const SERVER_TIMEOUT_FALLBACK_MESSAGE =
+  "Server is taking too long. Showing local suggestions only.";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
 
 type BackendMode = "checking" | "online" | "offline" | "misconfigured";
@@ -99,6 +105,7 @@ export default function App() {
   const analysisTimerRef = useRef<number | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const analysisRequestIdRef = useRef(0);
+  const hasMountedAnalysisRef = useRef(false);
   const manualAnalysisInFlightRef = useRef(false);
   const aiReviewInFlightRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -164,6 +171,11 @@ export default function App() {
           ),
     [reviewFilter, suggestions],
   );
+  const connectivityBanner = apiConfiguration.hardWarning
+    ? apiConfiguration.hardWarning
+    : backendMode === "offline"
+      ? BACKEND_UNAVAILABLE_MESSAGE
+      : null;
 
   useEffect(() => {
     window.localStorage.setItem(USER_PROFILE_ID_STORAGE_KEY, userId);
@@ -190,6 +202,11 @@ export default function App() {
   }, [userId, apiBaseUrl]);
 
   useEffect(() => {
+    if (!hasMountedAnalysisRef.current) {
+      hasMountedAnalysisRef.current = true;
+      return;
+    }
+
     scheduleAnalysis(text);
     return () => {
       if (analysisTimerRef.current) {
@@ -213,7 +230,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : SUGGESTIONS_DISABLED_MESSAGE,
+          : apiConfiguration.hardWarning ?? SUGGESTIONS_DISABLED_MESSAGE,
       );
       return;
     }
@@ -231,7 +248,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : SUGGESTIONS_DISABLED_MESSAGE,
+          : BACKEND_UNAVAILABLE_MESSAGE,
       );
     }
   }
@@ -311,7 +328,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : SUGGESTIONS_DISABLED_MESSAGE,
+          : apiConfiguration.hardWarning ?? SUGGESTIONS_DISABLED_MESSAGE,
       );
       setTone(null);
       setRewriteResult(null);
@@ -399,9 +416,13 @@ export default function App() {
       setTone(null);
       setRewriteResult(null);
       setStatus(
-        apiConfiguration.localFallbackEnabled
-          ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : SUGGESTIONS_DISABLED_MESSAGE,
+        message.includes("timed out")
+          ? includeLLM
+            ? SERVER_TIMEOUT_FALLBACK_MESSAGE
+            : REQUEST_TIMEOUT_MESSAGE
+          : apiConfiguration.localFallbackEnabled
+            ? DEV_LOCAL_FALLBACK_DESCRIPTION
+            : BACKEND_UNAVAILABLE_MESSAGE,
       );
     } finally {
       if (includeLLM) {
@@ -780,6 +801,12 @@ export default function App() {
       {preferencesWarning ? (
         <div className="warning-banner" role="status">
           {preferencesWarning}
+        </div>
+      ) : null}
+
+      {connectivityBanner ? (
+        <div className="warning-banner" role="status">
+          {connectivityBanner}
         </div>
       ) : null}
 

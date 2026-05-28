@@ -17,11 +17,12 @@ import { approximateSentenceCount, normalizeAnalyzeResponse } from "./analysis";
 
 const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:4000";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
-const PRODUCTION_API_BASE_URL = "https://shuddho-api.onrender.com";
+const DEFAULT_REQUEST_TIMEOUT_MS = 8000;
+const HEALTH_REQUEST_TIMEOUT_MS = 3000;
 
 export interface ApiConfigurationState {
   apiBaseUrl: string;
-  source: "default_local" | "environment" | "override";
+  source: "default_local" | "environment" | "override" | "unconfigured";
   isLocalBrowserOrigin: boolean;
   isProductionBuild: boolean;
   targetsLocalhost: boolean;
@@ -127,8 +128,7 @@ export function deriveApiConfiguration(args: {
   } = args;
   const isLocalOrigin = isLocalBrowserOrigin(browserHostname);
   const isProd = Boolean(isProductionBuild);
-  const configuredValue =
-    configuredBaseUrl?.trim() || (isProd ? PRODUCTION_API_BASE_URL : null);
+  const configuredValue = configuredBaseUrl?.trim() || null;
   const storedValue = storedBaseUrl?.trim() || null;
   const normalizedStoredValue = storedValue
     ? normalizeApiBaseUrl(storedValue)
@@ -138,17 +138,17 @@ export function deriveApiConfiguration(args: {
     !(isLocalApiBaseUrl(normalizedStoredValue) && !isLocalOrigin) &&
     (!isProd || isNonLocalHttpsApiBaseUrl(normalizedStoredValue)),
   );
-  const hasConfiguredBaseUrl = Boolean(
-    configuredValue || storedValueCanOverride,
-  );
+  const hasConfiguredBaseUrl = Boolean(configuredValue || storedValueCanOverride);
   const rawBaseUrl = storedValueCanOverride
     ? storedValue!
-    : (configuredValue ?? DEFAULT_LOCAL_API_BASE_URL);
+    : (configuredValue ?? (isProd ? "" : DEFAULT_LOCAL_API_BASE_URL));
   const source = storedValueCanOverride
     ? "override"
     : configuredValue
       ? "environment"
-      : "default_local";
+      : isProd
+        ? "unconfigured"
+        : "default_local";
   const apiBaseUrl = normalizeApiBaseUrl(rawBaseUrl);
   const targetsLocalhost = isLocalApiBaseUrl(apiBaseUrl);
   const localFallbackEnabled = Boolean(enableLocalFallback);
@@ -156,7 +156,7 @@ export function deriveApiConfiguration(args: {
     !isLocalOrigin && targetsLocalhost
       ? `This deployed editor is still pointing to ${apiBaseUrl}. Set VITE_API_BASE_URL to a public HTTPS tunnel URL; localhost is only valid from local browser sessions.`
       : isProd && !hasConfiguredBaseUrl
-        ? "VITE_API_BASE_URL is not set. Deployed frontend cannot call local backend without a public HTTPS tunnel."
+        ? "API URL is not configured. Set VITE_API_BASE_URL in Vercel."
         : null;
 
   return {
@@ -166,9 +166,42 @@ export function deriveApiConfiguration(args: {
     isProductionBuild: isProd,
     targetsLocalhost,
     hardWarning,
-    backendAllowed: hardWarning === null,
+    backendAllowed: hardWarning === null && apiBaseUrl.length > 0,
     localFallbackEnabled,
   };
+}
+
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const timeoutController = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => timeoutController.abort(), timeoutMs);
+  const upstreamSignal = options.signal;
+
+  if (upstreamSignal?.aborted) {
+    globalThis.clearTimeout(timeoutId);
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+
+  const abortFromUpstream = () => timeoutController.abort();
+  upstreamSignal?.addEventListener("abort", abortFromUpstream, { once: true });
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: timeoutController.signal,
+    });
+  } catch (error) {
+    if (timeoutController.signal.aborted && !upstreamSignal?.aborted) {
+      throw new Error("Request timed out. Please try again or check backend deployment.");
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+    upstreamSignal?.removeEventListener("abort", abortFromUpstream);
+  }
 }
 
 async function request<TResponse>(
@@ -188,7 +221,7 @@ async function request<TResponse>(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetchWithTimeout(url, {
       ...init,
       headers,
     });
@@ -291,7 +324,7 @@ export function sendFeedback(payload: FeedbackRequest): Promise<void> {
 }
 
 export function getHealth(): Promise<BackendHealthResponse> {
-  return request<BackendHealthResponse>("/health/deep", {
+  return request<BackendHealthResponse>("/health", {
     method: "GET",
   });
 }
@@ -310,12 +343,12 @@ export async function checkBackendHealth(): Promise<{
   }
 
   try {
-    const response = await fetch(`${getApiBaseUrl()}/health`, {
+    const response = await fetchWithTimeout(`${getApiBaseUrl()}/health`, {
       method: "GET",
       headers: {
         Accept: "application/json",
       },
-    });
+    }, HEALTH_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {
       return {
@@ -329,7 +362,7 @@ export async function checkBackendHealth(): Promise<{
     return {
       ok: false,
       message:
-        "Backend is not reachable. Check VITE_API_BASE_URL and make sure your tunnel is running.",
+        "Backend is unavailable. You can still use local checks. AI review will be disabled until the server is reachable.",
     };
   }
 }
@@ -372,7 +405,11 @@ async function safeJson(response: Response): Promise<unknown> {
 
 export async function fetchPreferences(): Promise<ShuddhoPreferences> {
   try {
-    const response = await fetch(`${getApiBaseUrl()}/api/preferences`, {
+    if (!apiConfiguration.backendAllowed) {
+      return DEFAULT_PREFERENCES;
+    }
+
+    const response = await fetchWithTimeout(`${getApiBaseUrl()}/api/preferences`, {
       method: "GET",
       headers: {
         Accept: "application/json",
@@ -402,7 +439,11 @@ export async function savePreferences(
   const normalized = normalizePreferences(preferences);
 
   try {
-    const response = await fetch(`${getApiBaseUrl()}/api/preferences`, {
+    if (!apiConfiguration.backendAllowed) {
+      return normalized;
+    }
+
+    const response = await fetchWithTimeout(`${getApiBaseUrl()}/api/preferences`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -607,8 +648,7 @@ function readConfiguredBaseUrl(): string | null {
   const importMetaEnv =
     (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
       .env ?? {};
-  const configuredBaseUrl =
-    importMetaEnv.VITE_API_BASE_URL ?? importMetaEnv.VITE_API_URL;
+  const configuredBaseUrl = importMetaEnv.VITE_API_BASE_URL;
   return configuredBaseUrl?.trim() || null;
 }
 
@@ -686,7 +726,7 @@ function isNonLocalHttpsApiBaseUrl(baseUrl: string): boolean {
 function normalizeApiBaseUrl(rawBaseUrl: string): string {
   const trimmedValue = rawBaseUrl.trim();
   if (!trimmedValue) {
-    return DEFAULT_LOCAL_API_BASE_URL;
+    return "";
   }
 
   if (/^[a-z]+:\/\//i.test(trimmedValue) || trimmedValue.startsWith("/")) {
