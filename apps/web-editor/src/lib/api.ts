@@ -14,11 +14,18 @@ import {
   type ShuddhoPreferences,
 } from "./preferences";
 import { approximateSentenceCount, normalizeAnalyzeResponse } from "./analysis";
+import {
+  AI_REVIEW_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  fetchWithTimeout,
+  GRAMMAR_CHECK_TIMEOUT_MS,
+  HEALTH_REQUEST_TIMEOUT_MS,
+} from "./fetchWithTimeout";
+
+export { fetchWithTimeout } from "./fetchWithTimeout";
 
 const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:4000";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
-const DEFAULT_REQUEST_TIMEOUT_MS = 8000;
-const HEALTH_REQUEST_TIMEOUT_MS = 3000;
 
 export interface ApiConfigurationState {
   apiBaseUrl: string;
@@ -171,42 +178,10 @@ export function deriveApiConfiguration(args: {
   };
 }
 
-export async function fetchWithTimeout(
-  url: string,
-  options: RequestInit = {},
-  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
-): Promise<Response> {
-  const timeoutController = new AbortController();
-  const timeoutId = globalThis.setTimeout(() => timeoutController.abort(), timeoutMs);
-  const upstreamSignal = options.signal;
-
-  if (upstreamSignal?.aborted) {
-    globalThis.clearTimeout(timeoutId);
-    throw new DOMException("The operation was aborted.", "AbortError");
-  }
-
-  const abortFromUpstream = () => timeoutController.abort();
-  upstreamSignal?.addEventListener("abort", abortFromUpstream, { once: true });
-
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: timeoutController.signal,
-    });
-  } catch (error) {
-    if (timeoutController.signal.aborted && !upstreamSignal?.aborted) {
-      throw new Error("Request timed out. Please try again or check backend deployment.");
-    }
-    throw error;
-  } finally {
-    globalThis.clearTimeout(timeoutId);
-    upstreamSignal?.removeEventListener("abort", abortFromUpstream);
-  }
-}
-
 async function request<TResponse>(
   path: string,
   init: RequestInit,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<TResponse> {
   if (!apiConfiguration.backendAllowed) {
     throw new Error(
@@ -221,10 +196,14 @@ async function request<TResponse>(
 
   let response: Response;
   try {
-    response = await fetchWithTimeout(url, {
-      ...init,
-      headers,
-    });
+    response = await fetchWithTimeout(
+      url,
+      {
+        ...init,
+        headers,
+      },
+      timeoutMs,
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown network error";
@@ -266,10 +245,14 @@ export async function analyzeText(
   const path = useGateway ? "/api/check" : "/analyze";
 
   if (!useGateway) {
-    const response = await request<Partial<AnalyzeResponse>>(path, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+    const response = await request<Partial<AnalyzeResponse>>(
+      path,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      GRAMMAR_CHECK_TIMEOUT_MS,
+    );
     return normalizeAnalyzeResponse(
       response,
       payload.text,
@@ -278,11 +261,15 @@ export async function analyzeText(
   }
 
   const body = buildCheckRequestBody(payload.text, options);
-  const response = await request<GatewayCheckResponse>(path, {
-    method: "POST",
-    signal: options.signal,
-    body: JSON.stringify(body),
-  });
+  const response = await request<GatewayCheckResponse>(
+    path,
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify(body),
+    },
+    options.includeLLM ? AI_REVIEW_TIMEOUT_MS : GRAMMAR_CHECK_TIMEOUT_MS,
+  );
 
   return gatewayCheckToAnalyzeResponse(response, payload);
 }
@@ -309,11 +296,15 @@ export async function runAiCheck(
   text: string,
   options: { signal?: AbortSignal } = {},
 ): Promise<AiCheckApiResponse> {
-  return request<AiCheckApiResponse>("/api/ai/check", {
-    method: "POST",
-    signal: options.signal,
-    body: JSON.stringify({ text, language: "bn" }),
-  });
+  return request<AiCheckApiResponse>(
+    "/api/ai/check",
+    {
+      method: "POST",
+      signal: options.signal,
+      body: JSON.stringify({ text, language: "bn" }),
+    },
+    AI_REVIEW_TIMEOUT_MS,
+  );
 }
 
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {
@@ -324,9 +315,13 @@ export function sendFeedback(payload: FeedbackRequest): Promise<void> {
 }
 
 export function getHealth(): Promise<BackendHealthResponse> {
-  return request<BackendHealthResponse>("/health", {
-    method: "GET",
-  });
+  return request<BackendHealthResponse>(
+    "/health",
+    {
+      method: "GET",
+    },
+    HEALTH_REQUEST_TIMEOUT_MS,
+  );
 }
 
 export async function checkBackendHealth(): Promise<{
@@ -343,12 +338,16 @@ export async function checkBackendHealth(): Promise<{
   }
 
   try {
-    const response = await fetchWithTimeout(`${getApiBaseUrl()}/health`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
+    const response = await fetchWithTimeout(
+      `${getApiBaseUrl()}/health`,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
       },
-    }, HEALTH_REQUEST_TIMEOUT_MS);
+      HEALTH_REQUEST_TIMEOUT_MS,
+    );
 
     if (!response.ok) {
       return {
@@ -372,10 +371,14 @@ export async function rewriteText(
 ): Promise<RewriteResponse> {
   const response = await request<
     { result?: RewriteResponse } | RewriteResponse
-  >("/api/rewrite", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  >(
+    "/api/rewrite",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    AI_REVIEW_TIMEOUT_MS,
+  );
   return (
     "result" in response && response.result ? response.result : response
   ) as RewriteResponse;
@@ -386,10 +389,14 @@ export async function analyzeTone(
 ): Promise<ToneAnalysisResponse> {
   const response = await request<
     { result?: ToneAnalysisResponse } | ToneAnalysisResponse
-  >("/api/tone", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  >(
+    "/api/tone",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    AI_REVIEW_TIMEOUT_MS,
+  );
   return (
     "result" in response && response.result ? response.result : response
   ) as ToneAnalysisResponse;

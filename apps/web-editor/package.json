@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:web-editor": "npm run build",
     "test": "node test/run-tests.mjs",
     "preview": "vite preview"
   },
@@ -24,8 +25,8 @@
     "vite": "^5.4.10"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "4.59.0",
-    "@rollup/rollup-win32-x64-gnu": "4.59.0",
-    "@rollup/rollup-win32-x64-msvc": "4.59.0"
+    "@rollup/rollup-linux-x64-gnu": "4.60.4",
+    "@rollup/rollup-win32-x64-gnu": "4.60.4",
+    "@rollup/rollup-win32-x64-msvc": "4.60.4"
   }
 }
