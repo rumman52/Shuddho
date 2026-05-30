@@ -1,12 +1,12 @@
 export type SuggestionType = 'grammar' | 'spelling' | 'punctuation' | 'spacing' | 'style' | 'tone' | 'rewrite';
 export type SuggestionSeverity = 'low' | 'medium' | 'high';
-export type SuggestionSource = 'rule' | 'spell' | 'grammar' | 'tone' | 'rewrite' | 'ml' | 'hybrid';
+export type SuggestionSource = 'rule' | 'spell' | 'grammar' | 'tone' | 'rewrite' | 'ml' | 'model' | 'hybrid';
 export type BanglaDialect = 'standard' | 'west_bengal' | 'bangladesh' | 'mixed';
 export type ClientSurface = 'web' | 'extension' | 'desktop' | 'mobile' | 'api';
 
 export const suggestionTypes: readonly SuggestionType[] = ['grammar', 'spelling', 'punctuation', 'spacing', 'style', 'tone', 'rewrite'];
 export const suggestionSeverities: readonly SuggestionSeverity[] = ['low', 'medium', 'high'];
-export const suggestionSources: readonly SuggestionSource[] = ['rule', 'spell', 'grammar', 'tone', 'rewrite', 'ml', 'hybrid'];
+export const suggestionSources: readonly SuggestionSource[] = ['rule', 'spell', 'grammar', 'tone', 'rewrite', 'ml', 'model', 'hybrid'];
 
 export interface TextSpan {
   startIndex: number;

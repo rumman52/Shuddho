@@ -18,38 +18,61 @@ from services.api.shuddho_api.llm_provider import DEFAULT_OPENAI_MODEL, LlmProvi
 OPENAI_URL = "https://api.openai.com/v1/responses"
 
 
-def _extract_output_text(response_json: dict[str, Any]) -> str | None:
+def _extract_response_content(response_json: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    """Return (text, parsed, refusal) from known Responses API shapes."""
+    refusal = response_json.get("refusal")
+    if isinstance(refusal, str) and refusal.strip():
+        return None, None, refusal.strip()
+
+    for key in ("output_parsed", "parsed"):
+        parsed = response_json.get(key)
+        if isinstance(parsed, dict):
+            return json.dumps(parsed, ensure_ascii=False), parsed, None
+
     value = response_json.get("output_text")
     if isinstance(value, str) and value.strip():
-        return value.strip()
+        return value.strip(), None, None
+
     output = response_json.get("output")
+    parts: list[str] = []
     if isinstance(output, list):
-        parts: list[str] = []
         for item in output:
             if not isinstance(item, dict):
                 continue
+            item_refusal = item.get("refusal")
+            if isinstance(item_refusal, str) and item_refusal.strip():
+                return None, None, item_refusal.strip()
+            parsed = item.get("parsed")
+            if isinstance(parsed, dict):
+                return json.dumps(parsed, ensure_ascii=False), parsed, None
             content = item.get("content")
             if isinstance(content, list):
                 for block in content:
                     if not isinstance(block, dict):
                         continue
-                    text = block.get("text") or block.get("content")
-                    if isinstance(text, str):
-                        parts.append(text)
+                    block_refusal = block.get("refusal")
+                    if isinstance(block_refusal, str) and block_refusal.strip():
+                        return None, None, block_refusal.strip()
+                    if block.get("type") in {"refusal", "output_refusal"}:
+                        text = block.get("text") or block.get("content")
+                        return None, None, str(text or "openai_refusal")
                     parsed = block.get("parsed")
                     if isinstance(parsed, dict):
-                        return json.dumps(parsed, ensure_ascii=False)
-            parsed = item.get("parsed")
-            if isinstance(parsed, dict):
-                return json.dumps(parsed, ensure_ascii=False)
-        joined = "".join(parts).strip()
-        if joined:
-            return joined
-    parsed = response_json.get("parsed")
-    if isinstance(parsed, dict):
-        return json.dumps(parsed, ensure_ascii=False)
-    return None
+                        return json.dumps(parsed, ensure_ascii=False), parsed, None
+                    text = block.get("text") or block.get("content")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text)
+                    if block.get("type") == "output_text" and isinstance(block.get("text"), str):
+                        parts.append(block["text"])
+    joined = "".join(parts).strip()
+    if joined:
+        return joined, None, None
+    return None, None, None
 
+
+def _extract_output_text(response_json: dict[str, Any]) -> str | None:
+    content, _parsed, _refusal = _extract_response_content(response_json)
+    return content
 
 def _sentences_for_prompt(text: str) -> list[dict[str, Any]]:
     return [
@@ -122,11 +145,18 @@ def run_openai_check(
         response_json = response.json()
     except json.JSONDecodeError:
         return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_json", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_json"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
-    content = _extract_output_text(response_json)
-    if content is None:
+    incomplete = str(response_json.get("status") or "").lower() == "incomplete" or response_json.get("incomplete_details")
+    if incomplete:
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="provider_error", response_mode="json_schema", http_status=response.status_code, warnings=["openai_incomplete_response"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    content, parsed_direct, refusal = _extract_response_content(response_json)
+    if refusal:
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="provider_error", response_mode="json_schema", http_status=response.status_code, warnings=["openai_refusal"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    if content is None and parsed_direct is None:
         return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_schema", response_mode="json_schema", http_status=response.status_code, warnings=["openai_empty_output"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     try:
-        parsed = extract_json_payload(content)
+        parsed = parsed_direct if parsed_direct is not None else extract_json_payload(content or "")
+    except json.JSONDecodeError:
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_json", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_json"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     except Exception:
         return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_json", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_json"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     try:

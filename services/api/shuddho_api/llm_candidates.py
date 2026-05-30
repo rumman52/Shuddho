@@ -40,39 +40,13 @@ def split_bangla_sentences(text: str) -> list[SentenceSpan]:
 
 
 def build_llm_candidates(text: str, local_suggestions: list[dict[str, Any]], max_sentences: int = 8, max_chars: int = 2200) -> list[dict[str, Any]]:
-    sentences = split_bangla_sentences(text)
-    if len(text) <= max_chars:
-        selected = sentences
-    else:
-        scored: list[tuple[int, SentenceSpan, list[str], list[str]]] = []
-        for s in sentences:
-            reasons: list[str] = []
-            local_ids: list[str] = []
-            for sug in local_suggestions:
-                span = sug.get("span") or {}
-                start = span.get("startIndex", sug.get("span_start", -1))
-                end = span.get("endIndex", sug.get("span_end", -1))
-                if isinstance(start, int) and isinstance(end, int) and start < s.end and end > s.start:
-                    reasons.append("local_rule_overlap")
-                    if sug.get("id"):
-                        local_ids.append(str(sug["id"]))
-            if _REPEAT_RE.search(s.text):
-                reasons.append("repeated_word")
-            if any(p in s.text for p in _RISK_PATTERNS):
-                reasons.append("grammar_risk_pattern")
-            if len(s.text) > 140:
-                reasons.append("long_sentence")
-            score = 0
-            for reason in reasons:
-                score += {"local_rule_overlap": 4, "repeated_word": 3, "grammar_risk_pattern": 2, "long_sentence": 1}.get(reason, 1)
-            if score:
-                scored.append((score, s, sorted(set(reasons)), sorted(set(local_ids))))
-        scored.sort(key=lambda item: item[0], reverse=True)
-        selected = [item[1] for item in scored[:max_sentences]]
+    max_sentences = max(1, int(max_sentences or 8))
+    max_chars = max(200, int(max_chars or 2200))
+    text_for_ai = text[:max_chars]
+    sentences = split_bangla_sentences(text_for_ai) or [SentenceSpan(text=text_for_ai, start=0, end=len(text_for_ai))]
 
-    candidates: list[dict[str, Any]] = []
-    used_chars = 0
-    for idx, s in enumerate(selected, start=1):
+    scored: list[tuple[int, int, SentenceSpan, list[str], list[str]]] = []
+    for idx, s in enumerate(sentences):
         reasons: list[str] = []
         local_ids: list[str] = []
         for sug in local_suggestions:
@@ -85,12 +59,45 @@ def build_llm_candidates(text: str, local_suggestions: list[dict[str, Any]], max
                     local_ids.append(str(sug["id"]))
         if _REPEAT_RE.search(s.text):
             reasons.append("repeated_word")
-        if any(p in s.text for p in _RISK_PATTERNS):
-            reasons.append("grammar_risk_pattern")
-        if used_chars + len(s.text) > max_chars:
-            break
+        if any(p in s.text for p in _RISK_PATTERNS) or re.search(r"\b(আমি|তুমি|সে|তারা)\s+\S+\s+(না|নাই)\s+\S+", s.text):
+            reasons.append("bangla_grammar_risk_pattern")
+        if len(s.text) > 140:
+            reasons.append("long_sentence")
+        if re.search(r"\s+[।,!?]|[।,!?]{2,}|\S[।!?]\S| {2,}", s.text):
+            reasons.append("punctuation_spacing_suspicious")
+        if len(text_for_ai) <= max_chars and len(sentences) <= max_sentences:
+            reasons.append("short_text_context")
+        score = sum({
+            "local_rule_overlap": 5,
+            "repeated_word": 4,
+            "bangla_grammar_risk_pattern": 3,
+            "punctuation_spacing_suspicious": 3,
+            "long_sentence": 2,
+            "short_text_context": 1,
+        }.get(reason, 1) for reason in set(reasons))
+        if reasons:
+            scored.append((score, idx, s, sorted(set(reasons)), sorted(set(local_ids))))
+
+    if not scored and sentences:
+        scored = [(1, idx, s, ["short_text_context"], []) for idx, s in enumerate(sentences[:max_sentences])]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+
+    candidates: list[dict[str, Any]] = []
+    used_chars = 0
+    for _score, idx, s, reasons, local_ids in scored:
+        if used_chars + len(s.text) > max_chars and candidates:
+            continue
         used_chars += len(s.text)
-        candidates.append({"id": f"cand_{idx}", "text": s.text, "start": s.start, "end": s.end, "reasons": sorted(set(reasons)) or ["short_text_context"], "local_suggestion_ids": sorted(set(local_ids))})
+        candidates.append({
+            "id": f"cand_{idx}",
+            "sentenceId": f"s_{idx}",
+            "text": s.text,
+            "start": s.start,
+            "end": s.end,
+            "reasons": reasons,
+            "local_suggestion_ids": local_ids,
+        })
         if len(candidates) >= max_sentences:
             break
+    candidates.sort(key=lambda item: item["start"])
     return candidates

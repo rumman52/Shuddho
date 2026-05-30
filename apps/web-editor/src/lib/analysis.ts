@@ -73,6 +73,18 @@ export function normalizeAnalyzeResponse(
         ? input.sentence_count
         : approximateSentenceCount(input?.text ?? fallbackText),
     request_mode_applied: input?.request_mode_applied ?? fallbackMode,
+    llm_requested: input?.llm_requested,
+    llm_attempted: input?.llm_attempted,
+    llm_used: input?.llm_used,
+    llm_status: input?.llm_status,
+    llm_provider: input?.llm_provider,
+    llm_model: input?.llm_model,
+    llm_response_mode: input?.llm_response_mode,
+    local_suggestion_count: input?.local_suggestion_count,
+    ai_suggestion_count: input?.ai_suggestion_count,
+    rejected_ai_suggestion_count: input?.rejected_ai_suggestion_count,
+    diagnostics: input?.diagnostics,
+    llm: input?.llm,
   };
 }
 

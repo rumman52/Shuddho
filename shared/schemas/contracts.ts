@@ -134,6 +134,8 @@ export interface Suggestion {
   action_hints?: string[];
   rewrite_intents?: RewriteIntent[];
   tone_labels?: ToneLabel[];
+  provider?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface AnalyzeRequest {
@@ -159,6 +161,19 @@ export interface AnalyzeResponse {
   backend_version?: string | null;
   sentence_count: number;
   request_mode_applied: AnalyzeMode;
+  warnings?: string[];
+  llm_requested?: boolean;
+  llm_attempted?: boolean;
+  llm_used?: boolean;
+  llm_status?: string | null;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+  llm_response_mode?: string | null;
+  local_suggestion_count?: number;
+  ai_suggestion_count?: number;
+  rejected_ai_suggestion_count?: number;
+  diagnostics?: Record<string, unknown>;
+  llm?: Record<string, unknown> | null;
 }
 
 export interface UserPreferences {

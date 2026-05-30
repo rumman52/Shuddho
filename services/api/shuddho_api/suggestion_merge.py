@@ -30,20 +30,40 @@ def _find_span(text: str, original: str, start: Any = None, end: Any = None, sen
     if isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= len(text) and text[start:end] == original:
         return start, end, None
     matches = [m.start() for m in re.finditer(re.escape(original), text)]
-    if not matches:
-        return -1, -1, "ai_suggestion_original_not_found"
-    if len(matches) == 1:
-        s = matches[0]
-        return s, s + len(original), None
-    if sentence_id:
+    if matches and sentence_id:
         for sentence in _sentence_index(text):
             if sentence.get("sentenceId") == sentence_id or sentence.get("id") == sentence_id:
                 contained = [m for m in matches if sentence["start"] <= m and m + len(original) <= sentence["end"]]
                 if len(contained) == 1:
                     s = contained[0]
                     return s, s + len(original), None
-    return -1, -1, "ai_suggestion_ambiguous_span"
+                if len(contained) > 1:
+                    return -1, -1, "ai_suggestion_ambiguous_span"
+    if len(matches) == 1:
+        s = matches[0]
+        return s, s + len(original), None
+    if len(matches) > 1:
+        return -1, -1, "ai_suggestion_ambiguous_span"
+    normalized_span = _find_whitespace_normalized_span(text, original)
+    if normalized_span is not None:
+        return normalized_span[0], normalized_span[1], None
+    return -1, -1, "ai_suggestion_original_not_found"
 
+
+
+def _find_whitespace_normalized_span(text: str, original: str) -> tuple[int, int] | None:
+    target = _norm(original)
+    if not target:
+        return None
+    tokens = original.split()
+    if not tokens:
+        return None
+    pattern = r"\s+".join(re.escape(token) for token in tokens)
+    matches = list(re.finditer(pattern, text))
+    if len(matches) == 1:
+        match = matches[0]
+        return match.start(), match.end()
+    return None
 
 def _looks_sensitive_change(original: str, replacement: str, issue_type: str) -> bool:
     if issue_type in SAFE_CHANGE_TYPES:

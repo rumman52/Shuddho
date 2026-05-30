@@ -25,6 +25,7 @@ import {
   sendFeedback,
   setApiBaseUrlOverride,
   clearApiBaseUrlOverride,
+  friendlyLlmWarning,
 } from "./lib/api";
 import { createEmptyAnalysis, normalizeAnalyzeResponse } from "./lib/analysis";
 import { analyzeTextLocally } from "./lib/localAnalysis";
@@ -42,6 +43,7 @@ const INITIAL_TEXT =
   sampleFixtures[0]?.text ?? "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!";
 const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 const ANALYSIS_DEBOUNCE_MS = 1200;
+const AUTO_AI_ANALYSIS_DEBOUNCE_MS = 3000;
 const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
 const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED =
   "Backend is not connected. Contextual Bengali correction is disabled.";
@@ -84,6 +86,7 @@ export default function App() {
     "all" | "spelling" | "grammar" | "clarity"
   >("all");
   const [status, setStatus] = useState("Ready");
+  const [autoAiReview, setAutoAiReview] = useState(false);
   const [debugMode, setDebugMode] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -221,6 +224,7 @@ export default function App() {
     mode,
     preferences.personal_dictionary,
     userId,
+    autoAiReview,
   ]);
 
   async function refreshBackendHealth() {
@@ -289,8 +293,8 @@ export default function App() {
       if (manualAnalysisInFlightRef.current || aiReviewInFlightRef.current) {
         return;
       }
-      void runAnalysis(nextText, false);
-    }, ANALYSIS_DEBOUNCE_MS);
+      void runAnalysis(nextText, autoAiReview);
+    }, autoAiReview ? AUTO_AI_ANALYSIS_DEBOUNCE_MS : ANALYSIS_DEBOUNCE_MS);
   }
 
   async function runAnalysis(nextText: string, includeLLM: boolean) {
@@ -372,15 +376,13 @@ export default function App() {
       const responseWarnings = Array.isArray(normalizedResponse.runtime_warnings)
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
+      const llmStatusMessage = friendlyLlmWarning(normalizedResponse as never);
       setStatus(
         includeLLM
-          ? responseWarnings.some((warning) => String(warning).includes("timeout"))
-            ? "AI review timed out, showing local suggestions"
-            : responseWarnings.some((warning) => String(warning).includes("api_key") || String(warning).includes("provider") || String(warning).includes("invalid_json"))
-              ? "AI review unavailable, showing local suggestions"
-              : responseSuggestions.length
-                ? "AI review complete"
-                : "AI review complete: no high-confidence correction found"
+          ? llmStatusMessage ??
+              (responseSuggestions.length
+                ? "AI suggestions merged."
+                : "OpenAI reviewed the text but found no extra high-confidence suggestions.")
           : responseSuggestions.length
             ? `${responseSuggestions.length} local suggestions ready`
             : responseWarnings.length
@@ -1012,6 +1014,14 @@ export default function App() {
             <div className="editor-statusbar">
               <span>Words: {wordCount}</span>
               <span>Characters: {characterCount}</span>
+              <label className="checkbox-row auto-ai-toggle">
+                <input
+                  type="checkbox"
+                  checked={autoAiReview}
+                  onChange={(event) => setAutoAiReview(event.target.checked)}
+                />
+                <span>Auto AI review</span>
+              </label>
               <button
                 type="button"
                 className="button-primary check-writing-button"
@@ -1215,6 +1225,9 @@ export default function App() {
               <strong>{runtimeDescriptor.label}</strong>
               <span>{status}</span>
               <span>Backend: {backendMode}</span>
+              <span>LLM: {normalizedAnalysis.llm_status ?? "not requested"}</span>
+              <span>LLM provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
+              <span>AI suggestions: {normalizedAnalysis.ai_suggestion_count ?? 0}; rejected: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>
               <span>Lexicon: {normalizedAnalysis.lexicon_source}</span>
               {runtimeWarnings.map((warning) => (
                 <span key={warning} className="chip chip-warning">
@@ -1276,6 +1289,14 @@ export default function App() {
                   }
                 />
                 <span>Enable rewrites</span>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={autoAiReview}
+                  onChange={(event) => setAutoAiReview(event.target.checked)}
+                />
+                <span>AI on every check</span>
               </label>
               <label className="checkbox-row">
                 <input

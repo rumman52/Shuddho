@@ -71,6 +71,8 @@ export type GatewaySuggestion = {
   explanationEn?: string;
   explanation_en?: string;
   source?: string;
+  provider?: string;
+  metadata?: Record<string, unknown>;
   severity?: string;
   suppressionKey?: string;
   suppression_key?: string;
@@ -87,8 +89,11 @@ export type GatewayCheckResponse = {
   llm_requested?: boolean;
   llm_attempted?: boolean;
   llm_used?: boolean;
+  llm_provider?: string;
   llm_model?: string;
   llm_status?: string;
+  llm_response_mode?: string;
+  rejected_ai_suggestion_count?: number;
   llm?: Record<string, unknown> | null;
   timings?: Record<string, number>;
   diagnostics?: Record<string, unknown>;
@@ -518,6 +523,18 @@ export function gatewayCheckToAnalyzeResponse(
     backend_version: null,
     sentence_count: approximateSentenceCount(payload.text),
     request_mode_applied: mode,
+    llm_requested: response.llm_requested,
+    llm_attempted: response.llm_attempted,
+    llm_used: response.llm_used,
+    llm_status: response.llm_status,
+    llm_provider: response.llm_provider,
+    llm_model: response.llm_model,
+    llm_response_mode: response.llm_response_mode,
+    local_suggestion_count: response.local_suggestion_count,
+    ai_suggestion_count: response.ai_suggestion_count,
+    rejected_ai_suggestion_count: response.rejected_ai_suggestion_count,
+    diagnostics: { ...(response.diagnostics ?? {}), llm: response.llm ?? (response.diagnostics as { llm?: unknown } | undefined)?.llm },
+    llm: response.llm ?? null,
     suggestions: suggestions.map((suggestion, index) => ({
       id:
         suggestion.id ??
@@ -553,6 +570,8 @@ export function gatewayCheckToAnalyzeResponse(
       explanation_en:
         suggestion.explanationEn ?? suggestion.explanation_en ?? "",
       source: normalizeGatewaySuggestionSource(suggestion.source),
+      provider: suggestion.provider ?? null,
+      metadata: suggestion.metadata ?? null,
       severity: suggestion.severity ?? "low",
       suppression_key:
         suggestion.suppressionKey ?? suggestion.suppression_key ?? "",
@@ -566,20 +585,29 @@ export function gatewayCheckToAnalyzeResponse(
   );
 }
 
-function friendlyLlmWarning(response: GatewayCheckResponse): string | null {
+export function friendlyLlmWarning(response: GatewayCheckResponse): string | null {
   const status = response.llm_status;
-  if (!status || status === "completed" || status === "completed_empty" || status === "skipped") {
-    return null;
+  const llm = (response.llm ?? {}) as Record<string, unknown>;
+  const skipReason = String(llm.skip_reason ?? "");
+  const warnings = Array.isArray(response.warnings) ? response.warnings.map(String) : [];
+  const httpStatus = Number(llm.http_status ?? 0);
+  if (!status) return null;
+  if (status === "completed") {
+    return (response.ai_suggestion_count ?? 0) > 0 ? "AI suggestions merged." : null;
   }
-  if (status === "timeout") {
-    return "AI review timed out, showing local suggestions.";
+  if (status === "completed_empty") return "OpenAI reviewed the text but found no extra high-confidence suggestions.";
+  if (status === "skipped") {
+    return skipReason === "include_llm_false" ? null : `AI review skipped: ${skipReason || "not requested"}.`;
   }
-  if (["missing_key", "unsupported_provider", "provider_error", "network_error", "rate_limited", "invalid_json", "invalid_schema", "failed"].includes(status)) {
-    return "AI review unavailable, showing local suggestions.";
-  }
-  if (status === "queued" || status === "attempted") {
-    return "Reviewing with AI.";
-  }
+  if (status === "missing_key") return "OpenAI is not configured: missing backend OPENAI_API_KEY.";
+  if (status === "unsupported_provider") return "OpenAI model config is invalid. Use an OpenAI model like gpt-4o-mini, not an OpenRouter model id.";
+  if (status === "timeout") return "OpenAI timed out, showing local suggestions.";
+  if (status === "rate_limited") return "OpenAI rate limit/quota hit, showing local suggestions.";
+  if (status === "provider_error" && (httpStatus === 401 || httpStatus === 403 || warnings.some((w) => w.includes("401") || w.includes("403")))) return "OpenAI authentication failed. Check backend API key.";
+  if (status === "invalid_json") return "OpenAI returned invalid JSON, showing local suggestions.";
+  if (status === "invalid_schema") return "OpenAI returned data that failed Shuddho validation.";
+  if (status === "queued" || status === "attempted") return "Reviewing with AI.";
+  if (["provider_error", "network_error", "failed"].includes(status)) return "AI review unavailable, showing local suggestions.";
   return `LLM status: ${status}`;
 }
 

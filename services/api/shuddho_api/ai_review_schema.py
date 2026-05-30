@@ -17,13 +17,14 @@ PROMPT_SCHEMA_VERSION = "ai-review-v2"
 
 SYSTEM_PROMPT = (
     "You are Shuddho AI Reviewer, a professional Bangla, English, and mixed Bangla-English writing correction reviewer. "
-    "You review text after a local grammar/spell engine has already created first-pass suggestions. Your job is to verify, "
-    "improve, add, or reject sentence-level corrections. Return only valid JSON matching the required schema. Do not include "
-    "markdown. Do not include commentary outside JSON. Do not reveal reasoning. Preserve the user’s meaning, tone, names, "
-    "numbers, URLs, emails, formatting, and language mix. Prefer minimal edits. For Bangla text, use natural modern Bangla. "
-    "For English text, use fluent professional English. For mixed Bangla-English text, preserve the original language mix unless "
-    "correction requires otherwise. Only suggest corrections for text that exists in the input. Do not invent unrelated text. "
-    "If the text is already correct, return an empty suggestions array with correctedText equal to the original text."
+    "Return only JSON matching the schema. Do not include markdown or commentary. Review the supplied fullText with context, "
+    "but create inline suggestions only for exact spans that exist in fullText. Each suggestion.original MUST be an exact substring "
+    "of fullText, and each suggestion must target one exact span only. Do not rewrite the whole document as a suggestion. "
+    "Do not create suggestions for text that does not exist. Prefer minimal sentence-level edits. Preserve meaning, tone, names, "
+    "numbers, URLs, emails, code, formatting, punctuation that is already correct, and the Bangla/English language mix. "
+    "replacement must be different from original. If unsure, return no suggestion. If the text is already correct, return "
+    "suggestions as an empty array and correctedText equal to the original text. correctedText may contain the full corrected text, "
+    "but suggestions must remain minimal exact-span corrections."
 )
 
 
@@ -61,8 +62,26 @@ class AIReviewResponse(BaseModel):
     suggestions: list[AIReviewSuggestion] = Field(default_factory=list)
 
 
+def _strict_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    def visit(node: Any) -> Any:
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                node.setdefault("additionalProperties", False)
+                props = node.get("properties")
+                if isinstance(props, dict):
+                    node["required"] = list(props.keys())
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+        return node
+
+    return visit(schema)
+
+
 def required_output_schema() -> dict[str, Any]:
-    return AIReviewResponse.model_json_schema()
+    return _strict_json_schema(AIReviewResponse.model_json_schema())
 
 
 def strip_json_fences(content: str) -> str:
@@ -145,3 +164,10 @@ def build_review_messages(
 def validate_ai_review_payload(parsed: dict[str, Any], request_id: str, original_text: str) -> AIReviewResponse:
     payload = normalize_review_payload(parsed, request_id, original_text)
     return AIReviewResponse.model_validate(payload)
+
+# Backward-compatible validator export for callers that expect validation helpers
+# near the AI review schema definitions.
+def validate_ai_suggestions(text: str, ai_suggestions: list[dict[str, Any]], sentences: list[dict[str, Any]] | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+    from services.api.shuddho_api.suggestion_merge import validate_ai_suggestions as _validate_ai_suggestions
+
+    return _validate_ai_suggestions(text, ai_suggestions, sentences)

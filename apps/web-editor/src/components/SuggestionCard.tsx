@@ -53,6 +53,7 @@ export function SuggestionCard({
           <span className="issue-dot" aria-hidden="true" />
           {displaySuggestionType(suggestion)}
         </span>
+        <span className="chip suggestion-card__source">{displaySuggestionSource(suggestion)}</span>
       </div>
 
       <div className="suggestion-card__change">
@@ -151,6 +152,8 @@ export function SuggestionCard({
           <p>confidence: {Math.round(suggestion.confidence * 100)}%</p>
           <p>source: {suggestion.source}</p>
           <p>severity: {suggestion.severity}</p>
+          <p>provider: {suggestion.provider ?? "local"}</p>
+          {suggestion.metadata ? <p>metadata: {JSON.stringify(suggestion.metadata)}</p> : null}
           <p>
             span: {suggestion.span_start}–{suggestion.span_end}
           </p>
@@ -194,4 +197,14 @@ function rewriteIntentLabel(intent: RewriteIntent): string {
     default:
       return intent;
   }
+}
+
+function displaySuggestionSource(suggestion: Suggestion): string {
+  if (suggestion.source === "hybrid") {
+    return "Local + AI";
+  }
+  if (suggestion.source === "model") {
+    return "AI";
+  }
+  return "Local";
 }

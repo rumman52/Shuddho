@@ -87,3 +87,19 @@ def test_validate_suggestions_keeps_only_high_confidence_contextual_edits() -> N
     validated = validate_suggestions(text, [valid, generic], mode=AnalyzeMode.STANDARD)
 
     assert [suggestion.id for suggestion in validated] == ["good-rule"]
+
+
+def test_ai_original_not_found_rejected_count_warning() -> None:
+    from services.api.shuddho_api.suggestion_merge import validate_ai_suggestions
+    valid, warnings = validate_ai_suggestions("আমি ভাত খাই।", [{"id":"ai1","sentenceId":"s_0","original":"ডাল","replacement":"ভাত","confidence":0.8}])
+    assert valid == []
+    assert "ai_suggestion_original_not_found" in warnings
+    assert len(warnings) == 1
+
+
+def test_ai_exact_substring_resolves_span() -> None:
+    from services.api.shuddho_api.suggestion_merge import validate_ai_suggestions
+    valid, warnings = validate_ai_suggestions("আমি ভাত খাই।", [{"id":"ai1","sentenceId":"s_0","original":"ভাত","replacement":"ডাল","confidence":0.8}])
+    assert warnings == []
+    assert valid[0]["span_start"] == 4
+    assert valid[0]["span_end"] == 7

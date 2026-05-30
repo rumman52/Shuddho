@@ -11,6 +11,7 @@ import {
   fetchPreferences,
   fetchWithTimeout,
   gatewayCheckToAnalyzeResponse,
+  friendlyLlmWarning,
   readStoredApiBaseUrl,
   setApiBaseUrlOverride,
 } from "./api";
@@ -339,4 +340,51 @@ test("readStoredApiBaseUrl ignores localhost override on deployed host", () => {
       configurable: true,
     });
   }
+});
+
+test("buildCheckRequestBody includeLLM flags preserve deep review mode", () => {
+  const quick = buildCheckRequestBody("আমি ভাত খাই।", { includeLLM: false });
+  assert.equal(quick.options.includeLLM, false);
+  assert.equal(quick.options.llmMode, "none");
+  assert.equal(quick.options.mode, "fast");
+
+  const deep = buildCheckRequestBody("আমি ভাত খাই।", { includeLLM: true });
+  assert.equal(deep.options.includeLLM, true);
+  assert.equal(deep.options.asyncLLM, false);
+  assert.equal(deep.options.llmMode, "review_candidates");
+  assert.equal(deep.options.mode, "smart");
+});
+
+test("gatewayCheckToAnalyzeResponse preserves llm diagnostics", () => {
+  const response = gatewayCheckToAnalyzeResponse(
+    {
+      normalizedText: "আমি ভাত খাই।",
+      warnings: ["openai_timeout"],
+      llm_requested: true,
+      llm_attempted: true,
+      llm_used: false,
+      llm_status: "timeout",
+      llm_provider: "openai",
+      llm_model: "gpt-4o-mini",
+      llm_response_mode: "json_schema",
+      local_suggestion_count: 1,
+      ai_suggestion_count: 0,
+      rejected_ai_suggestion_count: 2,
+      llm: { status: "timeout", error: "openai_timeout" },
+      diagnostics: { local: { suggestion_count: 1 } },
+    },
+    { text: "আমি ভাত খাই।", mode: "standard", personal_dictionary: [], user_id: "u1" },
+  );
+  assert.equal(response.llm_status, "timeout");
+  assert.equal(response.llm_provider, "openai");
+  assert.equal(response.rejected_ai_suggestion_count, 2);
+  assert.deepEqual(response.diagnostics?.llm, { status: "timeout", error: "openai_timeout" });
+});
+
+test("friendlyLlmWarning maps precise LLM statuses", () => {
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key" }), "OpenAI is not configured: missing backend OPENAI_API_KEY.");
+  assert.equal(friendlyLlmWarning({ llm_status: "timeout" }), "OpenAI timed out, showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider" }), "OpenAI model config is invalid. Use an OpenAI model like gpt-4o-mini, not an OpenRouter model id.");
+  assert.equal(friendlyLlmWarning({ llm_status: "rate_limited" }), "OpenAI rate limit/quota hit, showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "completed_empty" }), "OpenAI reviewed the text but found no extra high-confidence suggestions.");
 });
