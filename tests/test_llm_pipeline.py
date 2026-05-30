@@ -9,7 +9,7 @@ from services.api.shuddho_api.suggestion_merge import merge_suggestions, validat
 
 
 def test_provider_config_selects_openrouter_key() -> None:
-    cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "sk-or", "OPENROUTER_MODEL": "openai/gpt-oss-120b:free"})
+    cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "fake-openrouter-key", "OPENROUTER_MODEL": "openai/gpt-oss-120b:free"})
     assert cfg.enabled is True
     assert cfg.configured is True
     assert cfg.provider == "openrouter"

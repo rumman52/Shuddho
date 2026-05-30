@@ -469,6 +469,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
 
     llm_block: dict[str, Any] = {
         "requested": llm_requested,
+        "attempted": False,
         "used": False,
         "status": "skipped",
         "provider": config.provider,
@@ -478,6 +479,11 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         "error": None,
         "cache_hit": False,
         "mode": llm_mode,
+        "called": False,
+        "configured": config.configured,
+        "parsed": False,
+        "http_status": None,
+        "response_mode": "none",
         "llm_ms": None,
         "skip_reason": None,
     }
@@ -485,6 +491,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     if not llm_requested:
         ai.status = "skipped"
         llm_block["skip_reason"] = "include_llm_false"
+        ai.warnings = []
     elif not llm_allowed:
         ai.status = "skipped"
         llm_block["skip_reason"] = llm_reason
@@ -500,16 +507,18 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         job = _create_llm_review_job(canonical_payload.text, canonical_payload.language, local_suggestions, llm_mode, request_id=request_id)
         job_id = job["job_id"]
         ai.status = "attempted"
-        llm_block.update({"status": "queued", "job_id": job_id, "used": False})
+        llm_block.update({"status": "queued", "job_id": job_id, "used": False, "attempted": True})
     else:
         llm_started = time.time()
-        ai = _run_ai_check(canonical_payload.text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "4")) or "4"))
+        ai = _run_ai_check(canonical_payload.text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "15")) or "15"))
         llm_ms = float(int((time.time() - llm_started) * 1000))
-        llm_block.update({"status": ai.status, "warnings": list(ai.warnings), "error": ai.warnings[0] if ai.warnings and ai.status not in {"completed", "completed_empty"} else None, "llm_ms": llm_ms})
+        llm_block.update({"status": ai.status, "warnings": list(ai.warnings), "error": ai.warnings[0] if ai.warnings and ai.status not in {"completed", "completed_empty"} else None, "llm_ms": llm_ms, "attempted": bool(ai.called)})
         if ai.status in {"completed", "completed_empty"}:
             sentences = _sentences_for_ai(canonical_payload.text)
             validated_ai, validation_warnings = validate_ai_suggestions(canonical_payload.text, ai.suggestions, sentences)
-            rejected_count = max(0, len(ai.suggestions) - len(validated_ai)) + len(validation_warnings)
+            rejected_count = max(0, len(ai.suggestions) - len(validated_ai))
+            if ai.status == "completed" and not validated_ai:
+                ai.status = "completed_empty"
             merged_suggestions, merge_warnings = merge_suggestions(canonical_payload.text, local_suggestions, validated_ai, ai.provider, ai.model)
             response_payload["suggestions"] = merged_suggestions
             llm_block["used"] = ai.called and ai.parsed
@@ -528,6 +537,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["llm_status"] = ai.status if not (async_llm and job_id) else "queued"
     response_payload["llm_provider"] = ai.provider
     response_payload["llm_response_mode"] = ai.response_mode or llm_mode
+    response_payload["rejected_ai_suggestion_count"] = rejected_count
     response_payload["correctedText"] = ai.correctedText if ai.status in {"completed", "completed_empty"} and ai.correctedText else response_payload.get("correctedText") or canonical_payload.text
     response_payload["documentAssessment"] = ai.documentAssessment if ai.status in {"completed", "completed_empty"} and ai.documentAssessment else response_payload.get("documentAssessment") or {}
     timings: dict[str, int | float] = {"local_ms": local_ms, "total_ms": int((time.time() - started_at) * 1000)}
@@ -545,6 +555,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         "http_status": ai.http_status,
         "response_mode": ai.response_mode,
         "llm_ms": llm_ms,
+        "attempted": response_payload["llm_attempted"],
     })
     response_payload["llm"] = llm_block
     response_payload["local_suggestion_count"] = local_count
@@ -560,6 +571,12 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
             "http_status": ai.http_status,
             "rejected_ai_suggestion_count": rejected_count,
             "response_mode": ai.response_mode,
+            "warnings": all_warnings,
+            "error": llm_block.get("error"),
+            "skip_reason": llm_block.get("skip_reason"),
+            "llm_ms": llm_ms,
+            "cache_hit": False,
+            "job_id": job_id,
         },
         "local": {"local_engine_mode": os.environ.get("SHUDDHO_LOCAL_ENGINE_MODE", "fallback"), "suggestion_count": local_count},
     }
@@ -600,18 +617,27 @@ def get_llm_review(job_id: str) -> dict:
 
 @app.get("/api/llm/debug")
 def llm_debug() -> dict:
-    enabled, provider, model, api_key = _llm_config()
+    config = resolve_llm_config(os.environ)
+    provider = config.provider
+    model = config.model
     return {
-        "enabled": enabled,
+        "enabled": config.enabled,
+        "configured": config.configured,
         "provider": provider,
         "model": model,
-        "configured": bool(api_key),
+        "status": config.status,
+        "warnings": list(config.warnings),
+        "api_key_present": bool(config.api_key),
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
         "endpoint": "https://openrouter.ai/api/v1/chat/completions" if provider == "openrouter" else "https://api.openai.com/v1/responses",
-        "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
-        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "4"))),
+        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "15"))),
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "35")),
+        "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35")),
+        "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "circuit_open": _is_circuit_open(provider, model),
+        "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
+        "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
+        "max_ai_text_chars": int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
     }
 
 
@@ -843,7 +869,10 @@ def _run_ai_check(
         text,
         locals_for_prompt,
         max_sentences=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
-        max_chars=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "2200"))),
+        max_chars=min(
+            int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
+            int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
+        ),
     )
     sentences = _sentences_for_ai(text)
     if config.provider == "openai":
@@ -876,7 +905,15 @@ def _run_ai_check(
 def _create_llm_review_job(text: str, language: str, local_suggestions: list[dict], mode: str, request_id: str | None = None) -> dict:
     request_id = request_id or datetime.now(timezone.utc).isoformat()
     job_id = f"llm_{uuid.uuid4().hex[:12]}"
-    candidates = build_llm_candidates(text, local_suggestions, max_sentences=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")), max_chars=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")))
+    candidates = build_llm_candidates(
+        text,
+        local_suggestions,
+        max_sentences=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
+        max_chars=min(
+            int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
+            int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
+        ),
+    )
     llm_jobs[job_id] = {"job_id": job_id, "status": "queued", "suggestions": [], "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": [], "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "timings": {"queue_ms": 0, "llm_ms": 0, "total_ms": 0}, "created_at": time.time()}
     threading.Thread(target=_run_llm_job, args=(job_id, text, candidates, local_suggestions, request_id), daemon=True).start()
     return {"job_id": job_id, "status": "queued", "estimated_seconds": 3, "candidate_count": len(candidates)}

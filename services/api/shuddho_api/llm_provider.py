@@ -114,11 +114,14 @@ def resolve_llm_config(env: dict[str, str] | None = None) -> LlmProviderConfig:
             warnings.append("openai_model_id_suspicious_use_openrouter_provider")
 
     configured = bool(api_key) and not (provider == "openai" and ("/" in model or ":free" in model))
-    enabled = configured if enabled_flag is None else enabled_flag
+    enabled = True if enabled_flag is None else enabled_flag
+    suspicious_openai_model = provider == "openai" and ("/" in model or ":free" in model)
+    if not enabled and not suspicious_openai_model:
+        return LlmProviderConfig(False, provider, model, api_key, configured, warnings, "disabled")
+    if suspicious_openai_model:
+        return LlmProviderConfig(True, provider, model, api_key, False, warnings, "unsupported_provider")
     if not enabled:
         return LlmProviderConfig(False, provider, model, api_key, configured, warnings, "disabled")
     if not api_key:
         return LlmProviderConfig(True, provider, model, None, False, [*warnings, missing_warning], "missing_key")
-    if provider == "openai" and ("/" in model or ":free" in model):
-        return LlmProviderConfig(True, provider, model, api_key, False, warnings, "unsupported_provider")
     return LlmProviderConfig(True, provider, model, api_key, True, warnings, "completed")

@@ -910,3 +910,106 @@ def test_api_llm_debug_never_returns_api_key(monkeypatch) -> None:
 def test_version_returns_validation_fix_version() -> None:
     payload = client.get("/version").json()
     assert payload["llm_pipeline_version"] == "validation-fix-v1"
+
+
+def test_api_check_include_llm_false_has_explicit_skip_reason(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    response = client.post("/api/check", json={"text": "আমি  আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": False, "mode": "fast", "llmMode": "none"}})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm_requested"] is False
+    assert payload["llm_status"] == "skipped"
+    assert payload["llm"]["skip_reason"] == "include_llm_false"
+    assert isinstance(payload["suggestions"], list)
+
+
+def test_api_check_openai_missing_key_preserves_local(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    response = client.post("/api/check", json={"text": "আমি  আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": False, "mode": "smart", "llmMode": "review_candidates"}})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm_status"] == "missing_key"
+    assert "openai_api_key_missing" in payload["warnings"]
+    assert isinstance(payload["suggestions"], list)
+
+
+def test_api_check_openai_rejects_openrouter_model_id(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
+    monkeypatch.setenv("OPENAI_MODEL", "openai/gpt-oss-120b:free")
+    response = client.post("/api/check", json={"text": "আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": False}})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm_status"] == "unsupported_provider"
+    assert "openai_model_id_suspicious_use_openrouter_provider" in payload["warnings"]
+
+
+def test_api_check_successful_mocked_openai_merges_model_suggestion(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    def fake_run(text, request_id, local_suggestions=None, timeout_seconds=None):
+        return app_module.AiCheckResponse(
+            suggestions=[{"id":"ai1","sentenceId":"s_0","original":"ভাত","replacement":"ভাতই","issueType":"clarity","severity":"low","explanation":"আরও পরিষ্কার","confidence":0.9}],
+            correctedText=text.replace("ভাত", "ভাতই"),
+            provider="openai",
+            model="gpt-4o-mini",
+            llm_enabled=True,
+            configured=True,
+            called=True,
+            parsed=True,
+            status="completed",
+            response_mode="json_schema",
+        )
+
+    monkeypatch.setattr(app_module, "_run_ai_check", fake_run)
+    response = client.post("/api/check", json={"text": "আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": False, "mode": "smart", "llmMode": "review_candidates"}})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm_attempted"] is True
+    assert payload["llm_used"] is True
+    assert payload["llm_status"] == "completed"
+    assert payload["ai_suggestion_count"] > 0
+    assert any(s["source"] in {"model", "hybrid"} for s in payload["suggestions"])
+
+
+def test_api_check_timeout_invalid_json_invalid_schema_and_empty(monkeypatch) -> None:
+    statuses = [
+        ("timeout", "openai_timeout"),
+        ("invalid_json", "openai_invalid_json"),
+        ("invalid_schema", "openai_invalid_schema"),
+        ("completed_empty", None),
+    ]
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
+    for status, warning in statuses:
+        def fake_run(text, request_id, local_suggestions=None, timeout_seconds=None, status=status, warning=warning):
+            return app_module.AiCheckResponse(provider="openai", model="gpt-4o-mini", llm_enabled=True, configured=True, called=True, parsed=status=="completed_empty", status=status, warnings=[warning] if warning else [], response_mode="json_schema")
+        monkeypatch.setattr(app_module, "_run_ai_check", fake_run)
+        response = client.post("/api/check", json={"text": "আমি  আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": False}})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["llm_status"] == status
+        if warning:
+            assert warning in payload["warnings"]
+        assert isinstance(payload["suggestions"], list)
+
+
+def test_llm_debug_exposes_safe_config(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
+    response = client.get("/api/llm/debug")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["api_key_present"] is True
+    assert "api_key" not in payload
+    assert payload["status"] == "completed"
+    assert payload["interactive_timeout_seconds"] == 15
