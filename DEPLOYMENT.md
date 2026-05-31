@@ -41,7 +41,7 @@ Set only public Vite variables in the Vercel frontend project:
 ```dotenv
 VITE_API_BASE_URL=https://YOUR_BACKEND_URL
 VITE_USE_GATEWAY=true
-VITE_ENABLE_LOCAL_FALLBACK=true
+VITE_ENABLE_LOCAL_FALLBACK=false
 ```
 
 If `VITE_API_BASE_URL` is missing, the frontend still builds and renders, but it shows a configuration warning and keeps backend/AI requests disabled until a valid public backend URL is configured.
@@ -56,6 +56,25 @@ OPENROUTER_MODEL
 ```
 
 Those values belong only in the backend environment. Browser code must route AI review through the backend and must not receive private provider keys.
+
+
+### Render/FastAPI backend environment variables
+
+For Deep AI Review with the OpenRouter-hosted `openai/gpt-oss-120b:free` model, set these only on the backend service (for example Render), never in Vercel:
+
+```dotenv
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=<secret>
+OPENROUTER_MODEL=openai/gpt-oss-120b:free
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+```
+
+`openai/gpt-oss-120b:free` is an OpenRouter model ID. Do not set it as `OPENAI_MODEL` and do not use it with `SHUDDHO_LLM_PROVIDER=openai`; the OpenAI provider path is only for official OpenAI model IDs such as `gpt-4o-mini`.
 
 ### Local validation
 

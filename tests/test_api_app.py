@@ -1012,4 +1012,4 @@ def test_llm_debug_exposes_safe_config(monkeypatch) -> None:
     assert payload["api_key_present"] is True
     assert "api_key" not in payload
     assert payload["status"] == "completed"
-    assert payload["interactive_timeout_seconds"] == 15
+    assert payload["interactive_timeout_seconds"] == 45

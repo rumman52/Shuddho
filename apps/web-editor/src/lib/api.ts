@@ -588,26 +588,44 @@ export function gatewayCheckToAnalyzeResponse(
 export function friendlyLlmWarning(response: GatewayCheckResponse): string | null {
   const status = response.llm_status;
   const llm = (response.llm ?? {}) as Record<string, unknown>;
+  const rawProvider = String(response.llm_provider ?? llm.provider ?? "").toLowerCase();
+  const model = String(response.llm_model ?? llm.model ?? "");
   const skipReason = String(llm.skip_reason ?? "");
-  const warnings = Array.isArray(response.warnings) ? response.warnings.map(String) : [];
+  const warnings = [
+    ...(Array.isArray(response.warnings) ? response.warnings.map(String) : []),
+    ...(Array.isArray(llm.warnings) ? llm.warnings.map(String) : []),
+  ];
+  const inferredProvider = warnings.some((w) => w.includes("openrouter")) || model.includes("/") || model.includes(":free") ? "openrouter" : warnings.some((w) => w.includes("openai")) ? "openai" : rawProvider;
+  const provider = inferredProvider || rawProvider;
+  const providerLabel = provider === "openrouter" ? "OpenRouter" : provider === "openai" ? "OpenAI" : "AI";
   const httpStatus = Number(llm.http_status ?? 0);
   if (!status) return null;
   if (status === "completed") {
-    return (response.ai_suggestion_count ?? 0) > 0 ? "AI suggestions merged." : null;
+    return (response.ai_suggestion_count ?? 0) > 0 ? `${providerLabel} reviewed the text and suggestions were merged.` : null;
   }
-  if (status === "completed_empty") return "OpenAI reviewed the text but found no extra high-confidence suggestions.";
+  if (status === "completed_empty") return `${providerLabel} reviewed the text but found no extra high-confidence suggestions.`;
   if (status === "skipped") {
     return skipReason === "include_llm_false" ? null : `AI review skipped: ${skipReason || "not requested"}.`;
   }
-  if (status === "missing_key") return "OpenAI is not configured: missing backend OPENAI_API_KEY.";
-  if (status === "unsupported_provider") return "OpenAI model config is invalid. Use an OpenAI model like gpt-4o-mini, not an OpenRouter model id.";
-  if (status === "timeout") return "OpenAI timed out, showing local suggestions.";
-  if (status === "rate_limited") return "OpenAI rate limit/quota hit, showing local suggestions.";
-  if (status === "provider_error" && (httpStatus === 401 || httpStatus === 403 || warnings.some((w) => w.includes("401") || w.includes("403")))) return "OpenAI authentication failed. Check backend API key.";
-  if (status === "invalid_json") return "OpenAI returned invalid JSON, showing local suggestions.";
-  if (status === "invalid_schema") return "OpenAI returned data that failed Shuddho validation.";
-  if (status === "queued" || status === "attempted") return "Reviewing with AI.";
-  if (["provider_error", "network_error", "failed"].includes(status)) return "AI review unavailable, showing local suggestions.";
+  if (status === "missing_key") {
+    return provider === "openrouter"
+      ? "OpenRouter is not configured: missing backend OPENROUTER_API_KEY."
+      : "OpenAI is not configured: missing backend OPENAI_API_KEY.";
+  }
+  if (status === "unsupported_provider") {
+    if (warnings.some((w) => w.includes("openai_model_id_suspicious_use_openrouter_provider")) || model.includes("/") || model.includes(":free")) {
+      return `Invalid config: ${model || "this model"} must use SHUDDHO_LLM_PROVIDER=openrouter.`;
+    }
+    return "AI provider configuration is unsupported.";
+  }
+  if (status === "timeout") return "AI review timed out; showing local suggestions.";
+  if (status === "rate_limited") return "AI provider rate limit/quota hit; showing local suggestions.";
+  if (["auth_or_forbidden", "credits_or_payment_required", "model_not_found"].includes(status)) return `${providerLabel} configuration error; showing local suggestions.`;
+  if (status === "provider_error" && (httpStatus === 401 || httpStatus === 403 || warnings.some((w) => w.includes("401") || w.includes("403")))) return `${providerLabel} authentication failed. Check backend API key.`;
+  if (status === "invalid_json") return "AI returned invalid JSON; showing local suggestions.";
+  if (status === "invalid_schema") return "AI response failed Shuddho validation.";
+  if (status === "queued" || status === "attempted") return `Reviewing with ${providerLabel}.`;
+  if (["provider_error", "network_error", "failed", "content_filter"].includes(status)) return "AI review unavailable; showing local suggestions.";
   return `LLM status: ${status}`;
 }
 

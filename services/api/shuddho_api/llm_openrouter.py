@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import time
 from typing import Any
 
@@ -33,27 +34,43 @@ def _structured_response_format() -> dict[str, Any]:
 
 
 def _status_for_http(status: int) -> tuple[str, str]:
+    if status in {401, 403}:
+        return "auth_or_forbidden", f"openrouter_http_{status}_auth_or_forbidden"
+    if status == 402:
+        return "credits_or_payment_required", "openrouter_http_402_credits_or_payment_required"
+    if status == 404:
+        return "model_not_found", "openrouter_http_404_model_not_found"
     if status == 429:
         return "rate_limited", "openrouter_http_429_quota_or_rate_limit"
     if status in {408, 504}:
         return "timeout", "openrouter_timeout"
-    if status in {401, 403}:
-        return "provider_error", f"openrouter_http_{status}_auth_or_forbidden"
-    if status == 404:
-        return "provider_error", "openrouter_http_404_model_not_found"
+    if status in {500, 502, 503}:
+        return "provider_error", "openrouter_provider_or_server_error"
     if status >= 500:
         return "provider_error", "openrouter_provider_or_server_error"
     return "provider_error", "openrouter_http_error"
 
 
-def _extract_content(response_json: dict[str, Any]) -> str | None:
+def _extract_content(response_json: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    error = response_json.get("error")
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("code") or error.get("type")
+        return None, str(message) if message else "openrouter_error", None
     choices = response_json.get("choices")
     if not isinstance(choices, list) or not choices:
-        return None
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        return None, "openrouter_empty_choices", None
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    finish_reason = str(first.get("finish_reason") or "").lower()
+    message = first.get("message") if isinstance(first, dict) else None
+    if isinstance(message, dict) and message.get("refusal"):
+        return None, "openrouter_refusal", "content_filter"
+    if finish_reason in {"content_filter", "refusal", "safety"}:
+        return None, "openrouter_refusal", "content_filter"
+    if finish_reason in {"length", "error"}:
+        return None, f"openrouter_finish_reason_{finish_reason}", "provider_error"
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, str):
-        return content.strip() or None
+        return content.strip() or None, None, None
     if isinstance(content, list):
         parts: list[str] = []
         for part in content:
@@ -64,8 +81,8 @@ def _extract_content(response_json: dict[str, Any]) -> str | None:
             elif isinstance(part, str):
                 parts.append(part)
         joined = "".join(parts).strip()
-        return joined or None
-    return None
+        return joined or None, None, None
+    return None, "openrouter_empty_choices", None
 
 
 def _sentences_for_prompt(text: str) -> list[dict[str, Any]]:
@@ -73,6 +90,17 @@ def _sentences_for_prompt(text: str) -> list[dict[str, Any]]:
         {"sentenceId": f"s_{idx}", "text": sentence.text, "start": sentence.start, "end": sentence.end}
         for idx, sentence in enumerate(split_bangla_sentences(text))
     ] or [{"sentenceId": "s_0", "text": text, "start": 0, "end": len(text)}]
+
+
+def _retry_after_seconds(response: Any, fallback: float) -> float:
+    headers = getattr(response, "headers", {}) or {}
+    raw = headers.get("Retry-After") if hasattr(headers, "get") else None
+    try:
+        if raw is not None:
+            return max(0.0, min(float(raw), 2.0))
+    except (TypeError, ValueError):
+        pass
+    return fallback
 
 
 def run_openrouter_check(
@@ -86,6 +114,7 @@ def run_openrouter_check(
     sentences: list[dict[str, Any]] | None = None,
     local_suggestions: list[dict[str, Any]] | None = None,
     candidates: list[dict[str, Any]] | None = None,
+    background: bool = False,
 ) -> dict[str, Any]:
     del language
     rid = request_id or os.environ.get("SHUDDHO_REQUEST_ID", "unknown")
@@ -107,12 +136,15 @@ def run_openrouter_check(
     if os.environ.get("OPENROUTER_HTTP_REFERER", "").strip():
         headers["HTTP-Referer"] = os.environ["OPENROUTER_HTTP_REFERER"].strip()
     if os.environ.get("OPENROUTER_APP_TITLE", "").strip():
-        headers["X-OpenRouter-Title"] = os.environ["OPENROUTER_APP_TITLE"].strip()
+        title = os.environ["OPENROUTER_APP_TITLE"].strip()
+        headers["X-Title"] = title
+        headers["X-OpenRouter-Title"] = title
+    max_tokens = int(os.environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400") or "1400")
     base_payload = {
         "model": model,
         "messages": messages,
         "temperature": 0.1,
-        "max_completion_tokens": 1400,
+        "max_completion_tokens": max_tokens,
         "stream": False,
     }
     payload = {**base_payload, "response_format": _structured_response_format()}
@@ -120,28 +152,51 @@ def run_openrouter_check(
     response_mode = "json_schema"
     started = time.time()
     http_status: int | None = None
+    response: Any = None
+    max_retries = 2 if background else 1
     try:
         with httpx.Client(timeout=timeout_seconds) as client:
-            response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
-            http_status = response.status_code
-            if response.status_code == 400:
-                warnings.append("openrouter_structured_output_fallback_used")
-                response_mode = "strict_json_prompt"
-                response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=base_payload)
+            attempt = 0
+            while True:
+                response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
                 http_status = response.status_code
+                if http_status == 400 and response_mode == "json_schema":
+                    warnings.append("openrouter_structured_output_fallback_used")
+                    response_mode = "strict_json_prompt"
+                    payload = base_payload
+                    response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
+                    http_status = response.status_code
+                if http_status in {429, 503} and attempt < max_retries:
+                    attempt += 1
+                    warnings.append(f"openrouter_retry_after_http_{http_status}")
+                    time.sleep(_retry_after_seconds(response, min(2.0, 0.4 * (2 ** (attempt - 1)) + random.uniform(0, 0.2))))
+                    continue
+                break
     except httpx.TimeoutException:
-        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="timeout", response_mode=response_mode, warnings=["openrouter_timeout"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="timeout", response_mode=response_mode, warnings=[*warnings, "openrouter_timeout"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     except httpx.RequestError:
-        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="network_error", response_mode=response_mode, warnings=["openrouter_request_failed"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="network_error", response_mode=response_mode, warnings=[*warnings, "openrouter_request_failed"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
 
     if http_status is not None and http_status >= 400:
         status, warning = _status_for_http(http_status)
-        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status=status, response_mode=response_mode, http_status=http_status, warnings=[*warnings, warning], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+        extra_warning = warning
+        try:
+            body = response.json()
+            if isinstance(body, dict) and isinstance(body.get("error"), dict):
+                code = body["error"].get("code") or body["error"].get("type")
+                if code:
+                    extra_warning = f"{warning}:{code}"
+        except Exception:
+            pass
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status=status, response_mode=response_mode, http_status=http_status, warnings=[*warnings, extra_warning], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     try:
         response_json = response.json()
     except json.JSONDecodeError:
         return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="invalid_json", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_invalid_json"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
-    content = _extract_content(response_json)
+    content, content_warning, content_status = _extract_content(response_json)
+    if content_warning:
+        status = content_status or ("invalid_schema" if content_warning == "openrouter_empty_choices" else "provider_error")
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status=status, response_mode=response_mode, http_status=http_status, warnings=[*warnings, content_warning], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     if content is None:
         return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="invalid_schema", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_empty_choices"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     try:
