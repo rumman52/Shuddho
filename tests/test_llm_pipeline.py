@@ -35,9 +35,10 @@ def test_provider_disabled() -> None:
 
 
 class FakeResponse:
-    def __init__(self, status_code: int, payload: dict):
+    def __init__(self, status_code: int, payload: dict, headers: dict | None = None):
         self.status_code = status_code
         self._payload = payload
+        self.headers = headers or {}
     def json(self):
         return self._payload
 
@@ -109,3 +110,50 @@ def test_merge_dedupes_and_keeps_provider() -> None:
     assert merged[0]["source"] == "hybrid"
     assert merged[0]["provider"] == "openai"
     assert merged[0]["metadata"]["mergeStatus"] == "merged"
+
+
+def test_openrouter_http_status_mapping(monkeypatch) -> None:
+    expected = {
+        401: "auth_or_forbidden",
+        403: "auth_or_forbidden",
+        402: "credits_or_payment_required",
+        404: "model_not_found",
+        429: "rate_limited",
+        503: "provider_error",
+    }
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    for status_code, expected_status in expected.items():
+        FakeClient.calls = []
+        # One retry is allowed for 429/503, so provide two responses.
+        FakeClient.responses = [FakeResponse(status_code, {"error": {"code": "x"}}), FakeResponse(status_code, {"error": {"code": "x"}})] if status_code in {429, 503} else [FakeResponse(status_code, {"error": {"code": "x"}})]
+        result = run_openrouter_check("আমি ভাত খাই।", "openai/gpt-oss-120b:free", "key", request_id="r1")
+        assert result["status"] == expected_status
+        assert result["http_status"] == status_code
+
+
+def test_openrouter_invalid_json_and_schema(monkeypatch) -> None:
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    FakeClient.calls = []
+    FakeClient.responses = [FakeResponse(200, {"choices": [{"message": {"content": "not json"}}]})]
+    result = run_openrouter_check("আমি ভাত খাই।", "openai/gpt-oss-120b:free", "key", request_id="r1")
+    assert result["status"] == "invalid_json"
+
+    FakeClient.calls = []
+    FakeClient.responses = [FakeResponse(200, {"choices": [{"message": {"content": json.dumps({"suggestions": {}})}}]})]
+    result = run_openrouter_check("আমি ভাত খাই।", "openai/gpt-oss-120b:free", "key", request_id="r1")
+    assert result["status"] == "invalid_schema"
+
+
+def test_openrouter_valid_ai_suggestion_completed(monkeypatch) -> None:
+    payload = {
+        "requestId":"r1",
+        "correctedText":"আমি ভাত খাই।",
+        "documentAssessment":{"summary":"ok","overallQuality":"good","language":"bn"},
+        "suggestions":[{"id":"a1","sentenceId":"s_0","original":"খাই","replacement":"খাই।","issueType":"punctuation","severity":"medium","explanation":"punctuation","confidence":0.9,"source":"ai","start":8,"end":11}],
+    }
+    FakeClient.calls = []
+    FakeClient.responses = [FakeResponse(200, {"choices": [{"message": {"content": json.dumps(payload)}}]})]
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    result = run_openrouter_check("আমি ভাত খাই।", "openai/gpt-oss-120b:free", "key", request_id="r1")
+    assert result["status"] == "completed"
+    assert len(result["suggestions"]) == 1

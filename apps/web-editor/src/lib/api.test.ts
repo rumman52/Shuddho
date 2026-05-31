@@ -381,10 +381,13 @@ test("gatewayCheckToAnalyzeResponse preserves llm diagnostics", () => {
   assert.deepEqual(response.diagnostics?.llm, { status: "timeout", error: "openai_timeout" });
 });
 
-test("friendlyLlmWarning maps precise LLM statuses", () => {
-  assert.equal(friendlyLlmWarning({ llm_status: "missing_key" }), "OpenAI is not configured: missing backend OPENAI_API_KEY.");
-  assert.equal(friendlyLlmWarning({ llm_status: "timeout" }), "OpenAI timed out, showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider" }), "OpenAI model config is invalid. Use an OpenAI model like gpt-4o-mini, not an OpenRouter model id.");
-  assert.equal(friendlyLlmWarning({ llm_status: "rate_limited" }), "OpenAI rate limit/quota hit, showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "completed_empty" }), "OpenAI reviewed the text but found no extra high-confidence suggestions.");
+test("friendlyLlmWarning maps precise provider-aware LLM statuses", () => {
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "openrouter" }), "OpenRouter is not configured: missing backend OPENROUTER_API_KEY.");
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "openai" }), "OpenAI is not configured: missing backend OPENAI_API_KEY.");
+  assert.equal(friendlyLlmWarning({ llm_status: "timeout", llm_provider: "openrouter" }), "AI review timed out; showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider", llm_provider: "openai", llm_model: "openai/gpt-oss-120b:free", warnings: ["openai_model_id_suspicious_use_openrouter_provider"] }), "Invalid config: openai/gpt-oss-120b:free must use SHUDDHO_LLM_PROVIDER=openrouter.");
+  assert.equal(friendlyLlmWarning({ llm_status: "rate_limited", llm_provider: "openrouter" }), "AI provider rate limit/quota hit; showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "openrouter" }), "OpenRouter reviewed the text but found no extra high-confidence suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "invalid_json", llm_provider: "openrouter" }), "AI returned invalid JSON; showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "invalid_schema", llm_provider: "openrouter" }), "AI response failed Shuddho validation.");
 });

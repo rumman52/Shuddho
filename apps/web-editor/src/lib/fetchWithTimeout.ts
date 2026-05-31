@@ -1,7 +1,7 @@
 export const DEFAULT_REQUEST_TIMEOUT_MS = 8000;
 export const HEALTH_REQUEST_TIMEOUT_MS = 3000;
 export const GRAMMAR_CHECK_TIMEOUT_MS = 10000;
-export const AI_REVIEW_TIMEOUT_MS = 15000;
+export const AI_REVIEW_TIMEOUT_MS = 50000;
 
 export class FetchTimeoutError extends Error {
   readonly friendly = true;

@@ -382,7 +382,7 @@ export default function App() {
           ? llmStatusMessage ??
               (responseSuggestions.length
                 ? "AI suggestions merged."
-                : "OpenAI reviewed the text but found no extra high-confidence suggestions.")
+                : `${normalizedResponse.llm_provider === "openrouter" ? "OpenRouter" : normalizedResponse.llm_provider === "openai" ? "OpenAI" : "AI"} reviewed the text but found no extra high-confidence suggestions.`)
           : responseSuggestions.length
             ? `${responseSuggestions.length} local suggestions ready`
             : responseWarnings.length
@@ -1225,9 +1225,18 @@ export default function App() {
               <strong>{runtimeDescriptor.label}</strong>
               <span>{status}</span>
               <span>Backend: {backendMode}</span>
-              <span>LLM: {normalizedAnalysis.llm_status ?? "not requested"}</span>
-              <span>LLM provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
-              <span>AI suggestions: {normalizedAnalysis.ai_suggestion_count ?? 0}; rejected: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>
+              <span>llm_requested: {String(normalizedAnalysis.llm_requested ?? false)}</span>
+              <span>llm_attempted: {String(normalizedAnalysis.llm_attempted ?? false)}</span>
+              <span>llm_used: {String(normalizedAnalysis.llm_used ?? false)}</span>
+              <span>llm_status: {normalizedAnalysis.llm_status ?? "not requested"}</span>
+              <span>llm_provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
+              <span>llm_model: {normalizedAnalysis.llm_model ?? "none"}</span>
+              <span>llm_response_mode: {normalizedAnalysis.llm_response_mode ?? "none"}</span>
+              <span>http_status: {String((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.http_status ?? "none")}</span>
+              <span>local_suggestion_count: {normalizedAnalysis.local_suggestion_count ?? suggestions.length}</span>
+              <span>ai_suggestion_count: {normalizedAnalysis.ai_suggestion_count ?? 0}</span>
+              <span>rejected_ai_suggestion_count: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>
+              <span>timings: {JSON.stringify((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.timings ?? { llm_ms: (normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.llm_ms ?? "none" })}</span>
               <span>Lexicon: {normalizedAnalysis.lexicon_source}</span>
               {runtimeWarnings.map((warning) => (
                 <span key={warning} className="chip chip-warning">

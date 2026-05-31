@@ -73,6 +73,9 @@ OPENROUTER_API_KEY=
 OPENROUTER_MODEL=openai/gpt-oss-120b:free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
 ```
 
 Use the official OpenAI provider only with official OpenAI model IDs:
@@ -89,7 +92,7 @@ Operational safeguards:
 - Keep `OPENROUTER_API_KEY` and `OPENAI_API_KEY` only in backend environment variables.
 - Never use `VITE_*` variables for private provider keys because Vite exposes them to browser code.
 - Free OpenRouter models can be slower, unavailable, or rate-limited; Shuddho's local fallback must always remain enabled.
-- `SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=4` keeps editor review responsive, while `SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=35` allows queued background reviews more time.
+- `SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45` gives free OpenRouter reasoning models enough time for manual Deep AI Review, while `SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60` allows queued background reviews more time.
 - Set `SHUDDHO_MAX_AI_TEXT_CHARS=5000` and `SHUDDHO_LLM_CACHE_TTL_SECONDS=86400` to bound request size and avoid repeated unchanged reviews.
 
 ## Vercel deployment (apps/web-editor)
@@ -99,7 +102,7 @@ Use these Vercel project settings for the Vite web editor deployment:
 - Framework Preset: Vite
 - Root Directory: repo root
 - Install Command: `npm install --include=optional`
-- Build Command: `npm run build --workspace @shuddho/web-editor`
+- Build Command: `npm run build:web-editor`
 - Output Directory: `apps/web-editor/dist`
 
 Keep optional dependencies enabled so Vite/esbuild can install the native binary for the Vercel Linux build environment.
