@@ -463,6 +463,13 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload = response.model_dump(mode="json")
     local_suggestions = list(response_payload.get("suggestions") or [])
     local_count = len(local_suggestions)
+    detector_runtime = detector_service.runtime_status()
+    corrector_runtime = corrector_service.runtime_status()
+    corrector_missing_warning = (
+        "sentence_level_corrector_unavailable"
+        if corrector_runtime.status != "ready" or not corrector_runtime.loaded
+        else None
+    )
 
     config = resolve_llm_config(os.environ)
     llm_requested = include_llm
@@ -533,7 +540,12 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         elif ai.status in {"timeout", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "content_filter", "network_error", "rate_limited", "failed"}:
             _record_llm_failure(ai.provider, ai.model, ai.warnings or [ai.status])
 
-    all_warnings = _dedupe_strings([*(response_payload.get("warnings") or []), *ai.warnings, *merge_warnings])
+    all_warnings = _dedupe_strings([
+        *(response_payload.get("warnings") or []),
+        *([corrector_missing_warning] if corrector_missing_warning else []),
+        *ai.warnings,
+        *merge_warnings,
+    ])
     if llm_requested and ai.status not in {"completed", "completed_empty", "skipped", "attempted"} and not all_warnings:
         all_warnings.append(f"llm_{ai.status}")
     response_payload["warnings"] = all_warnings
@@ -573,6 +585,15 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["local_suggestion_count"] = local_count
     response_payload["ai_suggestion_count"] = len(validated_ai)
     response_payload["diagnostics"] = {
+        "backendReachable": True,
+        "backendStatus": "ok",
+        "detectorLoaded": detector_runtime.loaded,
+        "correctorLoaded": corrector_runtime.loaded,
+        "correctorReason": corrector_runtime.reason,
+        "llmEnabled": config.enabled,
+        "llmConfigured": config.configured,
+        "llmProvider": config.provider,
+        "llmModel": config.model,
         "llm": {
             "status": response_payload["llm_status"],
             "provider": ai.provider,

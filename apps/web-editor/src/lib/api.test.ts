@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   analyzeText,
   buildCheckRequestBody,
+  checkBackendHealth,
   deriveApiConfiguration,
   sendFeedback,
   fetchPreferences,
@@ -434,4 +435,42 @@ test("friendlyLlmWarning maps precise provider-aware LLM statuses", () => {
   assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "openrouter" }), "OpenRouter reviewed the text but found no extra high-confidence suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "invalid_json", llm_provider: "openrouter" }), "AI returned invalid JSON; showing local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "invalid_schema", llm_provider: "openrouter" }), "AI review unavailable; showing local suggestions.");
+});
+
+
+test("checkBackendHealth treats HTTP 200 plus ok true as connected", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ ok: true, status: "ok" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+  try {
+    const health = await checkBackendHealth();
+    assert.equal(health.ok, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+});
+
+test("checkBackendHealth rejects HTTP 200 without ok true", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ ok: false, status: "degraded" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+  try {
+    const health = await checkBackendHealth();
+    assert.equal(health.ok, false);
+    assert.match(health.message ?? "", /ok:true/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
 });

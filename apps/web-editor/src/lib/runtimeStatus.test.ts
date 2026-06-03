@@ -90,3 +90,78 @@ test("describeRuntimeState marks deployed localhost backends as misconfigured", 
   assert.equal(descriptor.degraded, true);
   assert.equal(descriptor.warnings[0]?.includes("VITE_API_BASE_URL"), true);
 });
+
+
+test("health ok with missing corrector is degraded rather than unavailable", () => {
+  const descriptor = describeRuntimeState({
+    analysis: buildAnalysis({
+      analysis_profile: "backend_without_corrector",
+      runtime_source: "backend_without_corrector",
+      runtime_warnings: ["corrector_missing_checkpoint"],
+      used_corrector: false,
+    }),
+    transport: "online",
+    health: {
+      ok: true,
+      service: "shuddho-api",
+      status: "ok",
+      backend_reachable: true,
+      detector_loaded: true,
+      corrector_loaded: false,
+      allowed_origins: [],
+      detector: {
+        enabled: true,
+        loaded: true,
+        status: "ready",
+        reason: null,
+        checkpoint: null,
+        checkpoint_exists: true,
+        backend_name: "stub_detector",
+        threshold: 0.92,
+      },
+      corrector: {
+        enabled: true,
+        loaded: false,
+        status: "missing_checkpoint",
+        reason: "missing best_model.pt",
+        checkpoint: "artifacts/corrector/corrector-base",
+        checkpoint_exists: false,
+        backend_name: "disabled",
+        threshold: 0.86,
+      },
+      analysis_profile: "backend_without_corrector",
+      degraded_reasons: ["corrector_missing_checkpoint"],
+      mode_capabilities: { standard: ["rules", "spelling"] },
+      backend_warning: "Sentence-level corrector is not loaded. Shuddho is running rules + spelling only.",
+      backend_version: "test",
+      env_file_loaded: false,
+      last_startup_timestamp: new Date().toISOString(),
+      llm: {
+        enabled: true,
+        configured: true,
+        provider: "openrouter",
+        model: "openai/gpt-oss-120b:free",
+      },
+      lexicon: {
+        runtime_source_of_truth: "csv_runtime",
+        runtime_source: "words_clean.csv",
+        runtime_exists: true,
+        accepted_word_count: 0,
+        candidate_word_count: 0,
+        correction_map_count: 0,
+        import_database_exists: false,
+        reload_supported: true,
+        restart_required: true,
+      },
+    },
+  });
+
+  assert.equal(descriptor.label, "Backend connected, but sentence-level corrector is degraded.");
+  assert.equal(descriptor.degraded, true);
+  assert.equal(descriptor.diagnostics.backendReachable, true);
+  assert.equal(descriptor.diagnostics.correctorLoaded, false);
+  assert.equal(descriptor.diagnostics.llmEnabled, true);
+  assert.equal(descriptor.diagnostics.llmConfigured, true);
+  assert.equal(descriptor.diagnostics.llmProvider, "openrouter");
+  assert.notEqual(descriptor.label, "Backend offline, suggestions disabled");
+});

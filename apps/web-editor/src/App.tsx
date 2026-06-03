@@ -1246,6 +1246,15 @@ export default function App() {
               <span>/health/deep status: {String(backendHealth?.status ?? (backendHealth?.ok === true ? "ok" : backendHealth ? "unknown" : "not loaded"))}</span>
               <span>/health result: {JSON.stringify(shallowHealth ?? null)}</span>
               <span>/health/deep result: {JSON.stringify(backendHealth ?? null)}</span>
+              <span>backendReachable: {String(runtimeDescriptor.diagnostics.backendReachable)}</span>
+              <span>backendStatus: {runtimeDescriptor.diagnostics.backendStatus}</span>
+              <span>detectorLoaded: {String(runtimeDescriptor.diagnostics.detectorLoaded)}</span>
+              <span>correctorLoaded: {String(runtimeDescriptor.diagnostics.correctorLoaded)}</span>
+              <span>correctorReason: {runtimeDescriptor.diagnostics.correctorReason ?? "none"}</span>
+              <span>llmEnabled: {String(runtimeDescriptor.diagnostics.llmEnabled)}</span>
+              <span>llmConfigured: {String(runtimeDescriptor.diagnostics.llmConfigured)}</span>
+              <span>llmProvider: {runtimeDescriptor.diagnostics.llmProvider ?? "unknown"}</span>
+              <span>llmModel: {runtimeDescriptor.diagnostics.llmModel ?? "unknown"}</span>
               <span>llm.enabled: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.enabled ?? "unknown")}</span>
               <span>llm.configured: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.configured ?? "unknown")}</span>
               <span>llm.provider: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.provider ?? "unknown")}</span>

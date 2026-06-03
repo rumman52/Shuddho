@@ -2,11 +2,54 @@ import type { AnalyzeResponse, AnalysisProfile, HealthDeepResponse, Suggestion }
 
 export type BackendTransportState = "checking" | "online" | "offline" | "misconfigured";
 
+export interface RuntimeDiagnostics {
+  backendReachable: boolean;
+  backendStatus: string;
+  detectorLoaded: boolean;
+  correctorLoaded: boolean;
+  correctorReason: string | null;
+  llmEnabled: boolean;
+  llmConfigured: boolean;
+  llmProvider: string | null;
+  llmModel: string | null;
+}
+
 export interface RuntimeDescriptor {
   label: string;
   localOnly: boolean;
   degraded: boolean;
   warnings: string[];
+  diagnostics: RuntimeDiagnostics;
+}
+
+const DEFAULT_RUNTIME_DIAGNOSTICS: RuntimeDiagnostics = {
+  backendReachable: false,
+  backendStatus: "unknown",
+  detectorLoaded: false,
+  correctorLoaded: false,
+  correctorReason: null,
+  llmEnabled: false,
+  llmConfigured: false,
+  llmProvider: null,
+  llmModel: null,
+};
+
+function runtimeDiagnostics(
+  health: HealthDeepResponse | null,
+  transport: BackendTransportState,
+): RuntimeDiagnostics {
+  const llm = health?.llm;
+  return {
+    backendReachable: Boolean(health?.backend_reachable ?? (transport === "online" && health?.ok === true)),
+    backendStatus: String(health?.status ?? (health?.ok === true ? "ok" : transport)),
+    detectorLoaded: Boolean(health?.detector_loaded ?? health?.detector?.loaded ?? false),
+    correctorLoaded: Boolean(health?.corrector_loaded ?? health?.corrector?.loaded ?? false),
+    correctorReason: health?.corrector?.reason ?? null,
+    llmEnabled: Boolean(llm?.enabled ?? false),
+    llmConfigured: Boolean(llm?.configured ?? false),
+    llmProvider: llm?.provider ?? null,
+    llmModel: llm?.model ?? null,
+  };
 }
 
 const BANGLA_LETTER_RE = /[\u0980-\u09ff]/u;
@@ -50,6 +93,7 @@ export function describeRuntimeState(args: {
         analysis.backend_warning,
         ...runtimeWarnings,
       ]),
+      diagnostics: { ...DEFAULT_RUNTIME_DIAGNOSTICS, backendStatus: "misconfigured" },
     };
   }
 
@@ -59,6 +103,7 @@ export function describeRuntimeState(args: {
       localOnly: localFallbackEnabled,
       degraded: true,
       warnings: compactWarnings([analysis.backend_warning, ...runtimeWarnings]),
+      diagnostics: { ...DEFAULT_RUNTIME_DIAGNOSTICS, backendStatus: "offline" },
     };
   }
 
@@ -68,15 +113,26 @@ export function describeRuntimeState(args: {
       localOnly: false,
       degraded: false,
       warnings: compactWarnings(runtimeWarnings),
+      diagnostics: { ...DEFAULT_RUNTIME_DIAGNOSTICS, backendStatus: "checking" },
     };
   }
 
   const profile = analysis.runtime_source || health?.analysis_profile || "backend_rules_and_spell_only";
+  const diagnostics = runtimeDiagnostics(health, transport);
+  const correctorDegraded = diagnostics.backendReachable && !diagnostics.correctorLoaded;
   return {
-    label: health?.backend_warning || analysis.backend_warning || getRuntimeLabel(profile),
+    label: correctorDegraded
+      ? "Backend connected, but sentence-level corrector is degraded."
+      : health?.backend_warning || analysis.backend_warning || getRuntimeLabel(profile),
     localOnly: profile === "frontend_local_fallback" && localFallbackEnabled,
-    degraded: profile !== "full_local",
-    warnings: compactWarnings([health?.backend_warning, analysis.backend_warning, ...runtimeWarnings]),
+    degraded: profile !== "full_local" || correctorDegraded,
+    warnings: compactWarnings([
+      correctorDegraded ? "sentence_level_corrector_unavailable" : null,
+      health?.backend_warning,
+      analysis.backend_warning,
+      ...runtimeWarnings,
+    ]),
+    diagnostics,
   };
 }
 
