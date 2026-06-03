@@ -34,7 +34,7 @@ Use these settings when the Vercel project is configured to build from the repos
 
 The root `vercel.json` is for this monorepo-root deployment shape. The root package script delegates to the `@shuddho/web-editor` npm workspace.
 
-### Frontend environment variables
+### A. Vercel frontend environment variables
 
 Set only public Vite variables in the Vercel frontend project:
 
@@ -58,7 +58,7 @@ OPENROUTER_MODEL
 Those values belong only in the backend environment. Browser code must route AI review through the backend and must not receive private provider keys.
 
 
-### Render/FastAPI backend environment variables
+### B. Backend environment variables
 
 For Deep AI Review with the OpenRouter-hosted `openai/gpt-oss-120b:free` model, set these only on the backend service (for example Render), never in Vercel:
 
@@ -72,6 +72,10 @@ OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual
 SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
 SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+SHUDDHO_MAX_AI_TEXT_CHARS=5000
+SHUDDHO_LLM_MAX_CANDIDATES=8
+SHUDDHO_LLM_MAX_CANDIDATE_CHARS=2200
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
 ```
 
 `openai/gpt-oss-120b:free` is an OpenRouter model ID. Do not set it as `OPENAI_MODEL` and do not use it with `SHUDDHO_LLM_PROVIDER=openai`; the OpenAI provider path is only for official OpenAI model IDs such as `gpt-4o-mini`.
@@ -95,3 +99,19 @@ npm run build:web-editor
 ```
 
 Both app-directory build commands produce `dist` inside `apps/web-editor`. The root build command produces the same app output at `apps/web-editor/dist`.
+
+### Manual validation commands
+
+```bash
+npm run build:web-editor
+npm run build --workspace @shuddho/api
+python -m uvicorn services.api.shuddho_api.app:app --host 127.0.0.1 --port 8000 --reload
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/health/deep
+curl http://127.0.0.1:8000/api/llm/debug
+curl -X POST http://127.0.0.1:8000/api/check \
+  -H "Content-Type: application/json" \
+  -d "{\"text\":\"আমি বাংলা লিখি ।। বাংলা বাংলা ভাষা খুব সুন্দর !!\",\"language\":\"bn\",\"options\":{\"includeLLM\":true,\"asyncLLM\":false,\"llmMode\":\"review_candidates\",\"mode\":\"smart\"}}"
+```
+
+The check response should include `llm_requested`, `llm_attempted` when the provider is configured, `llm_provider`, `llm_model`, `suggestions`, local/AI suggestion counts, `warnings`, `diagnostics.llm`, and `timings`.

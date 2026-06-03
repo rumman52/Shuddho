@@ -19,6 +19,7 @@ import {
   getApiBaseUrl,
   getApiConfiguration,
   getHealth,
+  getHealthDeep,
   getUserPreferences,
   rewriteText,
   saveUserPreferences,
@@ -45,11 +46,9 @@ const USER_PROFILE_ID_STORAGE_KEY = "shuddho-user-id";
 const ANALYSIS_DEBOUNCE_MS = 1200;
 const AUTO_AI_ANALYSIS_DEBOUNCE_MS = 3000;
 const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
-const BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED =
-  "Backend is not connected. Contextual Bengali correction is disabled.";
-const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_NOT_CONNECTED_CONTEXTUAL_DISABLED;
 const BACKEND_UNAVAILABLE_MESSAGE =
-  "Backend is unavailable. You can still use local checks. AI review will be disabled until the server is reachable.";
+  "Backend is unavailable. Check backend deployment, CORS, and /health.";
+const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_UNAVAILABLE_MESSAGE;
 const REQUEST_TIMEOUT_MESSAGE =
   "Request timed out. Please try again or check backend deployment.";
 const SERVER_TIMEOUT_FALLBACK_MESSAGE =
@@ -95,6 +94,8 @@ export default function App() {
   });
   const [backendMode, setBackendMode] = useState<BackendMode>("checking");
   const [backendHealth, setBackendHealth] =
+    useState<BackendHealthResponse | null>(null);
+  const [shallowHealth, setShallowHealth] =
     useState<BackendHealthResponse | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
@@ -231,6 +232,7 @@ export default function App() {
     if (!apiConfiguration.backendAllowed) {
       setBackendMode("misconfigured");
       setBackendHealth(null);
+      setShallowHealth(null);
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
@@ -240,14 +242,24 @@ export default function App() {
     }
 
     try {
-      const health = await getHealth();
-      setBackendHealth(health);
+      const [healthResult, deepResult] = await Promise.allSettled([
+        getHealth(),
+        getHealthDeep(),
+      ]);
+      if (healthResult.status === "rejected") {
+        throw healthResult.reason;
+      }
+      setShallowHealth(healthResult.value);
+      setBackendHealth(
+        deepResult.status === "fulfilled" ? deepResult.value : healthResult.value,
+      );
       setBackendMode("online");
     } catch (error) {
       if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
         console.debug("Backend health check failed", error);
       }
       setBackendHealth(null);
+      setShallowHealth(null);
       setBackendMode("offline");
       setStatus(
         apiConfiguration.localFallbackEnabled
@@ -1225,6 +1237,17 @@ export default function App() {
               <strong>{runtimeDescriptor.label}</strong>
               <span>{status}</span>
               <span>Backend: {backendMode}</span>
+              <span>apiBaseUrl: {apiConfiguration.apiBaseUrl || "none"}</span>
+              <span>source: {apiConfiguration.source}</span>
+              <span>backendAllowed: {String(apiConfiguration.backendAllowed)}</span>
+              <span>backendMode: {backendMode}</span>
+              <span>/health result: {JSON.stringify(shallowHealth ?? null)}</span>
+              <span>/health/deep result: {JSON.stringify(backendHealth ?? null)}</span>
+              <span>llm.enabled: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.enabled ?? "unknown")}</span>
+              <span>llm.provider: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.provider ?? "unknown")}</span>
+              <span>llm.model: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.model ?? "unknown")}</span>
+              <span>llm.configured: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.configured ?? "unknown")}</span>
+              <span>llm.circuit_open: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.circuit_open ?? "unknown")}</span>
               <span>llm_requested: {String(normalizedAnalysis.llm_requested ?? false)}</span>
               <span>llm_attempted: {String(normalizedAnalysis.llm_attempted ?? false)}</span>
               <span>llm_used: {String(normalizedAnalysis.llm_used ?? false)}</span>
@@ -1232,7 +1255,8 @@ export default function App() {
               <span>llm_provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
               <span>llm_model: {normalizedAnalysis.llm_model ?? "none"}</span>
               <span>llm_response_mode: {normalizedAnalysis.llm_response_mode ?? "none"}</span>
-              <span>http_status: {String((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.http_status ?? "none")}</span>
+              <span>llm_http_status: {String((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.http_status ?? "none")}</span>
+              <span>llm warnings: {JSON.stringify((normalizedAnalysis.diagnostics?.llm as Record<string, unknown> | undefined)?.warnings ?? normalizedAnalysis.runtime_warnings ?? [])}</span>
               <span>local_suggestion_count: {normalizedAnalysis.local_suggestion_count ?? suggestions.length}</span>
               <span>ai_suggestion_count: {normalizedAnalysis.ai_suggestion_count ?? 0}</span>
               <span>rejected_ai_suggestion_count: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>

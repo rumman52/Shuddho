@@ -1013,3 +1013,89 @@ def test_llm_debug_exposes_safe_config(monkeypatch) -> None:
     assert "api_key" not in payload
     assert payload["status"] == "completed"
     assert payload["interactive_timeout_seconds"] == 45
+
+def test_api_check_include_llm_false_skips_llm(monkeypatch) -> None:
+    called = False
+
+    def fail_run_ai_check(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("LLM should not run when includeLLM=false")
+
+    monkeypatch.setattr(app_module, "_run_ai_check", fail_run_ai_check)
+    response = check_canonical(
+        ApiCheckRequest(
+            text="আমি ভাত খাই।",
+            language="bn",
+            options={"includeLLM": False, "asyncLLM": False, "mode": "fast", "llmMode": "none"},
+        )
+    )
+    assert called is False
+    assert response.llm_requested is False
+    assert response.llm_attempted is False
+    assert response.llm_status == "skipped"
+
+
+def test_api_check_include_llm_true_merges_valid_ai(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+
+    def fake_run_ai_check(text, request_id, local_suggestions=None, timeout_seconds=None):
+        return app_module.AiCheckResponse(
+            suggestions=[
+                {
+                    "id": "ai-1",
+                    "sentenceId": "s_0",
+                    "original": "ভাত",
+                    "replacement": "ভাতটা",
+                    "issueType": "clarity",
+                    "severity": "low",
+                    "explanation": "আরও নির্দিষ্ট করুন",
+                    "confidence": 0.9,
+                    "start": 4,
+                    "end": 7,
+                }
+            ],
+            correctedText="আমি ভাতটা খাই।",
+            documentAssessment={"summary": "ok"},
+            provider="openrouter",
+            model="openai/gpt-oss-120b:free",
+            llm_enabled=True,
+            configured=True,
+            called=True,
+            parsed=True,
+            status="completed",
+            response_mode="json_schema",
+        )
+
+    monkeypatch.setattr(app_module, "_run_ai_check", fake_run_ai_check)
+    response = check_canonical(
+        ApiCheckRequest(
+            text="আমি ভাত খাই।",
+            language="bn",
+            options={"includeLLM": True, "asyncLLM": False, "mode": "smart", "llmMode": "review_candidates"},
+        )
+    )
+    assert response.llm_requested is True
+    assert response.llm_attempted is True
+    assert response.llm_used is True
+    assert response.llm_provider == "openrouter"
+    assert response.llm_model == "openai/gpt-oss-120b:free"
+    assert response.ai_suggestion_count == 1
+    assert any(s.originalText == "ভাত" and s.provider == "openrouter" for s in response.suggestions)
+
+
+def test_health_deep_reports_safe_llm_configuration(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_MODEL", "openai/gpt-oss-120b:free")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+    response = health_deep()
+    assert response.llm["enabled"] is True
+    assert response.llm["provider"] == "openai"
+    assert response.llm["configured"] is False
+    assert response.llm["status"] == "unsupported_provider"
+    assert "openai_model_id_suspicious_use_openrouter_provider" in response.llm["warnings"]
+    assert "api_key" not in response.llm

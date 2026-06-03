@@ -88,7 +88,11 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "https://shuddho-web-editor.vercel.app",
 ]
-ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
+ALLOWED_ORIGIN_REGEX = (
+    r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.vercel\.app)$"
+    if os.environ.get("SHUDDHO_ALLOW_VERCEL_PREVIEWS", "false").strip().lower() in {"1", "true", "yes", "on"}
+    else r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
+)
 STARTUP_TIMESTAMP = datetime.now(timezone.utc)
 LLM_PROVIDER_ENV_VAR = "SHUDDHO_LLM_PROVIDER"
 LLM_ENABLED_ENV_VAR = "SHUDDHO_ENABLE_LLM"
@@ -737,6 +741,21 @@ def _llm_config() -> tuple[bool, str, str, str | None]:
     return config.enabled, config.provider, config.model, config.api_key
 
 
+def _llm_safe_status() -> dict[str, Any]:
+    config = resolve_llm_config(os.environ)
+    return {
+        "enabled": config.enabled,
+        "provider": config.provider,
+        "model": config.model,
+        "configured": config.configured,
+        "circuit_open": _is_circuit_open(config.provider, config.model),
+        "warnings": list(config.warnings),
+        "status": config.status,
+        "cache_enabled": True,
+        "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
+    }
+
+
 def _sentences_for_ai(text: str) -> list[dict[str, Any]]:
     return [
         {"sentenceId": f"s_{idx}", "text": sentence.text, "start": sentence.start, "end": sentence.end}
@@ -880,10 +899,23 @@ def _run_ai_check(
         ),
     )
     sentences = _sentences_for_ai(ai_text)
-    if config.provider == "openai":
+    cache_key = _cache_key(ai_text, locals_for_prompt, candidates, config.provider, config.model)
+    cache_ttl = int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400") or "86400")
+    cached = llm_cache.get(cache_key)
+    if cached and time.time() - cached.get("created_at", 0) < cache_ttl:
+        result = dict(cached.get("result") or cached)
+        result.setdefault("called", True)
+        result.setdefault("configured", True)
+        result.setdefault("timings", {})
+        result["timings"] = {**(result.get("timings") or {}), "cache_hit": True}
+    elif config.provider == "openai":
         result = run_openai_check(text=ai_text, model=config.model, api_key=config.api_key or "", timeout_seconds=timeout, request_id=request_id, sentences=sentences, local_suggestions=locals_for_prompt, candidates=candidates)
+        if result.get("status") in {"completed", "completed_empty"}:
+            llm_cache[cache_key] = {"created_at": time.time(), "result": result}
     elif config.provider == "openrouter":
         result = run_openrouter_check(text=ai_text, model=config.model, api_key=config.api_key or "", timeout_seconds=timeout, request_id=request_id, sentences=sentences, local_suggestions=locals_for_prompt, candidates=candidates)
+        if result.get("status") in {"completed", "completed_empty"}:
+            llm_cache[cache_key] = {"created_at": time.time(), "result": result}
     else:
         result = LlmProviderResult(provider=config.provider, model=config.model, status="unsupported_provider", warnings=["unsupported_llm_provider"]).model_dump()
     warnings = _dedupe_strings([*config.warnings, *truncation_warnings, *(result.get("warnings") or [])])
@@ -1025,14 +1057,7 @@ def _build_health_deep_response() -> HealthDeepResponse:
         env_file_path=str(ENV_FILE_PATH),
         env_file_loaded=ENV_FILE_LOADED,
         last_startup_timestamp=STARTUP_TIMESTAMP,
-        llm={
-            "enabled": _llm_config()[0],
-            "provider": _llm_config()[1],
-            "model": _llm_config()[2],
-            "configured": bool(_llm_config()[3]),
-            "cache_enabled": True,
-            "circuit_open": _is_circuit_open(_llm_config()[1], _llm_config()[2]),
-        },
+        llm=_llm_safe_status(),
         lexicon=LexiconHealth(
             runtime_source_of_truth=snapshot.runtime_source_of_truth,
             runtime_source=spell_engine.lexicon_source,

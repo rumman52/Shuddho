@@ -82,7 +82,7 @@ test("describeRuntimeState marks deployed localhost backends as misconfigured", 
     transport: "misconfigured",
     health: null,
     hardWarning:
-      "This deployed editor is still pointing to http://127.0.0.1:8000. Set VITE_API_BASE_URL to a public HTTPS tunnel URL; localhost is only valid from local browser sessions.",
+      "This deployed editor is still pointing to localhost. Use a public HTTPS backend URL.",
   });
 
   assert.equal(descriptor.label, "Backend misconfigured - contextual correction disabled");

@@ -52,7 +52,7 @@ test("deriveApiConfiguration disables backend when production VITE_API_BASE_URL 
 
   assert.equal(config.backendAllowed, false);
   assert.equal(config.apiBaseUrl, "");
-  assert.equal(config.hardWarning, "API URL is not configured. Set VITE_API_BASE_URL in Vercel.");
+  assert.equal(config.hardWarning, "API URL is not configured. Set VITE_API_BASE_URL in Vercel to your backend URL.");
 });
 
 test("deriveApiConfiguration rejects localhost for deployed browser origins", () => {
@@ -63,7 +63,7 @@ test("deriveApiConfiguration rejects localhost for deployed browser origins", ()
   });
 
   assert.equal(deployedConfig.backendAllowed, false);
-  assert.match(deployedConfig.hardWarning ?? "", /VITE_API_BASE_URL/);
+  assert.equal(deployedConfig.hardWarning, "This deployed editor is still pointing to localhost. Use a public HTTPS backend URL.");
   assert.equal(deployedConfig.localFallbackEnabled, false);
 });
 
@@ -112,6 +112,50 @@ test("analyzeText calls /api/check on configured gateway base URL", async () => 
     mode: "fast",
   });
 });
+
+test("analyzeText sends Deep AI Review candidate options", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: any }> = [];
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")),
+    });
+    return new Response(
+      JSON.stringify({
+        requestId: "req-ai",
+        language: "bn",
+        normalizedText: "আমি ভাত খাই।",
+        suggestions: [],
+        warnings: [],
+        llm_requested: true,
+        llm_attempted: true,
+        llm_status: "completed_empty",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  try {
+    await analyzeText(
+      { text: "আমি ভাত খাই।", mode: "standard", personal_dictionary: [], user_id: "u1" },
+      { includeLLM: true, asyncLLM: false, llmMode: "review_candidates", mode: "smart" },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+
+  assert.equal(calls[0]?.url, "https://api.example.test/api/check");
+  assert.deepEqual(calls[0]?.body.options, {
+    includeLLM: true,
+    asyncLLM: false,
+    llmMode: "review_candidates",
+    mode: "smart",
+  });
+});
+
 
 test("fetchWithTimeout rejects with friendly timeout error", async () => {
   const originalFetch = globalThis.fetch;
@@ -382,8 +426,8 @@ test("gatewayCheckToAnalyzeResponse preserves llm diagnostics", () => {
 });
 
 test("friendlyLlmWarning maps precise provider-aware LLM statuses", () => {
-  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "openrouter" }), "OpenRouter is not configured: missing backend OPENROUTER_API_KEY.");
-  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "openai" }), "OpenAI is not configured: missing backend OPENAI_API_KEY.");
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "openrouter" }), "OpenRouter is not configured: missing backend OpenRouter API key.");
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "openai" }), "OpenAI is not configured: missing backend OpenAI API key.");
   assert.equal(friendlyLlmWarning({ llm_status: "timeout", llm_provider: "openrouter" }), "AI review timed out; showing local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider", llm_provider: "openai", llm_model: "openai/gpt-oss-120b:free", warnings: ["openai_model_id_suspicious_use_openrouter_provider"] }), "Invalid config: openai/gpt-oss-120b:free must use SHUDDHO_LLM_PROVIDER=openrouter.");
   assert.equal(friendlyLlmWarning({ llm_status: "rate_limited", llm_provider: "openrouter" }), "AI provider rate limit/quota hit; showing local suggestions.");
