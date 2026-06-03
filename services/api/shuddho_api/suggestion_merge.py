@@ -8,6 +8,8 @@ from services.api.shuddho_api.llm_candidates import split_bangla_sentences
 
 SAFE_CHANGE_TYPES = {"punctuation", "spacing"}
 HIGH_CONFIDENCE = 0.75
+VALID_ISSUE_TYPES = {"grammar", "spelling", "punctuation", "spacing", "style", "clarity", "fluency", "tone", "word_choice", "other"}
+VALID_SEVERITIES = {"low", "medium", "high"}
 
 
 def _norm(value: str) -> str:
@@ -63,9 +65,6 @@ def _find_span(text: str, original: str, start: Any = None, end: Any = None, sen
         return s, s + len(original), None
     if len(matches) > 1:
         return -1, -1, "ai_suggestion_ambiguous_span"
-    normalized_span = _find_whitespace_normalized_span(text, original)
-    if normalized_span is not None:
-        return normalized_span[0], normalized_span[1], None
     return -1, -1, "ai_suggestion_original_not_found"
 
 
@@ -87,8 +86,18 @@ def _find_whitespace_normalized_span(text: str, original: str) -> tuple[int, int
 def _looks_sensitive_change(original: str, replacement: str, issue_type: str) -> bool:
     if issue_type in SAFE_CHANGE_TYPES:
         return False
-    tokens = [r"https?://\S+", r"[\w.+-]+@[\w.-]+", r"\b\d+[\w.-]*\b", r"[`\"“”‘’].*[`\"“”‘’]"]
-    return any(re.search(pattern, original) and original != replacement for pattern in tokens)
+    tokens = [
+        r"https?://\S+",
+        r"[\w.+-]+@[\w.-]+",
+        r"\b\d+[\w.-]*\b",
+        r"[`\"“”‘’].*[`\"“”‘’]",
+        r"\b[A-Z]{2,}[-_A-Z0-9]*\d+[-_A-Z0-9]*\b",
+    ]
+    if any(re.search(pattern, original) and original != replacement for pattern in tokens):
+        return True
+    original_numbers = re.findall(r"[০-৯0-9]+(?:[.,][০-৯0-9]+)?", original)
+    replacement_numbers = re.findall(r"[০-৯0-9]+(?:[.,][০-৯0-9]+)?", replacement)
+    return original_numbers != replacement_numbers
 
 
 def validate_ai_suggestions(
@@ -121,12 +130,19 @@ def validate_ai_suggestions(
             warnings.append("ai_suggestion_invalid_confidence")
             continue
         issue_type = str(item.get("issueType") or item.get("type") or "grammar")
+        if issue_type not in VALID_ISSUE_TYPES:
+            warnings.append("ai_suggestion_invalid_issue_type")
+            continue
+        severity = str(item.get("severity") or "medium")
+        if severity not in VALID_SEVERITIES:
+            warnings.append("ai_suggestion_invalid_severity")
+            continue
         sentence_id = str(item.get("sentenceId") or item.get("sentence_id") or "")
         start, end, warning = _find_span(text, original, item.get("start", item.get("span_start")), item.get("end", item.get("span_end")), sentence_id)
         if warning:
             warnings.append(warning)
             continue
-        if _norm(original) == _norm(text) and sentence_count > 1:
+        if _norm(original) == _norm(text) or (len(original) >= max(1, int(len(text) * 0.8)) and sentence_count > 1):
             warnings.append("ai_suggestion_rewrites_whole_text")
             continue
         if sentence_id and sentence_id not in known_sentence_ids:
@@ -143,8 +159,8 @@ def validate_ai_suggestions(
             "sentenceId": sentence_id or "s_0",
             "original": original,
             "replacement": replacement,
-            "issueType": issue_type if issue_type in {"grammar","spelling","punctuation","spacing","style","clarity","fluency","tone","word_choice","other"} else "other",
-            "severity": str(item.get("severity") or "medium") if str(item.get("severity") or "medium") in {"low","medium","high"} else "medium",
+            "issueType": issue_type,
+            "severity": severity,
             "explanation": str(item.get("explanation") or item.get("message") or "প্রস্তাবিত সংশোধন"),
             "confidence": confidence,
             "source": "ai",
@@ -268,10 +284,13 @@ def merge_suggestions(
             continue
         if competing and float(canonical.get("confidence", 0)) < HIGH_CONFIDENCE and competing["type"] in {"spelling", "grammar"}:
             continue
+        if float(canonical.get("confidence", 0)) < HIGH_CONFIDENCE:
+            warnings.append("ai_suggestion_below_confidence_threshold")
+            continue
         by_key[key_for(canonical)] = canonical
         span_type_index[(start, end, canonical["type"])] = canonical
         merged.append(canonical)
 
     actionable = [item for item in merged if _norm(item["originalText"]) != _norm(item["suggestedText"])]
-    actionable.sort(key=lambda item: (item["span"]["startIndex"], item["span"]["endIndex"], item["id"]))
+    actionable.sort(key=lambda item: (item["span"]["startIndex"], item["span"]["endIndex"], item["type"], item["id"]))
     return actionable, warnings

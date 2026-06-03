@@ -74,6 +74,7 @@ OPENROUTER_MODEL=openai/gpt-oss-120b:free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_TIMEOUT_SECONDS=35
 SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
 SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
 ```
@@ -108,6 +109,40 @@ Use these Vercel project settings for the Vite web editor deployment:
 Keep optional dependencies enabled so Vite/esbuild can install the native binary for the Vercel Linux build environment.
 Do not set npm options such as `omit=optional`, `optional=false`, or `ignore-scripts=true` for this deployment.
 
+
+
+### Required production environment split
+
+Vercel frontend should contain only browser-safe Vite variables:
+
+```dotenv
+VITE_API_BASE_URL=https://YOUR_RENDER_BACKEND_PUBLIC_URL
+VITE_USE_GATEWAY=true
+VITE_ENABLE_LOCAL_FALLBACK=false
+```
+
+Never put provider secrets or provider model configuration in Vercel frontend variables: `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_MODEL`, `OPENAI_MODEL`, or `SHUDDHO_LLM_PROVIDER`.
+
+Render/backend should contain the private OpenRouter configuration when using `openai/gpt-oss-120b:free`:
+
+```dotenv
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=<secret>
+OPENROUTER_MODEL=openai/gpt-oss-120b:free
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
+SHUDDHO_LLM_TIMEOUT_SECONDS=35
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+SHUDDHO_MAX_AI_TEXT_CHARS=5000
+SHUDDHO_LLM_MAX_CANDIDATES=8
+SHUDDHO_LLM_MAX_CANDIDATE_CHARS=2200
+SHUDDHO_LLM_MAX_COMPLETION_TOKENS=1400
+```
 
 ## Render FastAPI backend
 

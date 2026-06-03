@@ -160,6 +160,21 @@ response = await fetch(`http://127.0.0.1:${port}/api/check`, {
 assert.equal(response.status, 204);
 assert.equal(response.headers.get('access-control-allow-origin'), 'https://shuddho-web-editor.vercel.app');
 
+response = await fetch(`http://127.0.0.1:${port}/api/check`, {
+  method: 'OPTIONS',
+  headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' },
+});
+assert.equal(response.status, 403);
+body = await response.json();
+assert.equal(body.error, 'cors_origin_not_allowed');
+
+response = await fetch(`http://127.0.0.1:${port}/health`, {
+  headers: { origin: 'https://evil.example' },
+});
+assert.equal(response.status, 403);
+body = await response.json();
+assert.equal(body.error, 'cors_origin_not_allowed');
+
 await close(server);
 await close(pythonServer);
 

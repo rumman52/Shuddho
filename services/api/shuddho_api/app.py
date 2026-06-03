@@ -186,13 +186,16 @@ def _parse_allowed_origins(value: str | None) -> list[str]:
     return allowed_origins
 
 
-def _safe_timings(timings: dict | None) -> dict[str, float]:
-    clean: dict[str, float] = {}
+def _safe_timings(timings: dict | None) -> dict[str, Any]:
+    clean: dict[str, Any] = {}
     if not isinstance(timings, dict):
         return clean
 
     for key, value in timings.items():
         if value is None:
+            continue
+        if isinstance(value, bool):
+            clean[str(key)] = value
             continue
         try:
             clean[str(key)] = float(value)
@@ -544,9 +547,12 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["rejected_ai_suggestion_count"] = rejected_count
     response_payload["correctedText"] = ai.correctedText if ai.status in {"completed", "completed_empty"} and ai.correctedText and "llm_text_truncated" not in ai.warnings else response_payload.get("correctedText") or canonical_payload.text
     response_payload["documentAssessment"] = ai.documentAssessment if ai.status in {"completed", "completed_empty"} and ai.documentAssessment else response_payload.get("documentAssessment") or {}
-    timings: dict[str, int | float] = {"local_ms": local_ms, "total_ms": int((time.time() - started_at) * 1000)}
-    if isinstance(llm_ms, (int, float)):
-        timings["llm_ms"] = llm_ms
+    timings: dict[str, int | float | bool] = {
+        "local_ms": local_ms,
+        "llm_ms": llm_ms or 0,
+        "total_ms": int((time.time() - started_at) * 1000),
+        "cache_hit": bool(ai.timings.get("cache_hit")),
+    }
     response_payload["timings"] = _safe_timings(timings)
     llm_block.update({
         "status": response_payload["llm_status"],
@@ -560,6 +566,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         "response_mode": ai.response_mode,
         "llm_ms": llm_ms,
         "timings": ai.timings,
+        "cache_hit": bool(ai.timings.get("cache_hit")),
         "attempted": response_payload["llm_attempted"],
     })
     response_payload["llm"] = llm_block

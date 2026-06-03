@@ -414,7 +414,7 @@ export interface CheckResponse {
   correctedText?: string;
   documentAssessment?: Record<string, unknown>;
   suggestions: CanonicalSuggestion[];
-  timings?: Record<string, number>;
+  timings?: Record<string, unknown>;
   warnings?: string[];
   llm_requested?: boolean;
   llm_attempted?: boolean;

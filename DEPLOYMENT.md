@@ -39,7 +39,7 @@ The root `vercel.json` is for this monorepo-root deployment shape. The root pack
 Set only public Vite variables in the Vercel frontend project:
 
 ```dotenv
-VITE_API_BASE_URL=https://YOUR_BACKEND_URL
+VITE_API_BASE_URL=https://YOUR_RENDER_BACKEND_PUBLIC_URL
 VITE_USE_GATEWAY=true
 VITE_ENABLE_LOCAL_FALLBACK=false
 ```
@@ -53,6 +53,7 @@ OPENAI_API_KEY
 OPENROUTER_API_KEY
 OPENAI_MODEL
 OPENROUTER_MODEL
+SHUDDHO_LLM_PROVIDER
 ```
 
 Those values belong only in the backend environment. Browser code must route AI review through the backend and must not receive private provider keys.
@@ -70,12 +71,15 @@ OPENROUTER_MODEL=openai/gpt-oss-120b:free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
+SHUDDHO_LLM_TIMEOUT_SECONDS=35
 SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
 SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
 SHUDDHO_MAX_AI_TEXT_CHARS=5000
 SHUDDHO_LLM_MAX_CANDIDATES=8
 SHUDDHO_LLM_MAX_CANDIDATE_CHARS=2200
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_LLM_MAX_COMPLETION_TOKENS=1400
 ```
 
 `openai/gpt-oss-120b:free` is an OpenRouter model ID. Do not set it as `OPENAI_MODEL` and do not use it with `SHUDDHO_LLM_PROVIDER=openai`; the OpenAI provider path is only for official OpenAI model IDs such as `gpt-4o-mini`.

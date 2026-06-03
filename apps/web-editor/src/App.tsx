@@ -1238,24 +1238,29 @@ export default function App() {
               <span>{status}</span>
               <span>Backend: {backendMode}</span>
               <span>apiBaseUrl: {apiConfiguration.apiBaseUrl || "none"}</span>
-              <span>source: {apiConfiguration.source}</span>
+              <span>apiBaseUrl source: {apiConfiguration.source}</span>
               <span>backendAllowed: {String(apiConfiguration.backendAllowed)}</span>
+              <span>hardWarning: {apiConfiguration.hardWarning ?? "none"}</span>
               <span>backendMode: {backendMode}</span>
+              <span>/health status: {String(shallowHealth?.status ?? (shallowHealth?.ok === true ? "ok" : shallowHealth ? "unknown" : "not loaded"))}</span>
+              <span>/health/deep status: {String(backendHealth?.status ?? (backendHealth?.ok === true ? "ok" : backendHealth ? "unknown" : "not loaded"))}</span>
               <span>/health result: {JSON.stringify(shallowHealth ?? null)}</span>
               <span>/health/deep result: {JSON.stringify(backendHealth ?? null)}</span>
               <span>llm.enabled: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.enabled ?? "unknown")}</span>
+              <span>llm.configured: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.configured ?? "unknown")}</span>
               <span>llm.provider: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.provider ?? "unknown")}</span>
               <span>llm.model: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.model ?? "unknown")}</span>
-              <span>llm.configured: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.configured ?? "unknown")}</span>
+              <span>llm.status: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.status ?? "unknown")}</span>
               <span>llm.circuit_open: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.circuit_open ?? "unknown")}</span>
+              <span>llm.warnings: {JSON.stringify((backendHealth?.llm as Record<string, unknown> | undefined)?.warnings ?? [])}</span>
               <span>llm_requested: {String(normalizedAnalysis.llm_requested ?? false)}</span>
               <span>llm_attempted: {String(normalizedAnalysis.llm_attempted ?? false)}</span>
               <span>llm_used: {String(normalizedAnalysis.llm_used ?? false)}</span>
-              <span>llm_status: {normalizedAnalysis.llm_status ?? "not requested"}</span>
+              <span>last check llm_status: {normalizedAnalysis.llm_status ?? "not requested"}</span>
               <span>llm_provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
               <span>llm_model: {normalizedAnalysis.llm_model ?? "none"}</span>
               <span>llm_response_mode: {normalizedAnalysis.llm_response_mode ?? "none"}</span>
-              <span>llm_http_status: {String((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.http_status ?? "none")}</span>
+              <span>last check llm_http_status: {String((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.http_status ?? "none")}</span>
               <span>llm warnings: {JSON.stringify((normalizedAnalysis.diagnostics?.llm as Record<string, unknown> | undefined)?.warnings ?? normalizedAnalysis.runtime_warnings ?? [])}</span>
               <span>local_suggestion_count: {normalizedAnalysis.local_suggestion_count ?? suggestions.length}</span>
               <span>ai_suggestion_count: {normalizedAnalysis.ai_suggestion_count ?? 0}</span>

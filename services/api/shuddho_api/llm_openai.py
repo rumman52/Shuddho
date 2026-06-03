@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any
 
@@ -87,7 +88,7 @@ def _status_for_http(status: int) -> tuple[str, str]:
     if status in {408, 504}:
         return "timeout", "openai_timeout"
     if status in {401, 403}:
-        return "provider_error", f"openai_http_{status}_auth_or_forbidden"
+        return "auth_or_forbidden", f"openai_http_{status}_auth_or_forbidden"
     if status >= 500:
         return "provider_error", "openai_server_error"
     return "provider_error", "openai_http_error"
@@ -150,7 +151,7 @@ def run_openai_check(
         return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="provider_error", response_mode="json_schema", http_status=response.status_code, warnings=["openai_incomplete_response"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     content, parsed_direct, refusal = _extract_response_content(response_json)
     if refusal:
-        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="provider_error", response_mode="json_schema", http_status=response.status_code, warnings=["openai_refusal"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="content_filter", response_mode="json_schema", http_status=response.status_code, warnings=["openai_refusal"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     if content is None and parsed_direct is None:
         return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_schema", response_mode="json_schema", http_status=response.status_code, warnings=["openai_empty_output"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     try:
