@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
@@ -16,6 +16,7 @@ const tests = [
 
 await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
+await copyFile(join(root, "src/App.tsx"), join(outdir, "App.tsx"));
 
 for (const testFile of tests) {
   const outfile = join(outdir, testFile.replace(/\W+/g, "_") + ".mjs");

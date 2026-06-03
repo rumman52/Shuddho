@@ -581,7 +581,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
             "skip_reason": llm_block.get("skip_reason"),
             "llm_ms": llm_ms,
             "timings": ai.timings,
-            "cache_hit": False,
+            "cache_hit": bool(ai.timings.get("cache_hit")),
             "job_id": job_id,
         },
         "local": {"local_engine_mode": os.environ.get("SHUDDHO_LOCAL_ENGINE_MODE", "fallback"), "suggestion_count": local_count},
@@ -753,6 +753,13 @@ def _llm_safe_status() -> dict[str, Any]:
         "status": config.status,
         "cache_enabled": True,
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
+        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
+        "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60")),
+        "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35")),
+        "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
+        "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
+        "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
+        "max_ai_text_chars": int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
     }
 
 
@@ -893,10 +900,8 @@ def _run_ai_check(
         ai_text,
         locals_for_prompt,
         max_sentences=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
-        max_chars=min(
-            int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
-            int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
-        ),
+        max_chars=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
+        max_text_chars=int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
     )
     sentences = _sentences_for_ai(ai_text)
     cache_key = _cache_key(ai_text, locals_for_prompt, candidates, config.provider, config.model)

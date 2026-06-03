@@ -68,7 +68,13 @@ export function createApp(deps: AppDeps = { orchestrator: new SuggestionOrchestr
     const requestId = req.headers['x-request-id']?.toString() ?? randomUUID();
     const start = performance.now();
     try {
-      if (req.method === 'OPTIONS') return send(req, res, 204, {}, requestId);
+      if (req.method === 'OPTIONS') {
+        const origin = req.headers.origin?.toString();
+        if (origin && !resolveAllowedOrigin(origin)) {
+          return send(req, res, 403, { error: 'cors_origin_not_allowed', requestId }, requestId);
+        }
+        return send(req, res, 204, {}, requestId);
+      }
       const url = new URL(req.url ?? '/', 'http://localhost');
       const path = url.pathname;
       if (req.method === 'GET' && path === '/health') return send(req, res, 200, { ok: true, service: 'shuddho-api', provider: deps.orchestrator.providerName() }, requestId);

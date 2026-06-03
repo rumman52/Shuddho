@@ -39,10 +39,17 @@ def split_bangla_sentences(text: str) -> list[SentenceSpan]:
     return spans
 
 
-def build_llm_candidates(text: str, local_suggestions: list[dict[str, Any]], max_sentences: int = 8, max_chars: int = 2200) -> list[dict[str, Any]]:
+def build_llm_candidates(
+    text: str,
+    local_suggestions: list[dict[str, Any]],
+    max_sentences: int = 8,
+    max_chars: int = 2200,
+    max_text_chars: int | None = None,
+) -> list[dict[str, Any]]:
     max_sentences = max(1, int(max_sentences or 8))
     max_chars = max(200, int(max_chars or 2200))
-    text_for_ai = text[:max_chars]
+    effective_text_limit = max_chars if max_text_chars is None else max(max_chars, int(max_text_chars or max_chars))
+    text_for_ai = text[:effective_text_limit]
     sentences = split_bangla_sentences(text_for_ai) or [SentenceSpan(text=text_for_ai, start=0, end=len(text_for_ai))]
 
     scored: list[tuple[int, int, SentenceSpan, list[str], list[str]]] = []
@@ -65,7 +72,7 @@ def build_llm_candidates(text: str, local_suggestions: list[dict[str, Any]], max
             reasons.append("long_sentence")
         if re.search(r"\s+[।,!?]|[।,!?]{2,}|\S[।!?]\S| {2,}", s.text):
             reasons.append("punctuation_spacing_suspicious")
-        if len(text_for_ai) <= max_chars and len(sentences) <= max_sentences:
+        if len(text_for_ai) <= effective_text_limit and len(sentences) <= max_sentences:
             reasons.append("short_text_context")
         score = sum({
             "local_rule_overlap": 5,

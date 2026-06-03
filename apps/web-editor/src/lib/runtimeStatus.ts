@@ -43,7 +43,13 @@ export function describeRuntimeState(args: {
       label: localFallbackEnabled ? "Dev-only browser fallback" : "Backend misconfigured - contextual correction disabled",
       localOnly: localFallbackEnabled,
       degraded: true,
-      warnings: compactWarnings([hardWarning, analysis.backend_warning, ...runtimeWarnings]),
+      warnings: compactWarnings([
+        hardWarning?.includes("VITE_API_BASE_URL")
+          ? hardWarning
+          : `${hardWarning ?? "Backend API URL is misconfigured."} Set VITE_API_BASE_URL to a public backend or gateway URL.`,
+        analysis.backend_warning,
+        ...runtimeWarnings,
+      ]),
     };
   }
 

@@ -1,10 +1,10 @@
-export type SuggestionType = 'grammar' | 'spelling' | 'punctuation' | 'spacing' | 'style' | 'tone' | 'rewrite';
+export type SuggestionType = 'grammar' | 'spelling' | 'punctuation' | 'spacing' | 'style' | 'tone' | 'rewrite' | 'clarity' | 'fluency' | 'word_choice';
 export type SuggestionSeverity = 'low' | 'medium' | 'high';
 export type SuggestionSource = 'rule' | 'spell' | 'grammar' | 'tone' | 'rewrite' | 'ml' | 'model' | 'hybrid';
 export type BanglaDialect = 'standard' | 'west_bengal' | 'bangladesh' | 'mixed';
 export type ClientSurface = 'web' | 'extension' | 'desktop' | 'mobile' | 'api';
 
-export const suggestionTypes: readonly SuggestionType[] = ['grammar', 'spelling', 'punctuation', 'spacing', 'style', 'tone', 'rewrite'];
+export const suggestionTypes: readonly SuggestionType[] = ['grammar', 'spelling', 'punctuation', 'spacing', 'style', 'tone', 'rewrite', 'clarity', 'fluency', 'word_choice'];
 export const suggestionSeverities: readonly SuggestionSeverity[] = ['low', 'medium', 'high'];
 export const suggestionSources: readonly SuggestionSource[] = ['rule', 'spell', 'grammar', 'tone', 'rewrite', 'ml', 'model', 'hybrid'];
 
@@ -45,7 +45,7 @@ export interface CheckRequest {
   dialect?: BanglaDialect;
   userId?: string;
   client?: { surface: ClientSurface; version?: string };
-  options?: { includeGrammar?: boolean; includeSpelling?: boolean; includeStyle?: boolean; includeTone?: boolean; includeRewrite?: boolean };
+  options?: { includeGrammar?: boolean; includeSpelling?: boolean; includeStyle?: boolean; includeTone?: boolean; includeRewrite?: boolean; includeLLM?: boolean; asyncLLM?: boolean; llmMode?: 'review_candidates' | 'none' | string; mode?: 'smart' | 'fast' | string };
   consent?: { productImprovementConsent?: boolean; productImprovement?: boolean };
 }
 
@@ -58,6 +58,20 @@ export interface CheckResponse {
   suggestions: Suggestion[];
   timings?: Record<string, number>;
   warnings?: string[];
+  correctedText?: string;
+  documentAssessment?: Record<string, unknown>;
+  llm_requested?: boolean;
+  llm_attempted?: boolean;
+  llm_used?: boolean;
+  llm_status?: string | null;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+  llm_response_mode?: string | null;
+  llm?: Record<string, unknown> | null;
+  local_suggestion_count?: number;
+  ai_suggestion_count?: number;
+  rejected_ai_suggestion_count?: number;
+  diagnostics?: Record<string, unknown>;
 }
 
 export interface RewriteRequest { text: string; instruction?: string; tone?: string; intent?: string; }

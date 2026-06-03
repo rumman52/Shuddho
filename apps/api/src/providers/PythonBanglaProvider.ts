@@ -50,12 +50,12 @@ export class PythonBanglaProvider implements BanglaSuggestionProvider {
     };
 
     let res = await this.fetchWithTimeout(`${this.baseUrl}/api/check`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-request-id': requestId }, body: JSON.stringify(payload),
     });
 
     if (res.status === 404) {
       res = await this.fetchWithTimeout(`${this.baseUrl}/analyze`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-request-id': requestId },
         body: JSON.stringify({ text: request.text, mode: 'standard', user_id: request.userId }),
       });
     }
