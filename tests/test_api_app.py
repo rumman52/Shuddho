@@ -1011,7 +1011,7 @@ def test_llm_debug_exposes_safe_config(monkeypatch) -> None:
     payload = response.json()
     assert payload["api_key_present"] is True
     assert "api_key" not in payload
-    assert payload["status"] == "completed"
+    assert payload["status"] == "ready"
     assert payload["interactive_timeout_seconds"] == 45
 
 def test_api_check_include_llm_false_skips_llm(monkeypatch) -> None:

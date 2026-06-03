@@ -51,8 +51,6 @@ const BACKEND_UNAVAILABLE_MESSAGE =
 const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_UNAVAILABLE_MESSAGE;
 const REQUEST_TIMEOUT_MESSAGE =
   "Request timed out. Please try again or check backend deployment.";
-const SERVER_TIMEOUT_FALLBACK_MESSAGE =
-  "Server is taking too long. Showing local suggestions only.";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
 
 type BackendMode = "checking" | "online" | "offline" | "misconfigured";
@@ -125,7 +123,7 @@ export default function App() {
       describeRuntimeState({
         analysis: normalizedAnalysis,
         transport: backendMode,
-        health: backendHealth?.detector
+        health: backendHealth?.ok === true || backendHealth?.status === "ok"
           ? (backendHealth as HealthDeepResponse)
           : null,
         hardWarning: apiConfiguration.hardWarning,
@@ -250,10 +248,17 @@ export default function App() {
         throw healthResult.reason;
       }
       setShallowHealth(healthResult.value);
-      setBackendHealth(
-        deepResult.status === "fulfilled" ? deepResult.value : healthResult.value,
-      );
+      if (healthResult.value?.ok !== true) {
+        throw new Error("Backend health response did not report ok:true.");
+      }
+      const nextHealth = deepResult.status === "fulfilled" ? deepResult.value : healthResult.value;
+      setBackendHealth(nextHealth);
       setBackendMode("online");
+      if (nextHealth?.corrector_loaded === false || nextHealth?.corrector?.loaded === false) {
+        setStatus("Backend connected, but sentence-level corrector is degraded.");
+      } else {
+        setStatus("Backend connected.");
+      }
     } catch (error) {
       if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
         console.debug("Backend health check failed", error);
@@ -407,7 +412,9 @@ export default function App() {
         return;
       }
       const message = error instanceof Error ? error.message : "";
-      if (message.includes("Backend validation failed:")) {
+      const checkErrorMessage = describeAnalyzeTextError(message, includeLLM);
+      const shouldMarkOffline = checkErrorMessage.startsWith("Browser could not reach backend");
+      if (message.includes("HTTP 422") || message.includes("Backend validation failed:")) {
         setStatus(
           "Backend validation failed. Request payload does not match /api/check schema.",
         );
@@ -426,17 +433,13 @@ export default function App() {
               "backend_offline_contextual_disabled",
             ),
       );
-      setBackendMode("offline");
+      setBackendMode(shouldMarkOffline ? "offline" : "online");
       setTone(null);
       setRewriteResult(null);
       setStatus(
-        message.includes("timed out")
-          ? includeLLM
-            ? SERVER_TIMEOUT_FALLBACK_MESSAGE
-            : REQUEST_TIMEOUT_MESSAGE
-          : apiConfiguration.localFallbackEnabled
-            ? DEV_LOCAL_FALLBACK_DESCRIPTION
-            : BACKEND_UNAVAILABLE_MESSAGE,
+        apiConfiguration.localFallbackEnabled && shouldMarkOffline
+          ? DEV_LOCAL_FALLBACK_DESCRIPTION
+          : checkErrorMessage,
       );
     } finally {
       if (includeLLM) {
@@ -700,6 +703,14 @@ export default function App() {
     setApiBaseUrlDraft(nextBaseUrl);
     setStatus(`API base URL reset to ${nextBaseUrl}`);
     void refreshBackendHealth();
+  }
+
+  function resetApiUrlOverrideAndReload() {
+    clearApiBaseUrlOverride();
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("shuddho-api-base-url");
+      window.location.reload();
+    }
   }
 
   async function markToneFeedback(action: FeedbackAction) {
@@ -1238,7 +1249,11 @@ export default function App() {
               <span>{status}</span>
               <span>Backend: {backendMode}</span>
               <span>apiBaseUrl: {apiConfiguration.apiBaseUrl || "none"}</span>
+              <span>apiBaseUrlSource: {apiConfiguration.apiBaseUrlSource}</span>
               <span>apiBaseUrl source: {apiConfiguration.source}</span>
+              <span>envApiBaseUrlPresent: {String(apiConfiguration.envApiBaseUrlPresent)}</span>
+              <span>localStorageOverridePresent: {String(apiConfiguration.localStorageOverridePresent)}</span>
+              <span>localStorageOverrideIgnored: {String(apiConfiguration.localStorageOverrideIgnored)}</span>
               <span>backendAllowed: {String(apiConfiguration.backendAllowed)}</span>
               <span>hardWarning: {apiConfiguration.hardWarning ?? "none"}</span>
               <span>backendMode: {backendMode}</span>
@@ -1308,6 +1323,13 @@ export default function App() {
                     onClick={resetApiBaseUrl}
                   >
                     Reset
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={resetApiUrlOverrideAndReload}
+                  >
+                    Reset API URL override
                   </button>
                 </div>
               </label>
@@ -1488,6 +1510,29 @@ function displaySuggestionType(suggestion: Suggestion): string {
     return "Clarity";
   }
   return "Spelling";
+}
+
+function describeAnalyzeTextError(message: string, includeLLM: boolean): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return includeLLM ? "AI review timed out. Showing local suggestions." : REQUEST_TIMEOUT_MESSAGE;
+  }
+  if (message.includes("HTTP 404") || /with 404[:;]/.test(message)) {
+    return "Backend route /api/check was not found.";
+  }
+  if (message.includes("HTTP 422") || /with 422[:;]/.test(message)) {
+    return "Backend validation failed. Request payload does not match /api/check schema.";
+  }
+  if (message.includes("HTTP 500") || /with 500[:;]/.test(message)) {
+    return "Backend crashed during analysis. Check Render logs.";
+  }
+  if (lower.includes("openrouter") || lower.includes("provider_error")) {
+    return `OpenRouter provider error while reviewing. ${message}`.slice(0, 240);
+  }
+  if (lower.includes("network request failed") || lower.includes("failed to fetch") || lower.includes("cors")) {
+    return "Browser could not reach backend. Check CORS and VITE_API_BASE_URL.";
+  }
+  return message || "Backend analysis failed. Check /api/check response and Render logs.";
 }
 
 function buildLocalFallbackResponse(

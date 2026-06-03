@@ -43,6 +43,37 @@ test("deriveApiConfiguration uses VITE_API_BASE_URL and normalizes trailing slas
   assert.equal(config.hardWarning, null);
 });
 
+test("production VITE_API_BASE_URL takes priority over stale localStorage override", () => {
+  const config = deriveApiConfiguration({
+    browserHostname: "shuddho-web-editor.vercel.app",
+    configuredBaseUrl: "https://shuddho-api.onrender.com",
+    storedBaseUrl: "https://old-backend.example.test",
+    isProductionBuild: true,
+  });
+
+  assert.equal(config.apiBaseUrl, "https://shuddho-api.onrender.com");
+  assert.equal(config.apiBaseUrlSource, "environment");
+  assert.equal(config.envApiBaseUrlPresent, true);
+  assert.equal(config.localStorageOverridePresent, true);
+  assert.equal(config.localStorageOverrideIgnored, true);
+  assert.equal(config.backendAllowed, true);
+  assert.equal(config.hardWarning, null);
+});
+
+test("production localStorage override is allowed only with explicit debug override", () => {
+  const config = deriveApiConfiguration({
+    browserHostname: "shuddho-web-editor.vercel.app",
+    configuredBaseUrl: "https://shuddho-api.onrender.com",
+    storedBaseUrl: "https://debug-backend.example.test",
+    isProductionBuild: true,
+    allowLocalStorageOverride: true,
+  });
+
+  assert.equal(config.apiBaseUrl, "https://debug-backend.example.test");
+  assert.equal(config.apiBaseUrlSource, "override");
+  assert.equal(config.localStorageOverrideIgnored, false);
+});
+
 test("deriveApiConfiguration disables backend when production VITE_API_BASE_URL is missing", () => {
   const config = deriveApiConfiguration({
     browserHostname: "shuddho-web-editor.vercel.app",
