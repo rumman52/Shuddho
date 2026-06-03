@@ -1099,3 +1099,110 @@ def test_health_deep_reports_safe_llm_configuration(monkeypatch) -> None:
     assert response.llm["status"] == "unsupported_provider"
     assert "openai_model_id_suspicious_use_openrouter_provider" in response.llm["warnings"]
     assert "api_key" not in response.llm
+
+
+def test_api_check_local_suggestions_continue_when_corrector_missing(monkeypatch) -> None:
+    class StubCorrectorService:
+        checkpoint_path = "artifacts/corrector/corrector-base"
+
+        def is_loaded(self) -> bool:
+            return False
+
+        def runtime_status(self):
+            return type(
+                "CorrectorStatus",
+                (),
+                {
+                    "enabled": True,
+                    "loaded": False,
+                    "status": "missing_checkpoint",
+                    "reason": "missing required corrector checkpoint files: best_model.pt",
+                    "checkpoint": self.checkpoint_path,
+                    "checkpoint_exists": False,
+                    "backend_name": "disabled",
+                    "threshold": 0.86,
+                },
+            )()
+
+    monkeypatch.setattr(app_module, "corrector_service", StubCorrectorService())
+    response = check_canonical(
+        ApiCheckRequest(
+            text="আমি  আমি ভাত খাই।",
+            language="bn",
+            options={"includeLLM": False, "asyncLLM": False, "mode": "fast", "llmMode": "none"},
+        )
+    )
+
+    assert response.local_suggestion_count == len(response.suggestions)
+    assert response.local_suggestion_count > 0
+    assert "sentence_level_corrector_unavailable" in response.warnings
+    assert response.diagnostics["backendReachable"] is True
+    assert response.diagnostics["backendStatus"] == "ok"
+    assert response.diagnostics["correctorLoaded"] is False
+    assert response.diagnostics["correctorReason"] == "missing required corrector checkpoint files: best_model.pt"
+
+
+def test_api_check_calls_openrouter_when_llm_configured_and_corrector_missing(monkeypatch) -> None:
+    class StubCorrectorService:
+        checkpoint_path = "artifacts/corrector/corrector-base"
+
+        def is_loaded(self) -> bool:
+            return False
+
+        def runtime_status(self):
+            return type(
+                "CorrectorStatus",
+                (),
+                {
+                    "enabled": True,
+                    "loaded": False,
+                    "status": "missing_checkpoint",
+                    "reason": "missing required corrector checkpoint files: best_model.pt",
+                    "checkpoint": self.checkpoint_path,
+                    "checkpoint_exists": False,
+                    "backend_name": "disabled",
+                    "threshold": 0.86,
+                },
+            )()
+
+    calls = []
+
+    def fake_run_ai_check(text, request_id, local_suggestions=None, timeout_seconds=None):
+        calls.append({"text": text, "local_suggestions": list(local_suggestions or [])})
+        return app_module.AiCheckResponse(
+            suggestions=[],
+            provider="openrouter",
+            model="openai/gpt-oss-120b:free",
+            llm_enabled=True,
+            configured=True,
+            called=True,
+            parsed=True,
+            status="completed_empty",
+            response_mode="json_schema",
+        )
+
+    monkeypatch.setattr(app_module, "corrector_service", StubCorrectorService())
+    monkeypatch.setattr(app_module, "_run_ai_check", fake_run_ai_check)
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+
+    response = check_canonical(
+        ApiCheckRequest(
+            text="আমি  আমি ভাত খাই।",
+            language="bn",
+            options={"includeLLM": True, "asyncLLM": False, "mode": "smart", "llmMode": "review_candidates"},
+        )
+    )
+
+    assert calls
+    assert response.llm_requested is True
+    assert response.llm_attempted is True
+    assert response.llm_provider == "openrouter"
+    assert response.llm_model == "openai/gpt-oss-120b:free"
+    assert "sentence_level_corrector_unavailable" in response.warnings
+    assert response.diagnostics["llmEnabled"] is True
+    assert response.diagnostics["llmConfigured"] is True
+    assert response.diagnostics["llmProvider"] == "openrouter"
+    assert response.diagnostics["llmModel"] == "openai/gpt-oss-120b:free"

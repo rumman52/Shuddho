@@ -369,7 +369,17 @@ export async function checkBackendHealth(): Promise<{
       };
     }
 
-    return { ok: true };
+    const health = (await safeJson(response)) as BackendHealthResponse | null;
+    if (health?.ok === true) {
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      message: health
+        ? "Backend health response did not report ok:true."
+        : "Backend health response was not valid JSON.",
+    };
   } catch {
     return {
       ok: false,
