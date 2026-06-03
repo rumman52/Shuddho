@@ -6,8 +6,8 @@ export class PythonBanglaProvider implements BanglaSuggestionProvider {
   private readonly timeoutMs: number;
 
   constructor(private baseUrl = process.env.SHUDDHO_PYTHON_API_URL ?? 'http://127.0.0.1:8000') {
-    const configuredTimeoutMs = Number(process.env.SHUDDHO_PROVIDER_TIMEOUT_MS ?? 25000);
-    this.timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0 ? configuredTimeoutMs : 25000;
+    const configuredTimeoutMs = Number(process.env.SHUDDHO_PROVIDER_TIMEOUT_MS ?? 50000);
+    this.timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0 ? configuredTimeoutMs : 50000;
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {

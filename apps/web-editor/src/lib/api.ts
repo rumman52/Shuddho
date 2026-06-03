@@ -166,9 +166,9 @@ export function deriveApiConfiguration(args: {
   const localFallbackEnabled = Boolean(enableLocalFallback);
   const hardWarning =
     !isLocalOrigin && targetsLocalhost
-      ? `This deployed editor is still pointing to ${apiBaseUrl}. Set VITE_API_BASE_URL to a public HTTPS tunnel URL; localhost is only valid from local browser sessions.`
+      ? "This deployed editor is still pointing to localhost. Use a public HTTPS backend URL."
       : isProd && !hasConfiguredBaseUrl
-        ? "API URL is not configured. Set VITE_API_BASE_URL in Vercel."
+        ? "API URL is not configured. Set VITE_API_BASE_URL in Vercel to your backend URL."
         : null;
 
   return {
@@ -329,6 +329,16 @@ export function getHealth(): Promise<BackendHealthResponse> {
   );
 }
 
+export function getHealthDeep(): Promise<BackendHealthResponse> {
+  return request<BackendHealthResponse>(
+    "/health/deep",
+    {
+      method: "GET",
+    },
+    HEALTH_REQUEST_TIMEOUT_MS,
+  );
+}
+
 export async function checkBackendHealth(): Promise<{
   ok: boolean;
   message?: string;
@@ -366,7 +376,7 @@ export async function checkBackendHealth(): Promise<{
     return {
       ok: false,
       message:
-        "Backend is unavailable. You can still use local checks. AI review will be disabled until the server is reachable.",
+        "Backend is unavailable. Check backend deployment, CORS, and /health.",
     };
   }
 }
@@ -601,7 +611,7 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   const httpStatus = Number(llm.http_status ?? 0);
   if (!status) return null;
   if (status === "completed") {
-    return (response.ai_suggestion_count ?? 0) > 0 ? `${providerLabel} reviewed the text and suggestions were merged.` : null;
+    return null;
   }
   if (status === "completed_empty") return `${providerLabel} reviewed the text but found no extra high-confidence suggestions.`;
   if (status === "skipped") {
@@ -609,8 +619,8 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   }
   if (status === "missing_key") {
     return provider === "openrouter"
-      ? "OpenRouter is not configured: missing backend OPENROUTER_API_KEY."
-      : "OpenAI is not configured: missing backend OPENAI_API_KEY.";
+      ? "OpenRouter is not configured: missing backend OpenRouter API key."
+      : "OpenAI is not configured: missing backend OpenAI API key.";
   }
   if (status === "unsupported_provider") {
     if (warnings.some((w) => w.includes("openai_model_id_suspicious_use_openrouter_provider")) || model.includes("/") || model.includes(":free")) {
