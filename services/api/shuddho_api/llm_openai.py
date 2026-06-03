@@ -128,7 +128,7 @@ def run_openai_check(
                 "schema": required_output_schema(),
             }
         },
-        "max_output_tokens": 1600,
+        "max_output_tokens": int(os.environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400") or "1400"),
     }
     started = time.time()
     try:

@@ -15,19 +15,31 @@ Quality = Literal["poor", "fair", "good", "excellent"]
 
 PROMPT_SCHEMA_VERSION = "ai-review-v2"
 
-SYSTEM_PROMPT = (
-    "You are Shuddho AI Reviewer, a professional Bangla writing reviewer. "
-    "Review Bangla writing with full context from fullText and candidateSentences. "
-    "Return only JSON matching the schema. Do not include markdown or commentary. "
-    "Do not rewrite the whole document as a suggestion. Only return precise, actionable, minimal suggestions. "
-    "Each suggestion.original MUST be an exact substring of fullText, and start/end MUST exactly identify that substring. "
-    "Preserve user intent, meaning, tone, names, numbers, IDs, URLs, emails, quoted text, code, and correct punctuation. "
-    "Prefer short corrections for spelling, grammar, punctuation, spacing, word choice, clarity, and fluency. "
-    "Never invent text or create suggestions for text that does not exist. replacement must differ from original. "
-    "If no confident suggestion exists, return suggestions as an empty array and correctedText equal to the original text. "
-    "Required top-level output fields: requestId, correctedText, documentAssessment, suggestions. "
-    "Each suggestion must include id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start, and end."
-)
+SYSTEM_PROMPT = """You are Shuddho AI Reviewer, a professional Bangla writing reviewer.
+
+Task:
+Review Bangla writing using the provided fullText, sentence spans, localSuggestions, and candidateSentences.
+Return ONLY valid JSON that matches the supplied schema exactly.
+
+Hard rules:
+- Never return markdown.
+- Never return commentary outside JSON.
+- Never rewrite the full document as one suggestion.
+- Return only precise, minimal, actionable edits.
+- Each suggestion.original MUST be an exact substring of fullText.
+- start and end MUST identify the exact original substring in fullText.
+- Preserve meaning, names, numbers, IDs, URLs, emails, quoted text, code, and user intent.
+- Prefer small spelling, grammar, punctuation, spacing, clarity, fluency, or word-choice edits.
+- If uncertain, do not guess.
+- If there is no confident edit, return suggestions: [] and correctedText equal to the input fullText.
+- replacement must differ from original.
+- Do not invent spans, sentence IDs, or fields.
+
+Required top-level fields:
+requestId, correctedText, documentAssessment, suggestions
+
+Required suggestion fields:
+id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start, end"""
 
 
 class DocumentAssessment(BaseModel):
@@ -45,9 +57,8 @@ class AIReviewSuggestion(BaseModel):
     severity: Severity = "medium"
     explanation: str = ""
     confidence: float = Field(ge=0.0, le=1.0)
-    source: Literal["ai"] = "ai"
-    start: int | None = None
-    end: int | None = None
+    start: int = Field(ge=0)
+    end: int = Field(ge=1)
 
     @field_validator("original", "replacement")
     @classmethod
@@ -130,7 +141,7 @@ def normalize_review_payload(parsed: dict[str, Any], request_id: str, original_t
         copy.setdefault("severity", "medium")
         copy.setdefault("explanation", copy.get("message") or copy.get("explanationBn") or "")
         copy.setdefault("confidence", 0.75)
-        copy["source"] = "ai"
+        copy.pop("source", None)
         if "start" not in copy and "span_start" in copy:
             copy["start"] = copy.get("span_start")
         if "end" not in copy and "span_end" in copy:

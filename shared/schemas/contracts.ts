@@ -297,9 +297,20 @@ export interface HealthDeepResponse extends HealthResponse {
   last_startup_timestamp: string;
   llm?: {
     enabled: boolean;
+    configured: boolean;
     provider: string;
     model: string;
-    configured: boolean;
+    status?: string;
+    warnings?: string[];
+    circuit_open?: boolean;
+    on_check?: "manual" | "always" | "never" | string;
+    interactive_timeout_seconds?: number;
+    background_timeout_seconds?: number;
+    timeout_seconds?: number;
+    cache_ttl_seconds?: number;
+    max_candidates?: number;
+    max_candidate_chars?: number;
+    max_ai_text_chars?: number;
   };
   lexicon: LexiconHealth;
 }
@@ -327,7 +338,10 @@ export type CanonicalSuggestionType =
   | "spacing"
   | "style"
   | "tone"
-  | "rewrite";
+  | "rewrite"
+  | "clarity"
+  | "fluency"
+  | "word_choice";
 export type CanonicalSuggestionSeverity = "low" | "medium" | "high";
 export type CanonicalSuggestionSource =
   | "rule"
@@ -336,6 +350,7 @@ export type CanonicalSuggestionSource =
   | "tone"
   | "rewrite"
   | "ml"
+  | "model"
   | "hybrid";
 export interface TextSpan {
   startIndex: number;
@@ -381,6 +396,13 @@ export interface CheckRequest {
     includeStyle?: boolean;
     includeTone?: boolean;
     includeRewrite?: boolean;
+    includeLLM?: boolean;
+    asyncLLM?: boolean;
+    llmMode?: "review_candidates" | "none" | string;
+    mode?: "smart" | "fast" | string;
+  };
+  consent?: {
+    productImprovementConsent?: boolean;
   };
 }
 export interface CheckResponse {
@@ -389,7 +411,21 @@ export interface CheckResponse {
   revision?: number;
   language: "bn";
   normalizedText?: string;
+  correctedText?: string;
+  documentAssessment?: Record<string, unknown>;
   suggestions: CanonicalSuggestion[];
   timings?: Record<string, number>;
   warnings?: string[];
+  llm_requested?: boolean;
+  llm_attempted?: boolean;
+  llm_used?: boolean;
+  llm_status?: string | null;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+  llm_response_mode?: string | null;
+  llm?: Record<string, unknown> | null;
+  local_suggestion_count?: number;
+  ai_suggestion_count?: number;
+  rejected_ai_suggestion_count?: number;
+  diagnostics?: Record<string, unknown>;
 }

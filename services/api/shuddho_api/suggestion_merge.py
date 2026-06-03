@@ -26,9 +26,28 @@ def _sentence_index(text: str) -> list[dict[str, Any]]:
     ] or [{"sentenceId": "s_0", "id": "s_0", "text": text, "start": 0, "end": len(text)}]
 
 
+def _as_index(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 def _find_span(text: str, original: str, start: Any = None, end: Any = None, sentence_id: str | None = None) -> tuple[int, int, str | None]:
-    if isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= len(text) and text[start:end] == original:
-        return start, end, None
+    start_index = _as_index(start)
+    end_index = _as_index(end)
+    if start_index is not None or end_index is not None:
+        if (
+            start_index is not None
+            and end_index is not None
+            and 0 <= start_index < end_index <= len(text)
+            and text[start_index:end_index] == original
+        ):
+            return start_index, end_index, None
+        return -1, -1, "ai_suggestion_invalid_span"
     matches = [m.start() for m in re.finditer(re.escape(original), text)]
     if matches and sentence_id:
         for sentence in _sentence_index(text):
@@ -103,7 +122,7 @@ def validate_ai_suggestions(
             continue
         issue_type = str(item.get("issueType") or item.get("type") or "grammar")
         sentence_id = str(item.get("sentenceId") or item.get("sentence_id") or "")
-        start, end, warning = _find_span(text, original, item.get("start") or item.get("span_start"), item.get("end") or item.get("span_end"), sentence_id)
+        start, end, warning = _find_span(text, original, item.get("start", item.get("span_start")), item.get("end", item.get("span_end")), sentence_id)
         if warning:
             warnings.append(warning)
             continue
@@ -112,7 +131,10 @@ def validate_ai_suggestions(
             continue
         if sentence_id and sentence_id not in known_sentence_ids:
             resolved = next((s for s in (sentences or _sentence_index(text)) if s["start"] <= start and end <= s["end"]), None)
-            sentence_id = str((resolved or {}).get("sentenceId") or (resolved or {}).get("id") or sentence_id)
+            if not resolved:
+                warnings.append("ai_suggestion_unknown_sentence_id")
+                continue
+            sentence_id = str(resolved.get("sentenceId") or resolved.get("id") or sentence_id)
         if _looks_sensitive_change(original, replacement, issue_type):
             warnings.append("ai_suggestion_sensitive_text_change_rejected")
             continue
@@ -175,7 +197,7 @@ def _canonicalize_ai(item: dict[str, Any], provider: str, model: str) -> dict[st
         "explanationEn": None,
         "span": {"startIndex": start, "endIndex": end},
         "confidence": float(item.get("confidence", 0.75)),
-        "source": "model",
+        "source": "ml",
         "provider": provider,
         "metadata": {"sources": ["ai"], "provider": provider, "model": model, "mergeStatus": "ai_only"},
     }
