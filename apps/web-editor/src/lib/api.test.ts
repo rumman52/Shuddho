@@ -60,7 +60,7 @@ test("production VITE_API_BASE_URL takes priority over stale localStorage overri
   assert.equal(config.hardWarning, null);
 });
 
-test("production localStorage override is allowed only with explicit debug override", () => {
+test("production ignores localStorage override even with explicit debug override", () => {
   const config = deriveApiConfiguration({
     browserHostname: "shuddho-web-editor.vercel.app",
     configuredBaseUrl: "https://shuddho-api.onrender.com",
@@ -69,9 +69,9 @@ test("production localStorage override is allowed only with explicit debug overr
     allowLocalStorageOverride: true,
   });
 
-  assert.equal(config.apiBaseUrl, "https://debug-backend.example.test");
-  assert.equal(config.apiBaseUrlSource, "override");
-  assert.equal(config.localStorageOverrideIgnored, false);
+  assert.equal(config.apiBaseUrl, "https://shuddho-api.onrender.com");
+  assert.equal(config.apiBaseUrlSource, "environment");
+  assert.equal(config.localStorageOverrideIgnored, true);
 });
 
 test("deriveApiConfiguration disables backend when production VITE_API_BASE_URL is missing", () => {

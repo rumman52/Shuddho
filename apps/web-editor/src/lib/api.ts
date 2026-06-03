@@ -142,7 +142,6 @@ export function deriveApiConfiguration(args: {
     browserHostname,
     enableLocalFallback,
     isProductionBuild,
-    allowLocalStorageOverride,
   } = args;
   const isLocalOrigin = isLocalBrowserOrigin(browserHostname);
   const isProd = Boolean(isProductionBuild);
@@ -153,12 +152,13 @@ export function deriveApiConfiguration(args: {
     : null;
   const envApiBaseUrlPresent = Boolean(configuredValue);
   const localStorageOverridePresent = Boolean(storedValue);
-  const explicitDebugOverride = Boolean(allowLocalStorageOverride);
+  // Production deployments must always use the configured backend URL.
+  // A stale localStorage override from a previous debug session can otherwise
+  // pin the Vercel app to an old backend and make /api/check look unavailable.
   const storedValueCanOverride = Boolean(
     normalizedStoredValue &&
-    !(isLocalApiBaseUrl(normalizedStoredValue) && !isLocalOrigin) &&
-    (!isProd || explicitDebugOverride) &&
-    (!isProd || !configuredValue || explicitDebugOverride),
+    !isProd &&
+    !(isLocalApiBaseUrl(normalizedStoredValue) && !isLocalOrigin),
   );
   const localStorageOverrideIgnored = Boolean(
     storedValue && !storedValueCanOverride && (isProd || configuredValue),
@@ -766,6 +766,11 @@ function readLocalFallbackFlag(): boolean {
 }
 
 function readApiOverrideDebugFlag(): boolean {
+  // Kept for compatibility with tests/callers of deriveApiConfiguration, but
+  // deriveApiConfiguration intentionally ignores overrides in production.
+  if (readProductionFlag()) {
+    return false;
+  }
   if (readViteBoolean("VITE_ALLOW_API_BASE_URL_OVERRIDE", false)) {
     return true;
   }

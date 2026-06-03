@@ -53,7 +53,7 @@ const REQUEST_TIMEOUT_MESSAGE =
   "Request timed out. Please try again or check backend deployment.";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
 
-type BackendMode = "checking" | "online" | "offline" | "misconfigured";
+type BackendMode = "checking" | "connected" | "degraded" | "ready" | "unavailable" | "misconfigured";
 
 export default function App() {
   const [text, setText] = useState(INITIAL_TEXT);
@@ -122,7 +122,7 @@ export default function App() {
     () =>
       describeRuntimeState({
         analysis: normalizedAnalysis,
-        transport: backendMode,
+        transport: backendTransportForRuntime(backendMode),
         health: backendHealth?.ok === true || backendHealth?.status === "ok"
           ? (backendHealth as HealthDeepResponse)
           : null,
@@ -175,7 +175,7 @@ export default function App() {
   );
   const connectivityBanner = apiConfiguration.hardWarning
     ? apiConfiguration.hardWarning
-    : backendMode === "offline"
+    : backendMode === "unavailable"
       ? BACKEND_UNAVAILABLE_MESSAGE
       : null;
 
@@ -253,9 +253,12 @@ export default function App() {
       }
       const nextHealth = deepResult.status === "fulfilled" ? deepResult.value : healthResult.value;
       setBackendHealth(nextHealth);
-      setBackendMode("online");
-      if (nextHealth?.corrector_loaded === false || nextHealth?.corrector?.loaded === false) {
+      const nextMode = deriveBackendModeFromHealth(healthResult.value, nextHealth);
+      setBackendMode(nextMode);
+      if (nextMode === "degraded") {
         setStatus("Backend connected, but sentence-level corrector is degraded.");
+      } else if (nextMode === "ready") {
+        setStatus("Backend connected and engines loaded.");
       } else {
         setStatus("Backend connected.");
       }
@@ -265,7 +268,7 @@ export default function App() {
       }
       setBackendHealth(null);
       setShallowHealth(null);
-      setBackendMode("offline");
+      setBackendMode("unavailable");
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
@@ -389,7 +392,7 @@ export default function App() {
         ? normalizedResponse.suggestions
         : [];
       setAnalysis(normalizedResponse);
-      setBackendMode("online");
+      setBackendMode(deriveBackendModeFromHealth(shallowHealth, backendHealth));
       const responseWarnings = Array.isArray(normalizedResponse.runtime_warnings)
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
@@ -433,7 +436,7 @@ export default function App() {
               "backend_offline_contextual_disabled",
             ),
       );
-      setBackendMode(shouldMarkOffline ? "offline" : "online");
+      setBackendMode(shouldMarkOffline ? "unavailable" : deriveBackendModeFromHealth(shallowHealth, backendHealth));
       setTone(null);
       setRewriteResult(null);
       setStatus(
@@ -593,7 +596,7 @@ export default function App() {
       suggestion?.span_end ??
       (selection.end > selection.start ? selection.end : null);
 
-    if (backendMode !== "online") {
+    if (!isBackendConnected(backendMode)) {
       setStatus(SUGGESTIONS_DISABLED_MESSAGE);
       return;
     }
@@ -672,7 +675,7 @@ export default function App() {
   }
 
   async function savePreferencesToBackend() {
-    if (backendMode !== "online") {
+    if (!isBackendConnected(backendMode)) {
       setStatus("Preferences saved locally for this session");
       return;
     }
@@ -1219,7 +1222,7 @@ export default function App() {
             </div>
           ) : (
             <p className="empty-state">
-              {backendMode === "online" || apiConfiguration.localFallbackEnabled
+              {isBackendConnected(backendMode) || apiConfiguration.localFallbackEnabled
                 ? "No high-confidence correction found in this filter."
                 : SUGGESTIONS_DISABLED_MESSAGE}
             </p>
@@ -1257,6 +1260,8 @@ export default function App() {
               <span>backendAllowed: {String(apiConfiguration.backendAllowed)}</span>
               <span>hardWarning: {apiConfiguration.hardWarning ?? "none"}</span>
               <span>backendMode: {backendMode}</span>
+              <span>healthOk: {String(shallowHealth?.ok === true)}</span>
+              <span>deepHealthOk: {String(backendHealth?.ok === true)}</span>
               <span>/health status: {String(shallowHealth?.status ?? (shallowHealth?.ok === true ? "ok" : shallowHealth ? "unknown" : "not loaded"))}</span>
               <span>/health/deep status: {String(backendHealth?.status ?? (backendHealth?.ok === true ? "ok" : backendHealth ? "unknown" : "not loaded"))}</span>
               <span>/health result: {JSON.stringify(shallowHealth ?? null)}</span>
@@ -1510,6 +1515,38 @@ function displaySuggestionType(suggestion: Suggestion): string {
     return "Clarity";
   }
   return "Spelling";
+}
+
+function isBackendConnected(backendMode: BackendMode): boolean {
+  return ["connected", "degraded", "ready"].includes(backendMode);
+}
+
+function backendTransportForRuntime(backendMode: BackendMode): "checking" | "online" | "offline" | "misconfigured" {
+  if (backendMode === "connected" || backendMode === "degraded" || backendMode === "ready") {
+    return "online";
+  }
+  if (backendMode === "unavailable") {
+    return "offline";
+  }
+  return backendMode;
+}
+
+function deriveBackendModeFromHealth(
+  health: BackendHealthResponse | null,
+  deepHealth: BackendHealthResponse | null,
+): BackendMode {
+  if (health?.ok !== true) {
+    return "unavailable";
+  }
+  const correctorLoaded = deepHealth?.corrector_loaded ?? deepHealth?.corrector?.loaded;
+  const detectorLoaded = deepHealth?.detector_loaded ?? deepHealth?.detector?.loaded;
+  if (correctorLoaded === false) {
+    return "degraded";
+  }
+  if (correctorLoaded === true && detectorLoaded !== false) {
+    return "ready";
+  }
+  return "connected";
 }
 
 function describeAnalyzeTextError(message: string, includeLLM: boolean): string {
