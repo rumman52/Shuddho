@@ -30,6 +30,10 @@ const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
 export interface ApiConfigurationState {
   apiBaseUrl: string;
   source: "default_local" | "environment" | "override" | "unconfigured";
+  apiBaseUrlSource: "default_local" | "environment" | "override" | "unconfigured";
+  envApiBaseUrlPresent: boolean;
+  localStorageOverridePresent: boolean;
+  localStorageOverrideIgnored: boolean;
   isLocalBrowserOrigin: boolean;
   isProductionBuild: boolean;
   targetsLocalhost: boolean;
@@ -130,6 +134,7 @@ export function deriveApiConfiguration(args: {
   browserHostname?: string | null;
   enableLocalFallback?: boolean | null;
   isProductionBuild?: boolean | null;
+  allowLocalStorageOverride?: boolean | null;
 }): ApiConfigurationState {
   const {
     configuredBaseUrl,
@@ -137,6 +142,7 @@ export function deriveApiConfiguration(args: {
     browserHostname,
     enableLocalFallback,
     isProductionBuild,
+    allowLocalStorageOverride,
   } = args;
   const isLocalOrigin = isLocalBrowserOrigin(browserHostname);
   const isProd = Boolean(isProductionBuild);
@@ -145,10 +151,17 @@ export function deriveApiConfiguration(args: {
   const normalizedStoredValue = storedValue
     ? normalizeApiBaseUrl(storedValue)
     : null;
+  const envApiBaseUrlPresent = Boolean(configuredValue);
+  const localStorageOverridePresent = Boolean(storedValue);
+  const explicitDebugOverride = Boolean(allowLocalStorageOverride);
   const storedValueCanOverride = Boolean(
     normalizedStoredValue &&
     !(isLocalApiBaseUrl(normalizedStoredValue) && !isLocalOrigin) &&
-    (!isProd || isNonLocalHttpsApiBaseUrl(normalizedStoredValue)),
+    (!isProd || explicitDebugOverride) &&
+    (!isProd || !configuredValue || explicitDebugOverride),
+  );
+  const localStorageOverrideIgnored = Boolean(
+    storedValue && !storedValueCanOverride && (isProd || configuredValue),
   );
   const hasConfiguredBaseUrl = Boolean(configuredValue || storedValueCanOverride);
   const rawBaseUrl = storedValueCanOverride
@@ -174,6 +187,10 @@ export function deriveApiConfiguration(args: {
   return {
     apiBaseUrl,
     source,
+    apiBaseUrlSource: source,
+    envApiBaseUrlPresent,
+    localStorageOverridePresent,
+    localStorageOverrideIgnored,
     isLocalBrowserOrigin: isLocalOrigin,
     isProductionBuild: isProd,
     targetsLocalhost,
@@ -264,6 +281,15 @@ export async function analyzeText(
   }
 
   const body = buildCheckRequestBody(payload.text, options);
+  if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
+    console.info("SHUDDHO_API_CHECK_REQUEST", {
+      url: `${getApiBaseUrl()}${path}`,
+      includeLLM: body.options.includeLLM,
+      llmMode: body.options.llmMode,
+      mode: body.options.mode,
+    });
+  }
+
   const response = await request<GatewayCheckResponse>(
     path,
     {
@@ -691,6 +717,7 @@ export function setApiBaseUrlOverride(nextBaseUrl: string): string {
       browserHostname: readBrowserHostname(),
       enableLocalFallback: readLocalFallbackFlag(),
       isProductionBuild: readProductionFlag(),
+      allowLocalStorageOverride: readApiOverrideDebugFlag(),
     });
   }
   return apiConfiguration.apiBaseUrl;
@@ -712,6 +739,7 @@ function resolveApiConfiguration(): ApiConfigurationState {
     browserHostname: readBrowserHostname(),
     enableLocalFallback: readLocalFallbackFlag(),
     isProductionBuild: readProductionFlag(),
+    allowLocalStorageOverride: readApiOverrideDebugFlag(),
   });
 }
 
@@ -735,6 +763,16 @@ function readProductionFlag(): boolean {
 
 function readLocalFallbackFlag(): boolean {
   return readViteBoolean("VITE_ENABLE_LOCAL_FALLBACK", false);
+}
+
+function readApiOverrideDebugFlag(): boolean {
+  if (readViteBoolean("VITE_ALLOW_API_BASE_URL_OVERRIDE", false)) {
+    return true;
+  }
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.localStorage.getItem("shuddho-web-editor-debug") === "1";
 }
 
 function readViteBoolean(key: string, fallback: boolean): boolean {
@@ -802,10 +840,6 @@ export function isLocalBrowserOrigin(
 
 export function isLocalApiBaseUrl(baseUrl: string): boolean {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(baseUrl);
-}
-
-function isNonLocalHttpsApiBaseUrl(baseUrl: string): boolean {
-  return /^https:\/\//i.test(baseUrl) && !isLocalApiBaseUrl(baseUrl);
 }
 
 function normalizeApiBaseUrl(rawBaseUrl: string): string {

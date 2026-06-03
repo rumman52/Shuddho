@@ -35,3 +35,13 @@ test("App source exposes precise AI status messages and auto AI toggle", () => {
   assert.match(source, /AI on every check/);
   assert.match(source, /friendlyLlmWarning/);
 });
+
+test("App source exposes precise /api/check error messages and reset override button", () => {
+  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(source, /Browser could not reach backend\. Check CORS and VITE_API_BASE_URL\./);
+  assert.match(source, /Backend route \/api\/check was not found\./);
+  assert.match(source, /Backend validation failed\. Request payload does not match \/api\/check schema\./);
+  assert.match(source, /Backend crashed during analysis\. Check Render logs\./);
+  assert.match(source, /AI review timed out\. Showing local suggestions\./);
+  assert.match(source, /Reset API URL override/);
+});

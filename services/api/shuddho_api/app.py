@@ -272,8 +272,8 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["content-type", "authorization", "x-request-id", "x-user-id", "x-tenant-id"],
 )
 
 normalizer = BanglaNormalizer()
@@ -654,14 +654,16 @@ def llm_debug() -> dict:
     config = resolve_llm_config(os.environ)
     provider = config.provider
     model = config.model
+    debug_status = "ready" if config.enabled and config.configured and not _is_circuit_open(provider, model) else config.status
     return {
         "enabled": config.enabled,
         "configured": config.configured,
         "provider": provider,
         "model": model,
-        "status": config.status,
+        "status": debug_status,
         "warnings": list(config.warnings),
         "api_key_present": bool(config.api_key),
+        "has_api_key": bool(config.api_key),
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
         "endpoint": "https://openrouter.ai/api/v1/chat/completions" if provider == "openrouter" else "https://api.openai.com/v1/responses",
         "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),

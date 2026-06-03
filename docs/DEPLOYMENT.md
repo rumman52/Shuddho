@@ -70,7 +70,7 @@ OPENROUTER_API_KEY=your_key_here
 OPENROUTER_MODEL=openai/gpt-oss-120b:free
 ```
 
-The Docker image copies `artifacts/` into `/app/artifacts` when the directory exists in the repository. The sentence-level corrector is optional: if `artifacts/corrector/corrector-base/best_model.pt` is absent or incomplete, `/health/deep` reports `corrector.status = missing_checkpoint`, analysis uses `backend_without_corrector` when the detector is ready, and Shuddho stays online with rules + spelling suggestions. The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.
+The Docker image copies `artifacts/` into `/app/artifacts` when the directory exists in the repository. The sentence-level corrector is optional: if `artifacts/corrector/corrector-base/best_model.pt` is absent or incomplete, `/health/deep` reports `corrector.status = missing_checkpoint`, analysis uses `backend_without_corrector` when the detector is ready, and Shuddho stays online with rules + spelling suggestions. To fully enable the corrector on Render, deployment artifacts must include both `artifacts/corrector/corrector-base/best_model.pt` and `artifacts/corrector/corrector-base/checkpoint`; until then use `SHUDDHO_CORRECTOR_ENABLED=auto` or `SHUDDHO_CORRECTOR_ENABLED=false` so missing checkpoints remain a health warning instead of a hard failure. The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.
 
 After merging a fix that removes broken LFS pointers, redeploy Render with **Manual Deploy → Clear build cache & deploy**.
 
@@ -125,6 +125,7 @@ Expected output files:
 artifacts/corrector/corrector-base/metadata.json
 artifacts/corrector/corrector-base/best_model.pt
 artifacts/corrector/corrector-base/last_model.pt
+artifacts/corrector/corrector-base/checkpoint
 artifacts/corrector/corrector-base/metrics.json
 ```
 
