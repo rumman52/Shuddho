@@ -97,7 +97,14 @@ def _truthy(value: str | None) -> bool | None:
 
 def resolve_llm_config(env: dict[str, str] | None = None) -> LlmProviderConfig:
     environ = env if env is not None else os.environ
-    provider = (environ.get("SHUDDHO_LLM_PROVIDER") or "openai").strip().lower() or "openai"
+    raw_provider = (environ.get("SHUDDHO_LLM_PROVIDER") or "").strip().lower()
+    provider_explicit = bool(raw_provider)
+    if raw_provider:
+        provider = raw_provider
+    elif (environ.get("OPENROUTER_API_KEY") or "").strip() and not (environ.get("OPENAI_API_KEY") or "").strip():
+        provider = "openrouter"
+    else:
+        provider = "openai"
     enabled_flag = _truthy(environ.get("SHUDDHO_ENABLE_LLM"))
     warnings: list[str] = []
 
@@ -118,14 +125,14 @@ def resolve_llm_config(env: dict[str, str] | None = None) -> LlmProviderConfig:
             warnings.append("openai_model_id_suspicious_use_openrouter_provider")
 
     configured = bool(api_key) and not (provider == "openai" and ("/" in model or ":free" in model))
-    enabled = True if enabled_flag is None else enabled_flag
+    enabled = (provider_explicit or bool(api_key)) if enabled_flag is None else enabled_flag
     suspicious_openai_model = provider == "openai" and ("/" in model or ":free" in model)
-    if not enabled and not suspicious_openai_model:
-        return LlmProviderConfig(False, provider, model, api_key, configured, warnings, "disabled")
-    if suspicious_openai_model:
+    if suspicious_openai_model and enabled_flag is not False:
         return LlmProviderConfig(True, provider, model, api_key, False, warnings, "unsupported_provider")
     if not enabled:
         return LlmProviderConfig(False, provider, model, api_key, configured, warnings, "disabled")
+    if suspicious_openai_model:
+        return LlmProviderConfig(True, provider, model, api_key, False, warnings, "unsupported_provider")
     if not api_key:
         return LlmProviderConfig(True, provider, model, None, False, [*warnings, missing_warning], "missing_key")
     return LlmProviderConfig(True, provider, model, api_key, True, warnings, "completed")

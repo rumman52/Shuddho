@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 IssueType = Literal[
     "grammar", "spelling", "punctuation", "spacing", "style", "clarity",
@@ -38,17 +38,43 @@ Hard rules:
 Required top-level fields:
 requestId, correctedText, documentAssessment, suggestions
 
-Required suggestion fields:
-id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start, end"""
+Required JSON:
+{
+  "requestId": "string",
+  "correctedText": "string",
+  "documentAssessment": {
+    "summary": "string",
+    "overallQuality": "poor|fair|good|excellent",
+    "language": "bn|en|mixed|unknown"
+  },
+  "suggestions": [
+    {
+      "id": "string",
+      "sentenceId": "string",
+      "original": "string",
+      "replacement": "string",
+      "issueType": "grammar|spelling|punctuation|spacing|style|clarity|fluency|tone|word_choice|other",
+      "severity": "low|medium|high",
+      "explanation": "string",
+      "confidence": 0.0,
+      "start": 0,
+      "end": 1
+    }
+  ]
+}"""
 
 
 class DocumentAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     summary: str = ""
     overallQuality: Quality = "good"
     language: Language = "unknown"
 
 
 class AIReviewSuggestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     sentenceId: str
     original: str
@@ -69,6 +95,8 @@ class AIReviewSuggestion(BaseModel):
 
 
 class AIReviewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     requestId: str
     correctedText: str
     documentAssessment: DocumentAssessment = Field(default_factory=DocumentAssessment)

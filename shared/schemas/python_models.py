@@ -686,7 +686,7 @@ class CanonicalCheckResponse(BaseModel):
     correctedText: str | None = None
     documentAssessment: dict[str, Any] = Field(default_factory=dict)
     suggestions: list[CanonicalSuggestion] = Field(default_factory=list)
-    timings: dict[str, float] = Field(default_factory=dict)
+    timings: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     llm_requested: bool = False
     llm_attempted: bool = False

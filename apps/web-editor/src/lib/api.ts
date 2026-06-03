@@ -244,9 +244,7 @@ export async function analyzeText(
   payload: AnalyzeRequest,
   options: AnalyzeGatewayOptions = {},
 ): Promise<AnalyzeResponse> {
-  const useGateway =
-    ((import.meta as ImportMeta & { env?: Record<string, string | undefined> })
-      .env?.VITE_USE_GATEWAY ?? "true") !== "false";
+  const useGateway = readViteBoolean("VITE_USE_GATEWAY", true);
   const path = useGateway ? "/api/check" : "/analyze";
 
   if (!useGateway) {
@@ -633,7 +631,7 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   if (["auth_or_forbidden", "credits_or_payment_required", "model_not_found"].includes(status)) return `${providerLabel} configuration error; showing local suggestions.`;
   if (status === "provider_error" && (httpStatus === 401 || httpStatus === 403 || warnings.some((w) => w.includes("401") || w.includes("403")))) return `${providerLabel} authentication failed. Check backend API key.`;
   if (status === "invalid_json") return "AI returned invalid JSON; showing local suggestions.";
-  if (status === "invalid_schema") return "AI response failed Shuddho validation.";
+  if (status === "invalid_schema") return "AI review unavailable; showing local suggestions.";
   if (status === "queued" || status === "attempted") return `Reviewing with ${providerLabel}.`;
   if (["provider_error", "network_error", "failed", "content_filter"].includes(status)) return "AI review unavailable; showing local suggestions.";
   return `LLM status: ${status}`;
@@ -726,14 +724,28 @@ function readProductionFlag(): boolean {
 }
 
 function readLocalFallbackFlag(): boolean {
+  return readViteBoolean("VITE_ENABLE_LOCAL_FALLBACK", false);
+}
+
+function readViteBoolean(key: string, fallback: boolean): boolean {
   const importMetaEnv =
-    (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+    (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> })
       .env ?? {};
-  const rawValue = importMetaEnv.VITE_ENABLE_LOCAL_FALLBACK;
-  if (!rawValue) {
+  const rawValue = importMetaEnv[key];
+  if (typeof rawValue === "boolean") {
+    return rawValue;
+  }
+  if (rawValue === undefined || rawValue === null || String(rawValue).trim() === "") {
+    return fallback;
+  }
+  const normalized = String(rawValue).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
     return false;
   }
-  return /^(1|true|yes|on)$/i.test(rawValue.trim());
+  return fallback;
 }
 
 function readBrowserHostname(): string | null {

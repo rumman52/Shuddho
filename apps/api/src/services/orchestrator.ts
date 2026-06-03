@@ -51,8 +51,34 @@ export class SuggestionOrchestrator {
       result.value.timings = { ...(result.value.timings ?? {}), [`provider.${this.primary.name}`]: result.durationMs };
       return result.value;
     } catch (error) {
-      logger.warn({ requestId, provider: this.primary.name, textLength: input.text.length, error: error instanceof Error ? error.message : 'unknown' }, 'primary bangla provider failed');
-      if (!this.fallback) throw error;
+      const errorMessage = error instanceof Error ? error.message : 'unknown';
+      logger.warn({ requestId, provider: this.primary.name, textLength: input.text.length, error: errorMessage }, 'primary bangla provider failed');
+      if (!this.fallback) {
+        return {
+          requestId,
+          documentId: input.documentId,
+          revision: input.revision,
+          language: 'bn',
+          normalizedText: input.text,
+          correctedText: input.text,
+          documentAssessment: {},
+          suggestions: [],
+          timings: { [`provider.${this.primary.name}`]: 0 },
+          warnings: [`primary_provider_failed:${this.primary.name}`, errorMessage === 'python_timeout' ? 'python_provider_timeout' : 'python_provider_unavailable'],
+          llm_requested: Boolean(input.options?.includeLLM),
+          llm_attempted: false,
+          llm_used: false,
+          llm_status: 'skipped',
+          llm_provider: null,
+          llm_model: null,
+          llm_response_mode: null,
+          llm: { status: 'skipped', warnings: [errorMessage], attempted: false },
+          local_suggestion_count: 0,
+          ai_suggestion_count: 0,
+          rejected_ai_suggestion_count: 0,
+          diagnostics: { provider: { status: 'degraded', error: errorMessage } },
+        };
+      }
       const result = await measure(this.fallback.name, () => this.fallback!.check(input, requestId));
       result.value.warnings = [...(result.value.warnings ?? []), `primary_provider_failed:${this.primary.name}`];
       result.value.timings = { ...(result.value.timings ?? {}), [`provider.${this.fallback.name}`]: result.durationMs };
