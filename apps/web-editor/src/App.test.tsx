@@ -5,8 +5,10 @@ import React from "react";
 import { renderToString } from "react-dom/server.browser";
 
 import App, {
+  deriveBackendModeAfterSuccessfulCheck,
   deriveBackendModeFromHealth,
   describeAnalyzeTextError,
+  normalizeShallowHealthAfterSuccessfulCheck,
 } from "./App";
 
 test("App renders editor shell when analysis runtime_warnings are missing from backend responses", () => {
@@ -28,6 +30,7 @@ test("App source keeps auto checks local-only by default and deep review AI-enab
   assert.match(source, /const \[autoAiReview, setAutoAiReview\] = useState\(false\)/);
   assert.match(source, /void runAnalysis\(nextText, autoAiReview\)/);
   assert.match(source, /void runAnalysis\(text, true\)/);
+  assert.match(source, /includeLLM,\n\s*asyncLLM: false,/);
   assert.match(source, /llmMode: includeLLM \? "review_candidates" : "none"/);
   assert.match(source, /mode: includeLLM \? "smart" : "fast"/);
 });
@@ -67,6 +70,36 @@ test("backend mode treats /health as reachability source of truth", () => {
     ),
     "ready",
   );
+});
+
+
+test("successful /api/check upgrades stale unavailable health to connected", () => {
+  assert.deepEqual(normalizeShallowHealthAfterSuccessfulCheck(null), {
+    ok: true,
+    status: "ok",
+  });
+  assert.equal(deriveBackendModeAfterSuccessfulCheck(null, null), "connected");
+  assert.equal(deriveBackendModeAfterSuccessfulCheck({ ok: false }, null), "connected");
+});
+
+test("successful /api/check still respects available deep health readiness", () => {
+  assert.equal(
+    deriveBackendModeAfterSuccessfulCheck(null, { ok: true, corrector_loaded: true, detector_loaded: true }),
+    "ready",
+  );
+  assert.equal(
+    deriveBackendModeAfterSuccessfulCheck(null, { ok: true, corrector_loaded: false, detector_loaded: true }),
+    "degraded",
+  );
+});
+
+test("App source clears stale unavailable banner after successful /api/check", () => {
+  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(source, /apiCheckReachableRef\.current = true/);
+  assert.match(source, /normalizeShallowHealthAfterSuccessfulCheck\(shallowHealth\)/);
+  assert.match(source, /setBackendHealthDiagnostic\(null\)/);
+  assert.match(source, /deriveBackendModeAfterSuccessfulCheck\(shallowHealth, backendHealth\)/);
+  assert.match(source, /setBackendMode\("connected"\)/);
 });
 
 test("App source checks /health before /health/deep and keeps deep failure degraded", () => {

@@ -119,6 +119,7 @@ export default function App() {
   const hasMountedAnalysisRef = useRef(false);
   const manualAnalysisInFlightRef = useRef(false);
   const aiReviewInFlightRef = useRef(false);
+  const apiCheckReachableRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
 
@@ -298,12 +299,17 @@ export default function App() {
       setLlmDebug(null);
       setLlmDebugDiagnostic(message);
       setBackendHealthDiagnostic(message);
-      setBackendMode("unavailable");
-      setStatus(
-        apiConfiguration.localFallbackEnabled
-          ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : `${BACKEND_UNAVAILABLE_MESSAGE} ${friendlyHealthFailure(message)}`,
-      );
+      if (apiCheckReachableRef.current) {
+        setBackendMode("connected");
+        setStatus("Backend connected through /api/check; /health diagnostics are stale or unavailable.");
+      } else {
+        setBackendMode("unavailable");
+        setStatus(
+          apiConfiguration.localFallbackEnabled
+            ? DEV_LOCAL_FALLBACK_DESCRIPTION
+            : `${BACKEND_UNAVAILABLE_MESSAGE} ${friendlyHealthFailure(message)}`,
+        );
+      }
       return;
     }
 
@@ -460,7 +466,13 @@ export default function App() {
         ? normalizedResponse.suggestions
         : [];
       setAnalysis(normalizedResponse);
-      setBackendMode(deriveBackendModeFromHealth(shallowHealth, backendHealth));
+      apiCheckReachableRef.current = true;
+      const checkReachableHealth = normalizeShallowHealthAfterSuccessfulCheck(shallowHealth);
+      if (checkReachableHealth !== shallowHealth) {
+        setShallowHealth(checkReachableHealth);
+      }
+      setBackendHealthDiagnostic(null);
+      setBackendMode(deriveBackendModeAfterSuccessfulCheck(shallowHealth, backendHealth));
       const responseWarnings = Array.isArray(normalizedResponse.runtime_warnings)
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
@@ -474,8 +486,8 @@ export default function App() {
           : responseSuggestions.length
             ? `${responseSuggestions.length} local suggestions ready`
             : responseWarnings.length
-              ? `No high-confidence correction found. Backend warnings: ${responseWarnings.join(", ")}`
-              : "No high-confidence correction found.",
+              ? `Local suggestions ready. Backend warnings: ${responseWarnings.join(", ")}`
+              : "Local suggestions ready.",
       );
       setTone(null);
     } catch (error) {
@@ -504,6 +516,9 @@ export default function App() {
               "backend_offline_contextual_disabled",
             ),
       );
+      if (shouldMarkOffline) {
+        apiCheckReachableRef.current = false;
+      }
       setBackendMode(shouldMarkOffline ? "unavailable" : deriveBackendModeFromHealth(shallowHealth, backendHealth));
       setTone(null);
       setRewriteResult(null);
@@ -1319,6 +1334,13 @@ export default function App() {
               <strong>{runtimeDescriptor.label}</strong>
               <span>{status}</span>
               <span>Backend: {backendMode}</span>
+              <span>llm_requested: {String(normalizedAnalysis.llm_requested ?? false)}</span>
+              <span>llm_attempted: {String(normalizedAnalysis.llm_attempted ?? false)}</span>
+              <span>llm_used: {String(normalizedAnalysis.llm_used ?? false)}</span>
+              <span>llm_status: {normalizedAnalysis.llm_status ?? "not requested"}</span>
+              <span>llm_provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
+              <span>llm_model: {normalizedAnalysis.llm_model ?? "none"}</span>
+              <span>rejected_ai_suggestion_count: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>
               {debugMode ? (
                 <button
                   type="button"
@@ -1684,6 +1706,25 @@ export function deriveBackendModeFromHealth(
     return "ready";
   }
   return "connected";
+}
+
+export function normalizeShallowHealthAfterSuccessfulCheck(
+  health: Partial<BackendHealthResponse> | null,
+): BackendHealthResponse {
+  if (health?.ok === true) {
+    return health;
+  }
+  return { ok: true, status: "ok" };
+}
+
+export function deriveBackendModeAfterSuccessfulCheck(
+  health: Partial<BackendHealthResponse> | null,
+  deepHealth: Partial<BackendHealthResponse> | null,
+): BackendMode {
+  return deriveBackendModeFromHealth(
+    normalizeShallowHealthAfterSuccessfulCheck(health),
+    deepHealth,
+  );
 }
 
 export function describeAnalyzeTextError(message: string, includeLLM: boolean): string {

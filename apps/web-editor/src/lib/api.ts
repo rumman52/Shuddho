@@ -705,7 +705,10 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   }
   if (status === "completed_empty") return `${providerLabel} reviewed the text but found no extra high-confidence suggestions.`;
   if (status === "skipped") {
-    return skipReason === "include_llm_false" ? null : `AI review skipped: ${skipReason || "not requested"}.`;
+    if (response.llm_requested === false || skipReason === "include_llm_false") {
+      return null;
+    }
+    return `AI review skipped: ${skipReason || "not requested"}.`;
   }
   if (status === "missing_key") {
     return provider === "openrouter"
