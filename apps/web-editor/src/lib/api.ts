@@ -703,10 +703,10 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   if (rejectedCount > 0 || status === "completed_rejected") {
     return "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.";
   }
-  if (status === "completed_empty") return `${providerLabel} reviewed the text but found no extra high-confidence suggestions.`;
+  if (status === "completed_empty") return "AI reviewed the text but found no extra high-confidence suggestions.";
   if (status === "skipped") {
     if (response.llm_requested === false || skipReason === "include_llm_false") {
-      return null;
+      return "AI review was not requested. Showing local suggestions.";
     }
     return `AI review skipped: ${skipReason || "not requested"}.`;
   }

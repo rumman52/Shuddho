@@ -395,6 +395,10 @@ def test_health_reports_detector_and_corrector_status() -> None:
         "ok",
         "service",
         "status",
+        "version",
+        "uptime_seconds",
+        "allowed_origins_count",
+        "config",
         "backend_reachable",
         "detector_loaded",
         "detector_checkpoint",
@@ -866,6 +870,7 @@ def test_ai_check_invalid_json_warning(monkeypatch) -> None:
 
 def test_api_check_returns_local_when_openrouter_fails(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_ON_CHECK", "always")
     monkeypatch.setenv("OPENROUTER_API_KEY", "key")
     monkeypatch.setattr(app_module, "run_openrouter_check", lambda **kwargs: {"suggestions": [], "warnings": ["openrouter_request_failed"], "provider": "openrouter", "model": "openai/gpt-oss-120b:free", "raw_used": False})
     response = check_canonical(CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn"))
@@ -922,6 +927,51 @@ def test_api_check_include_llm_false_has_explicit_skip_reason(monkeypatch) -> No
     assert payload["llm_status"] == "skipped"
     assert payload["llm"]["skip_reason"] == "include_llm_false"
     assert isinstance(payload["suggestions"], list)
+
+
+def test_api_check_env_always_forces_llm_when_include_llm_false(monkeypatch) -> None:
+    calls = []
+
+    def fake_run_ai_check(text, request_id, local_suggestions=None, timeout_seconds=None):
+        calls.append({"text": text, "local_suggestions": list(local_suggestions or [])})
+        return app_module.AiCheckResponse(
+            suggestions=[],
+            provider="openrouter",
+            model="openai/gpt-oss-120b:free",
+            llm_enabled=True,
+            configured=True,
+            called=True,
+            parsed=True,
+            status="completed_empty",
+            response_mode="json_schema",
+        )
+
+    monkeypatch.setattr(app_module, "_run_ai_check", fake_run_ai_check)
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("SHUDDHO_LLM_ON_CHECK", "always")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+
+    response = client.post(
+        "/api/check",
+        json={
+            "text": "আমি  আমি ভাত খাই।",
+            "language": "bn",
+            "options": {"includeLLM": False, "asyncLLM": False, "mode": "fast", "llmMode": "none"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert calls
+    assert payload["llm_requested"] is True
+    assert payload["llm_attempted"] is True
+    assert payload["llm_status"] == "completed_empty"
+    assert payload["llm"]["skip_reason"] is None
+    assert payload["diagnostics"]["llm"]["requested"] is True
+    assert payload["diagnostics"]["llm"]["attempted"] is True
+    assert payload["diagnostics"]["llm"]["http_status"] is None
+    assert payload["rejected_ai_suggestion_count"] == 0
 
 
 def test_api_check_openai_missing_key_preserves_local(monkeypatch) -> None:
@@ -1103,6 +1153,8 @@ def test_health_deep_reports_safe_llm_configuration(monkeypatch) -> None:
 
 
 def test_api_check_local_suggestions_continue_when_corrector_missing(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_LLM_ON_CHECK", "manual")
+
     class StubCorrectorService:
         checkpoint_path = "artifacts/corrector/corrector-base"
 

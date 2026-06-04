@@ -25,9 +25,9 @@ test("App renders editor shell without waiting for preferences", () => {
   assert.match(html, /Personal dictionary/);
 });
 
-test("App source keeps auto checks local-only by default and deep review AI-enabled", () => {
+test("App source keeps auto AI review enabled by default and deep review AI-enabled", () => {
   const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-  assert.match(source, /const \[autoAiReview, setAutoAiReview\] = useState\(false\)/);
+  assert.match(source, /const \[autoAiReview, setAutoAiReview\] = useState\(true\)/);
   assert.match(source, /void runAnalysis\(nextText, autoAiReview\)/);
   assert.match(source, /void runAnalysis\(text, true\)/);
   assert.match(source, /includeLLM,\n\s*asyncLLM: false,/);
