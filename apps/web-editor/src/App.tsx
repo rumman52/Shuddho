@@ -87,7 +87,7 @@ export default function App() {
     "all" | "spelling" | "grammar" | "clarity"
   >("all");
   const [status, setStatus] = useState("Ready");
-  const [autoAiReview, setAutoAiReview] = useState(false);
+  const [autoAiReview, setAutoAiReview] = useState(true);
   const [debugMode, setDebugMode] = useState(() => {
     if (typeof window === "undefined") {
       return false;

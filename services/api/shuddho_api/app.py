@@ -474,8 +474,11 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     )
 
     config = resolve_llm_config(os.environ)
-    llm_requested = include_llm
-    llm_allowed, llm_reason = _llm_allowed_on_check(include_llm)
+    llm_env_mode = os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower()
+    llm_requested = include_llm or llm_env_mode in {"always", "true"}
+    if llm_requested and not include_llm and llm_env_mode in {"always", "true"} and llm_mode in {"none", "fast"}:
+        llm_mode = "review_candidates"
+    llm_allowed, llm_reason = _llm_allowed_on_check(llm_requested)
     ai = AiCheckResponse(provider=config.provider, model=config.model, llm_enabled=config.enabled, configured=config.configured, warnings=list(config.warnings), status="skipped")
     validated_ai: list[dict[str, Any]] = []
     merge_warnings: list[str] = []
@@ -601,6 +604,9 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         "llmProvider": config.provider,
         "llmModel": config.model,
         "llm": {
+            "requested": response_payload["llm_requested"],
+            "attempted": response_payload["llm_attempted"],
+            "used": response_payload["llm_used"],
             "status": response_payload["llm_status"],
             "provider": ai.provider,
             "model": ai.model,
