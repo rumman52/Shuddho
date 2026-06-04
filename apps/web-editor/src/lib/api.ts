@@ -695,9 +695,13 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   const provider = inferredProvider || rawProvider;
   const providerLabel = provider === "openrouter" ? "OpenRouter" : provider === "openai" ? "OpenAI" : "AI";
   const httpStatus = Number(llm.http_status ?? 0);
+  const rejectedCount = Number(response.rejected_ai_suggestion_count ?? llm.rejected_ai_suggestion_count ?? 0);
   if (!status) return null;
   if (status === "completed") {
     return null;
+  }
+  if (rejectedCount > 0 || status === "completed_rejected") {
+    return "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.";
   }
   if (status === "completed_empty") return `${providerLabel} reviewed the text but found no extra high-confidence suggestions.`;
   if (status === "skipped") {

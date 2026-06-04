@@ -12,6 +12,7 @@ LLM_STATUSES = {
     "attempted",
     "completed",
     "completed_empty",
+    "completed_rejected",
     "timeout",
     "invalid_json",
     "invalid_schema",

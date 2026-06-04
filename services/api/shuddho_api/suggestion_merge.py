@@ -41,15 +41,14 @@ def _as_index(value: Any) -> int | None:
 def _find_span(text: str, original: str, start: Any = None, end: Any = None, sentence_id: str | None = None) -> tuple[int, int, str | None]:
     start_index = _as_index(start)
     end_index = _as_index(end)
-    if start_index is not None or end_index is not None:
-        if (
-            start_index is not None
-            and end_index is not None
-            and 0 <= start_index < end_index <= len(text)
-            and text[start_index:end_index] == original
-        ):
-            return start_index, end_index, None
-        return -1, -1, "ai_suggestion_invalid_span"
+    if (
+        start_index is not None
+        and end_index is not None
+        and 0 <= start_index < end_index <= len(text)
+        and text[start_index:end_index] == original
+    ):
+        return start_index, end_index, None
+
     matches = [m.start() for m in re.finditer(re.escape(original), text)]
     if matches and sentence_id:
         for sentence in _sentence_index(text):
@@ -60,11 +59,14 @@ def _find_span(text: str, original: str, start: Any = None, end: Any = None, sen
                     return s, s + len(original), None
                 if len(contained) > 1:
                     return -1, -1, "ai_suggestion_ambiguous_span"
+                break
     if len(matches) == 1:
         s = matches[0]
         return s, s + len(original), None
     if len(matches) > 1:
         return -1, -1, "ai_suggestion_ambiguous_span"
+    if start_index is not None or end_index is not None:
+        return -1, -1, "ai_suggestion_invalid_span"
     return -1, -1, "ai_suggestion_original_not_found"
 
 
@@ -114,7 +116,7 @@ def validate_ai_suggestions(
             warnings.append("ai_suggestion_invalid_schema")
             continue
         original = item.get("original") or item.get("originalText") or item.get("original_text")
-        replacement = item.get("replacement") or item.get("suggestedText") or item.get("suggested_text")
+        replacement = item.get("replacement") or item.get("suggestedText") or item.get("suggested_text") or item.get("replacementText") or item.get("replacement_text")
         if not isinstance(original, str) or not isinstance(replacement, str) or not original.strip() or not replacement.strip():
             warnings.append("ai_suggestion_invalid_schema")
             continue
@@ -213,7 +215,7 @@ def _canonicalize_ai(item: dict[str, Any], provider: str, model: str) -> dict[st
         "explanationEn": None,
         "span": {"startIndex": start, "endIndex": end},
         "confidence": float(item.get("confidence", 0.75)),
-        "source": "ml",
+        "source": "model",
         "provider": provider,
         "metadata": {"sources": ["ai"], "provider": provider, "model": model, "mergeStatus": "ai_only"},
     }

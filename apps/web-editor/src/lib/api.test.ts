@@ -513,6 +513,8 @@ test("friendlyLlmWarning maps precise provider-aware LLM statuses", () => {
   assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider", llm_provider: "openai", llm_model: "openai/gpt-oss-120b:free", warnings: ["openai_model_id_suspicious_use_openrouter_provider"] }), "Invalid config: openai/gpt-oss-120b:free must use SHUDDHO_LLM_PROVIDER=openrouter.");
   assert.equal(friendlyLlmWarning({ llm_status: "rate_limited", llm_provider: "openrouter" }), "AI provider rate limit/quota hit; showing local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "openrouter" }), "OpenRouter reviewed the text but found no extra high-confidence suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "completed_rejected", llm_provider: "openrouter", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "openrouter", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "invalid_json", llm_provider: "openrouter" }), "AI returned invalid JSON; showing local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "invalid_schema", llm_provider: "openrouter" }), "AI review unavailable; showing local suggestions.");
 });

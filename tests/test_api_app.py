@@ -1240,3 +1240,35 @@ def test_health_deep_shape_includes_llm_without_secret(monkeypatch) -> None:
     assert response.ok is True
     assert isinstance(response.llm, dict)
     assert "sk-secret-value" not in rendered
+
+
+def test_api_check_reports_rejected_ai_suggestions(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+
+    def fake_run_ai_check(text, request_id, local_suggestions=None, timeout_seconds=None):
+        return app_module.AiCheckResponse(
+            suggestions=[{"id": "bad", "sentenceId": "s_0", "original": "নেই", "replacement": "আছে", "issueType": "grammar", "confidence": 0.9}],
+            provider="openrouter",
+            model="openai/gpt-oss-120b:free",
+            llm_enabled=True,
+            configured=True,
+            called=True,
+            parsed=True,
+            status="completed",
+            response_mode="json_schema",
+        )
+
+    monkeypatch.setattr(app_module, "_run_ai_check", fake_run_ai_check)
+    response = check_canonical(
+        ApiCheckRequest(
+            text="আমি ভাত খাই।",
+            language="bn",
+            options={"includeLLM": True, "asyncLLM": False, "mode": "smart", "llmMode": "review_candidates"},
+        )
+    )
+    assert response.llm_status == "completed_rejected"
+    assert response.rejected_ai_suggestion_count == 1
+    assert "ai_suggestions_rejected" in response.warnings
+    assert response.diagnostics["llm"]["rejection_warnings"]
