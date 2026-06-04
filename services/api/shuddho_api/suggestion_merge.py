@@ -244,9 +244,15 @@ def merge_suggestions(
         if not (0 <= start < end <= len(text)) or text[start:end] != canonical["originalText"]:
             warnings.append("local_suggestion_invalid_span")
             continue
+        if _norm(canonical["originalText"]) == _norm(canonical["suggestedText"]):
+            warnings.append("local_suggestion_identical_replacement")
+            continue
         k = key_for(canonical)
+        if k in by_key:
+            warnings.append("local_suggestion_duplicate_dropped")
+            continue
         by_key[k] = canonical
-        span_type_index[(start, end, canonical["type"])] = canonical
+        span_type_index.setdefault((start, end, canonical["type"]), canonical)
         merged.append(canonical)
 
     for ai in ai_suggestions:
@@ -254,6 +260,12 @@ def merge_suggestions(
         start, end = canonical["span"]["startIndex"], canonical["span"]["endIndex"]
         if not (0 <= start < end <= len(text)) or text[start:end] != canonical["originalText"]:
             warnings.append("ai_suggestion_invalid_span")
+            continue
+        if canonical["originalText"] not in text:
+            warnings.append("ai_suggestion_original_not_found")
+            continue
+        if _norm(canonical["originalText"]) == _norm(canonical["suggestedText"]):
+            warnings.append("ai_suggestion_identical_replacement")
             continue
         exact = by_key.get(key_for(canonical))
         if exact:

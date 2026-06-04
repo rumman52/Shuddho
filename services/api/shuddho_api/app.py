@@ -670,7 +670,13 @@ def llm_debug() -> dict:
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
+        "timeout_settings": {
+            "interactive_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
+            "background_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60")),
+            "default_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35")),
+        },
         "circuit_open": _is_circuit_open(provider, model),
+        "circuit_state": "open" if _is_circuit_open(provider, model) else "closed",
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
         "max_ai_text_chars": int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
@@ -1055,10 +1061,20 @@ def _rewrite_service() -> RewriteService:
 def _build_health_response() -> HealthResponse:
     detector_runtime = detector_service.runtime_status()
     corrector_runtime = corrector_service.runtime_status()
+    llm_config = resolve_llm_config(os.environ)
     analysis_profile = _derive_analysis_profile(detector_runtime, corrector_runtime)
     degraded_reasons = _derive_degraded_reasons(detector_runtime, corrector_runtime)
     return HealthResponse(
         status="ok",
+        version=BACKEND_VERSION,
+        uptime_seconds=max(0.0, (datetime.now(timezone.utc) - STARTUP_TIMESTAMP).total_seconds()),
+        allowed_origins_count=len(ALLOWED_ORIGINS),
+        config={
+            "llm_provider": llm_config.provider,
+            "llm_enabled": llm_config.enabled,
+            "check_strategy": os.environ.get("SHUDDHO_CHECK_STRATEGY", "manual"),
+            "max_ai_text_chars": MAX_AI_CHECK_CHARS,
+        },
         backend_reachable=True,
         detector_loaded=detector_runtime.loaded,
         detector_checkpoint=detector_runtime.checkpoint,

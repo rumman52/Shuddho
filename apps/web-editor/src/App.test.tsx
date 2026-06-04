@@ -40,6 +40,16 @@ test("App source exposes precise AI status messages and auto AI toggle", () => {
 });
 
 
+test("App source gates diagnostics and retests backend without user text", () => {
+  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(source, /getLlmDebug/);
+  assert.match(source, /Retest Backend/);
+  assert.match(source, /Diagnostics/);
+  assert.match(source, /debugMode \? \(/);
+  assert.match(source, /await refreshBackendHealth\(\)/);
+});
+
+
 test("backend mode treats /health as reachability source of truth", () => {
   assert.equal(deriveBackendModeFromHealth(null, null), "unavailable");
   assert.equal(deriveBackendModeFromHealth({ ok: false }, null), "unavailable");

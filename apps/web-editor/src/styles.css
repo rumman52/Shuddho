@@ -974,3 +974,7 @@ p {
   white-space: nowrap;
   border: 0;
 }
+
+.diagnostics-retest {
+  width: fit-content;
+}

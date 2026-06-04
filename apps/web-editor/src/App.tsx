@@ -20,6 +20,8 @@ import {
   getApiConfiguration,
   getHealth,
   getHealthDeep,
+  getLlmDebug,
+  type LlmDebugResponse,
   getUserPreferences,
   rewriteText,
   saveUserPreferences,
@@ -100,6 +102,8 @@ export default function App() {
   const [backendHealthDiagnostic, setBackendHealthDiagnostic] = useState<
     string | null
   >(null);
+  const [llmDebug, setLlmDebug] = useState<LlmDebugResponse | null>(null);
+  const [llmDebugDiagnostic, setLlmDebugDiagnostic] = useState<string | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
   const [apiConfiguration, setApiConfiguration] = useState(() =>
@@ -178,6 +182,21 @@ export default function App() {
           ),
     [reviewFilter, suggestions],
   );
+  const suggestionSourceSummary = useMemo(
+    () => describeSuggestionSources(suggestions, normalizedAnalysis),
+    [normalizedAnalysis, suggestions],
+  );
+  const lastAnalysisResult = useMemo(
+    () => ({
+      suggestionCount: suggestions.length,
+      localSuggestionCount: normalizedAnalysis.local_suggestion_count ?? 0,
+      aiSuggestionCount: normalizedAnalysis.ai_suggestion_count ?? 0,
+      llmStatus: normalizedAnalysis.llm_status ?? "not_requested",
+      warnings: normalizedAnalysis.runtime_warnings ?? [],
+      timings: (normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.timings ?? normalizedAnalysis.diagnostics ?? {},
+    }),
+    [normalizedAnalysis, suggestions.length],
+  );
   const connectivityBanner = apiConfiguration.hardWarning
     ? apiConfiguration.hardWarning
     : backendMode === "unavailable"
@@ -236,6 +255,8 @@ export default function App() {
       setBackendMode("misconfigured");
       setBackendHealth(null);
       setShallowHealth(null);
+      setLlmDebug(null);
+      setLlmDebugDiagnostic(apiConfiguration.hardWarning);
       setBackendHealthDiagnostic(apiConfiguration.hardWarning);
       setStatus(
         apiConfiguration.localFallbackEnabled
@@ -256,6 +277,14 @@ export default function App() {
       setBackendHealth(health);
       setBackendHealthDiagnostic(null);
       setStatus("Backend connected.");
+      try {
+        setLlmDebug(await getLlmDebug());
+        setLlmDebugDiagnostic(null);
+      } catch (debugError) {
+        const debugMessage = debugError instanceof Error ? debugError.message : String(debugError ?? "Unknown LLM debug error");
+        setLlmDebug(null);
+        setLlmDebugDiagnostic(debugMessage);
+      }
     } catch (error) {
       if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
         console.debug("Backend /health check failed", error);
@@ -266,6 +295,8 @@ export default function App() {
           : String(error ?? "Unknown health check error");
       setBackendHealth(null);
       setShallowHealth(null);
+      setLlmDebug(null);
+      setLlmDebugDiagnostic(message);
       setBackendHealthDiagnostic(message);
       setBackendMode("unavailable");
       setStatus(
@@ -306,6 +337,12 @@ export default function App() {
       setBackendHealthDiagnostic(message);
       setStatus(BACKEND_DEEP_HEALTH_DEGRADED_MESSAGE);
     }
+  }
+
+  async function retestBackendDiagnostics() {
+    setBackendMode("checking");
+    setStatus("Retesting backend diagnostics.");
+    await refreshBackendHealth();
   }
 
   async function loadPreferences(nextUserId: string) {
@@ -1282,6 +1319,18 @@ export default function App() {
               <strong>{runtimeDescriptor.label}</strong>
               <span>{status}</span>
               <span>Backend: {backendMode}</span>
+              {debugMode ? (
+                <button
+                  type="button"
+                  className="button-secondary diagnostics-retest"
+                  onClick={() => void retestBackendDiagnostics()}
+                >
+                  Retest Backend
+                </button>
+              ) : null}
+              {debugMode ? (
+                <>
+              <strong>Diagnostics</strong>
               <span>apiBaseUrl: {apiConfiguration.apiBaseUrl || "none"}</span>
               <span>apiBaseUrlSource: {apiConfiguration.apiBaseUrlSource}</span>
               <span>apiBaseUrl source: {apiConfiguration.source}</span>
@@ -1327,7 +1376,16 @@ export default function App() {
               <span>ai_suggestion_count: {normalizedAnalysis.ai_suggestion_count ?? 0}</span>
               <span>rejected_ai_suggestion_count: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>
               <span>timings: {JSON.stringify((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.timings ?? { llm_ms: (normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.llm_ms ?? "none" })}</span>
+              <span>/api/llm/debug result: {JSON.stringify(llmDebug ?? null)}</span>
+              <span>/api/llm/debug error: {llmDebugDiagnostic ?? "none"}</span>
+              <span>last analysis result: {JSON.stringify(lastAnalysisResult)}</span>
+              <span>suggestion sources: {suggestionSourceSummary}</span>
+              <span>backend timeout/error reason: {backendHealthDiagnostic ?? llmDebugDiagnostic ?? "none"}</span>
               <span>Lexicon: {normalizedAnalysis.lexicon_source}</span>
+                </>
+              ) : (
+                <span>Enable “Show debug details” to view Diagnostics.</span>
+              )}
               {runtimeWarnings.map((warning) => (
                 <span key={warning} className="chip chip-warning">
                   {warning}
@@ -1547,6 +1605,36 @@ function displaySuggestionType(suggestion: Suggestion): string {
     return "Clarity";
   }
   return "Spelling";
+}
+
+
+function describeSuggestionSources(
+  suggestions: Suggestion[],
+  analysis: AnalyzeResponse,
+): "local" | "ai" | "hybrid" | "none" {
+  if (!suggestions.length) {
+    return "none";
+  }
+  const hasAi = suggestions.some((suggestion) => {
+    const metadata = (suggestion.metadata ?? {}) as Record<string, unknown>;
+    const sources = Array.isArray(metadata.sources) ? metadata.sources.map(String) : [];
+    return (
+      suggestion.source === "model" ||
+      suggestion.source === "hybrid" ||
+      suggestion.provider === "openrouter" ||
+      suggestion.provider === "openai" ||
+      sources.includes("ai")
+    );
+  });
+  const localCount = Number(analysis.local_suggestion_count ?? 0);
+  const aiCount = Number(analysis.ai_suggestion_count ?? 0);
+  if ((hasAi || aiCount > 0) && localCount > 0) {
+    return "hybrid";
+  }
+  if (hasAi || aiCount > 0) {
+    return "ai";
+  }
+  return "local";
 }
 
 function isBackendConnected(backendMode: BackendMode): boolean {
