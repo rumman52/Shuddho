@@ -519,6 +519,26 @@ test("friendlyLlmWarning maps precise provider-aware LLM statuses", () => {
   assert.equal(friendlyLlmWarning({ llm_status: "invalid_schema", llm_provider: "openrouter" }), "AI review unavailable; showing local suggestions.");
 });
 
+test("friendlyLlmWarning does not treat local-only skipped LLM as provider failure", () => {
+  assert.equal(
+    friendlyLlmWarning({
+      llm_requested: false,
+      llm_status: "skipped",
+      llm_provider: "openrouter",
+      llm: { skip_reason: "include_llm_false" },
+    }),
+    null,
+  );
+  assert.equal(
+    friendlyLlmWarning({
+      llm_requested: false,
+      llm_status: "skipped",
+      llm_provider: "openrouter",
+    }),
+    null,
+  );
+});
+
 
 test("checkBackendHealth treats HTTP 200 plus ok true as connected", async () => {
   const originalFetch = globalThis.fetch;
