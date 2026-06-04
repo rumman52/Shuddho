@@ -276,6 +276,10 @@ export interface HealthResponse {
   ok: boolean;
   service: string;
   status: string;
+  version?: string | null;
+  uptime_seconds?: number;
+  allowed_origins_count?: number;
+  config?: Record<string, unknown>;
   backend_reachable: boolean;
   detector_loaded: boolean;
   detector_checkpoint?: string | null;

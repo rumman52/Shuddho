@@ -92,6 +92,49 @@ def _sentences_for_prompt(text: str) -> list[dict[str, Any]]:
     ] or [{"sentenceId": "s_0", "text": text, "start": 0, "end": len(text)}]
 
 
+
+def _provider_error_message(response: Any) -> str:
+    try:
+        body = response.json()
+    except Exception:
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    error = body.get("error")
+    if isinstance(error, dict):
+        parts = [error.get("message"), error.get("code"), error.get("type")]
+        return " ".join(str(part) for part in parts if part)
+    return str(error) if error else ""
+
+
+def _looks_like_max_completion_token_error(message: str) -> bool:
+    lowered = message.lower()
+    return "max_completion_tokens" in lowered or ("max tokens" in lowered and "max_tokens" in lowered)
+
+
+def _with_max_tokens(payload: dict[str, Any]) -> dict[str, Any]:
+    if "max_completion_tokens" not in payload:
+        return payload
+    copied = dict(payload)
+    copied["max_tokens"] = copied.pop("max_completion_tokens")
+    return copied
+
+
+def _strict_json_prompt_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    strict_suffix = (
+        "\n\nOpenRouter structured response_format was not accepted for this provider. "
+        "You must still return strict JSON only. Do not include markdown, prose, "
+        "code fences, comments, or any text outside the JSON object."
+    )
+    strict_messages: list[dict[str, str]] = []
+    for message in messages:
+        if message.get("role") == "system":
+            strict_messages.append({**message, "content": f"{message.get('content', '')}{strict_suffix}"})
+        else:
+            strict_messages.append(dict(message))
+    return strict_messages
+
+
 def _retry_after_seconds(response: Any, fallback: float) -> float:
     headers = getattr(response, "headers", {}) or {}
     raw = headers.get("Retry-After") if hasattr(headers, "get") else None
@@ -150,6 +193,7 @@ def run_openrouter_check(
     payload = {**base_payload, "response_format": _structured_response_format()}
     warnings: list[str] = []
     response_mode = "json_schema"
+    using_max_tokens = False
     started = time.time()
     http_status: int | None = None
     response: Any = None
@@ -160,12 +204,20 @@ def run_openrouter_check(
             while True:
                 response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
                 http_status = response.status_code
-                if http_status == 400 and response_mode == "json_schema":
-                    warnings.append("openrouter_structured_output_fallback_used")
-                    response_mode = "strict_json_prompt"
-                    payload = base_payload
-                    response = client.post(OPENROUTER_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
-                    http_status = response.status_code
+                if http_status == 400:
+                    provider_message = _provider_error_message(response)
+                    if not using_max_tokens and _looks_like_max_completion_token_error(provider_message):
+                        warnings.append("openrouter_max_tokens_fallback_used")
+                        using_max_tokens = True
+                        base_payload = _with_max_tokens(base_payload)
+                        payload = _with_max_tokens(payload)
+                        continue
+                    if response_mode == "json_schema":
+                        warnings.append("openrouter_structured_output_fallback_used")
+                        response_mode = "strict_json_prompt"
+                        base_payload = {**base_payload, "messages": _strict_json_prompt_messages(messages)}
+                        payload = base_payload
+                        continue
                 if http_status in {429, 503} and attempt < max_retries:
                     attempt += 1
                     warnings.append(f"openrouter_retry_after_http_{http_status}")

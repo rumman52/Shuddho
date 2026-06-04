@@ -1,5 +1,6 @@
 import importlib
 import re
+import json
 from fastapi.testclient import TestClient
 
 from services.api.shuddho_api.app import (
@@ -1206,3 +1207,36 @@ def test_api_check_calls_openrouter_when_llm_configured_and_corrector_missing(mo
     assert response.diagnostics["llmConfigured"] is True
     assert response.diagnostics["llmProvider"] == "openrouter"
     assert response.diagnostics["llmModel"] == "openai/gpt-oss-120b:free"
+
+
+def test_llm_debug_does_not_expose_api_key(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-secret-value")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+    response = app_module.llm_debug()
+    rendered = json.dumps(response)
+    assert response["api_key_present"] is True
+    assert "sk-secret-value" not in rendered
+    assert response["provider"] == "openrouter"
+    assert response["model"] == "openai/gpt-oss-120b:free"
+    assert "timeout_settings" in response
+    assert response["circuit_state"] in {"open", "closed"}
+
+
+def test_health_shapes_include_lightweight_process_fields() -> None:
+    response = app_module.health()
+    assert response.ok is True
+    assert response.version
+    assert response.uptime_seconds >= 0
+    assert response.allowed_origins_count == len(response.allowed_origins)
+    assert "llm_provider" in response.config
+
+
+def test_health_deep_shape_includes_llm_without_secret(monkeypatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-secret-value")
+    response = app_module.health_deep()
+    rendered = response.model_dump_json()
+    assert response.ok is True
+    assert isinstance(response.llm, dict)
+    assert "sk-secret-value" not in rendered

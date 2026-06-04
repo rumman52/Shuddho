@@ -80,6 +80,30 @@ def test_openrouter_structured_output_fallback(monkeypatch) -> None:
     assert "openrouter_structured_output_fallback_used" in result["warnings"]
 
 
+def test_openrouter_timeout(monkeypatch) -> None:
+    FakeClient.calls = []
+    FakeClient.responses = [httpx.TimeoutException("slow provider")]
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    result = run_openrouter_check("আমি ভাত খাই।", "openai/gpt-oss-120b:free", "key", request_id="r1", timeout_seconds=0.01)
+    assert result["status"] == "timeout"
+    assert "openrouter_timeout" in result["warnings"]
+
+
+def test_openrouter_max_completion_tokens_fallback(monkeypatch) -> None:
+    FakeClient.calls = []
+    payload = {"requestId":"r1","correctedText":"আমি ভাত খাই।","documentAssessment":{"summary":"ok","overallQuality":"good","language":"bn"},"suggestions":[]}
+    FakeClient.responses = [
+        FakeResponse(400, {"error": {"message": "max_completion_tokens is not supported; use max_tokens"}}),
+        FakeResponse(200, {"choices": [{"message": {"content": json.dumps(payload)}}]}),
+    ]
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    result = run_openrouter_check("আমি ভাত খাই।", "openai/gpt-oss-120b:free", "key", request_id="r1")
+    assert result["status"] == "completed_empty"
+    assert "openrouter_max_tokens_fallback_used" in result["warnings"]
+    assert "max_tokens" in FakeClient.calls[-1]
+    assert "max_completion_tokens" not in FakeClient.calls[-1]
+
+
 def test_openai_parses_output_blocks(monkeypatch) -> None:
     payload = {"requestId":"r1","correctedText":"I eat rice.","documentAssessment":{"summary":"ok","overallQuality":"good","language":"en"},"suggestions":[]}
     FakeClient.calls = []

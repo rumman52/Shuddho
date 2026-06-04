@@ -49,6 +49,21 @@ export type BackendHealthResponse = Partial<HealthDeepResponse> & {
   provider?: string;
 };
 
+export type LlmDebugResponse = {
+  enabled?: boolean;
+  configured?: boolean;
+  provider?: string;
+  model?: string;
+  status?: string;
+  warnings?: string[];
+  api_key_present?: boolean;
+  on_check?: string;
+  timeout_settings?: Record<string, unknown>;
+  circuit_state?: string;
+  circuit_open?: boolean;
+  [key: string]: unknown;
+};
+
 export type GatewaySuggestion = {
   id?: string;
   ruleId?: string;
@@ -384,6 +399,16 @@ export function getHealth(): Promise<BackendHealthResponse> {
 export function getHealthDeep(): Promise<BackendHealthResponse> {
   return request<BackendHealthResponse>(
     "/health/deep",
+    {
+      method: "GET",
+    },
+    HEALTH_REQUEST_TIMEOUT_MS,
+  );
+}
+
+export function getLlmDebug(): Promise<LlmDebugResponse> {
+  return request<LlmDebugResponse>(
+    "/api/llm/debug",
     {
       method: "GET",
     },

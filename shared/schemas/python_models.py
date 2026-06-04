@@ -485,6 +485,10 @@ class HealthResponse(BaseModel):
     ok: bool = True
     service: str = "shuddho-api"
     status: str
+    version: str | None = None
+    uptime_seconds: float = Field(default=0.0, ge=0.0)
+    allowed_origins_count: int = Field(default=0, ge=0)
+    config: dict[str, Any] = Field(default_factory=dict)
     backend_reachable: bool = True
     detector_loaded: bool
     detector_checkpoint: str | None = None
