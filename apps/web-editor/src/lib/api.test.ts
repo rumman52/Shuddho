@@ -7,6 +7,7 @@ import {
   analyzeText,
   buildCheckRequestBody,
   checkBackendHealth,
+  describeRequestFailure,
   deriveApiConfiguration,
   sendFeedback,
   fetchPreferences,
@@ -208,6 +209,27 @@ test("fetchWithTimeout rejects with friendly timeout error", async () => {
   }
 });
 
+
+test("request diagnostics classify timeout and CORS/network failures", () => {
+  assert.match(
+    describeRequestFailure(
+      Object.assign(new Error("Request timed out"), {
+        name: "FetchTimeoutError",
+        timeoutMs: 20000,
+      }),
+      "https://api.example.test/health",
+    ),
+    /Backend timeout/,
+  );
+  assert.match(
+    describeRequestFailure(
+      new TypeError("Failed to fetch"),
+      "https://api.example.test/health",
+    ),
+    /CORS\/network failure/,
+  );
+});
+
 test("frontend source does not reference private LLM API key variable names", () => {
   const files = [
     "src/App.tsx",
@@ -277,6 +299,33 @@ test("analyzeText surfaces backend 422/500 detail payloads", async () => {
           user_id: "u1",
         }),
       /Backend failed: HTTP 422/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+});
+
+
+test("analyzeText surfaces invalid backend JSON diagnostics", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async () =>
+    new Response("not-json", {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () =>
+        analyzeText({
+          text: "আমি ভাত খাই।",
+          mode: "standard",
+          personal_dictionary: [],
+          user_id: "u1",
+        }),
+      /Backend JSON invalid/,
     );
   } finally {
     globalThis.fetch = originalFetch;

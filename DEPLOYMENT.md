@@ -39,10 +39,13 @@ The root `vercel.json` is for this monorepo-root deployment shape. The root pack
 Set only public Vite variables in the Vercel frontend project:
 
 ```dotenv
-VITE_API_BASE_URL=https://YOUR_RENDER_BACKEND_PUBLIC_URL
+VITE_API_BASE_URL=https://shuddho-api.onrender.com
 VITE_USE_GATEWAY=true
 VITE_ENABLE_LOCAL_FALLBACK=false
 ```
+
+
+Production health checks are intentionally Render-cold-start-safe: the web editor treats `/health` as the source of truth for backend reachability and waits up to 20 seconds. `/health/deep` is checked after `/health`; if deep health is slow or degraded, the editor shows a degraded/warming-up status but still allows quick local suggestions and `/api/check` requests.
 
 If `VITE_API_BASE_URL` is missing, the frontend still builds and renders, but it shows a configuration warning and keeps backend/AI requests disabled until a valid public backend URL is configured.
 

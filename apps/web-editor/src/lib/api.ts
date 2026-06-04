@@ -17,6 +17,7 @@ import { approximateSentenceCount, normalizeAnalyzeResponse } from "./analysis";
 import {
   AI_REVIEW_TIMEOUT_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  FetchTimeoutError,
   fetchWithTimeout,
   GRAMMAR_CHECK_TIMEOUT_MS,
   HEALTH_REQUEST_TIMEOUT_MS,
@@ -227,26 +228,22 @@ async function request<TResponse>(
       timeoutMs,
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown network error";
-    throw new Error(`Network request failed for ${url}: ${message}`);
+    throw new Error(describeRequestFailure(error, url));
   }
 
   if (response.status === 422 || response.status === 500) {
-    const detailJson = await response.json().catch(() => null);
-    const detailText =
-      detailJson === null ? (await response.text().catch(() => "")).trim() : "";
-    const detail = detailJson ?? detailText ?? response.statusText;
+    const detailJson = await safeJson(response);
+    const detail = detailJson ?? response.statusText;
     throw new Error(
-      `Backend failed: HTTP ${response.status}; check response validation failed. ${typeof detail === "string" ? detail : JSON.stringify(detail)}`,
+      `Backend failed: HTTP ${response.status}; backend HTTP status error for ${url}; check response validation failed. ${typeof detail === "string" ? detail : JSON.stringify(detail)}`,
     );
   }
 
   if (!response.ok) {
-    const responseText = await response.text();
+    const responseText = await response.text().catch(() => "");
     const detail = responseText.trim() || response.statusText;
     throw new Error(
-      `Request failed for ${url} with ${response.status}: ${detail}`,
+      `Backend HTTP status error for ${url}: HTTP ${response.status}; ${detail}`,
     );
   }
 
@@ -254,7 +251,38 @@ async function request<TResponse>(
     return undefined as TResponse;
   }
 
-  return response.json() as Promise<TResponse>;
+  const json = await safeJson(response);
+  if (json === null) {
+    throw new Error(`Backend JSON invalid for ${url}: response was not valid JSON.`);
+  }
+  return json as TResponse;
+}
+
+export function describeRequestFailure(error: unknown, url: string): string {
+  if (
+    error instanceof FetchTimeoutError ||
+    (error instanceof Error && error.name === "FetchTimeoutError")
+  ) {
+    const timeoutMs =
+      typeof (error as { timeoutMs?: unknown }).timeoutMs === "number"
+        ? (error as unknown as { timeoutMs: number }).timeoutMs
+        : "the configured timeout";
+    return `Backend timeout for ${url} after ${timeoutMs}ms. Render may still be cold-starting; try again shortly.`;
+  }
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return `Request aborted for ${url}.`;
+  }
+  const message =
+    error instanceof Error ? error.message : String(error ?? "Unknown network error");
+  const lower = message.toLowerCase();
+  if (
+    error instanceof TypeError ||
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror")
+  ) {
+    return `CORS/network failure for ${url}. Check VITE_API_BASE_URL, backend deployment, and SHUDDHO_ALLOWED_ORIGINS. ${message}`;
+  }
+  return `Network request failed for ${url}: ${message}`;
 }
 
 export async function analyzeText(
@@ -406,11 +434,10 @@ export async function checkBackendHealth(): Promise<{
         ? "Backend health response did not report ok:true."
         : "Backend health response was not valid JSON.",
     };
-  } catch {
+  } catch (error) {
     return {
       ok: false,
-      message:
-        "Backend is unavailable. Check backend deployment, CORS, and /health.",
+      message: describeRequestFailure(error, `${getApiBaseUrl()}/health`),
     };
   }
 }
