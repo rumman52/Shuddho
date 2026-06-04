@@ -13,6 +13,7 @@ from services.api.shuddho_api.ai_review_schema import (
     build_review_messages,
     extract_json_payload,
     required_output_schema,
+    raw_suggestion_count,
     validate_ai_review_payload,
 )
 from services.api.shuddho_api.llm_candidates import split_bangla_sentences
@@ -255,10 +256,11 @@ def run_openrouter_check(
         parsed = extract_json_payload(content)
     except Exception:
         return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status="invalid_json", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_invalid_json"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    raw_count = raw_suggestion_count(parsed)
     try:
         review = validate_ai_review_payload(parsed, rid, text)
     except Exception:
-        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, parsed=True, status="invalid_schema", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_invalid_schema"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, parsed=True, status="invalid_schema", response_mode=response_mode, http_status=http_status, warnings=[*warnings, "openrouter_invalid_schema"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}, ai_raw_suggestion_count=raw_count).model_dump()
     status = "completed" if review.suggestions else "completed_empty"
     return LlmProviderResult(
         suggestions=[s.model_dump() for s in review.suggestions],
@@ -275,4 +277,5 @@ def run_openrouter_check(
         http_status=http_status,
         usage=response_json.get("usage") or {},
         timings={"llm_ms": int((time.time()-started)*1000)},
+        ai_raw_suggestion_count=raw_count,
     ).model_dump()

@@ -135,6 +135,7 @@ class AiCheckResponse(BaseModel):
     http_status: int | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
     timings: dict[str, float] = Field(default_factory=dict)
+    ai_raw_suggestion_count: int = 0
 
 
 class ApiCheckRequest(BaseModel):
@@ -485,6 +486,8 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     llm_ms: float | None = None
     job_id: str | None = None
     rejected_count = 0
+    raw_ai_count = 0
+    ai_empty_reason: str | None = None
 
     llm_block: dict[str, Any] = {
         "requested": llm_requested,
@@ -534,8 +537,13 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         llm_block.update({"status": ai.status, "warnings": list(ai.warnings), "error": ai.warnings[0] if ai.warnings and ai.status not in {"completed", "completed_empty"} else None, "llm_ms": llm_ms, "attempted": bool(ai.called)})
         if ai.status in {"completed", "completed_empty"}:
             sentences = _sentences_for_ai(canonical_payload.text)
+            raw_ai_count = int(ai.ai_raw_suggestion_count or len(ai.suggestions or []))
             validated_ai, validation_warnings = validate_ai_suggestions(canonical_payload.text, ai.suggestions, sentences)
-            rejected_count = max(0, len(ai.suggestions) - len(validated_ai))
+            rejected_count = max(0, raw_ai_count - len(validated_ai))
+            if raw_ai_count == 0:
+                ai_empty_reason = "model_returned_no_suggestions"
+            elif not validated_ai:
+                ai_empty_reason = "all_ai_suggestions_rejected"
             if ai.suggestions and rejected_count == len(ai.suggestions):
                 validation_warnings = _dedupe_strings([*validation_warnings, "ai_suggestions_rejected"])
                 ai.status = "completed_rejected"
@@ -546,6 +554,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
             llm_block["used"] = ai.called and ai.parsed
             ai.warnings = _dedupe_strings([*ai.warnings, *validation_warnings, *merge_warnings])
         elif ai.status in {"timeout", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "content_filter", "network_error", "rate_limited", "failed"}:
+            ai_empty_reason = ai.status
             _record_llm_failure(ai.provider, ai.model, ai.warnings or [ai.status])
 
     all_warnings = _dedupe_strings([
@@ -565,6 +574,10 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["llm_provider"] = ai.provider
     response_payload["llm_response_mode"] = ai.response_mode or llm_mode
     response_payload["rejected_ai_suggestion_count"] = rejected_count
+    response_payload["ai_raw_suggestion_count"] = raw_ai_count
+    response_payload["ai_valid_suggestion_count"] = len(validated_ai)
+    response_payload["ai_rejected_suggestion_count"] = rejected_count
+    response_payload["ai_empty_reason"] = ai_empty_reason
     response_payload["correctedText"] = ai.correctedText if ai.status in {"completed", "completed_empty"} and ai.correctedText and "llm_text_truncated" not in ai.warnings else response_payload.get("correctedText") or canonical_payload.text
     response_payload["documentAssessment"] = ai.documentAssessment if ai.status in {"completed", "completed_empty", "completed_rejected"} and ai.documentAssessment else response_payload.get("documentAssessment") or {}
     timings: dict[str, int | float | bool] = {
@@ -589,6 +602,10 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         "timings": ai.timings,
         "cache_hit": bool(ai.timings.get("cache_hit")),
         "attempted": response_payload["llm_attempted"],
+        "ai_raw_suggestion_count": raw_ai_count,
+        "ai_valid_suggestion_count": len(validated_ai),
+        "ai_rejected_suggestion_count": rejected_count,
+        "ai_empty_reason": ai_empty_reason,
     })
     response_payload["llm"] = llm_block
     response_payload["local_suggestion_count"] = local_count
@@ -603,6 +620,10 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         "llmConfigured": config.configured,
         "llmProvider": config.provider,
         "llmModel": config.model,
+        "ai_raw_suggestion_count": raw_ai_count,
+        "ai_valid_suggestion_count": len(validated_ai),
+        "ai_rejected_suggestion_count": rejected_count,
+        "ai_empty_reason": ai_empty_reason,
         "llm": {
             "requested": response_payload["llm_requested"],
             "attempted": response_payload["llm_attempted"],
@@ -615,6 +636,10 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
             "parsed": ai.parsed,
             "http_status": ai.http_status,
             "rejected_ai_suggestion_count": rejected_count,
+            "ai_raw_suggestion_count": raw_ai_count,
+            "ai_valid_suggestion_count": len(validated_ai),
+            "ai_rejected_suggestion_count": rejected_count,
+            "ai_empty_reason": ai_empty_reason,
             "response_mode": ai.response_mode,
             "warnings": all_warnings,
             "rejection_warnings": [warning for warning in all_warnings if warning.startswith("ai_suggestion") or warning == "ai_suggestions_rejected"],
@@ -1048,7 +1073,8 @@ def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestio
     valid_ai, validation_warnings = validate_ai_suggestions(text, ai.suggestions, _sentences_for_ai(text))
     merged, merge_warnings = merge_suggestions(text, local_suggestions, valid_ai, ai.provider, ai.model)
     warnings = _dedupe_strings([*ai.warnings, *validation_warnings, *merge_warnings])
-    payload = {"suggestions": merged, "ai_suggestion_count": len(valid_ai), "correctedText": ai.correctedText, "documentAssessment": ai.documentAssessment, "llm_status": ai.status, "provider": ai.provider, "model": ai.model, "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": warnings, "usage": ai.usage, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}, "created_at": time.time()}
+    raw_ai_count = int(ai.ai_raw_suggestion_count or len(ai.suggestions or []))
+    payload = {"suggestions": merged, "ai_suggestion_count": len(valid_ai), "ai_raw_suggestion_count": raw_ai_count, "ai_valid_suggestion_count": len(valid_ai), "ai_rejected_suggestion_count": max(0, raw_ai_count - len(valid_ai)), "ai_empty_reason": "model_returned_no_suggestions" if raw_ai_count == 0 else ("all_ai_suggestions_rejected" if raw_ai_count and not valid_ai else None), "correctedText": ai.correctedText, "documentAssessment": ai.documentAssessment, "llm_status": ai.status, "provider": ai.provider, "model": ai.model, "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": warnings, "usage": ai.usage, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}, "created_at": time.time()}
     llm_cache[key] = payload
     job.update(payload | {"status": "completed" if ai.status in {"completed", "completed_empty"} else ai.status})
 

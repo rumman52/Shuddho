@@ -1138,6 +1138,49 @@ def test_api_check_include_llm_true_merges_valid_ai(monkeypatch) -> None:
     assert any(s.originalText == "ভাত" and s.provider == "openrouter" for s in response.suggestions)
 
 
+def test_api_check_openrouter_mock_returns_three_ai_suggestions(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+    text = "আমি  ভাত খাই। তুমি পানি খাই। সে সে স্কুলে যায়"
+
+    def fake_run_ai_check(text, request_id, local_suggestions=None, timeout_seconds=None):
+        return app_module.AiCheckResponse(
+            suggestions=[
+                {"id": "ai-spacing", "sentenceId": "s_0", "original": "আমি  ভাত", "replacement": "আমি ভাত", "issueType": "spacing", "severity": "low", "explanation": "অতিরিক্ত ফাঁক", "confidence": 0.86},
+                {"id": "ai-grammar", "sentenceId": "s_1", "original": "খাই", "replacement": "খাও", "issueType": "grammar", "severity": "medium", "explanation": "ব্যক্তি অনুযায়ী ক্রিয়া", "confidence": 0.84, "start": 999, "end": 1002},
+                {"id": "ai-repeat", "sentenceId": "s_2", "original": "সে সে", "replacement": "সে", "issueType": "repeated_word", "severity": "medium", "explanation": "পুনরাবৃত্ত শব্দ", "confidence": 0.82},
+            ],
+            correctedText="আমি ভাত খাই। তুমি পানি খাও। সে স্কুলে যায়",
+            documentAssessment={"summary": "তিনটি সংশোধন দরকার", "overallQuality": "fair", "language": "bn"},
+            provider="openrouter",
+            model="openai/gpt-oss-120b:free",
+            llm_enabled=True,
+            configured=True,
+            called=True,
+            parsed=True,
+            status="completed",
+            response_mode="json_schema",
+            ai_raw_suggestion_count=3,
+        )
+
+    monkeypatch.setattr(app_module, "_run_ai_check", fake_run_ai_check)
+    response = client.post("/api/check", json={"text": text, "language": "bn", "options": {"includeLLM": True, "asyncLLM": False}})
+    assert response.status_code == 200
+    payload = response.json()
+    ai_suggestions = [s for s in payload["suggestions"] if s.get("source") in {"model", "hybrid"}]
+    assert payload["llm_status"] == "completed"
+    assert payload["ai_suggestion_count"] == 3
+    assert payload["rejected_ai_suggestion_count"] == 0
+    assert payload["diagnostics"]["ai_raw_suggestion_count"] == 3
+    assert payload["diagnostics"]["ai_valid_suggestion_count"] == 3
+    assert payload["diagnostics"]["ai_rejected_suggestion_count"] == 0
+    assert payload["diagnostics"]["ai_empty_reason"] is None
+    assert {s["type"] for s in ai_suggestions} >= {"spacing", "grammar", "repeated_word"}
+    assert len(ai_suggestions) >= 3
+
+
 def test_health_deep_reports_safe_llm_configuration(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
     monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
