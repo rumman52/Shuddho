@@ -102,8 +102,13 @@ export default function App() {
   const [backendHealthDiagnostic, setBackendHealthDiagnostic] = useState<
     string | null
   >(null);
+  const [lastApiCheckDiagnostic, setLastApiCheckDiagnostic] = useState(
+    "not run",
+  );
   const [llmDebug, setLlmDebug] = useState<LlmDebugResponse | null>(null);
-  const [llmDebugDiagnostic, setLlmDebugDiagnostic] = useState<string | null>(null);
+  const [llmDebugDiagnostic, setLlmDebugDiagnostic] = useState<string | null>(
+    null,
+  );
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
   const [apiConfiguration, setApiConfiguration] = useState(() =>
@@ -467,12 +472,21 @@ export default function App() {
         : [];
       setAnalysis(normalizedResponse);
       apiCheckReachableRef.current = true;
-      const checkReachableHealth = normalizeShallowHealthAfterSuccessfulCheck(shallowHealth);
+      const checkReachableHealth = normalizeShallowHealthAfterSuccessfulCheck(
+        shallowHealth,
+      );
       if (checkReachableHealth !== shallowHealth) {
         setShallowHealth(checkReachableHealth);
       }
       setBackendHealthDiagnostic(null);
-      setBackendMode(deriveBackendModeAfterSuccessfulCheck(shallowHealth, backendHealth));
+      const nextBackendMode = deriveBackendModeAfterSuccessfulCheck(
+        checkReachableHealth,
+        backendHealth,
+      );
+      setBackendMode(nextBackendMode);
+      setLastApiCheckDiagnostic(
+        `success: ${responseSuggestions.length} suggestions; backendMode=${nextBackendMode}`,
+      );
       const responseWarnings = Array.isArray(normalizedResponse.runtime_warnings)
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
@@ -496,7 +510,10 @@ export default function App() {
       }
       const message = error instanceof Error ? error.message : "";
       const checkErrorMessage = describeAnalyzeTextError(message, includeLLM);
-      const shouldMarkOffline = checkErrorMessage.startsWith("Browser could not reach backend");
+      setLastApiCheckDiagnostic(`failure: ${checkErrorMessage}`);
+      const shouldMarkOffline = checkErrorMessage.startsWith(
+        "Browser could not reach backend",
+      );
       if (message.includes("HTTP 422") || message.includes("Backend validation failed:")) {
         setStatus(
           "Backend validation failed. Request payload does not match /api/check schema.",
@@ -921,6 +938,23 @@ export default function App() {
         </div>
       ) : null}
 
+      <div className="production-debug-line" role="status">
+        <span>API base URL: {apiConfiguration.apiBaseUrl || "none"}</span>
+        <span>
+          API config source: {apiConfiguration.apiBaseUrlSource} / {apiConfiguration.source}
+        </span>
+        <span>backendMode: {backendMode}</span>
+        <span>last health error: {backendHealthDiagnostic ?? "none"}</span>
+        <span>last /api/check: {lastApiCheckDiagnostic}</span>
+        <button
+          type="button"
+          className="button-secondary diagnostics-retest"
+          onClick={() => void retestBackendDiagnostics()}
+        >
+          Retest Backend
+        </button>
+      </div>
+
       <section className="product-shell" aria-label="Bangla writing assistant workspace">
         <aside className="left-nav" aria-label="Primary navigation">
           <div className="left-nav__main">
@@ -1341,15 +1375,13 @@ export default function App() {
               <span>llm_provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
               <span>llm_model: {normalizedAnalysis.llm_model ?? "none"}</span>
               <span>rejected_ai_suggestion_count: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>
-              {debugMode ? (
-                <button
-                  type="button"
-                  className="button-secondary diagnostics-retest"
-                  onClick={() => void retestBackendDiagnostics()}
-                >
-                  Retest Backend
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="button-secondary diagnostics-retest"
+                onClick={() => void retestBackendDiagnostics()}
+              >
+                Retest Backend
+              </button>
               {debugMode ? (
                 <>
               <strong>Diagnostics</strong>

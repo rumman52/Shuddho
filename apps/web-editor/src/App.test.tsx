@@ -96,9 +96,9 @@ test("successful /api/check still respects available deep health readiness", () 
 test("App source clears stale unavailable banner after successful /api/check", () => {
   const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   assert.match(source, /apiCheckReachableRef\.current = true/);
-  assert.match(source, /normalizeShallowHealthAfterSuccessfulCheck\(shallowHealth\)/);
+  assert.match(source, /normalizeShallowHealthAfterSuccessfulCheck\(\s*shallowHealth,\s*\)/);
   assert.match(source, /setBackendHealthDiagnostic\(null\)/);
-  assert.match(source, /deriveBackendModeAfterSuccessfulCheck\(shallowHealth, backendHealth\)/);
+  assert.match(source, /deriveBackendModeAfterSuccessfulCheck\(\s*checkReachableHealth,\s*backendHealth,\s*\)/);
   assert.match(source, /setBackendMode\("connected"\)/);
 });
 
@@ -109,6 +109,19 @@ test("App source checks /health before /health/deep and keeps deep failure degra
   assert.doesNotMatch(source, /Promise\.allSettled\(\[\s*getHealth\(\),\s*getHealthDeep\(\)/);
   assert.match(source, /setBackendMode\("degraded"\)/);
   assert.match(source, /Backend connected, but deep health check is degraded or still warming up\./);
+});
+
+test("App source exposes production backend debug strip outside debug mode", () => {
+  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(source, /production-debug-line/);
+  assert.match(source, /API base URL:/);
+  assert.match(source, /API config source:/);
+  assert.match(source, /backendMode:/);
+  assert.match(source, /last health error:/);
+  assert.match(source, /last \/api\/check:/);
+  assert.match(source, /lastApiCheckDiagnostic/);
+  assert.match(source, /setLastApiCheckDiagnostic\(\s*`success:/);
+  assert.match(source, /setLastApiCheckDiagnostic\(`failure:/);
 });
 
 test("timeout errors map to friendly user-facing messages", () => {
