@@ -48,6 +48,8 @@ const AUTO_AI_ANALYSIS_DEBOUNCE_MS = 3000;
 const DEBUG_MODE_STORAGE_KEY = "shuddho-web-editor-debug";
 const BACKEND_UNAVAILABLE_MESSAGE =
   "Backend is unavailable. Check backend deployment, CORS, and /health.";
+const BACKEND_DEEP_HEALTH_DEGRADED_MESSAGE =
+  "Backend connected, but deep health check is degraded or still warming up.";
 const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_UNAVAILABLE_MESSAGE;
 const REQUEST_TIMEOUT_MESSAGE =
   "Request timed out. Please try again or check backend deployment.";
@@ -95,6 +97,9 @@ export default function App() {
     useState<BackendHealthResponse | null>(null);
   const [shallowHealth, setShallowHealth] =
     useState<BackendHealthResponse | null>(null);
+  const [backendHealthDiagnostic, setBackendHealthDiagnostic] = useState<
+    string | null
+  >(null);
   const [apiBaseUrl, setApiBaseUrl] = useState(() => getApiBaseUrl());
   const [apiBaseUrlDraft, setApiBaseUrlDraft] = useState(() => getApiBaseUrl());
   const [apiConfiguration, setApiConfiguration] = useState(() =>
@@ -231,6 +236,7 @@ export default function App() {
       setBackendMode("misconfigured");
       setBackendHealth(null);
       setShallowHealth(null);
+      setBackendHealthDiagnostic(apiConfiguration.hardWarning);
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
@@ -239,24 +245,45 @@ export default function App() {
       return;
     }
 
+    let health: BackendHealthResponse;
     try {
-      const [healthResult, deepResult] = await Promise.allSettled([
-        getHealth(),
-        getHealthDeep(),
-      ]);
-      if (healthResult.status === "rejected") {
-        throw healthResult.reason;
-      }
-      setShallowHealth(healthResult.value);
-      if (healthResult.value?.ok !== true) {
+      health = await getHealth();
+      setShallowHealth(health);
+      if (health?.ok !== true) {
         throw new Error("Backend health response did not report ok:true.");
       }
-      const nextHealth = deepResult.status === "fulfilled" ? deepResult.value : healthResult.value;
-      setBackendHealth(nextHealth);
-      const nextMode = deriveBackendModeFromHealth(healthResult.value, nextHealth);
+      setBackendMode("connected");
+      setBackendHealth(health);
+      setBackendHealthDiagnostic(null);
+      setStatus("Backend connected.");
+    } catch (error) {
+      if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
+        console.debug("Backend /health check failed", error);
+      }
+      const message =
+        error instanceof Error
+          ? error.message
+          : String(error ?? "Unknown health check error");
+      setBackendHealth(null);
+      setShallowHealth(null);
+      setBackendHealthDiagnostic(message);
+      setBackendMode("unavailable");
+      setStatus(
+        apiConfiguration.localFallbackEnabled
+          ? DEV_LOCAL_FALLBACK_DESCRIPTION
+          : `${BACKEND_UNAVAILABLE_MESSAGE} ${friendlyHealthFailure(message)}`,
+      );
+      return;
+    }
+
+    try {
+      const deepHealth = await getHealthDeep();
+      setBackendHealth(deepHealth);
+      const nextMode = deriveBackendModeFromHealth(health, deepHealth);
       setBackendMode(nextMode);
+      setBackendHealthDiagnostic(null);
       if (nextMode === "degraded") {
-        setStatus("Backend connected, but sentence-level corrector is degraded.");
+        setStatus(BACKEND_DEEP_HEALTH_DEGRADED_MESSAGE);
       } else if (nextMode === "ready") {
         setStatus("Backend connected and engines loaded.");
       } else {
@@ -264,16 +291,20 @@ export default function App() {
       }
     } catch (error) {
       if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
-        console.debug("Backend health check failed", error);
+        console.debug("Backend /health/deep check failed", error);
       }
-      setBackendHealth(null);
-      setShallowHealth(null);
-      setBackendMode("unavailable");
-      setStatus(
-        apiConfiguration.localFallbackEnabled
-          ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : BACKEND_UNAVAILABLE_MESSAGE,
-      );
+      const message =
+        error instanceof Error
+          ? error.message
+          : String(error ?? "Unknown deep health check error");
+      setBackendMode("degraded");
+      setBackendHealth({
+        ...health,
+        status: "degraded",
+        backend_warning: BACKEND_DEEP_HEALTH_DEGRADED_MESSAGE,
+      });
+      setBackendHealthDiagnostic(message);
+      setStatus(BACKEND_DEEP_HEALTH_DEGRADED_MESSAGE);
     }
   }
 
@@ -1259,6 +1290,7 @@ export default function App() {
               <span>localStorageOverrideIgnored: {String(apiConfiguration.localStorageOverrideIgnored)}</span>
               <span>backendAllowed: {String(apiConfiguration.backendAllowed)}</span>
               <span>hardWarning: {apiConfiguration.hardWarning ?? "none"}</span>
+              <span>backendHealthDiagnostic: {backendHealthDiagnostic ?? "none"}</span>
               <span>backendMode: {backendMode}</span>
               <span>healthOk: {String(shallowHealth?.ok === true)}</span>
               <span>deepHealthOk: {String(backendHealth?.ok === true)}</span>
@@ -1531,9 +1563,26 @@ function backendTransportForRuntime(backendMode: BackendMode): "checking" | "onl
   return backendMode;
 }
 
-function deriveBackendModeFromHealth(
-  health: BackendHealthResponse | null,
-  deepHealth: BackendHealthResponse | null,
+function friendlyHealthFailure(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return "The backend timed out and may still be waking up on Render Free.";
+  }
+  if (lower.includes("cors") || lower.includes("network") || lower.includes("failed to fetch")) {
+    return "This looks like a CORS or network failure.";
+  }
+  if (lower.includes("http")) {
+    return "The backend returned an HTTP error.";
+  }
+  if (lower.includes("json")) {
+    return "The backend returned invalid JSON.";
+  }
+  return "";
+}
+
+export function deriveBackendModeFromHealth(
+  health: Partial<BackendHealthResponse> | null,
+  deepHealth: Partial<BackendHealthResponse> | null,
 ): BackendMode {
   if (health?.ok !== true) {
     return "unavailable";
@@ -1549,7 +1598,7 @@ function deriveBackendModeFromHealth(
   return "connected";
 }
 
-function describeAnalyzeTextError(message: string, includeLLM: boolean): string {
+export function describeAnalyzeTextError(message: string, includeLLM: boolean): string {
   const lower = message.toLowerCase();
   if (lower.includes("timed out") || lower.includes("timeout")) {
     return includeLLM ? "AI review timed out. Showing local suggestions." : REQUEST_TIMEOUT_MESSAGE;
@@ -1563,10 +1612,13 @@ function describeAnalyzeTextError(message: string, includeLLM: boolean): string 
   if (message.includes("HTTP 500") || /with 500[:;]/.test(message)) {
     return "Backend crashed during analysis. Check Render logs.";
   }
+  if (lower.includes("backend json invalid") || lower.includes("invalid json")) {
+    return "Backend returned invalid JSON. Check /api/check response and Render logs.";
+  }
   if (lower.includes("openrouter") || lower.includes("provider_error")) {
     return `OpenRouter provider error while reviewing. ${message}`.slice(0, 240);
   }
-  if (lower.includes("network request failed") || lower.includes("failed to fetch") || lower.includes("cors")) {
+  if (lower.includes("network request failed") || lower.includes("failed to fetch") || lower.includes("cors") || lower.includes("network failure")) {
     return "Browser could not reach backend. Check CORS and VITE_API_BASE_URL.";
   }
   return message || "Backend analysis failed. Check /api/check response and Render logs.";
