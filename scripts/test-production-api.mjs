@@ -44,11 +44,16 @@ function printCheckSummary(json) {
   const llm = json.llm ?? diagnostics.llm ?? {};
   console.log("-- check summary --");
   console.log(`suggestions=${Array.isArray(json.suggestions) ? json.suggestions.length : "unknown"}`);
+  console.log(`llm_requested=${json.llm_requested ?? llm.requested ?? "missing"}`);
+  console.log(`llm_attempted=${json.llm_attempted ?? llm.attempted ?? "missing"}`);
+  console.log(`llm_used=${json.llm_used ?? llm.used ?? "missing"}`);
   console.log(`llm_status=${json.llm_status ?? llm.status ?? "missing"}`);
   console.log(`llm_provider=${json.llm_provider ?? llm.provider ?? "missing"}`);
   console.log(`llm_model=${json.llm_model ?? llm.model ?? "missing"}`);
-  console.log(`llm_attempted=${json.llm_attempted ?? llm.attempted ?? "missing"}`);
-  console.log(`llm_used=${json.llm_used ?? llm.used ?? "missing"}`);
+  console.log(`llm.http_status=${llm.http_status ?? diagnostics.llm?.http_status ?? "missing"}`);
+  console.log(`local_suggestion_count=${json.local_suggestion_count ?? diagnostics.local?.suggestion_count ?? "missing"}`);
+  console.log(`ai_suggestion_count=${json.ai_suggestion_count ?? "missing"}`);
+  console.log(`rejected_ai_suggestion_count=${json.rejected_ai_suggestion_count ?? llm.rejected_ai_suggestion_count ?? "missing"}`);
   console.log(`warnings=${JSON.stringify(json.warnings ?? llm.warnings ?? [])}`);
   console.log(`diagnostics.llm=${JSON.stringify(diagnostics.llm ?? llm)}`);
 }

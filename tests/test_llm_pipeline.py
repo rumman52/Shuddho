@@ -181,3 +181,25 @@ def test_openrouter_valid_ai_suggestion_completed(monkeypatch) -> None:
     result = run_openrouter_check("আমি ভাত খাই।", "openai/gpt-oss-120b:free", "key", request_id="r1")
     assert result["status"] == "completed"
     assert len(result["suggestions"]) == 1
+
+def test_ai_validation_resolves_missing_and_incorrect_spans() -> None:
+    text = "আমি ভাত খাই। তুমি পানি খাই।"
+    valid, warnings = validate_ai_suggestions(text, [
+        {"id": "missing-span", "sentenceId": "s_0", "originalText": "ভাত", "replacementText": "ভাতটা", "type": "clarity", "confidence": 0.9},
+        {"id": "wrong-span", "sentenceId": "s_1", "original": "খাই", "suggestedText": "খাও", "issueType": "grammar", "confidence": 0.9, "start": 999, "end": 1002},
+    ])
+    assert warnings == []
+    assert [(item["span_start"], item["span_end"]) for item in valid] == [(4, 7), (23, 26)]
+    assert valid[0]["replacement"] == "ভাতটা"
+
+
+def test_merge_canonicalizes_ai_source_as_model() -> None:
+    merged, warnings = merge_suggestions(
+        "আমি ভাত খাই।",
+        [],
+        [{"id": "a1", "original": "ভাত", "replacement": "ভাতটা", "issueType": "clarity", "severity": "low", "explanation": "আরও নির্দিষ্ট", "confidence": 0.9, "span_start": 4, "span_end": 7}],
+        "openrouter",
+        "openai/gpt-oss-120b:free",
+    )
+    assert warnings == []
+    assert merged[0]["source"] == "model"

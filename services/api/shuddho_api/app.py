@@ -465,9 +465,11 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     local_count = len(local_suggestions)
     detector_runtime = detector_service.runtime_status()
     corrector_runtime = corrector_service.runtime_status()
+    local_runtime_warnings = response_payload.get("warnings") or []
     corrector_missing_warning = (
         "sentence_level_corrector_unavailable"
-        if corrector_runtime.status != "ready" or not corrector_runtime.loaded
+        if (corrector_runtime.status != "ready" or not corrector_runtime.loaded)
+        and "corrector_missing_checkpoint" not in local_runtime_warnings
         else None
     )
 
@@ -531,7 +533,10 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
             sentences = _sentences_for_ai(canonical_payload.text)
             validated_ai, validation_warnings = validate_ai_suggestions(canonical_payload.text, ai.suggestions, sentences)
             rejected_count = max(0, len(ai.suggestions) - len(validated_ai))
-            if ai.status == "completed" and not validated_ai:
+            if ai.suggestions and rejected_count == len(ai.suggestions):
+                validation_warnings = _dedupe_strings([*validation_warnings, "ai_suggestions_rejected"])
+                ai.status = "completed_rejected"
+            elif ai.status == "completed" and not validated_ai:
                 ai.status = "completed_empty"
             merged_suggestions, merge_warnings = merge_suggestions(canonical_payload.text, local_suggestions, validated_ai, ai.provider, ai.model)
             response_payload["suggestions"] = merged_suggestions
@@ -546,19 +551,19 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         *ai.warnings,
         *merge_warnings,
     ])
-    if llm_requested and ai.status not in {"completed", "completed_empty", "skipped", "attempted"} and not all_warnings:
+    if llm_requested and ai.status not in {"completed", "completed_empty", "completed_rejected", "skipped", "attempted"} and not all_warnings:
         all_warnings.append(f"llm_{ai.status}")
     response_payload["warnings"] = all_warnings
     response_payload["llm_requested"] = llm_requested
     response_payload["llm_attempted"] = bool(ai.called or async_llm and job_id)
-    response_payload["llm_used"] = bool(ai.status in {"completed", "completed_empty"} and ai.called and ai.parsed)
+    response_payload["llm_used"] = bool(ai.status in {"completed", "completed_empty", "completed_rejected"} and ai.called and ai.parsed)
     response_payload["llm_model"] = ai.model
     response_payload["llm_status"] = ai.status if not (async_llm and job_id) else "queued"
     response_payload["llm_provider"] = ai.provider
     response_payload["llm_response_mode"] = ai.response_mode or llm_mode
     response_payload["rejected_ai_suggestion_count"] = rejected_count
     response_payload["correctedText"] = ai.correctedText if ai.status in {"completed", "completed_empty"} and ai.correctedText and "llm_text_truncated" not in ai.warnings else response_payload.get("correctedText") or canonical_payload.text
-    response_payload["documentAssessment"] = ai.documentAssessment if ai.status in {"completed", "completed_empty"} and ai.documentAssessment else response_payload.get("documentAssessment") or {}
+    response_payload["documentAssessment"] = ai.documentAssessment if ai.status in {"completed", "completed_empty", "completed_rejected"} and ai.documentAssessment else response_payload.get("documentAssessment") or {}
     timings: dict[str, int | float | bool] = {
         "local_ms": local_ms,
         "llm_ms": llm_ms or 0,
@@ -571,6 +576,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         "provider": ai.provider,
         "model": ai.model,
         "warnings": all_warnings if ai.status not in {"completed", "completed_empty"} else ai.warnings,
+        "rejection_warnings": [warning for warning in all_warnings if warning.startswith("ai_suggestion") or warning == "ai_suggestions_rejected"],
         "called": ai.called,
         "configured": ai.configured,
         "parsed": ai.parsed,
@@ -605,6 +611,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
             "rejected_ai_suggestion_count": rejected_count,
             "response_mode": ai.response_mode,
             "warnings": all_warnings,
+            "rejection_warnings": [warning for warning in all_warnings if warning.startswith("ai_suggestion") or warning == "ai_suggestions_rejected"],
             "error": llm_block.get("error"),
             "skip_reason": llm_block.get("skip_reason"),
             "llm_ms": llm_ms,
@@ -614,6 +621,22 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         },
         "local": {"local_engine_mode": os.environ.get("SHUDDHO_LOCAL_ENGINE_MODE", "fallback"), "suggestion_count": local_count},
     }
+    logger.info(
+        "CHECK_LLM_STATUS request_id=%s includeLLM=%s llm_requested=%s llm_attempted=%s llm_used=%s llm_status=%s llm_provider=%s llm_model=%s llm_http_status=%s local_suggestion_count=%s ai_suggestion_count=%s rejected_ai_suggestion_count=%s warnings=%s",
+        request_id,
+        include_llm,
+        response_payload["llm_requested"],
+        response_payload["llm_attempted"],
+        response_payload["llm_used"],
+        response_payload["llm_status"],
+        ai.provider,
+        ai.model,
+        ai.http_status,
+        local_count,
+        len(validated_ai),
+        rejected_count,
+        all_warnings,
+    )
     logger.info("LLM_MERGE_DONE request_id=%s provider=%s model=%s status=%s http_status=%s local_count=%s ai_count=%s rejected_count=%s total_count=%s timings=%s warnings=%s", request_id, ai.provider, ai.model, response_payload["llm_status"], ai.http_status, local_count, len(validated_ai), rejected_count, len(response_payload.get("suggestions") or []), response_payload["timings"], all_warnings)
     try:
         return CanonicalCheckResponse(**response_payload)
@@ -865,12 +888,12 @@ def _normalize_api_check_payload(payload: ApiCheckRequest) -> dict[str, Any]:
     return {
         "text": payload.text,
         "language": payload.language or "bn",
-        "document_id": payload.document_id or payload.documentId,
-        "revision": payload.revision,
-        "dialect": payload.dialect,
-        "user_id": payload.user_id or payload.userId,
-        "client": payload.client,
-        "consent": payload.consent,
+        "document_id": getattr(payload, "document_id", None) or getattr(payload, "documentId", None),
+        "revision": getattr(payload, "revision", None),
+        "dialect": getattr(payload, "dialect", None),
+        "user_id": getattr(payload, "user_id", None) or getattr(payload, "userId", None),
+        "client": getattr(payload, "client", None),
+        "consent": getattr(payload, "consent", None),
         "options": options,
     }
 

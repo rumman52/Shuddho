@@ -83,8 +83,8 @@ class AIReviewSuggestion(BaseModel):
     severity: Severity = "medium"
     explanation: str = ""
     confidence: float = Field(ge=0.0, le=1.0)
-    start: int = Field(ge=0)
-    end: int = Field(ge=1)
+    start: int | None = Field(default=None, ge=0)
+    end: int | None = Field(default=None, ge=1)
 
     @field_validator("original", "replacement")
     @classmethod
@@ -163,18 +163,33 @@ def normalize_review_payload(parsed: dict[str, Any], request_id: str, original_t
         if not isinstance(item, dict):
             continue
         copy = dict(item)
-        copy.setdefault("id", f"ai_{index}")
-        copy.setdefault("sentenceId", copy.get("sentence_id") or "")
-        copy.setdefault("issueType", copy.get("type") or copy.get("category") or "grammar")
-        copy.setdefault("severity", "medium")
-        copy.setdefault("explanation", copy.get("message") or copy.get("explanationBn") or "")
-        copy.setdefault("confidence", 0.75)
+        original = copy.get("original") or copy.get("originalText") or copy.get("original_text")
+        replacement = (
+            copy.get("replacement")
+            or copy.get("suggestedText")
+            or copy.get("suggested_text")
+            or copy.get("replacementText")
+            or copy.get("replacement_text")
+        )
+        copy["original"] = original
+        copy["replacement"] = replacement
+        copy["id"] = copy.get("id") or f"ai_{index}"
+        copy["sentenceId"] = copy.get("sentenceId") or copy.get("sentence_id") or ""
+        copy["issueType"] = copy.get("issueType") or copy.get("type") or copy.get("category") or "grammar"
+        copy["severity"] = copy.get("severity") or "medium"
+        copy["explanation"] = copy.get("explanation") or copy.get("message") or copy.get("explanationBn") or copy.get("explanation_en") or ""
+        copy["confidence"] = copy.get("confidence", 0.75)
         copy.pop("source", None)
         if "start" not in copy and "span_start" in copy:
             copy["start"] = copy.get("span_start")
         if "end" not in copy and "span_end" in copy:
             copy["end"] = copy.get("span_end")
-        normalized.append(copy)
+        allowed = {"id", "sentenceId", "original", "replacement", "issueType", "severity", "explanation", "confidence", "start", "end"}
+        candidate = {key: copy.get(key) for key in allowed if key in copy}
+        try:
+            normalized.append(AIReviewSuggestion.model_validate(candidate).model_dump())
+        except Exception:
+            continue
     payload["suggestions"] = normalized
     return payload
 
