@@ -47,6 +47,7 @@ class LlmProviderResult:
     http_status: int | None = None
     usage: dict[str, Any] = field(default_factory=dict)
     timings: dict[str, Any] = field(default_factory=dict)
+    ai_raw_suggestion_count: int = 0
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -64,6 +65,7 @@ class LlmProviderResult:
             "http_status": self.http_status,
             "usage": self.usage,
             "timings": self.timings,
+            "ai_raw_suggestion_count": self.ai_raw_suggestion_count,
         }
 
 

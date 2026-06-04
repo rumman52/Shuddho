@@ -8,7 +8,7 @@ from services.api.shuddho_api.llm_candidates import split_bangla_sentences
 
 SAFE_CHANGE_TYPES = {"punctuation", "spacing"}
 HIGH_CONFIDENCE = 0.75
-VALID_ISSUE_TYPES = {"grammar", "spelling", "punctuation", "spacing", "style", "clarity", "fluency", "tone", "word_choice", "other"}
+VALID_ISSUE_TYPES = {"spelling", "grammar", "punctuation", "spacing", "repeated_word", "fluency", "sentence_rewrite", "style", "clarity", "tone", "word_choice", "other"}
 VALID_SEVERITIES = {"low", "medium", "high"}
 
 
@@ -57,16 +57,26 @@ def _find_span(text: str, original: str, start: Any = None, end: Any = None, sen
                 if len(contained) == 1:
                     s = contained[0]
                     return s, s + len(original), None
+                if len(contained) > 1 and start_index is not None:
+                    nearest = min(contained, key=lambda m: abs(m - start_index))
+                    if abs(nearest - start_index) <= max(3, len(original)):
+                        return nearest, nearest + len(original), None
+                    return -1, -1, "ai_suggestion_ambiguous_span"
                 if len(contained) > 1:
                     return -1, -1, "ai_suggestion_ambiguous_span"
                 break
     if len(matches) == 1:
         s = matches[0]
         return s, s + len(original), None
+    if len(matches) > 1 and start_index is not None:
+        nearest = min(matches, key=lambda m: abs(m - start_index))
+        if abs(nearest - start_index) <= max(3, len(original)):
+            return nearest, nearest + len(original), None
     if len(matches) > 1:
         return -1, -1, "ai_suggestion_ambiguous_span"
-    if start_index is not None or end_index is not None:
-        return -1, -1, "ai_suggestion_invalid_span"
+    whitespace_span = _find_whitespace_normalized_span(text, original)
+    if whitespace_span is not None:
+        return whitespace_span[0], whitespace_span[1], None
     return -1, -1, "ai_suggestion_original_not_found"
 
 
@@ -120,7 +130,8 @@ def validate_ai_suggestions(
         if not isinstance(original, str) or not isinstance(replacement, str) or not original.strip() or not replacement.strip():
             warnings.append("ai_suggestion_invalid_schema")
             continue
-        if _norm(original) == _norm(replacement):
+        issue_type = str(item.get("issueType") or item.get("type") or "grammar")
+        if original == replacement or (issue_type not in SAFE_CHANGE_TYPES and _norm(original) == _norm(replacement)):
             warnings.append("ai_suggestion_identical_replacement")
             continue
         try:
@@ -131,7 +142,6 @@ def validate_ai_suggestions(
         if confidence < 0 or confidence > 1:
             warnings.append("ai_suggestion_invalid_confidence")
             continue
-        issue_type = str(item.get("issueType") or item.get("type") or "grammar")
         if issue_type not in VALID_ISSUE_TYPES:
             warnings.append("ai_suggestion_invalid_issue_type")
             continue
@@ -246,7 +256,7 @@ def merge_suggestions(
         if not (0 <= start < end <= len(text)) or text[start:end] != canonical["originalText"]:
             warnings.append("local_suggestion_invalid_span")
             continue
-        if _norm(canonical["originalText"]) == _norm(canonical["suggestedText"]):
+        if canonical["originalText"] == canonical["suggestedText"] or (canonical["type"] not in SAFE_CHANGE_TYPES and _norm(canonical["originalText"]) == _norm(canonical["suggestedText"])):
             warnings.append("local_suggestion_identical_replacement")
             continue
         k = key_for(canonical)
@@ -266,7 +276,7 @@ def merge_suggestions(
         if canonical["originalText"] not in text:
             warnings.append("ai_suggestion_original_not_found")
             continue
-        if _norm(canonical["originalText"]) == _norm(canonical["suggestedText"]):
+        if canonical["originalText"] == canonical["suggestedText"] or (canonical["type"] not in SAFE_CHANGE_TYPES and _norm(canonical["originalText"]) == _norm(canonical["suggestedText"])):
             warnings.append("ai_suggestion_identical_replacement")
             continue
         exact = by_key.get(key_for(canonical))
@@ -296,15 +306,18 @@ def merge_suggestions(
                 "metadata": meta,
             })
             continue
-        if competing and float(canonical.get("confidence", 0)) < HIGH_CONFIDENCE and competing["type"] in {"spelling", "grammar"}:
-            continue
-        if float(canonical.get("confidence", 0)) < HIGH_CONFIDENCE:
-            warnings.append("ai_suggestion_below_confidence_threshold")
-            continue
+        if competing and key_for(competing) != key_for(canonical):
+            # Keep independent AI corrections instead of dropping valid lower-confidence
+            # items; exact duplicates were handled above.
+            pass
         by_key[key_for(canonical)] = canonical
         span_type_index[(start, end, canonical["type"])] = canonical
         merged.append(canonical)
 
-    actionable = [item for item in merged if _norm(item["originalText"]) != _norm(item["suggestedText"])]
+    actionable = [
+        item for item in merged
+        if item["originalText"] != item["suggestedText"]
+        and (item["type"] in SAFE_CHANGE_TYPES or _norm(item["originalText"]) != _norm(item["suggestedText"]))
+    ]
     actionable.sort(key=lambda item: (item["span"]["startIndex"], item["span"]["endIndex"], item["type"], item["id"]))
     return actionable, warnings

@@ -11,6 +11,7 @@ from services.api.shuddho_api.ai_review_schema import (
     build_review_messages,
     extract_json_payload,
     required_output_schema,
+    raw_suggestion_count,
     validate_ai_review_payload,
 )
 from services.api.shuddho_api.llm_candidates import split_bangla_sentences
@@ -160,10 +161,11 @@ def run_openai_check(
         return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_json", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_json"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     except Exception:
         return LlmProviderResult(provider="openai", model=model, called=True, configured=True, status="invalid_json", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_json"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+    raw_count = raw_suggestion_count(parsed)
     try:
         review = validate_ai_review_payload(parsed, rid, text)
     except Exception:
-        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, parsed=True, status="invalid_schema", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_schema"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+        return LlmProviderResult(provider="openai", model=model, called=True, configured=True, parsed=True, status="invalid_schema", response_mode="json_schema", http_status=response.status_code, warnings=["openai_invalid_schema"], usage=response_json.get("usage") or {}, timings={"llm_ms": int((time.time()-started)*1000)}, ai_raw_suggestion_count=raw_count).model_dump()
     return LlmProviderResult(
         suggestions=[s.model_dump() for s in review.suggestions],
         correctedText=review.correctedText,
@@ -179,4 +181,5 @@ def run_openai_check(
         http_status=response.status_code,
         usage=response_json.get("usage") or {},
         timings={"llm_ms": int((time.time()-started)*1000)},
+        ai_raw_suggestion_count=raw_count,
     ).model_dump()

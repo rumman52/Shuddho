@@ -203,3 +203,24 @@ def test_merge_canonicalizes_ai_source_as_model() -> None:
     )
     assert warnings == []
     assert merged[0]["source"] == "model"
+
+
+def test_review_prompt_requires_full_text_all_corrections_and_new_categories() -> None:
+    from services.api.shuddho_api.ai_review_schema import build_review_messages, required_output_schema
+
+    messages = build_review_messages(
+        request_id="r1",
+        full_text="আমি  ভাত খাই। সে সে যায়।",
+        sentences=[{"sentenceId": "s_0", "text": "আমি  ভাত খাই।", "start": 0, "end": 13}],
+        local_suggestions=[{"id": "l1", "originalText": "আমি  ভাত"}],
+        candidate_sentences=[],
+    )
+    system_prompt = messages[0]["content"]
+    schema_text = json.dumps(required_output_schema(), ensure_ascii=False)
+    assert "Review the entire Bangla fullText" in system_prompt
+    assert "Return every valid correction" in system_prompt
+    assert "Multiple suggestions may target the same sentence" in system_prompt
+    assert "repeated_word" in system_prompt
+    assert "sentence_rewrite" in system_prompt
+    assert "repeated_word" in schema_text
+    assert "sentence_rewrite" in schema_text

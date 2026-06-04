@@ -703,4 +703,8 @@ class CanonicalCheckResponse(BaseModel):
     local_suggestion_count: int = Field(default=0, ge=0)
     ai_suggestion_count: int = Field(default=0, ge=0)
     rejected_ai_suggestion_count: int = Field(default=0, ge=0)
+    ai_raw_suggestion_count: int = Field(default=0, ge=0)
+    ai_valid_suggestion_count: int = Field(default=0, ge=0)
+    ai_rejected_suggestion_count: int = Field(default=0, ge=0)
+    ai_empty_reason: str | None = None
     diagnostics: dict[str, Any] = Field(default_factory=dict)
