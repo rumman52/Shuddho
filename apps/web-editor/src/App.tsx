@@ -481,8 +481,6 @@ export default function App() {
         backendHealth,
       );
       setBackendMode(nextBackendMode);
-        `success: ${responseSuggestions.length} suggestions; backendMode=${nextBackendMode}`,
-      );
       const responseWarnings = Array.isArray(normalizedResponse.runtime_warnings)
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
