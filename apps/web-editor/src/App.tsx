@@ -102,9 +102,6 @@ export default function App() {
   const [backendHealthDiagnostic, setBackendHealthDiagnostic] = useState<
     string | null
   >(null);
-  const [lastApiCheckDiagnostic, setLastApiCheckDiagnostic] = useState(
-    "not run",
-  );
   const [llmDebug, setLlmDebug] = useState<LlmDebugResponse | null>(null);
   const [llmDebugDiagnostic, setLlmDebugDiagnostic] = useState<string | null>(
     null,
@@ -484,7 +481,6 @@ export default function App() {
         backendHealth,
       );
       setBackendMode(nextBackendMode);
-      setLastApiCheckDiagnostic(
         `success: ${responseSuggestions.length} suggestions; backendMode=${nextBackendMode}`,
       );
       const responseWarnings = Array.isArray(normalizedResponse.runtime_warnings)
@@ -510,7 +506,6 @@ export default function App() {
       }
       const message = error instanceof Error ? error.message : "";
       const checkErrorMessage = describeAnalyzeTextError(message, includeLLM);
-      setLastApiCheckDiagnostic(`failure: ${checkErrorMessage}`);
       const shouldMarkOffline = checkErrorMessage.startsWith(
         "Browser could not reach backend",
       );

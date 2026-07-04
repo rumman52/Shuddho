@@ -119,9 +119,6 @@ test("App source exposes production backend debug strip outside debug mode", () 
   assert.match(source, /backendMode:/);
   assert.match(source, /last health error:/);
   assert.match(source, /last \/api\/check:/);
-  assert.match(source, /lastApiCheckDiagnostic/);
-  assert.match(source, /setLastApiCheckDiagnostic\(\s*`success:/);
-  assert.match(source, /setLastApiCheckDiagnostic\(`failure:/);
 });
 
 test("timeout errors map to friendly user-facing messages", () => {
