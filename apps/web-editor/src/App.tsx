@@ -938,23 +938,6 @@ export default function App() {
         </div>
       ) : null}
 
-      <div className="production-debug-line" role="status">
-        <span>API base URL: {apiConfiguration.apiBaseUrl || "none"}</span>
-        <span>
-          API config source: {apiConfiguration.apiBaseUrlSource} / {apiConfiguration.source}
-        </span>
-        <span>backendMode: {backendMode}</span>
-        <span>last health error: {backendHealthDiagnostic ?? "none"}</span>
-        <span>last /api/check: {lastApiCheckDiagnostic}</span>
-        <button
-          type="button"
-          className="button-secondary diagnostics-retest"
-          onClick={() => void retestBackendDiagnostics()}
-        >
-          Retest Backend
-        </button>
-      </div>
-
       <section className="product-shell" aria-label="Bangla writing assistant workspace">
         <aside className="left-nav" aria-label="Primary navigation">
           <div className="left-nav__main">
@@ -963,6 +946,12 @@ export default function App() {
                 key={item}
                 type="button"
                 className={`left-nav__item ${item === "Write" ? "left-nav__item--active" : ""}`}
+                style={item === "Write" ? {
+                  backgroundColor: 'var(--accent-tint)',
+                  color: 'var(--primary)',
+                  borderLeft: '4px solid var(--primary)',
+                  paddingLeft: 'calc(1rem - 4px)'
+                } : {}}
               >
                 {item}
               </button>
