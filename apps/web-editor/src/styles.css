@@ -83,24 +83,36 @@ p {
 }
 
 .app-shell {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100vh;
   overflow: hidden;
-  grid-template-rows: 72px minmax(0, 1fr) auto;
   background: var(--bg);
 }
 
 .app-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
   height: 72px;
-  padding: 0 2rem;
+  padding: 0 2.25rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+}
+
+.header-actions {
+  gap: 1.1rem;
+}
+
+.header-wordcount {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .brand-text {
@@ -169,11 +181,12 @@ p {
 }
 
 .product-shell {
+  flex: 1 1 auto;
   display: grid;
   min-height: 0;
-  grid-template-columns: 148px minmax(0, 1fr) 340px;
-  gap: 20px;
-  padding: 20px 24px 12px 0;
+  grid-template-columns: 220px minmax(0, 1fr) 340px;
+  gap: 26px;
+  padding: 26px 30px;
   overflow: hidden;
 }
 
@@ -182,10 +195,13 @@ p {
   min-height: 0;
   flex-direction: column;
   justify-content: space-between;
-  padding: 1.5rem;
-  border-right: 1px solid var(--border);
+  gap: 1rem;
+  padding: 1.6rem 1.25rem;
   background: var(--accent-tint);
-  border-radius: 0 20px 20px 0;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: auto;
+  scrollbar-width: thin;
 }
 
 .left-nav__main,
@@ -197,23 +213,30 @@ p {
 .left-nav__item {
   display: flex;
   width: 100%;
-  min-height: 44px;
+  min-height: 46px;
   align-items: center;
-  padding: 0 1rem;
-  border-radius: var(--radius);
+  padding: 0 1.15rem;
+  border: 0;
+  border-radius: 999px;
   background: transparent;
   color: var(--text);
   cursor: pointer;
   text-align: left;
   font-size: 0.95rem;
-  font-weight: 650;
+  font-weight: 600;
   transition: all 0.2s ease;
 }
 
-.left-nav__item:hover,
-.left-nav__item--active {
+.left-nav__item:hover {
+  background: var(--surface);
+  color: var(--primary);
+}
+
+.left-nav__item--active,
+.left-nav__item--active:hover {
   background: var(--primary);
   color: #fff;
+  box-shadow: var(--shadow-sm);
 }
 
 .left-nav__item--quiet {
@@ -221,26 +244,34 @@ p {
   font-weight: 600;
 }
 
+.left-nav__item--quiet:hover {
+  background: var(--surface);
+  color: var(--primary);
+}
+
 .editor-column {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto auto auto minmax(0, auto) minmax(0, auto);
-  gap: 1.5rem;
+  gap: 1.75rem;
   overflow: auto;
-  padding: 0 2px 8px;
+  padding: 4px 6px 12px;
   scrollbar-width: thin;
   scrollbar-color: rgba(100, 116, 139, 0.26) transparent;
 }
 
+.editor-column > * {
+  flex: 0 0 auto;
+}
+
 .context-bar {
   display: flex;
-  min-height: 56px;
+  min-height: 60px;
   align-items: center;
   gap: 1rem;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  padding: 0.85rem 1.1rem;
+  border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
@@ -289,17 +320,17 @@ p {
 .review-panel,
 .ai-actions {
   display: grid;
-  gap: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  gap: 1.5rem;
+  border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: var(--shadow-md);
 }
 
 .editor-card {
   min-height: 0;
-  padding: 1.5rem;
-  max-width: 720px;
+  width: 100%;
+  padding: 2rem 2.25rem;
+  max-width: 760px;
   margin: 0 auto;
 }
 
@@ -339,8 +370,9 @@ p {
   min-height: 420px;
   max-height: calc(100vh - 300px);
   overflow: hidden;
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border), var(--shadow-sm);
 }
 
 .editor-highlight-layer,
@@ -350,9 +382,10 @@ p {
   min-height: 420px;
   max-height: calc(100vh - 300px);
   margin: 0;
-  padding: 1.55rem 1.65rem;
+  padding: 2rem 2.15rem;
   border: 0;
   border-radius: var(--radius);
+  font-family: 'Noto Serif Bengali', 'Noto Sans Bengali', serif;
   font-size: 19px;
   line-height: 1.9;
   letter-spacing: 0;
@@ -508,7 +541,7 @@ p {
 }
 
 .ai-actions {
-  padding: 1.5rem;
+  padding: 1.75rem 2rem;
 }
 
 .ai-actions h2 {
@@ -591,8 +624,9 @@ p {
 .review-panel {
   min-height: 0;
   align-self: stretch;
+  gap: 1.25rem;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
-  padding: 1.5rem;
+  padding: 1.75rem;
   overflow: hidden;
 }
 
@@ -636,27 +670,37 @@ p {
 
 .review-tabs {
   display: flex;
-  gap: 0.5rem;
-  padding: 0.35rem;
-  border-radius: var(--radius);
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  width: 100%;
+  max-width: 100%;
+  padding: 0.3rem;
+  border-radius: 999px;
   background: var(--accent-tint);
   box-shadow: var(--shadow-sm);
 }
 
 .review-tab {
   min-height: 36px;
-  flex: 1;
-  border-radius: var(--radius);
+  flex: 1 1 0;
+  min-width: 0;
+  border: 0;
+  border-radius: 999px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   font-size: 0.82rem;
-  font-weight: 650;
+  font-weight: 600;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.25rem;
   transition: all 0.2s ease;
+}
+
+.review-tab:hover {
+  color: var(--primary);
 }
 
 .review-tab strong {
@@ -895,15 +939,17 @@ p {
 }
 
 .trust-footer {
+  flex: 0 0 auto;
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 0.5rem;
-  min-height: 44px;
-  padding: 0 2rem 1.5rem;
+  min-height: 52px;
+  padding: 0.9rem 2rem;
   color: var(--muted);
   text-align: center;
   font-size: 0.88rem;
+  background: var(--surface);
   border-top: 1px solid var(--border);
 }
 
@@ -946,14 +992,9 @@ p {
 
 @media (max-width: 1240px) {
   .product-shell {
-    grid-template-columns: 112px minmax(0, 1fr) 300px;
-    gap: 14px;
-    padding-right: 16px;
-  }
-
-  .left-nav__item {
-    justify-content: center;
-    padding-inline: 0.4rem;
+    grid-template-columns: 190px minmax(0, 1fr) 300px;
+    gap: 18px;
+    padding: 20px 22px;
   }
 
   .context-bar {
@@ -974,7 +1015,6 @@ p {
     height: auto;
     min-height: 100vh;
     overflow: visible;
-    grid-template-rows: auto auto auto;
   }
 
   .app-header {
@@ -983,47 +1023,48 @@ p {
     padding: 1rem 1.5rem;
   }
 
+  /* Stack the three columns vertically — sidebar, editor, review. */
   .product-shell {
+    display: flex;
+    flex-direction: column;
     grid-template-columns: 1fr;
-    padding: 1rem;
+    padding: 1.25rem;
     overflow: visible;
-    gap: 1rem;
+    gap: 1.25rem;
   }
 
   .left-nav {
-    position: fixed;
-    right: 1rem;
-    bottom: 1rem;
-    left: 1rem;
-    z-index: 30;
-    display: block;
-    min-height: auto;
-    padding: 1rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    box-shadow: var(--shadow-md);
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    overflow: visible;
   }
 
   .left-nav__main {
+    grid-auto-flow: column;
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    flex: 1 1 260px;
   }
 
   .left-nav__footer {
-    display: none;
+    grid-auto-flow: column;
   }
 
-  .left-nav__item {
-    min-height: 40px;
-    border-radius: var(--radius);
+  .editor-column {
+    overflow: visible;
+  }
+
+  .editor-frame,
+  .editor-highlight-layer,
+  .editor-textarea {
+    max-height: none;
   }
 
   .review-panel {
     min-height: 520px;
-  }
-
-  .trust-footer {
-    padding-bottom: 76px;
+    overflow: visible;
   }
 }
 
@@ -1052,9 +1093,8 @@ p {
     max-height: none;
   }
 
-  .review-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    border-radius: var(--radius);
+  .review-tab {
+    flex-basis: calc(50% - 0.3rem);
   }
 }
 
