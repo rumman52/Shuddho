@@ -909,6 +909,9 @@ export default function App() {
           <button type="button" className="ghost-button">
             Settings
           </button>
+          <span className="header-wordcount" aria-label="Word count">
+            {wordCount} words
+          </span>
           <button
             type="button"
             className="avatar-button"
@@ -939,12 +942,6 @@ export default function App() {
                 key={item}
                 type="button"
                 className={`left-nav__item ${item === "Write" ? "left-nav__item--active" : ""}`}
-                style={item === "Write" ? {
-                  backgroundColor: 'var(--accent-tint)',
-                  color: 'var(--primary)',
-                  borderLeft: '4px solid var(--primary)',
-                  paddingLeft: 'calc(1rem - 4px)'
-                } : {}}
               >
                 {item}
               </button>
