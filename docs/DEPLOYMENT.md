@@ -51,7 +51,7 @@ VITE_ENABLE_LOCAL_FALLBACK=false
 
 `VITE_API_BASE_URL` must be the Shuddho backend origin, such as `https://shuddho-api.onrender.com`. It must not be an OpenAI or OpenRouter URL. If it is missing, the deployed frontend intentionally disables server AI review, renders the editor, and shows: “API URL is not configured. Set VITE_API_BASE_URL in Vercel.”
 
-Security note: do **not** add `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or other private backend secrets to Vercel frontend variables. Browser code must only use public `VITE_*` values and must send AI review requests through the backend.
+Security note: do **not** add `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or other private backend secrets to Vercel frontend variables. Browser code must only use public `VITE_*` values and must send AI review requests through the backend.
 
 ### Vercel preview deployments and CORS
 
@@ -62,6 +62,35 @@ SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://your-previ
 ```
 
 Do not use a blanket wildcard in production. The backend uses credentials-capable CORS, so `*` is ignored by origin parsing. If preview URLs must be dynamic, implement safe Vercel preview CORS handling that restricts origins to trusted Shuddho preview hostnames.
+
+
+### Gemini primary with OpenRouter fallback
+
+Render backend environment variables for production Deep AI Review:
+
+```bash
+SHUDDHO_ENABLE_LLM=true
+
+# Primary provider
+SHUDDHO_LLM_PROVIDER=gemini
+GEMINI_API_KEY=<render-secret>
+GEMINI_MODEL=gemini-3.5-flash
+
+# Automatic fallback
+SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
+OPENROUTER_API_KEY=<existing-render-secret>
+OPENROUTER_MODEL=<currently-valid-openrouter-model>
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+```
+
+Gemini and OpenRouter keys belong only in Render or another private backend runtime. Never add `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or `OPENROUTER_API_KEY` to Vercel; Vercel should contain only public `VITE_*` values. OpenRouter remains configured even while Gemini is primary, and `SHUDDHO_LLM_PROVIDER` / `SHUDDHO_LLM_FALLBACK_PROVIDER` can be reversed without code changes. Use a current Gemini auth key from Google AI Studio. Do not commit real secrets to `.env.example`, README files, `render.yaml`, tests, or source files.
+
+OpenRouter model availability changes. The old `openai/gpt-oss-120b:free` value is not an active default; set `OPENROUTER_MODEL` explicitly after checking the current OpenRouter catalog. The OpenRouter catalog lists current free/router choices such as `openrouter/free`, which routes to available free models, but production deployments should choose and monitor a model appropriate for Bangla writing review.
 
 ## Render FastAPI backend
 
@@ -83,7 +112,7 @@ SHUDDHO_LOG_RAW_TEXT=false
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=openai/gpt-oss-120b:free
+OPENROUTER_MODEL=<currently-valid-openrouter-model>
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual

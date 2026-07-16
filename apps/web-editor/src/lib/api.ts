@@ -691,13 +691,14 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
     ...(Array.isArray(response.warnings) ? response.warnings.map(String) : []),
     ...(Array.isArray(llm.warnings) ? llm.warnings.map(String) : []),
   ];
-  const inferredProvider = warnings.some((w) => w.includes("openrouter")) || model.includes("/") || model.includes(":free") ? "openrouter" : warnings.some((w) => w.includes("openai")) ? "openai" : rawProvider;
+  const inferredProvider = warnings.some((w) => w.includes("gemini")) ? "gemini" : warnings.some((w) => w.includes("openrouter")) || model.includes("/") || model.includes(":free") ? "openrouter" : warnings.some((w) => w.includes("openai")) ? "openai" : rawProvider;
   const provider = inferredProvider || rawProvider;
-  const providerLabel = provider === "openrouter" ? "OpenRouter" : provider === "openai" ? "OpenAI" : "AI";
+  const providerLabel = provider === "gemini" ? "Gemini" : provider === "openrouter" ? "OpenRouter" : provider === "openai" ? "OpenAI" : "AI";
   const httpStatus = Number(llm.http_status ?? 0);
   const rejectedCount = Number(response.rejected_ai_suggestion_count ?? llm.rejected_ai_suggestion_count ?? 0);
   if (!status) return null;
   if (status === "completed") {
+    if (warnings.some((w) => w.includes("primary_provider_failed:gemini")) && warnings.some((w) => w.includes("fallback_provider_used:openrouter"))) return "Gemini was unavailable, so OpenRouter completed the review.";
     return null;
   }
   if (rejectedCount > 0 || status === "completed_rejected") {
@@ -711,9 +712,11 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
     return `AI review skipped: ${skipReason || "not requested"}.`;
   }
   if (status === "missing_key") {
-    return provider === "openrouter"
-      ? "OpenRouter is not configured: missing backend OpenRouter API key."
-      : "OpenAI is not configured: missing backend OpenAI API key.";
+    return provider === "gemini"
+      ? "Gemini is not configured. Local suggestions are still available."
+      : provider === "openrouter"
+        ? "OpenRouter is not configured. Local suggestions are still available."
+        : "OpenAI is not configured. Local suggestions are still available.";
   }
   if (status === "unsupported_provider") {
     if (warnings.some((w) => w.includes("openai_model_id_suspicious_use_openrouter_provider")) || model.includes("/") || model.includes(":free")) {
@@ -728,7 +731,8 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   if (status === "invalid_json") return "AI returned invalid JSON; showing local suggestions.";
   if (status === "invalid_schema") return "AI review unavailable; showing local suggestions.";
   if (status === "queued" || status === "attempted") return `Reviewing with ${providerLabel}.`;
-  if (["provider_error", "network_error", "failed", "content_filter"].includes(status)) return "AI review unavailable; showing local suggestions.";
+  if (["provider_error", "network_error", "failed"].includes(status)) return "AI providers are unavailable. Showing local suggestions.";
+  if (status === "content_filter") return `${providerLabel} could not review this content. Showing local suggestions.`;
   return `LLM status: ${status}`;
 }
 

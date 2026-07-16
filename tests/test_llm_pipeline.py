@@ -224,3 +224,93 @@ def test_review_prompt_requires_full_text_all_corrections_and_new_categories() -
     assert "sentence_rewrite" in system_prompt
     assert "repeated_word" in schema_text
     assert "sentence_rewrite" in schema_text
+
+
+def test_provider_config_gemini_and_google_alias() -> None:
+    cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g", "GEMINI_MODEL": "gemini-3.5-flash"})
+    assert cfg.provider == "gemini"
+    assert cfg.configured is True
+    assert cfg.model == "gemini-3.5-flash"
+    cfg_alias = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "old", "GOOGLE_API_KEY": "new"})
+    assert cfg_alias.api_key == "new"
+
+
+def test_provider_config_gemini_missing_key_and_fallbacks() -> None:
+    missing = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini"})
+    assert missing.status == "missing_key"
+    assert "gemini_api_key_missing" in missing.warnings
+    forward = resolve_llm_config({"SHUDDHO_ENABLE_LLM":"true","SHUDDHO_LLM_PROVIDER":"gemini","GEMINI_API_KEY":"g","SHUDDHO_LLM_FALLBACK_PROVIDER":"openrouter","OPENROUTER_API_KEY":"o","OPENROUTER_MODEL":"openrouter/free"})
+    assert forward.fallback_provider == "openrouter"
+    assert forward.fallback_configured is True
+    reverse = resolve_llm_config({"SHUDDHO_ENABLE_LLM":"true","SHUDDHO_LLM_PROVIDER":"openrouter","OPENROUTER_API_KEY":"o","OPENROUTER_MODEL":"openrouter/free","SHUDDHO_LLM_FALLBACK_PROVIDER":"gemini","GEMINI_API_KEY":"g"})
+    assert reverse.fallback_provider == "gemini"
+    same = resolve_llm_config({"SHUDDHO_ENABLE_LLM":"true","SHUDDHO_LLM_PROVIDER":"gemini","GEMINI_API_KEY":"g","SHUDDHO_LLM_FALLBACK_PROVIDER":"gemini"})
+    assert "fallback_provider_same_as_primary" in same.warnings
+
+
+def test_openrouter_backward_compatibility_no_default_model_required() -> None:
+    cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM":"true","SHUDDHO_LLM_PROVIDER":"openrouter","OPENROUTER_API_KEY":"o","OPENROUTER_MODEL":"openrouter/free"})
+    assert cfg.provider == "openrouter"
+    assert cfg.configured is True
+    assert cfg.model == "openrouter/free"
+
+
+def test_gemini_provider_success_and_usage(monkeypatch) -> None:
+    import sys, types
+    from services.api.shuddho_api.llm_gemini import run_gemini_check
+    payload = {"requestId":"r1","correctedText":"আমি ভাত খাই।","documentAssessment":{"summary":"ok","overallQuality":"good","language":"bn"},"suggestions":[]}
+    class Usage: prompt_token_count=5; candidates_token_count=7; total_token_count=12
+    class Resp: text=json.dumps(payload, ensure_ascii=False); usage_metadata=Usage()
+    class Models:
+        def generate_content(self, **kwargs): return Resp()
+    class Client:
+        def __init__(self, api_key): self.models=Models()
+    genai=types.SimpleNamespace(Client=Client)
+    types_mod=types.SimpleNamespace(HttpOptions=lambda **k: k, GenerateContentConfig=lambda **k: types.SimpleNamespace(**k), Content=lambda **k: k, Part=lambda **k: k)
+    monkeypatch.setitem(sys.modules, 'google', types.SimpleNamespace(genai=genai))
+    monkeypatch.setitem(sys.modules, 'google.genai', genai)
+    monkeypatch.setitem(sys.modules, 'google.genai.types', types_mod)
+    result = run_gemini_check("আমি ভাত খাই।", "gemini-3.5-flash", "key", request_id="r1")
+    assert result["status"] == "completed_empty"
+    assert result["usage"]["total_tokens"] == 12
+
+
+def test_gemini_schema_fallback_retry(monkeypatch) -> None:
+    import sys, types
+    from services.api.shuddho_api.llm_gemini import run_gemini_check
+    payload = {"requestId":"r1","correctedText":"আমি ভাত খাই।","documentAssessment":{"summary":"ok","overallQuality":"good","language":"bn"},"suggestions":[]}
+    class Bad(Exception): status_code=400
+    class Resp: text=json.dumps(payload, ensure_ascii=False)
+    class Models:
+        calls=0
+        def generate_content(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1: raise Bad('response_schema rejected')
+            return Resp()
+    models=Models()
+    class Client:
+        def __init__(self, api_key): self.models=models
+    genai=types.SimpleNamespace(Client=Client)
+    types_mod=types.SimpleNamespace(HttpOptions=lambda **k: k, GenerateContentConfig=lambda **k: types.SimpleNamespace(**k), Content=lambda **k: k, Part=lambda **k: k)
+    monkeypatch.setitem(sys.modules, 'google', types.SimpleNamespace(genai=genai))
+    monkeypatch.setitem(sys.modules, 'google.genai', genai)
+    monkeypatch.setitem(sys.modules, 'google.genai.types', types_mod)
+    result = run_gemini_check("আমি ভাত খাই।", "gemini-3.5-flash", "key", request_id="r1")
+    assert result["status"] == "completed_empty"
+    assert result["response_mode"] == "json_mime"
+    assert "gemini_structured_output_fallback_used" in result["warnings"]
+
+
+def test_gemini_http_statuses(monkeypatch) -> None:
+    import sys, types
+    from services.api.shuddho_api.llm_gemini import run_gemini_check
+    class Client:
+        def __init__(self, api_key): self.models=self
+        def generate_content(self, **kwargs):
+            exc=Exception('no model'); exc.status_code=404; raise exc
+    genai=types.SimpleNamespace(Client=Client)
+    types_mod=types.SimpleNamespace(HttpOptions=lambda **k: k, GenerateContentConfig=lambda **k: types.SimpleNamespace(**k), Content=lambda **k: k, Part=lambda **k: k)
+    monkeypatch.setitem(sys.modules, 'google', types.SimpleNamespace(genai=genai))
+    monkeypatch.setitem(sys.modules, 'google.genai', genai)
+    monkeypatch.setitem(sys.modules, 'google.genai.types', types_mod)
+    assert run_gemini_check("আমি ভাত খাই।", "missing", "key", request_id="r1")["status"] == "model_not_found"
