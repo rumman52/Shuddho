@@ -333,17 +333,52 @@ export async function analyzeText(
     });
   }
 
-  const response = await request<GatewayCheckResponse>(
-    path,
-    {
-      method: "POST",
-      signal: options.signal,
-      body: JSON.stringify(body),
-    },
-    options.includeLLM ? AI_REVIEW_TIMEOUT_MS : GRAMMAR_CHECK_TIMEOUT_MS,
-  );
+  const startedAt = performance.now();
+  const url = `${getApiBaseUrl()}${path}`;
+  let httpResponse: Response;
+  try {
+    httpResponse = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        signal: options.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      options.includeLLM ? AI_REVIEW_TIMEOUT_MS : GRAMMAR_CHECK_TIMEOUT_MS,
+    );
+  } catch (error) {
+    throw new Error(describeRequestFailure(error, url));
+  }
 
-  return gatewayCheckToAnalyzeResponse(response, payload);
+  const httpStatus = httpResponse.status;
+  const json = await safeJson(httpResponse);
+  if (!httpResponse.ok) {
+    throw new Error(
+      `Backend failed: HTTP ${httpStatus}; backend HTTP status error for ${url}; check response validation failed. ${sanitizeApiErrorDetail(json ?? httpResponse.statusText)}`,
+    );
+  }
+  if (json === null) {
+    throw new Error(`Backend JSON invalid for ${url}: response was not valid JSON.`);
+  }
+
+  const validation = validateGatewayCheckResponse(json);
+  if (!validation.ok) {
+    throw new Error(`Backend response validation failed: ${validation.reason}`);
+  }
+
+  const response = json as GatewayCheckResponse;
+  return gatewayCheckToAnalyzeResponse(
+    {
+      ...response,
+      diagnostics: {
+        ...(response.diagnostics ?? {}),
+        http_status: httpStatus,
+        duration_ms: Math.round(performance.now() - startedAt),
+      },
+    },
+    payload,
+  );
 }
 
 export function buildCheckRequestBody(
@@ -377,6 +412,26 @@ export async function runAiCheck(
     },
     AI_REVIEW_TIMEOUT_MS,
   );
+}
+
+function validateGatewayCheckResponse(input: unknown): { ok: true } | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") {
+    return { ok: false, reason: "response_body_not_object" };
+  }
+  const record = input as Record<string, unknown>;
+  if (!("suggestions" in record)) {
+    return { ok: false, reason: "missing_suggestions_array" };
+  }
+  if (!Array.isArray(record.suggestions)) {
+    return { ok: false, reason: "suggestions_not_array" };
+  }
+  return { ok: true };
+}
+
+function sanitizeApiErrorDetail(detail: unknown): string {
+  return String(typeof detail === "string" ? detail : JSON.stringify(detail))
+    .replace(/(authorization|api[_-]?key|token)["'=:\s]+[^,"'\s}]+/gi, "$1=[redacted]")
+    .slice(0, 500);
 }
 
 export function sendFeedback(payload: FeedbackRequest): Promise<void> {

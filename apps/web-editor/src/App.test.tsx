@@ -12,6 +12,7 @@ import App, {
   normalizeShallowHealthAfterSuccessfulCheck,
 } from "./App";
 import type { Suggestion } from "@shared/schemas/contracts";
+import { analyzeText, setApiBaseUrlOverride } from "./lib/api";
 
 function suggestion(
   id: string,
@@ -216,4 +217,80 @@ test("App source exposes precise /api/check error messages and reset override bu
   assert.match(source, /Backend crashed during analysis\. Check Render logs\./);
   assert.match(source, /AI review timed out\. Showing local suggestions\./);
   assert.match(source, /Reset API URL override/);
+});
+
+test("latest analysis coordinator runs queued final edit after active request", async () => {
+  const { createLatestAnalysisCoordinator } = await import("./App");
+  const completed: number[] = [];
+  let releaseA!: () => void;
+  const coordinator = createLatestAnalysisCoordinator<{ requestId: number }>(
+    async (snapshot) => {
+      if (snapshot.requestId === 1) {
+        await new Promise<void>((resolve) => {
+          releaseA = resolve;
+        });
+      }
+      completed.push(snapshot.requestId);
+    },
+  );
+
+  coordinator.enqueue({ requestId: 1 });
+  coordinator.enqueue({ requestId: 2 });
+  coordinator.enqueue({ requestId: 3 });
+  releaseA();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(completed, [1, 3]);
+});
+
+test("analyzeText accepts HTTP 200 suggestions and preserves empty result count", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        suggestions: [
+          {
+            id: "s1",
+            category: "grammar",
+            span_start: 0,
+            span_end: 3,
+            original_text: "আমি",
+            suggested_text: "আমরা",
+            confidence: 0.8,
+            explanation_bn: "ব্যাকরণ",
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )) as typeof fetch;
+
+  try {
+    const response = await analyzeText({ text: "আমি", mode: "standard" });
+    assert.equal(response.suggestions.length, 1);
+    assert.equal(response.suggestions[0]?.replacement_options[0], "আমরা");
+    assert.equal(response.diagnostics?.http_status, 200);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+});
+
+test("analyzeText accepts HTTP 200 empty suggestions as valid empty analysis", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ suggestions: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+  try {
+    const response = await analyzeText({ text: "আমি", mode: "standard" });
+    assert.equal(response.suggestions.length, 0);
+    assert.equal(response.diagnostics?.http_status, 200);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
 });
