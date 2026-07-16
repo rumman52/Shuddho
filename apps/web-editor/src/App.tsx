@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import sampleFixtures from "@shared/fixtures/bangla_samples.json";
 import type {
   AnalyzeMode,
@@ -55,6 +55,49 @@ const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_UNAVAILABLE_MESSAGE;
 const REQUEST_TIMEOUT_MESSAGE =
   "Request timed out. Please try again or check backend deployment.";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
+
+type AnalysisRequestState =
+  | "idle"
+  | "queued"
+  | "checking"
+  | "success"
+  | "empty"
+  | "error"
+  | "cancelled";
+
+type AnalysisSnapshot = {
+  requestId: number;
+  text: string;
+  mode: AnalyzeMode;
+  dictionary: string[];
+  userId: string;
+  includeLLM: boolean;
+  manual: boolean;
+};
+
+type ApiCheckDiagnostic = {
+  responseReceived: "yes" | "no";
+  httpStatus: number | null;
+  requestId: number | null;
+  accepted: boolean | null;
+  discardReason: string | null;
+  responseSuggestionCount: number | null;
+  durationMs: number | null;
+  responseShape: string | null;
+  rejectionReason: string | null;
+};
+
+const EMPTY_API_CHECK_DIAGNOSTIC: ApiCheckDiagnostic = {
+  responseReceived: "no",
+  httpStatus: null,
+  requestId: null,
+  accepted: null,
+  discardReason: null,
+  responseSuggestionCount: null,
+  durationMs: null,
+  responseShape: null,
+  rejectionReason: null,
+};
 
 type BackendMode =
   | "checking"
@@ -137,14 +180,19 @@ export default function App() {
   });
   const analysisTimerRef = useRef<number | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
-  const analysisRequestIdRef = useRef(0);
+  const latestTextRef = useRef(text);
+  const latestRequestIdRef = useRef(0);
   const manualAnalysisInFlightRef = useRef(false);
   const aiReviewInFlightRef = useRef(false);
-  const analysisInFlightRef = useRef(false);
-  const pendingAnalysisRef = useRef<{ text: string; includeLLM: boolean; manual: boolean } | null>(null);
+  const activeAnalysisRef = useRef<AnalysisSnapshot | null>(null);
+  const queuedAnalysisRef = useRef<AnalysisSnapshot | null>(null);
   const apiCheckReachableRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
+  const [analysisState, setAnalysisState] = useState<AnalysisRequestState>("idle");
+  const [apiCheckDiagnostic, setApiCheckDiagnostic] = useState<ApiCheckDiagnostic>(
+    EMPTY_API_CHECK_DIAGNOSTIC,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileReviewOpen, setMobileReviewOpen] = useState(false);
   const [bulkApplyResult, setBulkApplyResult] = useState<string | null>(null);
@@ -255,6 +303,10 @@ export default function App() {
   useEffect(() => {
     void loadPreferences(userId);
   }, [userId, apiBaseUrl]);
+
+  useEffect(() => {
+    latestTextRef.current = text;
+  }, [text]);
 
   useEffect(() => {
     scheduleAnalysis(text);
@@ -414,86 +466,114 @@ export default function App() {
     );
   }
 
-  function enqueueAnalysis(nextText: string, includeLLM: boolean, manual = false) {
-    pendingAnalysisRef.current = { text: nextText, includeLLM, manual };
-    if (analysisInFlightRef.current) {
-      analysisAbortRef.current?.abort();
-      return;
-    }
-    void drainAnalysisQueue();
-  }
-
-  async function drainAnalysisQueue() {
-    const next = pendingAnalysisRef.current;
-    if (!next) {
-      return;
-    }
-    pendingAnalysisRef.current = null;
-    analysisInFlightRef.current = true;
-    await runAnalysis(next.text, next.includeLLM);
-    analysisInFlightRef.current = false;
-    if (pendingAnalysisRef.current) {
-      void drainAnalysisQueue();
-    }
-  }
-
-  async function runAnalysis(nextText: string, includeLLM: boolean) {
-    if (includeLLM) {
-      manualAnalysisInFlightRef.current = true;
-      setIsChecking(true);
-    }
-
-    if (!nextText.trim()) {
-      setAnalysis(createEmptyAnalysis(nextText, mode));
-      setTone(null);
-      setRewriteResult(null);
+  const enqueueAnalysis = useCallback(
+    (nextText: string, includeLLM: boolean, manual = false) => {
+      const snapshot: AnalysisSnapshot = {
+        requestId: latestRequestIdRef.current + 1,
+        text: nextText,
+        mode,
+        dictionary: [...(preferences.personal_dictionary ?? [])],
+        userId,
+        includeLLM,
+        manual,
+      };
+      latestRequestIdRef.current = snapshot.requestId;
+      queuedAnalysisRef.current = snapshot;
+      setAnalysisState(activeAnalysisRef.current ? "queued" : "checking");
       if (includeLLM) {
-        manualAnalysisInFlightRef.current = false;
-        setIsChecking(false);
+        aiReviewInFlightRef.current = true;
+        manualAnalysisInFlightRef.current = true;
+        setIsChecking(true);
+      }
+      void processLatestAnalysisQueue();
+    },
+    [mode, preferences.personal_dictionary, userId],
+  );
+
+  const processLatestAnalysisQueue = useCallback(async () => {
+    if (activeAnalysisRef.current) {
+      return;
+    }
+
+    const snapshot = queuedAnalysisRef.current;
+    if (!snapshot) {
+      return;
+    }
+
+    queuedAnalysisRef.current = null;
+    activeAnalysisRef.current = snapshot;
+    setAnalysisState("checking");
+    await runAnalysis(snapshot);
+    if (activeAnalysisRef.current?.requestId === snapshot.requestId) {
+      activeAnalysisRef.current = null;
+    }
+    if (queuedAnalysisRef.current) {
+      void processLatestAnalysisQueue();
+    }
+  }, []);
+
+  async function runAnalysis(snapshot: AnalysisSnapshot) {
+    const { includeLLM, requestId } = snapshot;
+    const startedAt = performance.now();
+
+    const setDiagnostic = (patch: Partial<ApiCheckDiagnostic>) => {
+      setApiCheckDiagnostic((current) => ({
+        ...current,
+        requestId,
+        durationMs: Math.round(performance.now() - startedAt),
+        ...patch,
+      }));
+    };
+
+    const isCurrentRequest = () =>
+      snapshot.requestId === latestRequestIdRef.current &&
+      snapshot.text === latestTextRef.current;
+
+    if (!snapshot.text.trim()) {
+      if (isCurrentRequest()) {
+        setAnalysis(createEmptyAnalysis(snapshot.text, snapshot.mode));
+        setTone(null);
+        setRewriteResult(null);
+        setAnalysisState("empty");
+        setStatus("Analysis complete — no issues found.");
       }
       return;
     }
 
     if (!apiConfiguration.backendAllowed) {
-      setAnalysis(
-        apiConfiguration.localFallbackEnabled
-          ? buildLocalFallbackResponse(
-              nextText,
-              mode,
-              preferences.personal_dictionary ?? [],
-            )
-          : createUnavailableAnalysis(
-              nextText,
-              mode,
-              "backend_misconfigured_contextual_disabled",
-            ),
-      );
-      setBackendMode("misconfigured");
-      setStatus(
-        apiConfiguration.localFallbackEnabled
-          ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : (apiConfiguration.hardWarning ?? SUGGESTIONS_DISABLED_MESSAGE),
-      );
-      setTone(null);
-      setRewriteResult(null);
-      if (includeLLM) {
-        manualAnalysisInFlightRef.current = false;
-        setIsChecking(false);
+      if (isCurrentRequest()) {
+        setAnalysis(
+          apiConfiguration.localFallbackEnabled
+            ? buildLocalFallbackResponse(snapshot.text, snapshot.mode, snapshot.dictionary)
+            : createUnavailableAnalysis(
+                snapshot.text,
+                snapshot.mode,
+                "backend_misconfigured_contextual_disabled",
+              ),
+        );
+        setBackendMode("misconfigured");
+        setStatus(
+          apiConfiguration.localFallbackEnabled
+            ? DEV_LOCAL_FALLBACK_DESCRIPTION
+            : (apiConfiguration.hardWarning ?? SUGGESTIONS_DISABLED_MESSAGE),
+        );
+        setTone(null);
+        setRewriteResult(null);
+        setAnalysisState("error");
       }
       return;
     }
 
     try {
-      analysisAbortRef.current?.abort();
       const controller = new AbortController();
       analysisAbortRef.current = controller;
-      const requestId = ++analysisRequestIdRef.current;
+      setDiagnostic({ responseReceived: "no", httpStatus: null, accepted: null, discardReason: null, responseSuggestionCount: null, responseShape: null, rejectionReason: null });
       const response = await analyzeText(
         {
-          text: nextText,
-          mode,
-          personal_dictionary: preferences.personal_dictionary ?? [],
-          user_id: userId,
+          text: snapshot.text,
+          mode: snapshot.mode,
+          personal_dictionary: snapshot.dictionary,
+          user_id: snapshot.userId,
         },
         {
           includeLLM,
@@ -503,17 +583,25 @@ export default function App() {
           signal: controller.signal,
         },
       );
-      if (requestId !== analysisRequestIdRef.current || nextText !== text) {
-        return;
-      }
       const normalizedResponse = normalizeAnalyzeResponse(
         response,
-        nextText,
-        mode,
+        snapshot.text,
+        snapshot.mode,
       );
       const responseSuggestions = Array.isArray(normalizedResponse.suggestions)
         ? normalizedResponse.suggestions
         : [];
+      setDiagnostic({
+        responseReceived: "yes",
+        httpStatus: readDiagnosticNumber(normalizedResponse.diagnostics, "http_status"),
+        responseShape: describeResponseShape(response),
+        responseSuggestionCount: responseSuggestions.length,
+      });
+      if (!isCurrentRequest()) {
+        setDiagnostic({ accepted: false, discardReason: "stale_request_or_text" });
+        return;
+      }
+      setDiagnostic({ accepted: true, discardReason: null });
       setAnalysis(normalizedResponse);
       apiCheckReachableRef.current = true;
       const checkReachableHealth =
@@ -534,24 +622,34 @@ export default function App() {
         : [];
       const llmStatusMessage = friendlyLlmWarning(normalizedResponse as never);
       setStatus(
-        includeLLM
-          ? (llmStatusMessage ??
-              (responseSuggestions.length
-                ? "AI suggestions merged."
-                : `${normalizedResponse.llm_provider === "gemini" ? "Gemini" : normalizedResponse.llm_provider === "openrouter" ? "OpenRouter" : normalizedResponse.llm_provider === "openai" ? "OpenAI" : "AI"} reviewed the text but found no extra high-confidence suggestions.`))
-          : responseSuggestions.length
-            ? `${responseSuggestions.length} local suggestions ready`
-            : responseWarnings.length
-              ? `Local suggestions ready. Backend warnings: ${responseWarnings.join(", ")}`
-              : "Local suggestions ready.",
+        responseSuggestions.length === 0
+          ? "Analysis complete — no issues found."
+          : includeLLM
+            ? (llmStatusMessage ?? "AI suggestions merged.")
+            : `${responseSuggestions.length} local suggestions ready`,
       );
+      setAnalysisState(responseSuggestions.length ? "success" : "empty");
+      if (!responseSuggestions.length && responseWarnings.length) {
+        setStatus(`Analysis complete — no issues found. Backend warnings: ${responseWarnings.join(", ")}`);
+      }
       setTone(null);
     } catch (error) {
-      if (analysisAbortRef.current?.signal.aborted) {
+      const message = error instanceof Error ? error.message : "";
+      const aborted = message.includes("Request aborted") ||
+        (error instanceof DOMException && error.name === "AbortError");
+      if (aborted) {
+        if (isCurrentRequest()) {
+          setAnalysisState("cancelled");
+          setStatus("Analysis cancelled.");
+        }
+        setDiagnostic({ responseReceived: "no", accepted: false, discardReason: "cancelled", rejectionReason: "request_aborted" });
         return;
       }
-      const message = error instanceof Error ? error.message : "";
       const checkErrorMessage = describeAnalyzeTextError(message, includeLLM);
+      setDiagnostic({ responseReceived: "no", accepted: false, discardReason: "error", rejectionReason: sanitizeDiagnosticError(checkErrorMessage) });
+      if (!isCurrentRequest()) {
+        return;
+      }
       const shouldMarkOffline = checkErrorMessage.startsWith(
         "Browser could not reach backend",
       );
@@ -562,18 +660,19 @@ export default function App() {
         setStatus(
           "Backend validation failed. Request payload does not match /api/check schema.",
         );
+        setAnalysisState("error");
         return;
       }
       setAnalysis(
         apiConfiguration.localFallbackEnabled
           ? buildLocalFallbackResponse(
-              nextText,
-              mode,
-              preferences.personal_dictionary ?? [],
+              snapshot.text,
+              snapshot.mode,
+              snapshot.dictionary,
             )
           : createUnavailableAnalysis(
-              nextText,
-              mode,
+              snapshot.text,
+              snapshot.mode,
               "backend_offline_contextual_disabled",
             ),
       );
@@ -592,11 +691,12 @@ export default function App() {
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
           : checkErrorMessage,
       );
+      setAnalysisState("error");
     } finally {
-      if (includeLLM) {
+      if (activeAnalysisRef.current?.requestId === requestId && includeLLM) {
         manualAnalysisInFlightRef.current = false;
         aiReviewInFlightRef.current = false;
-        setIsChecking(false);
+        setIsChecking(Boolean(queuedAnalysisRef.current?.includeLLM));
       }
     }
   }
@@ -867,7 +967,6 @@ export default function App() {
       analysisTimerRef.current = null;
     }
 
-    analysisAbortRef.current?.abort();
     aiReviewInFlightRef.current = true;
     setStatus("Reviewing with AI");
     enqueueAnalysis(text, true, true);
@@ -1240,8 +1339,10 @@ export default function App() {
             </button>
           </div>
           <p className="review-panel__status">
-            {isChecking
-              ? "Checking your full text with AI…"
+            {analysisState === "checking" || analysisState === "queued"
+              ? analysisState === "queued"
+                ? "Latest edit queued for review…"
+                : "Checking your full text with AI…"
               : getReviewStatusCopy({
                   suggestions: suggestions.length,
                   reviewUnavailable,
@@ -1351,11 +1452,15 @@ export default function App() {
             </div>
           ) : (
             <div className="empty-state">
-              {isChecking
+              {analysisState === "checking" || analysisState === "queued"
                 ? "Review is running. You can keep typing."
-                : text.trim()
-                  ? "Your writing looks clear."
-                  : "Suggestions will appear here as you write."}
+                : analysisState === "empty"
+                  ? "Analysis complete — no issues found."
+                  : analysisState === "error"
+                    ? status
+                    : text.trim()
+                      ? "Your writing looks clear."
+                      : "Suggestions will appear here as you write."}
             </div>
           )}
           {normalizedAnalysis.corrected_text &&
@@ -1522,6 +1627,8 @@ export default function App() {
                       backendHealthDiagnostic,
                       llmDebugDiagnostic,
                       lastAnalysisResult,
+                      apiCheckDiagnostic,
+                      analysisState,
                       llmDebug,
                       runtimeDescriptor: runtimeDescriptor.diagnostics,
                     },
@@ -1550,6 +1657,66 @@ export default function App() {
       ) : null}
     </main>
   );
+}
+
+export function createLatestAnalysisCoordinator<TSnapshot extends { requestId: number }>(
+  worker: (snapshot: TSnapshot) => Promise<void>,
+) {
+  let active = false;
+  let queued: TSnapshot | null = null;
+
+  const drain = async () => {
+    if (active || !queued) {
+      return;
+    }
+    const snapshot = queued;
+    queued = null;
+    active = true;
+    try {
+      await worker(snapshot);
+    } finally {
+      active = false;
+      if (queued) {
+        void drain();
+      }
+    }
+  };
+
+  return {
+    enqueue(snapshot: TSnapshot) {
+      queued = snapshot;
+      void drain();
+    },
+    get queued() {
+      return queued;
+    },
+    get active() {
+      return active;
+    },
+  };
+}
+
+function describeResponseShape(response: unknown): string {
+  if (!response || typeof response !== "object") {
+    return typeof response;
+  }
+  const record = response as Record<string, unknown>;
+  return Object.keys(record)
+    .filter((key) => !["text", "normalized_text", "corrected_text"].includes(key))
+    .sort()
+    .join(",");
+}
+
+function readDiagnosticNumber(
+  diagnostics: Record<string, unknown> | undefined,
+  key: string,
+): number | null {
+  const value = diagnostics?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function sanitizeDiagnosticError(message: string): string {
+  return message.replace(/(authorization|api[_-]?key|token)=([^\s&]+)/gi, "$1=[redacted]");
 }
 
 export function applySafeSuggestionBatch(
