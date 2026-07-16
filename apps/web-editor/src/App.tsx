@@ -3,7 +3,6 @@ import sampleFixtures from "@shared/fixtures/bangla_samples.json";
 import type {
   AnalyzeMode,
   AnalyzeResponse,
-  FeedbackAction,
   HealthDeepResponse,
   RewriteIntent,
   RewriteResponse,
@@ -57,12 +56,33 @@ const REQUEST_TIMEOUT_MESSAGE =
   "Request timed out. Please try again or check backend deployment.";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
 
-type BackendMode = "checking" | "connected" | "degraded" | "ready" | "unavailable" | "misconfigured";
+type BackendMode =
+  | "checking"
+  | "connected"
+  | "degraded"
+  | "ready"
+  | "unavailable"
+  | "misconfigured";
+
+type InlineSegment = {
+  key: string;
+  text: string;
+  suggestion: Suggestion | null;
+};
+
+type SafeApplyResult = {
+  text: string;
+  applied: number;
+  skipped: number;
+  appliedIds: string[];
+};
+
+type FriendlyStatus = { label: string; tone: "ok" | "warn" | "error" | "info" };
 
 export default function App() {
   const [text, setText] = useState(INITIAL_TEXT);
   const [mode, setMode] = useState<AnalyzeMode>("standard");
-  const [userId, setUserId] = useState(loadOrCreateLocalUserId);
+  const [userId] = useState(loadOrCreateLocalUserId);
   const [preferences, setPreferences] = useState<ShuddhoPreferences>(() =>
     createDefaultPreferences(userId),
   );
@@ -73,7 +93,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState<AnalyzeResponse>(() =>
     createEmptyAnalysis(INITIAL_TEXT, "standard"),
   );
-  const [tone, setTone] = useState<ToneAnalysisResponse | null>(null);
+  const [, setTone] = useState<ToneAnalysisResponse | null>(null);
   const [rewriteResult, setRewriteResult] = useState<RewriteResponse | null>(
     null,
   );
@@ -124,6 +144,9 @@ export default function App() {
   const apiCheckReachableRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mobileReviewOpen, setMobileReviewOpen] = useState(false);
+  const [bulkApplyResult, setBulkApplyResult] = useState<string | null>(null);
 
   const normalizedAnalysis = useMemo(
     () => normalizeAnalyzeResponse(analysis, text, mode),
@@ -135,9 +158,10 @@ export default function App() {
       describeRuntimeState({
         analysis: normalizedAnalysis,
         transport: backendTransportForRuntime(backendMode),
-        health: backendHealth?.ok === true || backendHealth?.status === "ok"
-          ? (backendHealth as HealthDeepResponse)
-          : null,
+        health:
+          backendHealth?.ok === true || backendHealth?.status === "ok"
+            ? (backendHealth as HealthDeepResponse)
+            : null,
         hardWarning: apiConfiguration.hardWarning,
       }),
     [
@@ -150,9 +174,6 @@ export default function App() {
 
   const suggestions = Array.isArray(normalizedAnalysis.suggestions)
     ? normalizedAnalysis.suggestions
-    : [];
-  const runtimeWarnings = Array.isArray(normalizedAnalysis.runtime_warnings)
-    ? normalizedAnalysis.runtime_warnings
     : [];
   const inlineSegments = useMemo(
     () => buildInlineSegments(text, suggestions),
@@ -196,7 +217,11 @@ export default function App() {
       aiSuggestionCount: normalizedAnalysis.ai_suggestion_count ?? 0,
       llmStatus: normalizedAnalysis.llm_status ?? "not_requested",
       warnings: normalizedAnalysis.runtime_warnings ?? [],
-      timings: (normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.timings ?? normalizedAnalysis.diagnostics ?? {},
+      timings:
+        (normalizedAnalysis.llm as Record<string, unknown> | null | undefined)
+          ?.timings ??
+        normalizedAnalysis.diagnostics ??
+        {},
     }),
     [normalizedAnalysis, suggestions.length],
   );
@@ -264,7 +289,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : apiConfiguration.hardWarning ?? SUGGESTIONS_DISABLED_MESSAGE,
+          : (apiConfiguration.hardWarning ?? SUGGESTIONS_DISABLED_MESSAGE),
       );
       return;
     }
@@ -284,7 +309,10 @@ export default function App() {
         setLlmDebug(await getLlmDebug());
         setLlmDebugDiagnostic(null);
       } catch (debugError) {
-        const debugMessage = debugError instanceof Error ? debugError.message : String(debugError ?? "Unknown LLM debug error");
+        const debugMessage =
+          debugError instanceof Error
+            ? debugError.message
+            : String(debugError ?? "Unknown LLM debug error");
         setLlmDebug(null);
         setLlmDebugDiagnostic(debugMessage);
       }
@@ -303,7 +331,9 @@ export default function App() {
       setBackendHealthDiagnostic(message);
       if (apiCheckReachableRef.current) {
         setBackendMode("connected");
-        setStatus("Backend connected through /api/check; /health diagnostics are stale or unavailable.");
+        setStatus(
+          "Backend connected through /api/check; /health diagnostics are stale or unavailable.",
+        );
       } else {
         setBackendMode("unavailable");
         setStatus(
@@ -385,12 +415,15 @@ export default function App() {
     if (analysisTimerRef.current) {
       window.clearTimeout(analysisTimerRef.current);
     }
-    analysisTimerRef.current = window.setTimeout(() => {
-      if (manualAnalysisInFlightRef.current || aiReviewInFlightRef.current) {
-        return;
-      }
-      void runAnalysis(nextText, autoAiReview);
-    }, autoAiReview ? AUTO_AI_ANALYSIS_DEBOUNCE_MS : ANALYSIS_DEBOUNCE_MS);
+    analysisTimerRef.current = window.setTimeout(
+      () => {
+        if (manualAnalysisInFlightRef.current || aiReviewInFlightRef.current) {
+          return;
+        }
+        void runAnalysis(nextText, autoAiReview);
+      },
+      autoAiReview ? AUTO_AI_ANALYSIS_DEBOUNCE_MS : ANALYSIS_DEBOUNCE_MS,
+    );
   }
 
   async function runAnalysis(nextText: string, includeLLM: boolean) {
@@ -428,7 +461,7 @@ export default function App() {
       setStatus(
         apiConfiguration.localFallbackEnabled
           ? DEV_LOCAL_FALLBACK_DESCRIPTION
-          : apiConfiguration.hardWarning ?? SUGGESTIONS_DISABLED_MESSAGE,
+          : (apiConfiguration.hardWarning ?? SUGGESTIONS_DISABLED_MESSAGE),
       );
       setTone(null);
       setRewriteResult(null);
@@ -444,18 +477,21 @@ export default function App() {
       const controller = new AbortController();
       analysisAbortRef.current = controller;
       const requestId = ++analysisRequestIdRef.current;
-      const response = await analyzeText({
-        text: nextText,
-        mode,
-        personal_dictionary: preferences.personal_dictionary ?? [],
-        user_id: userId,
-      }, {
-        includeLLM,
-        asyncLLM: false,
-        llmMode: includeLLM ? "review_candidates" : "none",
-        mode: includeLLM ? "smart" : "fast",
-        signal: controller.signal,
-      });
+      const response = await analyzeText(
+        {
+          text: nextText,
+          mode,
+          personal_dictionary: preferences.personal_dictionary ?? [],
+          user_id: userId,
+        },
+        {
+          includeLLM,
+          asyncLLM: false,
+          llmMode: includeLLM ? "review_candidates" : "none",
+          mode: includeLLM ? "smart" : "fast",
+          signal: controller.signal,
+        },
+      );
       if (requestId !== analysisRequestIdRef.current) {
         return;
       }
@@ -469,9 +505,8 @@ export default function App() {
         : [];
       setAnalysis(normalizedResponse);
       apiCheckReachableRef.current = true;
-      const checkReachableHealth = normalizeShallowHealthAfterSuccessfulCheck(
-        shallowHealth,
-      );
+      const checkReachableHealth =
+        normalizeShallowHealthAfterSuccessfulCheck(shallowHealth);
       if (checkReachableHealth !== shallowHealth) {
         setShallowHealth(checkReachableHealth);
       }
@@ -481,16 +516,18 @@ export default function App() {
         backendHealth,
       );
       setBackendMode(nextBackendMode);
-      const responseWarnings = Array.isArray(normalizedResponse.runtime_warnings)
+      const responseWarnings = Array.isArray(
+        normalizedResponse.runtime_warnings,
+      )
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
       const llmStatusMessage = friendlyLlmWarning(normalizedResponse as never);
       setStatus(
         includeLLM
-          ? llmStatusMessage ??
+          ? (llmStatusMessage ??
               (responseSuggestions.length
                 ? "AI suggestions merged."
-                : `${normalizedResponse.llm_provider === "openrouter" ? "OpenRouter" : normalizedResponse.llm_provider === "openai" ? "OpenAI" : "AI"} reviewed the text but found no extra high-confidence suggestions.`)
+                : `${normalizedResponse.llm_provider === "openrouter" ? "OpenRouter" : normalizedResponse.llm_provider === "openai" ? "OpenAI" : "AI"} reviewed the text but found no extra high-confidence suggestions.`))
           : responseSuggestions.length
             ? `${responseSuggestions.length} local suggestions ready`
             : responseWarnings.length
@@ -507,7 +544,10 @@ export default function App() {
       const shouldMarkOffline = checkErrorMessage.startsWith(
         "Browser could not reach backend",
       );
-      if (message.includes("HTTP 422") || message.includes("Backend validation failed:")) {
+      if (
+        message.includes("HTTP 422") ||
+        message.includes("Backend validation failed:")
+      ) {
         setStatus(
           "Backend validation failed. Request payload does not match /api/check schema.",
         );
@@ -529,7 +569,11 @@ export default function App() {
       if (shouldMarkOffline) {
         apiCheckReachableRef.current = false;
       }
-      setBackendMode(shouldMarkOffline ? "unavailable" : deriveBackendModeFromHealth(shallowHealth, backendHealth));
+      setBackendMode(
+        shouldMarkOffline
+          ? "unavailable"
+          : deriveBackendModeFromHealth(shallowHealth, backendHealth),
+      );
       setTone(null);
       setRewriteResult(null);
       setStatus(
@@ -801,27 +845,6 @@ export default function App() {
     void refreshBackendHealth();
   }
 
-  function resetApiUrlOverrideAndReload() {
-    clearApiBaseUrlOverride();
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem("shuddho-api-base-url");
-      window.location.reload();
-    }
-  }
-
-  async function markToneFeedback(action: FeedbackAction) {
-    if (!tone) {
-      return;
-    }
-    await sendFeedbackIfOnline({
-      suggestion_id: "tone-analysis",
-      action,
-      text,
-      replacement: tone.primary_tone ?? null,
-      user_id: userId,
-    });
-  }
-
   function handleCheckWriting() {
     if (isChecking) {
       return;
@@ -840,32 +863,26 @@ export default function App() {
     });
   }
 
-
-  function handleAcceptAll() {
-    const applicableSuggestions = suggestions
-      .filter((suggestion) => (suggestion.replacement_options[0] ?? "").length > 0)
-      .sort((a, b) => b.span_start - a.span_start);
-
-    if (!applicableSuggestions.length) {
-      setStatus("No suggestions available to apply");
+  function handleApplySafeSuggestions() {
+    const result = applySafeSuggestionBatch(text, suggestions);
+    if (result.applied === 0 && result.skipped === 0) {
+      setStatus("No safe suggestions available to apply");
+      setBulkApplyResult("No safe suggestions available.");
       return;
     }
-
-    const nextText = applicableSuggestions.reduce(
-      (draft, suggestion) =>
-        replaceSpan(
-          draft,
-          suggestion.span_start,
-          suggestion.span_end,
-          suggestion.replacement_options[0] ?? "",
-        ),
-      text,
-    );
-    setText(nextText);
-    setAnalysis((current) => ({ ...current, suggestions: [] }));
+    setText(result.text);
+    setAnalysis((current) => ({
+      ...current,
+      suggestions: (Array.isArray(current.suggestions)
+        ? current.suggestions
+        : []
+      ).filter((suggestion) => !result.appliedIds.includes(suggestion.id)),
+    }));
     setSelectedSuggestionId(null);
     setActiveInlineSuggestionId(null);
-    setStatus(`${applicableSuggestions.length} suggestions applied`);
+    const message = `${result.applied} applied, ${result.skipped} skipped`;
+    setBulkApplyResult(message);
+    setStatus(message);
   }
 
   function handleDismissAll() {
@@ -895,69 +912,83 @@ export default function App() {
     );
   }
 
+  const friendlyStatus = getFriendlyRuntimeStatus({
+    backendMode,
+    isChecking,
+    suggestionCount: suggestions.length,
+    runtimeDescriptorLabel: runtimeDescriptor.label,
+    llmStatus: normalizedAnalysis.llm_status ?? null,
+    sourceSummary: suggestionSourceSummary,
+  });
+  const reviewUnavailable =
+    backendMode === "unavailable" || backendMode === "misconfigured";
+  const aiUnavailable = Boolean(
+    normalizedAnalysis.llm_requested &&
+    normalizedAnalysis.llm_attempted &&
+    !normalizedAnalysis.llm_used &&
+    normalizedAnalysis.llm_status &&
+    normalizedAnalysis.llm_status !== "not_requested",
+  );
+
   return (
     <main className="app-shell">
       <header className="app-header">
         <div className="brand-text" aria-label="Shuddho home">
           <strong>Shuddho</strong>
-          <span>AI Bangla Writing Assistant</span>
+          <span>Bangla Writing Assistant</span>
         </div>
-        <nav className="header-actions" aria-label="Top navigation">
-          <button type="button" className="ghost-button">
-            Dictionary
-          </button>
-          <button type="button" className="ghost-button">
-            Settings
-          </button>
+        <div className="header-actions" aria-label="Workspace actions">
+          <span
+            className={`runtime-chip runtime-chip--${friendlyStatus.tone}`}
+            role="status"
+          >
+            {friendlyStatus.label}
+          </span>
           <span className="header-wordcount" aria-label="Word count">
             {wordCount} words
           </span>
           <button
             type="button"
-            className="avatar-button"
-            aria-label="User profile"
+            className="ghost-button"
+            onClick={() => setSettingsOpen(true)}
           >
-            {userId.slice(0, 1).toUpperCase() || "S"}
+            Settings
           </button>
-        </nav>
+          <button
+            type="button"
+            className="button-primary header-review-button"
+            onClick={handleCheckWriting}
+            disabled={isChecking || !text.trim()}
+          >
+            {isChecking ? "Checking" : "Deep AI Review"}
+          </button>
+        </div>
       </header>
 
-      {preferencesWarning ? (
-        <div className="warning-banner" role="status">
-          {preferencesWarning}
+      <div className="sr-only" aria-live="polite">
+        {status}
+      </div>
+      {preferencesWarning || connectivityBanner ? (
+        <div className="runtime-banner" role="status">
+          <strong>{reviewUnavailable ? "Limited mode" : "Notice"}</strong>
+          <span>{preferencesWarning ?? connectivityBanner}</span>
+          {reviewUnavailable ? (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => void retestBackendDiagnostics()}
+            >
+              Retry
+            </button>
+          ) : null}
         </div>
       ) : null}
 
-      {connectivityBanner ? (
-        <div className="warning-banner" role="status">
-          {connectivityBanner}
-        </div>
-      ) : null}
-
-      <section className="product-shell" aria-label="Bangla writing assistant workspace">
-        <aside className="left-nav" aria-label="Primary navigation">
-          <div className="left-nav__main">
-            {["Write", "Review", "Dictionary", "History"].map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={`left-nav__item ${item === "Write" ? "left-nav__item--active" : ""}`}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-          <div className="left-nav__footer">
-            <button type="button" className="left-nav__item left-nav__item--quiet">
-              Help
-            </button>
-            <button type="button" className="left-nav__item left-nav__item--quiet">
-              Theme
-            </button>
-          </div>
-        </aside>
-
-        <section className="editor-column">
+      <section
+        className="workspace"
+        aria-label="Bangla writing assistant workspace"
+      >
+        <section className="editor-column" aria-label="Writing workspace">
           <div className="context-bar" aria-label="Writing context">
             <label className="context-item">
               <span>Writing goal</span>
@@ -1000,40 +1031,32 @@ export default function App() {
                 <option value="confident">Confident</option>
               </select>
             </label>
-            <div className="context-item" aria-label="Suggestion count">
-              <span>Suggestions</span>
-              <strong>{suggestions.length}</strong>
-            </div>
-            <div className="context-item" aria-label="Dictionary word count">
-              <span>Dictionary</span>
-              <strong>{preferences.personal_dictionary?.length ?? 0} words</strong>
-            </div>
+            <button
+              type="button"
+              className="review-toggle"
+              onClick={() => setMobileReviewOpen(true)}
+            >
+              Review · {suggestions.length}
+            </button>
           </div>
 
-          <div className="editor-card">
-            <div className="editor-toolbar" aria-label="Editor formatting toolbar">
-              <button type="button">Normal</button>
-              <button type="button" aria-label="Bold">
-                <strong>B</strong>
-              </button>
-              <button type="button" aria-label="Italic">
-                <em>I</em>
-              </button>
-              <button type="button" aria-label="Underline">
-                <u>U</u>
-              </button>
-              <button type="button" aria-label="Bulleted list">• List</button>
-              <span className="toolbar-spacer" />
-              <button type="button" aria-label="Undo">Undo</button>
-              <button type="button" aria-label="Redo">Redo</button>
+          <article className="editor-card" aria-busy={isChecking}>
+            <div className="editor-card__header">
+              <div>
+                <p className="eyebrow">Document</p>
+                <h1>Write in Bangla with context-aware review</h1>
+              </div>
+              <p className="editor-card__status">
+                {suggestions.length
+                  ? `${suggestions.length} suggestions ready.`
+                  : "Start writing; quick checks run quietly."}
+              </p>
             </div>
-
             <div className="editor-frame">
-              <div className="editor-highlight-layer">
+              <div className="editor-highlight-layer" aria-hidden="true">
                 {inlineSegments.map((segment) => {
-                  if (!segment.suggestion) {
+                  if (!segment.suggestion)
                     return <span key={segment.key}>{segment.text}</span>;
-                  }
                   const suggestion = segment.suggestion;
                   const replacement = suggestion.replacement_options[0] ?? "";
                   const isActive = activeInlineSuggestionId === suggestion.id;
@@ -1050,19 +1073,18 @@ export default function App() {
                         setActiveInlineSuggestionId(suggestion.id);
                         setSelectedSuggestionId(suggestion.id);
                       }}
-                      onFocus={() => {
-                        setActiveInlineSuggestionId(suggestion.id);
-                        setSelectedSuggestionId(suggestion.id);
-                      }}
-                      tabIndex={0}
                     >
                       {segment.text}
                       {isActive ? (
-                        <span className="correction-popover" role="dialog">
+                        <span
+                          className="correction-popover"
+                          role="dialog"
+                          aria-label="Inline suggestion"
+                        >
                           <button
                             type="button"
                             className="popover-close"
-                            aria-label="Dismiss correction popover"
+                            aria-label="Close suggestion"
                             onClick={() => setActiveInlineSuggestionId(null)}
                           >
                             ×
@@ -1108,6 +1130,15 @@ export default function App() {
                             >
                               Ignore
                             </button>
+                            <button
+                              type="button"
+                              className="text-button"
+                              onClick={() =>
+                                void handleRewrite("clarity", suggestion)
+                              }
+                            >
+                              Explain
+                            </button>
                           </span>
                         </span>
                       ) : null}
@@ -1119,6 +1150,7 @@ export default function App() {
                 ref={textareaRef}
                 className="editor-textarea"
                 aria-label="Bangla editor"
+                placeholder="এখানে বাংলা লেখা শুরু করুন। Shuddho বানান, ব্যাকরণ, স্পষ্টতা ও প্রবাহ নিয়ে পরামর্শ দেবে।"
                 value={text}
                 onChange={(event) => setText(event.target.value)}
                 onSelect={handleSelectionChange}
@@ -1126,76 +1158,36 @@ export default function App() {
                 onClick={handleSelectionChange}
                 onScroll={handleEditorScroll}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    setActiveInlineSuggestionId(null);
-                  }
+                  if (event.key === "Escape") setActiveInlineSuggestionId(null);
                 }}
               />
             </div>
-
             <div className="editor-statusbar">
-              <span>Words: {wordCount}</span>
-              <span>Characters: {characterCount}</span>
-              <label className="checkbox-row auto-ai-toggle">
-                <input
-                  type="checkbox"
-                  checked={autoAiReview}
-                  onChange={(event) => setAutoAiReview(event.target.checked)}
-                />
-                <span>Auto AI review</span>
-              </label>
-              <button
-                type="button"
-                className="button-primary check-writing-button"
-                onClick={handleCheckWriting}
-                disabled={isChecking}
-              >
-{isChecking ? "Checking with AI..." : "Deep AI Review"}
-              </button>
+              <span>{wordCount} words</span>
+              <span>{characterCount} characters</span>
+              <span>
+                {suggestionSourceSummary === "hybrid"
+                  ? "Local + AI"
+                  : suggestionSourceSummary === "ai"
+                    ? "AI"
+                    : suggestionSourceSummary === "local"
+                      ? "Local"
+                      : "Ready"}
+              </span>
             </div>
-          </div>
-
-          <section className="ai-actions" aria-label="AI Actions">
-            <div>
-              <h2>AI Actions</h2>
-            </div>
-            <div className="ai-actions__buttons">
-              {(
-                [
-                  ["clarity", "Improve clarity"],
-                  ["formal", "Make formal"],
-                  ["friendly", "Make simpler"],
-                  ["concise", "Shorten"],
-                  ["professional", "Professional tone"],
-                ] as [RewriteIntent, string][]
-              ).map(([intent, label]) => (
-                <button
-                  key={intent}
-                  type="button"
-                  className="button-secondary"
-                  onClick={() => void handleRewrite(intent)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <p className="ai-actions__tip">
-              Select a sentence to see focused AI suggestions for improvement.
-            </p>
-          </section>
+          </article>
 
           {rewriteResult ? (
-            <div className="panel-block">
-              <h2>Rewrite options</h2>
-              <div className="compare-grid">
-                <div>
-                  <span className="suggestion-card__label">Original</span>
-                  <p>{rewriteResult.original_text}</p>
-                </div>
-                <div>
-                  <span className="suggestion-card__label">Suggested</span>
-                  <p>{rewriteResult.target_text}</p>
-                </div>
+            <section className="rewrite-panel" aria-label="Rewrite options">
+              <div className="review-panel__header">
+                <h2>Rewrite options</h2>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={dismissRewrite}
+                >
+                  Dismiss
+                </button>
               </div>
               <div className="suggestion-list">
                 {(rewriteResult.options ?? []).map((option) => (
@@ -1215,55 +1207,58 @@ export default function App() {
                   </article>
                 ))}
               </div>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={dismissRewrite}
-              >
-                Dismiss rewrite
-              </button>
-            </div>
-          ) : null}
-
-          {tone ? (
-            <div className="panel-block">
-              <div className="suggestion-card__eyebrow">Tone</div>
-              <h2>{tone.primary_tone ?? "neutral"}</h2>
-              <p>{tone.explanation_bn || tone.explanation_en}</p>
-              <div className="row">
-                <button
-                  type="button"
-                  className="button-secondary"
-                  onClick={() => void markToneFeedback("tone_helpful")}
-                >
-                  Helpful
-                </button>
-                <button
-                  type="button"
-                  className="button-secondary"
-                  onClick={() => void markToneFeedback("tone_not_helpful")}
-                >
-                  Not helpful
-                </button>
-              </div>
-            </div>
+            </section>
           ) : null}
         </section>
 
-        <aside className="review-panel" aria-label="AI Review suggestions">
-          <span className="sr-only">Review queue</span>
+        <aside
+          className={`review-panel ${mobileReviewOpen ? "review-panel--open" : ""}`}
+          aria-label="Review suggestions"
+        >
           <div className="review-panel__header">
             <div>
-              <h2>AI Review</h2>
+              <h2>Review</h2>
               <p className="review-count">{suggestions.length} suggestions</p>
             </div>
+            <button
+              type="button"
+              className="review-close"
+              aria-label="Close review"
+              onClick={() => setMobileReviewOpen(false)}
+            >
+              ×
+            </button>
           </div>
-
           <p className="review-panel__status">
-            Review spelling, grammar, and clarity suggestions.
+            {isChecking
+              ? "Checking your full text with AI…"
+              : getReviewStatusCopy({
+                  suggestions: suggestions.length,
+                  reviewUnavailable,
+                  aiUnavailable,
+                  status,
+                })}
           </p>
-
-          <div className="review-tabs" role="tablist" aria-label="Suggestion filters">
+          {reviewUnavailable ? (
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => void retestBackendDiagnostics()}
+            >
+              Retry backend
+            </button>
+          ) : null}
+          {aiUnavailable && !reviewUnavailable ? (
+            <p className="quiet-note">
+              AI review is temporarily unavailable. Local checks are still
+              active.
+            </p>
+          ) : null}
+          <div
+            className="review-tabs"
+            role="tablist"
+            aria-label="Suggestion filters"
+          >
             {(
               [
                 ["all", "All", suggestions.length],
@@ -1277,14 +1272,38 @@ export default function App() {
                 type="button"
                 role="tab"
                 aria-selected={reviewFilter === filter}
-                className={reviewFilter === filter ? "review-tab review-tab--active" : "review-tab"}
+                className={
+                  reviewFilter === filter
+                    ? "review-tab review-tab--active"
+                    : "review-tab"
+                }
                 onClick={() => setReviewFilter(filter)}
               >
                 {label} <strong>{count}</strong>
               </button>
             ))}
           </div>
-
+          <div className="review-actions">
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={handleApplySafeSuggestions}
+            >
+              Apply safe suggestions
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              onClick={handleDismissAll}
+            >
+              Dismiss all
+            </button>
+          </div>
+          {bulkApplyResult ? (
+            <p className="quiet-note" role="status">
+              {bulkApplyResult}
+            </p>
+          ) : null}
           {filteredSuggestions.length ? (
             <div className="suggestion-list">
               {filteredSuggestions.map((suggestion) => (
@@ -1295,6 +1314,10 @@ export default function App() {
                       ? "review-suggestion review-suggestion--active"
                       : "review-suggestion"
                   }
+                  onMouseEnter={() =>
+                    setActiveInlineSuggestionId(suggestion.id)
+                  }
+                  onFocus={() => setActiveInlineSuggestionId(suggestion.id)}
                 >
                   <SuggestionCard
                     suggestion={suggestion}
@@ -1317,263 +1340,309 @@ export default function App() {
               ))}
             </div>
           ) : (
-            <p className="empty-state">
-              {isBackendConnected(backendMode) || apiConfiguration.localFallbackEnabled
-                ? "No high-confidence correction found in this filter."
-                : SUGGESTIONS_DISABLED_MESSAGE}
-            </p>
+            <div className="empty-state">
+              {isChecking
+                ? "Review is running. You can keep typing."
+                : text.trim()
+                  ? "Your writing looks clear."
+                  : "Suggestions will appear here as you write."}
+            </div>
           )}
+          {normalizedAnalysis.corrected_text &&
+          normalizedAnalysis.corrected_text !== text ? (
+            <details className="corrected-preview">
+              <summary>Corrected text preview</summary>
+              <p>{normalizedAnalysis.corrected_text}</p>
+            </details>
+          ) : null}
+        </aside>
+      </section>
 
-          <div className="review-actions">
-            <button
-              type="button"
-              className="button-primary"
-              onClick={handleAcceptAll}
-            >
-              Accept All
-            </button>
+      {settingsOpen ? (
+        <div
+          className="drawer-backdrop"
+          role="presentation"
+          onClick={() => setSettingsOpen(false)}
+        >
+          <aside
+            className="settings-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Settings"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setSettingsOpen(false);
+            }}
+          >
+            <div className="review-panel__header">
+              <h2>Settings</h2>
+              <button
+                type="button"
+                className="review-close"
+                aria-label="Close settings"
+                onClick={() => setSettingsOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <label>
+              Writing goal
+              <select
+                value={preferences.writing_goal}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    writing_goal: event.target
+                      .value as ShuddhoPreferences["writing_goal"],
+                  }))
+                }
+              >
+                <option value="general">General</option>
+                <option value="formal">Formal</option>
+                <option value="academic">Academic</option>
+                <option value="business">Business</option>
+                <option value="casual">Casual</option>
+                <option value="social">Social</option>
+              </select>
+            </label>
+            <label>
+              Tone
+              <select
+                value={preferences.tone_goal}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    tone_goal: event.target
+                      .value as ShuddhoPreferences["tone_goal"],
+                  }))
+                }
+              >
+                <option value="neutral">Neutral</option>
+                <option value="friendly">Friendly</option>
+                <option value="professional">Professional</option>
+                <option value="concise">Concise</option>
+                <option value="confident">Confident</option>
+              </select>
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={autoAiReview}
+                onChange={(event) => setAutoAiReview(event.target.checked)}
+              />
+              <span>Auto AI review</span>
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={preferences.enable_rewrites}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    enable_rewrites: event.target.checked,
+                  }))
+                }
+              />
+              <span>Rewrite suggestions</span>
+            </label>
+            <label>
+              Personal dictionary
+              <input
+                value={dictionaryDraft}
+                placeholder="নতুন শব্দ"
+                onChange={(event) => setDictionaryDraft(event.target.value)}
+              />
+            </label>
             <button
               type="button"
               className="button-secondary"
-              onClick={handleDismissAll}
+              onClick={() => {
+                setPreferences((current) => ({
+                  ...current,
+                  personal_dictionary: upsertUnique(
+                    current.personal_dictionary,
+                    dictionaryDraft,
+                  ),
+                }));
+                setDictionaryDraft("");
+              }}
             >
-              Dismiss All
+              Add word
             </button>
-          </div>
-
-          <details className="advanced-settings">
-            <summary>Advanced settings for developers</summary>
-            <div className="advanced-settings__body">
-              <strong>{runtimeDescriptor.label}</strong>
-              <span>{status}</span>
-              <span>Backend: {backendMode}</span>
-              <span>llm_requested: {String(normalizedAnalysis.llm_requested ?? false)}</span>
-              <span>llm_attempted: {String(normalizedAnalysis.llm_attempted ?? false)}</span>
-              <span>llm_used: {String(normalizedAnalysis.llm_used ?? false)}</span>
-              <span>llm_status: {normalizedAnalysis.llm_status ?? "not requested"}</span>
-              <span>llm_provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
-              <span>llm_model: {normalizedAnalysis.llm_model ?? "none"}</span>
-              <span>rejected_ai_suggestion_count: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>
-              <button
-                type="button"
-                className="button-secondary diagnostics-retest"
-                onClick={() => void retestBackendDiagnostics()}
-              >
-                Retest Backend
-              </button>
-              {debugMode ? (
-                <>
-              <strong>Diagnostics</strong>
-              <span>apiBaseUrl: {apiConfiguration.apiBaseUrl || "none"}</span>
-              <span>apiBaseUrlSource: {apiConfiguration.apiBaseUrlSource}</span>
-              <span>apiBaseUrl source: {apiConfiguration.source}</span>
-              <span>envApiBaseUrlPresent: {String(apiConfiguration.envApiBaseUrlPresent)}</span>
-              <span>localStorageOverridePresent: {String(apiConfiguration.localStorageOverridePresent)}</span>
-              <span>localStorageOverrideIgnored: {String(apiConfiguration.localStorageOverrideIgnored)}</span>
-              <span>backendAllowed: {String(apiConfiguration.backendAllowed)}</span>
-              <span>hardWarning: {apiConfiguration.hardWarning ?? "none"}</span>
-              <span>backendHealthDiagnostic: {backendHealthDiagnostic ?? "none"}</span>
-              <span>backendMode: {backendMode}</span>
-              <span>healthOk: {String(shallowHealth?.ok === true)}</span>
-              <span>deepHealthOk: {String(backendHealth?.ok === true)}</span>
-              <span>/health status: {String(shallowHealth?.status ?? (shallowHealth?.ok === true ? "ok" : shallowHealth ? "unknown" : "not loaded"))}</span>
-              <span>/health/deep status: {String(backendHealth?.status ?? (backendHealth?.ok === true ? "ok" : backendHealth ? "unknown" : "not loaded"))}</span>
-              <span>/health result: {JSON.stringify(shallowHealth ?? null)}</span>
-              <span>/health/deep result: {JSON.stringify(backendHealth ?? null)}</span>
-              <span>backendReachable: {String(runtimeDescriptor.diagnostics.backendReachable)}</span>
-              <span>backendStatus: {runtimeDescriptor.diagnostics.backendStatus}</span>
-              <span>detectorLoaded: {String(runtimeDescriptor.diagnostics.detectorLoaded)}</span>
-              <span>correctorLoaded: {String(runtimeDescriptor.diagnostics.correctorLoaded)}</span>
-              <span>correctorReason: {runtimeDescriptor.diagnostics.correctorReason ?? "none"}</span>
-              <span>llmEnabled: {String(runtimeDescriptor.diagnostics.llmEnabled)}</span>
-              <span>llmConfigured: {String(runtimeDescriptor.diagnostics.llmConfigured)}</span>
-              <span>llmProvider: {runtimeDescriptor.diagnostics.llmProvider ?? "unknown"}</span>
-              <span>llmModel: {runtimeDescriptor.diagnostics.llmModel ?? "unknown"}</span>
-              <span>llm.enabled: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.enabled ?? "unknown")}</span>
-              <span>llm.configured: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.configured ?? "unknown")}</span>
-              <span>llm.provider: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.provider ?? "unknown")}</span>
-              <span>llm.model: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.model ?? "unknown")}</span>
-              <span>llm.status: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.status ?? "unknown")}</span>
-              <span>llm.circuit_open: {String((backendHealth?.llm as Record<string, unknown> | undefined)?.circuit_open ?? "unknown")}</span>
-              <span>llm.warnings: {JSON.stringify((backendHealth?.llm as Record<string, unknown> | undefined)?.warnings ?? [])}</span>
-              <span>llm_requested: {String(normalizedAnalysis.llm_requested ?? false)}</span>
-              <span>llm_attempted: {String(normalizedAnalysis.llm_attempted ?? false)}</span>
-              <span>llm_used: {String(normalizedAnalysis.llm_used ?? false)}</span>
-              <span>last check llm_status: {normalizedAnalysis.llm_status ?? "not requested"}</span>
-              <span>llm_provider: {normalizedAnalysis.llm_provider ?? "none"}</span>
-              <span>llm_model: {normalizedAnalysis.llm_model ?? "none"}</span>
-              <span>llm_response_mode: {normalizedAnalysis.llm_response_mode ?? "none"}</span>
-              <span>last check llm_http_status: {String((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.http_status ?? "none")}</span>
-              <span>llm warnings: {JSON.stringify((normalizedAnalysis.diagnostics?.llm as Record<string, unknown> | undefined)?.warnings ?? normalizedAnalysis.runtime_warnings ?? [])}</span>
-              <span>local_suggestion_count: {normalizedAnalysis.local_suggestion_count ?? suggestions.length}</span>
-              <span>ai_suggestion_count: {normalizedAnalysis.ai_suggestion_count ?? 0}</span>
-              <span>rejected_ai_suggestion_count: {normalizedAnalysis.rejected_ai_suggestion_count ?? 0}</span>
-              <span>timings: {JSON.stringify((normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.timings ?? { llm_ms: (normalizedAnalysis.llm as Record<string, unknown> | null | undefined)?.llm_ms ?? "none" })}</span>
-              <span>/api/llm/debug result: {JSON.stringify(llmDebug ?? null)}</span>
-              <span>/api/llm/debug error: {llmDebugDiagnostic ?? "none"}</span>
-              <span>last analysis result: {JSON.stringify(lastAnalysisResult)}</span>
-              <span>suggestion sources: {suggestionSourceSummary}</span>
-              <span>backend timeout/error reason: {backendHealthDiagnostic ?? llmDebugDiagnostic ?? "none"}</span>
-              <span>Lexicon: {normalizedAnalysis.lexicon_source}</span>
-                </>
-              ) : (
-                <span>Enable “Show debug details” to view Diagnostics.</span>
-              )}
-              {runtimeWarnings.map((warning) => (
-                <span key={warning} className="chip chip-warning">
-                  {warning}
-                </span>
-              ))}
-              <label>
-                User ID
-                <input
-                  value={userId}
-                  onChange={(event) => setUserId(event.target.value)}
-                />
-              </label>
-              <label>
-                API base URL
-                <div className="row">
+            <button
+              type="button"
+              className="button-primary"
+              onClick={() => void savePreferencesToBackend()}
+            >
+              Save settings
+            </button>
+            {debugMode ||
+            (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env
+              ?.DEV ? (
+              <details className="developer-diagnostics">
+                <summary>Developer diagnostics</summary>
+                <label>
+                  Backend URL override
                   <input
                     value={apiBaseUrlDraft}
                     onChange={(event) => setApiBaseUrlDraft(event.target.value)}
                   />
+                </label>
+                <div className="row">
                   <button
                     type="button"
                     className="button-secondary"
                     onClick={applyApiBaseUrl}
                   >
-                    Apply
+                    Apply URL
                   </button>
                   <button
                     type="button"
                     className="button-secondary"
                     onClick={resetApiBaseUrl}
                   >
-                    Reset
-                  </button>
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    onClick={resetApiUrlOverrideAndReload}
-                  >
                     Reset API URL override
                   </button>
                 </div>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={preferences.auto_show_tone}
-                  onChange={(event) =>
-                    setPreferences((current) => ({
-                      ...current,
-                      auto_show_tone: event.target.checked,
-                    }))
-                  }
-                />
-                <span>Auto-show tone</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={preferences.enable_rewrites}
-                  onChange={(event) =>
-                    setPreferences((current) => ({
-                      ...current,
-                      enable_rewrites: event.target.checked,
-                    }))
-                  }
-                />
-                <span>Enable rewrites</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={autoAiReview}
-                  onChange={(event) => setAutoAiReview(event.target.checked)}
-                />
-                <span>AI on every check</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={debugMode}
-                  onChange={(event) => setDebugMode(event.target.checked)}
-                />
-                <span>Show debug details</span>
-              </label>
+                <pre>
+                  {JSON.stringify(
+                    {
+                      apiBaseUrl,
+                      backendMode,
+                      backendHealthDiagnostic,
+                      llmDebugDiagnostic,
+                      lastAnalysisResult,
+                      llmDebug,
+                      runtimeDescriptor: runtimeDescriptor.diagnostics,
+                    },
+                    null,
+                    2,
+                  )}
+                </pre>
+              </details>
+            ) : (
               <button
                 type="button"
-                className="button-primary"
-                onClick={() => void savePreferencesToBackend()}
+                className="text-button"
+                onClick={() => setDebugMode(true)}
               >
-                Save Preferences
+                Show developer diagnostics
               </button>
-              <div className="dictionary-box">
-                <h3>Personal dictionary</h3>
-                <div className="row">
-                  <input
-                    value={dictionaryDraft}
-                    onChange={(event) => setDictionaryDraft(event.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    onClick={() => {
-                      if (!dictionaryDraft.trim()) {
-                        return;
-                      }
-                      setPreferences((current) => ({
-                        ...current,
-                        personal_dictionary: upsertUnique(
-                          current.personal_dictionary ?? [],
-                          dictionaryDraft,
-                        ),
-                      }));
-                      setDictionaryDraft("");
-                    }}
-                  >
-                    Add
-                  </button>
-                </div>
-                <div className="chip-row">
-                  {(preferences.personal_dictionary ?? []).map((entry) => (
-                    <button
-                      key={entry}
-                      type="button"
-                      className="chip chip-action"
-                      onClick={() =>
-                        setPreferences((current) => ({
-                          ...current,
-                          personal_dictionary: (
-                            current.personal_dictionary ?? []
-                          ).filter((item) => item !== entry),
-                        }))
-                      }
-                    >
-                      {entry}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </details>
-        </aside>
-      </section>
-
-      <footer className="trust-footer">
-        Your text is private and secure. <strong>Shuddho</strong> does not store
-        your content.
-      </footer>
+            )}
+            <p className="quiet-note production-debug-line">
+              API base URL: hidden in normal mode · API config source:{" "}
+              {apiConfiguration.source} · backendMode: {backendMode} · last
+              health error: {backendHealthDiagnostic ?? "none"} · last
+              /api/check: {normalizedAnalysis.llm_status ?? "not requested"}
+            </p>
+          </aside>
+        </div>
+      ) : null}
     </main>
   );
 }
 
-interface InlineSegment {
-  key: string;
-  text: string;
-  suggestion: Suggestion | null;
+export function applySafeSuggestionBatch(
+  text: string,
+  suggestions: Suggestion[],
+): SafeApplyResult {
+  const candidates = suggestions
+    .filter(
+      (suggestion) => (suggestion.replacement_options[0] ?? "").length > 0,
+    )
+    .sort((a, b) => a.span_start - b.span_start || a.span_end - b.span_end);
+  const selected: Suggestion[] = [];
+  let skipped = 0;
+
+  for (const suggestion of candidates) {
+    const validSpan =
+      Number.isInteger(suggestion.span_start) &&
+      Number.isInteger(suggestion.span_end) &&
+      suggestion.span_start >= 0 &&
+      suggestion.span_end > suggestion.span_start &&
+      suggestion.span_end <= text.length;
+    const stale =
+      !validSpan ||
+      text.slice(suggestion.span_start, suggestion.span_end) !==
+        suggestion.original_text;
+    const overlaps = selected.some(
+      (range) =>
+        suggestion.span_start < range.span_end &&
+        suggestion.span_end > range.span_start,
+    );
+    if (stale || overlaps) {
+      skipped += 1;
+      continue;
+    }
+    selected.push(suggestion);
+  }
+
+  let draft = text;
+  const appliedIds: string[] = [];
+  for (const suggestion of [...selected].sort(
+    (a, b) => b.span_start - a.span_start,
+  )) {
+    draft = replaceSpan(
+      draft,
+      suggestion.span_start,
+      suggestion.span_end,
+      suggestion.replacement_options[0] ?? "",
+    );
+    appliedIds.push(suggestion.id);
+  }
+
+  return { text: draft, applied: appliedIds.length, skipped, appliedIds };
+}
+
+function getFriendlyRuntimeStatus(args: {
+  backendMode: BackendMode;
+  isChecking: boolean;
+  suggestionCount: number;
+  runtimeDescriptorLabel: string;
+  llmStatus: string | null;
+  sourceSummary: "local" | "ai" | "hybrid" | "none";
+}): FriendlyStatus {
+  if (args.isChecking) return { label: "Checking", tone: "info" };
+  if (args.backendMode === "unavailable")
+    return { label: "Backend unavailable", tone: "error" };
+  if (args.backendMode === "misconfigured")
+    return { label: "Limited mode", tone: "warn" };
+  if (
+    args.sourceSummary === "ai" ||
+    args.sourceSummary === "hybrid" ||
+    args.llmStatus === "ok"
+  ) {
+    return { label: "AI review ready", tone: "ok" };
+  }
+  if (
+    args.backendMode === "degraded" ||
+    args.runtimeDescriptorLabel.toLowerCase().includes("degraded")
+  ) {
+    return { label: "Local checks active", tone: "warn" };
+  }
+  if (args.suggestionCount > 0) return { label: "Ready", tone: "ok" };
+  return { label: "Ready", tone: "info" };
+}
+
+function getReviewStatusCopy(args: {
+  suggestions: number;
+  reviewUnavailable: boolean;
+  aiUnavailable: boolean;
+  status: string;
+}): string {
+  if (args.reviewUnavailable) {
+    return "Contextual AI review is not connected. Retry the backend or continue only when limited local checks are available.";
+  }
+  if (args.status.toLowerCase().includes("timed out")) {
+    return "AI review took too long. You can try again.";
+  }
+  if (args.aiUnavailable) {
+    return "AI review is temporarily unavailable. Local checks are still active.";
+  }
+  if (args.suggestions > 0) {
+    return `${args.suggestions} suggestions ready.`;
+  }
+  return "Your writing looks clear.";
 }
 
 function buildInlineSegments(
@@ -1640,7 +1709,6 @@ function displaySuggestionType(suggestion: Suggestion): string {
   return "Spelling";
 }
 
-
 function describeSuggestionSources(
   suggestions: Suggestion[],
   analysis: AnalyzeResponse,
@@ -1650,7 +1718,9 @@ function describeSuggestionSources(
   }
   const hasAi = suggestions.some((suggestion) => {
     const metadata = (suggestion.metadata ?? {}) as Record<string, unknown>;
-    const sources = Array.isArray(metadata.sources) ? metadata.sources.map(String) : [];
+    const sources = Array.isArray(metadata.sources)
+      ? metadata.sources.map(String)
+      : [];
     return (
       suggestion.source === "model" ||
       suggestion.source === "hybrid" ||
@@ -1674,8 +1744,14 @@ function isBackendConnected(backendMode: BackendMode): boolean {
   return ["connected", "degraded", "ready"].includes(backendMode);
 }
 
-function backendTransportForRuntime(backendMode: BackendMode): "checking" | "online" | "offline" | "misconfigured" {
-  if (backendMode === "connected" || backendMode === "degraded" || backendMode === "ready") {
+function backendTransportForRuntime(
+  backendMode: BackendMode,
+): "checking" | "online" | "offline" | "misconfigured" {
+  if (
+    backendMode === "connected" ||
+    backendMode === "degraded" ||
+    backendMode === "ready"
+  ) {
     return "online";
   }
   if (backendMode === "unavailable") {
@@ -1689,7 +1765,11 @@ function friendlyHealthFailure(message: string): string {
   if (lower.includes("timeout") || lower.includes("timed out")) {
     return "The backend timed out and may still be waking up on Render Free.";
   }
-  if (lower.includes("cors") || lower.includes("network") || lower.includes("failed to fetch")) {
+  if (
+    lower.includes("cors") ||
+    lower.includes("network") ||
+    lower.includes("failed to fetch")
+  ) {
     return "This looks like a CORS or network failure.";
   }
   if (lower.includes("http")) {
@@ -1708,8 +1788,10 @@ export function deriveBackendModeFromHealth(
   if (health?.ok !== true) {
     return "unavailable";
   }
-  const correctorLoaded = deepHealth?.corrector_loaded ?? deepHealth?.corrector?.loaded;
-  const detectorLoaded = deepHealth?.detector_loaded ?? deepHealth?.detector?.loaded;
+  const correctorLoaded =
+    deepHealth?.corrector_loaded ?? deepHealth?.corrector?.loaded;
+  const detectorLoaded =
+    deepHealth?.detector_loaded ?? deepHealth?.detector?.loaded;
   if (correctorLoaded === false) {
     return "degraded";
   }
@@ -1738,10 +1820,15 @@ export function deriveBackendModeAfterSuccessfulCheck(
   );
 }
 
-export function describeAnalyzeTextError(message: string, includeLLM: boolean): string {
+export function describeAnalyzeTextError(
+  message: string,
+  includeLLM: boolean,
+): string {
   const lower = message.toLowerCase();
   if (lower.includes("timed out") || lower.includes("timeout")) {
-    return includeLLM ? "AI review timed out. Showing local suggestions." : REQUEST_TIMEOUT_MESSAGE;
+    return includeLLM
+      ? "AI review timed out. Showing local suggestions."
+      : REQUEST_TIMEOUT_MESSAGE;
   }
   if (message.includes("HTTP 404") || /with 404[:;]/.test(message)) {
     return "Backend route /api/check was not found.";
@@ -1752,16 +1839,30 @@ export function describeAnalyzeTextError(message: string, includeLLM: boolean): 
   if (message.includes("HTTP 500") || /with 500[:;]/.test(message)) {
     return "Backend crashed during analysis. Check Render logs.";
   }
-  if (lower.includes("backend json invalid") || lower.includes("invalid json")) {
+  if (
+    lower.includes("backend json invalid") ||
+    lower.includes("invalid json")
+  ) {
     return "Backend returned invalid JSON. Check /api/check response and Render logs.";
   }
   if (lower.includes("openrouter") || lower.includes("provider_error")) {
-    return `OpenRouter provider error while reviewing. ${message}`.slice(0, 240);
+    return `OpenRouter provider error while reviewing. ${message}`.slice(
+      0,
+      240,
+    );
   }
-  if (lower.includes("network request failed") || lower.includes("failed to fetch") || lower.includes("cors") || lower.includes("network failure")) {
+  if (
+    lower.includes("network request failed") ||
+    lower.includes("failed to fetch") ||
+    lower.includes("cors") ||
+    lower.includes("network failure")
+  ) {
     return "Browser could not reach backend. Check CORS and VITE_API_BASE_URL.";
   }
-  return message || "Backend analysis failed. Check /api/check response and Render logs.";
+  return (
+    message ||
+    "Backend analysis failed. Check /api/check response and Render logs."
+  );
 }
 
 function buildLocalFallbackResponse(
