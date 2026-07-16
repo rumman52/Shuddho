@@ -70,7 +70,7 @@ Use OpenRouter for OpenRouter model IDs such as `openai/gpt-oss-120b:free`:
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openai/gpt-oss-120b:free
+OPENROUTER_MODEL=<currently-valid-openrouter-model>
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual
@@ -95,6 +95,35 @@ Operational safeguards:
 - Free OpenRouter models can be slower, unavailable, or rate-limited; Shuddho's local fallback must always remain enabled.
 - `SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45` gives free OpenRouter reasoning models enough time for manual Deep AI Review, while `SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60` allows queued background reviews more time.
 - Set `SHUDDHO_MAX_AI_TEXT_CHARS=5000` and `SHUDDHO_LLM_CACHE_TTL_SECONDS=86400` to bound request size and avoid repeated unchanged reviews.
+
+
+### Gemini primary with OpenRouter fallback
+
+Render backend environment variables for production Deep AI Review:
+
+```bash
+SHUDDHO_ENABLE_LLM=true
+
+# Primary provider
+SHUDDHO_LLM_PROVIDER=gemini
+GEMINI_API_KEY=<render-secret>
+GEMINI_MODEL=gemini-3.5-flash
+
+# Automatic fallback
+SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
+OPENROUTER_API_KEY=<existing-render-secret>
+OPENROUTER_MODEL=<currently-valid-openrouter-model>
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+```
+
+Gemini and OpenRouter keys belong only in Render or another private backend runtime. Never add `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or `OPENROUTER_API_KEY` to Vercel; Vercel should contain only public `VITE_*` values. OpenRouter remains configured even while Gemini is primary, and `SHUDDHO_LLM_PROVIDER` / `SHUDDHO_LLM_FALLBACK_PROVIDER` can be reversed without code changes. Use a current Gemini auth key from Google AI Studio. Do not commit real secrets to `.env.example`, README files, `render.yaml`, tests, or source files.
+
+OpenRouter model availability changes. The old `openai/gpt-oss-120b:free` value is not an active default; set `OPENROUTER_MODEL` explicitly after checking the current OpenRouter catalog. The OpenRouter catalog lists current free/router choices such as `openrouter/free`, which routes to available free models, but production deployments should choose and monitor a model appropriate for Bangla writing review.
 
 ## Vercel deployment (apps/web-editor)
 
@@ -121,7 +150,7 @@ VITE_USE_GATEWAY=true
 VITE_ENABLE_LOCAL_FALLBACK=false
 ```
 
-Never put provider secrets or provider model configuration in Vercel frontend variables: `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_MODEL`, `OPENAI_MODEL`, or `SHUDDHO_LLM_PROVIDER`.
+Never put provider secrets or provider model configuration in Vercel frontend variables: `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GEMINI_MODEL`, `OPENROUTER_MODEL`, `OPENAI_MODEL`, or `SHUDDHO_LLM_PROVIDER`.
 
 Render/backend should contain the private OpenRouter configuration when using `openai/gpt-oss-120b:free`:
 
@@ -129,7 +158,7 @@ Render/backend should contain the private OpenRouter configuration when using `o
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=openai/gpt-oss-120b:free
+OPENROUTER_MODEL=<currently-valid-openrouter-model>
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual

@@ -26,8 +26,9 @@ LLM_STATUSES = {
     "failed",
 }
 
-ProviderName = Literal["openrouter", "openai", "disabled"]
-DEFAULT_OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
+ProviderName = Literal["gemini", "openrouter", "openai", "disabled"]
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_OPENROUTER_MODEL = ""
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
@@ -78,6 +79,12 @@ class LlmProviderConfig:
     configured: bool
     warnings: list[str] = field(default_factory=list)
     status: str = "completed"
+    fallback_provider: str | None = None
+    fallback_model: str = ""
+    fallback_api_key: str | None = None
+    fallback_configured: bool = False
+    fallback_status: str = "skipped"
+    fallback_warnings: list[str] = field(default_factory=list)
 
 
 class LlmReviewProvider(Protocol):
@@ -98,44 +105,124 @@ def _truthy(value: str | None) -> bool | None:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+
+def _key_for_provider(provider: str, environ: dict[str, str]) -> str | None:
+    if provider == "gemini":
+        # Google Gen AI SDK precedence: GOOGLE_API_KEY wins when both are set.
+        return (environ.get("GOOGLE_API_KEY") or environ.get("GEMINI_API_KEY") or "").strip() or None
+    if provider == "openrouter":
+        return (environ.get("OPENROUTER_API_KEY") or "").strip() or None
+    if provider == "openai":
+        return (environ.get("OPENAI_API_KEY") or "").strip() or None
+    return None
+
+
+def _model_for_provider(provider: str, environ: dict[str, str]) -> tuple[str, list[str]]:
+    warnings: list[str] = []
+    if provider == "gemini":
+        raw = environ.get("GEMINI_MODEL")
+        model = (raw or DEFAULT_GEMINI_MODEL).strip()
+        if raw is not None and not model:
+            warnings.append("gemini_model_missing")
+        return model, warnings
+    if provider == "openrouter":
+        raw = environ.get("OPENROUTER_MODEL")
+        model = (raw or DEFAULT_OPENROUTER_MODEL).strip()
+        if raw is not None and not model:
+            warnings.append("openrouter_model_missing")
+        return model, warnings
+    if provider == "openai":
+        raw = environ.get("OPENAI_MODEL")
+        model = (raw or DEFAULT_OPENAI_MODEL).strip()
+        if raw is not None and not model:
+            warnings.append("openai_model_missing")
+        if "/" in model or ":free" in model:
+            warnings.append("openai_model_id_suspicious_use_openrouter_provider")
+        return model, warnings
+    return "", []
+
+
+def _provider_status(provider: str, model: str, api_key: str | None, warnings: list[str]) -> tuple[bool, str, list[str]]:
+    if provider not in {"gemini", "openrouter", "openai"}:
+        return False, "unsupported_provider", [*warnings, "unsupported_llm_provider"]
+    if provider == "openai" and ("/" in model or ":free" in model):
+        return False, "unsupported_provider", warnings
+    if not model:
+        return False, "missing_key" if not api_key else "unsupported_provider", warnings
+    if not api_key:
+        missing = {
+            "gemini": "gemini_api_key_missing",
+            "openrouter": "openrouter_api_key_missing",
+            "openai": "openai_api_key_missing",
+        }[provider]
+        return False, "missing_key", [*warnings, missing]
+    return True, "completed", warnings
+
+
 def resolve_llm_config(env: dict[str, str] | None = None) -> LlmProviderConfig:
     environ = env if env is not None else os.environ
     raw_provider = (environ.get("SHUDDHO_LLM_PROVIDER") or "").strip().lower()
     provider_explicit = bool(raw_provider)
     if raw_provider:
         provider = raw_provider
-    elif (environ.get("OPENROUTER_API_KEY") or "").strip() and not (environ.get("OPENAI_API_KEY") or "").strip():
+    elif _key_for_provider("openrouter", environ) and not _key_for_provider("openai", environ):
         provider = "openrouter"
+    elif _key_for_provider("gemini", environ) and not _key_for_provider("openai", environ):
+        provider = "gemini"
     else:
         provider = "openai"
     enabled_flag = _truthy(environ.get("SHUDDHO_ENABLE_LLM"))
-    warnings: list[str] = []
 
     if provider in {"disabled", "none", "off"}:
         return LlmProviderConfig(False, "disabled", "", None, False, [], "disabled")
-    if provider not in {"openrouter", "openai"}:
+    if provider not in {"gemini", "openrouter", "openai"}:
         return LlmProviderConfig(False, provider, "", None, False, ["unsupported_llm_provider"], "unsupported_provider")
 
-    if provider == "openrouter":
-        model = (environ.get("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL).strip() or DEFAULT_OPENROUTER_MODEL
-        api_key = (environ.get("OPENROUTER_API_KEY") or "").strip() or None
-        missing_warning = "openrouter_api_key_missing"
-    else:
-        model = (environ.get("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
-        api_key = (environ.get("OPENAI_API_KEY") or "").strip() or None
-        missing_warning = "openai_api_key_missing"
-        if "/" in model or ":free" in model:
-            warnings.append("openai_model_id_suspicious_use_openrouter_provider")
-
-    configured = bool(api_key) and not (provider == "openai" and ("/" in model or ":free" in model))
+    model, warnings = _model_for_provider(provider, environ)
+    api_key = _key_for_provider(provider, environ)
+    configured, status, warnings = _provider_status(provider, model, api_key, warnings)
     enabled = (provider_explicit or bool(api_key)) if enabled_flag is None else enabled_flag
-    suspicious_openai_model = provider == "openai" and ("/" in model or ":free" in model)
-    if suspicious_openai_model and enabled_flag is not False:
-        return LlmProviderConfig(True, provider, model, api_key, False, warnings, "unsupported_provider")
+
+    fallback_raw = (environ.get("SHUDDHO_LLM_FALLBACK_PROVIDER") or "").strip().lower()
+    fallback_provider: str | None = None
+    fallback_model = ""
+    fallback_api_key: str | None = None
+    fallback_configured = False
+    fallback_status = "skipped"
+    fallback_warnings: list[str] = []
+    if fallback_raw:
+        if fallback_raw in {"disabled", "none", "off"}:
+            fallback_status = "disabled"
+        elif fallback_raw == provider:
+            warnings.append("fallback_provider_same_as_primary")
+            fallback_provider = fallback_raw
+            fallback_status = "unsupported_provider"
+        elif fallback_raw not in {"gemini", "openrouter", "openai"}:
+            warnings.append("unsupported_llm_provider")
+            fallback_provider = fallback_raw
+            fallback_status = "unsupported_provider"
+        else:
+            fallback_provider = fallback_raw
+            fallback_model, fallback_warnings = _model_for_provider(fallback_provider, environ)
+            fallback_api_key = _key_for_provider(fallback_provider, environ)
+            fallback_configured, fallback_status, fallback_warnings = _provider_status(fallback_provider, fallback_model, fallback_api_key, fallback_warnings)
+            if not fallback_configured:
+                warnings.append("fallback_provider_not_configured")
+
     if not enabled:
-        return LlmProviderConfig(False, provider, model, api_key, configured, warnings, "disabled")
-    if suspicious_openai_model:
-        return LlmProviderConfig(True, provider, model, api_key, False, warnings, "unsupported_provider")
-    if not api_key:
-        return LlmProviderConfig(True, provider, model, None, False, [*warnings, missing_warning], "missing_key")
-    return LlmProviderConfig(True, provider, model, api_key, True, warnings, "completed")
+        status = "disabled"
+    return LlmProviderConfig(
+        enabled,
+        provider,
+        model,
+        api_key if configured or api_key else None,
+        configured,
+        warnings,
+        status,
+        fallback_provider=fallback_provider,
+        fallback_model=fallback_model,
+        fallback_api_key=fallback_api_key if fallback_configured or fallback_api_key else None,
+        fallback_configured=fallback_configured,
+        fallback_status=fallback_status,
+        fallback_warnings=fallback_warnings,
+    )

@@ -527,7 +527,7 @@ export default function App() {
           ? (llmStatusMessage ??
               (responseSuggestions.length
                 ? "AI suggestions merged."
-                : `${normalizedResponse.llm_provider === "openrouter" ? "OpenRouter" : normalizedResponse.llm_provider === "openai" ? "OpenAI" : "AI"} reviewed the text but found no extra high-confidence suggestions.`))
+                : `${normalizedResponse.llm_provider === "gemini" ? "Gemini" : normalizedResponse.llm_provider === "openrouter" ? "OpenRouter" : normalizedResponse.llm_provider === "openai" ? "OpenAI" : "AI"} reviewed the text but found no extra high-confidence suggestions.`))
           : responseSuggestions.length
             ? `${responseSuggestions.length} local suggestions ready`
             : responseWarnings.length
@@ -1612,7 +1612,7 @@ function getFriendlyRuntimeStatus(args: {
     args.sourceSummary === "hybrid" ||
     args.llmStatus === "ok"
   ) {
-    return { label: "AI review ready", tone: "ok" };
+    return { label: args.llmStatus === "completed" ? "Gemini review ready" : "AI review ready", tone: "ok" };
   }
   if (
     args.backendMode === "degraded" ||
@@ -1724,6 +1724,7 @@ function describeSuggestionSources(
     return (
       suggestion.source === "model" ||
       suggestion.source === "hybrid" ||
+      suggestion.provider === "gemini" ||
       suggestion.provider === "openrouter" ||
       suggestion.provider === "openai" ||
       sources.includes("ai")

@@ -36,6 +36,7 @@ from services.suggestion_manager.shuddho_suggestion_manager.manager import Sugge
 from services.api.shuddho_api.adapters import analyze_to_check_response
 from services.api.shuddho_api.llm_openrouter import DEFAULT_OPENROUTER_MODEL, run_openrouter_check
 from services.api.shuddho_api.llm_openai import DEFAULT_OPENAI_MODEL, run_openai_check
+from services.api.shuddho_api.llm_gemini import DEFAULT_GEMINI_MODEL, run_gemini_check
 from services.api.shuddho_api.llm_candidates import build_llm_candidates, split_bangla_sentences
 from services.api.shuddho_api.llm_provider import resolve_llm_config, LlmProviderResult
 from services.api.shuddho_api.suggestion_merge import merge_suggestions, validate_ai_suggestions
@@ -101,7 +102,7 @@ OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
 OPENAI_MODEL_ENV_VAR = "OPENAI_MODEL"
 OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
 LOG_RAW_TEXT_ENV_VAR = "SHUDDHO_LOG_RAW_TEXT"
-DEFAULT_OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
+DEFAULT_OPENROUTER_MODEL = ""
 MAX_AI_CHECK_CHARS = int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000"))
 
 
@@ -124,8 +125,8 @@ class AiCheckResponse(BaseModel):
     correctedText: str | None = None
     documentAssessment: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
-    provider: str = "openrouter"
-    model: str = DEFAULT_OPENROUTER_MODEL
+    provider: str = "gemini"
+    model: str = DEFAULT_GEMINI_MODEL
     llm_enabled: bool = False
     configured: bool = False
     called: bool = False
@@ -706,20 +707,25 @@ def get_llm_review(job_id: str) -> dict:
 @app.get("/api/llm/debug")
 def llm_debug() -> dict:
     config = resolve_llm_config(os.environ)
-    provider = config.provider
-    model = config.model
-    debug_status = "ready" if config.enabled and config.configured and not _is_circuit_open(provider, model) else config.status
+    primary = _provider_safe_state(config.provider, config.model, config.configured, config.api_key, config.status, config.warnings)
+    fallback = _provider_safe_state(config.fallback_provider, config.fallback_model, config.fallback_configured, config.fallback_api_key, config.fallback_status, config.fallback_warnings)
+    debug_status = "ready" if config.enabled and config.configured and not _is_circuit_open(config.provider, config.model) else config.status
     return {
         "enabled": config.enabled,
         "configured": config.configured,
-        "provider": provider,
-        "model": model,
+        "provider": config.provider,
+        "model": config.model,
         "status": debug_status,
         "warnings": list(config.warnings),
         "api_key_present": bool(config.api_key),
         "has_api_key": bool(config.api_key),
+        "primary": primary,
+        "fallback": fallback,
+        "fallback_provider": config.fallback_provider,
+        "fallback_model": config.fallback_model,
+        "fallback_configured": config.fallback_configured,
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
-        "endpoint": "https://openrouter.ai/api/v1/chat/completions" if provider == "openrouter" else "https://api.openai.com/v1/responses",
+        "endpoint": "https://generativelanguage.googleapis.com" if config.provider == "gemini" else ("https://openrouter.ai/api/v1/chat/completions" if config.provider == "openrouter" else "https://api.openai.com/v1/responses"),
         "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35")),
@@ -729,8 +735,8 @@ def llm_debug() -> dict:
             "background_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60")),
             "default_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35")),
         },
-        "circuit_open": _is_circuit_open(provider, model),
-        "circuit_state": "open" if _is_circuit_open(provider, model) else "closed",
+        "circuit_open": _is_circuit_open(config.provider, config.model),
+        "circuit_state": "open" if _is_circuit_open(config.provider, config.model) else "closed",
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
         "max_ai_text_chars": int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
@@ -831,13 +837,33 @@ def _llm_config() -> tuple[bool, str, str, str | None]:
     return config.enabled, config.provider, config.model, config.api_key
 
 
+def _provider_safe_state(provider: str | None, model: str, configured: bool, api_key: str | None, status: str, warnings: list[str]) -> dict[str, Any] | None:
+    if not provider:
+        return None
+    return {
+        "provider": provider,
+        "model": model,
+        "configured": configured,
+        "api_key_present": bool(api_key),
+        "circuit_open": _is_circuit_open(provider, model),
+        "status": "ready" if configured and not _is_circuit_open(provider, model) else status,
+        "warnings": list(warnings),
+        "last_failure_count": len(llm_failures.get(f"{provider}:{model}", [])),
+    }
+
+
 def _llm_safe_status() -> dict[str, Any]:
     config = resolve_llm_config(os.environ)
+    primary = _provider_safe_state(config.provider, config.model, config.configured, config.api_key, config.status, config.warnings)
+    fallback = _provider_safe_state(config.fallback_provider, config.fallback_model, config.fallback_configured, config.fallback_api_key, config.fallback_status, config.fallback_warnings)
     return {
         "enabled": config.enabled,
         "provider": config.provider,
         "model": config.model,
         "configured": config.configured,
+        "api_key_present": bool(config.api_key),
+        "primary": primary,
+        "fallback": fallback,
         "circuit_open": _is_circuit_open(config.provider, config.model),
         "warnings": list(config.warnings),
         "status": config.status,
@@ -956,6 +982,70 @@ def _log_raw_text_enabled() -> bool:
     return os.environ.get(LOG_RAW_TEXT_ENV_VAR, "false").strip().lower() == "true"
 
 
+
+def _provider_configured(config: Any, fallback: bool = False) -> dict[str, Any]:
+    return {
+        "provider": config.fallback_provider if fallback else config.provider,
+        "model": config.fallback_model if fallback else config.model,
+        "api_key": config.fallback_api_key if fallback else config.api_key,
+        "configured": config.fallback_configured if fallback else config.configured,
+        "status": config.fallback_status if fallback else config.status,
+        "warnings": list(config.fallback_warnings if fallback else config.warnings),
+    }
+
+
+FALLBACK_ELIGIBLE_STATUSES = {"missing_key", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "timeout", "rate_limited", "network_error", "provider_error", "invalid_json", "invalid_schema", "failed"}
+
+
+def run_configured_provider(
+    provider_config: dict[str, Any],
+    text: str,
+    request_id: str,
+    sentences: list[dict[str, Any]],
+    local_suggestions: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    provider = provider_config.get("provider")
+    model = provider_config.get("model") or ""
+    if not provider_config.get("configured") or not provider_config.get("api_key"):
+        warning = {"gemini": "gemini_api_key_missing", "openrouter": "openrouter_api_key_missing", "openai": "openai_api_key_missing"}.get(str(provider), "unsupported_llm_provider")
+        status = provider_config.get("status") or "missing_key"
+        return LlmProviderResult(provider=str(provider or "disabled"), model=model, configured=False, status=status, warnings=[*(provider_config.get("warnings") or []), warning], response_mode="none").model_dump()
+    if _is_circuit_open(str(provider), model):
+        return LlmProviderResult(provider=str(provider), model=model, configured=True, status="failed", warnings=["llm_circuit_open"], response_mode="none").model_dump()
+    if provider == "gemini":
+        return run_gemini_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
+    if provider == "openrouter":
+        return run_openrouter_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
+    if provider == "openai":
+        return run_openai_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
+    return LlmProviderResult(provider=str(provider or "disabled"), model=model, status="unsupported_provider", warnings=["unsupported_llm_provider"]).model_dump()
+
+
+def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list[dict[str, Any]], local_suggestions: list[dict[str, Any]], candidates: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
+    primary_cfg = _provider_configured(config)
+    result = run_configured_provider(primary_cfg, text, request_id, sentences, local_suggestions, candidates, timeout)
+    primary_status = str(result.get("status") or "failed")
+    fallback_provider = config.fallback_provider
+    if fallback_provider and primary_status in FALLBACK_ELIGIBLE_STATUSES:
+        fallback_cfg = _provider_configured(config, fallback=True)
+        fallback_result = run_configured_provider(fallback_cfg, text, request_id, sentences, local_suggestions, candidates, timeout)
+        fallback_result["warnings"] = _dedupe_strings([
+            *(result.get("warnings") or []),
+            f"primary_provider_failed:{config.provider}",
+            f"primary_provider_status:{primary_status}",
+            f"fallback_provider_used:{fallback_provider}",
+            *(fallback_result.get("warnings") or []),
+        ])
+        if fallback_result.get("status") in {"completed", "completed_empty"}:
+            fallback_result.setdefault("timings", {})
+            fallback_result["timings"] = {**(fallback_result.get("timings") or {}), "fallback_used": True}
+            return fallback_result
+        return fallback_result
+    return result
+
+
 def _run_ai_check(
     text: str,
     request_id: str,
@@ -963,22 +1053,11 @@ def _run_ai_check(
     timeout_seconds: float | None = None,
 ) -> AiCheckResponse:
     config = resolve_llm_config(os.environ)
-    base = {
-        "provider": config.provider,
-        "model": config.model,
-        "llm_enabled": config.enabled,
-        "configured": config.configured,
-        "warnings": list(config.warnings),
-        "status": config.status if config.status != "completed" else "attempted",
-    }
+    base = {"provider": config.provider, "model": config.model, "llm_enabled": config.enabled, "configured": config.configured, "warnings": list(config.warnings), "status": config.status if config.status != "completed" else "attempted"}
     if not config.enabled:
         return AiCheckResponse(**{**base, "status": "disabled", "warnings": _dedupe_strings([*config.warnings, "llm_disabled"] if not config.warnings else config.warnings)})
-    if not config.configured or not config.api_key:
-        return AiCheckResponse(**base)
     if not text.strip():
         return AiCheckResponse(**{**base, "status": "skipped", "warnings": _dedupe_strings([*config.warnings, "llm_empty_text_skipped"])})
-    if _is_circuit_open(config.provider, config.model):
-        return AiCheckResponse(**{**base, "status": "failed", "warnings": _dedupe_strings([*config.warnings, "llm_circuit_open"])})
 
     os.environ["SHUDDHO_REQUEST_ID"] = request_id
     timeout = timeout_seconds if timeout_seconds is not None else float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35") or "35")
@@ -986,52 +1065,23 @@ def _run_ai_check(
     ai_text = text[:max_ai_chars]
     truncation_warnings = ["llm_text_truncated"] if len(text) > max_ai_chars else []
     locals_for_prompt = local_suggestions or []
-    candidates = build_llm_candidates(
-        ai_text,
-        locals_for_prompt,
-        max_sentences=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
-        max_chars=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
-        max_text_chars=int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
-    )
+    candidates = build_llm_candidates(ai_text, locals_for_prompt, max_sentences=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")), max_chars=int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")), max_text_chars=int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")))
     sentences = _sentences_for_ai(ai_text)
-    cache_key = _cache_key(ai_text, locals_for_prompt, candidates, config.provider, config.model)
+    cache_key = _cache_key(ai_text, locals_for_prompt, candidates, config.provider, config.model, config.fallback_provider, config.fallback_model)
     cache_ttl = int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400") or "86400")
     cached = llm_cache.get(cache_key)
     if cached and time.time() - cached.get("created_at", 0) < cache_ttl:
         result = dict(cached.get("result") or cached)
         result.setdefault("called", True)
         result.setdefault("configured", True)
-        result.setdefault("timings", {})
         result["timings"] = {**(result.get("timings") or {}), "cache_hit": True}
-    elif config.provider == "openai":
-        result = run_openai_check(text=ai_text, model=config.model, api_key=config.api_key or "", timeout_seconds=timeout, request_id=request_id, sentences=sentences, local_suggestions=locals_for_prompt, candidates=candidates)
-        if result.get("status") in {"completed", "completed_empty"}:
-            llm_cache[cache_key] = {"created_at": time.time(), "result": result}
-    elif config.provider == "openrouter":
-        result = run_openrouter_check(text=ai_text, model=config.model, api_key=config.api_key or "", timeout_seconds=timeout, request_id=request_id, sentences=sentences, local_suggestions=locals_for_prompt, candidates=candidates)
-        if result.get("status") in {"completed", "completed_empty"}:
-            llm_cache[cache_key] = {"created_at": time.time(), "result": result}
     else:
-        result = LlmProviderResult(provider=config.provider, model=config.model, status="unsupported_provider", warnings=["unsupported_llm_provider"]).model_dump()
+        result = _run_provider_chain(config, ai_text, request_id, sentences, locals_for_prompt, candidates, timeout)
+        if result.get("status") in {"completed", "completed_empty"}:
+            llm_cache[cache_key] = {"created_at": time.time(), "result": result, "provider": result.get("provider"), "model": result.get("model")}
     warnings = _dedupe_strings([*config.warnings, *truncation_warnings, *(result.get("warnings") or [])])
-    logger.info("ai_check_complete request_id=%s provider=%s model=%s status=%s http_status=%s text_length=%s sent_length=%s llm_ms=%s warnings=%s", request_id, config.provider, config.model, result.get("status"), result.get("http_status"), len(text), len(ai_text), (result.get("timings") or {}).get("llm_ms"), len(warnings))
-    return AiCheckResponse(
-        suggestions=result.get("suggestions", []) or [],
-        correctedText=result.get("correctedText"),
-        documentAssessment=result.get("documentAssessment") or {},
-        warnings=warnings,
-        provider=result.get("provider") or config.provider,
-        model=result.get("model") or config.model,
-        llm_enabled=config.enabled,
-        configured=bool(result.get("configured", config.configured)),
-        called=bool(result.get("called")),
-        parsed=bool(result.get("parsed")),
-        status=str(result.get("status") or "failed"),
-        response_mode=str(result.get("response_mode") or "none"),
-        http_status=result.get("http_status"),
-        usage=result.get("usage") or {},
-        timings=_safe_timings(result.get("timings")),
-    )
+    logger.info("ai_check_complete request_id=%s provider=%s model=%s status=%s http_status=%s text_length=%s sent_length=%s llm_ms=%s warnings=%s", request_id, result.get("provider") or config.provider, result.get("model") or config.model, result.get("status"), result.get("http_status"), len(text), len(ai_text), (result.get("timings") or {}).get("llm_ms"), len(warnings))
+    return AiCheckResponse(suggestions=result.get("suggestions", []) or [], correctedText=result.get("correctedText"), documentAssessment=result.get("documentAssessment") or {}, warnings=warnings, provider=result.get("provider") or config.provider, model=result.get("model") or config.model, llm_enabled=config.enabled, configured=bool(result.get("configured", config.configured)), called=bool(result.get("called")), parsed=bool(result.get("parsed")), status=str(result.get("status") or "failed"), response_mode=str(result.get("response_mode") or "none"), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings=_safe_timings(result.get("timings")), ai_raw_suggestion_count=int(result.get("ai_raw_suggestion_count") or 0))
 
 
 def _create_llm_review_job(text: str, language: str, local_suggestions: list[dict], mode: str, request_id: str | None = None) -> dict:
@@ -1059,7 +1109,7 @@ def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestio
     if not enabled or _is_circuit_open(provider, model):
         job.update({"status": "failed", "warnings": ["llm_circuit_open" if _is_circuit_open(provider, model) else "llm_disabled"]})
         return
-    key = _cache_key(text, local_suggestions, candidates, provider, model)
+    key = _cache_key(text, local_suggestions, candidates, provider, model, resolve_llm_config(os.environ).fallback_provider, resolve_llm_config(os.environ).fallback_model)
     cached = llm_cache.get(key)
     ttl = int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400"))
     if cached and time.time() - cached.get("created_at", 0) < ttl:
@@ -1067,7 +1117,7 @@ def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestio
         return
     ai = _run_ai_check(text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60") or "60"))
     if ai.status not in {"completed", "completed_empty"}:
-        _record_llm_failure(provider, model, ai.warnings or [ai.status])
+        _record_llm_failure(ai.provider, ai.model, ai.warnings or [ai.status])
         job.update({"status": ai.status if ai.status in {"timeout", "rate_limited"} else "failed", "llm_status": ai.status, "warnings": ai.warnings, "provider": ai.provider, "model": ai.model, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}})
         return
     valid_ai, validation_warnings = validate_ai_suggestions(text, ai.suggestions, _sentences_for_ai(text))
@@ -1079,9 +1129,10 @@ def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestio
     job.update(payload | {"status": "completed" if ai.status in {"completed", "completed_empty"} else ai.status})
 
 
-def _cache_key(text: str, local_suggestions: list[dict], candidates: list[dict], provider: str, model: str) -> str:
+def _cache_key(text: str, local_suggestions: list[dict], candidates: list[dict], provider: str, model: str, fallback_provider: str | None = None, fallback_model: str = "") -> str:
+    from services.api.shuddho_api.ai_review_schema import PROMPT_SCHEMA_VERSION
     normalized = " ".join(text.split())
-    blob = normalized + json.dumps(local_suggestions, sort_keys=True, ensure_ascii=False) + json.dumps(candidates, sort_keys=True, ensure_ascii=False) + provider + model + "v1"
+    blob = normalized + json.dumps(local_suggestions, sort_keys=True, ensure_ascii=False) + json.dumps(candidates, sort_keys=True, ensure_ascii=False) + provider + model + str(fallback_provider or "") + fallback_model + PROMPT_SCHEMA_VERSION + "v2"
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
