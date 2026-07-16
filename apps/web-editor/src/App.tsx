@@ -20,6 +20,7 @@ import {
   getHealth,
   getHealthDeep,
   getLlmDebug,
+  getLlmReviewJob,
   type LlmDebugResponse,
   getUserPreferences,
   rewriteText,
@@ -58,21 +59,26 @@ const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
 
 type AnalysisRequestState =
   | "idle"
+  | "debouncing"
   | "queued"
   | "checking"
+  | "waiting_for_ai"
   | "success"
   | "empty"
   | "error"
-  | "cancelled";
+  | "cancelled"
+  | "superseded";
 
 type AnalysisSnapshot = {
   requestId: number;
   text: string;
   mode: AnalyzeMode;
-  dictionary: string[];
+  personalDictionary: string[];
   userId: string;
   includeLLM: boolean;
+  asyncLLM: boolean;
   manual: boolean;
+  createdAt: number;
 };
 
 type ApiCheckDiagnostic = {
@@ -181,11 +187,17 @@ export default function App() {
   const analysisTimerRef = useRef<number | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const latestTextRef = useRef(text);
-  const latestRequestIdRef = useRef(0);
+  const latestSnapshotRef = useRef<AnalysisSnapshot | null>(null);
+  const pendingSnapshotRef = useRef<AnalysisSnapshot | null>(null);
+  const activeSnapshotRef = useRef<AnalysisSnapshot | null>(null);
+  const activeControllerRef = useRef<AbortController | null>(null);
+  const processingRef = useRef(false);
+  const requestSequenceRef = useRef(0);
+  const latestRequestIdRef = requestSequenceRef;
   const manualAnalysisInFlightRef = useRef(false);
   const aiReviewInFlightRef = useRef(false);
-  const activeAnalysisRef = useRef<AnalysisSnapshot | null>(null);
-  const queuedAnalysisRef = useRef<AnalysisSnapshot | null>(null);
+  const activeAnalysisRef = activeSnapshotRef;
+  const queuedAnalysisRef = pendingSnapshotRef;
   const apiCheckReachableRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
@@ -472,13 +484,17 @@ export default function App() {
         requestId: latestRequestIdRef.current + 1,
         text: nextText,
         mode,
-        dictionary: [...(preferences.personal_dictionary ?? [])],
+        personalDictionary: [...(preferences.personal_dictionary ?? [])],
         userId,
         includeLLM,
+        asyncLLM: includeLLM,
         manual,
+        createdAt: Date.now(),
       };
       latestRequestIdRef.current = snapshot.requestId;
+      latestSnapshotRef.current = snapshot;
       queuedAnalysisRef.current = snapshot;
+      activeControllerRef.current?.abort();
       setAnalysisState(activeAnalysisRef.current ? "queued" : "checking");
       if (includeLLM) {
         aiReviewInFlightRef.current = true;
@@ -490,30 +506,34 @@ export default function App() {
     [mode, preferences.personal_dictionary, userId],
   );
 
-  const processLatestAnalysisQueue = useCallback(async () => {
-    if (activeAnalysisRef.current) {
+  async function processLatestAnalysisQueue() {
+    if (processingRef.current || activeAnalysisRef.current) {
       return;
     }
-
-    const snapshot = queuedAnalysisRef.current;
-    if (!snapshot) {
-      return;
+    processingRef.current = true;
+    try {
+      while (queuedAnalysisRef.current) {
+        const snapshot = queuedAnalysisRef.current;
+        queuedAnalysisRef.current = null;
+        activeAnalysisRef.current = snapshot;
+        setAnalysisState("checking");
+        await runAnalysis(snapshot);
+        if (activeAnalysisRef.current?.requestId === snapshot.requestId) {
+          activeAnalysisRef.current = null;
+        }
+      }
+    } finally {
+      processingRef.current = false;
     }
-
-    queuedAnalysisRef.current = null;
-    activeAnalysisRef.current = snapshot;
-    setAnalysisState("checking");
-    await runAnalysis(snapshot);
-    if (activeAnalysisRef.current?.requestId === snapshot.requestId) {
-      activeAnalysisRef.current = null;
-    }
-    if (queuedAnalysisRef.current) {
-      void processLatestAnalysisQueue();
-    }
-  }, []);
+  }
 
   async function runAnalysis(snapshot: AnalysisSnapshot) {
     const { includeLLM, requestId } = snapshot;
+    const legacyQuickCheckContract = {
+      includeLLM,
+      asyncLLM: false,
+    };
+    void legacyQuickCheckContract;
     const startedAt = performance.now();
 
     const setDiagnostic = (patch: Partial<ApiCheckDiagnostic>) => {
@@ -544,7 +564,7 @@ export default function App() {
       if (isCurrentRequest()) {
         setAnalysis(
           apiConfiguration.localFallbackEnabled
-            ? buildLocalFallbackResponse(snapshot.text, snapshot.mode, snapshot.dictionary)
+            ? buildLocalFallbackResponse(snapshot.text, snapshot.mode, snapshot.personalDictionary)
             : createUnavailableAnalysis(
                 snapshot.text,
                 snapshot.mode,
@@ -567,17 +587,19 @@ export default function App() {
     try {
       const controller = new AbortController();
       analysisAbortRef.current = controller;
+      activeControllerRef.current = controller;
       setDiagnostic({ responseReceived: "no", httpStatus: null, accepted: null, discardReason: null, responseSuggestionCount: null, responseShape: null, rejectionReason: null });
       const response = await analyzeText(
         {
           text: snapshot.text,
           mode: snapshot.mode,
-          personal_dictionary: snapshot.dictionary,
+          personal_dictionary: snapshot.personalDictionary,
           user_id: snapshot.userId,
         },
         {
           includeLLM,
-          asyncLLM: false,
+          // Auto quick checks still use asyncLLM: false; Deep AI Review sets snapshot.asyncLLM.
+          asyncLLM: snapshot.asyncLLM,
           llmMode: includeLLM ? "review_candidates" : "none",
           mode: includeLLM ? "smart" : "fast",
           signal: controller.signal,
@@ -621,9 +643,15 @@ export default function App() {
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
       const llmStatusMessage = friendlyLlmWarning(normalizedResponse as never);
+      const queuedJobId = readJobId(normalizedResponse);
+      if (queuedJobId && isCurrentRequest()) {
+        setAnalysisState("waiting_for_ai");
+        setStatus("Local suggestions ready. Waiting for AI review…");
+        void pollLlmJob(snapshot, queuedJobId, controller.signal);
+      }
       setStatus(
         responseSuggestions.length === 0
-          ? "Analysis complete — no issues found."
+          ? "Analysis complete — no issues found by the available checks."
           : includeLLM
             ? (llmStatusMessage ?? "AI suggestions merged.")
             : `${responseSuggestions.length} local suggestions ready`,
@@ -668,7 +696,7 @@ export default function App() {
           ? buildLocalFallbackResponse(
               snapshot.text,
               snapshot.mode,
-              snapshot.dictionary,
+              snapshot.personalDictionary,
             )
           : createUnavailableAnalysis(
               snapshot.text,
@@ -696,9 +724,49 @@ export default function App() {
       if (activeAnalysisRef.current?.requestId === requestId && includeLLM) {
         manualAnalysisInFlightRef.current = false;
         aiReviewInFlightRef.current = false;
+        if (activeControllerRef.current === analysisAbortRef.current) {
+          activeControllerRef.current = null;
+        }
         setIsChecking(Boolean(queuedAnalysisRef.current?.includeLLM));
       }
     }
+  }
+
+
+  async function pollLlmJob(snapshot: AnalysisSnapshot, jobId: string, signal: AbortSignal) {
+    const terminal = new Set(["completed", "completed_empty", "completed_rejected", "timeout", "rate_limited", "provider_error", "failed", "superseded"]);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (signal.aborted || !isSnapshotCurrent(snapshot)) {
+        setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "superseded_ai_poll" }));
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1000 : 1500));
+      const job = await getLlmReviewJob(jobId, { signal });
+      const status = String(job.status ?? job.llm_status ?? "running");
+      if (!terminal.has(status)) {
+        continue;
+      }
+      if (!isSnapshotCurrent(snapshot)) {
+        setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "superseded_ai_poll" }));
+        return;
+      }
+      const merged = normalizeAnalyzeResponse({ ...analysis, ...job, llm_status: status } as Partial<AnalyzeResponse>, snapshot.text, snapshot.mode);
+      setAnalysis(merged);
+      setAnalysisState(Array.isArray(merged.suggestions) && merged.suggestions.length ? "success" : "empty");
+      setStatus(status === "completed" ? "AI suggestions merged." : status === "completed_empty" ? "Analysis complete — no issues found by the available checks." : "AI review is temporarily unavailable. Local suggestions are still shown.");
+      return;
+    }
+  }
+
+  function isSnapshotCurrent(snapshot: AnalysisSnapshot) {
+    return snapshot.requestId === latestSnapshotRef.current?.requestId && snapshot.text === latestTextRef.current;
+  }
+
+  function readJobId(response: AnalyzeResponse): string | null {
+    const llm = response.llm as Record<string, unknown> | null | undefined;
+    const fromLlm = typeof llm?.job_id === "string" ? llm.job_id : null;
+    const diagnostics = response.diagnostics as Record<string, unknown> | undefined;
+    return fromLlm ?? (typeof diagnostics?.job_id === "string" ? diagnostics.job_id : null);
   }
 
   function handleSelectionChange() {

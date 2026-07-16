@@ -1052,8 +1052,11 @@ def _record_provider_attempt(result: dict[str, Any]) -> None:
 
 
 def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list[dict[str, Any]], local_suggestions: list[dict[str, Any]], candidates: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
+    started = time.monotonic()
+    total_deadline = max(1.0, float(timeout))
+    primary_timeout = min(total_deadline, max(1.0, float(os.environ.get("SHUDDHO_LLM_PRIMARY_TIMEOUT_SECONDS", "35") or "35")))
     primary_cfg = _provider_configured(config)
-    result = run_configured_provider(primary_cfg, text, request_id, sentences, local_suggestions, candidates, timeout)
+    result = run_configured_provider(primary_cfg, text, request_id, sentences, local_suggestions, candidates, primary_timeout)
     _record_provider_attempt(result)
     primary_status = str(result.get("status") or "failed")
     attempts = [{"role": "primary", "provider": result.get("provider"), "model": result.get("model"), "status": primary_status, "http_status": result.get("http_status"), "warnings": result.get("warnings") or []}]
@@ -1067,8 +1070,14 @@ def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list
         and not _is_circuit_open(fallback_provider, config.fallback_model)
     )
     if fallback_ready and primary_status in FALLBACK_ELIGIBLE_STATUSES:
+        elapsed = time.monotonic() - started
+        remaining = total_deadline - elapsed
+        if remaining <= 1.0:
+            result["provider_attempts"] = attempts
+            result["warnings"] = _dedupe_strings([*(result.get("warnings") or []), "fallback_skipped_provider_chain_deadline_exhausted"])
+            return result
         fallback_cfg = _provider_configured(config, fallback=True)
-        fallback_result = run_configured_provider(fallback_cfg, text, request_id, sentences, local_suggestions, candidates, timeout)
+        fallback_result = run_configured_provider(fallback_cfg, text, request_id, sentences, local_suggestions, candidates, remaining)
         _record_provider_attempt(fallback_result)
         attempts.append({"role": "fallback", "provider": fallback_result.get("provider"), "model": fallback_result.get("model"), "status": fallback_result.get("status"), "http_status": fallback_result.get("http_status"), "warnings": fallback_result.get("warnings") or []})
         fallback_result["warnings"] = _dedupe_strings([

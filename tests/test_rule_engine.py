@@ -219,3 +219,21 @@ def test_rule_engine_skips_quoted_agreement_text() -> None:
     suggestions = engine.analyze("সে বলল, “আমি স্কুলে যায়।”")
 
     assert all(suggestion.original_text != "যায়" for suggestion in suggestions)
+
+def test_rule_engine_detects_requested_paragraph_typoes_without_ai() -> None:
+    engine = RuleEngine()
+    text = "আজ সকালবেলা সূর্য উদয় হইল।\nসব পাখিরা নীল আকাশে উড়িতেছে আর মিষ্টি সুরে গান গাচ্ছে।\nএই অপরুপ দৃশ্যটি দেখে আমার চোখ অশ্রুজলে ভরে গেল।\nপ্রকৃতির এই রূপ দেখে আমি অত্যাধিক আনন্দিত হইলাম।"
+    suggestions = engine.analyze(text)
+    replacements = {suggestion.original_text: suggestion.replacement_options[0] for suggestion in suggestions}
+    assert replacements["অপরুপ"] == "অপরূপ"
+    assert replacements["অত্যাধিক"] == "অত্যধিক"
+    assert replacements["গান গাচ্ছে"] == "গান গাইছে"
+    for original in ("অপরুপ", "অত্যাধিক"):
+        suggestion = next(item for item in suggestions if item.original_text == original)
+        assert text[suggestion.span_start:suggestion.span_end] == original
+
+
+def test_rule_engine_does_not_fabricate_for_clean_requested_words() -> None:
+    engine = RuleEngine()
+    suggestions = engine.analyze("এই অপরূপ দৃশ্যটি দেখে আমি অত্যধিক আনন্দিত হলাম।")
+    assert all(suggestion.original_text not in {"অপরূপ", "অত্যধিক"} for suggestion in suggestions)

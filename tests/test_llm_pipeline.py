@@ -314,3 +314,30 @@ def test_gemini_http_statuses(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, 'google.genai', genai)
     monkeypatch.setitem(sys.modules, 'google.genai.types', types_mod)
     assert run_gemini_check("আমি ভাত খাই।", "missing", "key", request_id="r1")["status"] == "model_not_found"
+
+def test_openrouter_http_200_error_object_is_rejected(monkeypatch) -> None:
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    FakeClient.calls = []
+    FakeClient.responses = [FakeResponse(200, {"error": {"code": "model_not_found", "message": "No endpoints found for model"}})]
+    result = run_openrouter_check("আমি ভাত খাই।", "missing/model", "key", request_id="r1")
+    assert result["status"] == "provider_error"
+    assert result["http_status"] == 200
+    assert "openrouter_error" not in " ".join(result["warnings"])
+    assert any("No endpoints found" in warning or "model_not_found" in warning for warning in result["warnings"])
+
+
+def test_openrouter_http_200_missing_choices_and_empty_content(monkeypatch) -> None:
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    FakeClient.calls = []
+    FakeClient.responses = [FakeResponse(200, {"choices": []})]
+    assert run_openrouter_check("আমি ভাত খাই।", "model", "key", request_id="r1")["status"] == "invalid_schema"
+    FakeClient.responses = [FakeResponse(200, {"choices": [{"message": {"content": ""}}]})]
+    assert run_openrouter_check("আমি ভাত খাই।", "model", "key", request_id="r1")["status"] == "invalid_schema"
+
+
+def test_provider_config_requires_explicit_gemini_model_and_warns_key_precedence() -> None:
+    cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g"})
+    assert cfg.configured is False
+    assert "gemini_model_missing" in cfg.warnings
+    both = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g", "GOOGLE_API_KEY": "stale", "GEMINI_MODEL": "gemini-1.5-flash"})
+    assert "google_api_key_takes_precedence_over_gemini_api_key" in both.warnings
