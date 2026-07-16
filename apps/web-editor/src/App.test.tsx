@@ -40,6 +40,7 @@ function suggestion(
 test("App renders the professional writing workspace without waiting for backend data", () => {
   const html = renderToString(<App />);
 
+  assert.match(html, /Shuddho/);
   assert.match(html, /Bangla Writing Assistant/);
   assert.match(html, /Write in Bangla with context-aware review/);
   assert.match(html, /Review suggestions/);
