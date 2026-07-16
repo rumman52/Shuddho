@@ -275,3 +275,69 @@ If Render shows OpenRouter HTTP 401, code cannot repair that invalid secret. The
 The current software can launch in rules + spelling + AI-provider mode while local ML training remains a separate product task. Missing corrector checkpoints are nonfatal. A detector or corrector with zero/near-zero validation quality must be reported as degraded and must not override deterministic rule/spelling suggestions.
 
 Before promoting a Bangla model to production-ready, require a larger representative Bangla dataset, separate train/validation/test splits, coverage for spelling, grammar, punctuation, fluency, dialect and formal writing, held-out precision/recall/F1 and correction-accuracy evaluation, and checkpoint storage with integrity validation.
+
+## Production hardening profile (Render + Vercel)
+
+Use the Vite editor in `apps/web-editor` on Vercel and the FastAPI service in `services/api/shuddho_api` on Render. Do not expose provider API keys through Vite variables.
+
+### Render environment template
+
+```env
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_LLM_PROVIDER=gemini
+GEMINI_API_KEY=<secret>
+GEMINI_MODEL=<verified-supported-gemini-model>
+
+SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
+OPENROUTER_API_KEY=<secret>
+OPENROUTER_MODEL=<verified-current-openrouter-model>
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_TIMEOUT_SECONDS=35
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=50
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
+SHUDDHO_LOG_RAW_TEXT=false
+
+SHUDDHO_DETECTOR_ENABLED=false
+SHUDDHO_CORRECTOR_ENABLED=false
+```
+
+Only one of `GOOGLE_API_KEY` and `GEMINI_API_KEY` should normally be configured. The Google Gen AI SDK gives `GOOGLE_API_KEY` precedence; if both are present, `/api/llm/debug` diagnostics should be treated as a configuration warning because a stale Google key can override the intended Gemini key.
+
+`GEMINI_MODEL` is required intentionally. Choose a currently supported model from official Google AI documentation for the Google project attached to the key. Code cannot create Gemini quota, repair an exhausted key, or enable billing; if Gemini returns 429, the owner must wait for quota reset, enable billing, select a model with available quota, or use a key from the intended Google project.
+
+`OPENROUTER_MODEL` is also required intentionally. Select a currently available OpenRouter model from the OpenRouter model list for the account/key being used. If OpenRouter returns a JSON error object inside HTTP 200 or reports model unavailability, update `OPENROUTER_MODEL`; code cannot make an unavailable model available.
+
+### Lightweight local-engine profile
+
+The Render lightweight profile should run rules, spelling, Gemini, and OpenRouter without PyTorch. Keep detector and corrector disabled until a validated CPU ML image and real checkpoints exist. Health should report disabled components as intentionally disabled rather than as load failures.
+
+### Optional ML profile
+
+A future ML profile may add CPU-only PyTorch and sentencepiece with validated detector/corrector checkpoints. Do not install CUDA, NVIDIA packages, or Triton in the free Render image. Do not enable the detector merely to make health green; current detector metrics are not production quality.
+
+To supply a real corrector checkpoint later, place a compatible `best_model.pt` under `artifacts/corrector/corrector-base/` or configure the checkpoint path used by the service, then validate metadata and model compatibility before enabling `SHUDDHO_CORRECTOR_ENABLED=true`. Do not create fake checkpoints or commit broken Git LFS pointers.
+
+### Vercel environment template
+
+```env
+VITE_API_BASE_URL=https://shuddho-api.onrender.com
+VITE_USE_GATEWAY=true
+VITE_ENABLE_LOCAL_FALLBACK=false
+```
+
+Never put Gemini, OpenRouter, OpenAI, or other backend provider secrets in Vercel. Production builds ignore stale localStorage backend URL overrides and use `VITE_API_BASE_URL`. After deployment, hard-refresh the browser with `Ctrl + Shift + R`.
+
+### Redeploy and smoke-test steps
+
+1. Deploy the Render service with the lightweight environment above.
+2. Confirm `GET /health` returns HTTP 200 and `ok: true`.
+3. Confirm `GET /health/deep` returns HTTP 200 with detector/corrector disabled or degraded, not a startup crash.
+4. Confirm CORS preflight succeeds for `Origin: https://shuddho-web-editor.vercel.app` on `OPTIONS /api/check` with `Access-Control-Request-Headers: content-type`.
+5. Deploy Vercel from `apps/web-editor` with only the Vite variables above.
+6. Hard-refresh the deployed editor and run a local-only paragraph check; HTTP 200 with zero suggestions should show a successful empty state, not backend unavailable.

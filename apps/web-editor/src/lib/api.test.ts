@@ -576,3 +576,40 @@ test("checkBackendHealth rejects HTTP 200 without ok true", async () => {
     setApiBaseUrlOverride("");
   }
 });
+
+test("GET /health request does not send Content-Type", async () => {
+  const { getHealth } = await import("./api");
+  const originalFetch = globalThis.fetch;
+  const seenHeaders: Headers[] = [];
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async (_url, init) => {
+    seenHeaders.push(new Headers(init?.headers));
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    await getHealth();
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+  assert.equal(seenHeaders[0].has("Content-Type"), false);
+  assert.equal(seenHeaders[0].get("Accept"), "application/json");
+});
+
+test("POST /api/check sends JSON Content-Type", async () => {
+  const originalFetch = globalThis.fetch;
+  const seenHeaders: Headers[] = [];
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async (_url, init) => {
+    seenHeaders.push(new Headers(init?.headers));
+    return new Response(JSON.stringify({ suggestions: [], local_suggestion_count: 0 }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    await analyzeText({ text: "আমি ভাত খাই।", mode: "standard", personal_dictionary: [], user_id: "u1" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+  assert.equal(seenHeaders[0].get("Content-Type"), "application/json");
+  assert.equal(seenHeaders[0].get("Accept"), "application/json");
+});

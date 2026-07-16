@@ -27,7 +27,7 @@ LLM_STATUSES = {
 }
 
 ProviderName = Literal["gemini", "openrouter", "openai", "disabled"]
-DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_GEMINI_MODEL = ""
 DEFAULT_OPENROUTER_MODEL = ""
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
@@ -122,8 +122,10 @@ def _model_for_provider(provider: str, environ: dict[str, str]) -> tuple[str, li
     if provider == "gemini":
         raw = environ.get("GEMINI_MODEL")
         model = (raw or DEFAULT_GEMINI_MODEL).strip()
-        if raw is not None and not model:
+        if not model:
             warnings.append("gemini_model_missing")
+        if environ.get("GOOGLE_API_KEY") and environ.get("GEMINI_API_KEY"):
+            warnings.append("google_api_key_takes_precedence_over_gemini_api_key")
         return model, warnings
     if provider == "openrouter":
         raw = environ.get("OPENROUTER_MODEL")

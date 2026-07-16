@@ -230,7 +230,13 @@ async function request<TResponse>(
 
   const url = `${getApiBaseUrl()}${path}`;
   const headers = new Headers(init.headers);
-  headers.set("Content-Type", "application/json");
+  headers.set("Accept", "application/json");
+  const method = (init.method ?? "GET").toUpperCase();
+  const hasBody = init.body !== undefined && init.body !== null;
+  const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
+  if (hasBody && !isFormData && method !== "GET" && method !== "HEAD" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
 
   let response: Response;
   try {
@@ -342,7 +348,7 @@ export async function analyzeText(
       {
         method: "POST",
         signal: options.signal,
-        headers: { "Content-Type": "application/json" },
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
         body: JSON.stringify(body),
       },
       options.includeLLM ? AI_REVIEW_TIMEOUT_MS : GRAMMAR_CHECK_TIMEOUT_MS,
@@ -397,6 +403,23 @@ export function buildCheckRequestBody(
       mode: options.mode ?? (includeLLM ? "smart" : "fast"),
     },
   };
+}
+
+
+export type LlmReviewJobResponse = GatewayCheckResponse & {
+  job_id?: string;
+  status?: string;
+  llm_status?: string;
+  provider?: string;
+  model?: string;
+};
+
+export function getLlmReviewJob(jobId: string, options: { signal?: AbortSignal } = {}): Promise<LlmReviewJobResponse> {
+  return request<LlmReviewJobResponse>(
+    `/api/llm/review/${encodeURIComponent(jobId)}`,
+    { method: "GET", signal: options.signal },
+    DEFAULT_REQUEST_TIMEOUT_MS,
+  );
 }
 
 export async function runAiCheck(
