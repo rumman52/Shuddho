@@ -256,3 +256,13 @@ VITE_API_BASE_URL=https://your-public-backend-tunnel-url
 ```
 
 See [Run the Shuddho backend locally behind a Vercel frontend](docs/LOCAL_BACKEND_WITH_VERCEL.md) for ngrok, Cloudflare Tunnel, CORS, and manual `curl` test commands.
+
+## Canonical deployment and model-readiness notes
+
+Canonical production path: Vite web editor (`apps/web-editor`) calls the Python FastAPI backend (`services/api/shuddho_api`), which returns local rules/spelling suggestions and uses Gemini as primary Deep AI Review with OpenRouter as an explicitly configured fallback.
+
+Secrets belong only in Render/backend environment variables. Never configure `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, or `OPENAI_API_KEY` in Vercel or any `VITE_*` variable. Vercel should use only `VITE_API_BASE_URL`, `VITE_USE_GATEWAY`, and `VITE_ENABLE_LOCAL_FALLBACK`.
+
+If OpenRouter returns HTTP 401 in Render, rotate/create the OpenRouter key, update only Render `OPENROUTER_API_KEY`, verify `OPENROUTER_MODEL` against the current OpenRouter model catalog, and redeploy Render. Do not paste secrets into logs, source files, issues, screenshots, or status reports.
+
+Current local ML artifacts are not production-quality sentence correction. Missing corrector checkpoints are health warnings; low-quality detector/corrector metrics must remain visible in diagnostics and must not supersede deterministic rules. Production promotion requires a representative Bangla dataset, clean train/validation/test splits, coverage across spelling/grammar/punctuation/fluency/dialect/formal writing, measured precision/recall/F1 and correction accuracy, and checkpoint integrity validation.

@@ -713,10 +713,10 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   }
   if (status === "missing_key") {
     return provider === "gemini"
-      ? "Gemini is not configured. Local suggestions are still available."
+      ? "Gemini is not configured: missing backend Gemini API key."
       : provider === "openrouter"
-        ? "OpenRouter is not configured. Local suggestions are still available."
-        : "OpenAI is not configured. Local suggestions are still available.";
+        ? "OpenRouter is not configured: missing backend OpenRouter API key."
+        : "OpenAI is not configured: missing backend OpenAI API key.";
   }
   if (status === "unsupported_provider") {
     if (warnings.some((w) => w.includes("openai_model_id_suspicious_use_openrouter_provider")) || model.includes("/") || model.includes(":free")) {

@@ -223,3 +223,55 @@ curl.exe -X POST https://shuddho-api.onrender.com/api/ai/check `
   -H "Content-Type: application/json" `
   -d "{\"text\":\"আমি আজ স্কুলে গেছিলাম।\",\"language\":\"bn\"}"
 ```
+
+## 2026 production configuration notes
+
+Canonical production traffic is `apps/web-editor` (Vite) → `services/api/shuddho_api` (FastAPI) → local rules/spelling/detector → Gemini primary → OpenRouter fallback. `/health` is liveness only and does not call providers; `/health/deep` reports stored provider operational state without secrets.
+
+Render/backend placeholders only:
+
+```dotenv
+SHUDDHO_ENABLE_LLM=true
+
+SHUDDHO_LLM_PROVIDER=gemini
+GEMINI_API_KEY=<render-secret>
+GEMINI_MODEL=gemini-3.5-flash
+
+SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
+OPENROUTER_API_KEY=<render-secret>
+OPENROUTER_MODEL=<verified-current-openrouter-model>
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_TIMEOUT_SECONDS=35
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
+SHUDDHO_LOG_RAW_TEXT=false
+
+SHUDDHO_CORRECTOR_ENABLED=auto
+SHUDDHO_CORRECTOR_CHECKPOINT=artifacts/corrector/corrector-base
+SHUDDHO_DETECTOR_ENABLED=auto
+SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
+```
+
+Vercel/frontend placeholders only:
+
+```dotenv
+VITE_API_BASE_URL=https://shuddho-api.onrender.com
+VITE_USE_GATEWAY=true
+VITE_ENABLE_LOCAL_FALLBACK=false
+```
+
+Never place these in Vercel or any browser-exposed `VITE_*` setting: `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`.
+
+If Render shows OpenRouter HTTP 401, code cannot repair that invalid secret. The owner must create or rotate the key in OpenRouter, replace only Render `OPENROUTER_API_KEY`, verify the chosen `OPENROUTER_MODEL` against the current OpenRouter catalog, and redeploy Render. Never paste keys into logs, screenshots, source files, GitHub issues, or reports.
+
+## Model readiness and promotion gate
+
+The current software can launch in rules + spelling + AI-provider mode while local ML training remains a separate product task. Missing corrector checkpoints are nonfatal. A detector or corrector with zero/near-zero validation quality must be reported as degraded and must not override deterministic rule/spelling suggestions.
+
+Before promoting a Bangla model to production-ready, require a larger representative Bangla dataset, separate train/validation/test splits, coverage for spelling, grammar, punctuation, fluency, dialect and formal writing, held-out precision/recall/F1 and correction-accuracy evaluation, and checkpoint storage with integrity validation.

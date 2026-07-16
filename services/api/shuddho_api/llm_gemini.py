@@ -23,9 +23,16 @@ def _sentences_for_prompt(text: str) -> list[dict[str, Any]]:
     ] or [{"sentenceId": "s_0", "text": text, "start": 0, "end": len(text)}]
 
 
+def _is_schema_400(status: int | None, message: str = "") -> bool:
+    lowered = message.lower()
+    return status == 400 and any(marker in lowered for marker in ("schema", "response_schema", "response_json_schema", "json schema"))
+
+
 def _status_for_http(status: int, message: str = "") -> tuple[str, str]:
     lowered = message.lower()
-    if status == 400 and ("schema" in lowered or "json" in lowered or "response_schema" in lowered):
+    if status == 400 and ("safety" in lowered or "blocked" in lowered or "prohibited" in lowered):
+        return "content_filter", "gemini_safety_blocked"
+    if _is_schema_400(status, message):
         return "invalid_schema", "gemini_invalid_schema"
     if status in {401, 403}:
         return "auth_or_forbidden", f"gemini_http_{status}_auth_or_forbidden"
@@ -97,32 +104,28 @@ def _usage(response: Any) -> dict[str, Any]:
     return usage
 
 
-def _config(response_schema: bool, timeout_seconds: float) -> Any:
+def _config(response_json_schema: bool, timeout_seconds: float, system_instruction: str) -> Any:
     from google.genai import types
     kwargs: dict[str, Any] = {
         "temperature": 0.1,
         "response_mime_type": "application/json",
         "http_options": types.HttpOptions(timeout=int(max(1, timeout_seconds) * 1000)),
+        "system_instruction": system_instruction,
     }
-    if response_schema:
-        kwargs["response_schema"] = required_output_schema()
+    if response_json_schema:
+        # The generated schema intentionally contains JSON Schema features such
+        # as $defs, $ref, and anyOf. Google GenAI accepts that through
+        # response_json_schema; response_schema is for the SDK's constrained
+        # schema subset and must not be sent at the same time.
+        kwargs["response_json_schema"] = required_output_schema()
     return types.GenerateContentConfig(**kwargs)
 
 
 def _call(client: Any, model: str, messages: list[dict[str, str]], timeout_seconds: float, structured: bool) -> Any:
-    from google.genai import types
     system = next((m["content"] for m in messages if m.get("role") == "system"), "")
     user = next((m["content"] for m in messages if m.get("role") == "user"), "")
-    config = _config(structured, timeout_seconds)
-    if hasattr(config, "system_instruction"):
-        config.system_instruction = system
-        return client.models.generate_content(model=model, contents=user, config=config)
-    return client.models.generate_content(
-        model=model,
-        contents=[types.Content(role="user", parts=[types.Part(text=user)])],
-        config=config,
-        system_instruction=system,
-    )
+    config = _config(structured, timeout_seconds, system)
+    return client.models.generate_content(model=model, contents=user, config=config)
 
 
 def run_gemini_check(
@@ -152,7 +155,7 @@ def run_gemini_check(
         except Exception as exc:
             status = _http_status(exc)
             message = str(exc)
-            if status == 400 and ("schema" in message.lower() or "response_schema" in message.lower() or "json schema" in message.lower()):
+            if _is_schema_400(status, message):
                 warnings.append("gemini_structured_output_fallback_used")
                 response_mode = "json_mime"
                 response = _call(client, model, messages, timeout_seconds, False)

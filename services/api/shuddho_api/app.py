@@ -307,6 +307,7 @@ llm_jobs: dict[str, dict] = {}
 llm_cache: dict[str, dict] = {}
 llm_failures: dict[str, list[float]] = {}
 llm_circuit_until: dict[str, float] = {}
+llm_provider_state: dict[str, dict[str, Any]] = {}
 
 class ApiPreferences(BaseModel):
     user_id: str = "demo-user"
@@ -840,15 +841,22 @@ def _llm_config() -> tuple[bool, str, str, str | None]:
 def _provider_safe_state(provider: str | None, model: str, configured: bool, api_key: str | None, status: str, warnings: list[str]) -> dict[str, Any] | None:
     if not provider:
         return None
+    key = f"{provider}:{model}"
+    operational = llm_provider_state.get(key, {})
+    circuit_open = _is_circuit_open(provider, model)
     return {
         "provider": provider,
         "model": model,
         "configured": configured,
+        "configuration_status": "ready" if configured else status,
         "api_key_present": bool(api_key),
-        "circuit_open": _is_circuit_open(provider, model),
-        "status": "ready" if configured and not _is_circuit_open(provider, model) else status,
+        "circuit_open": circuit_open,
+        "status": operational.get("last_request_status") or ("ready" if configured and not circuit_open else status),
+        "last_request_status": operational.get("last_request_status"),
+        "last_http_status": operational.get("last_http_status"),
+        "last_attempt_at": operational.get("last_attempt_at"),
+        "consecutive_failures": operational.get("consecutive_failures", len(llm_failures.get(key, []))),
         "warnings": list(warnings),
-        "last_failure_count": len(llm_failures.get(f"{provider}:{model}", [])),
     }
 
 
@@ -1023,14 +1031,46 @@ def run_configured_provider(
     return LlmProviderResult(provider=str(provider or "disabled"), model=model, status="unsupported_provider", warnings=["unsupported_llm_provider"]).model_dump()
 
 
+def _record_provider_attempt(result: dict[str, Any]) -> None:
+    provider = str(result.get("provider") or "")
+    model = str(result.get("model") or "")
+    if not provider or not model:
+        return
+    key = f"{provider}:{model}"
+    status = str(result.get("status") or "failed")
+    previous = llm_provider_state.get(key, {})
+    failed = status not in {"completed", "completed_empty"}
+    consecutive = (int(previous.get("consecutive_failures") or 0) + 1) if failed else 0
+    llm_provider_state[key] = {
+        "last_request_status": status,
+        "last_http_status": result.get("http_status"),
+        "last_attempt_at": datetime.now(timezone.utc).isoformat(),
+        "consecutive_failures": consecutive,
+    }
+    if failed:
+        _record_llm_failure(provider, model, [*(result.get("warnings") or []), status])
+
+
 def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list[dict[str, Any]], local_suggestions: list[dict[str, Any]], candidates: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
     primary_cfg = _provider_configured(config)
     result = run_configured_provider(primary_cfg, text, request_id, sentences, local_suggestions, candidates, timeout)
+    _record_provider_attempt(result)
     primary_status = str(result.get("status") or "failed")
+    attempts = [{"role": "primary", "provider": result.get("provider"), "model": result.get("model"), "status": primary_status, "http_status": result.get("http_status"), "warnings": result.get("warnings") or []}]
     fallback_provider = config.fallback_provider
-    if fallback_provider and primary_status in FALLBACK_ELIGIBLE_STATUSES:
+    fallback_ready = bool(
+        fallback_provider
+        and config.fallback_configured
+        and config.fallback_api_key
+        and config.fallback_model
+        and fallback_provider != config.provider
+        and not _is_circuit_open(fallback_provider, config.fallback_model)
+    )
+    if fallback_ready and primary_status in FALLBACK_ELIGIBLE_STATUSES:
         fallback_cfg = _provider_configured(config, fallback=True)
         fallback_result = run_configured_provider(fallback_cfg, text, request_id, sentences, local_suggestions, candidates, timeout)
+        _record_provider_attempt(fallback_result)
+        attempts.append({"role": "fallback", "provider": fallback_result.get("provider"), "model": fallback_result.get("model"), "status": fallback_result.get("status"), "http_status": fallback_result.get("http_status"), "warnings": fallback_result.get("warnings") or []})
         fallback_result["warnings"] = _dedupe_strings([
             *(result.get("warnings") or []),
             f"primary_provider_failed:{config.provider}",
@@ -1038,11 +1078,13 @@ def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list
             f"fallback_provider_used:{fallback_provider}",
             *(fallback_result.get("warnings") or []),
         ])
-        if fallback_result.get("status") in {"completed", "completed_empty"}:
-            fallback_result.setdefault("timings", {})
-            fallback_result["timings"] = {**(fallback_result.get("timings") or {}), "fallback_used": True}
-            return fallback_result
+        fallback_result["provider_attempts"] = attempts
+        fallback_result.setdefault("timings", {})
+        fallback_result["timings"] = {**(fallback_result.get("timings") or {}), "fallback_used": fallback_result.get("status") in {"completed", "completed_empty"}}
         return fallback_result
+    result["provider_attempts"] = attempts
+    if fallback_provider and not fallback_ready:
+        result["warnings"] = _dedupe_strings([*(result.get("warnings") or []), "fallback_provider_not_configured_or_unavailable"])
     return result
 
 
@@ -1081,7 +1123,8 @@ def _run_ai_check(
             llm_cache[cache_key] = {"created_at": time.time(), "result": result, "provider": result.get("provider"), "model": result.get("model")}
     warnings = _dedupe_strings([*config.warnings, *truncation_warnings, *(result.get("warnings") or [])])
     logger.info("ai_check_complete request_id=%s provider=%s model=%s status=%s http_status=%s text_length=%s sent_length=%s llm_ms=%s warnings=%s", request_id, result.get("provider") or config.provider, result.get("model") or config.model, result.get("status"), result.get("http_status"), len(text), len(ai_text), (result.get("timings") or {}).get("llm_ms"), len(warnings))
-    return AiCheckResponse(suggestions=result.get("suggestions", []) or [], correctedText=result.get("correctedText"), documentAssessment=result.get("documentAssessment") or {}, warnings=warnings, provider=result.get("provider") or config.provider, model=result.get("model") or config.model, llm_enabled=config.enabled, configured=bool(result.get("configured", config.configured)), called=bool(result.get("called")), parsed=bool(result.get("parsed")), status=str(result.get("status") or "failed"), response_mode=str(result.get("response_mode") or "none"), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings=_safe_timings(result.get("timings")), ai_raw_suggestion_count=int(result.get("ai_raw_suggestion_count") or 0))
+    diagnostics = {"provider_attempts": result.get("provider_attempts") or []}
+    return AiCheckResponse(suggestions=result.get("suggestions", []) or [], correctedText=result.get("correctedText"), documentAssessment=result.get("documentAssessment") or {}, warnings=warnings, provider=result.get("provider") or config.provider, model=result.get("model") or config.model, llm_enabled=config.enabled, configured=bool(result.get("configured", config.configured)), called=bool(result.get("called")), parsed=bool(result.get("parsed")), status=str(result.get("status") or "failed"), response_mode=str(result.get("response_mode") or "none"), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings={**_safe_timings(result.get("timings")), **diagnostics}, ai_raw_suggestion_count=int(result.get("ai_raw_suggestion_count") or 0))
 
 
 def _create_llm_review_job(text: str, language: str, local_suggestions: list[dict], mode: str, request_id: str | None = None) -> dict:

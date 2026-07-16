@@ -107,7 +107,7 @@ export default function App() {
     "all" | "spelling" | "grammar" | "clarity"
   >("all");
   const [status, setStatus] = useState("Ready");
-  const [autoAiReview, setAutoAiReview] = useState(true);
+  const [autoAiReview, setAutoAiReview] = useState(false);
   const [debugMode, setDebugMode] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -138,9 +138,10 @@ export default function App() {
   const analysisTimerRef = useRef<number | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const analysisRequestIdRef = useRef(0);
-  const hasMountedAnalysisRef = useRef(false);
   const manualAnalysisInFlightRef = useRef(false);
   const aiReviewInFlightRef = useRef(false);
+  const analysisInFlightRef = useRef(false);
+  const pendingAnalysisRef = useRef<{ text: string; includeLLM: boolean; manual: boolean } | null>(null);
   const apiCheckReachableRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
@@ -256,11 +257,6 @@ export default function App() {
   }, [userId, apiBaseUrl]);
 
   useEffect(() => {
-    if (!hasMountedAnalysisRef.current) {
-      hasMountedAnalysisRef.current = true;
-      return;
-    }
-
     scheduleAnalysis(text);
     return () => {
       if (analysisTimerRef.current) {
@@ -408,22 +404,37 @@ export default function App() {
   }
 
   function scheduleAnalysis(nextText: string) {
-    if (manualAnalysisInFlightRef.current || aiReviewInFlightRef.current) {
-      return;
-    }
-
     if (analysisTimerRef.current) {
       window.clearTimeout(analysisTimerRef.current);
     }
+    const includeLLM = autoAiReview;
     analysisTimerRef.current = window.setTimeout(
-      () => {
-        if (manualAnalysisInFlightRef.current || aiReviewInFlightRef.current) {
-          return;
-        }
-        void runAnalysis(nextText, autoAiReview);
-      },
-      autoAiReview ? AUTO_AI_ANALYSIS_DEBOUNCE_MS : ANALYSIS_DEBOUNCE_MS,
+      () => enqueueAnalysis(nextText, includeLLM, false),
+      includeLLM ? AUTO_AI_ANALYSIS_DEBOUNCE_MS : ANALYSIS_DEBOUNCE_MS,
     );
+  }
+
+  function enqueueAnalysis(nextText: string, includeLLM: boolean, manual = false) {
+    pendingAnalysisRef.current = { text: nextText, includeLLM, manual };
+    if (analysisInFlightRef.current) {
+      analysisAbortRef.current?.abort();
+      return;
+    }
+    void drainAnalysisQueue();
+  }
+
+  async function drainAnalysisQueue() {
+    const next = pendingAnalysisRef.current;
+    if (!next) {
+      return;
+    }
+    pendingAnalysisRef.current = null;
+    analysisInFlightRef.current = true;
+    await runAnalysis(next.text, next.includeLLM);
+    analysisInFlightRef.current = false;
+    if (pendingAnalysisRef.current) {
+      void drainAnalysisQueue();
+    }
   }
 
   async function runAnalysis(nextText: string, includeLLM: boolean) {
@@ -492,7 +503,7 @@ export default function App() {
           signal: controller.signal,
         },
       );
-      if (requestId !== analysisRequestIdRef.current) {
+      if (requestId !== analysisRequestIdRef.current || nextText !== text) {
         return;
       }
       const normalizedResponse = normalizeAnalyzeResponse(
@@ -584,6 +595,7 @@ export default function App() {
     } finally {
       if (includeLLM) {
         manualAnalysisInFlightRef.current = false;
+        aiReviewInFlightRef.current = false;
         setIsChecking(false);
       }
     }
@@ -858,9 +870,7 @@ export default function App() {
     analysisAbortRef.current?.abort();
     aiReviewInFlightRef.current = true;
     setStatus("Reviewing with AI");
-    void runAnalysis(text, true).finally(() => {
-      aiReviewInFlightRef.current = false;
-    });
+    enqueueAnalysis(text, true, true);
   }
 
   function handleApplySafeSuggestions() {
