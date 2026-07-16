@@ -13,15 +13,17 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace @shuddho/api & npm run dev --workspace @shuddho/web",
+    "dev": "sh -c 'npm run dev:python-api & npm run dev:web-editor & wait'",
     "dev:web": "npm run dev --workspace @shuddho/web",
     "dev:api": "npm run dev --workspace @shuddho/api",
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspace @shuddho/shared && npm run build --workspace @shuddho/config --if-present && npm run build --workspace @shuddho/observability --if-present && npm run build --workspace @shuddho/nlp && npm run build --workspaces --if-present",
+    "test": "npm run build --workspace @shuddho/shared && npm run test --workspaces --if-present",
     "build:web-editor": "npm run build --workspace @shuddho/web-editor",
     "build:extension": "npm run build --workspace apps/chrome-extension",
     "dev:web-editor": "npm run dev --workspace @shuddho/web-editor",
     "dev:python-api": "python -m uvicorn services.api.shuddho_api.app:app --host 127.0.0.1 --port 8000 --reload",
-    "dev:all": "npm run dev:api & npm run dev:web-editor"
+    "dev:all": "npm run dev",
+    "dev:gateway": "npm run dev --workspace @shuddho/api",
+    "dev:legacy-web": "npm run dev --workspace @shuddho/web"
   }
 }

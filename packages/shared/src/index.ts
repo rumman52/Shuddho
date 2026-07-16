@@ -22,6 +22,7 @@ export interface TextSpan {
 export interface Suggestion {
   id: string;
   suppressionKey: string;
+  feedbackKey?: string | null;
   ruleId: string;
   type: SuggestionType;
   severity: SuggestionSeverity;

@@ -128,7 +128,7 @@ def _model_for_provider(provider: str, environ: dict[str, str]) -> tuple[str, li
     if provider == "openrouter":
         raw = environ.get("OPENROUTER_MODEL")
         model = (raw or DEFAULT_OPENROUTER_MODEL).strip()
-        if raw is not None and not model:
+        if not model:
             warnings.append("openrouter_model_missing")
         return model, warnings
     if provider == "openai":
@@ -148,7 +148,7 @@ def _provider_status(provider: str, model: str, api_key: str | None, warnings: l
     if provider == "openai" and ("/" in model or ":free" in model):
         return False, "unsupported_provider", warnings
     if not model:
-        return False, "missing_key" if not api_key else "unsupported_provider", warnings
+        return False, "missing_key", warnings
     if not api_key:
         missing = {
             "gemini": "gemini_api_key_missing",
@@ -174,7 +174,7 @@ def resolve_llm_config(env: dict[str, str] | None = None) -> LlmProviderConfig:
     enabled_flag = _truthy(environ.get("SHUDDHO_ENABLE_LLM"))
 
     if provider in {"disabled", "none", "off"}:
-        return LlmProviderConfig(False, "disabled", "", None, False, [], "disabled")
+        return LlmProviderConfig(False, "disabled", "", None, False, ["llm_disabled"], "disabled")
     if provider not in {"gemini", "openrouter", "openai"}:
         return LlmProviderConfig(False, provider, "", None, False, ["unsupported_llm_provider"], "unsupported_provider")
 
@@ -211,6 +211,8 @@ def resolve_llm_config(env: dict[str, str] | None = None) -> LlmProviderConfig:
 
     if not enabled:
         status = "disabled"
+        if "llm_disabled" not in warnings:
+            warnings.append("llm_disabled")
     return LlmProviderConfig(
         enabled,
         provider,
