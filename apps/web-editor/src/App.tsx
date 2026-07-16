@@ -935,6 +935,7 @@ export default function App() {
       <header className="app-header">
         <div className="brand-text" aria-label="Shuddho home">
           <strong>Shuddho</strong>
+          <span className="sr-only">Bangla Writing Assistant</span>
         </div>
         <div className="header-actions" aria-label="Workspace actions">
           <span
@@ -1042,7 +1043,9 @@ export default function App() {
           </div>
 
           <article className="editor-card" aria-busy={isChecking}>
-            <h1 className="sr-only">Bangla document editor</h1>
+            <h1 className="sr-only">
+              Bangla document editor · Write in Bangla with context-aware review
+            </h1>
             <div className="editor-frame">
               <div className="editor-highlight-layer" aria-hidden="true">
                 {inlineSegments.map((segment) => {
