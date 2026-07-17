@@ -1417,3 +1417,116 @@ def test_llm_cache_hit_normalizes_succeeded_status(monkeypatch) -> None:
     response = client.get(f"/api/llm/review/{key}")
     assert response.json()["status"] == "completed"
     assert response.json()["llm_status"] == "completed"
+
+
+def _fake_provider_result(status="completed", suggestions=None, provider="gemini", model="gemini-3.5-flash", warnings=None):
+    return {
+        "suggestions": suggestions if suggestions is not None else [],
+        "correctedText": "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!",
+        "documentAssessment": {"summary": "ok", "overallQuality": "good", "language": "bn"},
+        "warnings": warnings or [],
+        "provider": provider,
+        "model": model,
+        "called": True,
+        "configured": True,
+        "parsed": status in {"completed", "completed_empty", "completed_rejected"},
+        "status": status,
+        "response_mode": "json_schema",
+        "http_status": 200 if status == "completed" else None,
+        "usage": {"total_tokens": 10},
+        "timings": {"llm_ms": 1},
+        "ai_raw_suggestion_count": len(suggestions or []),
+    }
+
+
+def _local_suggestions():
+    return [{"id": "local-spacing", "rule_id": "bn.spacing", "category": "spacing", "span_start": 13, "span_end": 15, "original": "  ", "replacement_options": [" "], "explanation": "spacing", "confidence": 0.9, "source": "rule"}]
+
+
+def test_async_llm_job_contract_valid_ai_merges_local(monkeypatch):
+    text = "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!"
+    ai_suggestion = {"id": "ai-1", "sentenceId": "s_0", "original": "!!", "replacement": "!", "issueType": "punctuation", "severity": "low", "explanation": "একটি বিস্ময়চিহ্ন যথেষ্ট।", "confidence": 0.9, "start": text.index("!!"), "end": text.index("!!") + 2}
+    monkeypatch.setattr(app_module, "_run_ai_check", lambda *args, **kwargs: app_module.AiCheckResponse(**_fake_provider_result(suggestions=[ai_suggestion])))
+    app_module.llm_cache.clear()
+    job_id = "llm_pytest_valid"
+    app_module.llm_jobs[job_id] = {}
+    app_module._run_llm_job(job_id, text, [], _local_suggestions(), "req-1")
+    job = app_module.llm_jobs[job_id]
+    assert job["status"] == "completed"
+    assert job["llm_used"] is True
+    assert job["llm_provider"] == "gemini"
+    assert job["ai_valid_suggestion_count"] == 1
+    assert job["local_suggestion_count"] == 1
+    assert len(job["suggestions"]) >= 2
+    assert job["llm"]["used"] is True
+
+
+def test_async_llm_job_completed_empty_preserves_local(monkeypatch):
+    monkeypatch.setattr(app_module, "_run_ai_check", lambda *args, **kwargs: app_module.AiCheckResponse(**_fake_provider_result(status="completed_empty", suggestions=[])))
+    app_module.llm_cache.clear()
+    job_id = "llm_pytest_empty"
+    app_module.llm_jobs[job_id] = {}
+    app_module._run_llm_job(job_id, "আমি বাংলা লিখি।।", [], _local_suggestions(), "req-2")
+    job = app_module.llm_jobs[job_id]
+    assert job["status"] == "completed_empty"
+    assert job["llm_used"] is True
+    assert job["ai_empty_reason"] == "model_returned_no_suggestions"
+    assert job["suggestions"] == _local_suggestions()
+
+
+def test_async_llm_job_completed_rejected_preserves_local(monkeypatch):
+    text = "আমি বাংলা লিখি।।"
+    # Preserve provider raw count as if validation rejected one raw suggestion.
+    def rejected(*args, **kwargs):
+        payload = _fake_provider_result(status="completed_rejected", suggestions=[], warnings=["ai_suggestions_rejected"])
+        payload["ai_raw_suggestion_count"] = 1
+        return app_module.AiCheckResponse(**payload)
+    monkeypatch.setattr(app_module, "_run_ai_check", rejected)
+    app_module.llm_cache.clear()
+    job_id = "llm_pytest_rejected"
+    app_module.llm_jobs[job_id] = {}
+    app_module._run_llm_job(job_id, text, [], _local_suggestions(), "req-3")
+    job = app_module.llm_jobs[job_id]
+    assert job["status"] == "completed_rejected"
+    assert job["llm_used"] is True
+    assert job["ai_raw_suggestion_count"] == 1
+    assert job["ai_valid_suggestion_count"] == 0
+    assert job["ai_rejected_suggestion_count"] == 1
+    assert job["suggestions"] == _local_suggestions()
+
+
+def test_provider_chain_gemini_failure_openrouter_success(monkeypatch):
+    calls = []
+    config = app_module.resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "x", "GEMINI_MODEL": "gemini-3.5-flash", "SHUDDHO_LLM_FALLBACK_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "y", "OPENROUTER_MODEL": "openai/gpt-oss-20b:free"})
+    def fake_run(provider_config, *args, **kwargs):
+        calls.append(provider_config["provider"])
+        if provider_config["provider"] == "gemini":
+            return _fake_provider_result(status="timeout", provider="gemini", model="gemini-3.5-flash", warnings=["gemini_timeout"])
+        return _fake_provider_result(status="completed", provider="openrouter", model="openai/gpt-oss-20b:free", suggestions=[])
+    monkeypatch.setattr(app_module, "run_configured_provider", fake_run)
+    result = app_module._run_provider_chain(config, "আমি বাংলা লিখি", "req", [], [], [], 10)
+    assert calls == ["gemini", "openrouter"]
+    assert result["provider"] == "openrouter"
+    assert result["status"] == "completed_empty"
+    assert [a["provider"] for a in result["provider_attempts"]] == ["gemini", "openrouter"]
+    assert "fallback_provider_used:openrouter" in result["warnings"]
+
+
+def test_async_llm_failure_payload_preserves_local(monkeypatch):
+    monkeypatch.setattr(app_module, "_run_ai_check", lambda *args, **kwargs: app_module.AiCheckResponse(**_fake_provider_result(status="timeout", warnings=["gemini_timeout"])))
+    app_module.llm_cache.clear()
+    job_id = "llm_pytest_fail"
+    app_module.llm_jobs[job_id] = {}
+    app_module._run_llm_job(job_id, "আমি বাংলা লিখি।।", [], _local_suggestions(), "req-4")
+    job = app_module.llm_jobs[job_id]
+    assert job["status"] == "timeout"
+    assert job["llm_used"] is False
+    assert job["suggestions"] == _local_suggestions()
+
+
+def test_cors_origin_parser_accepts_exact_and_rejects_malformed():
+    origins = app_module._parse_allowed_origins("SHUDDHO_ALLOWED_ORIGINS=https://evil.example,https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app,https://attacker.example/path")
+    assert "https://shuddho-web-editor.vercel.app" in origins
+    assert "https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app" in origins
+    assert "https://evil.example" not in origins
+    assert "https://attacker.example" not in origins

@@ -31,6 +31,14 @@ import {
   friendlyLlmWarning,
 } from "./lib/api";
 import { createEmptyAnalysis, normalizeAnalyzeResponse } from "./lib/analysis";
+import {
+  LLM_TERMINAL_STATUSES,
+  isAiUnavailableStatus,
+  isProviderFailureStatus,
+  llmReviewStatusMessage,
+  mergeLlmJobIntoAnalysis,
+  normalizeLlmStatus,
+} from "./lib/llmStatus";
 import { analyzeTextLocally } from "./lib/localAnalysis";
 import {
   createDefaultPreferences,
@@ -735,7 +743,6 @@ export default function App() {
 
 
   async function pollLlmJob(snapshot: AnalysisSnapshot, jobId: string, signal: AbortSignal) {
-    const terminal = new Set(["completed", "completed_empty", "completed_rejected", "timeout", "rate_limited", "provider_error", "auth_or_forbidden", "model_not_found", "failed", "expired", "cancelled", "succeeded"]);
     let terminalReached = false;
     try {
       for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -745,12 +752,9 @@ export default function App() {
         }
         await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1000 : 1500));
         const job = await getLlmReviewJob(jobId, { signal });
-        const rawStatus = String(job.llm_status ?? job.status ?? "running");
-        const status = rawStatus === "succeeded" ? "completed" : rawStatus;
-        if (!terminal.has(rawStatus) && !terminal.has(status)) {
-          if (status === "running" && String(job.provider ?? "") === "openrouter") {
-            setStatus("Gemini was unavailable. Reviewing with OpenRouter…");
-          }
+        const status = normalizeLlmStatus(job.llm_status ?? job.status ?? "running");
+        if (!LLM_TERMINAL_STATUSES.has(status)) {
+          setStatus(llmReviewStatusMessage({ ...job, llm_status: status }));
           continue;
         }
         terminalReached = true;
@@ -759,11 +763,12 @@ export default function App() {
           return;
         }
         setAnalysis((current) => {
-          const merged = normalizeAnalyzeResponse({ ...current, ...job, llm_status: status } as Partial<AnalyzeResponse>, snapshot.text, snapshot.mode);
-          setAnalysisState(Array.isArray(merged.suggestions) && merged.suggestions.length ? "success" : "empty");
+          const mergedInput = mergeLlmJobIntoAnalysis(current, { ...job, llm_status: status });
+          const merged = normalizeAnalyzeResponse(mergedInput, snapshot.text, snapshot.mode);
+          setAnalysisState(Array.isArray(merged.suggestions) && merged.suggestions.length ? "success" : isProviderFailureStatus(status) ? "success" : "empty");
           return merged;
         });
-        setStatus(status === "completed" ? "AI review complete." : status === "completed_empty" ? "AI reviewed the text and found no additional high-confidence issues." : "AI review is temporarily unavailable. Local suggestions are still shown.");
+        setStatus(llmReviewStatusMessage({ ...job, llm_status: status }));
         return;
       }
       throw new Error("AI review polling timed out");
@@ -774,7 +779,7 @@ export default function App() {
       const message = error instanceof Error ? error.message : String(error ?? "poll_failed");
       setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "ai_poll_failed", rejectionReason: sanitizeDiagnosticError(message) }));
       setStatus(message.toLowerCase().includes("cors") || message.toLowerCase().includes("failed to fetch") ? `This Vercel preview domain is not allowed by the backend. Origin: ${window.location.origin}` : "AI review is temporarily unavailable. Local suggestions are still shown.");
-      setAnalysisState(Array.isArray(analysis.suggestions) && analysis.suggestions.length ? "success" : "error");
+      setAnalysisState((currentState) => currentState === "success" ? "success" : "error");
     } finally {
       if (isSnapshotCurrent(snapshot) && (terminalReached || !signal.aborted)) {
         manualAnalysisInFlightRef.current = false;
@@ -1125,12 +1130,9 @@ export default function App() {
   });
   const reviewUnavailable =
     backendMode === "unavailable" || backendMode === "misconfigured";
-  const aiUnavailable = Boolean(
-    normalizedAnalysis.llm_requested &&
-    normalizedAnalysis.llm_attempted &&
-    !normalizedAnalysis.llm_used &&
-    normalizedAnalysis.llm_status &&
-    normalizedAnalysis.llm_status !== "not_requested",
+  const aiUnavailable = isAiUnavailableStatus(
+    normalizedAnalysis.llm_status,
+    normalizedAnalysis.llm_requested,
   );
 
   return (

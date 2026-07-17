@@ -76,3 +76,46 @@ Code cannot create Gemini quota. Another key in the same Google project does not
 OpenRouter free models can be useful for development, but they cannot guarantee production availability or capacity. Keep the model configurable and use a tested model with sufficient credits for production reliability.
 
 Missing detector/corrector checkpoints are health warnings for the lightweight deployment. Do not hide those warnings or fake a trained checkpoint.
+
+## Deep AI Review production environment checklist
+
+Render must keep all provider keys backend-only and use origin-only CORS values:
+
+```text
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_LLM_PROVIDER=gemini
+GEMINI_API_KEY=<Google AI Studio secret>
+GEMINI_MODEL=gemini-3.5-flash
+
+SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
+OPENROUTER_API_KEY=<OpenRouter secret>
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS=50
+SHUDDHO_GEMINI_TIMEOUT_SECONDS=30
+SHUDDHO_OPENROUTER_TIMEOUT_SECONDS=18
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=50
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
+
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
+
+SHUDDHO_LOG_RAW_TEXT=false
+SHUDDHO_DETECTOR_ENABLED=false
+SHUDDHO_CORRECTOR_ENABLED=false
+```
+
+Do not paste `SHUDDHO_ALLOWED_ORIGINS=` inside the Render value field; the value must be only the comma-separated origins. Do not enable a broad `*.vercel.app` wildcard.
+
+Vercel must contain only public frontend configuration:
+
+```text
+VITE_API_BASE_URL=https://shuddho-api.onrender.com
+VITE_USE_GATEWAY=true
+VITE_ENABLE_LOCAL_FALLBACK=false
+```
+
+No Gemini, OpenRouter, OpenAI, or other secret API keys belong in Vercel.
