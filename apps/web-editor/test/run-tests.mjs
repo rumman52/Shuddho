@@ -14,6 +14,7 @@ const tests = [
   "src/lib/preferences.test.ts",
   "src/lib/runtimeStatus.test.ts",
   "src/lib/textSurface.test.ts",
+  "src/lib/competitionDemo.test.ts",
 ];
 
 await rm(outdir, { recursive: true, force: true });
@@ -36,6 +37,7 @@ for (const testFile of tests) {
       "import.meta.env.VITE_USE_GATEWAY": '"true"',
       "import.meta.env.VITE_ENABLE_LOCAL_FALLBACK": '"false"',
       "import.meta.env.VITE_API_BASE_URL": '"https://shuddho-api.onrender.com"',
+      "import.meta.env.VITE_COMPETITION_DEMO_MODE": '"true"',
     },
   });
   await import(pathToFileURL(outfile));

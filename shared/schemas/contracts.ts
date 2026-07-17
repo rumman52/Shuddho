@@ -8,7 +8,7 @@ export type SuggestionCategory =
   | "style"
   | "rewrite_only";
 
-export type SuggestionSource = "rule" | "spell" | "model" | "hybrid";
+export type SuggestionSource = "rule" | "spell" | "model" | "hybrid" | "demo_fixture";
 export type SuggestionSeverity = "low" | "medium" | "high";
 export type AnalyzeMode = "standard" | "strict" | "formal";
 export type AnalysisProfile =
