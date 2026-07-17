@@ -130,3 +130,89 @@ VITE_ENABLE_LOCAL_FALLBACK=false
 ```
 
 No Gemini, OpenRouter, OpenAI, or other secret API keys belong in Vercel.
+
+## 2026 Reliability deployment checklist
+
+Render backend must install Python package dependencies from `pyproject.toml` during build:
+
+```bash
+pip install --upgrade pip && pip install .
+```
+
+Set these Render environment variables (replace placeholders only in Render, never in source control):
+
+```bash
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_LLM_PROVIDER=gemini
+GEMINI_API_KEY=<Google AI Studio secret with available project quota>
+GEMINI_MODEL=gemini-3.5-flash
+SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
+OPENROUTER_API_KEY=<OpenRouter key with credits>
+OPENROUTER_MODEL=<verified current paid model supporting Bangla/JSON>
+OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
+OPENROUTER_APP_TITLE=Shuddho
+SHUDDHO_LLM_ON_CHECK=manual
+SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS=45
+SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+SHUDDHO_GEMINI_TIMEOUT_SECONDS=25
+SHUDDHO_OPENROUTER_TIMEOUT_SECONDS=15
+SHUDDHO_LLM_MAX_COMPLETION_TOKENS=1400
+SHUDDHO_MAX_AI_TEXT_CHARS=5000
+SHUDDHO_LLM_MAX_CANDIDATES=8
+SHUDDHO_LLM_MAX_CANDIDATE_CHARS=2200
+SHUDDHO_LLM_CACHE_TTL_SECONDS=86400
+SHUDDHO_LLM_CIRCUIT_FAILURE_LIMIT=5
+SHUDDHO_LLM_CIRCUIT_WINDOW_SECONDS=300
+SHUDDHO_LLM_CIRCUIT_COOLDOWN_SECONDS=180
+SHUDDHO_LLM_JOB_WORKERS=2
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
+SHUDDHO_LOG_RAW_TEXT=false
+SHUDDHO_DETECTOR_ENABLED=false
+SHUDDHO_CORRECTOR_ENABLED=false
+```
+
+If `GEMINI_API_KEY` is used, delete `GOOGLE_API_KEY`; the backend reports `conflicting_keys` instead of silently choosing between both.
+
+Set these Vercel Production variables only:
+
+```bash
+VITE_API_BASE_URL=https://shuddho-api.onrender.com
+VITE_USE_GATEWAY=true
+VITE_ENABLE_LOCAL_FALLBACK=false
+VITE_COMPETITION_DEMO_MODE=false
+```
+
+Never put Gemini, OpenRouter, OpenAI, or other provider keys in Vercel.
+
+Deployment order:
+
+1. Fix Google quota/billing or wait for quota reset.
+2. Add OpenRouter credits and select a current paid model that supports Bangla and JSON output.
+3. Push the implementation.
+4. Render: clear build cache and deploy.
+5. Verify `/health`.
+6. Verify `/api/llm/debug` reports configured providers and closed circuits.
+7. Verify exact CORS preflight from the Vercel origin.
+8. Make one controlled synchronous provider smoke test.
+9. Make one async job/poll test.
+10. Redeploy Vercel and hard refresh.
+11. Test arbitrary Bangla text, not only fixtures.
+12. Test two sequential Apply operations.
+
+Verification commands (do not include provider secrets in commands or logs):
+
+```bash
+curl -i https://shuddho-api.onrender.com/health
+curl -s https://shuddho-api.onrender.com/api/llm/debug | python -m json.tool
+curl -i -X OPTIONS https://shuddho-api.onrender.com/api/check \
+  -H 'Origin: https://shuddho-web-editor.vercel.app' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type'
+curl -s https://shuddho-api.onrender.com/api/check \
+  -H 'content-type: application/json' \
+  -d '{"text":"আমি বাংলা লিখি।।","language":"bn","options":{"includeLLM":true,"asyncLLM":false}}' | python -m json.tool
+```
+
+Do not claim provider recovery until the controlled smoke request returns a non-429 provider attempt.

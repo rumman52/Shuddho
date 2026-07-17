@@ -299,7 +299,8 @@ test("App source preserves local suggestions while queued AI polling runs", () =
   const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /setAnalysisState\("waiting_for_ai"\)/);
   assert.match(source, /Local suggestions ready\. Gemini review is running/);
-  assert.match(source, /void pollLlmJob\(snapshot, queuedJobId, controller\.signal\);\n\s*return;/);
+  assert.doesNotMatch(source, /void pollLlmJob\(snapshot, queuedJobId, controller\.signal\);/);
+  assert.match(source, /pollLlmJob\(snapshot, queuedJobId, controller\.signal\)\.catch/);
   assert.match(source, /setAnalysis\(\(current\) =>/);
   assert.match(source, /normalizeLlmStatus/);
   assert.match(source, /llmReviewStatusMessage/);

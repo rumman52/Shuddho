@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import socket
 import time
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from services.api.shuddho_api.ai_review_schema import (
@@ -46,6 +48,24 @@ def _status_for_http(status: int, message: str = "") -> tuple[str, str]:
         return "provider_error", "gemini_provider_or_server_error"
     return "provider_error", "gemini_http_error"
 
+
+
+def _retry_after_from_exc(exc: BaseException) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) or getattr(exc, "headers", None) or {}
+    raw = headers.get("Retry-After") if hasattr(headers, "get") else None
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        try:
+            dt = parsedate_to_datetime(str(raw))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
+        except Exception:
+            return None
 
 def _http_status(exc: BaseException) -> int | None:
     for attr in ("status_code", "code"):
@@ -111,6 +131,7 @@ def _config(response_json_schema: bool, timeout_seconds: float, system_instructi
         "response_mime_type": "application/json",
         "http_options": types.HttpOptions(timeout=int(max(1, timeout_seconds) * 1000)),
         "system_instruction": system_instruction,
+        "max_output_tokens": int(__import__("os").environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400") or "1400"),
     }
     if response_json_schema:
         # The generated schema intentionally contains JSON Schema features such
@@ -148,7 +169,10 @@ def run_gemini_check(
     warnings: list[str] = []
     response_mode = "json_schema"
     try:
-        from google import genai
+        try:
+            from google import genai
+        except ImportError:
+            return LlmProviderResult(provider="gemini", model=model, called=False, configured=True, status="dependency_missing", response_mode=response_mode, warnings=[*warnings, "google_genai_dependency_missing"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
         client = genai.Client(api_key=api_key.strip())
         try:
             response = _call(client, model, messages, timeout_seconds, True)
@@ -173,7 +197,7 @@ def run_gemini_check(
         status_code = _http_status(exc)
         if status_code is not None:
             status, warning = _status_for_http(status_code, str(exc))
-            return LlmProviderResult(provider="gemini", model=model, called=True, configured=True, status=status, response_mode=response_mode, http_status=status_code, warnings=[*warnings, warning], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+            return LlmProviderResult(provider="gemini", model=model, called=True, configured=True, status=status, response_mode=response_mode, http_status=status_code, warnings=[*warnings, warning], timings={"llm_ms": int((time.time()-started)*1000)}, error_code=warning, retry_after_seconds=_retry_after_from_exc(exc)).model_dump()
         return LlmProviderResult(provider="gemini", model=model, called=True, configured=True, status="network_error", response_mode=response_mode, warnings=[*warnings, "gemini_request_failed"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
 
     usage = _usage(response)
