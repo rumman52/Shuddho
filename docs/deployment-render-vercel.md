@@ -45,6 +45,17 @@ VITE_ENABLE_LOCAL_FALLBACK=false
 
 Never set provider secrets in Vercel: `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, or `OPENAI_API_KEY`.
 
+
+### Competition Demo · Local Engine (Vercel only)
+
+For a competition/demo deployment that must run the prepared Bangla examples fully offline in the browser, set this public build-time Vite variable in the Vercel frontend project:
+
+```dotenv
+VITE_COMPETITION_DEMO_MODE=true
+```
+
+Use the exact lowercase string `true`. Configure it in Vercel, not Render, because it controls the Vite frontend bundle. Redeploy Vercel after changing it; Vite variables are baked in at build time. If you use both Vercel Production and Preview environments, set the variable separately in each environment. Do not put Gemini, OpenRouter, OpenAI, or any other secret provider keys in Vercel; keep the existing backend provider configuration on Render or another private backend runtime.
+
 ## Deployment order
 
 1. Push the branch containing the backend and frontend fixes.

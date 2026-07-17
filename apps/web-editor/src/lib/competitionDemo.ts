@@ -50,7 +50,7 @@ export function compileCompetitionDemoAnnotations(
   currentText: string,
 ): Suggestion[] {
   const suggestions: Suggestion[] = [];
-  if (!currentText.includes(fixture.incorrectText.split("\n")[0] ?? fixture.incorrectText)) return [];
+  if (!currentText.trim() || currentText.length < Math.floor(fixture.incorrectText.length * 0.8)) return [];
   const annotations = [...fixture.annotations, ...buildFixturePunctuationAnnotations(fixture)];
 
   for (const annotation of annotations) {
@@ -102,7 +102,7 @@ export function runCompetitionDemoReview(fixtureId: string, currentText: string)
     suggestions,
     analysis_profile: "frontend_local_fallback",
     runtime_source: "frontend_local_fallback",
-    runtime_warnings: ["competition_demo_mode", "local_demo_review", "prepared_fixture_annotations_used"],
+    runtime_warnings: ["competition_demo_mode", "local_demo_review", ...(prepared.length ? ["prepared_fixture_annotations_used"] : [])],
     backend_warning: null,
     llm_requested: false,
     llm_attempted: false,
@@ -174,13 +174,14 @@ function dedupeSuggestions(suggestions: Suggestion[]): Suggestion[] {
 
 function resolveSuggestionOverlaps(suggestions: Suggestion[], text: string): Suggestion[] {
   const selected: Suggestion[] = [];
-  for (const suggestion of suggestions.sort((a, b) => a.span_start - b.span_start || sourcePriority(b) - sourcePriority(a) || b.confidence - a.confidence)) {
+  for (const suggestion of suggestions.sort((a, b) => a.span_start - b.span_start || sourcePriority(b) - sourcePriority(a) || b.confidence - a.confidence || a.id.localeCompare(b.id))) {
     if (text.slice(suggestion.span_start, suggestion.span_end) !== suggestion.original_text) continue;
     const overlapping = selected.find((s) => suggestion.span_start < s.span_end && suggestion.span_end > s.span_start);
-    if (overlapping && (overlapping.source === "demo_fixture" || suggestion.source === "demo_fixture")) continue;
+    if (overlapping && (sourcePriority(overlapping) >= sourcePriority(suggestion) || overlapping.source === "demo_fixture" || suggestion.source === "demo_fixture")) continue;
+    if (overlapping) selected.splice(selected.indexOf(overlapping), 1);
     selected.push(suggestion);
   }
-  return selected.sort((a, b) => a.span_start - b.span_start || a.span_end - b.span_end);
+  return selected.sort((a, b) => a.span_start - b.span_start || a.span_end - b.span_end || a.id.localeCompare(b.id));
 }
 
 function sourcePriority(suggestion: Suggestion): number {

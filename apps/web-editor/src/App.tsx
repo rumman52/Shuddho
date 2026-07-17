@@ -170,7 +170,7 @@ export default function App() {
     string | null
   >(null);
   const [reviewFilter, setReviewFilter] = useState<
-    "all" | "spelling" | "grammar" | "clarity"
+    "all" | "spelling" | "grammar" | "punctuation" | "spacing" | "clarity"
   >("all");
   const [status, setStatus] = useState("Ready");
   const [autoAiReview, setAutoAiReview] = useState(false);
@@ -230,6 +230,7 @@ export default function App() {
   );
   const [loadedCompetitionFixtureId, setLoadedCompetitionFixtureId] = useState<string | null>(null);
   const [competitionReviewDurationMs, setCompetitionReviewDurationMs] = useState<number | null>(null);
+  const competitionDemoActive = COMPETITION_DEMO_MODE && loadedCompetitionFixtureId !== null;
 
   const normalizedAnalysis = useMemo(
     () => normalizeAnalyzeResponse(analysis, text, mode),
@@ -273,6 +274,12 @@ export default function App() {
       grammar: suggestions.filter(
         (suggestion) => displaySuggestionType(suggestion) === "Grammar",
       ).length,
+      punctuation: suggestions.filter(
+        (suggestion) => displaySuggestionType(suggestion) === "Punctuation",
+      ).length,
+      spacing: suggestions.filter(
+        (suggestion) => displaySuggestionType(suggestion) === "Spacing",
+      ).length,
       clarity: suggestions.filter(
         (suggestion) => displaySuggestionType(suggestion) === "Clarity",
       ).length,
@@ -308,11 +315,13 @@ export default function App() {
     }),
     [normalizedAnalysis, suggestions.length],
   );
-  const connectivityBanner = apiConfiguration.hardWarning
-    ? apiConfiguration.hardWarning
-    : backendMode === "unavailable"
-      ? BACKEND_UNAVAILABLE_MESSAGE
-      : null;
+  const connectivityBanner = competitionDemoActive
+    ? null
+    : apiConfiguration.hardWarning
+      ? apiConfiguration.hardWarning
+      : backendMode === "unavailable"
+        ? BACKEND_UNAVAILABLE_MESSAGE
+        : null;
 
   useEffect(() => {
     window.localStorage.setItem(USER_PROFILE_ID_STORAGE_KEY, userId);
@@ -343,6 +352,10 @@ export default function App() {
   }, [text]);
 
   useEffect(() => {
+    if (competitionDemoActive) {
+      cancelNormalAnalysisForCompetitionDemo("active_demo");
+      return;
+    }
     scheduleAnalysis(text);
     return () => {
       if (analysisTimerRef.current) {
@@ -358,6 +371,7 @@ export default function App() {
     preferences.personal_dictionary,
     userId,
     autoAiReview,
+    competitionDemoActive,
   ]);
 
   async function refreshBackendHealth() {
@@ -1070,35 +1084,79 @@ export default function App() {
     void refreshBackendHealth();
   }
 
-  function handleLoadCompetitionExample(fixture: CompetitionDemoFixture) {
-    setSelectedCompetitionFixtureId(fixture.id);
-    setLoadedCompetitionFixtureId(fixture.id);
-    setText(fixture.incorrectText);
-    setAnalysis(createEmptyAnalysis(fixture.incorrectText, mode, "frontend_local_fallback"));
-    setStatus("Competition demo example loaded. Click Run Demo Review when ready.");
-    setCompetitionReviewDurationMs(null);
+  function cancelNormalAnalysisForCompetitionDemo(reason: string) {
+    if (analysisTimerRef.current) {
+      window.clearTimeout(analysisTimerRef.current);
+      analysisTimerRef.current = null;
+    }
+    analysisAbortRef.current?.abort();
+    activeControllerRef.current?.abort();
+    queuedAnalysisRef.current = null;
+    pendingSnapshotRef.current = null;
+    activeAnalysisRef.current = null;
+    latestSnapshotRef.current = null;
+    latestRequestIdRef.current += 1;
+    manualAnalysisInFlightRef.current = false;
+    aiReviewInFlightRef.current = false;
+    setIsChecking(false);
+    setAnalysisState("idle");
+    setApiCheckDiagnostic({ ...EMPTY_API_CHECK_DIAGNOSTIC, discardReason: reason });
+    setSelectedSuggestionId(null);
+    setActiveInlineSuggestionId(null);
+    setBulkApplyResult(null);
   }
 
-  function handleRunCompetitionDemoReview() {
-    const fixtureId = loadedCompetitionFixtureId ?? selectedCompetitionFixtureId;
-    if (!COMPETITION_DEMO_MODE || !fixtureId) return;
+  function runLoadedCompetitionFixture(fixture: CompetitionDemoFixture) {
+    if (!COMPETITION_DEMO_MODE) return;
+    cancelNormalAnalysisForCompetitionDemo("competition_demo_started");
+    const fixtureText = fixture.incorrectText;
+    setSelectedCompetitionFixtureId(fixture.id);
+    setLoadedCompetitionFixtureId(fixture.id);
+    setText(fixtureText);
+    latestTextRef.current = fixtureText;
     const startedAt = performance.now();
-    const response = runCompetitionDemoReview(fixtureId, text);
+    const response = runCompetitionDemoReview(fixture.id, fixtureText);
     const duration = performance.now() - startedAt;
     setCompetitionReviewDurationMs(duration);
     setAnalysis(response);
     setAnalysisState(response.suggestions.length ? "success" : "empty");
-    setStatus(`${response.suggestions.length} local demo suggestions ready in ${duration.toFixed(1)} ms.`);
+    setReviewFilter("all");
+    setStatus(`${response.suggestions.length} local demo suggestions ready.`);
+  }
+
+  function handleSelectCompetitionFixture(fixtureId: string | null) {
+    setSelectedCompetitionFixtureId(fixtureId);
+    setLoadedCompetitionFixtureId(null);
+    setCompetitionReviewDurationMs(null);
+  }
+
+  function handleLoadCompetitionExample(fixture: CompetitionDemoFixture) {
+    runLoadedCompetitionFixture(fixture);
+  }
+
+  function handleRunCompetitionDemoReview() {
+    const fixture = competitionDemoFixtures.find((item) => item.id === selectedCompetitionFixtureId) ?? null;
+    if (!fixture) {
+      setStatus("Select a prepared competition example before running local review.");
+      return;
+    }
+    runLoadedCompetitionFixture(fixture);
   }
 
   function handleResetCompetitionExample() {
-    const fixture = competitionDemoFixtures.find((item) => item.id === (loadedCompetitionFixtureId ?? selectedCompetitionFixtureId));
-    if (fixture) handleLoadCompetitionExample(fixture);
+    const fixture = competitionDemoFixtures.find((item) => item.id === selectedCompetitionFixtureId) ?? null;
+    if (!fixture) {
+      setStatus("Select a prepared competition example before resetting.");
+      return;
+    }
+    runLoadedCompetitionFixture(fixture);
   }
 
   function handleTryOwnText() {
+    cancelNormalAnalysisForCompetitionDemo("competition_demo_exit");
     setLoadedCompetitionFixtureId(null);
     setSelectedCompetitionFixtureId(null);
+    setCompetitionReviewDurationMs(null);
     setAnalysis(createEmptyAnalysis(text, mode));
     setStatus("Try your own text. Normal production checks remain available.");
   }
@@ -1167,7 +1225,9 @@ export default function App() {
     );
   }
 
-  const friendlyStatus = getFriendlyRuntimeStatus({
+  const friendlyStatus = competitionDemoActive
+    ? { label: "Offline demo ready", tone: "ok" as const }
+    : getFriendlyRuntimeStatus({
     backendMode,
     isChecking,
     suggestionCount: suggestions.length,
@@ -1175,8 +1235,8 @@ export default function App() {
     llmStatus: normalizedAnalysis.llm_status ?? null,
     sourceSummary: suggestionSourceSummary,
   });
-  const reviewUnavailable =
-    backendMode === "unavailable" || backendMode === "misconfigured";
+  const reviewUnavailable = !competitionDemoActive &&
+    (backendMode === "unavailable" || backendMode === "misconfigured");
   const aiUnavailable = isAiUnavailableStatus(
     normalizedAnalysis.llm_status,
     normalizedAnalysis.llm_requested,
@@ -1206,14 +1266,20 @@ export default function App() {
           >
             Settings
           </button>
-          <button
-            type="button"
-            className="button-primary header-review-button"
-            onClick={handleCheckWriting}
-            disabled={isChecking || !text.trim()}
-          >
-            {isChecking ? "Checking" : "Deep AI Review"}
-          </button>
+          {competitionDemoActive ? (
+            <button type="button" className="button-secondary header-review-button" onClick={handleTryOwnText}>
+              Exit demo / Try own text
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="button-primary header-review-button"
+              onClick={handleCheckWriting}
+              disabled={isChecking || !text.trim()}
+            >
+              {isChecking ? "Checking" : "Deep AI Review"}
+            </button>
+          )}
         </div>
       </header>
 
@@ -1244,7 +1310,8 @@ export default function App() {
           {COMPETITION_DEMO_MODE ? (
             <CompetitionDemoPanel
               selectedFixtureId={selectedCompetitionFixtureId}
-              onSelectFixture={setSelectedCompetitionFixtureId}
+              loadedFixtureId={loadedCompetitionFixtureId}
+              onSelectFixture={handleSelectCompetitionFixture}
               onLoadExample={handleLoadCompetitionExample}
               onRunDemoReview={handleRunCompetitionDemoReview}
               onResetExample={handleResetCompetitionExample}
@@ -1501,6 +1568,7 @@ export default function App() {
                   : "Checking your full text with AI…"
               : getReviewStatusCopy({
                   suggestions: suggestions.length,
+                  competitionDemoActive,
                   reviewUnavailable,
                   aiUnavailable,
                   status,
@@ -1531,6 +1599,8 @@ export default function App() {
                 ["all", "All", suggestions.length],
                 ["spelling", "Spelling", suggestionCounts.spelling],
                 ["grammar", "Grammar", suggestionCounts.grammar],
+                ["punctuation", "Punctuation", suggestionCounts.punctuation],
+                ["spacing", "Spacing", suggestionCounts.spacing],
                 ["clarity", "Clarity", suggestionCounts.clarity],
               ] as const
             ).map(([filter, label, count]) => (
@@ -1959,10 +2029,14 @@ function getFriendlyRuntimeStatus(args: {
 
 function getReviewStatusCopy(args: {
   suggestions: number;
+  competitionDemoActive?: boolean;
   reviewUnavailable: boolean;
   aiUnavailable: boolean;
   status: string;
 }): string {
+  if (args.competitionDemoActive) {
+    return args.suggestions > 0 ? `${args.suggestions} local demo suggestions ready.` : "Offline demo ready. Load & Run Local Review to show prepared demo annotations.";
+  }
   if (args.reviewUnavailable) {
     return "Contextual AI review is not connected. Retry the backend or continue only when limited local checks are available.";
   }
@@ -2029,13 +2103,20 @@ function buildInlineSegments(
 function displaySuggestionType(suggestion: Suggestion): string {
   const value =
     `${suggestion.ui_group ?? suggestion.category ?? suggestion.subtype}`.toLowerCase();
+  if (value.includes("punctuation")) {
+    return "Punctuation";
+  }
+  if (value.includes("spacing") || value.includes("space")) {
+    return "Spacing";
+  }
   if (value.includes("grammar")) {
     return "Grammar";
   }
   if (
     value.includes("clarity") ||
     value.includes("style") ||
-    value.includes("tone")
+    value.includes("tone") ||
+    value.includes("register")
   ) {
     return "Clarity";
   }
