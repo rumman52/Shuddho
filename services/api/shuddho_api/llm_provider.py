@@ -49,6 +49,11 @@ class LlmProviderResult:
     usage: dict[str, Any] = field(default_factory=dict)
     timings: dict[str, Any] = field(default_factory=dict)
     ai_raw_suggestion_count: int = 0
+    ai_valid_suggestion_count: int = 0
+    ai_rejected_suggestion_count: int = 0
+    rejected_ai_suggestion_count: int = 0
+    ai_empty_reason: str | None = None
+    provider_attempts: list[dict[str, Any]] = field(default_factory=list)
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -67,6 +72,11 @@ class LlmProviderResult:
             "usage": self.usage,
             "timings": self.timings,
             "ai_raw_suggestion_count": self.ai_raw_suggestion_count,
+            "ai_valid_suggestion_count": self.ai_valid_suggestion_count,
+            "ai_rejected_suggestion_count": self.ai_rejected_suggestion_count,
+            "rejected_ai_suggestion_count": self.rejected_ai_suggestion_count,
+            "ai_empty_reason": self.ai_empty_reason,
+            "provider_attempts": self.provider_attempts,
         }
 
 

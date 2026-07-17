@@ -144,8 +144,13 @@ class AiCheckResponse(BaseModel):
     response_mode: str = "none"
     http_status: int | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
-    timings: dict[str, float] = Field(default_factory=dict)
+    timings: dict[str, Any] = Field(default_factory=dict)
+    provider_attempts: list[dict[str, Any]] = Field(default_factory=list)
     ai_raw_suggestion_count: int = 0
+    ai_valid_suggestion_count: int = 0
+    ai_rejected_suggestion_count: int = 0
+    rejected_ai_suggestion_count: int = 0
+    ai_empty_reason: str | None = None
 
 
 class ApiCheckRequest(BaseModel):
@@ -320,7 +325,9 @@ analyze_cache: ContentHashCache[AnalyzeResponse] = ContentHashCache(ttl_seconds=
 rewrite_cache: ContentHashCache[RewriteResponse] = ContentHashCache(ttl_seconds=20.0, max_entries=64)
 tone_cache: ContentHashCache[ToneAnalysisResponse] = ContentHashCache(ttl_seconds=20.0, max_entries=64)
 llm_jobs: dict[str, dict] = {}
-llm_cache: dict[str, dict] = {}
+llm_provider_cache: dict[str, dict] = {}
+# Backward-compatible alias for tests/utilities; stores provider results only.
+llm_cache = llm_provider_cache
 llm_failures: dict[str, list[float]] = {}
 llm_circuit_until: dict[str, float] = {}
 llm_provider_state: dict[str, dict[str, Any]] = {}
@@ -1267,20 +1274,19 @@ def _run_ai_check(
     sentences = _sentences_for_ai(ai_text)
     cache_key = _cache_key(ai_text, locals_for_prompt, candidates, config.provider, config.model, config.fallback_provider, config.fallback_model)
     cache_ttl = int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400") or "86400")
-    cached = llm_cache.get(cache_key)
-    if cached and time.time() - cached.get("created_at", 0) < cache_ttl:
-        result = dict(cached.get("result") or cached)
+    cached = llm_provider_cache.get(cache_key)
+    if cached and cached.get("kind") == "provider_result" and time.time() - cached.get("created_at", 0) < cache_ttl:
+        result = dict(cached.get("result") or {})
         result.setdefault("called", True)
         result.setdefault("configured", True)
         result["timings"] = {**(result.get("timings") or {}), "cache_hit": True}
     else:
         result = _run_provider_chain(config, ai_text, request_id, sentences, locals_for_prompt, candidates, timeout)
         if result.get("status") in {"completed", "completed_empty", "completed_rejected"}:
-            llm_cache[cache_key] = {"created_at": time.time(), "result": result, "provider": result.get("provider"), "model": result.get("model")}
+            llm_provider_cache[cache_key] = {"kind": "provider_result", "created_at": time.time(), "result": result, "provider": result.get("provider"), "model": result.get("model")}
     warnings = _dedupe_strings([*config.warnings, *truncation_warnings, *(result.get("warnings") or [])])
     logger.info("ai_check_complete request_id=%s provider=%s model=%s status=%s http_status=%s text_length=%s sent_length=%s llm_ms=%s warnings=%s", request_id, result.get("provider") or config.provider, result.get("model") or config.model, result.get("status"), result.get("http_status"), len(text), len(ai_text), (result.get("timings") or {}).get("llm_ms"), len(warnings))
-    diagnostics = {"provider_attempts": result.get("provider_attempts") or []}
-    return AiCheckResponse(suggestions=result.get("suggestions", []) or [], correctedText=result.get("correctedText"), documentAssessment=result.get("documentAssessment") or {}, warnings=warnings, provider=result.get("provider") or config.provider, model=result.get("model") or config.model, llm_enabled=config.enabled, configured=bool(result.get("configured", config.configured)), called=bool(result.get("called")), parsed=bool(result.get("parsed")), status=str(result.get("status") or "failed"), response_mode=str(result.get("response_mode") or "none"), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings={**_safe_timings(result.get("timings")), **diagnostics}, ai_raw_suggestion_count=int(result.get("ai_raw_suggestion_count") or 0))
+    return AiCheckResponse(suggestions=result.get("suggestions", []) or [], correctedText=result.get("correctedText"), documentAssessment=result.get("documentAssessment") or {}, warnings=warnings, provider=result.get("provider") or config.provider, model=result.get("model") or config.model, llm_enabled=config.enabled, configured=bool(result.get("configured", config.configured)), called=bool(result.get("called")), parsed=bool(result.get("parsed")), status=str(result.get("status") or "failed"), response_mode=str(result.get("response_mode") or "none"), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings=_safe_timings(result.get("timings")), provider_attempts=result.get("provider_attempts") or [], ai_raw_suggestion_count=int(result.get("ai_raw_suggestion_count") or 0), ai_valid_suggestion_count=int(result.get("ai_valid_suggestion_count") or len(result.get("suggestions") or [])), ai_rejected_suggestion_count=int(result.get("ai_rejected_suggestion_count") or result.get("rejected_ai_suggestion_count") or 0), rejected_ai_suggestion_count=int(result.get("rejected_ai_suggestion_count") or result.get("ai_rejected_suggestion_count") or 0), ai_empty_reason=result.get("ai_empty_reason"))
 
 
 def _now_iso() -> str:
@@ -1295,7 +1301,7 @@ def _update_llm_job(job_id: str, patch: dict[str, Any]) -> None:
     now = time.time()
     with llm_jobs_lock:
         job = llm_jobs.get(job_id)
-        if not job:
+        if job is None:
             return
         patch = dict(patch)
         if "status" in patch:
@@ -1338,29 +1344,64 @@ def _create_llm_review_job(text: str, language: str, local_suggestions: list[dic
     job.update({"created_at": now, "updated_at": now, "created_at_iso": _now_iso(), "updated_at_iso": _now_iso(), "request_id": request_id, "mode": mode, "language": language, "candidate_count": len(candidates)})
     with llm_jobs_lock:
         llm_jobs[job_id] = job
-    llm_executor.submit(_run_llm_job, job_id, text, candidates, local_suggestions, request_id)
+    future = llm_executor.submit(_run_llm_job, job_id, text, candidates, local_suggestions, request_id)
+    future.add_done_callback(lambda fut, jid=job_id, rid=request_id: _llm_job_done_callback(jid, rid, fut))
     return {k: job[k] for k in ("job_id", "status", "llm_status", "llm_requested", "llm_attempted", "llm_used", "llm_provider", "llm_model", "llm_response_mode", "suggestions", "local_suggestion_count", "ai_suggestion_count", "ai_raw_suggestion_count", "ai_valid_suggestion_count", "ai_rejected_suggestion_count", "rejected_ai_suggestion_count", "ai_empty_reason", "correctedText", "documentAssessment", "warnings", "usage", "timings", "provider_attempts", "llm") } | {"estimated_seconds": 3, "candidate_count": len(candidates)}
 
 
+
+def _llm_job_done_callback(job_id: str, request_id: str, future: Any) -> None:
+    try:
+        exc = future.exception()
+    except Exception as callback_exc:  # pragma: no cover
+        logger.exception("llm_job_future_observation_failed job_id=%s request_id=%s exception_class=%s", job_id, request_id, callback_exc.__class__.__name__)
+        return
+    if exc is not None:
+        logger.exception("llm_job_future_unhandled_exception job_id=%s request_id=%s exception_class=%s diagnostic_code=llm_job_future_error", job_id, request_id, exc.__class__.__name__, exc_info=exc)
+        _update_llm_job(job_id, {"status": "failed", "llm_status": "failed", "llm_attempted": True, "llm_used": False, "warnings": ["llm_job_internal_error"], "ai_empty_reason": "internal_job_error"})
+
 def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestions: list[dict], request_id: str) -> None:
+    try:
+        _run_llm_job_impl(job_id, text, candidates, local_suggestions, request_id)
+    except Exception as exc:  # pragma: no cover - final worker safety net
+        logger.exception(
+            "llm_job_internal_error job_id=%s request_id=%s exception_class=%s diagnostic_code=llm_job_internal_error",
+            job_id,
+            request_id,
+            exc.__class__.__name__,
+        )
+        safe_warnings = _dedupe_strings(["llm_job_internal_error"])
+        payload = _canonical_llm_job_payload(
+            job_id=job_id,
+            status="failed",
+            provider="gemini",
+            model="",
+            suggestions=list(local_suggestions or []),
+            local_suggestion_count=len(local_suggestions or []),
+            warnings=safe_warnings,
+            response_mode="none",
+            called=True,
+            configured=False,
+            parsed=False,
+            timings={"queue_ms": 0, "llm_ms": 0, "total_ms": 0},
+            provider_attempts=[],
+            ai_empty_reason="internal_job_error",
+        )
+        payload.update({
+            "llm_attempted": True,
+            "llm_used": False,
+            "ai_empty_reason": "internal_job_error",
+        })
+        if isinstance(payload.get("llm"), dict):
+            payload["llm"].update({"attempted": True, "used": False, "ai_empty_reason": "internal_job_error"})
+        _update_llm_job(job_id, payload)
+
+def _run_llm_job_impl(job_id: str, text: str, candidates: list[dict], local_suggestions: list[dict], request_id: str) -> None:
     started = time.time()
     config = resolve_llm_config(os.environ)
     _update_llm_job(job_id, {"status": "running", "llm_status": "running", "llm_attempted": True, "started_at": time.time(), "started_at_iso": _now_iso()})
     local_suggestions = list(local_suggestions or [])
-    key = _cache_key(text, local_suggestions, candidates, config.provider, config.model, config.fallback_provider, config.fallback_model)
-    cached = llm_cache.get(key)
-    ttl = int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400"))
-    if cached and time.time() - cached.get("created_at", 0) < ttl:
-        cached_payload = dict(cached.get("result") or cached)
-        cached_payload.update({"job_id": job_id, "cache_hit": True})
-        cached_payload["status"] = _normalize_job_status(str(cached_payload.get("status") or cached_payload.get("llm_status") or "completed"))
-        cached_payload["llm_status"] = cached_payload["status"]
-        cached_payload["timings"] = {**(cached_payload.get("timings") or {}), "cache_hit": True}
-        if isinstance(cached_payload.get("llm"), dict):
-            cached_payload["llm"] = {**cached_payload["llm"], "job_id": job_id, "status": cached_payload["status"], "cache_hit": True, "timings": cached_payload["timings"]}
-        _update_llm_job(job_id, cached_payload)
-        return
-
+    # Provider-result caching is handled inside _run_ai_check; job payloads are always freshly canonicalized.
     ai = _run_ai_check(text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50") or "50"))
     elapsed = int((time.time() - started) * 1000)
     status = ai.status if ai.status in LLM_TERMINAL_STATUSES else "failed"
@@ -1397,7 +1438,7 @@ def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestio
         http_status=ai.http_status,
         usage=ai.usage,
         timings={**ai.timings, "queue_ms": 0, "llm_ms": elapsed, "total_ms": elapsed},
-        provider_attempts=(ai.timings.get("provider_attempts") if isinstance(ai.timings, dict) else []) or [],
+        provider_attempts=ai.provider_attempts,
         ai_raw_suggestion_count=raw_ai_count,
         ai_valid_suggestion_count=len(valid_ai),
         ai_rejected_suggestion_count=rejected_count,
@@ -1406,8 +1447,6 @@ def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestio
         documentAssessment=ai.documentAssessment,
     )
     payload["created_at"] = time.time()
-    if status in {"completed", "completed_empty", "completed_rejected"}:
-        llm_cache[key] = {"created_at": time.time(), "result": payload, "provider": ai.provider, "model": ai.model}
     _update_llm_job(job_id, payload)
 
 def _cache_key(text: str, local_suggestions: list[dict], candidates: list[dict], provider: str, model: str, fallback_provider: str | None = None, fallback_model: str = "") -> str:

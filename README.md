@@ -70,13 +70,13 @@ Use OpenRouter for OpenRouter model IDs such as `openai/gpt-oss-120b:free`:
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=<currently-valid-openrouter-model>
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual
-SHUDDHO_LLM_TIMEOUT_SECONDS=35
+SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS=50
 SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
-SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=50
 ```
 
 Use the official OpenAI provider only with official OpenAI model IDs:
@@ -93,7 +93,7 @@ Operational safeguards:
 - Keep `OPENROUTER_API_KEY` and `OPENAI_API_KEY` only in backend environment variables.
 - Never use `VITE_*` variables for private provider keys because Vite exposes them to browser code.
 - Free OpenRouter models can be slower, unavailable, or rate-limited; Shuddho's local fallback must always remain enabled.
-- `SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45` gives free OpenRouter reasoning models enough time for manual Deep AI Review, while `SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60` allows queued background reviews more time.
+- `SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45` gives free OpenRouter reasoning models enough time for manual Deep AI Review, while `SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=50` allows queued background reviews more time.
 - Set `SHUDDHO_MAX_AI_TEXT_CHARS=5000` and `SHUDDHO_LLM_CACHE_TTL_SECONDS=86400` to bound request size and avoid repeated unchanged reviews.
 
 
@@ -112,13 +112,13 @@ GEMINI_MODEL=gemini-3.5-flash
 # Automatic fallback
 SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
 OPENROUTER_API_KEY=<existing-render-secret>
-OPENROUTER_MODEL=<currently-valid-openrouter-model>
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 
 SHUDDHO_LLM_ON_CHECK=manual
 SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
-SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=50
 ```
 
 Gemini and OpenRouter keys belong only in Render or another private backend runtime. Never add `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or `OPENROUTER_API_KEY` to Vercel; Vercel should contain only public `VITE_*` values. OpenRouter remains configured even while Gemini is primary, and `SHUDDHO_LLM_PROVIDER` / `SHUDDHO_LLM_FALLBACK_PROVIDER` can be reversed without code changes. Use a current Gemini auth key from Google AI Studio. Do not commit real secrets to `.env.example`, README files, `render.yaml`, tests, or source files.
@@ -158,15 +158,15 @@ Render/backend should contain the private OpenRouter configuration when using `o
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=<currently-valid-openrouter-model>
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app,http://localhost:5173,http://127.0.0.1:5173
 SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
-SHUDDHO_LLM_TIMEOUT_SECONDS=35
+SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS=50
 SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
-SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
+SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=50
 SHUDDHO_MAX_AI_TEXT_CHARS=5000
 SHUDDHO_LLM_MAX_CANDIDATES=8
 SHUDDHO_LLM_MAX_CANDIDATE_CHARS=2200
