@@ -62,6 +62,17 @@ SHUDDHO_LLM_PROVIDER
 Those values belong only in the backend environment. Browser code must route AI review through the backend and must not receive private provider keys.
 
 
+
+### Competition Demo · Local Engine (Vercel only)
+
+For a competition/demo deployment that must run the prepared Bangla examples fully offline in the browser, set this public build-time Vite variable in the Vercel frontend project:
+
+```dotenv
+VITE_COMPETITION_DEMO_MODE=true
+```
+
+Use the exact lowercase string `true`. Configure it in Vercel, not Render, because it controls the Vite frontend bundle. Redeploy Vercel after changing it; Vite variables are baked in at build time. If you use both Vercel Production and Preview environments, set the variable separately in each environment. Do not put Gemini, OpenRouter, OpenAI, or any other secret provider keys in Vercel; keep the existing backend provider configuration on Render or another private backend runtime.
+
 ### B. Backend environment variables
 
 For Deep AI Review with the OpenRouter-hosted `openai/gpt-oss-120b:free` model, set these only on the backend service (for example Render), never in Vercel:

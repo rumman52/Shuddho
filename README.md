@@ -173,6 +173,17 @@ SHUDDHO_LLM_MAX_CANDIDATE_CHARS=2200
 SHUDDHO_LLM_MAX_COMPLETION_TOKENS=1400
 ```
 
+
+### Competition Demo · Local Engine (Vercel only)
+
+For a competition/demo deployment that must run the prepared Bangla examples fully offline in the browser, set this public build-time Vite variable in the Vercel frontend project:
+
+```dotenv
+VITE_COMPETITION_DEMO_MODE=true
+```
+
+Use the exact lowercase string `true`. Configure it in Vercel, not Render, because it controls the Vite frontend bundle. Redeploy Vercel after changing it; Vite variables are baked in at build time. If you use both Vercel Production and Preview environments, set the variable separately in each environment. Do not put Gemini, OpenRouter, OpenAI, or any other secret provider keys in Vercel; keep the existing backend provider configuration on Render or another private backend runtime.
+
 ## Render FastAPI backend
 
 The Render backend can deploy without the optional sentence-level corrector checkpoint. Use `auto` so the backend loads a checkpoint only when the files are actually present:
