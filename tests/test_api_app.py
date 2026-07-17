@@ -1,6 +1,7 @@
 import importlib
 import re
 import json
+import time
 from fastapi.testclient import TestClient
 
 from services.api.shuddho_api.app import (
@@ -1367,3 +1368,52 @@ def test_api_check_reports_rejected_ai_suggestions(monkeypatch) -> None:
     assert response.rejected_ai_suggestion_count == 1
     assert "ai_suggestions_rejected" in response.warnings
     assert response.diagnostics["llm"]["rejection_warnings"]
+
+
+def test_safe_cors_accepts_exact_preview_origin() -> None:
+    origin = "https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app"
+    assert origin in ALLOWED_ORIGINS
+
+
+def test_safe_cors_rejects_unrelated_vercel_and_attacker_domain() -> None:
+    assert "https://evil-project.vercel.app" not in ALLOWED_ORIGINS
+    assert not re.fullmatch(ALLOWED_ORIGIN_REGEX, "https://evil-project.vercel.app")
+    assert not re.fullmatch(ALLOWED_ORIGIN_REGEX, "https://vercel.app.attacker.example")
+
+
+def test_cors_preflight_health_and_post_echo_preview_origin() -> None:
+    origin = "https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app"
+    preflight = client.options(
+        "/api/check",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+    assert preflight.headers.get("access-control-allow-credentials") == "true"
+    assert preflight.headers["access-control-allow-origin"] != "*"
+
+    health_response = client.get("/health", headers={"Origin": origin})
+    assert health_response.status_code == 200
+    assert health_response.headers["access-control-allow-origin"] == origin
+
+    post = client.post(
+        "/api/check",
+        headers={"Origin": origin},
+        json={"text": "আমি বাংলা লিখি  ।। বাংলা বাংলা ভাষা খুব সুন্দর !!", "language": "bn", "options": {"includeLLM": False, "asyncLLM": False, "llmMode": "none", "mode": "fast"}},
+    )
+    assert post.status_code == 200
+    assert post.headers["access-control-allow-origin"] == origin
+    assert post.json()["local_suggestion_count"] == 5
+
+
+def test_llm_cache_hit_normalizes_succeeded_status(monkeypatch) -> None:
+    key = "pytest-cache"
+    with app_module.llm_jobs_lock:
+        app_module.llm_jobs[key] = {"job_id": key, "status": "succeeded", "llm_status": "succeeded", "suggestions": [], "created_at": time.time()}
+    response = client.get(f"/api/llm/review/{key}")
+    assert response.json()["status"] == "completed"
+    assert response.json()["llm_status"] == "completed"

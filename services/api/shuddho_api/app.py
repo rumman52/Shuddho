@@ -5,6 +5,7 @@ import os
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import uuid
@@ -88,9 +89,17 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
     "https://shuddho-web-editor.vercel.app",
+    "https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app",
 ]
+# Dynamic Vercel previews are opt-in and project scoped.  Never allow all
+# *.vercel.app origins in production.
+SHUDDHO_VERCEL_PREVIEW_REGEX = (
+    r"https://shuddho-web-editor-[a-z0-9-]+-rumman52s-projects\.vercel\.app"
+)
 ALLOWED_ORIGIN_REGEX = (
-    r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.vercel\.app)$"
+    r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?|"
+    + SHUDDHO_VERCEL_PREVIEW_REGEX
+    + r")$"
     if os.environ.get("SHUDDHO_ALLOW_VERCEL_PREVIEWS", "false").strip().lower() in {"1", "true", "yes", "on"}
     else r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
 )
@@ -308,6 +317,9 @@ llm_cache: dict[str, dict] = {}
 llm_failures: dict[str, list[float]] = {}
 llm_circuit_until: dict[str, float] = {}
 llm_provider_state: dict[str, dict[str, Any]] = {}
+llm_jobs_lock = threading.RLock()
+llm_executor = ThreadPoolExecutor(max_workers=int(os.environ.get("SHUDDHO_LLM_JOB_WORKERS", "4") or "4"), thread_name_prefix="shuddho-llm")
+LLM_TERMINAL_STATUSES = {"completed", "completed_empty", "completed_rejected", "rate_limited", "timeout", "provider_error", "auth_or_forbidden", "model_not_found", "failed", "expired", "cancelled"}
 
 class ApiPreferences(BaseModel):
     user_id: str = "demo-user"
@@ -702,7 +714,14 @@ def create_llm_review(payload: LlmReviewRequest) -> dict:
 @app.get("/api/llm/review/{job_id}")
 def get_llm_review(job_id: str) -> dict:
     _cleanup_llm_jobs()
-    return llm_jobs.get(job_id, {"job_id": job_id, "status": "failed", "suggestions": [], "warnings": ["llm_job_not_found"]})
+    with llm_jobs_lock:
+        job = llm_jobs.get(job_id)
+        if job:
+            normalized = dict(job)
+            normalized["status"] = _normalize_job_status(str(normalized.get("status") or normalized.get("llm_status") or "running"))
+            normalized["llm_status"] = _normalize_job_status(str(normalized.get("llm_status") or normalized["status"]))
+            return normalized
+    return {"job_id": job_id, "status": "expired", "llm_status": "expired", "suggestions": [], "warnings": ["llm_job_not_found_or_expired"]}
 
 
 @app.get("/api/llm/debug")
@@ -727,9 +746,11 @@ def llm_debug() -> dict:
         "fallback_configured": config.fallback_configured,
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
         "endpoint": "https://generativelanguage.googleapis.com" if config.provider == "gemini" else ("https://openrouter.ai/api/v1/chat/completions" if config.provider == "openrouter" else "https://api.openai.com/v1/responses"),
-        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
-        "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60")),
-        "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35")),
+        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50")))),
+        "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50")),
+        "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50"))),
+        "gemini_timeout_seconds": float(os.environ.get("SHUDDHO_GEMINI_TIMEOUT_SECONDS", "30")),
+        "openrouter_timeout_seconds": float(os.environ.get("SHUDDHO_OPENROUTER_TIMEOUT_SECONDS", "18")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "timeout_settings": {
             "interactive_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
@@ -877,9 +898,11 @@ def _llm_safe_status() -> dict[str, Any]:
         "status": config.status,
         "cache_enabled": True,
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
-        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
-        "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60")),
-        "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35")),
+        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50")))),
+        "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50")),
+        "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50"))),
+        "gemini_timeout_seconds": float(os.environ.get("SHUDDHO_GEMINI_TIMEOUT_SECONDS", "30")),
+        "openrouter_timeout_seconds": float(os.environ.get("SHUDDHO_OPENROUTER_TIMEOUT_SECONDS", "18")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
@@ -1054,7 +1077,8 @@ def _record_provider_attempt(result: dict[str, Any]) -> None:
 def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list[dict[str, Any]], local_suggestions: list[dict[str, Any]], candidates: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
     started = time.monotonic()
     total_deadline = max(1.0, float(timeout))
-    primary_timeout = min(total_deadline, max(1.0, float(os.environ.get("SHUDDHO_LLM_PRIMARY_TIMEOUT_SECONDS", "35") or "35")))
+    primary_env = "SHUDDHO_GEMINI_TIMEOUT_SECONDS" if config.provider == "gemini" else ("SHUDDHO_OPENROUTER_TIMEOUT_SECONDS" if config.provider == "openrouter" else "SHUDDHO_LLM_PRIMARY_TIMEOUT_SECONDS")
+    primary_timeout = min(total_deadline, max(1.0, float(os.environ.get(primary_env, os.environ.get("SHUDDHO_LLM_PRIMARY_TIMEOUT_SECONDS", "30")) or "30")))
     primary_cfg = _provider_configured(config)
     result = run_configured_provider(primary_cfg, text, request_id, sentences, local_suggestions, candidates, primary_timeout)
     _record_provider_attempt(result)
@@ -1077,7 +1101,9 @@ def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list
             result["warnings"] = _dedupe_strings([*(result.get("warnings") or []), "fallback_skipped_provider_chain_deadline_exhausted"])
             return result
         fallback_cfg = _provider_configured(config, fallback=True)
-        fallback_result = run_configured_provider(fallback_cfg, text, request_id, sentences, local_suggestions, candidates, remaining)
+        fallback_env = "SHUDDHO_OPENROUTER_TIMEOUT_SECONDS" if fallback_provider == "openrouter" else ("SHUDDHO_GEMINI_TIMEOUT_SECONDS" if fallback_provider == "gemini" else "SHUDDHO_LLM_FALLBACK_TIMEOUT_SECONDS")
+        fallback_timeout = min(remaining, max(1.0, float(os.environ.get(fallback_env, "18") or "18")))
+        fallback_result = run_configured_provider(fallback_cfg, text, request_id, sentences, local_suggestions, candidates, fallback_timeout)
         _record_provider_attempt(fallback_result)
         attempts.append({"role": "fallback", "provider": fallback_result.get("provider"), "model": fallback_result.get("model"), "status": fallback_result.get("status"), "http_status": fallback_result.get("http_status"), "warnings": fallback_result.get("warnings") or []})
         fallback_result["warnings"] = _dedupe_strings([
@@ -1111,7 +1137,7 @@ def _run_ai_check(
         return AiCheckResponse(**{**base, "status": "skipped", "warnings": _dedupe_strings([*config.warnings, "llm_empty_text_skipped"])})
 
     os.environ["SHUDDHO_REQUEST_ID"] = request_id
-    timeout = timeout_seconds if timeout_seconds is not None else float(os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "35") or "35")
+    timeout = timeout_seconds if timeout_seconds is not None else float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50")) or "50")
     max_ai_chars = int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000") or "5000")
     ai_text = text[:max_ai_chars]
     truncation_warnings = ["llm_text_truncated"] if len(text) > max_ai_chars else []
@@ -1136,6 +1162,33 @@ def _run_ai_check(
     return AiCheckResponse(suggestions=result.get("suggestions", []) or [], correctedText=result.get("correctedText"), documentAssessment=result.get("documentAssessment") or {}, warnings=warnings, provider=result.get("provider") or config.provider, model=result.get("model") or config.model, llm_enabled=config.enabled, configured=bool(result.get("configured", config.configured)), called=bool(result.get("called")), parsed=bool(result.get("parsed")), status=str(result.get("status") or "failed"), response_mode=str(result.get("response_mode") or "none"), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings={**_safe_timings(result.get("timings")), **diagnostics}, ai_raw_suggestion_count=int(result.get("ai_raw_suggestion_count") or 0))
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_job_status(status: str) -> str:
+    return "completed" if status == "succeeded" else status
+
+
+def _update_llm_job(job_id: str, patch: dict[str, Any]) -> None:
+    now = time.time()
+    with llm_jobs_lock:
+        job = llm_jobs.get(job_id)
+        if not job:
+            return
+        patch = dict(patch)
+        if "status" in patch:
+            patch["status"] = _normalize_job_status(str(patch["status"]))
+        if "llm_status" in patch:
+            patch["llm_status"] = _normalize_job_status(str(patch["llm_status"]))
+        patch["updated_at"] = now
+        patch["updated_at_iso"] = _now_iso()
+        if patch.get("status") in LLM_TERMINAL_STATUSES and "completed_at" not in patch:
+            patch["completed_at"] = now
+            patch["completed_at_iso"] = _now_iso()
+        job.update(patch)
+
+
 def _create_llm_review_job(text: str, language: str, local_suggestions: list[dict], mode: str, request_id: str | None = None) -> dict:
     request_id = request_id or datetime.now(timezone.utc).isoformat()
     job_id = f"llm_{uuid.uuid4().hex[:12]}"
@@ -1148,29 +1201,32 @@ def _create_llm_review_job(text: str, language: str, local_suggestions: list[dic
             int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
         ),
     )
-    llm_jobs[job_id] = {"job_id": job_id, "status": "queued", "suggestions": [], "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": [], "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "timings": {"queue_ms": 0, "llm_ms": 0, "total_ms": 0}, "created_at": time.time()}
-    threading.Thread(target=_run_llm_job, args=(job_id, text, candidates, local_suggestions, request_id), daemon=True).start()
-    return {"job_id": job_id, "status": "queued", "estimated_seconds": 3, "candidate_count": len(candidates)}
+    now = time.time()
+    job = {"job_id": job_id, "status": "queued", "llm_status": "queued", "suggestions": [], "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": [], "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "timings": {"queue_ms": 0, "llm_ms": 0, "total_ms": 0}, "created_at": now, "updated_at": now, "created_at_iso": _now_iso(), "updated_at_iso": _now_iso(), "request_id": request_id, "mode": mode, "language": language}
+    with llm_jobs_lock:
+        llm_jobs[job_id] = job
+    llm_executor.submit(_run_llm_job, job_id, text, candidates, local_suggestions, request_id)
+    return {"job_id": job_id, "status": "queued", "llm_status": "queued", "estimated_seconds": 3, "candidate_count": len(candidates)}
 
 
 def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestions: list[dict], request_id: str) -> None:
     started = time.time()
-    job = llm_jobs[job_id]
-    job["status"] = "running"
+    _update_llm_job(job_id, {"status": "running", "llm_status": "running", "started_at": time.time(), "started_at_iso": _now_iso()})
     enabled, provider, model, _ = _llm_config()
     if not enabled or _is_circuit_open(provider, model):
-        job.update({"status": "failed", "warnings": ["llm_circuit_open" if _is_circuit_open(provider, model) else "llm_disabled"]})
+        _update_llm_job(job_id, {"status": "failed", "llm_status": "failed", "warnings": ["llm_circuit_open" if _is_circuit_open(provider, model) else "llm_disabled"]})
         return
     key = _cache_key(text, local_suggestions, candidates, provider, model, resolve_llm_config(os.environ).fallback_provider, resolve_llm_config(os.environ).fallback_model)
     cached = llm_cache.get(key)
     ttl = int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400"))
     if cached and time.time() - cached.get("created_at", 0) < ttl:
-        job.update(cached | {"job_id": job_id, "status": "succeeded"})
+        _update_llm_job(job_id, {**cached, "job_id": job_id, "status": _normalize_job_status(str(cached.get("status") or cached.get("llm_status") or "completed")), "llm_status": _normalize_job_status(str(cached.get("llm_status") or cached.get("status") or "completed")), "cache_hit": True})
         return
     ai = _run_ai_check(text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60") or "60"))
     if ai.status not in {"completed", "completed_empty"}:
         _record_llm_failure(ai.provider, ai.model, ai.warnings or [ai.status])
-        job.update({"status": ai.status if ai.status in {"timeout", "rate_limited"} else "failed", "llm_status": ai.status, "warnings": ai.warnings, "provider": ai.provider, "model": ai.model, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}})
+        terminal = ai.status if ai.status in LLM_TERMINAL_STATUSES else (ai.status if ai.status in {"timeout", "rate_limited", "provider_error", "auth_or_forbidden", "model_not_found"} else "failed")
+        _update_llm_job(job_id, {"status": terminal, "llm_status": terminal, "warnings": ai.warnings, "provider": ai.provider, "model": ai.model, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}})
         return
     valid_ai, validation_warnings = validate_ai_suggestions(text, ai.suggestions, _sentences_for_ai(text))
     merged, merge_warnings = merge_suggestions(text, local_suggestions, valid_ai, ai.provider, ai.model)
@@ -1178,7 +1234,8 @@ def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestio
     raw_ai_count = int(ai.ai_raw_suggestion_count or len(ai.suggestions or []))
     payload = {"suggestions": merged, "ai_suggestion_count": len(valid_ai), "ai_raw_suggestion_count": raw_ai_count, "ai_valid_suggestion_count": len(valid_ai), "ai_rejected_suggestion_count": max(0, raw_ai_count - len(valid_ai)), "ai_empty_reason": "model_returned_no_suggestions" if raw_ai_count == 0 else ("all_ai_suggestions_rejected" if raw_ai_count and not valid_ai else None), "correctedText": ai.correctedText, "documentAssessment": ai.documentAssessment, "llm_status": ai.status, "provider": ai.provider, "model": ai.model, "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": warnings, "usage": ai.usage, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}, "created_at": time.time()}
     llm_cache[key] = payload
-    job.update(payload | {"status": "completed" if ai.status in {"completed", "completed_empty"} else ai.status})
+    final_status = ai.status if ai.status in {"completed_empty", "completed_rejected"} else ("completed" if ai.status == "completed" else ai.status)
+    _update_llm_job(job_id, payload | {"status": final_status, "llm_status": final_status})
 
 
 def _cache_key(text: str, local_suggestions: list[dict], candidates: list[dict], provider: str, model: str, fallback_provider: str | None = None, fallback_model: str = "") -> str:

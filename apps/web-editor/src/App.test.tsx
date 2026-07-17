@@ -294,3 +294,14 @@ test("analyzeText accepts HTTP 200 empty suggestions as valid empty analysis", a
     setApiBaseUrlOverride("");
   }
 });
+
+test("App source preserves local suggestions while queued AI polling runs", () => {
+  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.match(source, /setAnalysisState\("waiting_for_ai"\)/);
+  assert.match(source, /Local suggestions ready\. Gemini review is running/);
+  assert.match(source, /void pollLlmJob\(snapshot, queuedJobId, controller\.signal\);\n\s*return;/);
+  assert.match(source, /setAnalysis\(\(current\) =>/);
+  assert.match(source, /rawStatus === "succeeded" \? "completed"/);
+  assert.match(source, /AI reviewed the text and found no additional high-confidence issues/);
+  assert.match(source, /This Vercel preview domain is not allowed by the backend/);
+});

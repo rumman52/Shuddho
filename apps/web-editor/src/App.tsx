@@ -646,14 +646,15 @@ export default function App() {
       const queuedJobId = readJobId(normalizedResponse);
       if (queuedJobId && isCurrentRequest()) {
         setAnalysisState("waiting_for_ai");
-        setStatus("Local suggestions ready. Waiting for AI review…");
+        setStatus("Local suggestions ready. Gemini review is running…");
         void pollLlmJob(snapshot, queuedJobId, controller.signal);
+        return;
       }
       setStatus(
         responseSuggestions.length === 0
           ? "Analysis complete — no issues found by the available checks."
           : includeLLM
-            ? (llmStatusMessage ?? "AI suggestions merged.")
+            ? (llmStatusMessage ?? "AI review complete.")
             : `${responseSuggestions.length} local suggestions ready`,
       );
       setAnalysisState(responseSuggestions.length ? "success" : "empty");
@@ -734,27 +735,52 @@ export default function App() {
 
 
   async function pollLlmJob(snapshot: AnalysisSnapshot, jobId: string, signal: AbortSignal) {
-    const terminal = new Set(["completed", "completed_empty", "completed_rejected", "timeout", "rate_limited", "provider_error", "failed", "superseded"]);
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      if (signal.aborted || !isSnapshotCurrent(snapshot)) {
-        setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "superseded_ai_poll" }));
+    const terminal = new Set(["completed", "completed_empty", "completed_rejected", "timeout", "rate_limited", "provider_error", "auth_or_forbidden", "model_not_found", "failed", "expired", "cancelled", "succeeded"]);
+    let terminalReached = false;
+    try {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        if (signal.aborted || !isSnapshotCurrent(snapshot)) {
+          setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "superseded_ai_poll" }));
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1000 : 1500));
+        const job = await getLlmReviewJob(jobId, { signal });
+        const rawStatus = String(job.llm_status ?? job.status ?? "running");
+        const status = rawStatus === "succeeded" ? "completed" : rawStatus;
+        if (!terminal.has(rawStatus) && !terminal.has(status)) {
+          if (status === "running" && String(job.provider ?? "") === "openrouter") {
+            setStatus("Gemini was unavailable. Reviewing with OpenRouter…");
+          }
+          continue;
+        }
+        terminalReached = true;
+        if (!isSnapshotCurrent(snapshot)) {
+          setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "superseded_ai_poll" }));
+          return;
+        }
+        setAnalysis((current) => {
+          const merged = normalizeAnalyzeResponse({ ...current, ...job, llm_status: status } as Partial<AnalyzeResponse>, snapshot.text, snapshot.mode);
+          setAnalysisState(Array.isArray(merged.suggestions) && merged.suggestions.length ? "success" : "empty");
+          return merged;
+        });
+        setStatus(status === "completed" ? "AI review complete." : status === "completed_empty" ? "AI reviewed the text and found no additional high-confidence issues." : "AI review is temporarily unavailable. Local suggestions are still shown.");
         return;
       }
-      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1000 : 1500));
-      const job = await getLlmReviewJob(jobId, { signal });
-      const status = String(job.status ?? job.llm_status ?? "running");
-      if (!terminal.has(status)) {
-        continue;
-      }
+      throw new Error("AI review polling timed out");
+    } catch (error) {
       if (!isSnapshotCurrent(snapshot)) {
-        setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "superseded_ai_poll" }));
         return;
       }
-      const merged = normalizeAnalyzeResponse({ ...analysis, ...job, llm_status: status } as Partial<AnalyzeResponse>, snapshot.text, snapshot.mode);
-      setAnalysis(merged);
-      setAnalysisState(Array.isArray(merged.suggestions) && merged.suggestions.length ? "success" : "empty");
-      setStatus(status === "completed" ? "AI suggestions merged." : status === "completed_empty" ? "Analysis complete — no issues found by the available checks." : "AI review is temporarily unavailable. Local suggestions are still shown.");
-      return;
+      const message = error instanceof Error ? error.message : String(error ?? "poll_failed");
+      setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "ai_poll_failed", rejectionReason: sanitizeDiagnosticError(message) }));
+      setStatus(message.toLowerCase().includes("cors") || message.toLowerCase().includes("failed to fetch") ? `This Vercel preview domain is not allowed by the backend. Origin: ${window.location.origin}` : "AI review is temporarily unavailable. Local suggestions are still shown.");
+      setAnalysisState(Array.isArray(analysis.suggestions) && analysis.suggestions.length ? "success" : "error");
+    } finally {
+      if (isSnapshotCurrent(snapshot) && (terminalReached || !signal.aborted)) {
+        manualAnalysisInFlightRef.current = false;
+        aiReviewInFlightRef.current = false;
+        setIsChecking(false);
+      }
     }
   }
 
@@ -1407,10 +1433,12 @@ export default function App() {
             </button>
           </div>
           <p className="review-panel__status">
-            {analysisState === "checking" || analysisState === "queued"
+            {analysisState === "checking" || analysisState === "queued" || analysisState === "waiting_for_ai"
               ? analysisState === "queued"
                 ? "Latest edit queued for review…"
-                : "Checking your full text with AI…"
+                : analysisState === "waiting_for_ai"
+                  ? "Local suggestions ready. Gemini review is running…"
+                  : "Checking your full text with AI…"
               : getReviewStatusCopy({
                   suggestions: suggestions.length,
                   reviewUnavailable,
@@ -1520,7 +1548,7 @@ export default function App() {
             </div>
           ) : (
             <div className="empty-state">
-              {analysisState === "checking" || analysisState === "queued"
+              {analysisState === "checking" || analysisState === "queued" || analysisState === "waiting_for_ai"
                 ? "Review is running. You can keep typing."
                 : analysisState === "empty"
                   ? "Analysis complete — no issues found."

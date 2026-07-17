@@ -55,8 +55,9 @@ def _status_for_http(status: int) -> tuple[str, str]:
 def _extract_content(response_json: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
     error = response_json.get("error")
     if isinstance(error, dict):
-        message = error.get("message") or error.get("code") or error.get("type")
-        return None, str(message) if message else "openrouter_error", None
+        code = _sanitize_error_part(error.get("code") or error.get("type") or "openrouter_error")
+        message = _sanitize_error_part(error.get("message") or code)
+        return None, f"openrouter_error:{code}:{message}", "provider_error"
     choices = response_json.get("choices")
     if not isinstance(choices, list) or not choices:
         return None, "openrouter_empty_choices", None
@@ -84,6 +85,13 @@ def _extract_content(response_json: dict[str, Any]) -> tuple[str | None, str | N
         joined = "".join(parts).strip()
         return joined or None, None, None
     return None, "openrouter_empty_choices", None
+
+
+def _sanitize_error_part(value: Any) -> str:
+    text = str(value or "").replace("\n", " ").replace("\r", " ")
+    for marker in ("Bearer ", "Authorization", "OPENROUTER_API_KEY"):
+        text = text.replace(marker, "[redacted]")
+    return text[:160]
 
 
 def _sentences_for_prompt(text: str) -> list[dict[str, Any]]:
