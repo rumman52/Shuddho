@@ -107,7 +107,7 @@ SHUDDHO_ENABLE_LLM=true
 # Primary provider
 SHUDDHO_LLM_PROVIDER=gemini
 GEMINI_API_KEY=<render-secret>
-GEMINI_MODEL=gemini-3.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 
 # Automatic fallback
 SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter

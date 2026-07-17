@@ -29,7 +29,7 @@ LLM_STATUSES = {
 }
 
 ProviderName = Literal["gemini", "openrouter", "openai", "disabled"]
-DEFAULT_GEMINI_MODEL = ""
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_OPENROUTER_MODEL = ""
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
@@ -124,8 +124,10 @@ def _truthy(value: str | None) -> bool | None:
 
 def _key_for_provider(provider: str, environ: dict[str, str]) -> str | None:
     if provider == "gemini":
-        if environ.get("GOOGLE_API_KEY") and environ.get("GEMINI_API_KEY"):
-            return "__SHUDDHO_CONFLICTING_GOOGLE_KEYS__"
+        # GEMINI_API_KEY is the supported production variable. GOOGLE_API_KEY is
+        # accepted only as a backward-compatible fallback so older Render
+        # services do not fail during rollout. When both are set, prefer
+        # GEMINI_API_KEY and surface a warning instead of disabling Gemini.
         return (environ.get("GEMINI_API_KEY") or environ.get("GOOGLE_API_KEY") or "").strip() or None
     if provider == "openrouter":
         return (environ.get("OPENROUTER_API_KEY") or "").strip() or None
@@ -142,7 +144,7 @@ def _model_for_provider(provider: str, environ: dict[str, str]) -> tuple[str, li
         if not model:
             warnings.append("gemini_model_missing")
         if environ.get("GOOGLE_API_KEY") and environ.get("GEMINI_API_KEY"):
-            warnings.append("conflicting_keys:delete_google_api_key_when_gemini_api_key_is_used")
+            warnings.append("google_api_key_ignored_because_gemini_api_key_is_set")
         return model, warnings
     if provider == "openrouter":
         raw = environ.get("OPENROUTER_MODEL")
@@ -168,8 +170,6 @@ def _provider_status(provider: str, model: str, api_key: str | None, warnings: l
         return False, "unsupported_provider", warnings
     if not model:
         return False, "missing_key", warnings
-    if api_key == "__SHUDDHO_CONFLICTING_GOOGLE_KEYS__":
-        return False, "configuration_error", [*warnings, "conflicting_keys"]
     if not api_key:
         missing = {
             "gemini": "gemini_api_key_missing",
