@@ -32,7 +32,7 @@ function normalizeCategory(value: unknown): SuggestionCategory {
 }
 
 export function normalizeGatewaySuggestionSource(source: unknown): SuggestionSource {
-  if (source === "rule" || source === "spell" || source === "model" || source === "hybrid") return source;
+  if (source === "rule" || source === "spell" || source === "model" || source === "hybrid" || source === "demo_fixture") return source;
   if (source === "ml" || source === "ai") return "model";
   return "rule";
 }

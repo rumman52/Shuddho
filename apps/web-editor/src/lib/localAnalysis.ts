@@ -2,7 +2,7 @@ import { getPrimaryReplacement } from "./suggestionAdapter";
 import type { AnalyzeMode, AnalyzeRequest, AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
 
 const BANGLA_WORD_PATTERN = /[\u0980-\u09FFA-Za-z]+/gu;
-const ACCEPTED_REDUPLICATION = new Set(["ধীরে ধীরে", "মাঝে মাঝে", "দিন দিন", "বার বার"]);
+const ACCEPTED_REDUPLICATION = new Set(["ধীরে ধীরে", "মাঝে মাঝে", "দিন দিন", "বার বার", "নিজ নিজ"]);
 
 export const LOCAL_FALLBACK_LABEL = "Limited browser fallback";
 export const LOCAL_FALLBACK_DESCRIPTION =
@@ -15,7 +15,32 @@ const SAFE_EXACT_REPLACEMENTS = new Map<string, string>([
   ["ব্যকরন", "ব্যাকরণ"],
   ["ব্যকরণ", "ব্যাকরণ"],
   ["অবশ্যইই", "অবশ্যই"],
+  ["গুরুত্বপূর্ন", "গুরুত্বপূর্ণ"],
+  ["বৃক্ষরোপন", "বৃক্ষরোপণ"],
+  ["রোপন", "রোপণ"],
+  ["কর্মসূচী", "কর্মসূচি"],
+  ["ওষুদের", "ওষুধের"],
+  ["ওষুদ", "ওষুধ"],
+  ["অপেক্ষমান", "অপেক্ষমাণ"],
+  ["পরিস্কার", "পরিষ্কার"],
+  ["গ্রহন", "গ্রহণ"],
+  ["অংশগ্রহনকারীদের", "অংশগ্রহণকারীদের"],
+  ["দেয়া", "দেওয়া"],
 ]);
+
+const SAFE_PHRASE_REPLACEMENTS: Array<[string, string, string, string]> = [
+  ["সবাই কে", "সবাইকে", "bn.spacing.compound_pronoun", "spacing"],
+  ["দায়িত্ব না", "দায়িত্ব নয়", "bn.grammar.formal_negation", "grammar"],
+  ["১০ টায়", "১০টায়", "bn.spacing.number_suffix", "spacing"],
+  ["বলেন শহরকে", "বলেন, শহরকে", "bn.punctuation.reported_speech_comma", "punctuation"],
+  ["আয়োজকরা জানায়", "আয়োজকেরা জানান", "bn.grammar.plural_subject_agreement", "grammar"],
+  ["দেখা যায় যে,", "দেখা যায়,", "bn.punctuation.official_clause", "punctuation"],
+  ["মজুদ", "মজুত", "bn.word_choice.mojut", "style"],
+  ["চিকিৎসকরা এবং", "চিকিৎসক ও", "bn.style.compound_subject", "style"],
+  ["ছিলোনা", "ছিল না", "bn.spacing.negative_auxiliary", "spacing"],
+  ["বলা হয়", "বলা হয়েছে", "bn.grammar.official_passive", "grammar"],
+  ["সার্বিক ভাবে", "সার্বিকভাবে", "bn.spacing.compound_sarbik", "spacing"],
+];
 
 const SAFE_VARIANT_REPLACEMENTS = new Map<string, string>([
   ["নিয়ে", "নিয়ে"],
@@ -38,6 +63,7 @@ export function analyzeTextLocally(
     ...buildWhitespaceBeforePunctuationSuggestions(text),
     ...buildBanglaFullStopSuggestions(text),
     ...buildSpaceAfterTerminatorSuggestions(text),
+    ...buildPhraseReplacementSuggestions(text),
     ...buildVariantSuggestions(text, mode, payload.personal_dictionary ?? []),
     ...buildExactCorrectionSuggestions(text, payload.personal_dictionary ?? []),
   ]);
@@ -256,6 +282,37 @@ function buildSpaceAfterTerminatorSuggestions(text: string): Suggestion[] {
   return suggestions;
 }
 
+
+function buildPhraseReplacementSuggestions(text: string): Suggestion[] {
+  const suggestions: Suggestion[] = [];
+  for (const [originalText, replacement, ruleId, category] of SAFE_PHRASE_REPLACEMENTS) {
+    let fromIndex = 0;
+    while (fromIndex < text.length) {
+      const start = text.indexOf(originalText, fromIndex);
+      if (start === -1) break;
+      suggestions.push(
+        buildSuggestion({
+          prefix: "local-phrase",
+          ruleId,
+          category: category as Suggestion["category"],
+          subtype: ruleId,
+          start,
+          end: start + originalText.length,
+          originalText,
+          replacementOptions: [replacement],
+          confidence: 0.95,
+          explanationBn: `'${originalText}' এর বদলে '${replacement}' ব্যবহার করুন।`,
+          explanationEn: `Replace '${originalText}' with '${replacement}'.`,
+          source: "rule",
+          severity: "medium",
+        }),
+      );
+      fromIndex = start + originalText.length;
+    }
+  }
+  return suggestions;
+}
+
 function buildVariantSuggestions(
   text: string,
   mode: AnalyzeMode,
@@ -442,6 +499,18 @@ function isSafeAutoApplySuggestion(text: string, suggestion: Suggestion): boolea
 }
 
 const SAFE_AUTO_APPLY_SUBTYPES = new Set([
+  "bn.spacing.compound_pronoun",
+  "bn.grammar.formal_negation",
+  "bn.spacing.number_suffix",
+  "bn.punctuation.reported_speech_comma",
+  "bn.grammar.plural_subject_agreement",
+  "bn.punctuation.official_clause",
+  "bn.word_choice.mojut",
+  "bn.style.compound_subject",
+  "bn.spacing.negative_auxiliary",
+  "bn.grammar.official_passive",
+  "bn.spacing.compound_sarbik",
+  "spelling_error",
   "repeated_word",
   "duplicate_punctuation",
   "extra_whitespace",

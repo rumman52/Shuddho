@@ -12,6 +12,7 @@ import type {
 } from "@shared/schemas/contracts";
 
 import { SuggestionCard } from "./components/SuggestionCard";
+import { CompetitionDemoPanel } from "./components/CompetitionDemoPanel";
 import {
   analyzeText,
   type BackendHealthResponse,
@@ -42,6 +43,12 @@ import {
 } from "./lib/llmStatus";
 import { analyzeTextLocally } from "./lib/localAnalysis";
 import {
+  competitionDemoFixtures,
+  isCompetitionDemoModeEnabled,
+  runCompetitionDemoReview,
+  type CompetitionDemoFixture,
+} from "./lib/competitionDemo";
+import {
   createDefaultPreferences,
   normalizePreferences,
   type ShuddhoPreferences,
@@ -65,6 +72,7 @@ const SUGGESTIONS_DISABLED_MESSAGE = BACKEND_UNAVAILABLE_MESSAGE;
 const REQUEST_TIMEOUT_MESSAGE =
   "Request timed out. Please try again or check backend deployment.";
 const DEV_LOCAL_FALLBACK_DESCRIPTION = "Dev-only browser fallback";
+const COMPETITION_DEMO_MODE = isCompetitionDemoModeEnabled();
 
 type AnalysisRequestState =
   | "idle"
@@ -217,6 +225,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileReviewOpen, setMobileReviewOpen] = useState(false);
   const [bulkApplyResult, setBulkApplyResult] = useState<string | null>(null);
+  const [selectedCompetitionFixtureId, setSelectedCompetitionFixtureId] = useState<string | null>(
+    COMPETITION_DEMO_MODE ? (competitionDemoFixtures[0]?.id ?? null) : null,
+  );
+  const [loadedCompetitionFixtureId, setLoadedCompetitionFixtureId] = useState<string | null>(null);
+  const [competitionReviewDurationMs, setCompetitionReviewDurationMs] = useState<number | null>(null);
 
   const normalizedAnalysis = useMemo(
     () => normalizeAnalyzeResponse(analysis, text, mode),
@@ -1057,6 +1070,39 @@ export default function App() {
     void refreshBackendHealth();
   }
 
+  function handleLoadCompetitionExample(fixture: CompetitionDemoFixture) {
+    setSelectedCompetitionFixtureId(fixture.id);
+    setLoadedCompetitionFixtureId(fixture.id);
+    setText(fixture.incorrectText);
+    setAnalysis(createEmptyAnalysis(fixture.incorrectText, mode, "frontend_local_fallback"));
+    setStatus("Competition demo example loaded. Click Run Demo Review when ready.");
+    setCompetitionReviewDurationMs(null);
+  }
+
+  function handleRunCompetitionDemoReview() {
+    const fixtureId = loadedCompetitionFixtureId ?? selectedCompetitionFixtureId;
+    if (!COMPETITION_DEMO_MODE || !fixtureId) return;
+    const startedAt = performance.now();
+    const response = runCompetitionDemoReview(fixtureId, text);
+    const duration = performance.now() - startedAt;
+    setCompetitionReviewDurationMs(duration);
+    setAnalysis(response);
+    setAnalysisState(response.suggestions.length ? "success" : "empty");
+    setStatus(`${response.suggestions.length} local demo suggestions ready in ${duration.toFixed(1)} ms.`);
+  }
+
+  function handleResetCompetitionExample() {
+    const fixture = competitionDemoFixtures.find((item) => item.id === (loadedCompetitionFixtureId ?? selectedCompetitionFixtureId));
+    if (fixture) handleLoadCompetitionExample(fixture);
+  }
+
+  function handleTryOwnText() {
+    setLoadedCompetitionFixtureId(null);
+    setSelectedCompetitionFixtureId(null);
+    setAnalysis(createEmptyAnalysis(text, mode));
+    setStatus("Try your own text. Normal production checks remain available.");
+  }
+
   function handleCheckWriting() {
     if (isChecking) {
       return;
@@ -1195,6 +1241,17 @@ export default function App() {
         aria-label="Bangla writing assistant workspace"
       >
         <section className="editor-column" aria-label="Writing workspace">
+          {COMPETITION_DEMO_MODE ? (
+            <CompetitionDemoPanel
+              selectedFixtureId={selectedCompetitionFixtureId}
+              onSelectFixture={setSelectedCompetitionFixtureId}
+              onLoadExample={handleLoadCompetitionExample}
+              onRunDemoReview={handleRunCompetitionDemoReview}
+              onResetExample={handleResetCompetitionExample}
+              onTryOwnText={handleTryOwnText}
+              reviewDurationMs={competitionReviewDurationMs}
+            />
+          ) : null}
           <div className="context-bar" aria-label="Writing context">
             <label className="context-item">
               <span>Writing goal</span>

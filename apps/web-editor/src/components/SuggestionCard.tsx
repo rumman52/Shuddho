@@ -205,5 +205,8 @@ function displaySuggestionSource(suggestion: Suggestion): string {
   if (suggestion.source === "model") {
     return "AI";
   }
-  return "Local";
+  if (suggestion.source === "demo_fixture") {
+    return "Prepared demo annotation";
+  }
+  return "Local rule";
 }

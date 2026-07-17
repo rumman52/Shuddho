@@ -696,3 +696,56 @@ textarea {
     animation: none !important;
   }
 }
+.competition-demo-panel {
+  background: linear-gradient(135deg, #ffffff, #f4f2fb);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+.competition-demo-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+}
+.competition-demo-panel h2 {
+  margin: 2px 0 0;
+  font-size: 1.1rem;
+}
+.competition-demo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+.competition-demo-card {
+  min-height: 96px;
+  text-align: left;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+  cursor: pointer;
+}
+.competition-demo-card--active,
+.competition-demo-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(91, 53, 213, 0.12);
+}
+.competition-demo-card span,
+.competition-demo-detail {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.competition-demo-detail {
+  display: grid;
+  gap: 8px;
+}
+.competition-demo-detail p {
+  margin: 0;
+}
