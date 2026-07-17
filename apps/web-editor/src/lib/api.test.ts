@@ -613,3 +613,42 @@ test("POST /api/check sends JSON Content-Type", async () => {
   assert.equal(seenHeaders[0].get("Content-Type"), "application/json");
   assert.equal(seenHeaders[0].get("Accept"), "application/json");
 });
+
+test("analyzeText renders five local suggestions from HTTP 200 /api/check response", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  const sample = "আমি বাংলা লিখি  ।। বাংলা বাংলা ভাষা খুব সুন্দর !!";
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        requestId: "req-local-five",
+        language: "bn",
+        normalizedText: sample,
+        correctedText: "আমি বাংলা লিখি। বাংলা ভাষা খুব সুন্দর!",
+        local_suggestion_count: 5,
+        ai_suggestion_count: 0,
+        llm_requested: false,
+        llm_attempted: false,
+        llm_status: "skipped",
+        suggestions: [
+          { id: "s1", rule_id: "spacing-before-dari", category: "punctuation", span_start: 13, span_end: 16, original_text: "  ।", replacement_options: ["।"], explanation_bn: "Remove the extra space before `।`", source: "rule", severity: "low" },
+          { id: "s2", rule_id: "double-dari", category: "punctuation", span_start: 15, span_end: 17, original_text: "।।", replacement_options: ["।"], explanation_bn: "Replace `।।` with `।`", source: "rule", severity: "low" },
+          { id: "s3", rule_id: "repeated-word", category: "grammar", span_start: 18, span_end: 29, original_text: "বাংলা বাংলা", replacement_options: ["বাংলা"], explanation_bn: "Replace repeated `বাংলা বাংলা` with `বাংলা`", source: "rule", severity: "medium" },
+          { id: "s4", rule_id: "space-before-bang", category: "punctuation", span_start: 47, span_end: 49, original_text: " !", replacement_options: ["!"], explanation_bn: "Remove the space before `!`", source: "rule", severity: "low" },
+          { id: "s5", rule_id: "double-bang", category: "punctuation", span_start: 48, span_end: 50, original_text: "!!", replacement_options: ["!"], explanation_bn: "Replace `!!` with `!`", source: "rule", severity: "low" },
+        ],
+        warnings: [],
+        diagnostics: { http_status: 200 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )) as typeof fetch;
+
+  try {
+    const result = await analyzeText({ text: sample, mode: "standard", personal_dictionary: [], user_id: "u1" }, { includeLLM: false, asyncLLM: false, llmMode: "none", mode: "fast" });
+    assert.equal(result.suggestions.length, 5);
+    assert.match(result.suggestions.map((s) => s.explanation_bn).join("\n"), /বাংলা বাংলা/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+});
