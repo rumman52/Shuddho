@@ -24,6 +24,8 @@ LLM_STATUSES = {
     "network_error",
     "rate_limited",
     "failed",
+    "circuit_open",
+    "dependency_missing",
 }
 
 ProviderName = Literal["gemini", "openrouter", "openai", "disabled"]
@@ -54,6 +56,8 @@ class LlmProviderResult:
     rejected_ai_suggestion_count: int = 0
     ai_empty_reason: str | None = None
     provider_attempts: list[dict[str, Any]] = field(default_factory=list)
+    error_code: str | None = None
+    retry_after_seconds: float | None = None
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -77,6 +81,8 @@ class LlmProviderResult:
             "rejected_ai_suggestion_count": self.rejected_ai_suggestion_count,
             "ai_empty_reason": self.ai_empty_reason,
             "provider_attempts": self.provider_attempts,
+            "error_code": self.error_code,
+            "retry_after_seconds": self.retry_after_seconds,
         }
 
 
@@ -118,8 +124,9 @@ def _truthy(value: str | None) -> bool | None:
 
 def _key_for_provider(provider: str, environ: dict[str, str]) -> str | None:
     if provider == "gemini":
-        # Google Gen AI SDK precedence: GOOGLE_API_KEY wins when both are set.
-        return (environ.get("GOOGLE_API_KEY") or environ.get("GEMINI_API_KEY") or "").strip() or None
+        if environ.get("GOOGLE_API_KEY") and environ.get("GEMINI_API_KEY"):
+            return "__SHUDDHO_CONFLICTING_GOOGLE_KEYS__"
+        return (environ.get("GEMINI_API_KEY") or environ.get("GOOGLE_API_KEY") or "").strip() or None
     if provider == "openrouter":
         return (environ.get("OPENROUTER_API_KEY") or "").strip() or None
     if provider == "openai":
@@ -135,7 +142,7 @@ def _model_for_provider(provider: str, environ: dict[str, str]) -> tuple[str, li
         if not model:
             warnings.append("gemini_model_missing")
         if environ.get("GOOGLE_API_KEY") and environ.get("GEMINI_API_KEY"):
-            warnings.append("google_api_key_takes_precedence_over_gemini_api_key")
+            warnings.append("conflicting_keys:delete_google_api_key_when_gemini_api_key_is_used")
         return model, warnings
     if provider == "openrouter":
         raw = environ.get("OPENROUTER_MODEL")
@@ -161,6 +168,8 @@ def _provider_status(provider: str, model: str, api_key: str | None, warnings: l
         return False, "unsupported_provider", warnings
     if not model:
         return False, "missing_key", warnings
+    if api_key == "__SHUDDHO_CONFLICTING_GOOGLE_KEYS__":
+        return False, "configuration_error", [*warnings, "conflicting_keys"]
     if not api_key:
         missing = {
             "gemini": "gemini_api_key_missing",

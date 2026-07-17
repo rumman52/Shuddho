@@ -6,6 +6,8 @@ import os
 import random
 import time
 from typing import Any
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 
 import httpx
 
@@ -144,14 +146,20 @@ def _strict_json_prompt_messages(messages: list[dict[str, str]]) -> list[dict[st
     return strict_messages
 
 
-def _retry_after_seconds(response: Any, fallback: float) -> float:
+def _retry_after_seconds(response: Any, fallback: float | None = None) -> float | None:
     headers = getattr(response, "headers", {}) or {}
     raw = headers.get("Retry-After") if hasattr(headers, "get") else None
     try:
         if raw is not None:
-            return max(0.0, min(float(raw), 2.0))
+            return max(0.0, float(raw))
     except (TypeError, ValueError):
-        pass
+        try:
+            dt = parsedate_to_datetime(str(raw))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
+        except Exception:
+            pass
     return fallback
 
 
@@ -227,10 +235,12 @@ def run_openrouter_check(
                         base_payload = {**base_payload, "messages": _strict_json_prompt_messages(messages)}
                         payload = base_payload
                         continue
-                if http_status in {429, 503} and attempt < max_retries:
+                if http_status == 429:
+                    break
+                if http_status == 503 and attempt < max_retries:
                     attempt += 1
                     warnings.append(f"openrouter_retry_after_http_{http_status}")
-                    time.sleep(_retry_after_seconds(response, min(2.0, 0.4 * (2 ** (attempt - 1)) + random.uniform(0, 0.2))))
+                    time.sleep(min(2.0, _retry_after_seconds(response, 0.4 * (2 ** (attempt - 1)) + random.uniform(0, 0.2)) or 0.4))
                     continue
                 break
     except httpx.TimeoutException:
@@ -249,7 +259,7 @@ def run_openrouter_check(
                     extra_warning = f"{warning}:{code}"
         except Exception:
             pass
-        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status=status, response_mode=response_mode, http_status=http_status, warnings=[*warnings, extra_warning], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
+        return LlmProviderResult(provider="openrouter", model=model, called=True, configured=True, status=status, response_mode=response_mode, http_status=http_status, warnings=[*warnings, extra_warning], timings={"llm_ms": int((time.time()-started)*1000)}, error_code=warning, retry_after_seconds=_retry_after_seconds(response, None)).model_dump()
     try:
         response_json = response.json()
     except json.JSONDecodeError:

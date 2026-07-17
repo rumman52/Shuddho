@@ -33,6 +33,7 @@ import {
 } from "./lib/api";
 import { createEmptyAnalysis, normalizeAnalyzeResponse } from "./lib/analysis";
 import { getPrimaryReplacement } from "./lib/suggestionAdapter";
+import { applySuggestionTransaction, applySuggestionBatchTransaction } from "./lib/suggestionTransaction";
 import {
   LLM_TERMINAL_STATUSES,
   isAiUnavailableStatus,
@@ -683,7 +684,11 @@ export default function App() {
       if (queuedJobId && isCurrentRequest()) {
         setAnalysisState("waiting_for_ai");
         setStatus("Local suggestions ready. Gemini review is running…");
-        void pollLlmJob(snapshot, queuedJobId, controller.signal);
+        pollLlmJob(snapshot, queuedJobId, controller.signal).catch((error) => {
+          if (!controller.signal.aborted) {
+            console.warn("Shuddho LLM polling failed", error);
+          }
+        });
         return;
       }
       setStatus(
@@ -866,19 +871,32 @@ export default function App() {
     replacement: string,
     suggestion: Suggestion,
   ) {
-    const nextText = replaceSpan(
-      text,
-      suggestion.span_start,
-      suggestion.span_end,
-      replacement,
-    );
-    setText(nextText);
-    dropSuggestion(suggestion.id);
+    activeControllerRef.current?.abort();
+    const transaction = applySuggestionTransaction(text, suggestion, replacement, suggestions);
+    if (!transaction.ok) {
+      setStatus(transaction.message);
+      setAnalysis((current) => ({ ...current, suggestions: [] }));
+      setSelectedSuggestionId(null);
+      setActiveInlineSuggestionId(null);
+      return;
+    }
+    setText(transaction.text);
+    latestTextRef.current = transaction.text;
+    setAnalysis((current) => ({ ...current, suggestions: transaction.suggestions }));
+    setSelectedSuggestionId(null);
+    setActiveInlineSuggestionId(null);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(transaction.caret, transaction.caret);
+      }
+    });
     setStatus("Suggestion applied");
     void sendFeedbackIfOnline({
       suggestion_id: candidate.id,
       action: "accepted",
-      text,
+      text: transaction.text,
       replacement,
       feedback_key: candidate.feedback_key,
       rule_id: candidate.rule_id,
@@ -1177,20 +1195,15 @@ export default function App() {
   }
 
   function handleApplySafeSuggestions() {
-    const result = applySafeSuggestionBatch(text, suggestions);
+    const result = applySuggestionBatchTransaction(text, suggestions);
     if (result.applied === 0 && result.skipped === 0) {
       setStatus("No safe suggestions available to apply");
       setBulkApplyResult("No safe suggestions available.");
       return;
     }
     setText(result.text);
-    setAnalysis((current) => ({
-      ...current,
-      suggestions: (Array.isArray(current.suggestions)
-        ? current.suggestions
-        : []
-      ).filter((suggestion) => !result.appliedIds.includes(suggestion.id)),
-    }));
+    latestTextRef.current = result.text;
+    setAnalysis((current) => ({ ...current, suggestions: result.suggestions }));
     setSelectedSuggestionId(null);
     setActiveInlineSuggestionId(null);
     const message = `${result.applied} applied, ${result.skipped} skipped`;
@@ -1383,7 +1396,7 @@ export default function App() {
               </p>
             </div>
             <div className="editor-frame">
-              <div className="editor-highlight-layer" aria-hidden="true">
+              <div className="editor-highlight-layer" aria-hidden="false">
                 {inlineSegments.map((segment) => {
                   if (!segment.suggestion)
                     return <span key={segment.key}>{segment.text}</span>;
