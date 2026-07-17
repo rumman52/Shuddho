@@ -21,7 +21,6 @@ import {
   getHealth,
   getHealthDeep,
   getLlmDebug,
-  getLlmReviewJob,
   type LlmDebugResponse,
   getUserPreferences,
   rewriteText,
@@ -34,14 +33,7 @@ import {
 import { createEmptyAnalysis, normalizeAnalyzeResponse } from "./lib/analysis";
 import { getPrimaryReplacement } from "./lib/suggestionAdapter";
 import { applySuggestionTransaction, applySuggestionBatchTransaction } from "./lib/suggestionTransaction";
-import {
-  LLM_TERMINAL_STATUSES,
-  isAiUnavailableStatus,
-  isProviderFailureStatus,
-  llmReviewStatusMessage,
-  mergeLlmJobIntoAnalysis,
-  normalizeLlmStatus,
-} from "./lib/llmStatus";
+import { isAiUnavailableStatus } from "./lib/llmStatus";
 import { analyzeTextLocally } from "./lib/localAnalysis";
 import {
   competitionDemoFixtures,
@@ -524,7 +516,10 @@ export default function App() {
         personalDictionary: [...(preferences.personal_dictionary ?? [])],
         userId,
         includeLLM,
-        asyncLLM: includeLLM,
+        // Manual Deep AI Review must be a direct frontend → backend → Gemini
+        // request. In-memory async job polling is unsafe on Render because jobs
+        // can disappear across sleeps, restarts, or workers.
+        asyncLLM: false,
         manual,
         createdAt: Date.now(),
       };
@@ -680,17 +675,6 @@ export default function App() {
         ? normalizedResponse.runtime_warnings.filter(Boolean)
         : [];
       const llmStatusMessage = friendlyLlmWarning(normalizedResponse as never);
-      const queuedJobId = readJobId(normalizedResponse);
-      if (queuedJobId && isCurrentRequest()) {
-        setAnalysisState("waiting_for_ai");
-        setStatus("Local suggestions ready. Gemini review is running…");
-        pollLlmJob(snapshot, queuedJobId, controller.signal).catch((error) => {
-          if (!controller.signal.aborted) {
-            console.warn("Shuddho LLM polling failed", error);
-          }
-        });
-        return;
-      }
       setStatus(
         responseSuggestions.length === 0
           ? "Analysis complete — no issues found by the available checks."
@@ -774,64 +758,6 @@ export default function App() {
     }
   }
 
-
-  async function pollLlmJob(snapshot: AnalysisSnapshot, jobId: string, signal: AbortSignal) {
-    let terminalReached = false;
-    try {
-      for (let attempt = 0; attempt < 40; attempt += 1) {
-        if (signal.aborted || !isSnapshotCurrent(snapshot)) {
-          setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "superseded_ai_poll" }));
-          return;
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1000 : 1500));
-        const job = await getLlmReviewJob(jobId, { signal });
-        const status = normalizeLlmStatus(job.llm_status ?? job.status ?? "running");
-        if (!LLM_TERMINAL_STATUSES.has(status)) {
-          setStatus(llmReviewStatusMessage({ ...job, llm_status: status }));
-          continue;
-        }
-        terminalReached = true;
-        if (!isSnapshotCurrent(snapshot)) {
-          setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "superseded_ai_poll" }));
-          return;
-        }
-        setAnalysis((current) => {
-          const mergedInput = mergeLlmJobIntoAnalysis(current, { ...job, llm_status: status });
-          const merged = normalizeAnalyzeResponse(mergedInput, snapshot.text, snapshot.mode);
-          setAnalysisState(Array.isArray(merged.suggestions) && merged.suggestions.length ? "success" : isProviderFailureStatus(status) ? "success" : "empty");
-          return merged;
-        });
-        setStatus(llmReviewStatusMessage({ ...job, llm_status: status }));
-        return;
-      }
-      throw new Error("AI review polling timed out");
-    } catch (error) {
-      if (!isSnapshotCurrent(snapshot)) {
-        return;
-      }
-      const message = error instanceof Error ? error.message : String(error ?? "poll_failed");
-      setApiCheckDiagnostic((current) => ({ ...current, accepted: false, discardReason: "ai_poll_failed", rejectionReason: sanitizeDiagnosticError(message) }));
-      setStatus(message.toLowerCase().includes("cors") || message.toLowerCase().includes("failed to fetch") ? `This Vercel preview domain is not allowed by the backend. Origin: ${window.location.origin}` : "AI review is temporarily unavailable. Local suggestions are still shown.");
-      setAnalysisState((currentState) => currentState === "success" ? "success" : "error");
-    } finally {
-      if (isSnapshotCurrent(snapshot) && (terminalReached || !signal.aborted)) {
-        manualAnalysisInFlightRef.current = false;
-        aiReviewInFlightRef.current = false;
-        setIsChecking(false);
-      }
-    }
-  }
-
-  function isSnapshotCurrent(snapshot: AnalysisSnapshot) {
-    return snapshot.requestId === latestSnapshotRef.current?.requestId && snapshot.text === latestTextRef.current;
-  }
-
-  function readJobId(response: AnalyzeResponse): string | null {
-    const llm = response.llm as Record<string, unknown> | null | undefined;
-    const fromLlm = typeof llm?.job_id === "string" ? llm.job_id : null;
-    const diagnostics = response.diagnostics as Record<string, unknown> | undefined;
-    return fromLlm ?? (typeof diagnostics?.job_id === "string" ? diagnostics.job_id : null);
-  }
 
   function handleSelectionChange() {
     const textarea = textareaRef.current;
@@ -1577,7 +1503,7 @@ export default function App() {
               ? analysisState === "queued"
                 ? "Latest edit queued for review…"
                 : analysisState === "waiting_for_ai"
-                  ? "Local suggestions ready. Gemini review is running…"
+                  ? "AI review in progress…"
                   : "Checking your full text with AI…"
               : getReviewStatusCopy({
                   suggestions: suggestions.length,

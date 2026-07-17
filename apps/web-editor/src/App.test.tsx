@@ -295,14 +295,11 @@ test("analyzeText accepts HTTP 200 empty suggestions as valid empty analysis", a
   }
 });
 
-test("App source preserves local suggestions while queued AI polling runs", () => {
+test("App source sends manual Deep AI Review as a direct backend request", () => {
   const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(source, /setAnalysisState\("waiting_for_ai"\)/);
-  assert.match(source, /Local suggestions ready\. Gemini review is running/);
-  assert.doesNotMatch(source, /void pollLlmJob\(snapshot, queuedJobId, controller\.signal\);/);
-  assert.match(source, /pollLlmJob\(snapshot, queuedJobId, controller\.signal\)\.catch/);
-  assert.match(source, /setAnalysis\(\(current\) =>/);
-  assert.match(source, /normalizeLlmStatus/);
-  assert.match(source, /llmReviewStatusMessage/);
-  assert.match(source, /This Vercel preview domain is not allowed by the backend/);
+  assert.match(source, /asyncLLM: false/);
+  assert.match(source, /In-memory async job polling is unsafe on Render/);
+  assert.doesNotMatch(source, /pollLlmJob\(/);
+  assert.doesNotMatch(source, /getLlmReviewJob/);
+  assert.doesNotMatch(source, /Gemini review is running/);
 });
