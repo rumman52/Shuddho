@@ -3,6 +3,7 @@ import type {
   AnalyzeResponse,
   Suggestion,
 } from "@shared/schemas/contracts";
+import { normalizeGatewaySuggestions } from "./suggestionAdapter";
 
 export function approximateSentenceCount(text: string): number {
   return text
@@ -42,9 +43,7 @@ export function normalizeAnalyzeResponse(
 ): AnalyzeResponse {
   const base = createEmptyAnalysis(fallbackText, fallbackMode);
 
-  const suggestions = Array.isArray(input?.suggestions)
-    ? input.suggestions
-    : [];
+  const suggestions = normalizeGatewaySuggestions(input?.suggestions, input?.text ?? fallbackText);
 
   return {
     ...base,
@@ -91,5 +90,5 @@ export function normalizeAnalyzeResponse(
 export function safeSuggestions(
   input: Partial<AnalyzeResponse> | null | undefined,
 ): Suggestion[] {
-  return Array.isArray(input?.suggestions) ? input.suggestions : [];
+  return normalizeGatewaySuggestions(input?.suggestions, input?.text ?? "");
 }

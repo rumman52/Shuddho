@@ -14,6 +14,7 @@ import {
   type ShuddhoPreferences,
 } from "./preferences";
 import { approximateSentenceCount, normalizeAnalyzeResponse } from "./analysis";
+import { normalizeGatewaySuggestions } from "./suggestionAdapter";
 import {
   AI_REVIEW_TIMEOUT_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -715,47 +716,7 @@ export function gatewayCheckToAnalyzeResponse(
     rejected_ai_suggestion_count: response.rejected_ai_suggestion_count,
     diagnostics: { ...(response.diagnostics ?? {}), llm: response.llm ?? (response.diagnostics as { llm?: unknown } | undefined)?.llm },
     llm: response.llm ?? null,
-    suggestions: suggestions.map((suggestion, index) => ({
-      id:
-        suggestion.id ??
-        `${suggestion.ruleId ?? suggestion.rule_id ?? "suggestion"}-${index}`,
-      rule_id: suggestion.ruleId ?? suggestion.rule_id ?? "unknown_rule",
-      category: suggestion.type ?? suggestion.category ?? "grammar",
-      subtype:
-        suggestion.subtype ??
-        suggestion.ruleId ??
-        suggestion.rule_id ??
-        "suggestion",
-      span_start:
-        suggestion.span?.codePointStartIndex ??
-        suggestion.span?.startIndex ??
-        suggestion.span_start ??
-        0,
-      span_end:
-        suggestion.span?.codePointEndIndex ??
-        suggestion.span?.endIndex ??
-        suggestion.span_end ??
-        0,
-      original_text: suggestion.originalText ?? suggestion.original_text ?? "",
-      replacement_options: Array.isArray(suggestion.replacementOptions)
-        ? suggestion.replacementOptions
-        : Array.isArray(suggestion.replacement_options)
-          ? suggestion.replacement_options
-          : suggestion.suggestedText || suggestion.suggested_text
-            ? [suggestion.suggestedText ?? suggestion.suggested_text ?? ""]
-            : [],
-      confidence: suggestion.confidence ?? 0,
-      explanation_bn:
-        suggestion.explanationBn ?? suggestion.explanation_bn ?? "",
-      explanation_en:
-        suggestion.explanationEn ?? suggestion.explanation_en ?? "",
-      source: normalizeGatewaySuggestionSource(suggestion.source),
-      provider: suggestion.provider ?? null,
-      metadata: suggestion.metadata ?? null,
-      severity: suggestion.severity ?? "low",
-      suppression_key:
-        suggestion.suppressionKey ?? suggestion.suppression_key ?? "",
-    })),
+    suggestions: normalizeGatewaySuggestions(suggestions, payload.text),
   };
 
   return normalizeAnalyzeResponse(
@@ -818,23 +779,6 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   if (["provider_error", "network_error", "failed"].includes(status)) return "AI providers are unavailable. Showing local suggestions.";
   if (status === "content_filter") return `${providerLabel} could not review this content. Showing local suggestions.`;
   return `LLM status: ${status}`;
-}
-
-function normalizeGatewaySuggestionSource(
-  source: string | undefined,
-): "rule" | "spell" | "model" | "hybrid" {
-  if (
-    source === "rule" ||
-    source === "spell" ||
-    source === "model" ||
-    source === "hybrid"
-  ) {
-    return source;
-  }
-  if (source === "ml") {
-    return "model";
-  }
-  return "rule";
 }
 
 export function getApiBaseUrl(): string {

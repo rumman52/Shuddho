@@ -20,16 +20,21 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error("Frontend render error", error, info);
+    if (import.meta.env.DEV) {
+      console.error("Frontend render error", error, info.componentStack);
+    } else {
+      console.error("Frontend render error", error.name);
+    }
   }
 
   render() {
     if (this.state.hasError) {
       return (
         <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
-          <h1>Shuddho could not load</h1>
-          <p>A frontend error occurred. Please check the backend URL and reload.</p>
-          {this.state.message ? <pre style={{ whiteSpace: "pre-wrap" }}>{this.state.message}</pre> : null}
+          <h1>Shuddho encountered an unexpected editor error</h1>
+          <p>Reload the page to recover. If this repeats, contact support with the time of the error.</p>
+          <button type="button" onClick={() => window.location.reload()}>Reload</button>
+          {import.meta.env.DEV && this.state.message ? <pre style={{ whiteSpace: "pre-wrap" }}>{this.state.message}</pre> : null}
         </main>
       );
     }

@@ -31,6 +31,7 @@ import {
   friendlyLlmWarning,
 } from "./lib/api";
 import { createEmptyAnalysis, normalizeAnalyzeResponse } from "./lib/analysis";
+import { getPrimaryReplacement } from "./lib/suggestionAdapter";
 import {
   LLM_TERMINAL_STATUSES,
   isAiUnavailableStatus,
@@ -891,7 +892,7 @@ export default function App() {
       suggestion_id: suggestion.id,
       action: "ignore_forever",
       text,
-      replacement: suggestion.replacement_options[0] ?? null,
+      replacement: getPrimaryReplacement(suggestion) || null,
       feedback_key: suggestion.feedback_key,
       rule_id: suggestion.rule_id,
       subtype: suggestion.subtype,
@@ -920,7 +921,7 @@ export default function App() {
       suggestion_id: suggestion.id,
       action: "add_to_personal_dictionary",
       text,
-      replacement: suggestion.replacement_options[0] ?? null,
+      replacement: getPrimaryReplacement(suggestion) || null,
       feedback_key: suggestion.feedback_key,
       rule_id: suggestion.rule_id,
       subtype: suggestion.subtype,
@@ -1263,7 +1264,7 @@ export default function App() {
                   if (!segment.suggestion)
                     return <span key={segment.key}>{segment.text}</span>;
                   const suggestion = segment.suggestion;
-                  const replacement = suggestion.replacement_options[0] ?? "";
+                  const replacement = getPrimaryReplacement(suggestion);
                   const isActive = activeInlineSuggestionId === suggestion.id;
                   return (
                     <span
@@ -1823,7 +1824,7 @@ export function applySafeSuggestionBatch(
 ): SafeApplyResult {
   const candidates = suggestions
     .filter(
-      (suggestion) => (suggestion.replacement_options[0] ?? "").length > 0,
+      (suggestion) => getPrimaryReplacement(suggestion).length > 0,
     )
     .sort((a, b) => a.span_start - b.span_start || a.span_end - b.span_end);
   const selected: Suggestion[] = [];
@@ -1861,7 +1862,7 @@ export function applySafeSuggestionBatch(
       draft,
       suggestion.span_start,
       suggestion.span_end,
-      suggestion.replacement_options[0] ?? "",
+      getPrimaryReplacement(suggestion),
     );
     appliedIds.push(suggestion.id);
   }

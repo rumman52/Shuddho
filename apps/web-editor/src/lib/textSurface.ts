@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { Suggestion } from "@shared/schemas/contracts";
+import { getPrimaryReplacement } from "./suggestionAdapter";
 
 export interface TextSegment {
   start: number;
@@ -97,7 +98,7 @@ export function matchSuggestionByContext(previous: Suggestion | null, nextSugges
     if (suggestion.original_text !== previous.original_text) {
       return false;
     }
-    if ((suggestion.replacement_options[0] ?? "") !== (previous.replacement_options[0] ?? "")) {
+    if (getPrimaryReplacement(suggestion) !== getPrimaryReplacement(previous)) {
       return false;
     }
     if (suggestion.occurrence_index !== previous.occurrence_index) {

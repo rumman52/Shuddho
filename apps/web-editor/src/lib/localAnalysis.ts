@@ -1,3 +1,4 @@
+import { getPrimaryReplacement } from "./suggestionAdapter";
 import type { AnalyzeMode, AnalyzeRequest, AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
 
 const BANGLA_WORD_PATTERN = /[\u0980-\u09FFA-Za-z]+/gu;
@@ -431,7 +432,7 @@ function isSafeAutoApplySuggestion(text: string, suggestion: Suggestion): boolea
     return false;
   }
 
-  const replacement = suggestion.replacement_options[0] ?? "";
+  const replacement = getPrimaryReplacement(suggestion);
   const originalText = text.slice(suggestion.span_start, suggestion.span_end);
   if (!replacement || originalText !== suggestion.original_text || replacement === originalText) {
     return false;
@@ -460,7 +461,7 @@ function buildEditCandidates(text: string, suggestions: Suggestion[]): EditCandi
   const candidates = new Map<string, EditCandidate>();
 
   for (const suggestion of suggestions) {
-    const replacement = suggestion.replacement_options[0] ?? "";
+    const replacement = getPrimaryReplacement(suggestion);
     setBestCandidate(candidates, {
       start: suggestion.span_start,
       end: suggestion.span_end,
@@ -563,7 +564,7 @@ function applyOrdering(clusterText: string, clusterStart: number, ordering: Sugg
 
   for (const suggestion of ordering) {
     const needle = suggestion.original_text;
-    const replacement = suggestion.replacement_options[0] ?? "";
+    const replacement = getPrimaryReplacement(suggestion);
     if (!needle || !replacement) {
       return null;
     }

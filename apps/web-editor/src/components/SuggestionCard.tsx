@@ -3,6 +3,7 @@ import type {
   Suggestion,
   SuggestionAlternative,
 } from "@shared/schemas/contracts";
+import { getReplacementOptions } from "../lib/suggestionAdapter";
 
 interface SuggestionCardProps {
   suggestion: Suggestion;
@@ -32,9 +33,7 @@ export function SuggestionCard({
     suggestion.suggestion_reason_short_bn ??
     suggestion.explanation_bn ??
     suggestion.explanation_en;
-  const replacementOptions = Array.isArray(suggestion.replacement_options)
-    ? suggestion.replacement_options
-    : [];
+  const replacementOptions = getReplacementOptions(suggestion);
   const alternatives = Array.isArray(suggestion.alternatives)
     ? suggestion.alternatives
     : [];

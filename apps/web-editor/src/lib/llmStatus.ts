@@ -1,4 +1,5 @@
-import type { AnalyzeResponse, Suggestion } from "@shared/schemas/contracts";
+import type { AnalyzeResponse } from "@shared/schemas/contracts";
+import { normalizeGatewaySuggestions } from "./suggestionAdapter";
 import type { LlmReviewJobResponse } from "./api";
 
 export const AI_UNAVAILABLE_STATUSES = new Set([
@@ -44,13 +45,20 @@ export function mergeLlmJobIntoAnalysis(
   job: LlmReviewJobResponse,
 ): Partial<AnalyzeResponse> {
   const status = normalizeLlmStatus(job.llm_status ?? job.status);
-  const providerFailureWithNoSuggestions = isProviderFailureStatus(status) && (!Array.isArray(job.suggestions) || job.suggestions.length === 0);
+  const currentSuggestions = normalizeGatewaySuggestions(current.suggestions, current.text);
+  const jobSuggestions = normalizeGatewaySuggestions(job.suggestions, current.text);
+  const providerFailureWithNoSuggestions = isProviderFailureStatus(status) && jobSuggestions.length === 0;
+  const terminalSuccess = ["completed", "completed_empty", "completed_rejected"].includes(status);
+  const selectedSuggestions = providerFailureWithNoSuggestions
+    ? currentSuggestions
+    : terminalSuccess || jobSuggestions.length > 0
+      ? jobSuggestions
+      : currentSuggestions;
+  const dedupedSuggestions = Array.from(new Map(selectedSuggestions.map((suggestion) => [suggestion.id, suggestion])).values());
   return {
     ...current,
     ...job,
-    suggestions: providerFailureWithNoSuggestions
-      ? (current.suggestions as Suggestion[])
-      : (job.suggestions as unknown as Suggestion[] | undefined),
+    suggestions: dedupedSuggestions,
     llm_status: status,
     llm_requested: job.llm_requested ?? current.llm_requested,
     llm_attempted: job.llm_attempted ?? current.llm_attempted,

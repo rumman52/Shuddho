@@ -9,6 +9,7 @@ const tests = [
   "src/lib/api.test.ts",
   "src/lib/analysis.test.ts",
   "src/lib/llmStatus.test.ts",
+  "src/lib/suggestionAdapter.test.ts",
   "src/App.test.tsx",
   "src/lib/preferences.test.ts",
   "src/lib/runtimeStatus.test.ts",
