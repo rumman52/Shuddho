@@ -184,6 +184,8 @@ class ApiCheckRequest(BaseModel):
 
 
 def _parse_allowed_origins(value: str | None) -> list[str]:
+    from urllib.parse import urlparse
+
     allowed_origins = list(DEFAULT_ALLOWED_ORIGINS)
     if value is None or not value.strip():
         return allowed_origins
@@ -192,8 +194,13 @@ def _parse_allowed_origins(value: str | None) -> list[str]:
         origin = raw_origin.strip().rstrip("/")
         if not origin or origin == "*":
             continue
-        if origin not in allowed_origins:
-            allowed_origins.append(origin)
+        parsed = urlparse(origin)
+        if "=" in origin or parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"}:
+            logger.warning("Ignoring malformed allowed origin item for %s", ALLOWED_ORIGINS_ENV_VAR)
+            continue
+        normalized = f"{parsed.scheme}://{parsed.netloc}"
+        if normalized not in allowed_origins:
+            allowed_origins.append(normalized)
     return allowed_origins
 
 
@@ -319,7 +326,7 @@ llm_circuit_until: dict[str, float] = {}
 llm_provider_state: dict[str, dict[str, Any]] = {}
 llm_jobs_lock = threading.RLock()
 llm_executor = ThreadPoolExecutor(max_workers=int(os.environ.get("SHUDDHO_LLM_JOB_WORKERS", "4") or "4"), thread_name_prefix="shuddho-llm")
-LLM_TERMINAL_STATUSES = {"completed", "completed_empty", "completed_rejected", "rate_limited", "timeout", "provider_error", "auth_or_forbidden", "model_not_found", "failed", "expired", "cancelled"}
+LLM_TERMINAL_STATUSES = {"completed", "completed_empty", "completed_rejected", "missing_key", "unsupported_provider", "rate_limited", "timeout", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "network_error", "failed", "expired", "cancelled"}
 
 class ApiPreferences(BaseModel):
     user_id: str = "demo-user"
@@ -549,7 +556,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         ai = _run_ai_check(canonical_payload.text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45")) or "45"))
         llm_ms = float(int((time.time() - llm_started) * 1000))
         llm_block.update({"status": ai.status, "warnings": list(ai.warnings), "error": ai.warnings[0] if ai.warnings and ai.status not in {"completed", "completed_empty"} else None, "llm_ms": llm_ms, "attempted": bool(ai.called)})
-        if ai.status in {"completed", "completed_empty"}:
+        if ai.status in {"completed", "completed_empty", "completed_rejected"}:
             sentences = _sentences_for_ai(canonical_payload.text)
             raw_ai_count = int(ai.ai_raw_suggestion_count or len(ai.suggestions or []))
             validated_ai, validation_warnings = validate_ai_suggestions(canonical_payload.text, ai.suggestions, sentences)
@@ -592,7 +599,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["ai_valid_suggestion_count"] = len(validated_ai)
     response_payload["ai_rejected_suggestion_count"] = rejected_count
     response_payload["ai_empty_reason"] = ai_empty_reason
-    response_payload["correctedText"] = ai.correctedText if ai.status in {"completed", "completed_empty"} and ai.correctedText and "llm_text_truncated" not in ai.warnings else response_payload.get("correctedText") or canonical_payload.text
+    response_payload["correctedText"] = ai.correctedText if ai.status in {"completed", "completed_empty", "completed_rejected"} and ai.correctedText and "llm_text_truncated" not in ai.warnings else response_payload.get("correctedText") or canonical_payload.text
     response_payload["documentAssessment"] = ai.documentAssessment if ai.status in {"completed", "completed_empty", "completed_rejected"} and ai.documentAssessment else response_payload.get("documentAssessment") or {}
     timings: dict[str, int | float | bool] = {
         "local_ms": local_ms,
@@ -721,7 +728,17 @@ def get_llm_review(job_id: str) -> dict:
             normalized["status"] = _normalize_job_status(str(normalized.get("status") or normalized.get("llm_status") or "running"))
             normalized["llm_status"] = _normalize_job_status(str(normalized.get("llm_status") or normalized["status"]))
             return normalized
-    return {"job_id": job_id, "status": "expired", "llm_status": "expired", "suggestions": [], "warnings": ["llm_job_not_found_or_expired"]}
+    config = resolve_llm_config(os.environ)
+    return _canonical_llm_job_payload(
+        job_id=job_id,
+        status="expired",
+        provider=config.provider,
+        model=config.model,
+        suggestions=[],
+        local_suggestion_count=0,
+        warnings=["llm_job_not_found_or_expired"],
+        configured=config.configured,
+    )
 
 
 @app.get("/api/llm/debug")
@@ -1062,7 +1079,7 @@ def _record_provider_attempt(result: dict[str, Any]) -> None:
     key = f"{provider}:{model}"
     status = str(result.get("status") or "failed")
     previous = llm_provider_state.get(key, {})
-    failed = status not in {"completed", "completed_empty"}
+    failed = status not in {"completed", "completed_empty", "completed_rejected"}
     consecutive = (int(previous.get("consecutive_failures") or 0) + 1) if failed else 0
     llm_provider_state[key] = {
         "last_request_status": status,
@@ -1074,6 +1091,108 @@ def _record_provider_attempt(result: dict[str, Any]) -> None:
         _record_llm_failure(provider, model, [*(result.get("warnings") or []), status])
 
 
+
+def _classify_ai_result_after_validation(text: str, result: dict[str, Any]) -> dict[str, Any]:
+    classified = dict(result)
+    status = str(classified.get("status") or "failed")
+    if status not in {"completed", "completed_empty", "completed_rejected"}:
+        return classified
+    raw_count = int(classified.get("ai_raw_suggestion_count") or len(classified.get("suggestions") or []))
+    valid_ai, validation_warnings = validate_ai_suggestions(text, classified.get("suggestions") or [], _sentences_for_ai(text))
+    rejected_count = max(0, raw_count - len(valid_ai))
+    warnings = list(classified.get("warnings") or [])
+    empty_reason: str | None = None
+    if raw_count == 0:
+        status = "completed_empty"
+        empty_reason = "model_returned_no_suggestions"
+    elif len(valid_ai) == 0:
+        status = "completed_rejected"
+        empty_reason = "all_ai_suggestions_rejected"
+        validation_warnings = _dedupe_strings([*validation_warnings, "ai_suggestions_rejected"])
+    else:
+        status = "completed"
+    classified.update({
+        "status": status,
+        "suggestions": valid_ai,
+        "ai_raw_suggestion_count": raw_count,
+        "ai_valid_suggestion_count": len(valid_ai),
+        "ai_rejected_suggestion_count": rejected_count,
+        "rejected_ai_suggestion_count": rejected_count,
+        "ai_empty_reason": empty_reason,
+        "warnings": _dedupe_strings([*warnings, *validation_warnings]),
+    })
+    return classified
+
+
+def _canonical_llm_job_payload(
+    *,
+    job_id: str,
+    status: str,
+    provider: str,
+    model: str,
+    suggestions: list[dict[str, Any]],
+    local_suggestion_count: int,
+    warnings: list[str] | None = None,
+    response_mode: str = "none",
+    called: bool = False,
+    configured: bool = False,
+    parsed: bool = False,
+    http_status: int | None = None,
+    usage: dict[str, Any] | None = None,
+    timings: dict[str, Any] | None = None,
+    provider_attempts: list[dict[str, Any]] | None = None,
+    ai_raw_suggestion_count: int = 0,
+    ai_valid_suggestion_count: int = 0,
+    ai_rejected_suggestion_count: int = 0,
+    ai_empty_reason: str | None = None,
+    correctedText: str | None = None,
+    documentAssessment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_status = _normalize_job_status(status)
+    used = normalized_status in {"completed", "completed_empty", "completed_rejected"} and parsed
+    attempted = normalized_status not in {"queued", "skipped", "not_requested"}
+    warn = _dedupe_strings(warnings or [])
+    safe_timings = _safe_timings(timings or {})
+    attempts = provider_attempts or []
+    payload = {
+        "job_id": job_id,
+        "status": normalized_status,
+        "llm_status": normalized_status,
+        "llm_requested": True,
+        "llm_attempted": attempted,
+        "llm_used": used,
+        "llm_provider": provider,
+        "llm_model": model,
+        "llm_response_mode": response_mode,
+        "provider": provider,
+        "model": model,
+        "suggestions": suggestions,
+        "local_suggestion_count": local_suggestion_count,
+        "ai_suggestion_count": ai_valid_suggestion_count,
+        "ai_raw_suggestion_count": ai_raw_suggestion_count,
+        "ai_valid_suggestion_count": ai_valid_suggestion_count,
+        "ai_rejected_suggestion_count": ai_rejected_suggestion_count,
+        "rejected_ai_suggestion_count": ai_rejected_suggestion_count,
+        "ai_empty_reason": ai_empty_reason,
+        "correctedText": correctedText,
+        "documentAssessment": documentAssessment or {},
+        "warnings": warn,
+        "usage": usage or {},
+        "timings": safe_timings,
+        "provider_attempts": attempts,
+    }
+    payload["llm"] = {
+        "requested": True, "attempted": attempted, "used": used, "called": called,
+        "configured": configured, "parsed": parsed, "status": normalized_status,
+        "provider": provider, "model": model, "response_mode": response_mode,
+        "http_status": http_status, "job_id": job_id, "warnings": warn,
+        "provider_attempts": attempts, "ai_raw_suggestion_count": ai_raw_suggestion_count,
+        "ai_valid_suggestion_count": ai_valid_suggestion_count,
+        "ai_rejected_suggestion_count": ai_rejected_suggestion_count,
+        "ai_empty_reason": ai_empty_reason, "usage": usage or {}, "timings": safe_timings,
+    }
+    return payload
+
 def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list[dict[str, Any]], local_suggestions: list[dict[str, Any]], candidates: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
     started = time.monotonic()
     total_deadline = max(1.0, float(timeout))
@@ -1082,6 +1201,7 @@ def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list
     primary_cfg = _provider_configured(config)
     result = run_configured_provider(primary_cfg, text, request_id, sentences, local_suggestions, candidates, primary_timeout)
     _record_provider_attempt(result)
+    result = _classify_ai_result_after_validation(text, result)
     primary_status = str(result.get("status") or "failed")
     attempts = [{"role": "primary", "provider": result.get("provider"), "model": result.get("model"), "status": primary_status, "http_status": result.get("http_status"), "warnings": result.get("warnings") or []}]
     fallback_provider = config.fallback_provider
@@ -1093,7 +1213,7 @@ def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list
         and fallback_provider != config.provider
         and not _is_circuit_open(fallback_provider, config.fallback_model)
     )
-    if fallback_ready and primary_status in FALLBACK_ELIGIBLE_STATUSES:
+    if fallback_ready and (primary_status in FALLBACK_ELIGIBLE_STATUSES or primary_status == "completed_rejected"):
         elapsed = time.monotonic() - started
         remaining = total_deadline - elapsed
         if remaining <= 1.0:
@@ -1105,6 +1225,7 @@ def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list
         fallback_timeout = min(remaining, max(1.0, float(os.environ.get(fallback_env, "18") or "18")))
         fallback_result = run_configured_provider(fallback_cfg, text, request_id, sentences, local_suggestions, candidates, fallback_timeout)
         _record_provider_attempt(fallback_result)
+        fallback_result = _classify_ai_result_after_validation(text, fallback_result)
         attempts.append({"role": "fallback", "provider": fallback_result.get("provider"), "model": fallback_result.get("model"), "status": fallback_result.get("status"), "http_status": fallback_result.get("http_status"), "warnings": fallback_result.get("warnings") or []})
         fallback_result["warnings"] = _dedupe_strings([
             *(result.get("warnings") or []),
@@ -1115,7 +1236,7 @@ def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list
         ])
         fallback_result["provider_attempts"] = attempts
         fallback_result.setdefault("timings", {})
-        fallback_result["timings"] = {**(fallback_result.get("timings") or {}), "fallback_used": fallback_result.get("status") in {"completed", "completed_empty"}}
+        fallback_result["timings"] = {**(fallback_result.get("timings") or {}), "fallback_used": fallback_result.get("status") in {"completed", "completed_empty", "completed_rejected"}}
         return fallback_result
     result["provider_attempts"] = attempts
     if fallback_provider and not fallback_ready:
@@ -1154,7 +1275,7 @@ def _run_ai_check(
         result["timings"] = {**(result.get("timings") or {}), "cache_hit": True}
     else:
         result = _run_provider_chain(config, ai_text, request_id, sentences, locals_for_prompt, candidates, timeout)
-        if result.get("status") in {"completed", "completed_empty"}:
+        if result.get("status") in {"completed", "completed_empty", "completed_rejected"}:
             llm_cache[cache_key] = {"created_at": time.time(), "result": result, "provider": result.get("provider"), "model": result.get("model")}
     warnings = _dedupe_strings([*config.warnings, *truncation_warnings, *(result.get("warnings") or [])])
     logger.info("ai_check_complete request_id=%s provider=%s model=%s status=%s http_status=%s text_length=%s sent_length=%s llm_ms=%s warnings=%s", request_id, result.get("provider") or config.provider, result.get("model") or config.model, result.get("status"), result.get("http_status"), len(text), len(ai_text), (result.get("timings") or {}).get("llm_ms"), len(warnings))
@@ -1202,41 +1323,92 @@ def _create_llm_review_job(text: str, language: str, local_suggestions: list[dic
         ),
     )
     now = time.time()
-    job = {"job_id": job_id, "status": "queued", "llm_status": "queued", "suggestions": [], "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": [], "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "timings": {"queue_ms": 0, "llm_ms": 0, "total_ms": 0}, "created_at": now, "updated_at": now, "created_at_iso": _now_iso(), "updated_at_iso": _now_iso(), "request_id": request_id, "mode": mode, "language": language}
+    config = resolve_llm_config(os.environ)
+    job = _canonical_llm_job_payload(
+        job_id=job_id,
+        status="queued",
+        provider=config.provider,
+        model=config.model,
+        suggestions=list(local_suggestions or []),
+        local_suggestion_count=len(local_suggestions or []),
+        warnings=list(config.warnings),
+        configured=config.configured,
+        timings={"queue_ms": 0, "llm_ms": 0, "total_ms": 0},
+    )
+    job.update({"created_at": now, "updated_at": now, "created_at_iso": _now_iso(), "updated_at_iso": _now_iso(), "request_id": request_id, "mode": mode, "language": language, "candidate_count": len(candidates)})
     with llm_jobs_lock:
         llm_jobs[job_id] = job
     llm_executor.submit(_run_llm_job, job_id, text, candidates, local_suggestions, request_id)
-    return {"job_id": job_id, "status": "queued", "llm_status": "queued", "estimated_seconds": 3, "candidate_count": len(candidates)}
+    return {k: job[k] for k in ("job_id", "status", "llm_status", "llm_requested", "llm_attempted", "llm_used", "llm_provider", "llm_model", "llm_response_mode", "suggestions", "local_suggestion_count", "ai_suggestion_count", "ai_raw_suggestion_count", "ai_valid_suggestion_count", "ai_rejected_suggestion_count", "rejected_ai_suggestion_count", "ai_empty_reason", "correctedText", "documentAssessment", "warnings", "usage", "timings", "provider_attempts", "llm") } | {"estimated_seconds": 3, "candidate_count": len(candidates)}
 
 
 def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestions: list[dict], request_id: str) -> None:
     started = time.time()
-    _update_llm_job(job_id, {"status": "running", "llm_status": "running", "started_at": time.time(), "started_at_iso": _now_iso()})
-    enabled, provider, model, _ = _llm_config()
-    if not enabled or _is_circuit_open(provider, model):
-        _update_llm_job(job_id, {"status": "failed", "llm_status": "failed", "warnings": ["llm_circuit_open" if _is_circuit_open(provider, model) else "llm_disabled"]})
-        return
-    key = _cache_key(text, local_suggestions, candidates, provider, model, resolve_llm_config(os.environ).fallback_provider, resolve_llm_config(os.environ).fallback_model)
+    config = resolve_llm_config(os.environ)
+    _update_llm_job(job_id, {"status": "running", "llm_status": "running", "llm_attempted": True, "started_at": time.time(), "started_at_iso": _now_iso()})
+    local_suggestions = list(local_suggestions or [])
+    key = _cache_key(text, local_suggestions, candidates, config.provider, config.model, config.fallback_provider, config.fallback_model)
     cached = llm_cache.get(key)
     ttl = int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400"))
     if cached and time.time() - cached.get("created_at", 0) < ttl:
-        _update_llm_job(job_id, {**cached, "job_id": job_id, "status": _normalize_job_status(str(cached.get("status") or cached.get("llm_status") or "completed")), "llm_status": _normalize_job_status(str(cached.get("llm_status") or cached.get("status") or "completed")), "cache_hit": True})
+        cached_payload = dict(cached.get("result") or cached)
+        cached_payload.update({"job_id": job_id, "cache_hit": True})
+        cached_payload["status"] = _normalize_job_status(str(cached_payload.get("status") or cached_payload.get("llm_status") or "completed"))
+        cached_payload["llm_status"] = cached_payload["status"]
+        cached_payload["timings"] = {**(cached_payload.get("timings") or {}), "cache_hit": True}
+        if isinstance(cached_payload.get("llm"), dict):
+            cached_payload["llm"] = {**cached_payload["llm"], "job_id": job_id, "status": cached_payload["status"], "cache_hit": True, "timings": cached_payload["timings"]}
+        _update_llm_job(job_id, cached_payload)
         return
-    ai = _run_ai_check(text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "60") or "60"))
-    if ai.status not in {"completed", "completed_empty"}:
-        _record_llm_failure(ai.provider, ai.model, ai.warnings or [ai.status])
-        terminal = ai.status if ai.status in LLM_TERMINAL_STATUSES else (ai.status if ai.status in {"timeout", "rate_limited", "provider_error", "auth_or_forbidden", "model_not_found"} else "failed")
-        _update_llm_job(job_id, {"status": terminal, "llm_status": terminal, "warnings": ai.warnings, "provider": ai.provider, "model": ai.model, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}})
-        return
-    valid_ai, validation_warnings = validate_ai_suggestions(text, ai.suggestions, _sentences_for_ai(text))
-    merged, merge_warnings = merge_suggestions(text, local_suggestions, valid_ai, ai.provider, ai.model)
-    warnings = _dedupe_strings([*ai.warnings, *validation_warnings, *merge_warnings])
-    raw_ai_count = int(ai.ai_raw_suggestion_count or len(ai.suggestions or []))
-    payload = {"suggestions": merged, "ai_suggestion_count": len(valid_ai), "ai_raw_suggestion_count": raw_ai_count, "ai_valid_suggestion_count": len(valid_ai), "ai_rejected_suggestion_count": max(0, raw_ai_count - len(valid_ai)), "ai_empty_reason": "model_returned_no_suggestions" if raw_ai_count == 0 else ("all_ai_suggestions_rejected" if raw_ai_count and not valid_ai else None), "correctedText": ai.correctedText, "documentAssessment": ai.documentAssessment, "llm_status": ai.status, "provider": ai.provider, "model": ai.model, "verified_local_suggestion_ids": [], "rejected_local_suggestion_ids": [], "warnings": warnings, "usage": ai.usage, "timings": {"queue_ms": 0, "llm_ms": int((time.time()-started)*1000), "total_ms": int((time.time()-started)*1000)}, "created_at": time.time()}
-    llm_cache[key] = payload
-    final_status = ai.status if ai.status in {"completed_empty", "completed_rejected"} else ("completed" if ai.status == "completed" else ai.status)
-    _update_llm_job(job_id, payload | {"status": final_status, "llm_status": final_status})
 
+    ai = _run_ai_check(text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50") or "50"))
+    elapsed = int((time.time() - started) * 1000)
+    status = ai.status if ai.status in LLM_TERMINAL_STATUSES else "failed"
+    valid_ai: list[dict[str, Any]] = list(ai.suggestions or []) if status in {"completed", "completed_empty", "completed_rejected"} else []
+    raw_ai_count = int(ai.ai_raw_suggestion_count or len(ai.suggestions or []))
+    rejected_count = max(0, raw_ai_count - len(valid_ai))
+    ai_empty_reason = ai.timings.get("ai_empty_reason") if isinstance(ai.timings, dict) else None
+    if status == "completed_empty":
+        ai_empty_reason = "model_returned_no_suggestions"
+    elif status == "completed_rejected":
+        ai_empty_reason = "all_ai_suggestions_rejected"
+    if status in {"completed", "completed_empty", "completed_rejected"}:
+        merged, merge_warnings = merge_suggestions(text, local_suggestions, valid_ai, ai.provider, ai.model)
+        warnings = _dedupe_strings([*ai.warnings, *merge_warnings])
+    else:
+        _record_llm_failure(ai.provider, ai.model, ai.warnings or [ai.status])
+        merged = local_suggestions
+        warnings = _dedupe_strings(ai.warnings or [f"llm_{status}"])
+        raw_ai_count = 0
+        rejected_count = 0
+        ai_empty_reason = status
+    payload = _canonical_llm_job_payload(
+        job_id=job_id,
+        status=status,
+        provider=ai.provider,
+        model=ai.model,
+        suggestions=merged,
+        local_suggestion_count=len(local_suggestions),
+        warnings=warnings,
+        response_mode=ai.response_mode,
+        called=ai.called,
+        configured=ai.configured,
+        parsed=ai.parsed,
+        http_status=ai.http_status,
+        usage=ai.usage,
+        timings={**ai.timings, "queue_ms": 0, "llm_ms": elapsed, "total_ms": elapsed},
+        provider_attempts=(ai.timings.get("provider_attempts") if isinstance(ai.timings, dict) else []) or [],
+        ai_raw_suggestion_count=raw_ai_count,
+        ai_valid_suggestion_count=len(valid_ai),
+        ai_rejected_suggestion_count=rejected_count,
+        ai_empty_reason=ai_empty_reason,
+        correctedText=ai.correctedText,
+        documentAssessment=ai.documentAssessment,
+    )
+    payload["created_at"] = time.time()
+    if status in {"completed", "completed_empty", "completed_rejected"}:
+        llm_cache[key] = {"created_at": time.time(), "result": payload, "provider": ai.provider, "model": ai.model}
+    _update_llm_job(job_id, payload)
 
 def _cache_key(text: str, local_suggestions: list[dict], candidates: list[dict], provider: str, model: str, fallback_provider: str | None = None, fallback_model: str = "") -> str:
     from services.api.shuddho_api.ai_review_schema import PROMPT_SCHEMA_VERSION

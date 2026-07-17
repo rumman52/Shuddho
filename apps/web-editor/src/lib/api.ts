@@ -113,9 +113,15 @@ export type GatewayCheckResponse = {
   llm_model?: string;
   llm_status?: string;
   llm_response_mode?: string;
+  ai_raw_suggestion_count?: number;
+  ai_valid_suggestion_count?: number;
+  ai_rejected_suggestion_count?: number;
   rejected_ai_suggestion_count?: number;
+  ai_empty_reason?: string | null;
+  provider_attempts?: Record<string, unknown>[];
+  usage?: Record<string, unknown>;
   llm?: Record<string, unknown> | null;
-  timings?: Record<string, number>;
+  timings?: Record<string, number | boolean | string>;
   diagnostics?: Record<string, unknown>;
   local_suggestion_count?: number;
   ai_suggestion_count?: number;

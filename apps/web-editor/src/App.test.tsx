@@ -57,7 +57,7 @@ test("App keeps advanced settings and diagnostics outside the normal workspace",
 });
 
 test("App source keeps auto AI review off by default and deep review AI-enabled", () => {
-  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(
     source,
     /const \[autoAiReview, setAutoAiReview\] = useState\(false\)/,
@@ -70,14 +70,14 @@ test("App source keeps auto AI review off by default and deep review AI-enabled"
 });
 
 test("App source exposes friendly AI status messages and auto AI toggle", () => {
-  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /Auto AI review/);
   assert.match(source, /AI review ready/);
   assert.match(source, /friendlyLlmWarning/);
 });
 
 test("App source gates diagnostics and retests backend without user text", () => {
-  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /getLlmDebug/);
   assert.match(source, /Retry backend/);
   assert.match(source, /Developer diagnostics/);
@@ -150,7 +150,7 @@ test("successful /api/check still respects available deep health readiness", () 
 });
 
 test("App source clears stale unavailable banner after successful /api/check", () => {
-  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /apiCheckReachableRef\.current = true/);
   assert.match(
     source,
@@ -164,7 +164,7 @@ test("App source clears stale unavailable banner after successful /api/check", (
 });
 
 test("App source checks /health before /health/deep and keeps deep failure degraded", () => {
-  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /health = await getHealth\(\)/);
   assert.match(source, /const deepHealth = await getHealthDeep\(\)/);
   assert.doesNotMatch(
@@ -179,7 +179,7 @@ test("App source checks /health before /health/deep and keeps deep failure degra
 });
 
 test("App source exposes production backend debug strip outside debug mode without raw secrets", () => {
-  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /production-debug-line/);
   assert.match(source, /API base URL:/);
   assert.match(source, /API config source:/);
@@ -204,7 +204,7 @@ test("timeout errors map to friendly user-facing messages", () => {
 });
 
 test("App source exposes precise /api/check error messages and reset override button", () => {
-  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(
     source,
     /Browser could not reach backend\. Check CORS and VITE_API_BASE_URL\./,
@@ -296,12 +296,12 @@ test("analyzeText accepts HTTP 200 empty suggestions as valid empty analysis", a
 });
 
 test("App source preserves local suggestions while queued AI polling runs", () => {
-  const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /setAnalysisState\("waiting_for_ai"\)/);
   assert.match(source, /Local suggestions ready\. Gemini review is running/);
   assert.match(source, /void pollLlmJob\(snapshot, queuedJobId, controller\.signal\);\n\s*return;/);
   assert.match(source, /setAnalysis\(\(current\) =>/);
-  assert.match(source, /rawStatus === "succeeded" \? "completed"/);
-  assert.match(source, /AI reviewed the text and found no additional high-confidence issues/);
+  assert.match(source, /normalizeLlmStatus/);
+  assert.match(source, /llmReviewStatusMessage/);
   assert.match(source, /This Vercel preview domain is not allowed by the backend/);
 });
