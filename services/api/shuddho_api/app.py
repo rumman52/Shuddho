@@ -334,7 +334,7 @@ llm_circuit_until: dict[str, float] = {}
 llm_provider_state: dict[str, dict[str, Any]] = {}
 llm_jobs_lock = threading.RLock()
 llm_executor = ThreadPoolExecutor(max_workers=int(os.environ.get("SHUDDHO_LLM_JOB_WORKERS", "4") or "4"), thread_name_prefix="shuddho-llm")
-LLM_TERMINAL_STATUSES = {"completed", "completed_empty", "completed_rejected", "circuit_open", "dependency_missing", "missing_key", "unsupported_provider", "rate_limited", "timeout", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "network_error", "failed", "expired", "cancelled"}
+LLM_TERMINAL_STATUSES = {"completed", "completed_empty", "completed_rejected", "circuit_open", "dependency_missing", "missing_key", "unsupported_provider", "rate_limited", "timeout", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "network_error", "content_filter", "failed", "expired", "cancelled"}
 
 class ApiPreferences(BaseModel):
     user_id: str = "demo-user"
@@ -1431,11 +1431,12 @@ def _run_llm_job(job_id: str, text: str, candidates: list[dict], local_suggestio
             exc.__class__.__name__,
         )
         safe_warnings = _dedupe_strings(["llm_job_internal_error"])
+        config = resolve_llm_config(os.environ)
         payload = _canonical_llm_job_payload(
             job_id=job_id,
             status="failed",
-            provider="gemini",
-            model="",
+            provider=config.provider,
+            model=config.model,
             suggestions=list(local_suggestions or []),
             local_suggestion_count=len(local_suggestions or []),
             warnings=safe_warnings,

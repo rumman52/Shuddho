@@ -81,7 +81,7 @@ For Deep AI Review with the OpenRouter-hosted `openai/gpt-oss-120b:free` model, 
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_MODEL=openrouter/free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual

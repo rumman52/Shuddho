@@ -227,12 +227,13 @@ def test_review_prompt_requires_full_text_all_corrections_and_new_categories() -
 
 
 def test_provider_config_gemini_and_google_alias() -> None:
-    cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g", "GEMINI_MODEL": "gemini-3.5-flash"})
+    cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g", "GEMINI_MODEL": "gemini-2.5-flash"})
     assert cfg.provider == "gemini"
     assert cfg.configured is True
-    assert cfg.model == "gemini-3.5-flash"
+    assert cfg.model == "gemini-2.5-flash"
     cfg_alias = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "old", "GOOGLE_API_KEY": "new"})
-    assert cfg_alias.api_key == "new"
+    assert cfg_alias.api_key == "old"
+    assert "google_api_key_ignored_because_gemini_api_key_is_set" in cfg_alias.warnings
 
 
 def test_provider_config_gemini_missing_key_and_fallbacks() -> None:
@@ -270,7 +271,7 @@ def test_gemini_provider_success_and_usage(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, 'google', types.SimpleNamespace(genai=genai))
     monkeypatch.setitem(sys.modules, 'google.genai', genai)
     monkeypatch.setitem(sys.modules, 'google.genai.types', types_mod)
-    result = run_gemini_check("আমি ভাত খাই।", "gemini-3.5-flash", "key", request_id="r1")
+    result = run_gemini_check("আমি ভাত খাই।", "gemini-2.5-flash", "key", request_id="r1")
     assert result["status"] == "completed_empty"
     assert result["usage"]["total_tokens"] == 12
 
@@ -295,7 +296,7 @@ def test_gemini_schema_fallback_retry(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, 'google', types.SimpleNamespace(genai=genai))
     monkeypatch.setitem(sys.modules, 'google.genai', genai)
     monkeypatch.setitem(sys.modules, 'google.genai.types', types_mod)
-    result = run_gemini_check("আমি ভাত খাই।", "gemini-3.5-flash", "key", request_id="r1")
+    result = run_gemini_check("আমি ভাত খাই।", "gemini-2.5-flash", "key", request_id="r1")
     assert result["status"] == "completed_empty"
     assert result["response_mode"] == "json_mime"
     assert "gemini_structured_output_fallback_used" in result["warnings"]
@@ -335,9 +336,10 @@ def test_openrouter_http_200_missing_choices_and_empty_content(monkeypatch) -> N
     assert run_openrouter_check("আমি ভাত খাই।", "model", "key", request_id="r1")["status"] == "invalid_schema"
 
 
-def test_provider_config_requires_explicit_gemini_model_and_warns_key_precedence() -> None:
+def test_provider_config_defaults_current_gemini_model_and_warns_key_precedence() -> None:
     cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g"})
-    assert cfg.configured is False
-    assert "gemini_model_missing" in cfg.warnings
-    both = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g", "GOOGLE_API_KEY": "stale", "GEMINI_MODEL": "gemini-1.5-flash"})
-    assert "google_api_key_takes_precedence_over_gemini_api_key" in both.warnings
+    assert cfg.configured is True
+    assert cfg.model == "gemini-2.5-flash"
+    both = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g", "GOOGLE_API_KEY": "stale", "GEMINI_MODEL": "gemini-2.5-flash"})
+    assert both.api_key == "g"
+    assert "google_api_key_ignored_because_gemini_api_key_is_set" in both.warnings

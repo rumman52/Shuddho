@@ -64,13 +64,13 @@ npm test --workspace @shuddho/api
 
 Shuddho always runs the local spelling/rule/dictionary engine first. When LLM review is enabled, the backend sends the full text, sentence spans, local suggestions, and candidate incorrect sentences to the configured provider, validates exact spans, then merges AI and local suggestions. If the provider is unavailable, times out, or returns invalid JSON, local suggestions still return with a non-blocking diagnostic warning.
 
-Use OpenRouter for OpenRouter model IDs such as `openai/gpt-oss-120b:free`:
+Use OpenRouter for OpenRouter model IDs or routing options such as `openrouter/free`:
 
 ```dotenv
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_MODEL=openrouter/free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual
@@ -112,7 +112,7 @@ GEMINI_MODEL=gemini-2.5-flash
 # Automatic fallback
 SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
 OPENROUTER_API_KEY=<existing-render-secret>
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_MODEL=openrouter/free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 
@@ -158,7 +158,7 @@ Render/backend should contain the private OpenRouter configuration when using `o
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_MODEL=openrouter/free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 SHUDDHO_LLM_ON_CHECK=manual
