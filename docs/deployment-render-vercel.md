@@ -9,11 +9,11 @@ SHUDDHO_ENABLE_LLM=true
 
 SHUDDHO_LLM_PROVIDER=gemini
 GEMINI_API_KEY=<secret>
-GEMINI_MODEL=gemini-3.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 
 SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
 OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_MODEL=openrouter/free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 
@@ -96,11 +96,11 @@ Render must keep all provider keys backend-only and use origin-only CORS values:
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=gemini
 GEMINI_API_KEY=<Google AI Studio secret>
-GEMINI_MODEL=gemini-3.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 
 SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
 OPENROUTER_API_KEY=<OpenRouter secret>
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_MODEL=openrouter/free
 OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
 OPENROUTER_APP_TITLE=Shuddho
 
@@ -145,7 +145,7 @@ Set these Render environment variables (replace placeholders only in Render, nev
 SHUDDHO_ENABLE_LLM=true
 SHUDDHO_LLM_PROVIDER=gemini
 GEMINI_API_KEY=<Google AI Studio secret with available project quota>
-GEMINI_MODEL=gemini-3.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
 OPENROUTER_API_KEY=<OpenRouter key with credits>
 OPENROUTER_MODEL=<verified current paid model supporting Bangla/JSON>
