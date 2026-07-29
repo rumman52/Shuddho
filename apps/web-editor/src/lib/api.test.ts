@@ -75,7 +75,7 @@ test("production ignores localStorage override even with explicit debug override
   assert.equal(config.localStorageOverrideIgnored, true);
 });
 
-test("deriveApiConfiguration disables backend when production VITE_API_BASE_URL is missing", () => {
+test("deriveApiConfiguration uses the same-origin proxy when production VITE_API_BASE_URL is missing", () => {
   const config = deriveApiConfiguration({
     browserHostname: "shuddho-web-editor.vercel.app",
     configuredBaseUrl: null,
@@ -83,9 +83,28 @@ test("deriveApiConfiguration disables backend when production VITE_API_BASE_URL 
     isProductionBuild: true,
   });
 
-  assert.equal(config.backendAllowed, false);
-  assert.equal(config.apiBaseUrl, "");
-  assert.equal(config.hardWarning, "API URL is not configured. Set VITE_API_BASE_URL in Vercel to your backend URL.");
+  assert.equal(config.backendAllowed, true);
+  assert.equal(config.apiBaseUrl, "/backend");
+  assert.equal(config.apiBaseUrlSource, "same_origin_proxy");
+  assert.equal(config.envApiBaseUrlPresent, false);
+  assert.equal(config.hardWarning, null);
+});
+
+test("Vercel configuration proxies backend routes before the SPA fallback", () => {
+  const candidates = [
+    join(process.cwd(), "vercel.json"),
+    join(process.cwd(), "apps/web-editor/vercel.json"),
+  ];
+  const configPath = candidates.find(existsSync);
+  assert.ok(configPath, "expected a web-editor Vercel configuration");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+
+  assert.equal(config.rewrites[0].source, "/backend/:path*");
+  assert.equal(
+    config.rewrites[0].destination,
+    "https://shuddho-api.onrender.com/:path*",
+  );
+  assert.equal(config.rewrites[1].destination, "/index.html");
 });
 
 test("deriveApiConfiguration rejects localhost for deployed browser origins", () => {

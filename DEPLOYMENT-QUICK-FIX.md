@@ -40,19 +40,27 @@ A plain `docker build .` and `docker build --target production .` both select th
 - Build Command: `npm run build`
 - Output Directory: `dist`
 
-Set only public frontend values:
+The checked-in Vercel rewrite proxies `/backend/*` to Render, so the standard
+deployment needs no frontend environment variables and avoids browser CORS.
+
+Only when using a custom backend, set these public frontend values:
 
 ```dotenv
-VITE_API_BASE_URL=https://shuddho-api.onrender.com
+VITE_API_BASE_URL=https://your-custom-api.example.com
 VITE_USE_GATEWAY=true
 VITE_ENABLE_LOCAL_FALLBACK=false
 VITE_COMPETITION_DEMO_MODE=false
 ```
 
-Never add `GOOGLE_API_KEY`, `GEMMA_MODEL`, or `SHUDDHO_LLM_PROVIDER` to Vercel, frontend source, GitHub, logs, or screenshots. CORS uses the exact production origin; broad `https://*.vercel.app` values are invalid. Localhost origins are built in for local development only.
+When `VITE_API_BASE_URL` is set it overrides the proxy, and the custom backend
+must allow the exact frontend origin. Never add `GOOGLE_API_KEY`, `GEMMA_MODEL`,
+or `SHUDDHO_LLM_PROVIDER` to Vercel, frontend source, GitHub, logs, or screenshots.
+CORS does not accept broad `https://*.vercel.app` values.
 
 ## Health and verification
 
 `/health` is liveness-only. `/health/deep` reports stored local component/configuration state, and `/api/llm/debug` reports safe booleans/status; neither endpoint calls Gemma. Deep-review failures retain deterministic suggestions and return warnings and diagnostics instead of claiming Gemma was used.
 
-After changing Render settings, choose **Clear build cache & deploy**, wait for `/health` HTTP 200, then redeploy Vercel and test in an incognito browser.
+After changing Render settings, choose **Clear build cache & deploy**, wait for
+`/health` HTTP 200, then redeploy Vercel and test `/backend/health` in an incognito
+browser.
