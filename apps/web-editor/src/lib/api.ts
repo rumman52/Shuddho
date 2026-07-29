@@ -27,12 +27,16 @@ import {
 export { fetchWithTimeout } from "./fetchWithTimeout";
 
 const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:4000";
+// Vercel rewrites this same-origin prefix to the Render API.  Keeping a
+// production-safe default means a missing build-time VITE_API_BASE_URL no
+// longer disables the editor, and browser CORS policy is avoided entirely.
+const DEFAULT_PRODUCTION_API_BASE_URL = "/backend";
 const API_BASE_URL_STORAGE_KEY = "shuddho-api-base-url";
 
 export interface ApiConfigurationState {
   apiBaseUrl: string;
-  source: "default_local" | "environment" | "override" | "unconfigured";
-  apiBaseUrlSource: "default_local" | "environment" | "override" | "unconfigured";
+  source: "default_local" | "same_origin_proxy" | "environment" | "override";
+  apiBaseUrlSource: "default_local" | "same_origin_proxy" | "environment" | "override";
   envApiBaseUrlPresent: boolean;
   localStorageOverridePresent: boolean;
   localStorageOverrideIgnored: boolean;
@@ -186,16 +190,15 @@ export function deriveApiConfiguration(args: {
   const localStorageOverrideIgnored = Boolean(
     storedValue && !storedValueCanOverride && (isProd || configuredValue),
   );
-  const hasConfiguredBaseUrl = Boolean(configuredValue || storedValueCanOverride);
   const rawBaseUrl = storedValueCanOverride
     ? storedValue!
-    : (configuredValue ?? (isProd ? "" : DEFAULT_LOCAL_API_BASE_URL));
+    : (configuredValue ?? (isProd ? DEFAULT_PRODUCTION_API_BASE_URL : DEFAULT_LOCAL_API_BASE_URL));
   const source = storedValueCanOverride
     ? "override"
     : configuredValue
       ? "environment"
       : isProd
-        ? "unconfigured"
+        ? "same_origin_proxy"
         : "default_local";
   const apiBaseUrl = normalizeApiBaseUrl(rawBaseUrl);
   const targetsLocalhost = isLocalApiBaseUrl(apiBaseUrl);
@@ -203,9 +206,7 @@ export function deriveApiConfiguration(args: {
   const hardWarning =
     !isLocalOrigin && targetsLocalhost
       ? "This deployed editor is still pointing to localhost. Use a public HTTPS backend URL."
-      : isProd && !hasConfiguredBaseUrl
-        ? "API URL is not configured. Set VITE_API_BASE_URL in Vercel to your backend URL."
-        : null;
+      : null;
 
   return {
     apiBaseUrl,
