@@ -30,8 +30,8 @@ for (const fixture of competitionDemoFixtures) {
       assert.ok(getPrimaryReplacement(suggestion));
       assert.equal(suggestion.source, "demo_fixture");
       assert.equal(suggestion.provider, null);
-      assert.notEqual(suggestion.provider, "gemini");
-      assert.notEqual(suggestion.provider, "openrouter");
+      assert.notEqual(suggestion.provider, "gemma");
+      assert.notEqual(suggestion.provider, "gemma");
     }
 
     const startedAt = performance.now();

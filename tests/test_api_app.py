@@ -85,10 +85,10 @@ def test_ai_check_returns_warning_when_llm_disabled(monkeypatch) -> None:
 
 def test_ai_check_warns_when_api_key_missing(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     response = ai_check(app_module.AiCheckRequest(text="আমি আজ স্কুলে গেছিলাম।", language="bn"))
-    assert "openrouter_api_key_missing" in response.warnings
+    assert "gemma_api_key_missing" in response.warnings
 
 
 
@@ -331,8 +331,8 @@ def test_api_check_mode_and_llmmode_strings_do_not_crash() -> None:
 
 
 def test_health_route_returns_fast_ok_without_llm_keys(monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
     response = client.get("/health")
 
@@ -831,52 +831,52 @@ def _suggestion(
 
 def test_llm_auto_enabled_when_key_set_and_unset_enable(monkeypatch) -> None:
     monkeypatch.delenv("SHUDDHO_ENABLE_LLM", raising=False)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "key")
     enabled, _, _, _ = app_module._llm_config()
     assert enabled is True
 
 
 def test_llm_auto_disabled_without_key(monkeypatch) -> None:
     monkeypatch.delenv("SHUDDHO_ENABLE_LLM", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     enabled, _, _, _ = app_module._llm_config()
     assert enabled is False
 
 
 def test_llm_false_overrides_key(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "false")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "key")
     enabled, _, _, _ = app_module._llm_config()
     assert enabled is False
 
 
-def test_health_deep_openrouter_details(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+def test_health_deep_gemma_details(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "key")
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
     resp = health_deep().model_dump()
-    assert resp["llm"]["provider"] == "openrouter"
-    assert resp["llm"]["model"] == "openai/gpt-oss-120b:free"
+    assert resp["llm"]["provider"] == "gemma"
+    assert resp["llm"]["model"] == "gemma-4-26b-a4b-it"
     assert resp["llm"]["configured"] is True
 
 
 def test_ai_check_invalid_json_warning(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "key")
     def stub(**kwargs):
-        return {"suggestions": [], "warnings": ["openrouter_invalid_json"], "provider": "openrouter", "model": "openai/gpt-oss-120b:free", "raw_used": False}
-    monkeypatch.setattr(app_module, "run_openrouter_check", stub)
+        return {"suggestions": [], "warnings": ["gemma_invalid_json"], "provider": "gemma", "model": "gemma-4-26b-a4b-it", "raw_used": False}
+    monkeypatch.setattr(app_module, "run_gemma_check", stub)
     response = ai_check(app_module.AiCheckRequest(text="আমি আজ স্কুলে গেছিলাম।", language="bn"))
-    assert "openrouter_invalid_json" in response.warnings
+    assert "gemma_invalid_json" in response.warnings
 
 
-def test_api_check_returns_local_when_openrouter_fails(monkeypatch) -> None:
+def test_api_check_returns_local_when_gemma_fails(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
     monkeypatch.setenv("SHUDDHO_LLM_ON_CHECK", "always")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
-    monkeypatch.setattr(app_module, "run_openrouter_check", lambda **kwargs: {"suggestions": [], "warnings": ["openrouter_request_failed"], "provider": "openrouter", "model": "openai/gpt-oss-120b:free", "raw_used": False})
+    monkeypatch.setenv("GOOGLE_API_KEY", "key")
+    monkeypatch.setattr(app_module, "run_gemma_check", lambda **kwargs: {"suggestions": [], "warnings": ["gemma_request_failed"], "provider": "gemma", "model": "gemma-4-26b-a4b-it", "raw_used": False})
     response = check_canonical(CanonicalCheckRequest(text="আমি  আমি ভাত খাই।", language="bn"))
     assert isinstance(response.suggestions, list)
-    assert "openrouter_request_failed" in response.warnings
+    assert "gemma_request_failed" in response.warnings
 
 def test_api_check_accepts_minimal_payload() -> None:
     response = client.post("/api/check", json={"text": "আমি ভাত খাই।"})
@@ -908,8 +908,8 @@ def test_invalid_request_returns_request_validation_error() -> None:
 
 
 def test_api_llm_debug_never_returns_api_key(monkeypatch) -> None:
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "secret-token")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
+    monkeypatch.setenv("GOOGLE_API_KEY", "secret-token")
     payload = client.get("/api/llm/debug").json()
     assert "secret-token" not in str(payload)
 
@@ -937,8 +937,8 @@ def test_api_check_env_always_forces_llm_when_include_llm_false(monkeypatch) -> 
         calls.append({"text": text, "local_suggestions": list(local_suggestions or [])})
         return app_module.AiCheckResponse(
             suggestions=[],
-            provider="openrouter",
-            model="openai/gpt-oss-120b:free",
+            provider="gemma",
+            model="gemma-4-26b-a4b-it",
             llm_enabled=True,
             configured=True,
             called=True,
@@ -949,9 +949,9 @@ def test_api_check_env_always_forces_llm_when_include_llm_false(monkeypatch) -> 
 
     monkeypatch.setattr(app_module, "_run_ai_check", fake_run_ai_check)
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
     monkeypatch.setenv("SHUDDHO_LLM_ON_CHECK", "always")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
 
     response = client.post(
         "/api/check",
@@ -975,96 +975,14 @@ def test_api_check_env_always_forces_llm_when_include_llm_false(monkeypatch) -> 
     assert payload["rejected_ai_suggestion_count"] == 0
 
 
-def test_api_check_openai_missing_key_preserves_local(monkeypatch) -> None:
-    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    response = client.post("/api/check", json={"text": "আমি  আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": False, "mode": "smart", "llmMode": "review_candidates"}})
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["llm_status"] == "missing_key"
-    assert "openai_api_key_missing" in payload["warnings"]
-    assert isinstance(payload["suggestions"], list)
 
 
-def test_api_check_openai_rejects_openrouter_model_id(monkeypatch) -> None:
-    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
-    monkeypatch.setenv("OPENAI_MODEL", "openai/gpt-oss-120b:free")
-    response = client.post("/api/check", json={"text": "আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": False}})
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["llm_status"] == "unsupported_provider"
-    assert "openai_model_id_suspicious_use_openrouter_provider" in payload["warnings"]
 
 
-def test_api_check_successful_mocked_openai_merges_model_suggestion(monkeypatch) -> None:
-    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
-
-    def fake_run(text, request_id, local_suggestions=None, timeout_seconds=None):
-        return app_module.AiCheckResponse(
-            suggestions=[{"id":"ai1","sentenceId":"s_0","original":"ভাত","replacement":"ভাতই","issueType":"clarity","severity":"low","explanation":"আরও পরিষ্কার","confidence":0.9}],
-            correctedText=text.replace("ভাত", "ভাতই"),
-            provider="openai",
-            model="gpt-4o-mini",
-            llm_enabled=True,
-            configured=True,
-            called=True,
-            parsed=True,
-            status="completed",
-            response_mode="json_schema",
-        )
-
-    monkeypatch.setattr(app_module, "_run_ai_check", fake_run)
-    response = client.post("/api/check", json={"text": "আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": False, "mode": "smart", "llmMode": "review_candidates"}})
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["llm_attempted"] is True
-    assert payload["llm_used"] is True
-    assert payload["llm_status"] == "completed"
-    assert payload["ai_suggestion_count"] > 0
-    assert any(s["source"] in {"model", "hybrid"} for s in payload["suggestions"])
 
 
-def test_api_check_timeout_invalid_json_invalid_schema_and_empty(monkeypatch) -> None:
-    statuses = [
-        ("timeout", "openai_timeout"),
-        ("invalid_json", "openai_invalid_json"),
-        ("invalid_schema", "openai_invalid_schema"),
-        ("completed_empty", None),
-    ]
-    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
-    for status, warning in statuses:
-        def fake_run(text, request_id, local_suggestions=None, timeout_seconds=None, status=status, warning=warning):
-            return app_module.AiCheckResponse(provider="openai", model="gpt-4o-mini", llm_enabled=True, configured=True, called=True, parsed=status=="completed_empty", status=status, warnings=[warning] if warning else [], response_mode="json_schema")
-        monkeypatch.setattr(app_module, "_run_ai_check", fake_run)
-        response = client.post("/api/check", json={"text": "আমি  আমি ভাত খাই।", "language": "bn", "options": {"includeLLM": True, "asyncLLM": False}})
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["llm_status"] == status
-        if warning:
-            assert warning in payload["warnings"]
-        assert isinstance(payload["suggestions"], list)
 
 
-def test_llm_debug_exposes_safe_config(monkeypatch) -> None:
-    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
-    response = client.get("/api/llm/debug")
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["api_key_present"] is True
-    assert "api_key" not in payload
-    assert payload["status"] == "ready"
-    assert payload["interactive_timeout_seconds"] == 45
 
 def test_api_check_include_llm_false_skips_llm(monkeypatch) -> None:
     called = False
@@ -1090,9 +1008,9 @@ def test_api_check_include_llm_false_skips_llm(monkeypatch) -> None:
 
 def test_api_check_include_llm_true_merges_valid_ai(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
-    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GEMMA_MODEL", "gemma-4-26b-a4b-it")
 
     def fake_run_ai_check(text, request_id, local_suggestions=None, timeout_seconds=None):
         return app_module.AiCheckResponse(
@@ -1112,8 +1030,8 @@ def test_api_check_include_llm_true_merges_valid_ai(monkeypatch) -> None:
             ],
             correctedText="আমি ভাতটা খাই।",
             documentAssessment={"summary": "ok"},
-            provider="openrouter",
-            model="openai/gpt-oss-120b:free",
+            provider="gemma",
+            model="gemma-4-26b-a4b-it",
             llm_enabled=True,
             configured=True,
             called=True,
@@ -1133,17 +1051,17 @@ def test_api_check_include_llm_true_merges_valid_ai(monkeypatch) -> None:
     assert response.llm_requested is True
     assert response.llm_attempted is True
     assert response.llm_used is True
-    assert response.llm_provider == "openrouter"
-    assert response.llm_model == "openai/gpt-oss-120b:free"
+    assert response.llm_provider == "gemma"
+    assert response.llm_model == "gemma-4-26b-a4b-it"
     assert response.ai_suggestion_count == 1
-    assert any(s.originalText == "ভাত" and s.provider == "openrouter" for s in response.suggestions)
+    assert any(s.originalText == "ভাত" and s.provider == "gemma" for s in response.suggestions)
 
 
-def test_api_check_openrouter_mock_returns_three_ai_suggestions(monkeypatch) -> None:
+def test_api_check_gemma_mock_returns_three_ai_suggestions(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
-    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GEMMA_MODEL", "gemma-4-26b-a4b-it")
     text = "আমি  ভাত খাই। তুমি পানি খাই। সে সে স্কুলে যায়"
 
     def fake_run_ai_check(text, request_id, local_suggestions=None, timeout_seconds=None):
@@ -1155,8 +1073,8 @@ def test_api_check_openrouter_mock_returns_three_ai_suggestions(monkeypatch) -> 
             ],
             correctedText="আমি ভাত খাই। তুমি পানি খাও। সে স্কুলে যায়",
             documentAssessment={"summary": "তিনটি সংশোধন দরকার", "overallQuality": "fair", "language": "bn"},
-            provider="openrouter",
-            model="openai/gpt-oss-120b:free",
+            provider="gemma",
+            model="gemma-4-26b-a4b-it",
             llm_enabled=True,
             configured=True,
             called=True,
@@ -1182,18 +1100,6 @@ def test_api_check_openrouter_mock_returns_three_ai_suggestions(monkeypatch) -> 
     assert len(ai_suggestions) >= 3
 
 
-def test_health_deep_reports_safe_llm_configuration(monkeypatch) -> None:
-    monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_MODEL", "openai/gpt-oss-120b:free")
-    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
-    response = health_deep()
-    assert response.llm["enabled"] is True
-    assert response.llm["provider"] == "openai"
-    assert response.llm["configured"] is False
-    assert response.llm["status"] == "unsupported_provider"
-    assert "openai_model_id_suspicious_use_openrouter_provider" in response.llm["warnings"]
-    assert "api_key" not in response.llm
 
 
 def test_api_check_local_suggestions_continue_when_corrector_missing(monkeypatch) -> None:
@@ -1239,7 +1145,7 @@ def test_api_check_local_suggestions_continue_when_corrector_missing(monkeypatch
     assert response.diagnostics["correctorReason"] == "missing required corrector checkpoint files: best_model.pt"
 
 
-def test_api_check_calls_openrouter_when_llm_configured_and_corrector_missing(monkeypatch) -> None:
+def test_api_check_calls_gemma_when_llm_configured_and_corrector_missing(monkeypatch) -> None:
     class StubCorrectorService:
         checkpoint_path = "artifacts/corrector/corrector-base"
 
@@ -1268,8 +1174,8 @@ def test_api_check_calls_openrouter_when_llm_configured_and_corrector_missing(mo
         calls.append({"text": text, "local_suggestions": list(local_suggestions or [])})
         return app_module.AiCheckResponse(
             suggestions=[],
-            provider="openrouter",
-            model="openai/gpt-oss-120b:free",
+            provider="gemma",
+            model="gemma-4-26b-a4b-it",
             llm_enabled=True,
             configured=True,
             called=True,
@@ -1281,9 +1187,9 @@ def test_api_check_calls_openrouter_when_llm_configured_and_corrector_missing(mo
     monkeypatch.setattr(app_module, "corrector_service", StubCorrectorService())
     monkeypatch.setattr(app_module, "_run_ai_check", fake_run_ai_check)
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
-    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    monkeypatch.setenv("GEMMA_MODEL", "gemma-4-26b-a4b-it")
 
     response = check_canonical(
         ApiCheckRequest(
@@ -1296,26 +1202,26 @@ def test_api_check_calls_openrouter_when_llm_configured_and_corrector_missing(mo
     assert calls
     assert response.llm_requested is True
     assert response.llm_attempted is True
-    assert response.llm_provider == "openrouter"
-    assert response.llm_model == "openai/gpt-oss-120b:free"
+    assert response.llm_provider == "gemma"
+    assert response.llm_model == "gemma-4-26b-a4b-it"
     assert "sentence_level_corrector_unavailable" in response.warnings
     assert response.diagnostics["llmEnabled"] is True
     assert response.diagnostics["llmConfigured"] is True
-    assert response.diagnostics["llmProvider"] == "openrouter"
-    assert response.diagnostics["llmModel"] == "openai/gpt-oss-120b:free"
+    assert response.diagnostics["llmProvider"] == "gemma"
+    assert response.diagnostics["llmModel"] == "gemma-4-26b-a4b-it"
 
 
 def test_llm_debug_does_not_expose_api_key(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-secret-value")
-    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
+    monkeypatch.setenv("GOOGLE_API_KEY", "sk-secret-value")
+    monkeypatch.setenv("GEMMA_MODEL", "gemma-4-26b-a4b-it")
     response = app_module.llm_debug()
     rendered = json.dumps(response)
     assert response["api_key_present"] is True
     assert "sk-secret-value" not in rendered
-    assert response["provider"] == "openrouter"
-    assert response["model"] == "openai/gpt-oss-120b:free"
+    assert response["provider"] == "gemma"
+    assert response["model"] == "gemma-4-26b-a4b-it"
     assert "timeout_settings" in response
     assert response["circuit_state"] in {"open", "closed"}
 
@@ -1330,7 +1236,7 @@ def test_health_shapes_include_lightweight_process_fields() -> None:
 
 
 def test_health_deep_shape_includes_llm_without_secret(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-secret-value")
+    monkeypatch.setenv("GOOGLE_API_KEY", "sk-secret-value")
     response = app_module.health_deep()
     rendered = response.model_dump_json()
     assert response.ok is True
@@ -1340,14 +1246,14 @@ def test_health_deep_shape_includes_llm_without_secret(monkeypatch) -> None:
 
 def test_api_check_reports_rejected_ai_suggestions(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
-    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
 
     def fake_run_ai_check(text, request_id, local_suggestions=None, timeout_seconds=None):
         return app_module.AiCheckResponse(
             suggestions=[{"id": "bad", "sentenceId": "s_0", "original": "নেই", "replacement": "আছে", "issueType": "grammar", "confidence": 0.9}],
-            provider="openrouter",
-            model="openai/gpt-oss-120b:free",
+            provider="gemma",
+            model="gemma-4-26b-a4b-it",
             llm_enabled=True,
             configured=True,
             called=True,
@@ -1419,7 +1325,7 @@ def test_llm_cache_hit_normalizes_succeeded_status(monkeypatch) -> None:
     assert response.json()["llm_status"] == "completed"
 
 
-def _fake_provider_result(status="completed", suggestions=None, provider="gemini", model="gemini-3.5-flash", warnings=None):
+def _fake_provider_result(status="completed", suggestions=None, provider="gemma", model="gemma-3.5-flash", warnings=None):
     return {
         "suggestions": suggestions if suggestions is not None else [],
         "correctedText": "আমি বাংলা লিখি।। বাংলা ভাষা খুব সুন্দর !!",
@@ -1454,7 +1360,7 @@ def test_async_llm_job_contract_valid_ai_merges_local(monkeypatch):
     job = app_module.llm_jobs[job_id]
     assert job["status"] == "completed"
     assert job["llm_used"] is True
-    assert job["llm_provider"] == "gemini"
+    assert job["llm_provider"] == "gemma"
     assert job["ai_valid_suggestion_count"] == 1
     assert job["local_suggestion_count"] == 1
     assert len(job["suggestions"]) >= 2
@@ -1495,25 +1401,10 @@ def test_async_llm_job_completed_rejected_preserves_local(monkeypatch):
     assert job["suggestions"] == _local_suggestions()
 
 
-def test_provider_chain_gemini_failure_openrouter_success(monkeypatch):
-    calls = []
-    config = app_module.resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "x", "GEMINI_MODEL": "gemini-3.5-flash", "SHUDDHO_LLM_FALLBACK_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "y", "OPENROUTER_MODEL": "openai/gpt-oss-20b:free"})
-    def fake_run(provider_config, *args, **kwargs):
-        calls.append(provider_config["provider"])
-        if provider_config["provider"] == "gemini":
-            return _fake_provider_result(status="timeout", provider="gemini", model="gemini-3.5-flash", warnings=["gemini_timeout"])
-        return _fake_provider_result(status="completed", provider="openrouter", model="openai/gpt-oss-20b:free", suggestions=[])
-    monkeypatch.setattr(app_module, "run_configured_provider", fake_run)
-    result = app_module._run_provider_chain(config, "আমি বাংলা লিখি", "req", [], [], [], 10)
-    assert calls == ["gemini", "openrouter"]
-    assert result["provider"] == "openrouter"
-    assert result["status"] == "completed_empty"
-    assert [a["provider"] for a in result["provider_attempts"]] == ["gemini", "openrouter"]
-    assert "fallback_provider_used:openrouter" in result["warnings"]
 
 
 def test_async_llm_failure_payload_preserves_local(monkeypatch):
-    monkeypatch.setattr(app_module, "_run_ai_check", lambda *args, **kwargs: app_module.AiCheckResponse(**_fake_provider_result(status="timeout", warnings=["gemini_timeout"])))
+    monkeypatch.setattr(app_module, "_run_ai_check", lambda *args, **kwargs: app_module.AiCheckResponse(**_fake_provider_result(status="timeout", warnings=["gemma_timeout"])))
     app_module.llm_cache.clear()
     job_id = "llm_pytest_fail"
     app_module.llm_jobs[job_id] = {}

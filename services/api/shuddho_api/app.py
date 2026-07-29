@@ -35,9 +35,7 @@ from services.rules.shuddho_rules.engine import RuleEngine
 from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from services.api.shuddho_api.adapters import analyze_to_check_response
-from services.api.shuddho_api.llm_openrouter import DEFAULT_OPENROUTER_MODEL, run_openrouter_check
-from services.api.shuddho_api.llm_openai import DEFAULT_OPENAI_MODEL, run_openai_check
-from services.api.shuddho_api.llm_gemini import DEFAULT_GEMINI_MODEL, run_gemini_check
+from services.api.shuddho_api.llm_gemma import DEFAULT_GEMMA_MODEL, run_gemma_check
 from services.api.shuddho_api.llm_candidates import build_llm_candidates, split_bangla_sentences
 from services.api.shuddho_api.llm_provider import resolve_llm_config, LlmProviderResult
 from services.api.shuddho_api.suggestion_merge import merge_suggestions, validate_ai_suggestions
@@ -106,12 +104,7 @@ ALLOWED_ORIGIN_REGEX = (
 STARTUP_TIMESTAMP = datetime.now(timezone.utc)
 LLM_PROVIDER_ENV_VAR = "SHUDDHO_LLM_PROVIDER"
 LLM_ENABLED_ENV_VAR = "SHUDDHO_ENABLE_LLM"
-OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
-OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
-OPENAI_MODEL_ENV_VAR = "OPENAI_MODEL"
-OPENROUTER_MODEL_ENV_VAR = "OPENROUTER_MODEL"
 LOG_RAW_TEXT_ENV_VAR = "SHUDDHO_LOG_RAW_TEXT"
-DEFAULT_OPENROUTER_MODEL = ""
 MAX_AI_CHECK_CHARS = int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000"))
 
 
@@ -134,8 +127,8 @@ class AiCheckResponse(BaseModel):
     correctedText: str | None = None
     documentAssessment: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
-    provider: str = "gemini"
-    model: str = DEFAULT_GEMINI_MODEL
+    provider: str = "gemma"
+    model: str = DEFAULT_GEMMA_MODEL
     llm_enabled: bool = False
     configured: bool = False
     called: bool = False
@@ -779,12 +772,11 @@ def llm_debug() -> dict:
         "fallback_model": config.fallback_model,
         "fallback_configured": config.fallback_configured,
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
-        "endpoint": "https://generativelanguage.googleapis.com" if config.provider == "gemini" else ("https://openrouter.ai/api/v1/chat/completions" if config.provider == "openrouter" else "https://api.openai.com/v1/responses"),
+        "endpoint": "https://generativelanguage.googleapis.com",
         "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50")))),
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50"))),
-        "gemini_timeout_seconds": float(os.environ.get("SHUDDHO_GEMINI_TIMEOUT_SECONDS", "30")),
-        "openrouter_timeout_seconds": float(os.environ.get("SHUDDHO_OPENROUTER_TIMEOUT_SECONDS", "18")),
+        "gemma_timeout_seconds": float(os.environ.get("SHUDDHO_GEMMA_TIMEOUT_SECONDS", "30")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "timeout_settings": {
             "interactive_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
@@ -959,8 +951,7 @@ def _llm_safe_status() -> dict[str, Any]:
         "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50")))),
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50"))),
-        "gemini_timeout_seconds": float(os.environ.get("SHUDDHO_GEMINI_TIMEOUT_SECONDS", "30")),
-        "openrouter_timeout_seconds": float(os.environ.get("SHUDDHO_OPENROUTER_TIMEOUT_SECONDS", "18")),
+        "gemma_timeout_seconds": float(os.environ.get("SHUDDHO_GEMMA_TIMEOUT_SECONDS", "30")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
@@ -1098,17 +1089,13 @@ def run_configured_provider(
     provider = provider_config.get("provider")
     model = provider_config.get("model") or ""
     if not provider_config.get("configured") or not provider_config.get("api_key"):
-        warning = {"gemini": "gemini_api_key_missing", "openrouter": "openrouter_api_key_missing", "openai": "openai_api_key_missing"}.get(str(provider), "unsupported_llm_provider")
+        warning = {"gemma": "google_api_key_missing"}.get(str(provider), "unsupported_llm_provider")
         status = provider_config.get("status") or "missing_key"
         return LlmProviderResult(provider=str(provider or "disabled"), model=model, configured=False, status=status, warnings=[*(provider_config.get("warnings") or []), warning], response_mode="none").model_dump()
     if _is_circuit_open(str(provider), model):
         return LlmProviderResult(provider=str(provider), model=model, called=False, configured=True, status="circuit_open", warnings=["llm_circuit_open"], response_mode="none").model_dump()
-    if provider == "gemini":
-        return run_gemini_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
-    if provider == "openrouter":
-        return run_openrouter_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
-    if provider == "openai":
-        return run_openai_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
+    if provider == "gemma":
+        return run_gemma_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
     return LlmProviderResult(provider=str(provider or "disabled"), model=model, status="unsupported_provider", warnings=["unsupported_llm_provider"]).model_dump()
 
 
@@ -1252,7 +1239,7 @@ def _canonical_llm_job_payload(
 def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list[dict[str, Any]], local_suggestions: list[dict[str, Any]], candidates: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
     started = time.monotonic()
     total_deadline = max(1.0, float(timeout))
-    primary_env = "SHUDDHO_GEMINI_TIMEOUT_SECONDS" if config.provider == "gemini" else ("SHUDDHO_OPENROUTER_TIMEOUT_SECONDS" if config.provider == "openrouter" else "SHUDDHO_LLM_PRIMARY_TIMEOUT_SECONDS")
+    primary_env = "SHUDDHO_GEMMA_TIMEOUT_SECONDS"
     primary_timeout = min(total_deadline, max(1.0, float(os.environ.get(primary_env, os.environ.get("SHUDDHO_LLM_PRIMARY_TIMEOUT_SECONDS", "30")) or "30")))
     primary_cfg = _provider_configured(config)
     result = run_configured_provider(primary_cfg, text, request_id, sentences, local_suggestions, candidates, primary_timeout)
@@ -1260,42 +1247,7 @@ def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list
     result = _classify_ai_result_after_validation(text, result)
     primary_status = str(result.get("status") or "failed")
     attempts = [_provider_attempt("primary", result)]
-    fallback_provider = config.fallback_provider
-    fallback_ready = bool(
-        fallback_provider
-        and config.fallback_configured
-        and config.fallback_api_key
-        and config.fallback_model
-        and fallback_provider != config.provider
-    )
-    if fallback_ready and (primary_status in FALLBACK_ELIGIBLE_STATUSES or primary_status == "completed_rejected"):
-        elapsed = time.monotonic() - started
-        remaining = total_deadline - elapsed
-        if remaining <= 1.0:
-            result["provider_attempts"] = attempts
-            result["warnings"] = _dedupe_strings([*(result.get("warnings") or []), "fallback_skipped_provider_chain_deadline_exhausted"])
-            return result
-        fallback_cfg = _provider_configured(config, fallback=True)
-        fallback_env = "SHUDDHO_OPENROUTER_TIMEOUT_SECONDS" if fallback_provider == "openrouter" else ("SHUDDHO_GEMINI_TIMEOUT_SECONDS" if fallback_provider == "gemini" else "SHUDDHO_LLM_FALLBACK_TIMEOUT_SECONDS")
-        fallback_timeout = min(remaining, max(1.0, float(os.environ.get(fallback_env, "18") or "18")))
-        fallback_result = run_configured_provider(fallback_cfg, text, request_id, sentences, local_suggestions, candidates, fallback_timeout)
-        _record_provider_attempt(fallback_result)
-        fallback_result = _classify_ai_result_after_validation(text, fallback_result)
-        attempts.append(_provider_attempt("fallback", fallback_result))
-        fallback_result["warnings"] = _dedupe_strings([
-            *(result.get("warnings") or []),
-            f"primary_provider_failed:{config.provider}",
-            f"primary_provider_status:{primary_status}",
-            f"fallback_provider_used:{fallback_provider}",
-            *(fallback_result.get("warnings") or []),
-        ])
-        fallback_result["provider_attempts"] = attempts
-        fallback_result.setdefault("timings", {})
-        fallback_result["timings"] = {**(fallback_result.get("timings") or {}), "fallback_used": fallback_result.get("status") in {"completed", "completed_empty", "completed_rejected"}}
-        return fallback_result
     result["provider_attempts"] = attempts
-    if fallback_provider and not fallback_ready:
-        result["warnings"] = _dedupe_strings([*(result.get("warnings") or []), "fallback_provider_not_configured_or_unavailable"])
     return result
 
 

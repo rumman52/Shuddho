@@ -139,8 +139,8 @@ test("health ok with missing corrector is degraded rather than unavailable", () 
       llm: {
         enabled: true,
         configured: true,
-        provider: "openrouter",
-        model: "openai/gpt-oss-120b:free",
+        provider: "gemma",
+        model: "gemma-4-26b-a4b-it",
       },
       lexicon: {
         runtime_source_of_truth: "csv_runtime",
@@ -162,6 +162,6 @@ test("health ok with missing corrector is degraded rather than unavailable", () 
   assert.equal(descriptor.diagnostics.correctorLoaded, false);
   assert.equal(descriptor.diagnostics.llmEnabled, true);
   assert.equal(descriptor.diagnostics.llmConfigured, true);
-  assert.equal(descriptor.diagnostics.llmProvider, "openrouter");
+  assert.equal(descriptor.diagnostics.llmProvider, "gemma");
   assert.notEqual(descriptor.label, "Backend offline, suggestions disabled");
 });
