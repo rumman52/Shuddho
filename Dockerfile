@@ -29,3 +29,7 @@ FROM lightweight AS ml-cpu
 ENV SHUDDHO_DETECTOR_ENABLED=auto \
     SHUDDHO_CORRECTOR_ENABLED=auto
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu torch sentencepiece
+
+# Keep the optional ML image addressable with `--target ml-cpu`, while making
+# an ordinary `docker build .` select the dependency-light hosted-AI runtime.
+FROM lightweight AS production

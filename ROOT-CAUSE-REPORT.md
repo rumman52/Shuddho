@@ -1,29 +1,13 @@
-# Shuddho Root-Cause Report
+# Shuddho production root-cause report
 
-## Confirmed root causes from repository audit
+## Confirmed repository cause
 
-1. **Stale model names in deployment examples.** Several deployment examples referenced `gemini-3.5-flash`, which is not the stable documented default used by the backend. Official Google AI docs list `gemini-2.5-flash` as a supported Flash model, and the backend default is `gemini-2.5-flash`.
-2. **OpenRouter examples relied on a brittle free model alias.** Docs and examples referenced `openai/gpt-oss-20b:free`; OpenRouter model availability changes. The safer routing example is `openrouter/free`, while production should choose a monitored model from the catalog.
-3. **Gemini key precedence was ambiguous in tests/docs.** The backend already treats `GEMINI_API_KEY` as canonical and `GOOGLE_API_KEY` as a legacy fallback. Tests still expected the stale `GOOGLE_API_KEY` value to win, which would keep a rotated Gemini key from being used.
-4. **Asynchronous LLM job terminal statuses missed `content_filter`.** A provider safety/content-filter response could be coerced to a generic failed state instead of preserving the specific terminal status.
-5. **Backend Python test environment was incomplete in this container.** The local virtualenv lacks `httpx`, and network package installation was blocked by the environment proxy, so FastAPI TestClient-based tests could not run here. Frontend tests and builds passed.
-6. **Live read-only verification was blocked by this execution environment.** `curl` to the Render URL failed with a CONNECT tunnel 403 before reaching the service, so live `/health` could not be verified from here.
+The default Docker result previously ended at the `ml-cpu` stage. Consequently an unqualified Docker deployment installed PyTorch/SentencePiece and selected automatic checkpoint engines even though hosted Gemma inference needs neither. The quick-fix documentation also used `uv sync`, whose default development group expands the install and made the native Render path inconsistent with the known-working base-package install. Both choices add avoidable startup work before an HTTP health response and match the observed symptom: the host accepted a connection but health endpoints timed out before any Gemma request.
 
-## Evidence collected
+The production repair makes the last Docker stage a lightweight `production` alias, retains `ml-cpu` only as an explicit target, and standardizes native Render on `python -m pip install --no-cache-dir .`. Explicitly disabled corrector startup now skips even optional model-download handling.
 
-- Repository search found AI failure status handling across `services/api/shuddho_api/app.py`, `llm_gemini.py`, `llm_openrouter.py`, and frontend status mapping in `apps/web-editor/src/lib/api.ts` and `apps/web-editor/src/lib/llmStatus.ts`.
-- Frontend tests verify production base URL handling, localhost rejection on deployed hosts, polling status merge behavior, duplicate/stale request protection, local-suggestion preservation after AI failure, and fallback success messaging.
-- Provider tests mock OpenRouter and Gemini success/failure cases without paid API calls.
-- Official documentation checked on 2026-07-22: Google AI Gemini model docs list `gemini-2.5-flash`; OpenRouter docs use `/api/v1/chat/completions` with Bearer auth and provide model catalog APIs.
+## Runtime architecture
 
-## Fixes made
+The competition runtime uses the Google Gen AI SDK/API transport to call only pretrained instruction-tuned Gemma 4 (`gemma-4-26b-a4b-it`). Unsupported provider names and non-`gemma-*` models fail closed. Health and debug routes inspect state only; provider calls occur only for requested AI review. Local rules and spelling remain the honest fallback.
 
-- Updated deployment examples to use `GEMINI_MODEL=gemini-2.5-flash`.
-- Updated OpenRouter examples to use `OPENROUTER_MODEL=openrouter/free` where a generic fallback routing example is needed.
-- Updated Gemini config tests to assert `GEMINI_API_KEY` precedence and default `gemini-2.5-flash` behavior.
-- Added `content_filter` to backend LLM terminal statuses so asynchronous jobs preserve that terminal category.
-- Made the async job safety-net failure payload use the configured provider/model instead of hard-coding Gemini.
-
-## Remaining external blocker
-
-If production still returns `auth_or_forbidden`, code cannot repair that secret. Rotate or replace the backend-only provider key in Render, verify the selected model is enabled for that account/project, and redeploy Render before redeploying Vercel.
+Repository changes cannot redeploy the existing Render/Vercel projects. The owner must apply the dashboard settings in `DEPLOYMENT.md`, clear Render's build cache, verify `/health`, and then redeploy Vercel.

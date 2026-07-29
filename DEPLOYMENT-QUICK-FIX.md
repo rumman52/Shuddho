@@ -1,157 +1,58 @@
-# Shuddho Deployment Quick Fix
+# Shuddho competition deployment
 
-Use this checklist to repair the production “AI review is temporarily unavailable” loop without exposing secrets.
+Shuddho's only generative runtime is the pretrained instruction-tuned **Gemma 4** model `gemma-4-26b-a4b-it`. The Google Gen AI SDK and Gemini API endpoint are transport infrastructure; the application does not call a `gemini-*` model and does not claim to have trained or fine-tuned Gemma. Deterministic Bangla rules, spelling, dictionaries, punctuation, spacing, and regex checks remain available when hosted inference is unavailable.
 
-## Render backend
+## Render: native Python (recommended)
 
-### Build command
+Configure the existing service in the Render dashboard; this repository does not use a Blueprint.
 
-```bash
-uv sync --frozen || uv sync
-```
+- Runtime: **Python**
+- Build command: `python -m pip install --upgrade pip && python -m pip install --no-cache-dir .`
+- Start command: `python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port "$PORT"`
+- Health Check Path: `/health`
 
-If Render does not have `uv`, use:
+Render supplies `$PORT`; do not hard-code it. The base package intentionally excludes PyTorch, CUDA, SentencePiece, and optional ML engines.
 
-```bash
-python -m pip install -e '.[dev]'
-```
+Set these backend-only values:
 
-### Start command
-
-```bash
-python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT
-```
-
-The service must bind to Render's `$PORT`.
-
-### Environment variables
-
-Set these only on Render/backend:
-
-```bash
+```dotenv
+GOOGLE_API_KEY=<real secret>
+GEMMA_MODEL=gemma-4-26b-a4b-it
+SHUDDHO_LLM_PROVIDER=gemma
 SHUDDHO_ENABLE_LLM=true
-SHUDDHO_LLM_PROVIDER=gemini
-GEMINI_API_KEY=<Google AI Studio secret>
-GEMINI_MODEL=gemini-2.5-flash
-SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
-OPENROUTER_API_KEY=<OpenRouter secret>
-OPENROUTER_MODEL=openrouter/free
-OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
-OPENROUTER_APP_TITLE=Shuddho
-SHUDDHO_LLM_ON_CHECK=manual
-SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS=50
-SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
-SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=50
-SHUDDHO_GEMINI_TIMEOUT_SECONDS=30
-SHUDDHO_OPENROUTER_TIMEOUT_SECONDS=18
-SHUDDHO_MAX_AI_TEXT_CHARS=5000
-SHUDDHO_LLM_MAX_CANDIDATES=8
-SHUDDHO_LLM_MAX_CANDIDATE_CHARS=2200
-SHUDDHO_LLM_MAX_COMPLETION_TOKENS=1400
-SHUDDHO_LLM_CACHE_TTL_SECONDS=86400
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+SHUDDHO_DETECTOR_ENABLED=false
+SHUDDHO_CORRECTOR_ENABLED=false
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
 SHUDDHO_LOG_RAW_TEXT=false
 ```
 
-`GEMINI_API_KEY` is canonical. `GOOGLE_API_KEY` is accepted only as a legacy alias. If both are set, Shuddho uses `GEMINI_API_KEY` and reports a safe warning.
+The disabled ML settings do not disable local deterministic analysis or Gemma review. Do not configure old provider/model/fallback variables or local ML model URLs on this service. Missing `GOOGLE_API_KEY` is reported as `missing_key` without breaking liveness.
 
-### Delete from Render if present
+## Render: Docker alternative
 
-```bash
-GOOGLE_API_KEY=<stale duplicate>
-GEMINI_MODEL=gemini-3.5-flash
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
-SHUDDHO_ALLOWED_ORIGINS=https://*.vercel.app
-```
+A plain `docker build .` and `docker build --target production .` both select the lightweight production stage. The optional CPU ML image is available only with `docker build --target ml-cpu .`; it is for offline/local work, not the competition Render service.
 
-Do not use wildcard Vercel origins. Add exact preview origins only when needed.
+## Vercel
 
-## Vercel frontend
+- Root Directory: `apps/web-editor`
+- Framework: Vite
+- Install Command: `npm install`
+- Build Command: `npm run build`
+- Output Directory: `dist`
 
-### Project settings
+Set only public frontend values:
 
-- Framework preset: Vite
-- Root directory: `apps/web-editor`
-- Install command: `npm install`
-- Build command: `npm run build`
-- Output directory: `dist`
-
-### Environment variables
-
-Set these only on Vercel/frontend:
-
-```bash
+```dotenv
 VITE_API_BASE_URL=https://shuddho-api.onrender.com
 VITE_USE_GATEWAY=true
 VITE_ENABLE_LOCAL_FALLBACK=false
 VITE_COMPETITION_DEMO_MODE=false
 ```
 
-### Delete from Vercel if present
+Never add `GOOGLE_API_KEY`, `GEMMA_MODEL`, or `SHUDDHO_LLM_PROVIDER` to Vercel, frontend source, GitHub, logs, or screenshots. CORS uses the exact production origin; broad `https://*.vercel.app` values are invalid. Localhost origins are built in for local development only.
 
-```bash
-GEMINI_API_KEY
-GOOGLE_API_KEY
-OPENROUTER_API_KEY
-OPENAI_API_KEY
-GEMINI_MODEL
-OPENROUTER_MODEL
-OPENAI_MODEL
-SHUDDHO_LLM_PROVIDER
-SHUDDHO_LLM_FALLBACK_PROVIDER
-```
+## Health and verification
 
-Never place backend API keys in Vercel. Any `VITE_` variable is browser-visible.
+`/health` is liveness-only. `/health/deep` reports stored local component/configuration state, and `/api/llm/debug` reports safe booleans/status; neither endpoint calls Gemma. Deep-review failures retain deterministic suggestions and return warnings and diagnostics instead of claiming Gemma was used.
 
-## Redeployment order
-
-1. Update Render environment variables.
-2. Redeploy Render backend.
-3. Wait for Render health to pass.
-4. Update Vercel environment variables.
-5. Redeploy Vercel frontend.
-6. Hard-refresh the browser.
-
-## Health-check commands
-
-```bash
-curl -i https://shuddho-api.onrender.com/health
-curl -s https://shuddho-api.onrender.com/api/llm/debug | python -m json.tool
-curl -i -X OPTIONS https://shuddho-api.onrender.com/api/check \
-  -H 'Origin: https://shuddho-web-editor.vercel.app' \
-  -H 'Access-Control-Request-Method: POST' \
-  -H 'Access-Control-Request-Headers: content-type'
-```
-
-Expected health: HTTP 200 with `ok: true`. Expected LLM debug: `enabled: true`, `provider: gemini`, `model: gemini-2.5-flash`, and `api_key_present: true` without revealing the key.
-
-## AI Review verification
-
-Use the frontend Deep AI Review button with Bangla text. Expected successful `/api/check` response includes:
-
-```json
-{
-  "llm_requested": true,
-  "llm_attempted": true,
-  "llm_used": true,
-  "llm_provider": "gemini",
-  "llm_status": "completed",
-  "suggestions": [],
-  "warnings": [],
-  "provider_attempts": []
-}
-```
-
-If Gemini fails and OpenRouter succeeds, expect `llm_provider: "openrouter"`, `llm_status: "completed"`, and warnings containing `primary_provider_failed:gemini` and `fallback_provider_used:openrouter`.
-
-## Troubleshooting
-
-| Symptom | Likely cause | Action |
-|---|---|---|
-| 401 | Invalid provider key | Rotate `GEMINI_API_KEY` or `OPENROUTER_API_KEY` on Render only. |
-| 403 | Key forbidden, project restriction, or API not enabled | Verify Google AI Studio key/project permissions; keep the key server-side. |
-| 404 | Unsupported model | Set `GEMINI_MODEL=gemini-2.5-flash`; verify `OPENROUTER_MODEL` in OpenRouter catalog. |
-| 429 | Quota or rate limit | Wait, enable billing/credits, or rely on fallback provider. |
-| Timeout | Render cold start or slow provider | Retry once; keep bounded timeout variables above. |
-| CORS | Origin missing from backend | Add exact Vercel origin to `SHUDDHO_ALLOWED_ORIGINS`, redeploy Render. |
-| Malformed provider response | Model did not return valid schema | Backend returns `invalid_json` or `invalid_schema`; local suggestions remain visible. |
+After changing Render settings, choose **Clear build cache & deploy**, wait for `/health` HTTP 200, then redeploy Vercel and test in an incognito browser.

@@ -1,135 +1,58 @@
-# Shuddho Deployment
+# Shuddho competition deployment
 
-## Web editor on Vercel
+Shuddho's only generative runtime is the pretrained instruction-tuned **Gemma 4** model `gemma-4-26b-a4b-it`. The Google Gen AI SDK and Gemini API endpoint are transport infrastructure; the application does not call a `gemini-*` model and does not claim to have trained or fine-tuned Gemma. Deterministic Bangla rules, spelling, dictionaries, punctuation, spacing, and regex checks remain available when hosted inference is unavailable.
 
-The web editor is a Vite React single-page application in `apps/web-editor`. The repository uses npm workspaces with `package-lock.json`; use npm commands for Vercel and local validation.
+## Render: native Python (recommended)
 
-### Recommended Vercel settings when Root Directory is `apps/web-editor`
+Configure the existing service in the Render dashboard; this repository does not use a Blueprint.
 
-Use these settings when the Vercel project is configured to build from the web editor package directory:
+- Runtime: **Python**
+- Build command: `python -m pip install --upgrade pip && python -m pip install --no-cache-dir .`
+- Start command: `python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port "$PORT"`
+- Health Check Path: `/health`
 
-- Framework Preset: Vite
+Render supplies `$PORT`; do not hard-code it. The base package intentionally excludes PyTorch, CUDA, SentencePiece, and optional ML engines.
+
+Set these backend-only values:
+
+```dotenv
+GOOGLE_API_KEY=<real secret>
+GEMMA_MODEL=gemma-4-26b-a4b-it
+SHUDDHO_LLM_PROVIDER=gemma
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_DETECTOR_ENABLED=false
+SHUDDHO_CORRECTOR_ENABLED=false
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
+SHUDDHO_LOG_RAW_TEXT=false
+```
+
+The disabled ML settings do not disable local deterministic analysis or Gemma review. Do not configure old provider/model/fallback variables or local ML model URLs on this service. Missing `GOOGLE_API_KEY` is reported as `missing_key` without breaking liveness.
+
+## Render: Docker alternative
+
+A plain `docker build .` and `docker build --target production .` both select the lightweight production stage. The optional CPU ML image is available only with `docker build --target ml-cpu .`; it is for offline/local work, not the competition Render service.
+
+## Vercel
+
 - Root Directory: `apps/web-editor`
+- Framework: Vite
 - Install Command: `npm install`
 - Build Command: `npm run build`
 - Output Directory: `dist`
 
-Fallback build command also supported:
-
-```bash
-npm run build:web-editor
-```
-
-`apps/web-editor/vercel.json` pins the app-root deployment to Vite, `npm run build`, `dist`, and an SPA rewrite to `index.html` so direct routes work after deployment.
-
-### Alternative monorepo-root Vercel settings
-
-Use these settings when the Vercel project is configured to build from the repository root:
-
-- Framework Preset: Vite
-- Root Directory: repository root
-- Install Command: `npm install`
-- Build Command: `npm run build:web-editor`
-- Output Directory: `apps/web-editor/dist`
-
-The root `vercel.json` is for this monorepo-root deployment shape. The root package script delegates to the `@shuddho/web-editor` npm workspace.
-
-### A. Vercel frontend environment variables
-
-Set only public Vite variables in the Vercel frontend project:
+Set only public frontend values:
 
 ```dotenv
 VITE_API_BASE_URL=https://shuddho-api.onrender.com
 VITE_USE_GATEWAY=true
 VITE_ENABLE_LOCAL_FALLBACK=false
+VITE_COMPETITION_DEMO_MODE=false
 ```
 
+Never add `GOOGLE_API_KEY`, `GEMMA_MODEL`, or `SHUDDHO_LLM_PROVIDER` to Vercel, frontend source, GitHub, logs, or screenshots. CORS uses the exact production origin; broad `https://*.vercel.app` values are invalid. Localhost origins are built in for local development only.
 
-Production health checks are intentionally Render-cold-start-safe: the web editor treats `/health` as the source of truth for backend reachability and waits up to 20 seconds. `/health/deep` is checked after `/health`; if deep health is slow or degraded, the editor shows a degraded/warming-up status but still allows quick local suggestions and `/api/check` requests.
+## Health and verification
 
-If `VITE_API_BASE_URL` is missing, the frontend still builds and renders, but it shows a configuration warning and keeps backend/AI requests disabled until a valid public backend URL is configured.
+`/health` is liveness-only. `/health/deep` reports stored local component/configuration state, and `/api/llm/debug` reports safe booleans/status; neither endpoint calls Gemma. Deep-review failures retain deterministic suggestions and return warnings and diagnostics instead of claiming Gemma was used.
 
-Do **not** add these to Vercel frontend environment variables:
-
-```dotenv
-OPENAI_API_KEY
-OPENROUTER_API_KEY
-OPENAI_MODEL
-OPENROUTER_MODEL
-SHUDDHO_LLM_PROVIDER
-```
-
-Those values belong only in the backend environment. Browser code must route AI review through the backend and must not receive private provider keys.
-
-
-
-### Competition Demo · Local Engine (Vercel only)
-
-For a competition/demo deployment that must run the prepared Bangla examples fully offline in the browser, set this public build-time Vite variable in the Vercel frontend project:
-
-```dotenv
-VITE_COMPETITION_DEMO_MODE=true
-```
-
-Use the exact lowercase string `true`. Configure it in Vercel, not Render, because it controls the Vite frontend bundle. Redeploy Vercel after changing it; Vite variables are baked in at build time. If you use both Vercel Production and Preview environments, set the variable separately in each environment. Do not put Gemini, OpenRouter, OpenAI, or any other secret provider keys in Vercel; keep the existing backend provider configuration on Render or another private backend runtime.
-
-### B. Backend environment variables
-
-For Deep AI Review with the OpenRouter-hosted `openai/gpt-oss-120b:free` model, set these only on the backend service (for example Render), never in Vercel:
-
-```dotenv
-SHUDDHO_ENABLE_LLM=true
-SHUDDHO_LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=openrouter/free
-OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
-OPENROUTER_APP_TITLE=Shuddho
-SHUDDHO_LLM_ON_CHECK=manual
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app,http://localhost:5173,http://127.0.0.1:5173
-SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
-SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS=50
-SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
-SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=50
-SHUDDHO_MAX_AI_TEXT_CHARS=5000
-SHUDDHO_LLM_MAX_CANDIDATES=8
-SHUDDHO_LLM_MAX_CANDIDATE_CHARS=2200
-SHUDDHO_LLM_MAX_COMPLETION_TOKENS=1400
-```
-
-`openai/gpt-oss-120b:free` is an OpenRouter model ID. Do not set it as `OPENAI_MODEL` and do not use it with `SHUDDHO_LLM_PROVIDER=openai`; the OpenAI provider path is only for official OpenAI model IDs such as `gpt-4o-mini`.
-
-### Local validation
-
-From the repository root:
-
-```bash
-npm install
-npm run build:web-editor
-```
-
-From the app directory:
-
-```bash
-cd apps/web-editor
-npm install
-npm run build
-npm run build:web-editor
-```
-
-Both app-directory build commands produce `dist` inside `apps/web-editor`. The root build command produces the same app output at `apps/web-editor/dist`.
-
-### Manual validation commands
-
-```bash
-npm run build:web-editor
-npm run build --workspace @shuddho/api
-python -m uvicorn services.api.shuddho_api.app:app --host 127.0.0.1 --port 8000 --reload
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/health/deep
-curl http://127.0.0.1:8000/api/llm/debug
-curl -X POST http://127.0.0.1:8000/api/check \
-  -H "Content-Type: application/json" \
-  -d "{\"text\":\"আমি বাংলা লিখি ।। বাংলা বাংলা ভাষা খুব সুন্দর !!\",\"language\":\"bn\",\"options\":{\"includeLLM\":true,\"asyncLLM\":false,\"llmMode\":\"review_candidates\",\"mode\":\"smart\"}}"
-```
-
-The check response should include `llm_requested`, `llm_attempted` when the provider is configured, `llm_provider`, `llm_model`, `suggestions`, local/AI suggestion counts, `warnings`, `diagnostics.llm`, and `timings`.
+After changing Render settings, choose **Clear build cache & deploy**, wait for `/health` HTTP 200, then redeploy Vercel and test in an incognito browser.
