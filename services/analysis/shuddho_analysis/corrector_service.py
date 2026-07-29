@@ -156,10 +156,6 @@ class CorrectorService:
         normalized_checkpoint_path, resolved_checkpoint_path = (
             cls._resolve_checkpoint_path(configured_checkpoint)
         )
-        cls._download_optional_model(
-            environment.get(CORRECTOR_MODEL_URL_ENV_VAR),
-            resolved_checkpoint_path,
-        )
         checkpoint_exists = bool(
             resolved_checkpoint_path and resolved_checkpoint_path.exists()
         )
@@ -195,6 +191,17 @@ class CorrectorService:
                 reason=f"{CORRECTOR_ENABLED_ENV_VAR}=false disabled corrector startup.",
                 checkpoint_exists=checkpoint_exists,
             )
+
+        # Optional model downloads are only a local/ML-profile concern.  In
+        # particular, a stale model URL must never make a lightweight Render
+        # process perform network I/O while its corrector is explicitly off.
+        cls._download_optional_model(
+            environment.get(CORRECTOR_MODEL_URL_ENV_VAR),
+            resolved_checkpoint_path,
+        )
+        checkpoint_exists = bool(
+            resolved_checkpoint_path and resolved_checkpoint_path.exists()
+        )
 
         return cls.from_checkpoint_path(
             normalized_checkpoint_path,

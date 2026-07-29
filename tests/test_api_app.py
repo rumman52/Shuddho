@@ -344,14 +344,23 @@ def test_health_route_returns_fast_ok_without_llm_keys(monkeypatch) -> None:
 
 
 def test_health_deep_does_not_call_llm_provider(monkeypatch) -> None:
-    def fail_llm_config() -> tuple[bool, str, str, str | None]:
-        raise AssertionError("health/deep must not initialize or call an LLM provider")
+    def fail_llm_call(*args, **kwargs):
+        raise AssertionError("health/deep must not call Gemma")
 
-    monkeypatch.setattr(app_module, "_llm_config", fail_llm_config)
+    monkeypatch.setattr(app_module, "run_gemma_check", fail_llm_call)
 
-    response = client.get("/health")
+    response = client.get("/health/deep")
 
     assert response.status_code == 200
+
+
+def test_llm_debug_does_not_call_llm_provider(monkeypatch) -> None:
+    monkeypatch.setattr(
+        app_module,
+        "run_gemma_check",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("debug must not call Gemma")),
+    )
+    assert client.get("/api/llm/debug").status_code == 200
 
 
 def test_cors_preflight_allows_vercel_frontend_origin() -> None:

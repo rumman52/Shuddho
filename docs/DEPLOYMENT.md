@@ -1,343 +1,58 @@
-# Shuddho deployment
+# Shuddho competition deployment
 
-## Vercel web editor
+Shuddho's only generative runtime is the pretrained instruction-tuned **Gemma 4** model `gemma-4-26b-a4b-it`. The Google Gen AI SDK and Gemini API endpoint are transport infrastructure; the application does not call a `gemini-*` model and does not claim to have trained or fine-tuned Gemma. Deterministic Bangla rules, spelling, dictionaries, punctuation, spacing, and regex checks remain available when hosted inference is unavailable.
 
-The web editor is a static Vite SPA in `apps/web-editor`. Deploy it from the repository root so Vercel uses the checked-in `vercel.json` rewrite and output settings. The editor must render before any backend, Render, OpenAI, or OpenRouter call succeeds. If the backend is down or `VITE_API_BASE_URL` is missing, the page still loads and shows a non-blocking setup or backend-unavailable banner.
+## Render: native Python (recommended)
 
-### Supported Vercel project settings
+Configure the existing service in the Render dashboard; this repository does not use a Blueprint.
 
-Case A — Vercel Root Directory is the repository root:
+- Runtime: **Python**
+- Build command: `python -m pip install --upgrade pip && python -m pip install --no-cache-dir .`
+- Start command: `python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port "$PORT"`
+- Health Check Path: `/health`
 
-- Framework Preset: Vite
-- Root Directory: repository root
-- Install Command: `npm install`
-- Build Command: `npm run build:web-editor`
-- Output Directory: `apps/web-editor/dist`
+Render supplies `$PORT`; do not hard-code it. The base package intentionally excludes PyTorch, CUDA, SentencePiece, and optional ML engines.
 
-Case B — Vercel Root Directory is `apps/web-editor`:
+Set these backend-only values:
 
-- Framework Preset: Vite
+```dotenv
+GOOGLE_API_KEY=<real secret>
+GEMMA_MODEL=gemma-4-26b-a4b-it
+SHUDDHO_LLM_PROVIDER=gemma
+SHUDDHO_ENABLE_LLM=true
+SHUDDHO_DETECTOR_ENABLED=false
+SHUDDHO_CORRECTOR_ENABLED=false
+SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app
+SHUDDHO_LOG_RAW_TEXT=false
+```
+
+The disabled ML settings do not disable local deterministic analysis or Gemma review. Do not configure old provider/model/fallback variables or local ML model URLs on this service. Missing `GOOGLE_API_KEY` is reported as `missing_key` without breaking liveness.
+
+## Render: Docker alternative
+
+A plain `docker build .` and `docker build --target production .` both select the lightweight production stage. The optional CPU ML image is available only with `docker build --target ml-cpu .`; it is for offline/local work, not the competition Render service.
+
+## Vercel
+
 - Root Directory: `apps/web-editor`
+- Framework: Vite
 - Install Command: `npm install`
 - Build Command: `npm run build`
 - Output Directory: `dist`
 
-The root `vercel.json` should remain aligned with those settings and includes this SPA fallback so deep links return `index.html` instead of 404s:
-
-```json
-{
-  "version": 2,
-  "buildCommand": "npm run build:web-editor",
-  "outputDirectory": "apps/web-editor/dist",
-  "installCommand": "npm install",
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
-  ]
-}
-```
-
-### Frontend Vercel environment variables
-
-Set these on the Vercel frontend project in **Production, Preview, and Development**:
+Set only public frontend values:
 
 ```dotenv
 VITE_API_BASE_URL=https://shuddho-api.onrender.com
 VITE_USE_GATEWAY=true
 VITE_ENABLE_LOCAL_FALLBACK=false
+VITE_COMPETITION_DEMO_MODE=false
 ```
 
-`VITE_API_BASE_URL` must be the Shuddho backend origin, such as `https://shuddho-api.onrender.com`. It must not be an OpenAI or OpenRouter URL. If it is missing, the deployed frontend intentionally disables server AI review, renders the editor, and shows: “API URL is not configured. Set VITE_API_BASE_URL in Vercel.”
+Never add `GOOGLE_API_KEY`, `GEMMA_MODEL`, or `SHUDDHO_LLM_PROVIDER` to Vercel, frontend source, GitHub, logs, or screenshots. CORS uses the exact production origin; broad `https://*.vercel.app` values are invalid. Localhost origins are built in for local development only.
 
-Security note: do **not** add `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or other private backend secrets to Vercel frontend variables. Browser code must only use public `VITE_*` values and must send AI review requests through the backend.
+## Health and verification
 
-### Vercel preview deployments and CORS
+`/health` is liveness-only. `/health/deep` reports stored local component/configuration state, and `/api/llm/debug` reports safe booleans/status; neither endpoint calls Gemma. Deep-review failures retain deterministic suggestions and return warnings and diagnostics instead of claiming Gemma was used.
 
-Render only allows browser origins listed in `SHUDDHO_ALLOWED_ORIGINS` plus the safe local/extension regex built into the FastAPI app. If you test a Vercel preview URL, add that exact preview origin to `SHUDDHO_ALLOWED_ORIGINS`, for example:
-
-```dotenv
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,https://your-preview-url.vercel.app,http://localhost:5173
-```
-
-Do not use a blanket wildcard in production. The backend uses credentials-capable CORS, so `*` is ignored by origin parsing. If preview URLs must be dynamic, implement safe Vercel preview CORS handling that restricts origins to trusted Shuddho preview hostnames.
-
-
-### Gemini primary with OpenRouter fallback
-
-Render backend environment variables for production Deep AI Review:
-
-```bash
-SHUDDHO_ENABLE_LLM=true
-
-# Primary provider
-SHUDDHO_LLM_PROVIDER=gemini
-GEMINI_API_KEY=<render-secret>
-GEMINI_MODEL=gemini-2.5-flash
-
-# Automatic fallback
-SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
-OPENROUTER_API_KEY=<existing-render-secret>
-OPENROUTER_MODEL=<currently-valid-openrouter-model>
-OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
-OPENROUTER_APP_TITLE=Shuddho
-
-SHUDDHO_LLM_ON_CHECK=manual
-SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
-SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
-```
-
-Gemini and OpenRouter keys belong only in Render or another private backend runtime. Never add `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or `OPENROUTER_API_KEY` to Vercel; Vercel should contain only public `VITE_*` values. OpenRouter remains configured even while Gemini is primary, and `SHUDDHO_LLM_PROVIDER` / `SHUDDHO_LLM_FALLBACK_PROVIDER` can be reversed without code changes. Use a current Gemini auth key from Google AI Studio. Do not commit real secrets to `.env.example`, README files, `render.yaml`, tests, or source files.
-
-OpenRouter model availability changes. The old `openai/gpt-oss-120b:free` value is not an active default; set `OPENROUTER_MODEL` explicitly after checking the current OpenRouter catalog. The OpenRouter catalog lists current free/router choices such as `openrouter/free`, which routes to available free models, but production deployments should choose and monitor a model appropriate for Bangla writing review.
-
-## Render FastAPI backend
-
-Render start command:
-
-```bash
-python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT
-```
-
-Set these private Render environment variables for `https://shuddho-api.onrender.com`:
-
-```dotenv
-SHUDDHO_CORRECTOR_ENABLED=auto
-SHUDDHO_CORRECTOR_CHECKPOINT=artifacts/corrector/corrector-base
-SHUDDHO_DETECTOR_ENABLED=auto
-SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173
-SHUDDHO_LOG_RAW_TEXT=false
-SHUDDHO_ENABLE_LLM=true
-SHUDDHO_LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=<currently-valid-openrouter-model>
-OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
-OPENROUTER_APP_TITLE=Shuddho
-SHUDDHO_LLM_ON_CHECK=manual
-```
-
-The Docker image copies `artifacts/` into `/app/artifacts` when the directory exists in the repository. The sentence-level corrector is optional: if `artifacts/corrector/corrector-base/best_model.pt` is absent or incomplete, `/health/deep` reports `corrector.status = missing_checkpoint`, analysis uses `backend_without_corrector` when the detector is ready, and Shuddho stays online with rules + spelling suggestions. To fully enable the corrector on Render, deployment artifacts must include both `artifacts/corrector/corrector-base/best_model.pt` and `artifacts/corrector/corrector-base/checkpoint`; until then use `SHUDDHO_CORRECTOR_ENABLED=auto` or `SHUDDHO_CORRECTOR_ENABLED=false` so missing checkpoints remain a health warning instead of a hard failure. The FastAPI backend must expose `/health`, `/health/deep`, `/api/preferences`, `/api/check`, `/api/rewrite`, `/api/tone`, and `/api/events` so the Vite web editor can call Render directly. Keep `SHUDDHO_LOG_RAW_TEXT=false` in production so raw user text is not logged.
-
-After merging a fix that removes broken LFS pointers, redeploy Render with **Manual Deploy → Clear build cache & deploy**.
-
-## Corrector checkpoint deployment
-
-### Option A: run without corrector
-
-- No `.pt` files are needed.
-- The app uses rules + spelling, and the detector if a valid detector artifact is available.
-- Render deploy works because there are no broken Git LFS pointers to download during clone.
-
-### Option B: use Git LFS manually
-
-Only use this from a developer machine that has the real checkpoint files and can upload to GitHub LFS:
-
-```bash
-git lfs install
-git lfs track "*.pt"
-git add .gitattributes
-git add artifacts/corrector/corrector-base/best_model.pt
-git add artifacts/corrector/corrector-base/last_model.pt
-git commit -m "Add corrector model checkpoints"
-git push origin main
-git lfs push --all origin main
-```
-
-Then redeploy Render with **Manual Deploy → Clear build cache & deploy**. The `git lfs push --all origin main` step is required; if the Git LFS pointer exists but the object was not uploaded, Render fails during checkout with a smudge error.
-
-### Option C: use external storage
-
-Recommended for production:
-
-- Hugging Face Hub
-- AWS S3
-- Cloudflare R2
-- GitHub Releases
-- Google Cloud Storage
-
-Store the model outside the Git repository and download it during build or startup. The backend supports optional `SHUDDHO_CORRECTOR_MODEL_URL`; when set, startup downloads the URL to `artifacts/corrector/corrector-base/best_model.pt` if that file is missing. The checkpoint metadata must still exist at `artifacts/corrector/corrector-base/metadata.json`.
-
-## Training the sentence-level corrector
-
-Train from the repository root before deploying full contextual correction mode:
-
-```bash
-python -m ml.corrector.train --config ml/training/configs/corrector.base.json
-```
-
-Expected output files:
-
-```text
-artifacts/corrector/corrector-base/metadata.json
-artifacts/corrector/corrector-base/best_model.pt
-artifacts/corrector/corrector-base/last_model.pt
-artifacts/corrector/corrector-base/checkpoint
-artifacts/corrector/corrector-base/metrics.json
-```
-
-Do not commit raw PyTorch `.pt` binaries directly from automation. For full contextual correction, add `best_model.pt` and `last_model.pt` with the Git LFS flow above or publish them to external model storage. Without a loadable `.pt` checkpoint, copying `artifacts/` is still safe, but the backend runs without the sentence-level corrector.
-
-## Manual smoke tests
-
-```bash
-curl https://shuddho-api.onrender.com/health
-curl https://shuddho-api.onrender.com/health/deep
-curl https://shuddho-api.onrender.com/api/preferences
-curl -X POST https://shuddho-api.onrender.com/api/check \
-  -H "Content-Type: application/json" \
-  -d '{"text":"আমি  আমি ভাত খাই।","language":"bn"}'
-curl -X POST https://shuddho-api.onrender.com/api/ai/check \
-  -H "Content-Type: application/json" \
-  -d '{"text":"আমি আজ স্কুলে গেছিলাম।","language":"bn"}'
-```
-
-Verify full mode with:
-
-```bash
-curl https://shuddho-api.onrender.com/health/deep
-```
-
-The corrector is loaded when the JSON contains:
-
-```json
-{
-  "corrector": { "status": "ready", "loaded": true },
-  "analysis_profile": "full_local"
-}
-```
-
-If the JSON contains `"corrector": { "status": "missing_checkpoint" }`, Render received a reachable backend but not a loadable `artifacts/corrector/corrector-base` artifact.
-
-PowerShell:
-
-```powershell
-curl.exe https://shuddho-api.onrender.com/health
-curl.exe https://shuddho-api.onrender.com/health/deep
-curl.exe https://shuddho-api.onrender.com/api/preferences
-curl.exe -X POST https://shuddho-api.onrender.com/api/check `
-  -H "Content-Type: application/json" `
-  -d "{\"text\":\"আমি  আমি ভাত খাই।\",\"language\":\"bn\"}"
-curl.exe -X POST https://shuddho-api.onrender.com/api/ai/check `
-  -H "Content-Type: application/json" `
-  -d "{\"text\":\"আমি আজ স্কুলে গেছিলাম।\",\"language\":\"bn\"}"
-```
-
-## 2026 production configuration notes
-
-Canonical production traffic is `apps/web-editor` (Vite) → `services/api/shuddho_api` (FastAPI) → local rules/spelling/detector → Gemini primary → OpenRouter fallback. `/health` is liveness only and does not call providers; `/health/deep` reports stored provider operational state without secrets.
-
-Render/backend placeholders only:
-
-```dotenv
-SHUDDHO_ENABLE_LLM=true
-
-SHUDDHO_LLM_PROVIDER=gemini
-GEMINI_API_KEY=<render-secret>
-GEMINI_MODEL=gemini-2.5-flash
-
-SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
-OPENROUTER_API_KEY=<render-secret>
-OPENROUTER_MODEL=<verified-current-openrouter-model>
-OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
-OPENROUTER_APP_TITLE=Shuddho
-
-SHUDDHO_LLM_ON_CHECK=manual
-SHUDDHO_LLM_TIMEOUT_SECONDS=35
-SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=45
-SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
-
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
-SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
-SHUDDHO_LOG_RAW_TEXT=false
-
-SHUDDHO_CORRECTOR_ENABLED=auto
-SHUDDHO_CORRECTOR_CHECKPOINT=artifacts/corrector/corrector-base
-SHUDDHO_DETECTOR_ENABLED=auto
-SHUDDHO_DETECTOR_CHECKPOINT=artifacts/detector/detector-base
-```
-
-Vercel/frontend placeholders only:
-
-```dotenv
-VITE_API_BASE_URL=https://shuddho-api.onrender.com
-VITE_USE_GATEWAY=true
-VITE_ENABLE_LOCAL_FALLBACK=false
-```
-
-Never place these in Vercel or any browser-exposed `VITE_*` setting: `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`.
-
-If Render shows OpenRouter HTTP 401, code cannot repair that invalid secret. The owner must create or rotate the key in OpenRouter, replace only Render `OPENROUTER_API_KEY`, verify the chosen `OPENROUTER_MODEL` against the current OpenRouter catalog, and redeploy Render. Never paste keys into logs, screenshots, source files, GitHub issues, or reports.
-
-## Model readiness and promotion gate
-
-The current software can launch in rules + spelling + AI-provider mode while local ML training remains a separate product task. Missing corrector checkpoints are nonfatal. A detector or corrector with zero/near-zero validation quality must be reported as degraded and must not override deterministic rule/spelling suggestions.
-
-Before promoting a Bangla model to production-ready, require a larger representative Bangla dataset, separate train/validation/test splits, coverage for spelling, grammar, punctuation, fluency, dialect and formal writing, held-out precision/recall/F1 and correction-accuracy evaluation, and checkpoint storage with integrity validation.
-
-## Production hardening profile (Render + Vercel)
-
-Use the Vite editor in `apps/web-editor` on Vercel and the FastAPI service in `services/api/shuddho_api` on Render. Do not expose provider API keys through Vite variables.
-
-### Render environment template
-
-```env
-SHUDDHO_ENABLE_LLM=true
-SHUDDHO_LLM_PROVIDER=gemini
-GEMINI_API_KEY=<secret>
-GEMINI_MODEL=<verified-supported-gemini-model>
-
-SHUDDHO_LLM_FALLBACK_PROVIDER=openrouter
-OPENROUTER_API_KEY=<secret>
-OPENROUTER_MODEL=<verified-current-openrouter-model>
-OPENROUTER_HTTP_REFERER=https://shuddho-web-editor.vercel.app
-OPENROUTER_APP_TITLE=Shuddho
-
-SHUDDHO_LLM_ON_CHECK=manual
-SHUDDHO_LLM_TIMEOUT_SECONDS=35
-SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS=50
-SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS=60
-
-SHUDDHO_ALLOWED_ORIGINS=https://shuddho-web-editor.vercel.app,http://localhost:5173,http://127.0.0.1:5173
-SHUDDHO_ALLOW_VERCEL_PREVIEWS=false
-SHUDDHO_LOG_RAW_TEXT=false
-
-SHUDDHO_DETECTOR_ENABLED=false
-SHUDDHO_CORRECTOR_ENABLED=false
-```
-
-Only one of `GOOGLE_API_KEY` and `GEMINI_API_KEY` should normally be configured. The Google Gen AI SDK gives `GOOGLE_API_KEY` precedence; if both are present, `/api/llm/debug` diagnostics should be treated as a configuration warning because a stale Google key can override the intended Gemini key.
-
-`GEMINI_MODEL` is required intentionally. Choose a currently supported model from official Google AI documentation for the Google project attached to the key. Code cannot create Gemini quota, repair an exhausted key, or enable billing; if Gemini returns 429, the owner must wait for quota reset, enable billing, select a model with available quota, or use a key from the intended Google project.
-
-`OPENROUTER_MODEL` is also required intentionally. Select a currently available OpenRouter model from the OpenRouter model list for the account/key being used. If OpenRouter returns a JSON error object inside HTTP 200 or reports model unavailability, update `OPENROUTER_MODEL`; code cannot make an unavailable model available.
-
-### Lightweight local-engine profile
-
-The Render lightweight profile should run rules, spelling, Gemini, and OpenRouter without PyTorch. Keep detector and corrector disabled until a validated CPU ML image and real checkpoints exist. Health should report disabled components as intentionally disabled rather than as load failures.
-
-### Optional ML profile
-
-A future ML profile may add CPU-only PyTorch and sentencepiece with validated detector/corrector checkpoints. Do not install CUDA, NVIDIA packages, or Triton in the free Render image. Do not enable the detector merely to make health green; current detector metrics are not production quality.
-
-To supply a real corrector checkpoint later, place a compatible `best_model.pt` under `artifacts/corrector/corrector-base/` or configure the checkpoint path used by the service, then validate metadata and model compatibility before enabling `SHUDDHO_CORRECTOR_ENABLED=true`. Do not create fake checkpoints or commit broken Git LFS pointers.
-
-### Vercel environment template
-
-```env
-VITE_API_BASE_URL=https://shuddho-api.onrender.com
-VITE_USE_GATEWAY=true
-VITE_ENABLE_LOCAL_FALLBACK=false
-```
-
-Never put Gemini, OpenRouter, OpenAI, or other backend provider secrets in Vercel. Production builds ignore stale localStorage backend URL overrides and use `VITE_API_BASE_URL`. After deployment, hard-refresh the browser with `Ctrl + Shift + R`.
-
-### Redeploy and smoke-test steps
-
-1. Deploy the Render service with the lightweight environment above.
-2. Confirm `GET /health` returns HTTP 200 and `ok: true`.
-3. Confirm `GET /health/deep` returns HTTP 200 with detector/corrector disabled or degraded, not a startup crash.
-4. Confirm CORS preflight succeeds for `Origin: https://shuddho-web-editor.vercel.app` on `OPTIONS /api/check` with `Access-Control-Request-Headers: content-type`.
-5. Deploy Vercel from `apps/web-editor` with only the Vite variables above.
-6. Hard-refresh the deployed editor and run a local-only paragraph check; HTTP 200 with zero suggestions should show a successful empty state, not backend unavailable.
+After changing Render settings, choose **Clear build cache & deploy**, wait for `/health` HTTP 200, then redeploy Vercel and test in an incognito browser.

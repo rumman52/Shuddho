@@ -1,4 +1,3 @@
-import importlib
 import json
 from pathlib import Path
 import tomllib
@@ -57,23 +56,55 @@ def test_windows_backend_script_uses_repo_root_before_starting_uvicorn() -> None
     assert "-m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port 8000 --reload" in script
 
 
-def test_pyproject_includes_ml_packages_and_windows_friendly_torch_strategy() -> None:
+def test_pyproject_keeps_hosted_runtime_lightweight_and_ml_optional() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["project"]["requires-python"] == ">=3.11,<3.15"
     dependencies = pyproject["project"]["dependencies"]
-    assert "torch>=2.5.1,<3.0.0; sys_platform == 'win32'" in dependencies
-    assert "torch>=2.4.0,<3.0.0; sys_platform != 'win32'" in dependencies
+    optional_ml = pyproject["project"]["optional-dependencies"]["ml"]
+    assert any(item.startswith("google-genai") for item in dependencies)
+    assert not any(item.lower().startswith(("torch", "sentencepiece", "transformers")) for item in dependencies)
+    assert any(item.startswith("torch") for item in optional_ml)
+    assert any(item.startswith("sentencepiece") for item in optional_ml)
 
     package_find = pyproject["tool"]["setuptools"]["packages"]["find"]
     assert "ml*" in package_find["include"]
     assert "ml*" not in package_find["exclude"]
 
 
-def test_ml_modules_used_by_backend_startup_are_importable() -> None:
-    assert importlib.import_module("ml.detector.runtime").__name__ == "ml.detector.runtime"
-    assert importlib.import_module("ml.ranking.pipeline").__name__ == "ml.ranking.pipeline"
-    assert importlib.import_module("ml.corrector.model").__name__ == "ml.corrector.model"
+def test_default_docker_target_is_lightweight_production() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    stages = [line.strip() for line in dockerfile.splitlines() if line.strip().upper().startswith("FROM ")]
+    assert any(line.endswith(" AS ml-cpu") for line in stages)
+    assert stages[-1].endswith(" AS production")
+    production_tail = dockerfile.rsplit("FROM lightweight AS production", 1)[1]
+    assert "torch" not in production_tail.lower()
+
+
+def test_render_docs_use_lightweight_native_install() -> None:
+    for filename in ("DEPLOYMENT.md", "DEPLOYMENT-QUICK-FIX.md", "docs/DEPLOYMENT.md", "docs/deployment-render-vercel.md"):
+        content = Path(filename).read_text(encoding="utf-8")
+        assert "python -m pip install --upgrade pip && python -m pip install --no-cache-dir ." in content
+        assert "uv sync --frozen || uv sync" not in content
+
+
+def test_disabled_corrector_skips_optional_model_download(monkeypatch) -> None:
+    from services.analysis.shuddho_analysis.corrector_service import CorrectorService
+
+    monkeypatch.setattr(
+        CorrectorService,
+        "_download_optional_model",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("disabled corrector attempted download")),
+    )
+    service = CorrectorService.from_environment(
+        {"SHUDDHO_CORRECTOR_ENABLED": "false", "SHUDDHO_CORRECTOR_MODEL_URL": "https://invalid.example/model"}
+    )
+    assert service.runtime_status().status == "disabled"
+
+
+def test_optional_ml_source_remains_available_without_being_a_base_requirement() -> None:
+    for path in ("ml/detector/runtime.py", "ml/ranking/pipeline.py", "ml/corrector/model.py"):
+        assert Path(path).is_file()
 
 
 def test_root_workspace_includes_gateway_web_and_packages() -> None:
