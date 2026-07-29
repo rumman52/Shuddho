@@ -516,7 +516,7 @@ export default function App() {
         personalDictionary: [...(preferences.personal_dictionary ?? [])],
         userId,
         includeLLM,
-        // Manual Deep AI Review must be a direct frontend → backend → Gemini
+        // Manual Deep AI Review must be a direct frontend → backend → Gemma
         // request. In-memory async job polling is unsafe on Render because jobs
         // can disappear across sleeps, restarts, or workers.
         asyncLLM: false,
@@ -1954,7 +1954,7 @@ function getFriendlyRuntimeStatus(args: {
     args.sourceSummary === "hybrid" ||
     args.llmStatus === "ok"
   ) {
-    return { label: args.llmStatus === "completed" ? "Gemini review ready" : "AI review ready", tone: "ok" };
+    return { label: args.llmStatus === "completed" ? "Gemma review ready" : "AI review ready", tone: "ok" };
   }
   if (
     args.backendMode === "degraded" ||
@@ -2077,9 +2077,7 @@ function describeSuggestionSources(
     return (
       suggestion.source === "model" ||
       suggestion.source === "hybrid" ||
-      suggestion.provider === "gemini" ||
-      suggestion.provider === "openrouter" ||
-      suggestion.provider === "openai" ||
+      suggestion.provider === "gemma" ||
       sources.includes("ai")
     );
   });
@@ -2199,8 +2197,8 @@ export function describeAnalyzeTextError(
   ) {
     return "Backend returned invalid JSON. Check /api/check response and Render logs.";
   }
-  if (lower.includes("openrouter") || lower.includes("provider_error")) {
-    return `OpenRouter provider error while reviewing. ${message}`.slice(
+  if (lower.includes("gemma") || lower.includes("provider_error")) {
+    return `Gemma provider error while reviewing. ${message}`.slice(
       0,
       240,
     );

@@ -730,20 +730,17 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   const status = response.llm_status;
   const llm = (response.llm ?? {}) as Record<string, unknown>;
   const rawProvider = String(response.llm_provider ?? llm.provider ?? "").toLowerCase();
-  const model = String(response.llm_model ?? llm.model ?? "");
   const skipReason = String(llm.skip_reason ?? "");
   const warnings = [
     ...(Array.isArray(response.warnings) ? response.warnings.map(String) : []),
     ...(Array.isArray(llm.warnings) ? llm.warnings.map(String) : []),
   ];
-  const inferredProvider = warnings.some((w) => w.includes("gemini")) ? "gemini" : warnings.some((w) => w.includes("openrouter")) || model.includes("/") || model.includes(":free") ? "openrouter" : warnings.some((w) => w.includes("openai")) ? "openai" : rawProvider;
-  const provider = inferredProvider || rawProvider;
-  const providerLabel = provider === "gemini" ? "Gemini" : provider === "openrouter" ? "OpenRouter" : provider === "openai" ? "OpenAI" : "AI";
+  const provider = rawProvider || "gemma";
+  const providerLabel = provider === "gemma" ? "Gemma" : "AI";
   const httpStatus = Number(llm.http_status ?? 0);
   const rejectedCount = Number(response.rejected_ai_suggestion_count ?? llm.rejected_ai_suggestion_count ?? 0);
   if (!status) return null;
   if (status === "completed") {
-    if (warnings.some((w) => w.includes("primary_provider_failed:gemini")) && warnings.some((w) => w.includes("fallback_provider_used:openrouter"))) return "Gemini was unavailable, so OpenRouter completed the review.";
     return null;
   }
   if (rejectedCount > 0 || status === "completed_rejected") {
@@ -756,19 +753,8 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
     }
     return `AI review skipped: ${skipReason || "not requested"}.`;
   }
-  if (status === "missing_key") {
-    return provider === "gemini"
-      ? "Gemini is not configured: missing backend Gemini API key."
-      : provider === "openrouter"
-        ? "OpenRouter is not configured: missing backend OpenRouter API key."
-        : "OpenAI is not configured: missing backend OpenAI API key.";
-  }
-  if (status === "unsupported_provider") {
-    if (warnings.some((w) => w.includes("openai_model_id_suspicious_use_openrouter_provider")) || model.includes("/") || model.includes(":free")) {
-      return `Invalid config: ${model || "this model"} must use SHUDDHO_LLM_PROVIDER=openrouter.`;
-    }
-    return "AI provider configuration is unsupported.";
-  }
+  if (status === "missing_key") return "Gemma is not configured: missing backend GOOGLE_API_KEY.";
+  if (status === "unsupported_provider") return "Invalid configuration: Shuddho supports only the Gemma provider and Gemma models.";
   if (status === "timeout") return "AI review timed out; showing local suggestions.";
   if (status === "rate_limited") return "AI provider rate limit/quota hit; showing local suggestions.";
   if (["auth_or_forbidden", "credits_or_payment_required", "model_not_found"].includes(status)) return `${providerLabel} configuration error; showing local suggestions.`;
@@ -776,7 +762,7 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   if (status === "invalid_json") return "AI returned invalid JSON; showing local suggestions.";
   if (status === "invalid_schema") return "AI review unavailable; showing local suggestions.";
   if (status === "queued" || status === "attempted") return `Reviewing with ${providerLabel}.`;
-  if (["provider_error", "network_error", "failed"].includes(status)) return "AI providers are unavailable. Showing local suggestions.";
+  if (["provider_error", "network_error", "failed"].includes(status)) return "Gemma is unavailable. Showing local suggestions.";
   if (status === "content_filter") return `${providerLabel} could not review this content. Showing local suggestions.`;
   return `LLM status: ${status}`;
 }

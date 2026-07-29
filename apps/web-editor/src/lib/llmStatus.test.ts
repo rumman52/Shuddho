@@ -34,8 +34,8 @@ test("terminal job replaces stale queued llm fields", () => {
     llm_requested: true,
     llm_attempted: true,
     llm_used: true,
-    llm_provider: "gemini",
-    llm_model: "gemini-3.5-flash",
+    llm_provider: "gemma",
+    llm_model: "gemma-4-26b-a4b-it",
     suggestions: [],
   });
   assert.equal(merged.llm_used, true);
@@ -57,9 +57,9 @@ test("local suggestions survive AI provider failure with empty job suggestions",
   assert.equal(merged.suggestions?.length, 1);
 });
 
-test("fallback success displays OpenRouter completion message", () => {
+test("completed Gemma review does not claim a provider fallback", () => {
   assert.equal(
-    llmReviewStatusMessage({ llm_status: "completed", llm_provider: "openrouter", warnings: ["fallback_provider_used:openrouter"], provider_attempts: [{ provider: "gemini" }, { provider: "openrouter" }] }),
-    "Gemini was unavailable, so OpenRouter completed the review.",
+    llmReviewStatusMessage({ llm_status: "completed", llm_provider: "gemma", warnings: ["fallback_provider_used:gemma"], provider_attempts: [{ provider: "gemma" }, { provider: "gemma" }] }),
+    "AI review complete.",
   );
 });

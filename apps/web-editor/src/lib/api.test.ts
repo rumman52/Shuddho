@@ -484,39 +484,39 @@ test("gatewayCheckToAnalyzeResponse preserves llm diagnostics", () => {
   const response = gatewayCheckToAnalyzeResponse(
     {
       normalizedText: "আমি ভাত খাই।",
-      warnings: ["openai_timeout"],
+      warnings: ["gemma_timeout"],
       llm_requested: true,
       llm_attempted: true,
       llm_used: false,
       llm_status: "timeout",
-      llm_provider: "openai",
-      llm_model: "gpt-4o-mini",
+      llm_provider: "gemma",
+      llm_model: "gemma-4-26b-a4b-it",
       llm_response_mode: "json_schema",
       local_suggestion_count: 1,
       ai_suggestion_count: 0,
       rejected_ai_suggestion_count: 2,
-      llm: { status: "timeout", error: "openai_timeout" },
+      llm: { status: "timeout", error: "gemma_timeout" },
       diagnostics: { local: { suggestion_count: 1 } },
     },
     { text: "আমি ভাত খাই।", mode: "standard", personal_dictionary: [], user_id: "u1" },
   );
   assert.equal(response.llm_status, "timeout");
-  assert.equal(response.llm_provider, "openai");
+  assert.equal(response.llm_provider, "gemma");
   assert.equal(response.rejected_ai_suggestion_count, 2);
-  assert.deepEqual(response.diagnostics?.llm, { status: "timeout", error: "openai_timeout" });
+  assert.deepEqual(response.diagnostics?.llm, { status: "timeout", error: "gemma_timeout" });
 });
 
 test("friendlyLlmWarning maps precise provider-aware LLM statuses", () => {
-  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "openrouter" }), "OpenRouter is not configured: missing backend OpenRouter API key.");
-  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "openai" }), "OpenAI is not configured: missing backend OpenAI API key.");
-  assert.equal(friendlyLlmWarning({ llm_status: "timeout", llm_provider: "openrouter" }), "AI review timed out; showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider", llm_provider: "openai", llm_model: "openai/gpt-oss-120b:free", warnings: ["openai_model_id_suspicious_use_openrouter_provider"] }), "Invalid config: openai/gpt-oss-120b:free must use SHUDDHO_LLM_PROVIDER=openrouter.");
-  assert.equal(friendlyLlmWarning({ llm_status: "rate_limited", llm_provider: "openrouter" }), "AI provider rate limit/quota hit; showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "openrouter" }), "AI reviewed the text but found no extra high-confidence suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "completed_rejected", llm_provider: "openrouter", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "openrouter", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "invalid_json", llm_provider: "openrouter" }), "AI returned invalid JSON; showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "invalid_schema", llm_provider: "openrouter" }), "AI review unavailable; showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "gemma" }), "Gemma is not configured: missing backend GOOGLE_API_KEY.");
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "gemma" }), "Gemma is not configured: missing backend GOOGLE_API_KEY.");
+  assert.equal(friendlyLlmWarning({ llm_status: "timeout", llm_provider: "gemma" }), "AI review timed out; showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider", llm_provider: "gemma", llm_model: "gemma-4-26b-a4b-it", warnings: ["gemma_model_id_suspicious_use_gemma_provider"] }), "Invalid configuration: Shuddho supports only the Gemma provider and Gemma models.");
+  assert.equal(friendlyLlmWarning({ llm_status: "rate_limited", llm_provider: "gemma" }), "AI provider rate limit/quota hit; showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "gemma" }), "AI reviewed the text but found no extra high-confidence suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "completed_rejected", llm_provider: "gemma", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "gemma", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "invalid_json", llm_provider: "gemma" }), "AI returned invalid JSON; showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "invalid_schema", llm_provider: "gemma" }), "AI review unavailable; showing local suggestions.");
 });
 
 test("friendlyLlmWarning explains local-only skipped LLM without treating it as provider failure", () => {
@@ -524,7 +524,7 @@ test("friendlyLlmWarning explains local-only skipped LLM without treating it as 
     friendlyLlmWarning({
       llm_requested: false,
       llm_status: "skipped",
-      llm_provider: "openrouter",
+      llm_provider: "gemma",
       llm: { skip_reason: "include_llm_false" },
     }),
     "AI review was not requested. Showing local suggestions.",
@@ -533,7 +533,7 @@ test("friendlyLlmWarning explains local-only skipped LLM without treating it as 
     friendlyLlmWarning({
       llm_requested: false,
       llm_status: "skipped",
-      llm_provider: "openrouter",
+      llm_provider: "gemma",
     }),
     "AI review was not requested. Showing local suggestions.",
   );

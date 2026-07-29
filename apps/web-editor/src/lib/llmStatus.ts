@@ -73,18 +73,6 @@ export function mergeLlmJobIntoAnalysis(
 
 export function llmReviewStatusMessage(job: Partial<LlmReviewJobResponse>): string {
   const status = normalizeLlmStatus(job.llm_status ?? job.status);
-  const attempts = Array.isArray(job.provider_attempts)
-    ? job.provider_attempts
-    : Array.isArray((job.llm as { provider_attempts?: unknown[] } | undefined)?.provider_attempts)
-      ? ((job.llm as { provider_attempts: unknown[] }).provider_attempts)
-      : [];
-  const warnings = Array.isArray(job.warnings) ? job.warnings : [];
-  const usedOpenRouterFallback =
-    warnings.includes("fallback_provider_used:openrouter") ||
-    (job.llm_provider === "openrouter" && attempts.some((attempt) => (attempt as { provider?: string }).provider === "gemini"));
-  if (usedOpenRouterFallback && ["completed", "completed_empty", "completed_rejected"].includes(status)) {
-    return "Gemini was unavailable, so OpenRouter completed the review.";
-  }
   if (status === "completed") return "AI review complete.";
   if (status === "completed_empty") return "AI reviewed the text and found no additional high-confidence issues.";
   if (status === "completed_rejected") return "AI reviewed the text, but its suggestions did not pass validation. Local suggestions are still shown.";

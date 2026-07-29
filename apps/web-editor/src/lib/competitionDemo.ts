@@ -164,7 +164,7 @@ function dedupeSuggestions(suggestions: Suggestion[]): Suggestion[] {
   const byKey = new Map<string, Suggestion>();
   for (const suggestion of suggestions) {
     const replacement = getPrimaryReplacement(suggestion);
-    if (!replacement || suggestion.provider === "gemini" || suggestion.provider === "openrouter") continue;
+    if (!replacement || suggestion.provider === "gemma") continue;
     const key = `${suggestion.span_start}:${suggestion.span_end}:${suggestion.original_text}:${replacement}`;
     const existing = byKey.get(key);
     if (!existing || sourcePriority(suggestion) > sourcePriority(existing)) byKey.set(key, suggestion);
