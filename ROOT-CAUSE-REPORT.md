@@ -1,13 +1,53 @@
 # Shuddho production root-cause report
 
-## Confirmed repository cause
+## Current confirmed live failure (July 31, 2026)
 
-The default Docker result previously ended at the `ml-cpu` stage. Consequently an unqualified Docker deployment installed PyTorch/SentencePiece and selected automatic checkpoint engines even though hosted Gemma inference needs neither. The quick-fix documentation also used `uv sync`, whose default development group expands the install and made the native Render path inconsistent with the known-working base-package install. Both choices add avoidable startup work before an HTTP health response and match the observed symptom: the host accepted a connection but health endpoints timed out before any Gemma request.
+The deployed Render service is reachable, but its dashboard environment selects
+`SHUDDHO_LLM_PROVIDER=gemini`. Shuddho's competition runtime accepts only
+`gemma`, so configuration resolution fails closed with
+`unsupported_llm_provider_gemma_only` before it reads `GOOGLE_API_KEY` or makes
+a model request. While the provider is invalid, `api_key_present: false` is not
+evidence that the key is absent.
 
-The production repair makes the last Docker stage a lightweight `production` alias, retains `ml-cpu` only as an explicit target, and standardizes native Render on `python -m pip install --no-cache-dir .`. Explicitly disabled corrector startup now skips even optional model-download handling.
+The Vercel production build also has dashboard overrides that set
+`VITE_API_BASE_URL=https://shuddho-api.onrender.com` and
+`VITE_COMPETITION_DEMO_MODE=true`. The former bypasses the working same-origin
+`/backend` rewrite; the latter enables a demo mode that should be disabled in
+production.
+
+Repository commits cannot alter environment variables already stored in the
+Render or Vercel dashboards. An authorized project owner must apply the
+production settings below and redeploy both services.
+
+## Required external remediation
+
+Render must use `SHUDDHO_LLM_PROVIDER=gemma`, enable LLM review, select
+`GEMMA_MODEL=gemma-4-26b-a4b-it`, and provide an approved server-side
+`GOOGLE_API_KEY`. Detector and corrector engines remain disabled in the
+lightweight service. After saving the variables, clear the Render build cache
+and deploy, then verify `/health`, `/health/deep`, `/api/llm/debug`, and
+`/version`.
+
+Vercel Production must delete the direct `VITE_API_BASE_URL` override (or set it
+to `/backend` only), set `VITE_COMPETITION_DEMO_MODE=false`, retain
+`VITE_USE_GATEWAY=true` and `VITE_ENABLE_LOCAL_FALLBACK=false`, and redeploy
+after Render is ready. Backend variables and secrets must never be added to
+Vercel.
+
+## Historical issues (resolved)
+
+Earlier repository revisions made the ML-heavy `ml-cpu` Docker stage the
+default and documented a development-oriented native install. Those startup and
+dependency risks were repaired: the final Docker stage is now lightweight
+`production`, `ml-cpu` remains an explicit opt-in target, and production uses
+the base package without Torch or SentencePiece. They are not the cause of the
+current AI-unavailable message.
 
 ## Runtime architecture
 
-The competition runtime uses the Google Gen AI SDK/API transport to call only pretrained instruction-tuned Gemma 4 (`gemma-4-26b-a4b-it`). Unsupported provider names and non-`gemma-*` models fail closed. Health and debug routes inspect state only; provider calls occur only for requested AI review. Local rules and spelling remain the honest fallback.
-
-Repository changes cannot redeploy the existing Render/Vercel projects. The owner must apply the dashboard settings in `DEPLOYMENT.md`, clear Render's build cache, verify `/health`, and then redeploy Vercel.
+The Google Gen AI SDK/API is transport for the pretrained instruction-tuned
+Gemma model `gemma-4-26b-a4b-it`; Shuddho does not use a Gemini model or claim
+to have trained or fine-tuned Gemma. Unsupported providers and non-`gemma-*`
+models fail closed. Local rules, dictionaries, spelling, punctuation, and
+spacing checks remain available as deterministic fallback and quick typing
+support.

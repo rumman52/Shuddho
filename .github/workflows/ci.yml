@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.22"
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Validate Python lockfile
+        run: uv lock --check
+      - name: Install lightweight Python dependencies
+        run: uv sync --frozen --group dev --no-extra ml
+      - name: Check Python syntax
+        run: >-
+          uv run python -m py_compile
+          services/api/shuddho_api/app.py
+          services/api/shuddho_api/llm_provider.py
+          services/api/shuddho_api/llm_gemma.py
+      - name: Run Python tests
+        run: uv run pytest -q
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Run JavaScript tests
+        run: npm test
+      - name: Build workspaces
+        run: npm run build
