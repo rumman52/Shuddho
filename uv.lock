@@ -1,6 +1,6 @@
 version = 1
 revision = 3
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'win32'",
     "python_full_version >= '3.12' and sys_platform != 'win32'",
@@ -215,6 +215,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/51/7c/f60c259dcbf4f0c47
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/ab/fb21f4c939bb440104cc2b396d3be1d9b7a9fd3c6c2a53d98c45b3d7c954/fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437", size = 202505, upload-time = "2026-02-05T21:50:51.819Z" },
 ]
+
+[[package]]
+name = "google-genai"
+version = "1.27.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "httpx"
+version = "0.28.1"
+source = { registry = "https://pypi.org/simple" }
 
 [[package]]
 name = "h11"
@@ -731,28 +741,40 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "google-genai", version = "1.27.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "httpx", version = "0.28.1", source = { registry = "https://pypi.org/simple" } },
     { name = "pydantic" },
-    { name = "pytest" },
     { name = "python-dotenv" },
-    { name = "requests" },
+    { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+ml = [
     { name = "sentencepiece" },
     { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
     { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
-    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
+    { name = "google-genai", specifier = ">=1.27.0,<2.0.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "pydantic", specifier = ">=2.8.0,<3.0.0" },
-    { name = "pytest", specifier = ">=8.2.0,<9.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2.0.0" },
-    { name = "requests", specifier = ">=2.32.0,<3.0.0" },
-    { name = "sentencepiece", specifier = ">=0.2.0,<1.0.0" },
-    { name = "torch", marker = "sys_platform != 'win32'", specifier = ">=2.4.0,<3.0.0" },
-    { name = "torch", marker = "sys_platform == 'win32'", specifier = "==2.5.1" },
+    { name = "sentencepiece", extra = "ml", specifier = ">=0.2.0,<1.0.0" },
+    { name = "torch", extra = "ml", marker = "sys_platform != 'win32'", specifier = ">=2.4.0,<3.0.0" },
+    { name = "torch", extra = "ml", marker = "sys_platform == 'win32'", specifier = ">=2.5.1,<3.0.0" },
     { name = "uvicorn", specifier = ">=0.30.0,<1.0.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.2.0,<9.0.0" }]
 
 [[package]]
 name = "starlette"

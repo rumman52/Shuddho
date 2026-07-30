@@ -78,6 +78,20 @@ def test_pyproject_keeps_hosted_runtime_lightweight_and_ml_optional() -> None:
     assert "ml*" not in package_find["exclude"]
 
 
+def test_lock_metadata_matches_current_dependency_groups() -> None:
+    lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
+    project = next(package for package in lock["package"] if package["name"] == "shuddho")
+
+    base = {dependency["name"] for dependency in project["dependencies"]}
+    optional_ml = {dependency["name"] for dependency in project["optional-dependencies"]["ml"]}
+    dev = {dependency["name"] for dependency in project["dev-dependencies"]["dev"]}
+
+    assert {"google-genai", "httpx"} <= base
+    assert {"torch", "sentencepiece"}.isdisjoint(base)
+    assert {"torch", "sentencepiece"} <= optional_ml
+    assert "pytest" in dev
+
+
 def test_default_docker_target_is_lightweight_production() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     stages = [line.strip() for line in dockerfile.splitlines() if line.strip().upper().startswith("FROM ")]

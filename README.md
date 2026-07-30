@@ -5,8 +5,8 @@ Shuddho is a Bangla writing assistant with deterministic spelling/rule/dictionar
 ## Development
 
 ```bash
-python -m pip install -e '.[dev]'
-python -m pytest -q
+uv sync --group dev
+uv run pytest -q
 npm ci
 npm run test --workspace @shuddho/web-editor
 npm run build --workspace @shuddho/web-editor
