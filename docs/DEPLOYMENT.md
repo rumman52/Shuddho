@@ -7,6 +7,8 @@ Shuddho's only generative runtime is the pretrained instruction-tuned **Gemma 4*
 Configure the existing service in the Render dashboard; this repository does not use a Blueprint.
 
 - Runtime: **Python**
+- Branch: **main**
+- Root Directory: **blank / repository root**
 - Build command: `python -m pip install --upgrade pip && python -m pip install --no-cache-dir .`
 - Start command: `python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port "$PORT"`
 - Health Check Path: `/health`
@@ -40,13 +42,14 @@ A plain `docker build .` and `docker build --target production .` both select th
 - Build Command: `npm run build`
 - Output Directory: `dist`
 
-Set only public frontend values:
+Set only these public frontend values. Prefer to leave `VITE_API_BASE_URL`
+unset; if the dashboard requires an explicit value, use `/backend`:
 
 ```dotenv
-VITE_API_BASE_URL=https://shuddho-api.onrender.com
 VITE_USE_GATEWAY=true
 VITE_ENABLE_LOCAL_FALLBACK=false
 VITE_COMPETITION_DEMO_MODE=false
+# Optional: VITE_API_BASE_URL=/backend
 ```
 
 Never add `GOOGLE_API_KEY`, `GEMMA_MODEL`, or `SHUDDHO_LLM_PROVIDER` to Vercel, frontend source, GitHub, logs, or screenshots. CORS uses the exact production origin; broad `https://*.vercel.app` values are invalid. Localhost origins are built in for local development only.

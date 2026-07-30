@@ -87,7 +87,6 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
     "https://shuddho-web-editor.vercel.app",
-    "https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app",
 ]
 # Dynamic Vercel previews are opt-in and project scoped.  Never allow all
 # *.vercel.app origins in production.
@@ -1414,11 +1413,24 @@ def _run_llm_job_impl(job_id: str, text: str, candidates: list[dict], local_sugg
     config = resolve_llm_config(os.environ)
     _update_llm_job(job_id, {"status": "running", "llm_status": "running", "llm_attempted": True, "started_at": time.time(), "started_at_iso": _now_iso()})
     local_suggestions = list(local_suggestions or [])
+    canonical_local, local_boundary_warnings = merge_suggestions(
+        text, local_suggestions, [], "local", ""
+    )
     # Provider-result caching is handled inside _run_ai_check; job payloads are always freshly canonicalized.
     ai = _run_ai_check(text, request_id, local_suggestions=local_suggestions, timeout_seconds=float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50") or "50"))
     elapsed = int((time.time() - started) * 1000)
     status = ai.status if ai.status in LLM_TERMINAL_STATUSES else "failed"
-    valid_ai: list[dict[str, Any]] = list(ai.suggestions or []) if status in {"completed", "completed_empty", "completed_rejected"} else []
+    valid_ai: list[dict[str, Any]] = []
+    boundary_warnings: list[str] = []
+    if status in {"completed", "completed_empty", "completed_rejected"}:
+        # The provider chain normally performs this normalization. Keep the
+        # asynchronous service boundary defensive as well: injected providers,
+        # legacy cached results, and test doubles must never send raw ``start``
+        # fields into merge logic, which accepts only the canonical internal
+        # ``span_start``/``span_end`` shape.
+        valid_ai, boundary_warnings = validate_ai_suggestions(
+            text, list(ai.suggestions or []), _sentences_for_ai(text)
+        )
     raw_ai_count = int(ai.ai_raw_suggestion_count or len(ai.suggestions or []))
     rejected_count = max(0, raw_ai_count - len(valid_ai))
     ai_empty_reason = ai.timings.get("ai_empty_reason") if isinstance(ai.timings, dict) else None
@@ -1427,11 +1439,11 @@ def _run_llm_job_impl(job_id: str, text: str, candidates: list[dict], local_sugg
     elif status == "completed_rejected":
         ai_empty_reason = "all_ai_suggestions_rejected"
     if status in {"completed", "completed_empty", "completed_rejected"}:
-        merged, merge_warnings = merge_suggestions(text, local_suggestions, valid_ai, ai.provider, ai.model)
-        warnings = _dedupe_strings([*ai.warnings, *merge_warnings])
+        merged, merge_warnings = merge_suggestions(text, canonical_local, valid_ai, ai.provider, ai.model)
+        warnings = _dedupe_strings([*ai.warnings, *local_boundary_warnings, *boundary_warnings, *merge_warnings])
     else:
-        merged = local_suggestions
-        warnings = _dedupe_strings(ai.warnings or [f"llm_{status}"])
+        merged = canonical_local
+        warnings = _dedupe_strings([*(ai.warnings or [f"llm_{status}"]), *local_boundary_warnings])
         raw_ai_count = 0
         rejected_count = 0
         ai_empty_reason = status
@@ -1441,7 +1453,7 @@ def _run_llm_job_impl(job_id: str, text: str, candidates: list[dict], local_sugg
         provider=ai.provider,
         model=ai.model,
         suggestions=merged,
-        local_suggestion_count=len(local_suggestions),
+        local_suggestion_count=len(canonical_local),
         warnings=warnings,
         response_mode=ai.response_mode,
         called=ai.called,

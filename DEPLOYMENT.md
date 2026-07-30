@@ -7,6 +7,8 @@ Shuddho's only generative runtime is the pretrained instruction-tuned **Gemma 4*
 Configure the existing service in the Render dashboard; this repository does not use a Blueprint.
 
 - Runtime: **Python**
+- Branch: **main**
+- Root Directory: **blank / repository root**
 - Build command: `python -m pip install --upgrade pip && python -m pip install --no-cache-dir .`
 - Start command: `python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port "$PORT"`
 - Health Check Path: `/health`
@@ -69,3 +71,9 @@ After changing Render settings, choose **Clear build cache & deploy**, wait for
 `/health` HTTP 200, then redeploy Vercel and test in an incognito browser. The
 standard frontend health URL is `/backend/health`; Vercel forwards it to Render's
 `/health` endpoint.
+
+The canonical public competition demo is
+`https://shuddho-web-editor.vercel.app`; a protected branch preview is not the
+public demo. Remove the stale production dashboard value
+`VITE_API_BASE_URL=https://shuddho-api.onrender.com`. Prefer no value; if Vercel
+requires one, use only `VITE_API_BASE_URL=/backend`.
