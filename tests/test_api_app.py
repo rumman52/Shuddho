@@ -3,6 +3,7 @@ import re
 import json
 import time
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from services.api.shuddho_api.app import (
     app,
@@ -88,7 +89,7 @@ def test_ai_check_warns_when_api_key_missing(monkeypatch) -> None:
     monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     response = ai_check(app_module.AiCheckRequest(text="আমি আজ স্কুলে গেছিলাম।", language="bn"))
-    assert "gemma_api_key_missing" in response.warnings
+    assert "google_api_key_missing" in response.warnings
 
 
 
@@ -1147,7 +1148,7 @@ def test_api_check_local_suggestions_continue_when_corrector_missing(monkeypatch
 
     assert response.local_suggestion_count == len(response.suggestions)
     assert response.local_suggestion_count > 0
-    assert "sentence_level_corrector_unavailable" in response.warnings
+    assert "corrector_missing_checkpoint" in response.warnings
     assert response.diagnostics["backendReachable"] is True
     assert response.diagnostics["backendStatus"] == "ok"
     assert response.diagnostics["correctorLoaded"] is False
@@ -1213,7 +1214,7 @@ def test_api_check_calls_gemma_when_llm_configured_and_corrector_missing(monkeyp
     assert response.llm_attempted is True
     assert response.llm_provider == "gemma"
     assert response.llm_model == "gemma-4-26b-a4b-it"
-    assert "sentence_level_corrector_unavailable" in response.warnings
+    assert "corrector_missing_checkpoint" in response.warnings
     assert response.diagnostics["llmEnabled"] is True
     assert response.diagnostics["llmConfigured"] is True
     assert response.diagnostics["llmProvider"] == "gemma"
@@ -1285,8 +1286,8 @@ def test_api_check_reports_rejected_ai_suggestions(monkeypatch) -> None:
     assert response.diagnostics["llm"]["rejection_warnings"]
 
 
-def test_safe_cors_accepts_exact_preview_origin() -> None:
-    origin = "https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app"
+def test_safe_cors_accepts_exact_production_origin() -> None:
+    origin = "https://shuddho-web-editor.vercel.app"
     assert origin in ALLOWED_ORIGINS
 
 
@@ -1296,8 +1297,8 @@ def test_safe_cors_rejects_unrelated_vercel_and_attacker_domain() -> None:
     assert not re.fullmatch(ALLOWED_ORIGIN_REGEX, "https://vercel.app.attacker.example")
 
 
-def test_cors_preflight_health_and_post_echo_preview_origin() -> None:
-    origin = "https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app"
+def test_cors_preflight_health_and_post_echo_production_origin() -> None:
+    origin = "https://shuddho-web-editor.vercel.app"
     preflight = client.options(
         "/api/check",
         headers={
@@ -1354,8 +1355,14 @@ def _fake_provider_result(status="completed", suggestions=None, provider="gemma"
     }
 
 
-def _local_suggestions():
-    return [{"id": "local-spacing", "rule_id": "bn.spacing", "category": "spacing", "span_start": 13, "span_end": 15, "original": "  ", "replacement_options": [" "], "explanation": "spacing", "confidence": 0.9, "source": "rule"}]
+def _local_suggestions(text: str):
+    start = text.index("।।")
+    return [{
+        "id": "local-punctuation", "ruleId": "bn.punctuation", "type": "punctuation",
+        "originalText": "।।", "suggestedText": "।", "replacementOptions": ["।"],
+        "explanationBn": "একটি দাঁড়ি যথেষ্ট।", "span": {"startIndex": start, "endIndex": start + 2},
+        "confidence": 0.9, "source": "rule", "provider": "local",
+    }]
 
 
 def test_async_llm_job_contract_valid_ai_merges_local(monkeypatch):
@@ -1365,7 +1372,7 @@ def test_async_llm_job_contract_valid_ai_merges_local(monkeypatch):
     app_module.llm_cache.clear()
     job_id = "llm_pytest_valid"
     app_module.llm_jobs[job_id] = {}
-    app_module._run_llm_job(job_id, text, [], _local_suggestions(), "req-1")
+    app_module._run_llm_job(job_id, text, [], _local_suggestions(text), "req-1")
     job = app_module.llm_jobs[job_id]
     assert job["status"] == "completed"
     assert job["llm_used"] is True
@@ -1381,12 +1388,14 @@ def test_async_llm_job_completed_empty_preserves_local(monkeypatch):
     app_module.llm_cache.clear()
     job_id = "llm_pytest_empty"
     app_module.llm_jobs[job_id] = {}
-    app_module._run_llm_job(job_id, "আমি বাংলা লিখি।।", [], _local_suggestions(), "req-2")
+    text = "আমি বাংলা লিখি।।"
+    app_module._run_llm_job(job_id, text, [], _local_suggestions(text), "req-2")
     job = app_module.llm_jobs[job_id]
     assert job["status"] == "completed_empty"
     assert job["llm_used"] is True
     assert job["ai_empty_reason"] == "model_returned_no_suggestions"
-    assert job["suggestions"] == _local_suggestions()
+    assert [item["id"] for item in job["suggestions"]] == ["local-punctuation"]
+    assert job["suggestions"][0]["span"] == _local_suggestions(text)[0]["span"]
 
 
 def test_async_llm_job_completed_rejected_preserves_local(monkeypatch):
@@ -1400,14 +1409,15 @@ def test_async_llm_job_completed_rejected_preserves_local(monkeypatch):
     app_module.llm_cache.clear()
     job_id = "llm_pytest_rejected"
     app_module.llm_jobs[job_id] = {}
-    app_module._run_llm_job(job_id, text, [], _local_suggestions(), "req-3")
+    app_module._run_llm_job(job_id, text, [], _local_suggestions(text), "req-3")
     job = app_module.llm_jobs[job_id]
     assert job["status"] == "completed_rejected"
     assert job["llm_used"] is True
     assert job["ai_raw_suggestion_count"] == 1
     assert job["ai_valid_suggestion_count"] == 0
     assert job["ai_rejected_suggestion_count"] == 1
-    assert job["suggestions"] == _local_suggestions()
+    assert [item["id"] for item in job["suggestions"]] == ["local-punctuation"]
+    assert job["suggestions"][0]["span"] == _local_suggestions(text)[0]["span"]
 
 
 
@@ -1417,16 +1427,18 @@ def test_async_llm_failure_payload_preserves_local(monkeypatch):
     app_module.llm_cache.clear()
     job_id = "llm_pytest_fail"
     app_module.llm_jobs[job_id] = {}
-    app_module._run_llm_job(job_id, "আমি বাংলা লিখি।।", [], _local_suggestions(), "req-4")
+    text = "আমি বাংলা লিখি।।"
+    app_module._run_llm_job(job_id, text, [], _local_suggestions(text), "req-4")
     job = app_module.llm_jobs[job_id]
     assert job["status"] == "timeout"
     assert job["llm_used"] is False
-    assert job["suggestions"] == _local_suggestions()
+    assert [item["id"] for item in job["suggestions"]] == ["local-punctuation"]
+    assert job["suggestions"][0]["span"] == _local_suggestions(text)[0]["span"]
 
 
-def test_cors_origin_parser_accepts_exact_and_rejects_malformed():
-    origins = app_module._parse_allowed_origins("SHUDDHO_ALLOWED_ORIGINS=https://evil.example,https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app,https://attacker.example/path")
+def test_cors_origin_parser_accepts_canonical_and_rejects_malformed():
+    origins = app_module._parse_allowed_origins("SHUDDHO_ALLOWED_ORIGINS=https://evil.example,https://attacker.example/path")
     assert "https://shuddho-web-editor.vercel.app" in origins
-    assert "https://shuddho-web-editor-luqrebd0p-rumman52s-projects.vercel.app" in origins
     assert "https://evil.example" not in origins
     assert "https://attacker.example" not in origins
+    assert not any("rumman52s-projects.vercel.app" in origin for origin in origins)

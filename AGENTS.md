@@ -15,8 +15,9 @@ The main user experience should be similar to a professional writing assistant:
 
 1. Do not expose API keys in frontend code, commits, logs, or test fixtures.
 2. API keys must be read from backend environment variables only.
-3. OpenAI should be the primary provider when `SHUDDHO_LLM_PROVIDER=openai`.
-4. OpenRouter should still work when `SHUDDHO_LLM_PROVIDER=openrouter`.
+3. The competition generative runtime is Gemma-only: `SHUDDHO_LLM_PROVIDER=gemma`.
+4. The Google Gen AI SDK/API is transport for `gemma-4-26b-a4b-it`; OpenAI,
+   OpenRouter, Qwen, and Gemini models must fail closed without a generative fallback.
 5. Local spelling/rule/dictionary engines must remain available as fallback.
 6. Heavy local ML corrector must not block production when its checkpoint is missing.
 7. Missing checkpoint should be a health warning, not a hard crash.
@@ -86,7 +87,7 @@ The editor UI should be professional and responsive:
 Backend:
 ```bash
 python -m py_compile services/api/shuddho_api/app.py
-python -m py_compile services/api/shuddho_api/llm_openrouter.py
+python -m py_compile services/api/shuddho_api/llm_provider.py services/api/shuddho_api/llm_gemma.py
 python -m pytest tests/test_api_app.py tests/test_frontend_backend_only.py tests/test_suggestion_validation.py -q
 ```
 

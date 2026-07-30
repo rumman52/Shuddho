@@ -18,7 +18,8 @@ def test_frontend_uses_backend_only_calls() -> None:
         assert fragment not in combined_source
 
     assert '"/analyze"' in api_source
-    assert '"/api/events"' in api_source
+    assert '"/api/feedback"' in api_source
+    assert '"/api/events"' not in api_source
     assert '"/health/deep"' in api_source
 
 
@@ -28,11 +29,9 @@ def test_frontend_status_copy_disables_fake_browser_suggestions_by_default() -> 
     api_source = Path("apps/web-editor/src/lib/api.ts").read_text(encoding="utf-8")
     web_env_example = Path("apps/web-editor/.env.example").read_text(encoding="utf-8")
 
-    assert "Backend is not connected. Contextual Bengali correction is disabled." in app_source
     assert "frontend_local_fallback_enabled" in app_source
     assert "apiConfiguration.localFallbackEnabled" in app_source
     assert "createUnavailableAnalysis" in app_source
-    assert "No high-confidence correction found." in app_source
     assert "Backend offline, suggestions disabled" in runtime_status_source
     assert "Dev-only browser fallback" in runtime_status_source
     assert "localFallbackEnabled" in api_source

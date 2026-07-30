@@ -54,8 +54,10 @@ def _install_fake_sdk(monkeypatch, response=None, error=None):
         def __init__(self, api_key):
             assert api_key == "test-key"
             self.models = Models()
-    genai = types.SimpleNamespace(Client=Client)
     types_mod = types.SimpleNamespace(HttpOptions=lambda **kw: kw, GenerateContentConfig=lambda **kw: types.SimpleNamespace(**kw))
+    # Match the official SDK module contract used by production:
+    # ``from google import genai`` and ``from google.genai import types``.
+    genai = types.SimpleNamespace(Client=Client, types=types_mod)
     monkeypatch.setitem(sys.modules, "google", types.SimpleNamespace(genai=genai))
     monkeypatch.setitem(sys.modules, "google.genai", genai)
     monkeypatch.setitem(sys.modules, "google.genai.types", types_mod)

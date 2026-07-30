@@ -7,6 +7,8 @@ Shuddho's only generative runtime is the pretrained instruction-tuned **Gemma 4*
 Configure the existing service in the Render dashboard; this repository does not use a Blueprint.
 
 - Runtime: **Python**
+- Branch: **main**
+- Root Directory: **blank / repository root**
 - Build command: `python -m pip install --upgrade pip && python -m pip install --no-cache-dir .`
 - Start command: `python -m uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port "$PORT"`
 - Health Check Path: `/health`
@@ -64,3 +66,7 @@ CORS does not accept broad `https://*.vercel.app` values.
 After changing Render settings, choose **Clear build cache & deploy**, wait for
 `/health` HTTP 200, then redeploy Vercel and test `/backend/health` in an incognito
 browser.
+
+Use `https://shuddho-web-editor.vercel.app` as the public demo. Remove
+`VITE_API_BASE_URL=https://shuddho-api.onrender.com` from production (or replace
+it with `/backend` only when an explicit value is required).

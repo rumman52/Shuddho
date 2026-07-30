@@ -44,7 +44,13 @@ def test_vercel_config_deploys_web_editor_spa_from_repo_root() -> None:
     assert config["installCommand"] == "npm install"
     assert config["buildCommand"] == "npm run build:web-editor"
     assert config["outputDirectory"] == "apps/web-editor/dist"
-    assert config["rewrites"] == [{"source": "/(.*)", "destination": "/index.html"}]
+    assert config["rewrites"] == [
+        {
+            "source": "/backend/:path*",
+            "destination": "https://shuddho-api.onrender.com/:path*",
+        },
+        {"source": "/(.*)", "destination": "/index.html"},
+    ]
 
 def test_windows_backend_script_uses_repo_root_before_starting_uvicorn() -> None:
     script = Path("run_backend_windows.bat").read_text(encoding="utf-8")
