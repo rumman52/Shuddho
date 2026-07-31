@@ -14,6 +14,7 @@ export const AI_UNAVAILABLE_STATUSES = new Set([
   "provider_error",
   "invalid_json",
   "invalid_schema",
+  "truncated",
   "failed",
   "expired",
 ]);

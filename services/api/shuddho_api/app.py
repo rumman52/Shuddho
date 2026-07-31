@@ -138,6 +138,7 @@ class AiCheckResponse(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     timings: dict[str, Any] = Field(default_factory=dict)
     provider_attempts: list[dict[str, Any]] = Field(default_factory=list)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
     ai_raw_suggestion_count: int = 0
     ai_valid_suggestion_count: int = 0
     ai_rejected_suggestion_count: int = 0
@@ -326,7 +327,7 @@ llm_circuit_until: dict[str, float] = {}
 llm_provider_state: dict[str, dict[str, Any]] = {}
 llm_jobs_lock = threading.RLock()
 llm_executor = ThreadPoolExecutor(max_workers=int(os.environ.get("SHUDDHO_LLM_JOB_WORKERS", "4") or "4"), thread_name_prefix="shuddho-llm")
-LLM_TERMINAL_STATUSES = {"completed", "completed_empty", "completed_rejected", "circuit_open", "dependency_missing", "missing_key", "unsupported_provider", "rate_limited", "timeout", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "network_error", "content_filter", "failed", "expired", "cancelled"}
+LLM_TERMINAL_STATUSES = {"completed", "completed_empty", "completed_rejected", "circuit_open", "dependency_missing", "missing_key", "unsupported_provider", "rate_limited", "timeout", "truncated", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "network_error", "content_filter", "failed", "expired", "cancelled"}
 
 class ApiPreferences(BaseModel):
     user_id: str = "demo-user"
@@ -574,7 +575,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
             response_payload["suggestions"] = merged_suggestions
             llm_block["used"] = ai.called and ai.parsed
             ai.warnings = _dedupe_strings([*ai.warnings, *validation_warnings, *merge_warnings])
-        elif ai.status in {"timeout", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "content_filter", "network_error", "rate_limited", "failed", "circuit_open", "dependency_missing"}:
+        elif ai.status in {"timeout", "truncated", "invalid_json", "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "content_filter", "network_error", "rate_limited", "failed", "circuit_open", "dependency_missing"}:
             ai_empty_reason = ai.status
 
     all_warnings = _dedupe_strings([
@@ -593,6 +594,8 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["llm_status"] = ai.status if not (async_llm and job_id) else "queued"
     response_payload["llm_provider"] = ai.provider
     response_payload["llm_response_mode"] = ai.response_mode or llm_mode
+    response_payload["usage"] = ai.usage
+    response_payload["provider_attempts"] = ai.provider_attempts
     response_payload["rejected_ai_suggestion_count"] = rejected_count
     response_payload["ai_raw_suggestion_count"] = raw_ai_count
     response_payload["ai_valid_suggestion_count"] = len(validated_ai)
@@ -620,6 +623,8 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
         "response_mode": ai.response_mode,
         "llm_ms": llm_ms,
         "timings": ai.timings,
+        "usage": ai.usage,
+        "diagnostics": ai.diagnostics,
         "cache_hit": bool(ai.timings.get("cache_hit")),
         "attempted": response_payload["llm_attempted"],
         "ai_raw_suggestion_count": raw_ai_count,
@@ -667,6 +672,8 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
             "skip_reason": llm_block.get("skip_reason"),
             "llm_ms": llm_ms,
             "timings": ai.timings,
+            "usage": ai.usage,
+            "diagnostics": ai.diagnostics,
             "cache_hit": bool(ai.timings.get("cache_hit")),
             "job_id": job_id,
         },
@@ -772,7 +779,7 @@ def llm_debug() -> dict:
         "fallback_configured": config.fallback_configured,
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
         "endpoint": "https://generativelanguage.googleapis.com",
-        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50")))),
+        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50"))),
         "gemma_timeout_seconds": float(os.environ.get("SHUDDHO_GEMMA_TIMEOUT_SECONDS", "40")),
@@ -785,7 +792,7 @@ def llm_debug() -> dict:
         "circuit_open": primary_open,
         "circuit_state": "open" if _is_circuit_open(config.provider, config.model) else "closed",
         "thinking_level": os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL", "minimal"),
-        "response_mode": os.environ.get("SHUDDHO_GEMMA_RESPONSE_MODE", "json_mime"),
+        "response_mode": os.environ.get("SHUDDHO_GEMMA_RESPONSE_MODE", "function_call"),
         "max_output_tokens": int(os.environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400")),
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
@@ -950,13 +957,13 @@ def _llm_safe_status() -> dict[str, Any]:
         "dependencies": _dependency_diagnostics(config),
         "cache_enabled": True,
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
-        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50")))),
+        "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50"))),
         "gemma_timeout_seconds": float(os.environ.get("SHUDDHO_GEMMA_TIMEOUT_SECONDS", "40")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "thinking_level": os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL", "minimal"),
-        "response_mode": os.environ.get("SHUDDHO_GEMMA_RESPONSE_MODE", "json_mime"),
+        "response_mode": os.environ.get("SHUDDHO_GEMMA_RESPONSE_MODE", "function_call"),
         "max_output_tokens": int(os.environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400")),
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
@@ -1079,7 +1086,7 @@ def _provider_configured(config: Any, fallback: bool = False) -> dict[str, Any]:
     }
 
 
-FALLBACK_ELIGIBLE_STATUSES = {"circuit_open", "dependency_missing", "missing_key", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "timeout", "rate_limited", "network_error", "provider_error", "invalid_json", "invalid_schema", "failed"}
+FALLBACK_ELIGIBLE_STATUSES = {"circuit_open", "dependency_missing", "missing_key", "auth_or_forbidden", "credits_or_payment_required", "model_not_found", "timeout", "truncated", "rate_limited", "network_error", "provider_error", "invalid_json", "invalid_schema", "failed"}
 
 
 def run_configured_provider(
@@ -1291,7 +1298,7 @@ def _run_ai_check(
             llm_provider_cache[cache_key] = {"kind": "provider_result", "created_at": time.time(), "result": result, "provider": result.get("provider"), "model": result.get("model")}
     warnings = _dedupe_strings([*config.warnings, *truncation_warnings, *(result.get("warnings") or [])])
     logger.info("ai_check_complete request_id=%s provider=%s model=%s status=%s http_status=%s text_length=%s sent_length=%s llm_ms=%s warnings=%s", request_id, result.get("provider") or config.provider, result.get("model") or config.model, result.get("status"), result.get("http_status"), len(text), len(ai_text), (result.get("timings") or {}).get("llm_ms"), len(warnings))
-    return AiCheckResponse(suggestions=result.get("suggestions", []) or [], correctedText=result.get("correctedText"), documentAssessment=result.get("documentAssessment") or {}, warnings=warnings, provider=result.get("provider") or config.provider, model=result.get("model") or config.model, llm_enabled=config.enabled, configured=bool(result.get("configured", config.configured)), called=bool(result.get("called")), parsed=bool(result.get("parsed")), status=str(result.get("status") or "failed"), response_mode=str(result.get("response_mode") or "none"), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings=_safe_timings(result.get("timings")), provider_attempts=result.get("provider_attempts") or [], ai_raw_suggestion_count=int(result.get("ai_raw_suggestion_count") or 0), ai_valid_suggestion_count=int(result.get("ai_valid_suggestion_count") or len(result.get("suggestions") or [])), ai_rejected_suggestion_count=int(result.get("ai_rejected_suggestion_count") or result.get("rejected_ai_suggestion_count") or 0), rejected_ai_suggestion_count=int(result.get("rejected_ai_suggestion_count") or result.get("ai_rejected_suggestion_count") or 0), ai_empty_reason=result.get("ai_empty_reason"))
+    return AiCheckResponse(suggestions=result.get("suggestions", []) or [], correctedText=result.get("correctedText"), documentAssessment=result.get("documentAssessment") or {}, warnings=warnings, provider=result.get("provider") or config.provider, model=result.get("model") or config.model, llm_enabled=config.enabled, configured=bool(result.get("configured", config.configured)), called=bool(result.get("called")), parsed=bool(result.get("parsed")), status=str(result.get("status") or "failed"), response_mode=str(result.get("response_mode") or "none"), http_status=result.get("http_status"), usage=result.get("usage") or {}, timings=_safe_timings(result.get("timings")), provider_attempts=result.get("provider_attempts") or [], diagnostics=result.get("diagnostics") or {}, ai_raw_suggestion_count=int(result.get("ai_raw_suggestion_count") or 0), ai_valid_suggestion_count=int(result.get("ai_valid_suggestion_count") or len(result.get("suggestions") or [])), ai_rejected_suggestion_count=int(result.get("ai_rejected_suggestion_count") or result.get("rejected_ai_suggestion_count") or 0), rejected_ai_suggestion_count=int(result.get("rejected_ai_suggestion_count") or result.get("ai_rejected_suggestion_count") or 0), ai_empty_reason=result.get("ai_empty_reason"))
 
 
 def _now_iso() -> str:

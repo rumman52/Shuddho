@@ -14,7 +14,7 @@ Severity = Literal["low", "medium", "high"]
 Language = Literal["bn", "en", "mixed", "unknown"]
 Quality = Literal["poor", "fair", "good", "excellent"]
 
-PROMPT_SCHEMA_VERSION = "ai-review-v3-compact"
+PROMPT_SCHEMA_VERSION = "ai-review-v4-function-call"
 
 SYSTEM_PROMPT = """You are Shuddho, a professional Bangla editor. Review fullText in context for spelling, grammar, punctuation, spacing, word choice, clarity, fluency, and meaning. Return only JSON (no markdown) with keys requestId, correctedText, documentAssessment, suggestions. documentAssessment has summary, overallQuality (poor|fair|good|excellent), language (bn|en|mixed|unknown). Each suggestion has id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start, end.
 original must be an exact fullText substring and [start,end) its exact indexes. Prefer minimal edits, preserve meaning/names/numbers/quotes, never rewrite the whole document as one suggestion, and omit uncertain edits. correctedText must be the complete corrected document. If no edits, use suggestions=[] and correctedText=fullText."""
@@ -90,13 +90,42 @@ def strip_json_fences(content: str) -> str:
 
 def extract_json_payload(content: str) -> dict[str, Any]:
     cleaned = strip_json_fences(content)
+    # Providers occasionally encode the whole object as a JSON string. Decode
+    # at most once more; never apply lossy text substitutions.
     try:
         parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        match = re.search(r"\{[\s\S]*\}", cleaned)
-        if not match:
-            raise
-        parsed = json.loads(match.group(0))
+        if isinstance(parsed, str):
+            parsed = json.loads(parsed)
+    except json.JSONDecodeError as direct_error:
+        start = cleaned.find("{")
+        if start < 0:
+            raise direct_error
+        depth = 0
+        in_string = False
+        escaped = False
+        end = None
+        for index in range(start, len(cleaned)):
+            char = cleaned[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        if end is None:
+            raise direct_error
+        parsed = json.loads(cleaned[start:end])
     if not isinstance(parsed, dict):
         raise TypeError("AI response must be a JSON object")
     return parsed

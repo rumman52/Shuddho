@@ -4,6 +4,7 @@ import types
 
 import pytest
 
+from services.api.shuddho_api.ai_review_schema import extract_json_payload
 from services.api.shuddho_api.llm_gemma import run_gemma_check
 from services.api.shuddho_api.llm_provider import DEFAULT_GEMMA_MODEL, resolve_llm_config
 
@@ -54,7 +55,12 @@ def _install_fake_sdk(monkeypatch, response=None, error=None):
         def __init__(self, api_key):
             assert api_key == "test-key"
             self.models = Models()
-    types_mod = types.SimpleNamespace(HttpOptions=lambda **kw: kw, GenerateContentConfig=lambda **kw: types.SimpleNamespace(**kw))
+    constructor = lambda **kw: types.SimpleNamespace(**kw)
+    types_mod = types.SimpleNamespace(
+        HttpOptions=constructor, HttpRetryOptions=constructor,
+        GenerateContentConfig=constructor, ThinkingConfig=constructor,
+        Tool=constructor, ToolConfig=constructor, FunctionCallingConfig=constructor,
+    )
     # Match the official SDK module contract used by production:
     # ``from google import genai`` and ``from google.genai import types``.
     genai = types.SimpleNamespace(Client=Client, types=types_mod)
@@ -65,6 +71,7 @@ def _install_fake_sdk(monkeypatch, response=None, error=None):
 
 
 def test_existing_json_parsing_and_official_sdk_call(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_GEMMA_RESPONSE_MODE", "json_mime")
     payload = {"requestId": "r1", "correctedText": "আমি ভাত খাই।", "documentAssessment": {"summary": "ঠিক", "overallQuality": "good", "language": "bn"}, "suggestions": []}
     response = types.SimpleNamespace(text=json.dumps(payload, ensure_ascii=False), usage_metadata=None)
     calls = _install_fake_sdk(monkeypatch, response=response)
@@ -73,6 +80,37 @@ def test_existing_json_parsing_and_official_sdk_call(monkeypatch) -> None:
     assert result["parsed"] is True
     assert calls[0]["model"] == DEFAULT_GEMMA_MODEL
     assert "contents" in calls[0]
+
+
+def test_function_call_is_preferred_and_validated(monkeypatch) -> None:
+    payload = {"requestId": "r1", "correctedText": "আমি ভাত খাই।", "documentAssessment": {"summary": "ঠিক", "overallQuality": "good", "language": "bn"}, "suggestions": []}
+    response = types.SimpleNamespace(function_calls=[types.SimpleNamespace(name="submit_shuddho_review", args=payload)], candidates=[], usage_metadata={"prompt_token_count": 10, "candidates_token_count": 5, "total_token_count": 15})
+    calls = _install_fake_sdk(monkeypatch, response=response)
+    result = run_gemma_check("আমি ভাত খাই।", DEFAULT_GEMMA_MODEL, "test-key", request_id="r1")
+    assert result["status"] == "completed_empty"
+    assert result["response_mode"] == "function_call"
+    assert result["usage"]["output_tokens"] == 5
+    assert calls[0]["config"].tool_config.function_calling_config.mode == "ANY"
+
+
+@pytest.mark.parametrize("wrapped", [
+    '```json\n{"requestId":"r"}\n```',
+    'Here is the result: {"requestId":"r"} thanks.',
+    '"{\\"requestId\\":\\"r\\"}"',
+    'prefix {"requestId":"r","correctedText":"বাংলা {ভাষা} \\\"ভালো\\\""} trailing {"ignored":true}',
+])
+def test_deterministic_json_compatibility_extraction(wrapped) -> None:
+    assert extract_json_payload(wrapped)["requestId"] == "r"
+
+
+def test_truncation_is_not_invalid_json(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_GEMMA_RESPONSE_MODE", "json_mime")
+    response = types.SimpleNamespace(text='{"requestId":', candidates=[types.SimpleNamespace(finish_reason="MAX_TOKENS")], usage_metadata={"candidates_token_count": 9})
+    _install_fake_sdk(monkeypatch, response=response)
+    result = run_gemma_check("আমি ভাত খাই।", DEFAULT_GEMMA_MODEL, "test-key", request_id="r1")
+    assert result["status"] == "truncated"
+    assert result["usage"]["output_tokens"] == 9
+    assert "provider output" not in str(result).lower()
 
 
 def test_gemma_api_failure_returns_existing_error_shape(monkeypatch) -> None:

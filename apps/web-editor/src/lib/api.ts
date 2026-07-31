@@ -712,6 +712,8 @@ export function gatewayCheckToAnalyzeResponse(
     llm_provider: response.llm_provider,
     llm_model: response.llm_model,
     llm_response_mode: response.llm_response_mode,
+    usage: response.usage,
+    provider_attempts: response.provider_attempts,
     local_suggestion_count: response.local_suggestion_count,
     ai_suggestion_count: response.ai_suggestion_count,
     rejected_ai_suggestion_count: response.rejected_ai_suggestion_count,

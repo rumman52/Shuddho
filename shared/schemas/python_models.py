@@ -708,3 +708,5 @@ class CanonicalCheckResponse(BaseModel):
     ai_rejected_suggestion_count: int = Field(default=0, ge=0)
     ai_empty_reason: str | None = None
     diagnostics: dict[str, Any] = Field(default_factory=dict)
+    usage: dict[str, Any] = Field(default_factory=dict)
+    provider_attempts: list[dict[str, Any]] = Field(default_factory=list)
