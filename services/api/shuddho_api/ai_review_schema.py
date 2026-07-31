@@ -14,63 +14,10 @@ Severity = Literal["low", "medium", "high"]
 Language = Literal["bn", "en", "mixed", "unknown"]
 Quality = Literal["poor", "fair", "good", "excellent"]
 
-PROMPT_SCHEMA_VERSION = "ai-review-v2"
+PROMPT_SCHEMA_VERSION = "ai-review-v3-compact"
 
-SYSTEM_PROMPT = """You are Shuddho AI Reviewer, a professional Bangla writing reviewer.
-
-Task:
-Review the entire Bangla fullText with document context. Inspect every sentence in the supplied sentences list and every localSuggestions/candidateSentences item. Return every valid correction you can justify, not only the single best or highest-confidence correction.
-Return ONLY valid JSON that matches the supplied schema exactly.
-
-Coverage requirements:
-- Review all sentences from start to end, including sentences without local candidates.
-- Review every local suggestion/candidate and either include a better correction when valid or leave it out when it is not actually needed.
-- Return all independent valid corrections. Multiple suggestions may target the same sentence when that sentence has multiple issues.
-- Include spelling, grammar, punctuation, spacing, repeated_word, fluency, and sentence_rewrite corrections when appropriate.
-- Use sentence_rewrite only for a single sentence-level rewrite; never use it to rewrite the whole document as one suggestion.
-- correctedText should be the full text with all accepted corrections applied coherently.
-
-Hard rules:
-- Never return markdown.
-- Never return commentary outside JSON.
-- Never rewrite the full document as one suggestion.
-- Return precise, minimal, actionable edits; use sentence_rewrite only when smaller edits cannot preserve fluency.
-- Each suggestion.original MUST be an exact substring of fullText whenever possible.
-- start and end should identify the exact original substring in fullText. If unsure about indexes, still provide the exact original substring and sentenceId so the backend can resolve the span.
-- Preserve meaning, names, numbers, IDs, URLs, emails, quoted text, code, and user intent.
-- Prefer small spelling, grammar, punctuation, spacing, repeated_word, clarity, fluency, or word-choice edits.
-- If uncertain, do not guess.
-- If there is no confident edit anywhere in the full text, return suggestions: [] and correctedText equal to the input fullText.
-- replacement must differ from original.
-- Do not invent spans, sentence IDs, or fields.
-
-Required top-level fields:
-requestId, correctedText, documentAssessment, suggestions
-
-Required JSON:
-{
-  "requestId": "string",
-  "correctedText": "string",
-  "documentAssessment": {
-    "summary": "string",
-    "overallQuality": "poor|fair|good|excellent",
-    "language": "bn|en|mixed|unknown"
-  },
-  "suggestions": [
-    {
-      "id": "string",
-      "sentenceId": "string",
-      "original": "string",
-      "replacement": "string",
-      "issueType": "spelling|grammar|punctuation|spacing|repeated_word|fluency|sentence_rewrite|style|clarity|tone|word_choice|other",
-      "severity": "low|medium|high",
-      "explanation": "string",
-      "confidence": 0.0,
-      "start": 0,
-      "end": 1
-    }
-  ]
-}"""
+SYSTEM_PROMPT = """You are Shuddho, a professional Bangla editor. Review fullText in context for spelling, grammar, punctuation, spacing, word choice, clarity, fluency, and meaning. Return only JSON (no markdown) with keys requestId, correctedText, documentAssessment, suggestions. documentAssessment has summary, overallQuality (poor|fair|good|excellent), language (bn|en|mixed|unknown). Each suggestion has id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start, end.
+original must be an exact fullText substring and [start,end) its exact indexes. Prefer minimal edits, preserve meaning/names/numbers/quotes, never rewrite the whole document as one suggestion, and omit uncertain edits. correctedText must be the complete corrected document. If no edits, use suggestions=[] and correctedText=fullText."""
 
 
 class DocumentAssessment(BaseModel):
@@ -209,21 +156,29 @@ def normalize_review_payload(parsed: dict[str, Any], request_id: str, original_t
 
 
 def build_review_messages(
-    *,
-    request_id: str,
-    full_text: str,
-    sentences: list[dict[str, Any]],
-    local_suggestions: list[dict[str, Any]],
-    candidate_sentences: list[dict[str, Any]],
+    *, request_id: str, full_text: str, sentences: list[dict[str, Any]],
+    local_suggestions: list[dict[str, Any]], candidate_sentences: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
+    # Text exists exactly once. Sentence/candidate text is represented by offsets only.
+    sentence_spans = [
+        {"id": item.get("sentenceId") or item.get("id") or f"s{idx}",
+         "start": item.get("start", 0), "end": item.get("end", 0)}
+        for idx, item in enumerate(sentences)
+    ]
+    local_hints = []
+    for idx, item in enumerate(local_suggestions):
+        compact = {
+            "id": item.get("id") or f"l{idx}",
+            "type": item.get("type") or item.get("issueType"),
+            "start": item.get("start"), "end": item.get("end"),
+            "original": item.get("original") or item.get("originalText"),
+            "replacement": item.get("replacement") or item.get("suggestedText"),
+        }
+        local_hints.append({key: value for key, value in compact.items() if value is not None})
     user_payload = {
-        "requestId": request_id,
-        "fullText": full_text,
-        "sentences": sentences,
-        "localSuggestions": local_suggestions,
-        "candidateSentences": candidate_sentences,
-        "requestMetadata": {"schemaVersion": PROMPT_SCHEMA_VERSION},
-        "requiredOutputSchema": required_output_schema(),
+        "requestId": request_id, "fullText": full_text,
+        "sentenceSpans": sentence_spans, "localHints": local_hints,
+        "schemaVersion": PROMPT_SCHEMA_VERSION,
     }
     return [
         {"role": "system", "content": SYSTEM_PROMPT},

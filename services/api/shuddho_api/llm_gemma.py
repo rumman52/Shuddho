@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import time
 from email.utils import parsedate_to_datetime
@@ -119,25 +120,37 @@ def _usage(response: Any) -> dict[str, Any]:
     usage = {
         "input_tokens": get("prompt_token_count", get("input_tokens", 0)) or 0,
         "output_tokens": get("candidates_token_count", get("output_tokens", 0)) or 0,
+        "thought_tokens": get("thoughts_token_count", get("thought_tokens", 0)) or 0,
         "total_tokens": get("total_token_count", get("total_tokens", 0)) or 0,
     }
     return usage
 
 
+def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)) or str(default))
+    except ValueError:
+        return default
+    return min(maximum, max(minimum, value))
+
+
 def _config(response_json_schema: bool, timeout_seconds: float, system_instruction: str) -> Any:
     from google.genai import types
+    thinking_level = (os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL") or "minimal").strip().lower()
+    if thinking_level not in {"minimal", "low", "medium", "high"}:
+        thinking_level = "minimal"
     kwargs: dict[str, Any] = {
-        "temperature": 0.1,
+        "temperature": 1.0, "top_p": 0.95, "top_k": 64,
         "response_mime_type": "application/json",
-        "http_options": types.HttpOptions(timeout=int(max(1, timeout_seconds) * 1000)),
+        "max_output_tokens": _bounded_int("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", 1400, 256, 8192),
+        "thinking_config": types.ThinkingConfig(thinking_level=thinking_level),
+        "http_options": types.HttpOptions(
+            timeout=int(max(1, timeout_seconds) * 1000),
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
         "system_instruction": system_instruction,
-        "max_output_tokens": int(__import__("os").environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400") or "1400"),
     }
     if response_json_schema:
-        # The generated schema intentionally contains JSON Schema features such
-        # as $defs, $ref, and anyOf. Google GenAI accepts that through
-        # response_json_schema; response_schema is for the SDK's constrained
-        # schema subset and must not be sent at the same time.
         kwargs["response_json_schema"] = required_output_schema()
     return types.GenerateContentConfig(**kwargs)
 
@@ -153,7 +166,7 @@ def run_gemma_check(
     text: str,
     model: str,
     api_key: str,
-    timeout_seconds: float = 35.0,
+    timeout_seconds: float = 40.0,
     *,
     request_id: str = "",
     sentences: list[dict[str, Any]] | None = None,
@@ -165,37 +178,33 @@ def run_gemma_check(
     if model.lower().startswith("gemini-") or not model.lower().startswith("gemma-"):
         return LlmProviderResult(provider="gemma", model=model, configured=False, status="unsupported_provider", warnings=["unsupported_model_gemma_only"]).model_dump()
     if not api_key or not api_key.strip():
-        return LlmProviderResult(provider="gemma", model=model, configured=False, status="missing_key", response_mode="json_schema", warnings=["google_api_key_missing"]).model_dump()
+        return LlmProviderResult(provider="gemma", model=model, configured=False, status="missing_key", response_mode="json_mime", warnings=["google_api_key_missing"]).model_dump()
     messages = build_review_messages(request_id=rid, full_text=text, sentences=sentences or _sentences_for_prompt(text), local_suggestions=local_suggestions or [], candidate_sentences=candidates or [])
     started = time.time()
     warnings: list[str] = []
-    response_mode = "json_schema"
+    response_mode = (os.environ.get("SHUDDHO_GEMMA_RESPONSE_MODE") or "json_mime").strip().lower()
+    if response_mode not in {"json_mime", "json_schema"}:
+        response_mode = "json_mime"
     try:
         try:
             from google import genai
         except ImportError:
             return LlmProviderResult(provider="gemma", model=model, called=False, configured=True, status="dependency_missing", response_mode=response_mode, warnings=[*warnings, "google_genai_dependency_missing"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
         client = genai.Client(api_key=api_key.strip())
-        try:
-            response = _call(client, model, messages, timeout_seconds, True)
-        except Exception as exc:
-            status = _http_status(exc)
-            message = str(exc)
-            if _is_schema_400(status, message):
-                warnings.append("gemma_structured_output_fallback_used")
-                response_mode = "json_mime"
-                response = _call(client, model, messages, timeout_seconds, False)
-            else:
-                raise
+        response = _call(client, model, messages, timeout_seconds, response_mode == "json_schema")
     except TimeoutError:
         return LlmProviderResult(provider="gemma", model=model, called=True, configured=True, status="timeout", response_mode=response_mode, warnings=[*warnings, "gemma_timeout"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     except (socket.timeout,):
         return LlmProviderResult(provider="gemma", model=model, called=True, configured=True, status="timeout", response_mode=response_mode, warnings=[*warnings, "gemma_timeout"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
     except (OSError, ConnectionError) as exc:
+        if "timeout" in type(exc).__name__.lower():
+            return LlmProviderResult(provider="gemma", model=model, called=True, configured=True, status="timeout", response_mode=response_mode, warnings=[*warnings, "gemma_timeout"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
         if _http_status(exc) is None:
             return LlmProviderResult(provider="gemma", model=model, called=True, configured=True, status="network_error", response_mode=response_mode, warnings=[*warnings, "gemma_request_failed"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
         raise
     except Exception as exc:
+        if "timeout" in type(exc).__name__.lower():
+            return LlmProviderResult(provider="gemma", model=model, called=True, configured=True, status="timeout", response_mode=response_mode, warnings=[*warnings, "gemma_timeout"], timings={"llm_ms": int((time.time()-started)*1000)}).model_dump()
         status_code = _http_status(exc)
         if status_code is not None:
             status, warning = _status_for_http(status_code, str(exc))
