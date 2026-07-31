@@ -1511,6 +1511,7 @@ export default function App() {
                   reviewUnavailable,
                   aiUnavailable,
                   status,
+                  llmStatus: normalizedAnalysis.llm_status,
                 })}
           </p>
           {reviewUnavailable ? (
@@ -1521,9 +1522,6 @@ export default function App() {
             >
               Retry backend
             </button>
-          ) : null}
-          {aiUnavailable && !reviewUnavailable && !status.toLowerCase().includes("timed out") ? (
-            <p className="quiet-note">AI review is temporarily unavailable. Local checks are still active.</p>
           ) : null}
           <div
             className="review-tabs"
@@ -1969,6 +1967,7 @@ function getReviewStatusCopy(args: {
   reviewUnavailable: boolean;
   aiUnavailable: boolean;
   status: string;
+  llmStatus?: string | null;
 }): string {
   if (args.competitionDemoActive) {
     return args.suggestions > 0 ? `${args.suggestions} local demo suggestions ready.` : "Offline demo ready. Load & Run Local Review to show prepared demo annotations.";
@@ -1980,7 +1979,13 @@ function getReviewStatusCopy(args: {
     return "Gemma review timed out. Local suggestions are still available. Try again.";
   }
   if (args.aiUnavailable) {
-    return "AI review is temporarily unavailable. Local checks are still active.";
+    const llmStatus = String(args.llmStatus ?? "failed");
+    if (llmStatus === "invalid_json") return "Gemma returned an unreadable response. Local suggestions are still available.";
+    if (llmStatus === "truncated") return "Gemma’s response was incomplete. Local suggestions are still available.";
+    if (llmStatus === "rate_limited") return "Gemma is temporarily rate-limited. Local suggestions are still available.";
+    if (["auth_or_forbidden", "missing_key", "unsupported_provider"].includes(llmStatus)) return "Gemma is not configured correctly. Local suggestions are still available.";
+    if (llmStatus === "network_error") return "Gemma could not be reached. Local suggestions are still available.";
+    return "Gemma review is unavailable. Local suggestions are still available.";
   }
   if (args.suggestions > 0) {
     return `${args.suggestions} suggestions ready.`;

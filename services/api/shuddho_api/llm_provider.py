@@ -9,7 +9,7 @@ LLM_STATUSES = {
     "completed", "completed_empty", "completed_rejected", "timeout", "invalid_json",
     "invalid_schema", "provider_error", "auth_or_forbidden", "credits_or_payment_required",
     "model_not_found", "content_filter", "network_error", "rate_limited", "failed",
-    "circuit_open", "dependency_missing",
+    "circuit_open", "dependency_missing", "truncated",
 }
 DEFAULT_GEMMA_MODEL = "gemma-4-26b-a4b-it"
 
@@ -37,6 +37,7 @@ class LlmProviderResult:
     provider_attempts: list[dict[str, Any]] = field(default_factory=list)
     error_code: str | None = None
     retry_after_seconds: float | None = None
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     def model_dump(self) -> dict[str, Any]:
         return self.__dict__.copy()
 
