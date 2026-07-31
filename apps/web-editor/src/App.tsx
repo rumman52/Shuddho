@@ -1522,11 +1522,8 @@ export default function App() {
               Retry backend
             </button>
           ) : null}
-          {aiUnavailable && !reviewUnavailable ? (
-            <p className="quiet-note">
-              AI review is temporarily unavailable. Local checks are still
-              active.
-            </p>
+          {aiUnavailable && !reviewUnavailable && !status.toLowerCase().includes("timed out") ? (
+            <p className="quiet-note">AI review is temporarily unavailable. Local checks are still active.</p>
           ) : null}
           <div
             className="review-tabs"
@@ -1980,7 +1977,7 @@ function getReviewStatusCopy(args: {
     return "Contextual AI review is not connected. Retry the backend or continue only when limited local checks are available.";
   }
   if (args.status.toLowerCase().includes("timed out")) {
-    return "AI review took too long. You can try again.";
+    return "Gemma review timed out. Local suggestions are still available. Try again.";
   }
   if (args.aiUnavailable) {
     return "AI review is temporarily unavailable. Local checks are still active.";
