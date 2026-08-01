@@ -5,12 +5,17 @@ Shuddho is a Bangla writing assistant with deterministic spelling/rule/dictionar
 ## Development
 
 ```bash
+uv lock --check
 uv sync --group dev
 uv run pytest -q
 npm ci
 npm run test --workspace @shuddho/web-editor
 npm run build --workspace @shuddho/web-editor
 ```
+
+Optional dependencies are excluded by default, so the lightweight setup does
+not need `--no-extra ml`. Use `uv sync --group dev --extra ml` only when the
+checkpoint-backed ML engines are intentionally required.
 
 Run the API locally without optional ML engines:
 

@@ -27,7 +27,10 @@ jobs:
       - name: Validate Python lockfile
         run: uv lock --check
       - name: Install lightweight Python dependencies
-        run: uv sync --frozen --group dev --no-extra ml
+        # Optional extras are excluded unless explicitly requested with
+        # --extra/--all-extras. Passing --no-extra without --all-extras makes
+        # uv reject the command instead of installing the lightweight set.
+        run: uv sync --frozen --group dev
       - name: Check Python syntax
         run: >-
           uv run python -m py_compile
