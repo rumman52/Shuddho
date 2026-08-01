@@ -92,6 +92,13 @@ def test_lock_metadata_matches_current_dependency_groups() -> None:
     assert "pytest" in dev
 
 
+def test_ci_sync_excludes_optional_ml_without_invalid_no_extra_flag() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "uv sync --frozen --group dev\n" in workflow
+    assert "uv sync --frozen --group dev --no-extra ml" not in workflow
+
+
 def test_default_docker_target_is_lightweight_production() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     stages = [line.strip() for line in dockerfile.splitlines() if line.strip().upper().startswith("FROM ")]
