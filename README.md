@@ -26,3 +26,7 @@ The local rules, lexicon, spelling, punctuation, and spacing checks continue to 
 See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the exact lightweight Render and Vercel settings. Backend secrets are read from server environment variables only. Never expose `GOOGLE_API_KEY` in a `VITE_*` variable, frontend code, logs, tests, or commits.
 
 Key endpoints are `/health`, `/health/deep`, `/api/llm/debug`, and `/api/check`. AI errors are surfaced through warnings and diagnostics while valid local suggestions are preserved.
+
+## Gemma production contract
+
+Render must use `SHUDDHO_GEMMA_RESPONSE_MODE=function_call`; legacy JSON response modes are local compatibility modes only. Keep `GOOGLE_API_KEY` exclusively in the backend environment and never configure it in Vercel. Safe diagnostics expose both the requested and effective mode so stale deployment configuration is visible.

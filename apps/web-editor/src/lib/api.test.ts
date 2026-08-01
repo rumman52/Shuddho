@@ -534,8 +534,8 @@ test("friendlyLlmWarning maps precise provider-aware LLM statuses", () => {
   assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "gemma" }), "AI reviewed the text but found no extra high-confidence suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "completed_rejected", llm_provider: "gemma", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "gemma", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "invalid_json", llm_provider: "gemma" }), "AI returned invalid JSON; showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "invalid_schema", llm_provider: "gemma" }), "AI review unavailable; showing local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "invalid_json", llm_provider: "gemma" }), "Gemma returned malformed JSON, so Shuddho safely ignored it and kept local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "invalid_schema", llm_provider: "gemma" }), "Gemma returned a response in the wrong format, so Shuddho safely kept local suggestions.");
 });
 
 test("friendlyLlmWarning explains local-only skipped LLM without treating it as provider failure", () => {
