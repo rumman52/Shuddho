@@ -6,15 +6,18 @@ import socket
 import time
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
+from collections.abc import Mapping
 from typing import Any
 
 from services.api.shuddho_api.ai_review_schema import (
     build_review_messages,
-    extract_json_payload,
+    decode_json_payload,
+    normalize_legacy_top_level,
     required_output_schema,
     raw_suggestion_count,
     validate_ai_review_payload,
 )
+from services.api.shuddho_api.gemma_response_mode import resolve_gemma_response_mode
 from services.api.shuddho_api.llm_candidates import split_bangla_sentences
 from services.api.shuddho_api.llm_provider import DEFAULT_GEMMA_MODEL, LlmProviderResult
 
@@ -79,22 +82,31 @@ def _http_status(exc: BaseException) -> int | None:
 
 
 def _response_text(response: Any) -> str | None:
-    text = getattr(response, "text", None)
-    if isinstance(text, str) and text.strip():
-        return text.strip()
     parts: list[str] = []
-    candidates = getattr(response, "candidates", None)
+    try:
+        candidates = _value(response, "candidates", None)
+    except (AttributeError, ValueError):
+        candidates = None
     if isinstance(candidates, list):
         for candidate in candidates:
             content = getattr(candidate, "content", None) or (candidate.get("content") if isinstance(candidate, dict) else None)
             cparts = getattr(content, "parts", None) or (content.get("parts") if isinstance(content, dict) else None)
             if isinstance(cparts, list):
                 for part in cparts:
-                    value = getattr(part, "text", None) or (part.get("text") if isinstance(part, dict) else None)
+                    try:
+                        value = _value(part, "text")
+                    except (AttributeError, ValueError):
+                        value = None
                     if isinstance(value, str):
                         parts.append(value)
     joined = "".join(parts).strip()
-    return joined or None
+    if joined:
+        return joined
+    try:
+        text = getattr(response, "text", None)
+    except (AttributeError, ValueError):
+        text = None
+    return text.strip() if isinstance(text, str) and text.strip() else None
 
 
 def _safety_blocked(response: Any) -> bool:
@@ -106,7 +118,8 @@ def _safety_blocked(response: Any) -> bool:
     if isinstance(candidates, list):
         for candidate in candidates:
             reason = getattr(candidate, "finish_reason", None) or (candidate.get("finish_reason") if isinstance(candidate, dict) else None)
-            if str(reason).lower() in {"safety", "blocked", "prohibited_content", "recitation"}:
+            normalized = str(_value(reason, "value", reason)).lower().rsplit(".", 1)[-1]
+            if normalized in {"safety", "blocked", "prohibited_content", "recitation"}:
                 return True
     return False
 
@@ -140,11 +153,12 @@ def _function_schema() -> dict[str, Any]:
         "properties": {
             "id": {"type": "string"}, "sentenceId": {"type": "string"},
             "original": {"type": "string"}, "replacement": {"type": "string"},
-            "issueType": {"type": "string"}, "severity": {"type": "string"},
+            "issueType": {"type": "string", "enum": ["spelling", "grammar", "punctuation", "spacing", "repeated_word", "fluency", "sentence_rewrite", "style", "clarity", "tone", "word_choice", "other"]},
+            "severity": {"type": "string", "enum": ["low", "medium", "high"]},
             "explanation": {"type": "string"}, "confidence": {"type": "number"},
             "start": {"type": "integer"}, "end": {"type": "integer"},
         },
-        "required": ["id", "sentenceId", "original", "replacement", "issueType", "severity", "explanation", "confidence", "start", "end"],
+        "required": ["id", "sentenceId", "original", "replacement", "issueType", "severity", "explanation", "confidence", "start", "end"], "additionalProperties": False,
     }
     return {
         "type": "object",
@@ -152,12 +166,12 @@ def _function_schema() -> dict[str, Any]:
             "requestId": {"type": "string"}, "correctedText": {"type": "string"},
             "documentAssessment": {
                 "type": "object", "properties": {
-                    "summary": {"type": "string"}, "overallQuality": {"type": "string"}, "language": {"type": "string"},
-                }, "required": ["summary", "overallQuality", "language"],
+                    "summary": {"type": "string"}, "overallQuality": {"type": "string", "enum": ["poor", "fair", "good", "excellent"]}, "language": {"type": "string", "enum": ["bn", "en", "mixed", "unknown"]},
+                }, "required": ["summary", "overallQuality", "language"], "additionalProperties": False,
             },
             "suggestions": {"type": "array", "items": suggestion},
         },
-        "required": ["requestId", "correctedText", "documentAssessment", "suggestions"],
+        "required": ["requestId", "correctedText", "documentAssessment", "suggestions"], "additionalProperties": False,
     }
 
 
@@ -175,8 +189,11 @@ def _config(response_mode: str, timeout_seconds: float, system_instruction: str)
     }
     if response_mode == "function_call":
         name = "submit_shuddho_review"
-        kwargs["tools"] = [types.Tool(function_declarations=[{"name": name, "description": "Submit the complete Shuddho Bangla review.", "parameters": _function_schema()}])]
+        declaration = types.FunctionDeclaration(name=name, description="Submit the complete Shuddho Bangla review.", parameters_json_schema=_function_schema())
+        kwargs["tools"] = [types.Tool(function_declarations=[declaration])]
         kwargs["tool_config"] = types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[name]))
+        kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
+        kwargs["system_instruction"] = system_instruction.split(" Return only JSON", 1)[0].rstrip() + " Call submit_shuddho_review exactly once with the complete review. Do not return prose, Markdown, or a JSON text response."
     else:
         kwargs["response_mime_type"] = "application/json"
         if response_mode == "json_schema":
@@ -201,23 +218,39 @@ def _finish_metadata(response: Any) -> tuple[str | None, int]:
     return (str(reason) if reason is not None else None), len(candidates)
 
 
-def _function_payload(response: Any) -> tuple[dict[str, Any] | None, str | None]:
-    calls = _value(response, "function_calls", []) or []
+def _function_calls(response: Any) -> list[Any]:
+    calls = list(_value(response, "function_calls", []) or [])
+    if calls:
+        return calls
+    for candidate in _value(response, "candidates", []) or []:
+        content = _value(candidate, "content")
+        for part in _value(content, "parts", []) or []:
+            call = _value(part, "function_call")
+            if call is not None:
+                calls.append(call)
+    return calls
+
+
+def _function_payload(response: Any) -> tuple[dict[str, Any] | None, str | None, int]:
+    calls = _function_calls(response)
+    first_name = _value(calls[0], "name") if calls else None
     for call in calls:
         name = _value(call, "name")
         if name == "submit_shuddho_review":
             args = _value(call, "args")
-            return (dict(args) if isinstance(args, dict) else None), name
-    return None, (_value(calls[0], "name") if calls else None)
+            return (dict(args) if isinstance(args, Mapping) else None), name, len(calls)
+    return None, first_name, len(calls)
 
 
 def _result(*, model: str, status: str, response_mode: str, started: float, timeout_seconds: float,
             warning: str, called: bool = True, usage: dict[str, Any] | None = None,
             diagnostics: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
-    safe = {"response_mode": response_mode, "provider_timeout_seconds": timeout_seconds, **(diagnostics or {})}
+    mode = resolve_gemma_response_mode(os.environ)
+    safe = {"response_mode": response_mode, "requested_response_mode": mode.requested,
+            "effective_response_mode": mode.effective, "provider_timeout_seconds": timeout_seconds, **(diagnostics or {})}
     safe.update(usage or {})
     return LlmProviderResult(provider="gemma", model=model, called=called, configured=True, status=status,
-        response_mode=response_mode, warnings=[warning] if warning else [], usage=usage or {},
+        response_mode=response_mode, warnings=[*([warning] if warning else []), *mode.warnings], usage=usage or {},
         timings={"llm_ms": int((time.time()-started)*1000)}, diagnostics=safe, **kwargs).model_dump()
 
 
@@ -226,8 +259,8 @@ def run_gemma_check(text: str, model: str, api_key: str, timeout_seconds: float 
                     candidates: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     rid = request_id or "unknown"
     model = (model or DEFAULT_GEMMA_MODEL).strip() or DEFAULT_GEMMA_MODEL
-    response_mode = (os.environ.get("SHUDDHO_GEMMA_RESPONSE_MODE") or "function_call").strip().lower()
-    if response_mode not in {"function_call", "json_mime", "json_schema"}: response_mode = "function_call"
+    mode = resolve_gemma_response_mode(os.environ)
+    response_mode = mode.effective
     if model.lower().startswith("gemini-") or not model.lower().startswith("gemma-"):
         return LlmProviderResult(provider="gemma", model=model, configured=False, status="unsupported_provider", warnings=["unsupported_model_gemma_only"]).model_dump()
     if not api_key or not api_key.strip():
@@ -258,32 +291,43 @@ def run_gemma_check(text: str, model: str, api_key: str, timeout_seconds: float 
 
     usage = _usage(response)
     finish_reason, candidate_count = _finish_metadata(response)
-    parsed, function_name = _function_payload(response)
-    content = _response_text(response)
+    parsed, function_name, function_count = _function_payload(response)
+    content = None if function_count else _response_text(response)
     diag: dict[str, Any] = {"finish_reason": finish_reason, "candidate_count": candidate_count,
-        "has_function_call": parsed is not None or function_name is not None, "function_call_name": function_name,
-        "provider_output_chars": len(content or ""), "truncated": str(finish_reason).upper().endswith("MAX_TOKENS")}
+        "has_function_call": function_count > 0, "function_call_count": function_count, "function_call_name": function_name,
+        "provider_output_chars": len(content or ""), "truncated": str(finish_reason).upper().endswith("MAX_TOKENS"),
+        "requested_response_mode": mode.requested, "effective_response_mode": mode.effective, "parse_stage": "function_call" if function_count else "text"}
     if _safety_blocked(response):
         return _result(model=model, status="content_filter", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning="gemma_safety_blocked", usage=usage, diagnostics=diag)
     if diag["truncated"]:
         return _result(model=model, status="truncated", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning="gemma_truncated", usage=usage, diagnostics=diag)
-    if parsed is None and response_mode == "function_call":
-        return _result(model=model, status="invalid_schema", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning="gemma_missing_function_call", usage=usage, diagnostics=diag)
+    if response_mode == "function_call" and (function_name != "submit_shuddho_review"):
+        warning = "gemma_unexpected_function_call" if function_count else "gemma_missing_function_call"
+        return _result(model=model, status="invalid_schema", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning=warning, usage=usage, diagnostics=diag)
+    if response_mode == "function_call" and parsed is None:
+        return _result(model=model, status="invalid_schema", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning="gemma_invalid_schema", usage=usage, diagnostics=diag)
     if parsed is None:
         if content is None:
             return _result(model=model, status="invalid_schema", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning="gemma_empty_output", usage=usage, diagnostics=diag)
         cleaned = content.lstrip("\ufeff").strip()
         diag.update({"starts_with_object": cleaned.startswith("{"), "ends_with_object": cleaned.endswith("}"), "had_markdown_fence": cleaned.startswith("```")})
         try:
-            parsed = extract_json_payload(content)
-        except Exception as exc:
+            decoded = decode_json_payload(content)
+            diag["decoded_json_type"] = type(decoded).__name__
+            parsed, shape = normalize_legacy_top_level(decoded, rid, text)
+            diag["payload_shape"] = shape
+        except json.JSONDecodeError as exc:
             diag.update({"json_error_class": type(exc).__name__, "json_error_message": str(exc)[:160], "json_error_position": getattr(exc, "pos", None)})
             return _result(model=model, status="invalid_json", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning="gemma_invalid_json", usage=usage, diagnostics=diag)
+        if not isinstance(parsed, dict):
+            return _result(model=model, status="invalid_schema", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning="gemma_invalid_schema", usage=usage, diagnostics=diag)
+    else:
+        diag.update({"decoded_json_type": "dict", "payload_shape": "canonical_object"})
     raw_count = raw_suggestion_count(parsed)
     try:
         review = validate_ai_review_payload(parsed, rid, text)
     except Exception as exc:
-        diag["exception_class"] = type(exc).__name__
+        diag.update({"exception_class": type(exc).__name__, "parse_stage": "schema_validation"})
         return _result(model=model, status="invalid_schema", response_mode=response_mode, started=started, timeout_seconds=timeout_seconds, warning="gemma_invalid_schema", usage=usage, diagnostics=diag, parsed=True, ai_raw_suggestion_count=raw_count)
     return _result(model=model, status="completed" if review.suggestions else "completed_empty", response_mode=response_mode,
         started=started, timeout_seconds=timeout_seconds, warning="", usage=usage, diagnostics=diag, parsed=True,

@@ -1980,7 +1980,8 @@ function getReviewStatusCopy(args: {
   }
   if (args.aiUnavailable) {
     const llmStatus = String(args.llmStatus ?? "failed");
-    if (llmStatus === "invalid_json") return "Gemma returned an unreadable response. Local suggestions are still available.";
+    if (llmStatus === "invalid_json") return "Gemma returned malformed JSON, so Shuddho safely ignored it and kept local suggestions.";
+    if (llmStatus === "invalid_schema") return "Gemma returned a response in the wrong format, so Shuddho safely kept local suggestions.";
     if (llmStatus === "truncated") return "Gemma’s response was incomplete. Local suggestions are still available.";
     if (llmStatus === "rate_limited") return "Gemma is temporarily rate-limited. Local suggestions are still available.";
     if (["auth_or_forbidden", "missing_key", "unsupported_provider"].includes(llmStatus)) return "Gemma is not configured correctly. Local suggestions are still available.";

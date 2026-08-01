@@ -36,6 +36,7 @@ from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from services.api.shuddho_api.adapters import analyze_to_check_response
 from services.api.shuddho_api.llm_gemma import DEFAULT_GEMMA_MODEL, run_gemma_check
+from services.api.shuddho_api.gemma_response_mode import resolve_gemma_response_mode
 from services.api.shuddho_api.llm_candidates import build_llm_candidates, split_bangla_sentences
 from services.api.shuddho_api.llm_provider import resolve_llm_config, LlmProviderResult
 from services.api.shuddho_api.suggestion_merge import merge_suggestions, validate_ai_suggestions
@@ -750,6 +751,7 @@ def get_llm_review(job_id: str) -> dict:
 @app.get("/api/llm/debug")
 def llm_debug() -> dict:
     config = resolve_llm_config(os.environ)
+    response_mode = resolve_gemma_response_mode(os.environ)
     primary = _provider_safe_state(config.provider, config.model, config.configured, config.api_key, config.status, config.warnings)
     fallback = _provider_safe_state(config.fallback_provider, config.fallback_model, config.fallback_configured, config.fallback_api_key, config.fallback_status, config.fallback_warnings)
     primary_open = _is_circuit_open(config.provider, config.model)
@@ -768,7 +770,7 @@ def llm_debug() -> dict:
         "provider": config.provider,
         "model": config.model,
         "status": debug_status,
-        "warnings": list(config.warnings),
+        "warnings": [*config.warnings, *response_mode.warnings],
         "dependencies": _dependency_diagnostics(config),
         "api_key_present": bool(config.api_key),
         "has_api_key": bool(config.api_key),
@@ -792,7 +794,9 @@ def llm_debug() -> dict:
         "circuit_open": primary_open,
         "circuit_state": "open" if _is_circuit_open(config.provider, config.model) else "closed",
         "thinking_level": os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL", "minimal"),
-        "response_mode": os.environ.get("SHUDDHO_GEMMA_RESPONSE_MODE", "function_call"),
+        "response_mode": response_mode.effective,
+        "requested_response_mode": response_mode.requested,
+        "effective_response_mode": response_mode.effective,
         "max_output_tokens": int(os.environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400")),
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
@@ -940,6 +944,7 @@ def _dependency_diagnostics(config: Any) -> dict[str, Any]:
 
 def _llm_safe_status() -> dict[str, Any]:
     config = resolve_llm_config(os.environ)
+    response_mode = resolve_gemma_response_mode(os.environ)
     primary_open = _is_circuit_open(config.provider, config.model)
     primary = _provider_safe_state(config.provider, config.model, config.configured, config.api_key, config.status, config.warnings)
     fallback = _provider_safe_state(config.fallback_provider, config.fallback_model, config.fallback_configured, config.fallback_api_key, config.fallback_status, config.fallback_warnings)
@@ -952,7 +957,7 @@ def _llm_safe_status() -> dict[str, Any]:
         "primary": primary,
         "fallback": fallback,
         "circuit_open": primary_open,
-        "warnings": list(config.warnings),
+        "warnings": [*config.warnings, *response_mode.warnings],
         "status": config.status,
         "dependencies": _dependency_diagnostics(config),
         "cache_enabled": True,
@@ -963,7 +968,9 @@ def _llm_safe_status() -> dict[str, Any]:
         "gemma_timeout_seconds": float(os.environ.get("SHUDDHO_GEMMA_TIMEOUT_SECONDS", "40")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "thinking_level": os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL", "minimal"),
-        "response_mode": os.environ.get("SHUDDHO_GEMMA_RESPONSE_MODE", "function_call"),
+        "response_mode": response_mode.effective,
+        "requested_response_mode": response_mode.requested,
+        "effective_response_mode": response_mode.effective,
         "max_output_tokens": int(os.environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400")),
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),

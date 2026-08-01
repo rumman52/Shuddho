@@ -88,7 +88,7 @@ def strip_json_fences(content: str) -> str:
     return cleaned.strip()
 
 
-def extract_json_payload(content: str) -> dict[str, Any]:
+def decode_json_payload(content: str) -> Any:
     cleaned = strip_json_fences(content)
     # Providers occasionally encode the whole object as a JSON string. Decode
     # at most once more; never apply lossy text substitutions.
@@ -126,9 +126,31 @@ def extract_json_payload(content: str) -> dict[str, Any]:
         if end is None:
             raise direct_error
         parsed = json.loads(cleaned[start:end])
+    return parsed
+
+
+def extract_json_payload(content: str) -> dict[str, Any]:
+    parsed = decode_json_payload(content)
     if not isinstance(parsed, dict):
         raise TypeError("AI response must be a JSON object")
     return parsed
+
+
+def normalize_legacy_top_level(parsed: Any, request_id: str, original_text: str) -> tuple[Any, str]:
+    if isinstance(parsed, dict):
+        return parsed, "canonical_object"
+    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict) and {
+        "requestId", "correctedText", "documentAssessment", "suggestions"
+    }.issubset(parsed[0]):
+        return parsed[0], "one_element_canonical_array"
+    if isinstance(parsed, list) and all(isinstance(item, dict) for item in parsed):
+        return {
+            "requestId": request_id,
+            "correctedText": original_text,
+            "documentAssessment": {},
+            "suggestions": parsed,
+        }, "suggestion_array"
+    return parsed, "unsupported_top_level"
 
 
 def raw_suggestion_count(parsed: dict[str, Any]) -> int:

@@ -762,8 +762,8 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
   if (status === "rate_limited") return "AI provider rate limit/quota hit; showing local suggestions.";
   if (["auth_or_forbidden", "credits_or_payment_required", "model_not_found"].includes(status)) return `${providerLabel} configuration error; showing local suggestions.`;
   if (status === "provider_error" && (httpStatus === 401 || httpStatus === 403 || warnings.some((w) => w.includes("401") || w.includes("403")))) return `${providerLabel} authentication failed. Check backend API key.`;
-  if (status === "invalid_json") return "AI returned invalid JSON; showing local suggestions.";
-  if (status === "invalid_schema") return "AI review unavailable; showing local suggestions.";
+  if (status === "invalid_json") return "Gemma returned malformed JSON, so Shuddho safely ignored it and kept local suggestions.";
+  if (status === "invalid_schema") return "Gemma returned a response in the wrong format, so Shuddho safely kept local suggestions.";
   if (status === "queued" || status === "attempted") return `Reviewing with ${providerLabel}.`;
   if (["provider_error", "network_error", "failed"].includes(status)) return "Gemma is unavailable. Showing local suggestions.";
   if (status === "content_filter") return `${providerLabel} could not review this content. Showing local suggestions.`;
