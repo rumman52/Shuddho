@@ -46,3 +46,66 @@ jobs:
         run: npm test
       - name: Build workspaces
         run: npm run build
+
+  coworker:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_DB: shuddho_coworker_test
+          POSTGRES_USER: shuddho_test
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U shuddho_test -d shuddho_coworker_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SHUDDHO_TEST_POSTGRES_URL: postgresql+psycopg://shuddho_test:ci-only-password@localhost:5432/shuddho_coworker_test
+      SHUDDHO_TEMPORAL_TESTS: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: { version: "0.7.22", enable-cache: true }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install document rendering libraries and fonts
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+          fonts-noto-core fonts-noto-cjk fonts-dejavu-core
+      - name: Install coworker dependencies
+        run: uv sync --frozen --group dev --extra coworker
+      - name: Test accounts, real exports, PostgreSQL races, and Temporal recovery
+        run: uv run --extra coworker pytest tests/test_coworker.py tests/test_coworker_postgres.py tests/test_coworker_temporal.py -q
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm }
+      - run: npm ci
+      - name: Install browser
+        run: npx playwright install --with-deps chromium --only-shell
+      - name: Check coworker workflow in the browser
+        env:
+          SHUDDHO_BROWSER_TESTS: "true"
+          SHUDDHO_TEST_WORKDIR: /tmp/shuddho-coworker-browser
+          VITE_COWORKER_ENABLED: "true"
+          VITE_SUPABASE_URL: https://identity.example.test
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_browser_test
+          VITE_COWORKER_API_BASE_URL: http://127.0.0.1:8000
+        run: |
+          mkdir -p "$SHUDDHO_TEST_WORKDIR"
+          PYTHONPATH=. uv run --extra coworker python tests/coworker_browser_server.py > "$SHUDDHO_TEST_WORKDIR/backend.log" 2>&1 &
+          fixture_pid=$!
+          npm run dev --workspace @shuddho/web-editor -- --host 127.0.0.1 > "$SHUDDHO_TEST_WORKDIR/frontend.log" 2>&1 &
+          editor_pid=$!
+          trap 'kill "$fixture_pid" "$editor_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null && curl -fsS http://127.0.0.1:5173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          node apps/web-editor/test/coworker-browser.mjs
+      - name: Keep browser screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coworker-browser-screenshots
+          path: /tmp/shuddho-coworker-browser/screenshots/

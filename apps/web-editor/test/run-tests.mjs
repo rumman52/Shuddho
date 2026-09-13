@@ -6,6 +6,7 @@ import { build } from "esbuild";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outdir = join(root, ".test-dist");
 const tests = [
+  "src/coworker/client.test.ts",
   "src/lib/api.test.ts",
   "src/lib/analysis.test.ts",
   "src/lib/llmStatus.test.ts",

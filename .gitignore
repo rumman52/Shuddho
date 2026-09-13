@@ -5,6 +5,8 @@ build/
 *.egg-info/
 *.tsbuildinfo
 .env
+.env.coworker
+data/coworker-files/
 __pycache__/
 .pytest_cache/
 .mypy_cache/

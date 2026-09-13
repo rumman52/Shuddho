@@ -1,0 +1,59 @@
+# Local development only. Configure .env.coworker with a real managed identity
+# issuer and DeepSeek key. Production uses managed PostgreSQL, S3 and Temporal.
+name: shuddho-coworker-dev
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: shuddho_coworker_dev
+      POSTGRES_USER: shuddho_dev
+      POSTGRES_PASSWORD: local-development-only
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: ["coworker-postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shuddho_dev -d shuddho_coworker_dev"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  temporal:
+    image: temporalio/temporal:latest
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/var/lib/temporal/development.db"]
+    ports: ["127.0.0.1:7233:7233", "127.0.0.1:8233:8233"]
+    volumes: ["coworker-temporal:/var/lib/temporal"]
+  migrate:
+    build: { context: .., dockerfile: Dockerfile.coworker }
+    env_file: ../.env.coworker
+    environment: &coworker-environment
+      SHUDDHO_COWORKER_ENABLED: "true"
+      SHUDDHO_COWORKER_ENV: development
+      SHUDDHO_COWORKER_DATABASE_URL: postgresql+psycopg://shuddho_dev:local-development-only@postgres:5432/shuddho_coworker_dev
+      SHUDDHO_COWORKER_STORAGE: local
+      SHUDDHO_COWORKER_LOCAL_STORAGE: /app/data/coworker-files
+      SHUDDHO_TEMPORAL_ADDRESS: temporal:7233
+      SHUDDHO_TEMPORAL_NAMESPACE: default
+      SHUDDHO_TEMPORAL_API_KEY: ""
+      SHUDDHO_TEMPORAL_TLS: "false"
+    command: ["python", "-m", "services.coworker.migrate"]
+    depends_on: { postgres: { condition: service_healthy } }
+  api:
+    build: { context: .., dockerfile: Dockerfile.coworker }
+    env_file: ../.env.coworker
+    environment: *coworker-environment
+    ports: ["127.0.0.1:8000:8000"]
+    volumes: ["coworker-files:/app/data/coworker-files"]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+  worker:
+    build: { context: .., dockerfile: Dockerfile.coworker }
+    env_file: ../.env.coworker
+    environment: *coworker-environment
+    command: ["python", "-m", "services.coworker.worker"]
+    volumes: ["coworker-files:/app/data/coworker-files"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      temporal: { condition: service_started }
+    restart: unless-stopped
+volumes:
+  coworker-postgres:
+  coworker-temporal:
+  coworker-files:

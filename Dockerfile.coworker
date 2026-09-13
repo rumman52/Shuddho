@@ -1,0 +1,25 @@
+FROM ghcr.io/astral-sh/uv:0.7.22 AS uv
+FROM python:3.11-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    SHUDDHO_CORRECTOR_ENABLED=false SHUDDHO_DETECTOR_ENABLED=false \
+    PATH="/app/.venv/bin:$PATH"
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates fontconfig libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+    fonts-noto-core fonts-noto-cjk fonts-dejavu-core && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=uv /uv /usr/local/bin/uv
+COPY pyproject.toml uv.lock README.md ./
+COPY services ./services
+COPY shared ./shared
+COPY ml ./ml
+COPY data/runtime ./data/runtime
+COPY artifacts/detector ./artifacts/detector
+COPY artifacts/corrector/corrector-base/metadata.json ./artifacts/corrector/corrector-base/metadata.json
+COPY artifacts/corrector/corrector-base/metrics.json ./artifacts/corrector/corrector-base/metrics.json
+RUN uv sync --frozen --no-dev --extra coworker && \
+    groupadd --gid 10001 shuddho && useradd --uid 10001 --gid shuddho --create-home shuddho && \
+    mkdir -p /app/data/coworker-files && chown -R shuddho:shuddho /app/data
+USER shuddho
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "services.api.shuddho_api.app:app", "--host", "0.0.0.0", "--port", "8000"]
