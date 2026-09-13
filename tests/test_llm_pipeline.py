@@ -11,21 +11,21 @@ from services.api.shuddho_api.llm_provider import DEFAULT_GEMMA_MODEL, resolve_l
 from services.api.shuddho_api.gemma_response_mode import resolve_gemma_response_mode
 
 
-def test_gemma_selected_by_default_and_default_model() -> None:
-    cfg = resolve_llm_config({"GOOGLE_API_KEY": "test-key"})
+def test_explicit_gemma_and_default_model() -> None:
+    cfg = resolve_llm_config({"SHUDDHO_LLM_PROVIDER": "gemma", "GOOGLE_API_KEY": "test-key"})
     assert cfg.provider == "gemma"
     assert cfg.model == DEFAULT_GEMMA_MODEL == "gemma-4-26b-a4b-it"
     assert cfg.configured is True
 
 
 def test_custom_gemma_model_works() -> None:
-    cfg = resolve_llm_config({"GOOGLE_API_KEY": "test-key", "GEMMA_MODEL": "gemma-custom-it"})
+    cfg = resolve_llm_config({"SHUDDHO_LLM_PROVIDER": "gemma", "GOOGLE_API_KEY": "test-key", "GEMMA_MODEL": "gemma-custom-it"})
     assert cfg.configured is True
     assert cfg.model == "gemma-custom-it"
 
 
 def test_missing_google_api_key_is_clear() -> None:
-    cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true"})
+    cfg = resolve_llm_config({"SHUDDHO_LLM_PROVIDER": "gemma", "SHUDDHO_ENABLE_LLM": "true"})
     assert cfg.status == "missing_key"
     assert "google_api_key_missing" in cfg.warnings
 
@@ -35,11 +35,11 @@ def test_other_generative_providers_are_rejected(provider: str) -> None:
     cfg = resolve_llm_config({"SHUDDHO_ENABLE_LLM": "true", "SHUDDHO_LLM_PROVIDER": provider, "GOOGLE_API_KEY": "test-key"})
     assert cfg.configured is False
     assert cfg.status == "unsupported_provider"
-    assert "unsupported_llm_provider_gemma_only" in cfg.warnings
+    assert "unsupported_llm_provider" in cfg.warnings
 
 
 def test_gemini_model_is_rejected() -> None:
-    cfg = resolve_llm_config({"GOOGLE_API_KEY": "test-key", "GEMMA_MODEL": "gemini-2.5-flash"})
+    cfg = resolve_llm_config({"SHUDDHO_LLM_PROVIDER": "gemma", "GOOGLE_API_KEY": "test-key", "GEMMA_MODEL": "gemini-2.5-flash"})
     assert cfg.configured is False
     assert cfg.status == "unsupported_provider"
     assert "unsupported_model_gemma_only" in cfg.warnings
@@ -147,7 +147,7 @@ def test_stale_production_json_mode_is_overridden() -> None:
     assert "gemma_legacy_response_mode_overridden" in mode.warnings
 
 
-@pytest.mark.parametrize((content, status, shape), [
+@pytest.mark.parametrize(("content", "status", "shape"), [
     (json.dumps([_canonical_payload()], ensure_ascii=False), "completed_empty", "one_element_canonical_array"),
     ("42", "invalid_schema", "unsupported_top_level"),
     ("not-json", "invalid_json", None),

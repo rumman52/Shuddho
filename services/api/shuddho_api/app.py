@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -36,12 +36,13 @@ from services.spell.shuddho_spell.engine import SpellEngine
 from services.suggestion_manager.shuddho_suggestion_manager.manager import SuggestionManager
 from services.api.shuddho_api.adapters import analyze_to_check_response
 from services.api.shuddho_api.llm_gemma import DEFAULT_GEMMA_MODEL, run_gemma_check
-from services.api.shuddho_api.gemma_response_mode import resolve_gemma_response_mode
+from services.api.shuddho_api.llm_deepseek import DEEPSEEK_ENDPOINT, max_output_tokens as deepseek_max_output_tokens, run_deepseek_check
 from services.api.shuddho_api.llm_candidates import build_llm_candidates, split_bangla_sentences
-from services.api.shuddho_api.llm_provider import resolve_llm_config, LlmProviderResult
-from services.api.shuddho_api.suggestion_merge import merge_suggestions, validate_ai_suggestions
+from services.api.shuddho_api.llm_provider import resolve_llm_config, resolve_llm_response_mode, LlmProviderResult
+from services.api.shuddho_api.suggestion_merge import build_canonical_preview, merge_suggestions, validate_ai_suggestions
 from shared.schemas.python_models import (
     AnalysisProfile,
+    AnalyzeMode,
     AnalyzeRequest,
     AnalyzeResponse,
     CorrectorHealth,
@@ -127,8 +128,8 @@ class AiCheckResponse(BaseModel):
     correctedText: str | None = None
     documentAssessment: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
-    provider: str = "gemma"
-    model: str = DEFAULT_GEMMA_MODEL
+    provider: str = "disabled"
+    model: str = ""
     llm_enabled: bool = False
     configured: bool = False
     called: bool = False
@@ -158,6 +159,9 @@ class ApiCheckRequest(BaseModel):
     dialect: str | None = None
     userId: str | None = None
     user_id: str | None = None
+    personalDictionary: list[str] | None = None
+    personal_dictionary: list[str] = Field(default_factory=list)
+    writingMode: AnalyzeMode | None = None
     client: dict[str, Any] | None = None
     consent: dict[str, Any] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
@@ -361,9 +365,6 @@ class ApiPreferences(BaseModel):
     productImprovementConsent: bool = False
 
 
-_preferences_store: dict[str, ApiPreferences] = {}
-
-
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return _build_health_response()
@@ -445,6 +446,7 @@ def analyze(payload: AnalyzeRequest) -> AnalyzeResponse:
 
 
 @app.post("/feedback", response_model=FeedbackRecord)
+@app.post("/api/feedback", response_model=FeedbackRecord)
 def feedback(payload: FeedbackRequest) -> FeedbackRecord:
     return feedback_store.save(payload)
 
@@ -452,14 +454,17 @@ def feedback(payload: FeedbackRequest) -> FeedbackRecord:
 
 
 @app.get("/api/preferences", response_model=ApiPreferences)
-def get_api_preferences(user_id: str = "demo-user") -> ApiPreferences:
-    return _preferences_store.get(user_id, ApiPreferences(user_id=user_id))
+def get_api_preferences(user_id: str = Query(min_length=1, max_length=128)) -> ApiPreferences:
+    stored = feedback_store.load_editor_preferences(user_id)
+    return ApiPreferences.model_validate(stored or {"user_id": user_id})
 
 
 @app.put("/api/preferences", response_model=ApiPreferences)
-def put_api_preferences(payload: ApiPreferences, user_id: str = "demo-user") -> ApiPreferences:
-    stored = payload.model_copy(update={"user_id": payload.user_id or user_id})
-    _preferences_store[user_id] = stored
+def put_api_preferences(payload: ApiPreferences, user_id: str = Query(min_length=1, max_length=128)) -> ApiPreferences:
+    # Profile IDs prevent accidental collisions; they are not authentication.
+    # Part 2 replaces this legacy boundary with authenticated account ownership.
+    stored = payload.model_copy(update={"user_id": user_id})
+    feedback_store.save_editor_preferences(user_id, stored.model_dump(mode="json"))
     return stored
 
 @app.post("/api/check", response_model=CanonicalCheckResponse)
@@ -481,7 +486,10 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     logger.info("CHECK_START request_id=%s text_length=%s includeLLM=%s asyncLLM=%s mode=%s", request_id, len(canonical_payload.text), include_llm, async_llm, llm_mode)
 
     local_started = time.time()
-    legacy = analyze(AnalyzeRequest(text=canonical_payload.text, user_id=canonical_payload.userId))
+    legacy = analyze(AnalyzeRequest(
+        text=canonical_payload.text, user_id=canonical_payload.userId,
+        personal_dictionary=normalized["personalDictionary"], mode=normalized["writingMode"],
+    ))
     local_ms = int((time.time() - local_started) * 1000)
     response = analyze_to_check_response(legacy, request_id=request_id, text=canonical_payload.text, document_id=canonical_payload.documentId, revision=canonical_payload.revision)
     response_payload = response.model_dump(mode="json")
@@ -602,7 +610,10 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     response_payload["ai_valid_suggestion_count"] = len(validated_ai)
     response_payload["ai_rejected_suggestion_count"] = rejected_count
     response_payload["ai_empty_reason"] = ai_empty_reason
-    response_payload["correctedText"] = ai.correctedText if ai.status in {"completed", "completed_empty", "completed_rejected"} and ai.correctedText and "llm_text_truncated" not in ai.warnings else response_payload.get("correctedText") or canonical_payload.text
+    if ai.status in {"completed", "completed_empty", "completed_rejected"} and "llm_text_truncated" not in ai.warnings:
+        response_payload["correctedText"] = build_canonical_preview(canonical_payload.text, response_payload["suggestions"])
+    else:
+        response_payload["correctedText"] = response_payload.get("correctedText") or canonical_payload.text
     response_payload["documentAssessment"] = ai.documentAssessment if ai.status in {"completed", "completed_empty", "completed_rejected"} and ai.documentAssessment else response_payload.get("documentAssessment") or {}
     timings: dict[str, int | float | bool] = {
         "local_ms": local_ms,
@@ -751,7 +762,7 @@ def get_llm_review(job_id: str) -> dict:
 @app.get("/api/llm/debug")
 def llm_debug() -> dict:
     config = resolve_llm_config(os.environ)
-    response_mode = resolve_gemma_response_mode(os.environ)
+    response_mode = resolve_llm_response_mode(config, os.environ)
     primary = _provider_safe_state(config.provider, config.model, config.configured, config.api_key, config.status, config.warnings)
     fallback = _provider_safe_state(config.fallback_provider, config.fallback_model, config.fallback_configured, config.fallback_api_key, config.fallback_status, config.fallback_warnings)
     primary_open = _is_circuit_open(config.provider, config.model)
@@ -780,11 +791,12 @@ def llm_debug() -> dict:
         "fallback_model": config.fallback_model,
         "fallback_configured": config.fallback_configured,
         "on_check": os.environ.get("SHUDDHO_LLM_ON_CHECK", "manual").strip().lower(),
-        "endpoint": "https://generativelanguage.googleapis.com",
+        "endpoint": DEEPSEEK_ENDPOINT if config.provider == "deepseek" else "https://generativelanguage.googleapis.com",
         "interactive_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50"))),
         "gemma_timeout_seconds": float(os.environ.get("SHUDDHO_GEMMA_TIMEOUT_SECONDS", "40")),
+        "deepseek_timeout_seconds": float(os.environ.get("SHUDDHO_DEEPSEEK_TIMEOUT_SECONDS", "15")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
         "timeout_settings": {
             "interactive_seconds": float(os.environ.get("SHUDDHO_LLM_INTERACTIVE_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "45"))),
@@ -793,7 +805,7 @@ def llm_debug() -> dict:
         },
         "circuit_open": primary_open,
         "circuit_state": "open" if _is_circuit_open(config.provider, config.model) else "closed",
-        "thinking_level": os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL", "minimal"),
+        "thinking_level": "disabled" if config.provider == "deepseek" else os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL", "minimal"),
         "response_mode": response_mode.effective,
         "requested_response_mode": response_mode.requested,
         "effective_response_mode": response_mode.effective,
@@ -922,6 +934,8 @@ def _provider_safe_state(provider: str | None, model: str, configured: bool, api
 
 
 def _dependency_diagnostics(config: Any) -> dict[str, Any]:
+    import httpx
+
     google_genai_installed = False
     google_genai_version = None
     try:
@@ -931,6 +945,8 @@ def _dependency_diagnostics(config: Any) -> dict[str, Any]:
     except Exception:
         google_genai_installed = False
     return {
+        "transport": "httpx" if config.provider == "deepseek" else "google-genai" if config.provider == "gemma" else None,
+        "httpx_version": httpx.__version__,
         "google_genai_installed": google_genai_installed,
         "google_genai_version": google_genai_version,
         "provider_configured": config.configured,
@@ -944,7 +960,7 @@ def _dependency_diagnostics(config: Any) -> dict[str, Any]:
 
 def _llm_safe_status() -> dict[str, Any]:
     config = resolve_llm_config(os.environ)
-    response_mode = resolve_gemma_response_mode(os.environ)
+    response_mode = resolve_llm_response_mode(config, os.environ)
     primary_open = _is_circuit_open(config.provider, config.model)
     primary = _provider_safe_state(config.provider, config.model, config.configured, config.api_key, config.status, config.warnings)
     fallback = _provider_safe_state(config.fallback_provider, config.fallback_model, config.fallback_configured, config.fallback_api_key, config.fallback_status, config.fallback_warnings)
@@ -966,12 +982,13 @@ def _llm_safe_status() -> dict[str, Any]:
         "background_timeout_seconds": float(os.environ.get("SHUDDHO_LLM_BACKGROUND_TIMEOUT_SECONDS", "50")),
         "timeout_seconds": float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50"))),
         "gemma_timeout_seconds": float(os.environ.get("SHUDDHO_GEMMA_TIMEOUT_SECONDS", "40")),
+        "deepseek_timeout_seconds": float(os.environ.get("SHUDDHO_DEEPSEEK_TIMEOUT_SECONDS", "15")),
         "cache_ttl_seconds": int(os.environ.get("SHUDDHO_LLM_CACHE_TTL_SECONDS", "86400")),
-        "thinking_level": os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL", "minimal"),
+        "thinking_level": "disabled" if config.provider == "deepseek" else os.environ.get("SHUDDHO_GEMMA_THINKING_LEVEL", "minimal"),
         "response_mode": response_mode.effective,
         "requested_response_mode": response_mode.requested,
         "effective_response_mode": response_mode.effective,
-        "max_output_tokens": int(os.environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400")),
+        "max_output_tokens": deepseek_max_output_tokens() if config.provider == "deepseek" else int(os.environ.get("SHUDDHO_LLM_MAX_COMPLETION_TOKENS", "1400")),
         "max_candidates": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATES", "8")),
         "max_candidate_chars": int(os.environ.get("SHUDDHO_LLM_MAX_CANDIDATE_CHARS", "2200")),
         "max_ai_text_chars": int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000")),
@@ -1041,13 +1058,21 @@ def _normalize_api_check_payload(payload: ApiCheckRequest) -> dict[str, Any]:
     for key in ["includeLLM", "includeAi", "includeAI", "asyncLLM", "asyncAi", "asyncAI", "llmMode", "mode", "ai", "llm"]:
         if key in extra and key not in options:
             options[key] = extra[key]
+    personal_dictionary = getattr(payload, "personalDictionary", None)
+    if personal_dictionary is None:
+        personal_dictionary = getattr(payload, "personal_dictionary", [])
+    legacy_mode = extra.get("mode")
+    if not isinstance(legacy_mode, str) or legacy_mode not in {"standard", "strict", "formal"}:
+        legacy_mode = "standard"
     return {
         "text": payload.text,
         "language": payload.language or "bn",
-        "document_id": getattr(payload, "document_id", None) or getattr(payload, "documentId", None),
+        "documentId": getattr(payload, "document_id", None) or getattr(payload, "documentId", None),
         "revision": getattr(payload, "revision", None),
         "dialect": getattr(payload, "dialect", None),
-        "user_id": getattr(payload, "user_id", None) or getattr(payload, "userId", None),
+        "userId": getattr(payload, "user_id", None) or getattr(payload, "userId", None),
+        "personalDictionary": personal_dictionary,
+        "writingMode": getattr(payload, "writingMode", None) or legacy_mode,
         "client": getattr(payload, "client", None),
         "consent": getattr(payload, "consent", None),
         "options": options,
@@ -1108,13 +1133,15 @@ def run_configured_provider(
     provider = provider_config.get("provider")
     model = provider_config.get("model") or ""
     if not provider_config.get("configured") or not provider_config.get("api_key"):
-        warning = {"gemma": "google_api_key_missing"}.get(str(provider), "unsupported_llm_provider")
+        warning = {"gemma": "google_api_key_missing", "deepseek": "deepseek_api_key_missing"}.get(str(provider), "unsupported_llm_provider")
         status = provider_config.get("status") or "missing_key"
         return LlmProviderResult(provider=str(provider or "disabled"), model=model, configured=False, status=status, warnings=[*(provider_config.get("warnings") or []), warning], response_mode="none").model_dump()
     if _is_circuit_open(str(provider), model):
         return LlmProviderResult(provider=str(provider), model=model, called=False, configured=True, status="circuit_open", warnings=["llm_circuit_open"], response_mode="none").model_dump()
     if provider == "gemma":
         return run_gemma_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
+    if provider == "deepseek":
+        return run_deepseek_check(text=text, model=model, api_key=provider_config.get("api_key") or "", timeout_seconds=timeout_seconds, request_id=request_id, sentences=sentences, local_suggestions=local_suggestions, candidates=candidates)
     return LlmProviderResult(provider=str(provider or "disabled"), model=model, status="unsupported_provider", warnings=["unsupported_llm_provider"]).model_dump()
 
 
@@ -1173,9 +1200,13 @@ def _classify_ai_result_after_validation(text: str, result: dict[str, Any]) -> d
         validation_warnings = _dedupe_strings([*validation_warnings, "ai_suggestions_rejected"])
     else:
         status = "completed"
+    preview_suggestions, _ = merge_suggestions(text, [], valid_ai, str(classified.get("provider") or "ai"), str(classified.get("model") or ""))
     classified.update({
         "status": status,
         "suggestions": valid_ai,
+        # A provider's full rewrite may contain changes rejected above, or edits
+        # it never explained. Only validated, non-overlapping edits enter preview.
+        "correctedText": build_canonical_preview(text, preview_suggestions),
         "ai_raw_suggestion_count": raw_count,
         "ai_valid_suggestion_count": len(valid_ai),
         "ai_rejected_suggestion_count": rejected_count,
@@ -1258,8 +1289,9 @@ def _canonical_llm_job_payload(
 def _run_provider_chain(config: Any, text: str, request_id: str, sentences: list[dict[str, Any]], local_suggestions: list[dict[str, Any]], candidates: list[dict[str, Any]], timeout: float) -> dict[str, Any]:
     started = time.monotonic()
     total_deadline = max(1.0, float(timeout))
-    primary_env = "SHUDDHO_GEMMA_TIMEOUT_SECONDS"
-    primary_timeout = min(total_deadline, max(1.0, float(os.environ.get(primary_env, os.environ.get("SHUDDHO_LLM_PRIMARY_TIMEOUT_SECONDS", "30")) or "30")))
+    primary_env = "SHUDDHO_DEEPSEEK_TIMEOUT_SECONDS" if config.provider == "deepseek" else "SHUDDHO_GEMMA_TIMEOUT_SECONDS"
+    default_timeout = "15" if config.provider == "deepseek" else "30"
+    primary_timeout = min(total_deadline, max(1.0, float(os.environ.get(primary_env, os.environ.get("SHUDDHO_LLM_PRIMARY_TIMEOUT_SECONDS", default_timeout)) or default_timeout)))
     primary_cfg = _provider_configured(config)
     result = run_configured_provider(primary_cfg, text, request_id, sentences, local_suggestions, candidates, primary_timeout)
     _record_provider_attempt(result)
@@ -1279,11 +1311,10 @@ def _run_ai_check(
     config = resolve_llm_config(os.environ)
     base = {"provider": config.provider, "model": config.model, "llm_enabled": config.enabled, "configured": config.configured, "warnings": list(config.warnings), "status": config.status if config.status != "completed" else "attempted"}
     if not config.enabled:
-        return AiCheckResponse(**{**base, "status": "disabled", "warnings": _dedupe_strings([*config.warnings, "llm_disabled"] if not config.warnings else config.warnings)})
+        return AiCheckResponse(**{**base, "status": config.status if config.status != "completed" else "disabled", "warnings": _dedupe_strings([*config.warnings, "llm_disabled"] if not config.warnings else config.warnings)})
     if not text.strip():
         return AiCheckResponse(**{**base, "status": "skipped", "warnings": _dedupe_strings([*config.warnings, "llm_empty_text_skipped"])})
 
-    os.environ["SHUDDHO_REQUEST_ID"] = request_id
     timeout = timeout_seconds if timeout_seconds is not None else float(os.environ.get("SHUDDHO_LLM_TOTAL_TIMEOUT_SECONDS", os.environ.get("SHUDDHO_LLM_TIMEOUT_SECONDS", "50")) or "50")
     max_ai_chars = int(os.environ.get("SHUDDHO_MAX_AI_TEXT_CHARS", "5000") or "5000")
     ai_text = text[:max_ai_chars]
@@ -1487,7 +1518,7 @@ def _run_llm_job_impl(job_id: str, text: str, candidates: list[dict], local_sugg
         ai_valid_suggestion_count=len(valid_ai),
         ai_rejected_suggestion_count=rejected_count,
         ai_empty_reason=ai_empty_reason,
-        correctedText=ai.correctedText,
+        correctedText=build_canonical_preview(text, merged),
         documentAssessment=ai.documentAssessment,
     )
     payload["created_at"] = time.time()

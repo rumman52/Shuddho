@@ -44,6 +44,7 @@ export function SuggestionCard({
     ? suggestion.source_trace
     : [];
   const primaryReplacement = replacementOptions[0] ?? "";
+  const hasReplacement = replacementOptions.length > 0;
 
   return (
     <article className="suggestion-card">
@@ -57,14 +58,14 @@ export function SuggestionCard({
 
       <div className="suggestion-card__change">
         <span>{suggestion.original_text}</span>
-        {primaryReplacement ? <span aria-hidden="true">→</span> : null}
-        {primaryReplacement ? <strong>{primaryReplacement}</strong> : null}
+        {hasReplacement ? <span aria-hidden="true">→</span> : null}
+        {hasReplacement ? <strong>{primaryReplacement || "Delete"}</strong> : null}
       </div>
 
       <p className="suggestion-card__summary">{primaryExplanation}</p>
 
       <div className="suggestion-card__footer">
-        {primaryReplacement ? (
+        {hasReplacement ? (
           <button
             type="button"
             className="button-primary"

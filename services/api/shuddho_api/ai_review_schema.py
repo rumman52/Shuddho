@@ -11,10 +11,10 @@ IssueType = Literal[
     "word_choice", "other",
 ]
 Severity = Literal["low", "medium", "high"]
-Language = Literal["bn", "en", "mixed", "unknown"]
+Language = str
 Quality = Literal["poor", "fair", "good", "excellent"]
 
-PROMPT_SCHEMA_VERSION = "ai-review-v4-function-call"
+PROMPT_SCHEMA_VERSION = "ai-review-v5-multilingual-deletions"
 
 SYSTEM_PROMPT = """You are Shuddho, a professional Bangla editor. Review fullText in context for spelling, grammar, punctuation, spacing, word choice, clarity, fluency, and meaning. Return only JSON (no markdown) with keys requestId, correctedText, documentAssessment, suggestions. documentAssessment has summary, overallQuality (poor|fair|good|excellent), language (bn|en|mixed|unknown). Each suggestion has id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start, end.
 original must be an exact fullText substring and [start,end) its exact indexes. Prefer minimal edits, preserve meaning/names/numbers/quotes, never rewrite the whole document as one suggestion, and omit uncertain edits. correctedText must be the complete corrected document. If no edits, use suggestions=[] and correctedText=fullText."""
@@ -25,7 +25,7 @@ class DocumentAssessment(BaseModel):
 
     summary: str = ""
     overallQuality: Quality = "good"
-    language: Language = "unknown"
+    language: Language = Field(default="unknown", min_length=2, max_length=35)
 
 
 class AIReviewSuggestion(BaseModel):
@@ -42,11 +42,11 @@ class AIReviewSuggestion(BaseModel):
     start: int | None = Field(default=None, ge=0)
     end: int | None = Field(default=None, ge=1)
 
-    @field_validator("original", "replacement")
+    @field_validator("original")
     @classmethod
     def not_blank(cls, value: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("must not be blank")
+        if not value:
+            raise ValueError("original must not be empty")
         return value
 
 
@@ -176,13 +176,9 @@ def normalize_review_payload(parsed: dict[str, Any], request_id: str, original_t
             continue
         copy = dict(item)
         original = copy.get("original") or copy.get("originalText") or copy.get("original_text")
-        replacement = (
-            copy.get("replacement")
-            or copy.get("suggestedText")
-            or copy.get("suggested_text")
-            or copy.get("replacementText")
-            or copy.get("replacement_text")
-        )
+        replacement = next((copy[key] for key in (
+            "replacement", "suggestedText", "suggested_text", "replacementText", "replacement_text"
+        ) if isinstance(copy.get(key), str)), None)
         copy["original"] = original
         copy["replacement"] = replacement
         copy["id"] = copy.get("id") or f"ai_{index}"

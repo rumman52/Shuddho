@@ -10,6 +10,8 @@ const tests = [
   "src/lib/analysis.test.ts",
   "src/lib/llmStatus.test.ts",
   "src/lib/suggestionAdapter.test.ts",
+  "src/lib/suggestionTransaction.test.ts",
+  "src/lib/fetchWithTimeout.test.ts",
   "src/App.test.tsx",
   "src/lib/preferences.test.ts",
   "src/lib/runtimeStatus.test.ts",

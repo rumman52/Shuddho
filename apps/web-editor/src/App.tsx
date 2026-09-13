@@ -516,7 +516,7 @@ export default function App() {
         personalDictionary: [...(preferences.personal_dictionary ?? [])],
         userId,
         includeLLM,
-        // Manual Deep AI Review must be a direct frontend → backend → Gemma
+        // Manual Deep AI Review must be a direct frontend → backend → provider
         // request. In-memory async job polling is unsafe on Render because jobs
         // can disappear across sleeps, restarts, or workers.
         asyncLLM: false,
@@ -1949,7 +1949,7 @@ function getFriendlyRuntimeStatus(args: {
     args.sourceSummary === "hybrid" ||
     args.llmStatus === "ok"
   ) {
-    return { label: args.llmStatus === "completed" ? "Gemma review ready" : "AI review ready", tone: "ok" };
+    return { label: "AI review ready", tone: "ok" };
   }
   if (
     args.backendMode === "degraded" ||
@@ -1976,17 +1976,16 @@ function getReviewStatusCopy(args: {
     return "Contextual AI review is not connected. Retry the backend or continue only when limited local checks are available.";
   }
   if (args.status.toLowerCase().includes("timed out")) {
-    return "Gemma review timed out. Local suggestions are still available. Try again.";
+    return "AI review timed out. Local suggestions are still available. Try again.";
   }
   if (args.aiUnavailable) {
     const llmStatus = String(args.llmStatus ?? "failed");
-    if (llmStatus === "invalid_json") return "Gemma returned malformed JSON, so Shuddho safely ignored it and kept local suggestions.";
-    if (llmStatus === "invalid_schema") return "Gemma returned a response in the wrong format, so Shuddho safely kept local suggestions.";
-    if (llmStatus === "truncated") return "Gemma’s response was incomplete. Local suggestions are still available.";
-    if (llmStatus === "rate_limited") return "Gemma is temporarily rate-limited. Local suggestions are still available.";
-    if (["auth_or_forbidden", "missing_key", "unsupported_provider"].includes(llmStatus)) return "Gemma is not configured correctly. Local suggestions are still available.";
-    if (llmStatus === "network_error") return "Gemma could not be reached. Local suggestions are still available.";
-    return "Gemma review is unavailable. Local suggestions are still available.";
+    if (llmStatus === "invalid_json" || llmStatus === "invalid_schema") return "The AI response could not be read. Local suggestions are still available.";
+    if (llmStatus === "truncated") return "AI review was incomplete. Local suggestions are still available.";
+    if (llmStatus === "rate_limited") return "AI review is temporarily busy. Local suggestions are still available.";
+    if (["auth_or_forbidden", "missing_key", "unsupported_provider"].includes(llmStatus)) return "AI review is not configured correctly. Local suggestions are still available.";
+    if (llmStatus === "network_error") return "AI review could not connect. Local suggestions are still available.";
+    return "AI review is unavailable. Local suggestions are still available.";
   }
   if (args.suggestions > 0) {
     return `${args.suggestions} suggestions ready.`;
@@ -2081,6 +2080,7 @@ function describeSuggestionSources(
       suggestion.source === "model" ||
       suggestion.source === "hybrid" ||
       suggestion.provider === "gemma" ||
+      suggestion.provider === "deepseek" ||
       sources.includes("ai")
     );
   });
@@ -2200,8 +2200,8 @@ export function describeAnalyzeTextError(
   ) {
     return "Backend returned invalid JSON. Check /api/check response and Render logs.";
   }
-  if (lower.includes("gemma") || lower.includes("provider_error")) {
-    return `Gemma provider error while reviewing. ${message}`.slice(
+  if (lower.includes("gemma") || lower.includes("deepseek") || lower.includes("provider_error")) {
+    return `AI provider error while reviewing. ${message}`.slice(
       0,
       240,
     );

@@ -11,6 +11,8 @@ import {
   deriveApiConfiguration,
   sendFeedback,
   fetchPreferences,
+  getUserPreferences,
+  saveUserPreferences,
   fetchWithTimeout,
   gatewayCheckToAnalyzeResponse,
   friendlyLlmWarning,
@@ -499,6 +501,64 @@ test("buildCheckRequestBody includeLLM flags preserve deep review mode", () => {
   assert.equal(deep.options.mode, "smart");
 });
 
+test("check requests keep writing preferences separate from execution mode", () => {
+  const body = buildCheckRequestBody("Shuddho", { includeLLM: false }, {
+    user_id: "profile-a", personal_dictionary: ["Shuddho"], mode: "formal",
+  });
+  assert.equal(body.userId, "profile-a");
+  assert.deepEqual(body.personalDictionary, ["Shuddho"]);
+  assert.equal(body.writingMode, "formal");
+  assert.equal(body.options.mode, "fast");
+});
+
+test("preference requests use the active profile for reads and writes", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  setApiBaseUrlOverride("https://api.example.test");
+  globalThis.fetch = (async (url, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    calls.push({ url: String(url), body });
+    return new Response(JSON.stringify(body), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    const read = await getUserPreferences("profile a");
+    const saved = await saveUserPreferences("profile-b", DEFAULT_PREFERENCES);
+    assert.equal(read.user_id, "profile a");
+    assert.equal(saved.user_id, "profile-b");
+    assert.equal(calls[0]?.url, "https://api.example.test/api/preferences?user_id=profile%20a");
+    assert.equal(calls[1]?.url, "https://api.example.test/api/preferences?user_id=profile-b");
+    assert.equal(calls[1]?.body.user_id, "profile-b");
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+});
+
+test("failed preference saves are reported instead of appearing successful", async () => {
+  const originalFetch = globalThis.fetch;
+  setApiBaseUrlOverride("https://api.example.test");
+  try {
+    globalThis.fetch = (async () => new Response("unavailable", { status: 503 })) as typeof fetch;
+    await assert.rejects(() => saveUserPreferences("profile-a", DEFAULT_PREFERENCES), /HTTP 503/);
+    globalThis.fetch = (async () => new Response("not-json", { status: 200 })) as typeof fetch;
+    await assert.rejects(() => saveUserPreferences("profile-a", DEFAULT_PREFERENCES), /invalid JSON/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    setApiBaseUrlOverride("");
+  }
+});
+
+test("DeepSeek errors identify the active provider and keep local editing available", () => {
+  for (const status of ["invalid_json", "invalid_schema", "network_error"]) {
+    const message = friendlyLlmWarning({ llm_provider: "deepseek", llm_status: status });
+    assert.match(message ?? "", /DeepSeek/);
+    assert.doesNotMatch(message ?? "", /Gemma/);
+    assert.match(message ?? "", /local suggestions/);
+  }
+});
+
 test("gatewayCheckToAnalyzeResponse preserves llm diagnostics", () => {
   const response = gatewayCheckToAnalyzeResponse(
     {
@@ -526,10 +586,10 @@ test("gatewayCheckToAnalyzeResponse preserves llm diagnostics", () => {
 });
 
 test("friendlyLlmWarning maps precise provider-aware LLM statuses", () => {
-  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "gemma" }), "Gemma is not configured: missing backend GOOGLE_API_KEY.");
-  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "gemma" }), "Gemma is not configured: missing backend GOOGLE_API_KEY.");
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "gemma" }), "AI review is not configured yet. You can keep using local suggestions.");
+  assert.equal(friendlyLlmWarning({ llm_status: "missing_key", llm_provider: "deepseek" }), "AI review is not configured yet. You can keep using local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "timeout", llm_provider: "gemma" }), "AI review timed out; showing local suggestions.");
-  assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider", llm_provider: "gemma", llm_model: "gemma-4-26b-a4b-it", warnings: ["gemma_model_id_suspicious_use_gemma_provider"] }), "Invalid configuration: Shuddho supports only the Gemma provider and Gemma models.");
+  assert.equal(friendlyLlmWarning({ llm_status: "unsupported_provider", llm_provider: "gemma", llm_model: "gemma-4-26b-a4b-it", warnings: ["gemma_model_id_suspicious_use_gemma_provider"] }), "AI review configuration needs attention. You can keep using local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "rate_limited", llm_provider: "gemma" }), "AI provider rate limit/quota hit; showing local suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "completed_empty", llm_provider: "gemma" }), "AI reviewed the text but found no extra high-confidence suggestions.");
   assert.equal(friendlyLlmWarning({ llm_status: "completed_rejected", llm_provider: "gemma", rejected_ai_suggestion_count: 1 }), "AI reviewed the text, but its suggestions were rejected by validation. Showing local suggestions.");

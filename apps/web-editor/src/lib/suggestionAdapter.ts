@@ -48,8 +48,8 @@ export function getReplacementOptions(suggestion: unknown): string[] {
   if (camel.length) return camel;
   const snake = stringArray(record.replacement_options);
   if (snake.length) return snake;
-  const suggested = stringValue(record.suggestedText, stringValue(record.suggested_text));
-  return suggested ? [suggested] : [];
+  const suggested = record.suggestedText ?? record.suggested_text;
+  return typeof suggested === "string" ? [suggested] : [];
 }
 
 export function getPrimaryReplacement(suggestion: unknown): string {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Suggestion } from "@shared/schemas/contracts";
-import { applySuggestionTransaction } from "./suggestionTransaction";
+import { applySuggestionTransaction, applySuggestionBatchTransaction } from "./suggestionTransaction";
 
 function suggestion(id: string, text: string, original: string, replacement: string): Suggestion {
   const start = text.indexOf(original);
@@ -38,4 +38,14 @@ test("stale suggestion does not modify text", () => {
   const item = suggestion("stale", original, "বাংলা", "বাংলায়");
   const result = applySuggestionTransaction("আমি ইংরেজি লিখি।", item, "বাংলায়", [item]);
   assert.equal(result.ok, false);
+});
+
+test("apply all includes deletion suggestions and preserves adjacent edits", () => {
+  const text = "🙂 Hello!! world";
+  const deletion = suggestion("delete", text, "!!", "!");
+  const spacing = suggestion("space", text, " world", "");
+  const result = applySuggestionBatchTransaction(text, [deletion, spacing]);
+  assert.equal(result.text, "🙂 Hello!");
+  assert.equal(result.applied, 2);
+  assert.equal(result.skipped, 0);
 });

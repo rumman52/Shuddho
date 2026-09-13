@@ -67,6 +67,10 @@ class FeedbackStore:
     def _initialize(self) -> None:
         with sqlite3.connect(self.database_path) as connection:
             connection.execute(
+                "CREATE TABLE IF NOT EXISTS editor_preferences ("
+                "user_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL)"
+            )
+            connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS feedback (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,6 +135,21 @@ class FeedbackStore:
             self._ensure_column(connection, "feedback_preferences", "user_dictionary_entry", "TEXT")
             self._ensure_column(connection, "feedback_preferences", "user_id", "TEXT")
             connection.commit()
+
+    def load_editor_preferences(self, user_id: str) -> dict | None:
+        with sqlite3.connect(self.database_path) as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM editor_preferences WHERE user_id = ?", (user_id,),
+            ).fetchone()
+        return json.loads(row[0]) if row is not None else None
+
+    def save_editor_preferences(self, user_id: str, payload: dict) -> None:
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute(
+                "INSERT INTO editor_preferences (user_id, payload_json) VALUES (?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET payload_json = excluded.payload_json",
+                (user_id, json.dumps({**payload, "user_id": user_id}, ensure_ascii=False)),
+            )
 
     def save(self, payload: FeedbackRequest) -> FeedbackRecord:
         created_at = datetime.now(timezone.utc)
