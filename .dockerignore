@@ -11,4 +11,8 @@ artifacts/**/*.pt
 artifacts/**/checkpoint
 __pycache__
 *.pyc
+.env*
+data/coworker-files
+test-artifacts
+tests
 .pytest_cache

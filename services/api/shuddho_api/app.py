@@ -293,9 +293,20 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
-    allow_headers=["content-type", "authorization", "x-request-id", "x-user-id", "x-tenant-id"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["content-type", "authorization", "x-request-id", "x-user-id", "x-tenant-id", "idempotency-key", "last-event-id"],
+    expose_headers=["Location", "Idempotent-Replayed"],
 )
+
+# Optional, independently deployed worker and authenticated routes. The free
+# writing profile is never used to establish ownership of coworker resources.
+from services.coworker.config import enabled as coworker_enabled
+
+if coworker_enabled():
+    from services.coworker.api import mount as mount_coworker
+    from services.coworker.config import Settings as CoworkerSettings
+    from services.coworker.container import Container as CoworkerContainer
+    mount_coworker(app, CoworkerContainer.create(CoworkerSettings.from_env()))
 
 normalizer = BanglaNormalizer()
 spell_engine = SpellEngine(
