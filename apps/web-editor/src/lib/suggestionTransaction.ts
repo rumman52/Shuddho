@@ -64,7 +64,7 @@ export function applySuggestionBatchTransaction(currentText: string, currentSugg
   let skipped = 0;
   for (const suggestion of [...suggestions].sort((a, b) => b.span_start - a.span_start)) {
     const replacement = firstReplacement(suggestion);
-    if (!replacement) {
+    if (replacement === null) {
       skipped += 1;
       continue;
     }
@@ -86,5 +86,5 @@ function staleResult(): SuggestionTransactionFailure {
 
 function firstReplacement(suggestion: Suggestion): string | null {
   const options = suggestion.replacement_options;
-  return Array.isArray(options) && typeof options[0] === "string" && options[0].length > 0 ? options[0] : null;
+  return Array.isArray(options) && typeof options[0] === "string" ? options[0] : null;
 }

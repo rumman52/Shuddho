@@ -35,10 +35,15 @@ export async function fetchWithTimeout(
   upstreamSignal?.addEventListener("abort", abortFromUpstream, { once: true });
 
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...options,
       signal: timeoutController.signal,
     });
+    // These endpoints return bounded JSON, not streaming task events. Read the
+    // complete body before releasing the deadline/cancellation listener. Keep
+    // the original Response unconsumed so existing callers can still use json().
+    await response.clone().arrayBuffer();
+    return response;
   } catch (error) {
     if (timeoutController.signal.aborted && !upstreamSignal?.aborted) {
       throw new FetchTimeoutError(timeoutMs);

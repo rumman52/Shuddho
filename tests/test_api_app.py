@@ -2,6 +2,7 @@ import importlib
 import re
 import json
 import time
+import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -38,6 +39,12 @@ from shared.schemas.python_models import (
 
 app_module = importlib.import_module("services.api.shuddho_api.app")
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolate_feedback_database(monkeypatch, tmp_path):
+    from services.feedback.shuddho_feedback.store import FeedbackStore
+    monkeypatch.setattr(app_module, "feedback_store", FeedbackStore(tmp_path / "feedback.db"))
 
 
 def test_api_preferences_route_returns_full_shape() -> None:
@@ -840,6 +847,7 @@ def _suggestion(
 
 
 def test_llm_auto_enabled_when_key_set_and_unset_enable(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
     monkeypatch.delenv("SHUDDHO_ENABLE_LLM", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "key")
     enabled, _, _, _ = app_module._llm_config()
@@ -847,6 +855,7 @@ def test_llm_auto_enabled_when_key_set_and_unset_enable(monkeypatch) -> None:
 
 
 def test_llm_auto_disabled_without_key(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
     monkeypatch.delenv("SHUDDHO_ENABLE_LLM", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     enabled, _, _, _ = app_module._llm_config()
@@ -854,6 +863,7 @@ def test_llm_auto_disabled_without_key(monkeypatch) -> None:
 
 
 def test_llm_false_overrides_key(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "false")
     monkeypatch.setenv("GOOGLE_API_KEY", "key")
     enabled, _, _, _ = app_module._llm_config()
@@ -861,6 +871,7 @@ def test_llm_false_overrides_key(monkeypatch) -> None:
 
 
 def test_health_deep_gemma_details(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
     monkeypatch.setenv("GOOGLE_API_KEY", "key")
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
     resp = health_deep().model_dump()
@@ -870,6 +881,7 @@ def test_health_deep_gemma_details(monkeypatch) -> None:
 
 
 def test_ai_check_invalid_json_warning(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
     monkeypatch.setenv("GOOGLE_API_KEY", "key")
     def stub(**kwargs):
@@ -880,6 +892,7 @@ def test_ai_check_invalid_json_warning(monkeypatch) -> None:
 
 
 def test_api_check_returns_local_when_gemma_fails(monkeypatch) -> None:
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
     monkeypatch.setenv("SHUDDHO_ENABLE_LLM", "true")
     monkeypatch.setenv("SHUDDHO_LLM_ON_CHECK", "always")
     monkeypatch.setenv("GOOGLE_API_KEY", "key")

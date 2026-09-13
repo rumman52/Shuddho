@@ -337,7 +337,7 @@ export async function analyzeText(
     );
   }
 
-  const body = buildCheckRequestBody(payload.text, options);
+  const body = buildCheckRequestBody(payload.text, options, payload);
   if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
     console.info("SHUDDHO_API_CHECK_REQUEST", {
       url: `${getApiBaseUrl()}${path}`,
@@ -398,12 +398,18 @@ export async function analyzeText(
 export function buildCheckRequestBody(
   text: string,
   options: AnalyzeOptions = {},
+  context?: Pick<AnalyzeRequest, "user_id" | "personal_dictionary" | "mode">,
 ) {
   const includeLLM = Boolean(options.includeLLM);
   const asyncLLM = Boolean(options.asyncLLM);
   return {
     text: String(text ?? ""),
     language: "bn",
+    ...(context ? {
+      userId: context.user_id,
+      personalDictionary: context.personal_dictionary ?? [],
+      writingMode: context.mode ?? "standard",
+    } : {}),
     options: {
       includeLLM,
       asyncLLM,
@@ -597,13 +603,14 @@ async function safeJson(response: Response): Promise<unknown> {
   }
 }
 
-export async function fetchPreferences(): Promise<ShuddhoPreferences> {
+export async function fetchPreferences(userId = DEFAULT_PREFERENCES.user_id): Promise<ShuddhoPreferences> {
+  const defaults = normalizePreferences({ user_id: userId });
   try {
     if (!apiConfiguration.backendAllowed) {
-      return DEFAULT_PREFERENCES;
+      return defaults;
     }
 
-    const response = await fetchWithTimeout(`${getApiBaseUrl()}/api/preferences`, {
+    const response = await fetchWithTimeout(`${getApiBaseUrl()}/api/preferences?user_id=${encodeURIComponent(userId)}`, {
       method: "GET",
       headers: {
         Accept: "application/json",
@@ -614,16 +621,17 @@ export async function fetchPreferences(): Promise<ShuddhoPreferences> {
       console.warn(
         `Preferences request failed with ${response.status}. Using defaults.`,
       );
-      return DEFAULT_PREFERENCES;
+      return defaults;
     }
 
     const data = await safeJson(response);
-    return normalizePreferences(
-      data as Partial<ShuddhoPreferences> | null | undefined,
-    );
+    return normalizePreferences({
+      ...(data as Partial<ShuddhoPreferences> | null | undefined),
+      user_id: userId,
+    });
   } catch (error) {
     console.warn("Preferences request failed. Using defaults.", error);
-    return DEFAULT_PREFERENCES;
+    return defaults;
   }
 }
 
@@ -637,7 +645,7 @@ export async function savePreferences(
       return normalized;
     }
 
-    const response = await fetchWithTimeout(`${getApiBaseUrl()}/api/preferences`, {
+    const response = await fetchWithTimeout(`${getApiBaseUrl()}/api/preferences?user_id=${encodeURIComponent(normalized.user_id)}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -647,31 +655,31 @@ export async function savePreferences(
     });
 
     if (!response.ok) {
-      console.warn(`Save preferences failed with ${response.status}.`);
-      return normalized;
+      throw new Error(`Save preferences failed with HTTP ${response.status}.`);
     }
 
     const data = await safeJson(response);
+    if (data === null) throw new Error("Save preferences returned invalid JSON.");
     return normalizePreferences(
       data as Partial<ShuddhoPreferences> | null | undefined,
     );
   } catch (error) {
     console.warn("Save preferences failed.", error);
-    return normalized;
+    throw error;
   }
 }
 
 export function getUserPreferences(
-  _userId: string,
+  userId: string,
 ): Promise<ShuddhoPreferences> {
-  return fetchPreferences();
+  return fetchPreferences(userId);
 }
 
 export function saveUserPreferences(
-  _userId: string,
+  userId: string,
   payload: ShuddhoPreferences,
 ): Promise<ShuddhoPreferences> {
-  return savePreferences(payload);
+  return savePreferences({ ...payload, user_id: userId });
 }
 
 export function gatewayCheckToAnalyzeResponse(
@@ -738,8 +746,7 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
     ...(Array.isArray(response.warnings) ? response.warnings.map(String) : []),
     ...(Array.isArray(llm.warnings) ? llm.warnings.map(String) : []),
   ];
-  const provider = rawProvider || "gemma";
-  const providerLabel = provider === "gemma" ? "Gemma" : "AI";
+  const providerLabel = rawProvider === "gemma" ? "Gemma" : rawProvider === "deepseek" ? "DeepSeek" : "AI";
   const httpStatus = Number(llm.http_status ?? 0);
   const rejectedCount = Number(response.rejected_ai_suggestion_count ?? llm.rejected_ai_suggestion_count ?? 0);
   if (!status) return null;
@@ -756,16 +763,18 @@ export function friendlyLlmWarning(response: GatewayCheckResponse): string | nul
     }
     return `AI review skipped: ${skipReason || "not requested"}.`;
   }
-  if (status === "missing_key") return "Gemma is not configured: missing backend GOOGLE_API_KEY.";
-  if (status === "unsupported_provider") return "Invalid configuration: Shuddho supports only the Gemma provider and Gemma models.";
+  if (status === "missing_key") return "AI review is not configured yet. You can keep using local suggestions.";
+  if (status === "unsupported_provider") return "AI review configuration needs attention. You can keep using local suggestions.";
   if (status === "timeout") return "AI review timed out; showing local suggestions.";
   if (status === "rate_limited") return "AI provider rate limit/quota hit; showing local suggestions.";
   if (["auth_or_forbidden", "credits_or_payment_required", "model_not_found"].includes(status)) return `${providerLabel} configuration error; showing local suggestions.`;
   if (status === "provider_error" && (httpStatus === 401 || httpStatus === 403 || warnings.some((w) => w.includes("401") || w.includes("403")))) return `${providerLabel} authentication failed. Check backend API key.`;
-  if (status === "invalid_json") return "Gemma returned malformed JSON, so Shuddho safely ignored it and kept local suggestions.";
-  if (status === "invalid_schema") return "Gemma returned a response in the wrong format, so Shuddho safely kept local suggestions.";
+  if (status === "invalid_json") return `${providerLabel} returned malformed JSON, so Shuddho safely ignored it and kept local suggestions.`;
+  if (status === "invalid_schema") return `${providerLabel} returned a response in the wrong format, so Shuddho safely kept local suggestions.`;
   if (status === "queued" || status === "attempted") return `Reviewing with ${providerLabel}.`;
-  if (["provider_error", "network_error", "failed"].includes(status)) return "Gemma is unavailable. Showing local suggestions.";
+  if (["provider_error", "network_error", "failed"].includes(status)) return `${providerLabel} is unavailable. Showing local suggestions.`;
+  if (status === "truncated") return "AI review was incomplete. Please try a shorter passage; local suggestions are still available.";
+  if (status === "circuit_open") return "AI review is temporarily paused after repeated errors. You can keep using local suggestions.";
   if (status === "content_filter") return `${providerLabel} could not review this content. Showing local suggestions.`;
   return `LLM status: ${status}`;
 }

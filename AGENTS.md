@@ -2,10 +2,10 @@
 
 ## Project goal
 
-Shuddho is a Bangla AI writing assistant. The production architecture must be AI-first for deep review, with local spelling/rule/dictionary engines as fallback and quick typing support.
+Shuddho is a global multilingual writing assistant evolving into an AI coworker. Preserve its Bangla language foundation and free writing experience. Deep review uses the configured API provider, with local spelling/rule/dictionary engines as fallback and quick typing support.
 
 The main user experience should be similar to a professional writing assistant:
-- User writes Bangla text.
+- User writes in their language; retain and evaluate Bangla support.
 - Deep AI Review reads the full text with context.
 - Backend returns structured suggestions and corrected text.
 - Frontend shows suggestions clearly with apply/dismiss actions.
@@ -15,9 +15,11 @@ The main user experience should be similar to a professional writing assistant:
 
 1. Do not expose API keys in frontend code, commits, logs, or test fixtures.
 2. API keys must be read from backend environment variables only.
-3. The competition generative runtime is Gemma-only: `SHUDDHO_LLM_PROVIDER=gemma`.
-4. The Google Gen AI SDK/API is transport for `gemma-4-26b-a4b-it`; OpenAI,
-   OpenRouter, Qwen, and Gemini models must fail closed without a generative fallback.
+3. The user selected DeepSeek for the new runtime: `SHUDDHO_LLM_PROVIDER=deepseek`.
+   Use backend-only `DEEPSEEK_API_KEY` and configurable `DEEPSEEK_MODEL`.
+4. Preserve the explicit `gemma` adapter for existing deployments and rollback.
+   Google Gen AI is transport for Gemma. Unimplemented providers fail closed;
+   never silently switch providers. This supersedes the competition-only policy.
 5. Local spelling/rule/dictionary engines must remain available as fallback.
 6. Heavy local ML corrector must not block production when its checkpoint is missing.
 7. Missing checkpoint should be a health warning, not a hard crash.
@@ -50,7 +52,7 @@ Response should include:
 
 ## AI review behavior
 
-The AI must review the full Bangla text with context, not only isolated words.
+The AI must review the full text with context, preserving its language and meaning. Keep Bangla-specific quality coverage.
 
 It must return:
 - spelling corrections
@@ -87,7 +89,7 @@ The editor UI should be professional and responsive:
 Backend:
 ```bash
 python -m py_compile services/api/shuddho_api/app.py
-python -m py_compile services/api/shuddho_api/llm_provider.py services/api/shuddho_api/llm_gemma.py
+python -m py_compile services/api/shuddho_api/llm_provider.py services/api/shuddho_api/llm_deepseek.py services/api/shuddho_api/llm_gemma.py
 python -m pytest tests/test_api_app.py tests/test_frontend_backend_only.py tests/test_suggestion_validation.py -q
 ```
 

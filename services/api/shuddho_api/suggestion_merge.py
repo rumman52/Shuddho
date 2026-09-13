@@ -12,6 +12,31 @@ VALID_ISSUE_TYPES = {"spelling", "grammar", "punctuation", "spacing", "repeated_
 VALID_SEVERITIES = {"low", "medium", "high"}
 
 
+def build_canonical_preview(text: str, suggestions: list[dict[str, Any]]) -> str:
+    """Build a preview from exact canonical spans without touching the document."""
+    edits = []
+    for item in suggestions:
+        span = item.get("span") or {}
+        start, end = span.get("startIndex"), span.get("endIndex")
+        replacement = item.get("suggestedText")
+        if (
+            isinstance(start, int) and isinstance(end, int)
+            and 0 <= start < end <= len(text)
+            and text[start:end] == item.get("originalText")
+            and isinstance(replacement, str)
+        ):
+            edits.append((start, end, replacement))
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, replacement in sorted(edits, key=lambda edit: (edit[0], edit[1])):
+        if start < cursor:
+            continue
+        pieces.extend((text[cursor:start], replacement))
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
 def _norm(value: str) -> str:
     return " ".join(str(value).split())
 
@@ -126,8 +151,10 @@ def validate_ai_suggestions(
             warnings.append("ai_suggestion_invalid_schema")
             continue
         original = item.get("original") or item.get("originalText") or item.get("original_text")
-        replacement = item.get("replacement") or item.get("suggestedText") or item.get("suggested_text") or item.get("replacementText") or item.get("replacement_text")
-        if not isinstance(original, str) or not isinstance(replacement, str) or not original.strip() or not replacement.strip():
+        replacement = next((item[key] for key in (
+            "replacement", "suggestedText", "suggested_text", "replacementText", "replacement_text"
+        ) if isinstance(item.get(key), str)), None)
+        if not isinstance(original, str) or not isinstance(replacement, str) or not original:
             warnings.append("ai_suggestion_invalid_schema")
             continue
         issue_type = str(item.get("issueType") or item.get("type") or "grammar")
