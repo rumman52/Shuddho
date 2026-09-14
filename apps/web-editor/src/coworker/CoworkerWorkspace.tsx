@@ -19,7 +19,7 @@ export function TaskResult({ task, client, revise }: { task: CoworkerTask; clien
   const [downloading, setDownloading] = useState("");
   const draft = task.draft;
   return <section className="cw-result" aria-label="Task result">
-    <div className="cw-result-heading"><div><span className="cw-eyebrow">Your work</span><h2>{draft?.report.title ?? "Report & email draft"}</h2></div><span className={`cw-status cw-status-${task.state}`}>{labels[task.state]}</span></div>
+    <div className="cw-result-heading"><div><span className="cw-eyebrow">Your work</span><h2 dir="auto" lang={draft?.output_language}>{draft?.report.title ?? "Report & email draft"}</h2></div><span className={`cw-status cw-status-${task.state}`}>{labels[task.state]}</span></div>
     <p role="status" className={task.state === "failed" ? "cw-error" : "cw-task-message"}>{task.message}</p>
     {!terminal(task.state) && <ol className="cw-steps" aria-label="Task progress">
       {[["extract", "Read sources"], ["draft", "Prepare drafts"], ["export", "Create files"], ["complete", "Check downloads"]].map(([phase, label], index) =>
@@ -66,6 +66,12 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
   const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
   const notesInput = useRef<HTMLTextAreaElement>(null);
+  const outputColumn = useRef<HTMLDivElement>(null);
+
+  function viewTask() {
+    outputColumn.current?.focus({ preventScroll: true });
+    outputColumn.current?.scrollIntoView({ block: "start" });
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -105,6 +111,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     try {
       const next = await client.create(input, submission.current.key);
       setTask(next); setSelected(next.id); setHistory(previous => [next, ...previous.filter(item => item.id !== next.id)]);
+      if (window.matchMedia("(max-width: 680px)").matches) requestAnimationFrame(viewTask);
       // Retain the key for an unchanged brief, including a lost response. A
       // deliberate revision or changed input starts a new task.
       try { setWorkspace(await client.me()); } catch { /* Task creation already succeeded. History can refresh usage later. */ }
@@ -123,7 +130,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
   }
 
   return <main className="cw-workspace">
-    <header className="cw-header"><div><span className="cw-eyebrow">Shuddho coworker</span><h1>Good work starts here.</h1><p>A professional report. A thoughtful email. In your language.</p></div>
+    <header className="cw-header"><div><span className="cw-eyebrow">Shuddho coworker</span><h1>Good work starts here.</h1><p>A professional report. A thoughtful email. In your language.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
       <div className="cw-account"><span title={email}>{email}</span><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={async () => {
         setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); }
       }}>Sign out</button></div>
@@ -166,7 +173,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
         {workspace && <p className="cw-usage">{workspace.usage.tasks_today} of {workspace.limits.daily_tasks} daily coworker tasks used</p>}
       </form>
     </section>
-    <div className="cw-output-column">
+    <div className="cw-output-column" ref={outputColumn} tabIndex={-1}>
       {connection && <p className="cw-notice" role="status">{connection}</p>}
       {task ? <><TaskResult key={task.id} task={task} client={client} revise={revise} />{!terminal(task.state) && <button className="cw-text-button cw-cancel" type="button" disabled={busy === "cancel" || task.state === "cancelling"} onClick={async () => {
         setBusy("cancel"); setError("");

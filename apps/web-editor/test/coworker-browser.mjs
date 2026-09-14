@@ -58,6 +58,11 @@ try {
   await download.saveAs(join(folder, "browser-report.docx"));
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.getByRole("button", { name: "View current task", exact: true }).click();
+  assert.equal(await result.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.top >= 0 && bounds.top < window.innerHeight / 2;
+  }), true);
   await page.screenshot({ path: join(folder, "screenshots/coworker-mobile.png"), fullPage: true });
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
