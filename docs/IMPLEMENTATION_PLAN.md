@@ -20,7 +20,7 @@ Working plan, 13 September 2026. Continue in the existing `rumman52/Shuddho` rep
 | Part | Outcome | Current status |
 | --- | --- | --- |
 | 1. Reliable writing foundation | Existing editor + configurable DeepSeek + correct suggestion application + clear failure states | Merged in PR #100; CI passed; live API and staging verification pending |
-| 2. Coworker foundation | Authenticated workspace, durable tasks/files, and one useful document workflow | Implemented on the Part 2 branch behind feature flags; validation and staging gates tracked in the Part 2 report |
+| 2. Coworker foundation | Authenticated workspace, durable tasks/files, and one useful document workflow | Merged in PR #101; CI passed; feature flags remain off pending the staging gates in the Part 2 report |
 | 3. Full services and measured scale | Remaining skills, approved integrations, reliability operations, and regional expansion | Planned; released incrementally after Part 2 |
 
 These are three release tracks with smaller steps, not a single rewrite or three enormous launches.

@@ -1,6 +1,6 @@
 # Part 2 — the first Shuddho coworker workflow
 
-Implementation branch: `codex/shuddho-part-2-coworker`. Builds on merged Part 1 PR #100. The feature is disabled by default; this document describes the code and the remaining staging release gates, not a live production deployment.
+Part 2 was merged in [PR #101](https://github.com/rumman52/Shuddho/pull/101), following Part 1 PR #100. The feature is disabled by default; this document describes the code and the remaining staging release gates, not a live production deployment.
 
 ## What the user can do
 
@@ -161,6 +161,7 @@ For native local services set `SHUDDHO_COWORKER_ENABLED=true`, development mode,
 ## Production staging and rollback
 
 1. Provision the chosen managed identity, PostgreSQL, private object bucket and Temporal namespace. Record region, retention, backup and cost decisions. Keep browser roles out of the private schema. Use a migration role separately from the runtime database role where practical; grant the runtime role only the private schema/table access it needs.
+   The current database adapter sets connection-level `search_path` and timeouts. Use a direct or session-preserving database endpoint; transaction-pooling compatibility has not been validated.
 2. Build `Dockerfile.coworker`. Supply backend-only environment variables to both API and worker as appropriate. Use TLS for database, storage and Temporal. Use a private bucket with public access blocked and least-privilege object access. Give workers enough memory for their configured activity concurrency and child limits; size this from measured documents.
 3. Run migrations once before enabling routes. Start the document worker. Verify task submission/outbox delivery, source upload, model completion and all four downloads in staging.
 4. Add the public frontend Auth configuration and trusted API origin. For the existing Vercel app, `/backend` remains the same-origin proxy. Enable `VITE_COWORKER_ENABLED` only for the intended deployment. Check allowed origins and email redirect allowlists.
@@ -170,6 +171,8 @@ For native local services set `SHUDDHO_COWORKER_ENABLED=true`, development mode,
 Rollback the frontend flag to hide the coworker entry. Stop new coworker submissions by disabling the backend feature after deciding whether active tasks should drain or be cancelled. Keep the worker and migrations available while tasks drain. The original lightweight Dockerfile and Part 1 writing routes remain available; do not run a destructive schema downgrade to hide the UI.
 
 ## Verification
+
+The merged Part 2 commit passed [CI run 34770618764](https://github.com/rumman52/Shuddho/actions/runs/34770618764): 28 coworker checks, 289 existing Python checks, all 100 editor checks, the other JavaScript workspace tests, and workspace builds. The coworker job includes real PostgreSQL concurrency, Temporal worker replacement and a complete browser workflow through a Bangla DOCX download. Five optional checks in the lightweight Python job were skipped; its separate coworker job enables the required integrations.
 
 ```bash
 uv run --extra coworker pytest -q
