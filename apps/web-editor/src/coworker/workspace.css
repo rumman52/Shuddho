@@ -97,6 +97,20 @@
 .cw-paper h3 { margin: 0 0 18px; font-size: 21px; font-weight: 600; letter-spacing: normal; line-height: 1.5; }
 .cw-paper h4 { margin: 22px 0 10px; font-size: 14px; }
 .cw-paper p, .cw-email p { font-size: 14px; color: #5e516a; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cw-paper li { font-size: 14px; color: #5e516a; line-height: 1.9; overflow-wrap: anywhere; }
+.cw-paper ul { padding-inline-start: 22px; }
+.cw-service-description { color: #81778d; font-size: 12px; line-height: 1.7; font-weight: 400; }
+.cw-output-formats { margin: 0; font-size: 11px; color: #786488; }
+.cw-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 4px 0 16px; }
+.cw-copy > span { font-size: 11px; line-height: 1.6; color: #81778d; }
+.cw-post { padding: 18px; border: 1px solid #e9e3f0; border-radius: 10px; margin-bottom: 16px; }
+.cw-post-heading { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: #857390; margin-bottom: 18px; }
+.cw-post .cw-email { padding-bottom: 6px; }
+.cw-reference { overflow-wrap: anywhere; }
+.cw-plan-list { list-style: none; counter-reset: cw-plan; padding: 0; }
+.cw-plan-list > li { border-top: 1px solid #eee9f3; padding: 14px 0; }
+.cw-plan-list h4 { margin-top: 0; }
+.cw-paper .cw-plan-meta, .cw-email .cw-plan-meta { font-size: 11px; color: #81778d; }
 .cw-result :lang(bn) { font-family: "Noto Serif Bengali", "Noto Sans Bengali", sans-serif; }
 .cw-paper .cw-report-summary { color: #81738c; }
 .cw-paper .cw-reference { font-size: 9px; color: #a798b6; }

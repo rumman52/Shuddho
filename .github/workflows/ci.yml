@@ -77,7 +77,7 @@ jobs:
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
       - name: Test accounts, real exports, PostgreSQL races, and Temporal recovery
-        run: uv run --extra coworker pytest tests/test_coworker.py tests/test_coworker_postgres.py tests/test_coworker_temporal.py -q
+        run: uv run --extra coworker pytest tests/test_coworker.py tests/test_coworker_services.py tests/test_coworker_postgres.py tests/test_coworker_temporal.py -q
       - uses: actions/setup-node@v4
         with: { node-version: "20", cache: npm }
       - run: npm ci

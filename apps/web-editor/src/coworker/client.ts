@@ -2,15 +2,29 @@ import { fetchWithTimeout } from "../lib/fetchWithTimeout";
 
 export type TaskState = "queued" | "running" | "cancelling" | "completed" | "needs_input" | "failed" | "cancelled";
 export type Artifact = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
+export type SkillId = "report_email" | "email" | "document" | "career" | "social" | "meeting" | "daily_plan" | "personal_plan";
+export type WorkSkill = { id: SkillId; name: string; description: string; instruction: string; output: string };
+export type DraftMetadata = { output_language: string; missing_information: string[] };
+export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
+export type EmailDraft = { subject: string; body: string };
+export type CoworkerDraft = DraftMetadata & (
+  | { kind?: never; report: { title: string; summary: string; sections: { heading: string; paragraphs: string[]; source_ids: string[] }[] }; email: EmailDraft }
+  | { kind: "email"; email: EmailDraft; source_ids: string[] }
+  | { kind: "document"; document: { title: string; summary: string; sections: WorkSection[] } }
+  | { kind: "social"; title: string; posts: { platform: "facebook" | "linkedin" | "other"; label: string; text: string; suggested_timing: string | null; source_ids: string[] }[] }
+  | { kind: "meeting"; title: string; summary: string; labels: { notes: string; decisions: string; actions: string; owner: string; deadline: string; recorded: string; suggested: string };
+      notes: { text: string; source_ids: string[] }[]; decisions: { text: string; source_ids: string[] }[];
+      actions: { text: string; owner: string | null; deadline: string | null; basis: "recorded" | "suggested"; source_ids: string[] }[] }
+  | { kind: "plan"; title: string; overview: string; labels: Record<"high" | "normal" | "low" | "provided" | "suggested", string>;
+      items: { task: string; when: string; priority: "high" | "normal" | "low"; basis: "provided" | "suggested"; source_ids: string[] }[] }
+);
 export type CoworkerTask = {
   id: string; state: TaskState; phase: string; message: string; error_code: string | null;
   instruction: string; output_language: string; created_at: string; event_sequence: number;
+  skill_id?: SkillId; workflow_version?: string;
   input: { notes: string; document_ids: string[] } | null;
   artifacts: Artifact[]; usage: { model_attempts: number; accounted_tokens: number };
-  draft: null | {
-    report: { title: string; summary: string; sections: { heading: string; paragraphs: string[]; source_ids: string[] }[] };
-    email: { subject: string; body: string }; output_language: string; missing_information: string[];
-  };
+  draft: CoworkerDraft | null;
   sources: { id: string; label: string; sha256: string }[];
 };
 export type Workspace = {
@@ -18,7 +32,7 @@ export type Workspace = {
   usage: { tasks_today: number }; limits: { daily_tasks: number; upload_bytes: number };
 };
 export type SourceDocument = { id: string; filename: string; state: string; byte_size: number };
-export type TaskInput = { instruction: string; notes: string; document_ids: string[]; output_language: string };
+export type TaskInput = { skill_id?: SkillId; instruction: string; notes: string; document_ids: string[]; output_language: string };
 export type ProgressEvent = { sequence: number; state: TaskState; phase: string; message: string };
 export const terminal = (state: TaskState) => ["completed", "needs_input", "failed", "cancelled"].includes(state);
 
@@ -94,6 +108,7 @@ export class CoworkerClient {
     return (await this.response(path, options)).json() as Promise<T>;
   }
   me(signal?: AbortSignal) { return this.json<Workspace>("/api/v1/me", { signal }); }
+  skills(signal?: AbortSignal) { return this.json<{ skills: WorkSkill[] }>("/api/v1/skills", { signal }); }
   list(signal?: AbortSignal) { return this.json<{ tasks: CoworkerTask[] }>("/api/v1/tasks", { signal }); }
   documents(signal?: AbortSignal) { return this.json<{ documents: SourceDocument[] }>("/api/v1/documents", { signal }); }
   deleteDocument(id: string) { return this.json<{ message: string }>(`/api/v1/documents/${identifier(id)}`, { method: "DELETE" }); }

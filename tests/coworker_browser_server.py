@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from temporalio.testing import WorkflowEnvironment
 
 from test_coworker import FakeModel, draft
+from coworker_samples import work_draft
 from test_coworker_temporal import make_worker
 from services.coworker.api import mount
 from services.coworker.auth import JwtVerifier
@@ -35,7 +36,7 @@ folder = Path(os.environ["SHUDDHO_TEST_WORKDIR"])
 folder.mkdir(parents=True, exist_ok=True)
 issuer = "https://identity.example.test/auth/v1"
 settings = Settings(database_url=f"sqlite:///{folder / 'browser.sqlite3'}", auth_issuer=issuer,
-                    environment="development", storage_backend="local", local_storage_path=folder / "files")
+                    environment="development", storage_backend="local", local_storage_path=folder / "files", work_services_enabled=True)
 upgrade(settings.database_url)
 container = Container.create(settings)
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -54,10 +55,17 @@ for subject in ["alice", "bob"]:
 
 
 class BrowserModel(FakeModel):
+    def messages(self, task, sources):
+        return [{"role": "user", "content": json.dumps({"skill_id": task["skill_id"], "sources": sources})}]
+
     async def generate(self, _messages, language, source_ids):
         await asyncio.sleep(2)  # Exercise progress, navigation and refresh.
-        value = draft(language)
-        value.report.sections[0].source_ids = sorted(source_ids)
+        skill_id = json.loads(_messages[-1]["content"])["skill_id"]
+        if skill_id == "report_email":
+            value = draft(language)
+            value.report.sections[0].source_ids = sorted(source_ids)
+        else:
+            value = work_draft(skill_id, language, sorted(source_ids))
         return DraftResult(value, 180, 2000)
 
 

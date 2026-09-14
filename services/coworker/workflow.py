@@ -29,3 +29,29 @@ class ReportEmailWorkflow:
                 schedule_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=5),
             )
+
+
+@workflow.defn(name="shuddho_work_services_v1")
+class WorkServicesWorkflow:
+    """Separate workflow/activity identity keeps Part 2 histories replayable."""
+    @workflow.run
+    async def run(self, task_id: str):
+        try:
+            for phase in ("extract", "draft", "export", "complete"):
+                await workflow.execute_activity(
+                    "shuddho_work_phase_v1", {"task_id": task_id, "phase": phase},
+                    start_to_close_timeout=timedelta(seconds=180),
+                    schedule_to_close_timeout=timedelta(minutes=6),
+                    heartbeat_timeout=timedelta(seconds=15),
+                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), maximum_attempts=2),
+                )
+        except ActivityError as error:
+            cause = error.cause
+            code = cause.type if isinstance(cause, ApplicationError) else "workflow_failed"
+            message = str(cause.message) if isinstance(cause, ApplicationError) else "This task could not finish. Please try again."
+            await workflow.execute_activity(
+                "shuddho_document_failed_v1", {"task_id": task_id, "code": code, "message": message},
+                start_to_close_timeout=timedelta(seconds=20),
+                schedule_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=5),
+            )

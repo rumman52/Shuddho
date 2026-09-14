@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, terminal, type CoworkerTask, type SourceDocument, type Workspace } from "./client";
+import { CoworkerClient, WorkspaceError, terminal, type CoworkerTask, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
+import DraftPreview, { draftTitle } from "./DraftPreview";
+
+const originalService: WorkSkill = {
+  id: "report_email", name: "Report & email", description: "Turn your sources into a report and an email draft.",
+  instruction: "Turn these sources into a professional report and a short email sharing the key findings.",
+  output: "Report, email, DOCX, PDF",
+};
 
 const labels = { queued: "Queued", running: "In progress", cancelling: "Stopping", completed: "Ready", needs_input: "Details needed", failed: "Could not finish", cancelled: "Cancelled" };
 const languages = [
@@ -18,8 +25,8 @@ export function TaskResult({ task, client, revise }: { task: CoworkerTask; clien
   const [downloadError, setDownloadError] = useState("");
   const [downloading, setDownloading] = useState("");
   const draft = task.draft;
-  return <section className="cw-result" aria-label="Task result">
-    <div className="cw-result-heading"><div><span className="cw-eyebrow">Your work</span><h2 dir="auto" lang={draft?.output_language}>{draft?.report.title ?? "Report & email draft"}</h2></div><span className={`cw-status cw-status-${task.state}`}>{labels[task.state]}</span></div>
+  return <section className="cw-result" aria-label="Task result" data-task-id={task.id}>
+    <div className="cw-result-heading"><div><span className="cw-eyebrow">Your work</span><h2 dir="auto" lang={draft?.output_language}>{draft ? draftTitle(draft) : "Your draft"}</h2></div><span className={`cw-status cw-status-${task.state}`}>{labels[task.state]}</span></div>
     <p role="status" className={task.state === "failed" ? "cw-error" : "cw-task-message"}>{task.message}</p>
     {!terminal(task.state) && <ol className="cw-steps" aria-label="Task progress">
       {[["extract", "Read sources"], ["draft", "Prepare drafts"], ["export", "Create files"], ["complete", "Check downloads"]].map(([phase, label], index) =>
@@ -27,15 +34,7 @@ export function TaskResult({ task, client, revise }: { task: CoworkerTask; clien
     </ol>}
     {draft && <>
       {draft.missing_information.length > 0 && <aside className="cw-missing"><strong>A few details need your input</strong><ul>{draft.missing_information.map((item, index) => <li key={index} dir="auto">{item}</li>)}</ul><button type="button" className="cw-secondary" onClick={revise}>Add details & revise</button></aside>}
-      <div className="cw-draft-tabs">
-        <details open><summary>Report preview</summary><article className="cw-paper" dir="auto" lang={draft.output_language}>
-          <h3>{draft.report.title}</h3><p className="cw-report-summary">{draft.report.summary}</p>
-          {draft.report.sections.map((section, index) => <section key={index}><h4>{section.heading}</h4>{section.paragraphs.map((text, index) => <p key={index}>{text}</p>)}
-            <p className="cw-reference">{section.source_ids.map(id => task.sources.find(source => source.id === id)?.label ?? id).join(" · ")}</p>
-          </section>)}
-        </article></details>
-        <details open><summary>Email draft</summary><article className="cw-email" dir="auto" lang={draft.output_language}><h3>{draft.email.subject}</h3><p>{draft.email.body}</p></article></details>
-      </div>
+      <DraftPreview draft={draft} sources={task.sources} />
       <p className="cw-fineprint">Review the facts and wording before using these drafts. Source references point to your provided material.</p>
     </>}
     {task.artifacts.length > 0 && <div className="cw-downloads" aria-label="Downloads">{task.artifacts.map(artifact => <button type="button" className="cw-secondary" key={artifact.id} disabled={Boolean(downloading)} onClick={async () => {
@@ -50,12 +49,14 @@ export function TaskResult({ task, client, revise }: { task: CoworkerTask; clien
 
 export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [skills, setSkills] = useState<WorkSkill[]>([originalService]);
+  const [skillId, setSkillId] = useState<SkillId>("report_email");
   const [history, setHistory] = useState<CoworkerTask[]>([]);
   const [documents, setDocuments] = useState<SourceDocument[]>([]);
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
   const [task, setTask] = useState<CoworkerTask | null>(null);
-  const [instruction, setInstruction] = useState("Turn these sources into a professional report and a short email sharing the key findings.");
+  const [instruction, setInstruction] = useState(originalService.instruction);
   const [notes, setNotes] = useState("");
   const [language, setLanguage] = useState("en");
   const [customLanguage, setCustomLanguage] = useState("");
@@ -67,6 +68,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
   const submission = useRef<{ fingerprint: string; key: string }>();
   const notesInput = useRef<HTMLTextAreaElement>(null);
   const outputColumn = useRef<HTMLDivElement>(null);
+  const activeSkill = skills.find(skill => skill.id === skillId);
 
   function viewTask() {
     outputColumn.current?.focus({ preventScroll: true });
@@ -76,9 +78,15 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
   useEffect(() => {
     const controller = new AbortController();
     setError("");
-    Promise.all([client.me(controller.signal), client.list(controller.signal), client.documents(controller.signal)]).then(([profile, tasks, files]) => {
+    const catalog = client.skills(controller.signal).catch(error => {
+      // A Part 2 API supports only the original service. Other failures must
+      // surface, especially authentication errors, rather than enabling tools.
+      if (error instanceof WorkspaceError && error.status === 404) return { skills: [originalService] };
+      throw error;
+    });
+    Promise.all([client.me(controller.signal), client.list(controller.signal), client.documents(controller.signal), catalog]).then(([profile, tasks, files, catalog]) => {
       if (controller.signal.aborted) return;
-      setWorkspace(profile); setHistory(tasks.tasks); setDocuments(files.documents);
+      setWorkspace(profile); setHistory(tasks.tasks); setDocuments(files.documents); setSkills(catalog.skills);
       setSelected(current => {
         if (current && tasks.tasks.some(item => item.id === current)) return current;
         let saved = "";
@@ -105,7 +113,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     event.preventDefault();
     if (busy) return;
     setBusy("submit"); setError(""); setNotice("");
-    const input = { instruction, notes, document_ids: selectedDocs, output_language: language === "custom" ? customLanguage : language };
+    const input = { ...(skillId === "report_email" ? {} : { skill_id: skillId }), instruction, notes, document_ids: selectedDocs, output_language: language === "custom" ? customLanguage : language };
     const fingerprint = JSON.stringify(input);
     if (submission.current?.fingerprint !== fingerprint) submission.current = { fingerprint, key: crypto.randomUUID() };
     try {
@@ -121,6 +129,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
 
   function revise() {
     if (!task?.input) return;
+    setSkillId(task.skill_id ?? "report_email");
     setInstruction(task.instruction); setNotes(task.input.notes); setSelectedDocs(task.input.document_ids);
     if (languages.some(([code]) => code === task.output_language)) setLanguage(task.output_language);
     else { setLanguage("custom"); setCustomLanguage(task.output_language); }
@@ -130,7 +139,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
   }
 
   return <main className="cw-workspace">
-    <header className="cw-header"><div><span className="cw-eyebrow">Shuddho coworker</span><h1>Good work starts here.</h1><p>A professional report. A thoughtful email. In your language.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
+    <header className="cw-header"><div><span className="cw-eyebrow">Shuddho coworker</span><h1>Good work starts here.</h1><p>Your documents, communication, and everyday plans. In your language.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
       <div className="cw-account"><span title={email}>{email}</span><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={async () => {
         setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); }
       }}>Sign out</button></div>
@@ -140,8 +149,15 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     <div className="cw-layout"><section className="cw-compose" aria-label="Create a coworker task">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>Give your coworker a brief</h2><p>Bring the facts. Describe the outcome.</p></div></div>
       <form onSubmit={submit}>
-        <label>What would you like to create?<textarea rows={3} value={instruction} minLength={3} maxLength={2000} required onChange={event => setInstruction(event.target.value)} /></label>
-        <label>Your notes<textarea ref={notesInput} dir="auto" rows={8} maxLength={20000} value={notes} required={!selectedDocs.length} onChange={event => setNotes(event.target.value)} placeholder="Paste meeting notes, project updates, or the details you want to turn into a report…" /><span className="cw-field-meta">{notes.length.toLocaleString()} / 20,000 characters</span></label>
+        {(skills.length > 1 || !activeSkill) && <label>Work service<select value={skillId} disabled={Boolean(busy)} onChange={event => {
+          const next = skills.find(skill => skill.id === event.target.value);
+          if (!next) return;
+          // Preserve a customized brief; replace only an untouched preset.
+          if (instruction === activeSkill?.instruction || !instruction.trim()) setInstruction(next.instruction);
+          setSkillId(next.id); submission.current = undefined;
+        }}>{skills.map(skill => <option value={skill.id} key={skill.id}>{skill.name}</option>)}{!activeSkill && <option value={skillId} disabled>Service currently unavailable</option>}</select><span className="cw-service-description">{activeSkill?.description ?? "Choose an available service to create a new task. Your saved draft remains available."}</span></label>}
+        <label>What would you like to create?<textarea dir="auto" rows={3} value={instruction} minLength={3} maxLength={2000} required onChange={event => setInstruction(event.target.value)} /></label>
+        <label>Your notes{skillId !== "report_email" && " (optional)"}<textarea ref={notesInput} dir="auto" rows={8} maxLength={20000} value={notes} required={skillId === "report_email" && !selectedDocs.length} onChange={event => setNotes(event.target.value)} placeholder="Paste notes, useful facts, or details you would like your coworker to use…" /><span className="cw-field-meta">{notes.length.toLocaleString()} / 20,000 characters</span></label>
         <label className="cw-upload">Add source files<input type="file" multiple accept=".txt,.docx,.pdf" disabled={Boolean(busy) || selectedDocs.length >= 5 || !workspace} onChange={async event => {
           const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = "";
           if (files.length + selectedDocs.length > 5) { setError("Use up to five source files per task."); return; }
@@ -168,7 +184,8 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
         }}>Delete</button></div>)}</div></details>}
         <label>Output language<select value={language} onChange={event => setLanguage(event.target.value)}>{languages.map(([code, name]) => <option key={code} value={code}>{name}</option>)}<option value="custom">Another language</option></select></label>
         {language === "custom" && <label>Language code<input value={customLanguage} onChange={event => setCustomLanguage(event.target.value)} placeholder="For example, en-GB or si" pattern="[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*" maxLength={35} required /></label>}
-        <button className="cw-primary" type="submit" disabled={Boolean(busy) || !workspace || !notes.trim() && selectedDocs.length === 0}>{busy === "submit" ? "Starting your task…" : "Create report & email draft"}<span aria-hidden="true">↗</span></button>
+        {activeSkill && skills.length > 1 && <p className="cw-output-formats">{activeSkill.output}</p>}
+        <button className="cw-primary" type="submit" disabled={Boolean(busy) || !workspace || !activeSkill || skillId === "report_email" && !notes.trim() && selectedDocs.length === 0}>{busy === "submit" ? "Starting your task…" : skillId === "report_email" ? "Create report & email draft" : "Create draft"}<span aria-hidden="true">↗</span></button>
         <p className="cw-fineprint">Once submitted, your task continues if you close this page. You review the results before using them.</p>
         {workspace && <p className="cw-usage">{workspace.usage.tasks_today} of {workspace.limits.daily_tasks} daily coworker tasks used</p>}
       </form>
@@ -179,8 +196,8 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
         setBusy("cancel"); setError("");
         try { setTask(await client.cancel(task.id)); } catch (error) { setError(message(error)); }
         finally { setBusy(""); }
-      }}>{task.state === "cancelling" ? "Stopping…" : "Cancel this task"}</button>}</> : selected ? <p className="cw-loading" role="status">Loading your task…</p> : <section className="cw-empty"><span className="cw-empty-mark" aria-hidden="true">✦</span><span className="cw-eyebrow">From scattered notes to finished drafts</span><h2>Make space for the work<br />that matters.</h2><p>Add your sources to get an editable report, a PDF, and an email draft together.</p><div className="cw-format-tags"><span>DOCX</span><span>PDF</span><span>EMAIL</span></div></section>}
-      {history.length > 0 && <section className="cw-history"><div className="cw-history-title"><h2>Recent work</h2><button className="cw-text-button" type="button" onClick={() => setReload(value => value + 1)}>Refresh</button></div><ul>{history.map(item => <li key={item.id}><button type="button" aria-pressed={selected === item.id} onClick={() => setSelected(item.id)}><div><strong>{item.instruction}</strong><small>{new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {item.output_language}</small></div><span className={`cw-status cw-status-${item.state}`}>{labels[item.state]}</span></button></li>)}</ul></section>}
+      }}>{task.state === "cancelling" ? "Stopping…" : "Cancel this task"}</button>}</> : selected ? <p className="cw-loading" role="status">Loading your task…</p> : <section className="cw-empty"><span className="cw-empty-mark" aria-hidden="true">✦</span><span className="cw-eyebrow">From scattered notes to finished drafts</span><h2>Make space for the work<br />that matters.</h2><p>Choose the work you need, add your details, and leave with a draft you can review and use.</p><div className="cw-format-tags"><span>DOCX</span><span>PDF</span><span>TEXT</span></div></section>}
+      {history.length > 0 && <section className="cw-history"><div className="cw-history-title"><h2>Recent work</h2><button className="cw-text-button" type="button" onClick={() => setReload(value => value + 1)}>Refresh</button></div><ul>{history.map(item => <li key={item.id}><button type="button" aria-pressed={selected === item.id} onClick={() => setSelected(item.id)}><div><strong>{item.instruction}</strong><small>{skills.find(skill => skill.id === (item.skill_id ?? "report_email"))?.name ?? "Saved work"} · {new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {item.output_language}</small></div><span className={`cw-status cw-status-${item.state}`}>{labels[item.state]}</span></button></li>)}</ul></section>}
     </div></div>
   </main>;
 }

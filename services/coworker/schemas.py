@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .skills import SkillId
 
 
 class StrictModel(BaseModel):
@@ -27,6 +29,7 @@ class UploadRequest(StrictModel):
 
 
 class TaskCreate(StrictModel):
+    skill_id: SkillId = "report_email"
     instruction: str = Field(min_length=3, max_length=2000)
     notes: str = Field(default="", max_length=20000)
     document_ids: list[UUID] = Field(default_factory=list, max_length=5)
@@ -34,7 +37,7 @@ class TaskCreate(StrictModel):
 
     @model_validator(mode="after")
     def input_required(self):
-        if not self.notes and not self.document_ids:
+        if self.skill_id == "report_email" and not self.notes and not self.document_ids:
             raise ValueError("Add notes or a supported document")
         if len(set(self.document_ids)) != len(self.document_ids):
             raise ValueError("A document may be included only once")
@@ -65,9 +68,7 @@ class EmailDraft(StrictModel):
     body: str = Field(min_length=1, max_length=6000)
 
 
-class DraftPackage(StrictModel):
-    report: Report
-    email: EmailDraft
+class DraftContent(StrictModel):
     output_language: str = Field(pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$", max_length=35)
     missing_information: list[str] = Field(default_factory=list, max_length=8)
 
@@ -87,6 +88,144 @@ class DraftPackage(StrictModel):
         if invalid(self.model_dump()):
             raise ValueError("Draft contains unsupported control characters")
         return self
+
+
+class DraftPackage(DraftContent):
+    """Original Part 2 shape, still accepted for stored report_email_v1 tasks."""
+    report: Report
+    email: EmailDraft
+
+
+OutputText = Annotated[str, Field(min_length=1, max_length=2400)]
+SourceId = Annotated[str, Field(min_length=1, max_length=100)]
+SourceIds = Annotated[list[SourceId], Field(min_length=1, max_length=7)]
+
+
+class WorkSection(StrictModel):
+    heading: str = Field(default="", max_length=180)
+    paragraphs: list[OutputText] = Field(default_factory=list, max_length=8)
+    bullets: list[OutputText] = Field(default_factory=list, max_length=12)
+    source_ids: SourceIds
+
+    @model_validator(mode="after")
+    def has_content(self):
+        if not self.paragraphs and not self.bullets:
+            raise ValueError("A section needs text or bullets")
+        return self
+
+
+class WorkDocument(StrictModel):
+    title: str = Field(min_length=1, max_length=180)
+    summary: str = Field(default="", max_length=1800)
+    sections: list[WorkSection] = Field(min_length=1, max_length=15)
+
+
+class EmailPackage(DraftContent):
+    kind: Literal["email"] = "email"
+    email: EmailDraft
+    source_ids: SourceIds
+
+
+class DocumentPackage(DraftContent):
+    kind: Literal["document"] = "document"
+    document: WorkDocument
+
+
+class SocialPost(StrictModel):
+    platform: Literal["facebook", "linkedin", "other"]
+    label: str = Field(min_length=1, max_length=160)
+    text: str = Field(min_length=1, max_length=5000)
+    suggested_timing: str | None = Field(default=None, max_length=160)
+    source_ids: SourceIds
+
+
+class SocialPackage(DraftContent):
+    kind: Literal["social"] = "social"
+    title: str = Field(min_length=1, max_length=180)
+    posts: list[SocialPost] = Field(min_length=1, max_length=6)
+
+
+class MeetingNote(StrictModel):
+    text: OutputText
+    source_ids: SourceIds
+
+
+class MeetingAction(MeetingNote):
+    owner: str | None = Field(default=None, max_length=160)
+    deadline: str | None = Field(default=None, max_length=160)
+    basis: Literal["recorded", "suggested"]
+
+
+Label = Annotated[str, Field(min_length=1, max_length=100)]
+
+
+class MeetingLabels(StrictModel):
+    notes: Label
+    decisions: Label
+    actions: Label
+    owner: Label
+    deadline: Label
+    recorded: Label
+    suggested: Label
+
+
+class MeetingPackage(DraftContent):
+    kind: Literal["meeting"] = "meeting"
+    title: str = Field(min_length=1, max_length=180)
+    summary: str = Field(min_length=1, max_length=1800)
+    labels: MeetingLabels
+    notes: list[MeetingNote] = Field(min_length=1, max_length=15)
+    decisions: list[MeetingNote] = Field(default_factory=list, max_length=12)
+    actions: list[MeetingAction] = Field(default_factory=list, max_length=15)
+
+
+class PlanItem(StrictModel):
+    task: OutputText
+    when: str = Field(default="", max_length=160)
+    priority: Literal["high", "normal", "low"] = "normal"
+    basis: Literal["provided", "suggested"]
+    source_ids: SourceIds
+
+
+class PlanLabels(StrictModel):
+    high: Label
+    normal: Label
+    low: Label
+    provided: Label
+    suggested: Label
+
+
+class PlanPackage(DraftContent):
+    kind: Literal["plan"] = "plan"
+    title: str = Field(min_length=1, max_length=180)
+    overview: str = Field(min_length=1, max_length=1800)
+    labels: PlanLabels
+    items: list[PlanItem] = Field(min_length=1, max_length=25)
+
+
+AnyDraft = DraftPackage | EmailPackage | DocumentPackage | SocialPackage | MeetingPackage | PlanPackage
+DRAFT_TYPES = {
+    "report_email": DraftPackage, "email": EmailPackage, "document": DocumentPackage,
+    "career": DocumentPackage, "social": SocialPackage, "meeting": MeetingPackage,
+    "daily_plan": PlanPackage, "personal_plan": PlanPackage,
+}
+
+
+def parse_draft(skill_id: SkillId, value) -> AnyDraft:
+    return DRAFT_TYPES[skill_id].model_validate(value)
+
+
+def source_references(draft: AnyDraft) -> set[str]:
+    def collect(value):
+        if isinstance(value, dict):
+            found = set(value.get("source_ids", []))
+            for item in value.values():
+                found.update(collect(item))
+            return found
+        if isinstance(value, list):
+            return set().union(*(collect(item) for item in value))
+        return set()
+    return collect(draft.model_dump())
 
 
 class PreferencesRequest(StrictModel):

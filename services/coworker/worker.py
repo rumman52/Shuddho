@@ -18,7 +18,7 @@ from .drafting import DraftFailure
 from .errors import CoworkerError
 from .repository import TERMINAL
 from .runner import DocumentRunner
-from .workflow import ReportEmailWorkflow
+from .workflow import ReportEmailWorkflow, WorkServicesWorkflow
 
 logger = logging.getLogger("shuddho.coworker")
 
@@ -29,8 +29,21 @@ class Activities:
 
     @activity.defn(name="shuddho_document_phase_v1")
     async def phase(self, value: dict):
+        return await self.run_phase(value, legacy=True)
+
+    @activity.defn(name="shuddho_work_phase_v1")
+    async def work_phase(self, value: dict):
+        return await self.run_phase(value, legacy=False)
+
+    async def checked_phase(self, value: dict, legacy: bool):
+        task = await asyncio.to_thread(self.runner.repo.worker_task, value["task_id"], False)
+        if (task["workflow_version"] == "report_email_v1") != legacy:
+            raise CoworkerError("workflow_version", "The task was routed to an incompatible workflow. Please contact support.")
+        await self.runner.phase(value["task_id"], value["phase"])
+
+    async def run_phase(self, value: dict, *, legacy: bool):
         task_id = value["task_id"]
-        operation = asyncio.create_task(self.runner.phase(task_id, value["phase"]))
+        operation = asyncio.create_task(self.checked_phase(value, legacy))
         try:
             while True:
                 activity.heartbeat()
@@ -76,7 +89,8 @@ class Dispatcher:
             if task["state"] not in TERMINAL:
                 try:
                     await self.client.start_workflow(
-                        ReportEmailWorkflow.run, task_id, id="shuddho-task-" + task_id,
+                        ReportEmailWorkflow.run if task["skill_id"] == "report_email" else WorkServicesWorkflow.run,
+                        task_id, id="shuddho-task-" + task_id,
                         task_queue=self.container.settings.task_queue,
                         execution_timeout=timedelta(seconds=self.container.settings.task_timeout_seconds),
                         id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
@@ -120,8 +134,8 @@ async def main():
             loop.add_signal_handler(name, stop.set)
         except NotImplementedError:
             pass
-    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow],
-                      activities=[activities.phase, activities.failed],
+    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow],
+                      activities=[activities.phase, activities.work_phase, activities.failed],
                       # Four short deterministic steps: replay is inexpensive.
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,
