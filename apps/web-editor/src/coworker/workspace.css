@@ -106,14 +106,13 @@
 .cw-post { padding: 18px; border: 1px solid #e9e3f0; border-radius: 10px; margin-bottom: 16px; }
 .cw-post-heading { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: #857390; margin-bottom: 18px; }
 .cw-post .cw-email { padding-bottom: 6px; }
-.cw-reference { overflow-wrap: anywhere; }
+.cw-reference, .cw-paper .cw-reference { overflow-wrap: anywhere; font-size: 11px; line-height: 1.7; color: #786488; }
 .cw-plan-list { list-style: none; counter-reset: cw-plan; padding: 0; }
 .cw-plan-list > li { border-top: 1px solid #eee9f3; padding: 14px 0; }
 .cw-plan-list h4 { margin-top: 0; }
 .cw-paper .cw-plan-meta, .cw-email .cw-plan-meta { font-size: 11px; color: #81778d; }
 .cw-result :lang(bn) { font-family: "Noto Serif Bengali", "Noto Sans Bengali", sans-serif; }
 .cw-paper .cw-report-summary { color: #81738c; }
-.cw-paper .cw-reference { font-size: 9px; color: #a798b6; }
 .cw-email { padding: 2px 0 20px; }
 .cw-email h3 { font-size: 14px; margin: 0 0 15px; font-weight: 600; overflow-wrap: anywhere; }
 .cw-downloads { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 12px; }
