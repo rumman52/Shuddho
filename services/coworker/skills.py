@@ -6,7 +6,8 @@ from typing import Literal
 
 from .errors import CoworkerError
 
-SkillId = Literal["report_email", "email", "document", "career", "social", "meeting", "daily_plan", "personal_plan"]
+SkillId = Literal["report_email", "email", "document", "career", "social", "meeting", "daily_plan", "personal_plan", "presentation", "spreadsheet"]
+ARTIFACT_SKILLS = {"presentation", "spreadsheet"}
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,26 @@ class WorkSkill:
 
 SKILLS = {
     skill.id: skill for skill in [
+        WorkSkill("presentation", "Presentations", "Create up to eight editable slides with speaker notes and data charts.",
+                  "Create a concise presentation from these details for my audience, with useful speaker notes.",
+                  "Create 1 to 8 slides in the requested language. Respect the requested slide count, including a cover only when useful. "
+                  "Use at most 3 short bullets per slide; put extra detail in speaker_notes. "
+                  "Use cover, content, or chart layouts. A chart must use only supplied numeric data and explicit units. "
+                  "Never invent data, quotes, images, logos or sources. This service creates text and native charts, not image illustrations. "
+                  "Keep the response concise enough to fit the output budget; prefer 4 to 6 slides unless requested otherwise.",
+                  "Editable PPTX, PDF handout, speaker notes", "presentation"),
+        WorkSkill("spreadsheet", "Spreadsheets", "Create an editable table of up to 40 rows with calculations, totals, and a chart.",
+                  "Organize these data into a useful spreadsheet. Keep the original values, and add calculations or a chart where appropriate.",
+                  "Create one worksheet with up to 8 input columns, 40 rows, and 3 calculated columns. "
+                  "Keep numeric cells as JSON numbers and identifiers as strings. Preserve units in column labels. "
+                  "Never invent amounts or fill unknown values with zero; use null. Do not silently drop source rows to meet the limits. "
+                  "Select calculations only from sum, difference, product, ratio with existing numeric column IDs. "
+                  "Calculated columns may refer only to earlier numeric columns. Never output Excel formula strings or URLs as formulas. "
+                  "Percent format uses fractional values (0.25 means 25%). Do not sum rates or unrelated units. "
+                  "Include a chart only when every selected category and series value is known; otherwise use chart=null. "
+                  "Use aggregate=sum or average only when appropriate, otherwise none. Do not claim analysis unsupported by the source. "
+                  "If the requested table exceeds the limits, list that in missing_information and ask for a smaller selection.",
+                  "Editable XLSX, CSV values, PDF table", "spreadsheet"),
         WorkSkill("report_email", "Report & email", "Turn your sources into a report and an email draft.",
                   "Turn these sources into a professional report and a short email sharing the key findings.",
                   "Create a professional report and an accompanying email draft.", "Report, email, DOCX, PDF", "report"),
@@ -89,5 +110,14 @@ def skill_for_version(version: str) -> WorkSkill:
     raise CoworkerError("workflow_version", "This task needs a newer coworker version. Please contact support.", 409)
 
 
-def available_skills(work_services_enabled: bool):
-    return [skill.public() for skill in SKILLS.values() if work_services_enabled or skill.id == "report_email"]
+def available_skills(work_services_enabled: bool, artifact_services_enabled: bool = False):
+    return [skill.public() for skill in sorted(SKILLS.values(), key=lambda value: value.id in ARTIFACT_SKILLS) if (
+        artifact_services_enabled if skill.id in ARTIFACT_SKILLS else work_services_enabled or skill.id == "report_email")]
+
+
+def artifact_filenames(skill_id: SkillId):
+    if skill_id == "report_email":
+        return {"report.docx", "report.pdf", "email-draft.txt", "source-manifest.json"}
+    stem = SKILLS[skill_id].filename
+    extensions = {"presentation": ("pptx", "pdf", "txt"), "spreadsheet": ("xlsx", "pdf", "csv")}.get(skill_id, ("docx", "pdf", "txt"))
+    return {stem + "." + ext for ext in extensions} | {"source-manifest.json"}

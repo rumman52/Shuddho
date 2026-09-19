@@ -113,6 +113,15 @@
 .cw-paper .cw-plan-meta, .cw-email .cw-plan-meta { font-size: 11px; color: #81778d; }
 .cw-result :lang(bn) { font-family: "Noto Serif Bengali", "Noto Sans Bengali", sans-serif; }
 .cw-paper .cw-report-summary { color: #81738c; }
+.cw-slide-preview .cw-eyebrow { display: block; margin-bottom: 12px; }
+.cw-table-scroll { max-width: 100%; overflow-x: auto; margin: 16px 0; border: 1px solid #e9e5ed; border-radius: 5px; }
+.cw-table-scroll:focus-visible { outline: 2px solid #776282; outline-offset: 2px; }
+.cw-table-scroll table { border-collapse: collapse; width: 100%; font-size: 12px; line-height: 1.6; text-align: start; }
+.cw-table-scroll caption { padding: 10px; text-align: start; color: #776282; }
+.cw-table-scroll th, .cw-table-scroll td { padding: 10px 12px; min-width: 90px; max-width: 240px; overflow-wrap: anywhere; border-bottom: 1px solid #e9e5ed; vertical-align: top; }
+.cw-table-scroll thead th { background: #f5f2f8; font-weight: 600; text-align: start; }
+.cw-table-scroll th small { display: block; font-size: 10px; font-weight: 400; color: #776282; }
+.cw-table-scroll tfoot { font-weight: 600; background: #faf8fc; }
 .cw-email { padding: 2px 0 20px; }
 .cw-email h3 { font-size: 14px; margin: 0 0 15px; font-weight: 600; overflow-wrap: anywhere; }
 .cw-downloads { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 12px; }

@@ -4,7 +4,7 @@ import re
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, field_validator, model_validator
 
 from .skills import SkillId
 
@@ -23,8 +23,8 @@ class UploadRequest(StrictModel):
     def safe_filename(cls, value: str) -> str:
         if any(char in value for char in '/\\') or any(ord(char) < 32 or ord(char) == 127 for char in value) or value in {".", ".."}:
             raise ValueError("Use a filename without paths or control characters")
-        if not value.lower().endswith((".txt", ".docx", ".pdf")):
-            raise ValueError("Supported files: TXT, DOCX, and text-based PDF")
+        if not value.lower().endswith((".txt", ".docx", ".pdf", ".csv", ".xlsx", ".pptx")):
+            raise ValueError("Unsupported source file type")
         return value
 
 
@@ -203,11 +203,132 @@ class PlanPackage(DraftContent):
     items: list[PlanItem] = Field(min_length=1, max_length=25)
 
 
-AnyDraft = DraftPackage | EmailPackage | DocumentPackage | SocialPackage | MeetingPackage | PlanPackage
+Number = Annotated[StrictFloat | StrictInt, Field(ge=-1e12, le=1e12, allow_inf_nan=False)]
+ColumnId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,23}$")]
+
+
+class ChartSeries(StrictModel):
+    label: str = Field(min_length=1, max_length=40)
+    values: list[Number] = Field(min_length=1, max_length=8)
+
+
+class SlideChart(StrictModel):
+    kind: Literal["bar", "line"] = "bar"
+    categories: list[Annotated[str, Field(min_length=1, max_length=35)]] = Field(min_length=1, max_length=8)
+    series: list[ChartSeries] = Field(min_length=1, max_length=3)
+    unit: str = Field(default="", max_length=40)
+
+    @model_validator(mode="after")
+    def dimensions(self):
+        if any(len(series.values) != len(self.categories) for series in self.series):
+            raise ValueError("Every chart series must match the categories")
+        return self
+
+
+class PresentationSlide(StrictModel):
+    layout: Literal["cover", "content", "chart"] = "content"
+    title: str = Field(min_length=1, max_length=60)
+    bullets: list[Annotated[str, Field(min_length=1, max_length=110)]] = Field(default_factory=list, max_length=3)
+    speaker_notes: str = Field(default="", max_length=600)
+    chart: SlideChart | None = None
+    source_ids: SourceIds
+
+    @model_validator(mode="after")
+    def layout_content(self):
+        if (self.layout == "chart") != (self.chart is not None):
+            raise ValueError("Only chart slides contain chart data")
+        if self.layout in {"cover", "chart"} and len(self.bullets) > 1:
+            raise ValueError("Cover and chart slides allow one short subtitle")
+        if self.layout == "content" and not self.bullets:
+            raise ValueError("A content slide needs at least one point")
+        return self
+
+
+class PresentationPackage(DraftContent):
+    kind: Literal["presentation"] = "presentation"
+    title: str = Field(min_length=1, max_length=120)
+    slides: list[PresentationSlide] = Field(min_length=1, max_length=8)
+
+
+class SheetColumn(StrictModel):
+    id: ColumnId
+    label: str = Field(min_length=1, max_length=50)
+    format: Literal["text", "number", "integer", "percent"] = "text"
+    aggregate: Literal["none", "sum", "average"] = "none"
+
+
+class CalculatedColumn(SheetColumn):
+    format: Literal["number", "integer", "percent"] = "number"
+    operation: Literal["sum", "difference", "product", "ratio"]
+    inputs: list[ColumnId] = Field(min_length=2, max_length=4)
+
+
+class SheetChart(StrictModel):
+    kind: Literal["bar", "line"] = "bar"
+    title: str = Field(min_length=1, max_length=100)
+    category: ColumnId
+    series: list[ColumnId] = Field(min_length=1, max_length=3)
+
+
+Cell = Annotated[str, Field(max_length=160)] | Number | None
+
+
+class SpreadsheetPackage(DraftContent):
+    kind: Literal["spreadsheet"] = "spreadsheet"
+    title: str = Field(min_length=1, max_length=120)
+    summary: str = Field(default="", max_length=600)
+    sheet_name: str = Field(min_length=1, max_length=31)
+    columns: list[SheetColumn] = Field(min_length=1, max_length=8)
+    rows: list[Annotated[list[Cell], Field(min_length=1, max_length=8)]] = Field(min_length=1, max_length=40)
+    calculations: list[CalculatedColumn] = Field(default_factory=list, max_length=3)
+    summary_label: str = Field(default="", max_length=60)
+    chart: SheetChart | None = None
+    source_ids: SourceIds
+
+    @model_validator(mode="after")
+    def table_contract(self):
+        if re.search(r"[\[\]:*?/\\]", self.sheet_name) or self.sheet_name.startswith("'") or self.sheet_name.endswith("'") or self.sheet_name.lower() == "history":
+            raise ValueError("Unsupported worksheet name")
+        columns = self.columns + self.calculations
+        ids = [column.id for column in columns]
+        if len(ids) != len(set(ids)) or len(columns) > 10:
+            raise ValueError("Use unique column IDs and at most ten total columns")
+        if any(column.format == "text" and column.aggregate != "none" for column in columns):
+            raise ValueError("Text cannot be aggregated")
+        if any(column.aggregate != "none" for column in columns) and not self.summary_label:
+            raise ValueError("Provide a localized label for the summary row")
+        for row in self.rows:
+            if len(row) != len(self.columns):
+                raise ValueError("Row width must match the input columns")
+            for value, column in zip(row, self.columns):
+                if value is not None and ((column.format == "text") != isinstance(value, str)):
+                    raise ValueError("Use typed numbers and text in the matching columns")
+                if value is not None and column.format == "integer" and int(value) != value:
+                    raise ValueError("Integer columns require whole numbers")
+        available = {column.id for column in self.columns if column.format != "text"}
+        for column in self.calculations:
+            if not set(column.inputs).issubset(available) or len(column.inputs) != len(set(column.inputs)):
+                raise ValueError("Calculations reference distinct earlier numeric columns only")
+            if column.operation in {"difference", "ratio"} and len(column.inputs) != 2:
+                raise ValueError("Difference and ratio require exactly two inputs")
+            available.add(column.id)
+        if self.chart and (self.chart.category not in ids or not set(self.chart.series).issubset(available) or len(self.chart.series) != len(set(self.chart.series))):
+            raise ValueError("The chart must reference existing numeric series")
+        from .calculations import table_values
+        preview = table_values(self)  # Reject excessive calculated values before saving a draft.
+        if self.chart:
+            indexes = [ids.index(key) for key in [self.chart.category, *self.chart.series]]
+            if any(row[index] is None for row in preview["rows"] for index in indexes):
+                raise ValueError("Charts require known category and series values; omit the chart when data are missing")
+        return self
+
+
+AnyDraft = DraftPackage | EmailPackage | DocumentPackage | SocialPackage | MeetingPackage | PlanPackage | PresentationPackage | SpreadsheetPackage
 DRAFT_TYPES = {
     "report_email": DraftPackage, "email": EmailPackage, "document": DocumentPackage,
     "career": DocumentPackage, "social": SocialPackage, "meeting": MeetingPackage,
     "daily_plan": PlanPackage, "personal_plan": PlanPackage,
+    "presentation": PresentationPackage, "spreadsheet": SpreadsheetPackage,
 }
 
 

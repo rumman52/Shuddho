@@ -34,11 +34,11 @@ async def run_handle(env, task_id):
     return env.client.get_workflow_handle(workflow_id, run_id=execution.run_id)
 
 
-@pytest.mark.parametrize("skill_id", ["report_email", "social"])
+@pytest.mark.parametrize("skill_id", ["report_email", "social", "presentation", "spreadsheet"])
 def test_worker_restart_after_saved_draft_does_not_repeat_model(container, skill_id):
     async def scenario():
         async with await WorkflowEnvironment.start_time_skipping() as env:
-            container.settings = replace(container.settings, work_services_enabled=True)
+            container.settings = replace(container.settings, work_services_enabled=True, artifact_services_enabled=True)
             container.repository.settings = container.settings
             task = new_task(container, skill_id=skill_id)
             model = FakeModel() if skill_id == "report_email" else WorkModel()

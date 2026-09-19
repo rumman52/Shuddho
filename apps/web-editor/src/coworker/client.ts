@@ -2,11 +2,13 @@ import { fetchWithTimeout } from "../lib/fetchWithTimeout";
 
 export type TaskState = "queued" | "running" | "cancelling" | "completed" | "needs_input" | "failed" | "cancelled";
 export type Artifact = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
-export type SkillId = "report_email" | "email" | "document" | "career" | "social" | "meeting" | "daily_plan" | "personal_plan";
+export type SkillId = "report_email" | "email" | "document" | "career" | "social" | "meeting" | "daily_plan" | "personal_plan" | "presentation" | "spreadsheet";
 export type WorkSkill = { id: SkillId; name: string; description: string; instruction: string; output: string };
 export type DraftMetadata = { output_language: string; missing_information: string[] };
 export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
 export type EmailDraft = { subject: string; body: string };
+export type CellFormat = "text" | "number" | "integer" | "percent";
+export type TablePreview = { columns: { id: string; label: string; format: CellFormat; aggregate: string; calculated: boolean }[]; rows: (string | number | null)[][]; totals: (number | null)[] };
 export type CoworkerDraft = DraftMetadata & (
   | { kind?: never; report: { title: string; summary: string; sections: { heading: string; paragraphs: string[]; source_ids: string[] }[] }; email: EmailDraft }
   | { kind: "email"; email: EmailDraft; source_ids: string[] }
@@ -17,6 +19,9 @@ export type CoworkerDraft = DraftMetadata & (
       actions: { text: string; owner: string | null; deadline: string | null; basis: "recorded" | "suggested"; source_ids: string[] }[] }
   | { kind: "plan"; title: string; overview: string; labels: Record<"high" | "normal" | "low" | "provided" | "suggested", string>;
       items: { task: string; when: string; priority: "high" | "normal" | "low"; basis: "provided" | "suggested"; source_ids: string[] }[] }
+  | { kind: "presentation"; title: string; slides: { layout: "cover" | "content" | "chart"; title: string; bullets: string[]; speaker_notes: string; source_ids: string[];
+      chart: { kind: "bar" | "line"; categories: string[]; series: { label: string; values: number[] }[]; unit: string } | null }[] }
+  | { kind: "spreadsheet"; title: string; summary: string; summary_label: string; sheet_name: string; source_ids: string[]; chart: { title: string } | null }
 );
 export type CoworkerTask = {
   id: string; state: TaskState; phase: string; message: string; error_code: string | null;
@@ -25,6 +30,7 @@ export type CoworkerTask = {
   input: { notes: string; document_ids: string[] } | null;
   artifacts: Artifact[]; usage: { model_attempts: number; accounted_tokens: number };
   draft: CoworkerDraft | null;
+  preview?: TablePreview | null;
   sources: { id: string; label: string; sha256: string }[];
 };
 export type Workspace = {
@@ -108,7 +114,7 @@ export class CoworkerClient {
     return (await this.response(path, options)).json() as Promise<T>;
   }
   me(signal?: AbortSignal) { return this.json<Workspace>("/api/v1/me", { signal }); }
-  skills(signal?: AbortSignal) { return this.json<{ skills: WorkSkill[] }>("/api/v1/skills", { signal }); }
+  skills(signal?: AbortSignal) { return this.json<{ skills: WorkSkill[]; upload_formats?: string[] }>("/api/v1/skills", { signal }); }
   list(signal?: AbortSignal) { return this.json<{ tasks: CoworkerTask[] }>("/api/v1/tasks", { signal }); }
   documents(signal?: AbortSignal) { return this.json<{ documents: SourceDocument[] }>("/api/v1/documents", { signal }); }
   deleteDocument(id: string) { return this.json<{ message: string }>(`/api/v1/documents/${identifier(id)}`, { method: "DELETE" }); }
@@ -119,8 +125,8 @@ export class CoworkerClient {
   }
 
   async upload(file: File): Promise<SourceDocument> {
-    if (!/\.(txt|docx|pdf)$/i.test(file.name) || file.size < 1 || file.size > 8 * 1024 * 1024) {
-      throw new WorkspaceError("Choose a TXT, DOCX, or text-based PDF file up to 8 MB.");
+    if (!/\.(txt|docx|pdf|csv|xlsx|pptx)$/i.test(file.name) || file.size < 1 || file.size > 8 * 1024 * 1024) {
+      throw new WorkspaceError("Choose a supported document, presentation, or spreadsheet up to 8 MB.");
     }
     const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
     const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
