@@ -18,6 +18,7 @@ from .auth import Principal, require_principal
 from .container import Container
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
+from .skills import available_skills
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -43,6 +44,11 @@ def me(identity: Identity, services: Services):
 @router.put("/preferences")
 def preferences(payload: PreferencesRequest, identity: Identity, services: Services):
     return services.repository.save_preferences(identity.account_id, payload.model_dump())
+
+
+@router.get("/skills")
+def skills(identity: Identity, services: Services):
+    return {"skills": available_skills(services.settings.work_services_enabled)}
 
 
 @router.get("/documents")

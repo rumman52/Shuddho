@@ -10,11 +10,12 @@ from .drafting import DeepSeekDraftModel, DraftFailure, DraftModel
 from .errors import CoworkerError
 from .extraction import extract_in_subprocess
 from .exports import render_in_subprocess
-from .schemas import DraftPackage
+from .schemas import parse_draft, source_references
+from .skills import skill_for_version
 
 PHASE_MESSAGES = {
     "extract": "Reading your source material.",
-    "draft": "Preparing your report and email draft.",
+    "draft": "Preparing your draft.",
     "export": "Creating your downloadable documents.",
     "complete": "Checking your downloads.",
 }
@@ -32,6 +33,7 @@ class DocumentRunner:
         # Completion can reach the database before the activity acknowledgement.
         if task["state"] in {"completed", "needs_input"}:
             return
+        skill_for_version(task["workflow_version"])
         if phase not in PHASE_MESSAGES:
             raise CoworkerError("workflow_version", "This task uses an unsupported workflow version.")
         checkpoint = await asyncio.to_thread(self.repo.begin_phase, task_id, phase, PHASE_MESSAGES[phase])
@@ -48,6 +50,11 @@ class DocumentRunner:
 
     async def extract(self, task):
         sources = []
+        if task["skill_id"] != "report_email":
+            # A complete natural-language brief can be enough for a work service.
+            # Include it as an owned source so facts in the request have provenance.
+            sources.append({"id": "brief", "label": "Your brief", "text": task["instruction"],
+                            "sha256": hashlib.sha256(task["instruction"].encode()).hexdigest()})
         if task["notes"]:
             notes = task["notes"]
             sources.append({"id": "notes", "label": "Provided notes", "text": notes,
@@ -71,12 +78,24 @@ class DocumentRunner:
         if isinstance(self.model, DeepSeekDraftModel) and not self.container.settings.deepseek_api_key:
             raise CoworkerError("model_not_configured", "Your coworker is temporarily unavailable. Please try again later.", 503)
         sources = extracted["sources"]
-        messages = self.model.messages(task, sources)
+        skill = skill_for_version(task["workflow_version"])
+        model = (DeepSeekDraftModel(self.container.settings, self.model.transport, skill_id=skill.id)
+                 if isinstance(self.model, DeepSeekDraftModel) else self.model)
+        messages = model.messages(task, sources)
         # Conservative UTF-8 byte bound, with room for chat framing and output.
         reservation = len(json.dumps(messages, ensure_ascii=False).encode()) + self.container.settings.max_output_tokens + 512
         attempt = await asyncio.to_thread(self.repo.reserve_model, task["id"], reservation)
         try:
-            result = await self.model.generate(messages, task["output_language"], {source["id"] for source in sources})
+            source_ids = {source["id"] for source in sources}
+            result = await model.generate(messages, task["output_language"], source_ids)
+            try:
+                validated = parse_draft(skill.id, result.draft.model_dump())
+                if not source_references(validated).issubset(source_ids) or (
+                    task["output_language"] != "auto" and validated.output_language.lower() != task["output_language"].lower()
+                ):
+                    raise ValueError()
+            except (ValueError, TypeError, AttributeError):
+                raise DraftFailure("invalid_draft", "The draft did not match the requested service or sources. Please try again.", total_tokens=result.total_tokens) from None
         except DraftFailure as error:
             await asyncio.to_thread(self.repo.settle_model, task["id"], attempt, error.total_tokens, None, "failed")
             raise
@@ -88,14 +107,16 @@ class DocumentRunner:
         await asyncio.to_thread(self.repo.settle_model, task["id"], attempt, result.total_tokens, result.latency_ms, "completed")
         manifest = [{key: value for key, value in source.items() if key != "text"} for source in sources]
         await asyncio.to_thread(self.repo.save_step, task["id"], "draft", {
-            "draft": result.draft.model_dump(), "sources": manifest,
+            "draft": validated.model_dump(), "sources": manifest,
         })
 
     async def export(self, task):
         saved = await asyncio.to_thread(self.repo.step, task["id"], "draft")
         if saved is None:
             raise CoworkerError("checkpoint_missing", "The draft could not be recovered. Please create a new task.")
-        outputs = await asyncio.to_thread(self.renderer, DraftPackage.model_validate(saved["draft"]), saved["sources"])
+        skill = skill_for_version(task["workflow_version"])
+        options = {} if skill.id == "report_email" else {"skill_id": skill.id}
+        outputs = await asyncio.to_thread(self.renderer, parse_draft(skill.id, saved["draft"]), saved["sources"], **options)
         manifest = []
         for filename, content_type, body in outputs:
             await asyncio.to_thread(self.repo.worker_task, task["id"])

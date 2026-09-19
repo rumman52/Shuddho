@@ -15,16 +15,17 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 from pypdf import PdfReader
 
-from .schemas import DraftPackage
+from .schemas import AnyDraft, DraftPackage
+from .skills import SKILLS, SkillId
 from .errors import CoworkerError
 
 RTL_LANGUAGES = {"ar", "fa", "he", "ur", "ps", "dv"}
 
 
-def render_in_subprocess(draft: DraftPackage, sources: list[dict]):
+def render_in_subprocess(draft: AnyDraft, sources: list[dict], *, skill_id: SkillId = "report_email"):
     with tempfile.TemporaryDirectory(prefix="shuddho-export-") as directory:
         folder = Path(directory)
-        (folder / "input.json").write_text(json.dumps({"draft": draft.model_dump(), "sources": sources}, ensure_ascii=False), encoding="utf-8")
+        (folder / "input.json").write_text(json.dumps({"draft": draft.model_dump(), "sources": sources, "skill_id": skill_id}, ensure_ascii=False), encoding="utf-8")
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "services.coworker.render_worker", directory],
@@ -35,7 +36,10 @@ def render_in_subprocess(draft: DraftPackage, sources: list[dict]):
             if result.returncode or not manifest_path.is_file() or manifest_path.stat().st_size > 2000:
                 raise ValueError()
             manifest = json.loads(manifest_path.read_text())
-            if {row[0] for row in manifest} != {"report.docx", "report.pdf", "email-draft.txt", "source-manifest.json"} or len(manifest) != 4:
+            stem = SKILLS[skill_id].filename
+            expected = ({"report.docx", "report.pdf", "email-draft.txt", "source-manifest.json"} if skill_id == "report_email"
+                        else {stem + ".docx", stem + ".pdf", stem + ".txt", "source-manifest.json"})
+            if {row[0] for row in manifest} != expected or len(manifest) != 4:
                 raise ValueError()
             outputs = []
             for filename, content_type in manifest:
@@ -45,7 +49,7 @@ def render_in_subprocess(draft: DraftPackage, sources: list[dict]):
                 outputs.append((filename, content_type, path.read_bytes()))
             return outputs
         except (subprocess.TimeoutExpired, ValueError, OSError, TypeError):
-            raise CoworkerError("export_failed", "The document export could not finish. Try a shorter report.", 422) from None
+            raise CoworkerError("export_failed", "The file export could not finish. Try a shorter draft.", 422) from None
 
 
 def font_for(language):

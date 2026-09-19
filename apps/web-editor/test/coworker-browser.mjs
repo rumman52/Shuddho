@@ -64,6 +64,56 @@ try {
     return bounds.top >= 0 && bounds.top < window.innerHeight / 2;
   }), true);
   await page.screenshot({ path: join(folder, "screenshots/coworker-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 1365, height: 960 });
+  await page.getByLabel("What would you like to create?").fill("Keep my custom brief while I choose a service.");
+  await page.getByLabel("Work service", { exact: true }).selectOption("email");
+  assert.equal(await page.getByLabel("What would you like to create?").inputValue(), "Keep my custom brief while I choose a service.");
+  for (const [skill, language, preview, filename] of [
+    ["email", "ar", "Email draft", "email-draft.txt"],
+    ["document", "bn", "Document preview", "document.docx"],
+    ["career", "en", "Document preview", "career-document.docx"],
+    ["social", "bn", "Post drafts", "social-posts.txt"],
+    ["meeting", "ar", "Meeting draft", "meeting-notes.docx"],
+    ["daily_plan", "bn", "Proposed plan", "daily-plan.txt"],
+    ["personal_plan", "en", "Proposed plan", "personal-plan.txt"],
+  ]) {
+    await page.getByLabel("Work service", { exact: true }).selectOption(skill);
+    await page.getByLabel("What would you like to create?").fill(`Prepare ${skill} from my project notes.`);
+    await page.getByLabel("Your notes").fill("The team completed 12 reviews. Draft only; no external actions.");
+    await page.getByLabel("Output language").selectOption(language);
+    const response = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/api/v1/tasks"));
+    await page.getByRole("button", { name: "Create draft", exact: true }).click();
+    const created = await (await response).json();
+    assert.equal(created.skill_id, skill);
+    const current = page.locator(`.cw-result[data-task-id="${created.id}"]`);
+    await current.getByText("Ready", { exact: true }).waitFor({ timeout: 60000 });
+    await current.locator("summary").filter({ hasText: preview }).waitFor();
+    assert.equal(await current.locator(".cw-paper, .cw-email").first().getAttribute("lang"), language);
+    const nextDownload = page.waitForEvent("download");
+    await current.getByRole("button", { name: new RegExp(filename.replaceAll(".", "\\.")) }).click();
+    assert.equal((await nextDownload).suggestedFilename(), filename);
+    if (skill === "social") {
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: "http://127.0.0.1:5173" });
+      await current.getByRole("button", { name: "Copy post", exact: true }).first().click();
+      await current.getByText("Copied.", { exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "দলটি ১২টি পর্যালোচনা সম্পন্ন করেছে।");
+      await page.reload();
+      await page.locator(`.cw-result[data-task-id="${created.id}"]`).getByText("Ready", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Use these sources for a new draft" }).click();
+      assert.equal(await page.getByLabel("Work service", { exact: true }).inputValue(), "social");
+      assert.equal(await page.getByLabel("Your notes").inputValue(), "The team completed 12 reviews. Draft only; no external actions.");
+    }
+    await page.locator(".workspace-coworker").evaluate(element => { element.scrollTop = 0; });
+    await page.screenshot({ path: join(folder, `screenshots/service-${skill}.png`), fullPage: true });
+    if (["social", "meeting", "daily_plan"].includes(skill)) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByRole("button", { name: "View current task", exact: true }).click();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+      await page.screenshot({ path: join(folder, `screenshots/service-${skill}-mobile.png`), fullPage: true });
+      await page.setViewportSize({ width: 1365, height: 960 });
+    }
+  }
+  assert.equal(await page.locator(".cw-history li").count(), 8);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   assert.equal(await page.getByText("প্রকল্পের অগ্রগতি", { exact: true }).count(), 0);
@@ -75,7 +125,7 @@ try {
   assert.equal(await page.locator(".cw-history li").count(), 0);
   assert.equal(await page.locator(".cw-file-chips li").count(), 0);
   assert.deepEqual(failures, []);
-  console.log("Browser workflow passed: login, upload, task, writing tab, refresh recovery, Bangla output, DOCX download, mobile layout, sign-out and account switch.");
+  console.log("Browser workflow passed: login, upload, all eight work services, writing tab, refresh recovery, service-aware revision, Bangla and RTL previews, downloads, copy post, mobile layout, sign-out and account switch.");
 } finally {
   await context.close();
   await browser.close();

@@ -26,6 +26,7 @@ class Settings:
     temporal_api_key: str = field(default="", repr=False)
     temporal_tls: bool = True
     task_queue: str = "shuddho-documents-v1"
+    work_services_enabled: bool = False
     max_upload_bytes: int = 8 * 1024 * 1024
     max_account_bytes: int = 256 * 1024 * 1024
     max_source_chars: int = 20000
@@ -57,6 +58,7 @@ class Settings:
             temporal_api_key=os.getenv("SHUDDHO_TEMPORAL_API_KEY", ""),
             temporal_tls=os.getenv("SHUDDHO_TEMPORAL_TLS", "true").lower() == "true",
             task_queue=os.getenv("SHUDDHO_TEMPORAL_TASK_QUEUE", "shuddho-documents-v1"),
+            work_services_enabled=os.getenv("SHUDDHO_WORK_SERVICES_ENABLED", "false").lower() == "true",
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
             max_daily_tasks=int(os.getenv("SHUDDHO_COWORKER_DAILY_TASKS", "20")),

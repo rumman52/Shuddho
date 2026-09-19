@@ -13,6 +13,7 @@ from .config import Settings
 from .errors import CoworkerError
 from .models import Account, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, Workspace, utcnow
 from .schemas import TaskCreate, UploadRequest
+from .skills import SKILLS, skill_for_version
 
 TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
@@ -156,7 +157,11 @@ class Repository:
 
     def create_task(self, owner: str, request: TaskCreate, idempotency_key: str) -> tuple[dict, bool]:
         self.expire_tasks(owner)
-        fingerprint = hashlib.sha256(json.dumps(request.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
+        payload = request.model_dump(mode="json")
+        # Preserve the exact Part 2 fingerprint when the legacy service is selected.
+        if request.skill_id == "report_email":
+            payload.pop("skill_id")
+        fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
             self._account(db, owner)  # Serializes quota and idempotency decisions per account.
             previous = db.scalar(select(Task).where(Task.owner_id == owner, Task.idempotency_key == idempotency_key))
@@ -164,6 +169,8 @@ class Repository:
                 if previous.fingerprint != fingerprint:
                     raise CoworkerError("idempotency_conflict", "This request key belongs to different input. Submit a new task.", 409)
                 return self._task_dto(db, previous), False
+            if request.skill_id != "report_email" and not self.settings.work_services_enabled:
+                raise CoworkerError("service_unavailable", "This work service is not available yet. Please choose another service.", 409)
             active = db.scalar(select(func.count()).select_from(Task).where(Task.owner_id == owner, Task.state.not_in(TERMINAL)))
             day = utcnow().date().isoformat()
             usage = db.get(DailyUsage, (owner, day))
@@ -186,6 +193,7 @@ class Repository:
             task = Task(id=str(uuid4()), owner_id=owner, workspace_id=self._workspace(db, owner),
                         idempotency_key=idempotency_key, fingerprint=fingerprint, instruction=request.instruction,
                         notes=request.notes, output_language=request.output_language, input_versions=versions,
+                        workflow_version=SKILLS[request.skill_id].version,
                         deadline_at=utcnow() + timedelta(seconds=self.settings.task_timeout_seconds))
             db.add(task)
             db.flush()
@@ -201,6 +209,7 @@ class Repository:
         usage = db.scalars(select(ModelAttempt).where(ModelAttempt.task_id == task.id)).all()
         return {"id": task.id, "state": task.state, "phase": task.phase, "message": task.message,
                 "error_code": task.error_code, "output_language": task.output_language,
+                "skill_id": skill_for_version(task.workflow_version).id, "workflow_version": task.workflow_version,
                 "instruction": task.instruction, "created_at": iso(task.created_at), "updated_at": iso(task.updated_at),
                 "event_sequence": task.event_sequence, "cancel_requested": task.cancel_requested,
                 "artifacts": [{"id": item.id, "filename": item.filename, "content_type": item.content_type,
@@ -282,6 +291,7 @@ class Repository:
                     raise not_found()
                 documents.append(self._document_dto(document, version) | {"object_key": version.object_key})
             return {"id": task.id, "owner_id": task.owner_id, "instruction": task.instruction,
+                    "workflow_version": task.workflow_version, "skill_id": skill_for_version(task.workflow_version).id,
                     "notes": task.notes, "output_language": task.output_language, "documents": documents,
                     "state": task.state, "deadline_at": iso(task.deadline_at)}
 
@@ -371,7 +381,7 @@ class Repository:
                                 task_id=task_id, owner_id=owner, **item))
             account.storage_bytes += new_bytes
             self._event(db, task, "needs_input" if needs_input else "completed", "complete",
-                        "Drafts are ready. Review the missing details before using them." if needs_input else "Your report and email draft are ready to review.")
+                        "Drafts are ready. Review the missing details before using them." if needs_input else "Your drafts and downloads are ready to review.")
             self._audit(db, owner, task_id, "drafts_created")
             self._discard_extracted_text(db, task_id)
 

@@ -13,11 +13,16 @@ def main():
     except ImportError:  # Windows development; production uses the Linux image.
         pass
     from .exports import render_artifacts
-    from .schemas import DraftPackage
+    from .schemas import parse_draft
+    from .work_exports import render_work_artifacts
     folder = Path(sys.argv[1])
     value = json.loads((folder / "input.json").read_text(encoding="utf-8"))
+    skill_id = value.get("skill_id", "report_email")
+    draft = parse_draft(skill_id, value["draft"])
+    outputs = (render_artifacts(draft, value["sources"]) if skill_id == "report_email"
+               else render_work_artifacts(skill_id, draft, value["sources"]))
     manifest = []
-    for filename, content_type, body in render_artifacts(DraftPackage.model_validate(value["draft"]), value["sources"]):
+    for filename, content_type, body in outputs:
         (folder / filename).write_bytes(body)
         manifest.append([filename, content_type])
     (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

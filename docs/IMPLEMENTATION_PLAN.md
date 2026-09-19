@@ -21,7 +21,7 @@ Working plan, 13 September 2026. Continue in the existing `rumman52/Shuddho` rep
 | --- | --- | --- |
 | 1. Reliable writing foundation | Existing editor + configurable DeepSeek + correct suggestion application + clear failure states | Merged in PR #100; CI passed; live API and staging verification pending |
 | 2. Coworker foundation | Authenticated workspace, durable tasks/files, and one useful document workflow | Merged in PR #101; CI passed; feature flags remain off pending the staging gates in the Part 2 report |
-| 3. Full services and measured scale | Remaining skills, approved integrations, reliability operations, and regional expansion | Planned; released incrementally after Part 2 |
+| 3. Full services and measured scale | Remaining skills, approved integrations, reliability operations, and regional expansion | Wave A work services implemented behind a feature flag; subsequent waves and staging release gates remain pending |
 
 These are three release tracks with smaller steps, not a single rewrite or three enormous launches.
 
@@ -111,6 +111,8 @@ Each task carries account/workspace, task ID, workflow version, request ID, outp
 - A curated multilingual evaluation records source fidelity, writing quality, formatting, task success, latency, and cost. No unmeasured universal language guarantee.
 
 ## Part 3 — remaining services and global operation
+
+Wave A is implemented in [the Part 3 work-services report](PART_3_WORK_SERVICES.md). It adds seven services to the existing report-and-email workflow, with typed output and native downloads. Enable it only after the coordinated API/worker rollout and staging checks described there.
 
 ### Skill rollout
 
