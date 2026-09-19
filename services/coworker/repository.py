@@ -13,7 +13,7 @@ from .config import Settings
 from .errors import CoworkerError
 from .models import Account, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, Workspace, utcnow
 from .schemas import TaskCreate, UploadRequest
-from .skills import SKILLS, skill_for_version
+from .skills import ARTIFACT_SKILLS, SKILLS, skill_for_version
 
 TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
@@ -83,6 +83,8 @@ class Repository:
     def create_upload(self, owner: str, request: UploadRequest) -> dict:
         with self.sessions.begin() as db:
             account = self._account(db, owner)
+            if request.filename.rsplit(".", 1)[1].lower() in {"csv", "xlsx", "pptx"} and not self.settings.artifact_services_enabled:
+                raise CoworkerError("service_unavailable", "Spreadsheet and presentation uploads are not available yet.", 409)
             count = db.scalar(select(func.count()).select_from(Document).where(Document.owner_id == owner, Document.deleted.is_(False)))
             if count >= 100:
                 raise CoworkerError("document_limit", "Your workspace has 100 source files. Remove an unused upload before adding another.", 429)
@@ -169,7 +171,9 @@ class Repository:
                 if previous.fingerprint != fingerprint:
                     raise CoworkerError("idempotency_conflict", "This request key belongs to different input. Submit a new task.", 409)
                 return self._task_dto(db, previous), False
-            if request.skill_id != "report_email" and not self.settings.work_services_enabled:
+            enabled = (self.settings.artifact_services_enabled if request.skill_id in ARTIFACT_SKILLS
+                       else self.settings.work_services_enabled or request.skill_id == "report_email")
+            if not enabled:
                 raise CoworkerError("service_unavailable", "This work service is not available yet. Please choose another service.", 409)
             active = db.scalar(select(func.count()).select_from(Task).where(Task.owner_id == owner, Task.state.not_in(TERMINAL)))
             day = utcnow().date().isoformat()
@@ -215,6 +219,7 @@ class Repository:
                 "artifacts": [{"id": item.id, "filename": item.filename, "content_type": item.content_type,
                                "byte_size": item.byte_size, "sha256": item.sha256} for item in artifacts],
                 "draft": draft_step.output.get("draft") if draft_step else None,
+                "preview": draft_step.output.get("preview") if draft_step else None,
                 "sources": draft_step.output.get("sources", []) if draft_step else [],
                 "input": {"notes": task.notes, "document_ids": list(db.scalars(select(DocumentVersion.document_id).where(
                     DocumentVersion.id.in_(task.input_versions), DocumentVersion.owner_id == task.owner_id,

@@ -13,7 +13,28 @@ def work_draft(skill_id, language="en", source_ids=None, missing=False):
         "ar": ("تحديث المشروع", "أكمل الفريق 12 مراجعة.", "الصباح"),
     }[language]
     value = {"output_language": language, "missing_information": ["Please provide the missing recipient."] if missing else []}
-    if skill_id == "email":
+    if skill_id == "presentation":
+        value.update(title=title, slides=[
+            {"layout": "cover", "title": title, "bullets": [sentence], "speaker_notes": sentence, "source_ids": ids},
+            {"layout": "content", "title": title, "bullets": [sentence, sentence, sentence], "speaker_notes": sentence, "source_ids": ids},
+            {"layout": "chart", "title": title, "bullets": [sentence], "speaker_notes": sentence, "source_ids": ids,
+             "chart": {"kind": "bar", "categories": ["A", "B"], "series": [{"label": title, "values": [12, 8]}], "unit": title}},
+        ])
+    elif skill_id == "spreadsheet":
+        quantity, price, cost, ratio = {
+            "en": ["Quantity", "Unit price (BDT)", "Cost (BDT)", "Price / quantity"],
+            "bn": ["পরিমাণ", "একক মূল্য (BDT)", "মোট মূল্য (BDT)", "মূল্য / পরিমাণ"],
+            "ar": ["الكمية", "سعر الوحدة (BDT)", "التكلفة (BDT)", "السعر / الكمية"],
+        }[language]
+        value.update(title=title, summary=sentence, sheet_name=title[:31], source_ids=ids,
+            columns=[{"id": "item", "label": title, "format": "text"},
+                     {"id": "quantity", "label": quantity, "format": "integer", "aggregate": "sum"},
+                     {"id": "price", "label": price, "format": "number"}],
+            rows=[["A", 3, 12.5], ["B", 2, 8], ["C", 0, 15]],
+            calculations=[{"id": "cost", "label": cost, "format": "number", "aggregate": "sum", "operation": "product", "inputs": ["quantity", "price"]},
+                          {"id": "ratio", "label": ratio, "format": "number", "operation": "ratio", "inputs": ["price", "quantity"]}],
+            summary_label=title, chart={"kind": "bar", "title": title, "category": "item", "series": ["cost"]})
+    elif skill_id == "email":
         value.update(email={"subject": title, "body": sentence}, source_ids=ids)
     elif skill_id in {"document", "career"}:
         value.update(document={"title": title, "summary": "", "sections": [

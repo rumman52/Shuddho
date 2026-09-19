@@ -54,8 +54,11 @@ def extract_text(data: bytes, kind: str, max_chars=20000) -> str:
             if sum(len(value) for value in pages) > max_chars:
                 raise CoworkerError("source_too_large", "Choose a shorter document for this workflow.", 413)
         text = "\n".join(pages)
+    elif kind in {"csv", "xlsx", "pptx"}:
+        from .office_sources import extract_office_text
+        text = extract_office_text(data, kind)
     else:
-        raise CoworkerError("unsupported_file", "Supported files: TXT, DOCX, and text-based PDF.", 415)
+        raise CoworkerError("unsupported_file", "Supported files: TXT, DOCX, text-based PDF, CSV, XLSX, and PPTX.", 415)
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         raise CoworkerError("empty_document", "No readable text was found. Add notes or use a text-based document.", 415)

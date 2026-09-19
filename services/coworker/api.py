@@ -48,7 +48,9 @@ def preferences(payload: PreferencesRequest, identity: Identity, services: Servi
 
 @router.get("/skills")
 def skills(identity: Identity, services: Services):
-    return {"skills": available_skills(services.settings.work_services_enabled)}
+    artifacts = services.settings.artifact_services_enabled
+    return {"skills": available_skills(services.settings.work_services_enabled, artifacts),
+            "upload_formats": ["txt", "docx", "pdf"] + (["csv", "xlsx", "pptx"] if artifacts else [])}
 
 
 @router.get("/documents")
@@ -82,7 +84,7 @@ async def upload_content(document_id: UUID, request: Request, identity: Identity
         raise CoworkerError("upload_timeout", "The file upload timed out. Please try again.", 408) from None
     if len(body) != item["byte_size"] or hashlib.sha256(body).hexdigest() != item["sha256"]:
         raise CoworkerError("upload_mismatch", "The file upload was incomplete or changed. Select the file again.", 409)
-    if item["kind"] == "pdf" and not body.startswith(b"%PDF-") or item["kind"] == "docx" and not body.startswith(b"PK\x03\x04"):
+    if item["kind"] == "pdf" and not body.startswith(b"%PDF-") or item["kind"] in {"docx", "pptx", "xlsx"} and not body.startswith(b"PK\x03\x04"):
         raise CoworkerError("file_type_mismatch", "The file content does not match its extension.", 415)
     await run_in_threadpool(services.storage.put, item["object_key"], bytes(body), "application/octet-stream")
     return await run_in_threadpool(services.repository.finish_upload, identity.account_id, str(document_id))

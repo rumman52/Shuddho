@@ -15,12 +15,17 @@ def main():
     from .exports import render_artifacts
     from .schemas import parse_draft
     from .work_exports import render_work_artifacts
+    from .skills import ARTIFACT_SKILLS
     folder = Path(sys.argv[1])
     value = json.loads((folder / "input.json").read_text(encoding="utf-8"))
     skill_id = value.get("skill_id", "report_email")
     draft = parse_draft(skill_id, value["draft"])
-    outputs = (render_artifacts(draft, value["sources"]) if skill_id == "report_email"
-               else render_work_artifacts(skill_id, draft, value["sources"]))
+    if skill_id in ARTIFACT_SKILLS:
+        from .office_exports import render_office_artifacts
+        outputs = render_office_artifacts(skill_id, draft, value["sources"])
+    else:
+        outputs = (render_artifacts(draft, value["sources"]) if skill_id == "report_email"
+                   else render_work_artifacts(skill_id, draft, value["sources"]))
     manifest = []
     for filename, content_type, body in outputs:
         (folder / filename).write_bytes(body)

@@ -106,8 +106,10 @@ class DocumentRunner:
             raise
         await asyncio.to_thread(self.repo.settle_model, task["id"], attempt, result.total_tokens, result.latency_ms, "completed")
         manifest = [{key: value for key, value in source.items() if key != "text"} for source in sources]
+        from .calculations import table_values
+        preview = table_values(validated) if skill.id == "spreadsheet" else None
         await asyncio.to_thread(self.repo.save_step, task["id"], "draft", {
-            "draft": validated.model_dump(), "sources": manifest,
+            "draft": validated.model_dump(), "sources": manifest, "preview": preview,
         })
 
     async def export(self, task):

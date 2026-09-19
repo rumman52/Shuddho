@@ -74,10 +74,13 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
           fonts-noto-core fonts-noto-cjk fonts-dejavu-core
+          libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
       - name: Test accounts, real exports, PostgreSQL races, and Temporal recovery
-        run: uv run --extra coworker pytest tests/test_coworker.py tests/test_coworker_services.py tests/test_coworker_postgres.py tests/test_coworker_temporal.py -q
+        run: uv run --extra coworker pytest tests/test_coworker.py tests/test_coworker_services.py tests/test_coworker_office.py tests/test_coworker_postgres.py tests/test_coworker_temporal.py -q
+      - name: Render native Office files and verify recalculation after edits
+        run: PYTHONPATH=.:tests uv run --extra coworker python tests/verify_office_native.py /tmp/shuddho-coworker-browser/screenshots/native
       - uses: actions/setup-node@v4
         with: { node-version: "20", cache: npm }
       - run: npm ci

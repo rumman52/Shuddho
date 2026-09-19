@@ -16,7 +16,7 @@ from docx.shared import Inches, Pt, RGBColor
 from pypdf import PdfReader
 
 from .schemas import AnyDraft, DraftPackage
-from .skills import SKILLS, SkillId
+from .skills import SkillId, artifact_filenames
 from .errors import CoworkerError
 
 RTL_LANGUAGES = {"ar", "fa", "he", "ur", "ps", "dv"}
@@ -36,9 +36,7 @@ def render_in_subprocess(draft: AnyDraft, sources: list[dict], *, skill_id: Skil
             if result.returncode or not manifest_path.is_file() or manifest_path.stat().st_size > 2000:
                 raise ValueError()
             manifest = json.loads(manifest_path.read_text())
-            stem = SKILLS[skill_id].filename
-            expected = ({"report.docx", "report.pdf", "email-draft.txt", "source-manifest.json"} if skill_id == "report_email"
-                        else {stem + ".docx", stem + ".pdf", stem + ".txt", "source-manifest.json"})
+            expected = artifact_filenames(skill_id)
             if {row[0] for row in manifest} != expected or len(manifest) != 4:
                 raise ValueError()
             outputs = []
@@ -55,7 +53,8 @@ def render_in_subprocess(draft: AnyDraft, sources: list[dict], *, skill_id: Skil
 def font_for(language):
     root = language.split("-")[0].lower()
     return {"bn": "Noto Sans Bengali", "hi": "Noto Sans Devanagari", "ar": "Noto Sans Arabic",
-            "fa": "Noto Sans Arabic", "ur": "Noto Sans Arabic", "he": "Noto Sans Hebrew"}.get(root, "Noto Sans")
+            "fa": "Noto Sans Arabic", "ur": "Noto Sans Arabic", "he": "Noto Sans Hebrew",
+            "zh": "Noto Sans CJK SC", "ja": "Noto Sans CJK JP", "ko": "Noto Sans CJK KR"}.get(root, "Noto Sans")
 
 
 def render_artifacts(draft: DraftPackage, sources: list[dict]) -> list[tuple[str, str, bytes]]:

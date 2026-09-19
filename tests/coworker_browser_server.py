@@ -36,7 +36,8 @@ folder = Path(os.environ["SHUDDHO_TEST_WORKDIR"])
 folder.mkdir(parents=True, exist_ok=True)
 issuer = "https://identity.example.test/auth/v1"
 settings = Settings(database_url=f"sqlite:///{folder / 'browser.sqlite3'}", auth_issuer=issuer,
-                    environment="development", storage_backend="local", local_storage_path=folder / "files", work_services_enabled=True)
+                    environment="development", storage_backend="local", local_storage_path=folder / "files", work_services_enabled=True,
+                    artifact_services_enabled=True)
 upgrade(settings.database_url)
 container = Container.create(settings)
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

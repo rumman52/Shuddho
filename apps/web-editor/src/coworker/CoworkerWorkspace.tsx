@@ -34,7 +34,7 @@ export function TaskResult({ task, client, revise }: { task: CoworkerTask; clien
     </ol>}
     {draft && <>
       {draft.missing_information.length > 0 && <aside className="cw-missing"><strong>A few details need your input</strong><ul>{draft.missing_information.map((item, index) => <li key={index} dir="auto">{item}</li>)}</ul><button type="button" className="cw-secondary" onClick={revise}>Add details & revise</button></aside>}
-      <DraftPreview draft={draft} sources={task.sources} />
+      <DraftPreview draft={draft} sources={task.sources} preview={task.preview} />
       <p className="cw-fineprint">Review the facts and wording before using these drafts. Source references point to your provided material.</p>
     </>}
     {task.artifacts.length > 0 && <div className="cw-downloads" aria-label="Downloads">{task.artifacts.map(artifact => <button type="button" className="cw-secondary" key={artifact.id} disabled={Boolean(downloading)} onClick={async () => {
@@ -50,6 +50,7 @@ export function TaskResult({ task, client, revise }: { task: CoworkerTask; clien
 export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [skills, setSkills] = useState<WorkSkill[]>([originalService]);
+  const [uploadFormats, setUploadFormats] = useState(["txt", "docx", "pdf"]);
   const [skillId, setSkillId] = useState<SkillId>("report_email");
   const [history, setHistory] = useState<CoworkerTask[]>([]);
   const [documents, setDocuments] = useState<SourceDocument[]>([]);
@@ -81,12 +82,13 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     const catalog = client.skills(controller.signal).catch(error => {
       // A Part 2 API supports only the original service. Other failures must
       // surface, especially authentication errors, rather than enabling tools.
-      if (error instanceof WorkspaceError && error.status === 404) return { skills: [originalService] };
+      if (error instanceof WorkspaceError && error.status === 404) return { skills: [originalService], upload_formats: ["txt", "docx", "pdf"] };
       throw error;
     });
     Promise.all([client.me(controller.signal), client.list(controller.signal), client.documents(controller.signal), catalog]).then(([profile, tasks, files, catalog]) => {
       if (controller.signal.aborted) return;
       setWorkspace(profile); setHistory(tasks.tasks); setDocuments(files.documents); setSkills(catalog.skills);
+      setUploadFormats((catalog.upload_formats ?? ["txt", "docx", "pdf"]).filter(format => ["txt", "docx", "pdf", "csv", "xlsx", "pptx"].includes(format)));
       setSelected(current => {
         if (current && tasks.tasks.some(item => item.id === current)) return current;
         let saved = "";
@@ -158,7 +160,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
         }}>{skills.map(skill => <option value={skill.id} key={skill.id}>{skill.name}</option>)}{!activeSkill && <option value={skillId} disabled>Service currently unavailable</option>}</select><span id="cw-service-description" className="cw-service-description">{activeSkill?.description ?? "Choose an available service to create a new task. Your saved draft remains available."}</span></div>}
         <label>What would you like to create?<textarea dir="auto" rows={3} value={instruction} minLength={3} maxLength={2000} required onChange={event => setInstruction(event.target.value)} /></label>
         <label>Your notes{skillId !== "report_email" && " (optional)"}<textarea ref={notesInput} dir="auto" rows={8} maxLength={20000} value={notes} required={skillId === "report_email" && !selectedDocs.length} onChange={event => setNotes(event.target.value)} placeholder="Paste notes, useful facts, or details you would like your coworker to use…" /><span className="cw-field-meta">{notes.length.toLocaleString()} / 20,000 characters</span></label>
-        <label className="cw-upload">Add source files<input type="file" multiple accept=".txt,.docx,.pdf" disabled={Boolean(busy) || selectedDocs.length >= 5 || !workspace} onChange={async event => {
+        <label className="cw-upload">Add source files<input type="file" multiple accept={uploadFormats.map(format => "." + format).join(",")} disabled={Boolean(busy) || selectedDocs.length >= 5 || !workspace} onChange={async event => {
           const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = "";
           if (files.length + selectedDocs.length > 5) { setError("Use up to five source files per task."); return; }
           setBusy("upload"); setError("");
@@ -170,7 +172,8 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
             }
           } catch (error) { setError(message(error)); }
           finally { setBusy(""); }
-        }} /><small>{busy === "upload" ? "Uploading your sources…" : "TXT, DOCX, or text-based PDF · Up to 8 MB each"}</small></label>
+        }} /><small>{busy === "upload" ? "Uploading your sources…" : `${uploadFormats.map(format => format === "pdf" ? "text-based PDF" : format.toUpperCase()).join(", ")} · Up to 8 MB each`}</small></label>
+        {uploadFormats.includes("xlsx") && <p className="cw-fineprint">Spreadsheets: saved values, up to 4 sheets, 200 rows and 20 columns. Presentations: text, notes and saved chart data, up to 20 slides. Images and scans need pasted text.</p>}
         {selectedDocs.length > 0 && <ul className="cw-file-chips" aria-label="Selected sources">{selectedDocs.map(id => <li key={id}><span>{documents.find(doc => doc.id === id)?.filename ?? "Saved source"}</span><button type="button" aria-label={`Remove ${documents.find(doc => doc.id === id)?.filename ?? "saved source"} from this task`} disabled={Boolean(busy)} onClick={() => setSelectedDocs(previous => previous.filter(item => item !== id))}>×</button></li>)}</ul>}
         {documents.length > 0 && <details className="cw-saved-files"><summary>Use a previous upload</summary><div>{documents.map(doc => <div className="cw-saved-file" key={doc.id}><label><input type="checkbox" checked={selectedDocs.includes(doc.id)} disabled={Boolean(busy) || !selectedDocs.includes(doc.id) && selectedDocs.length >= 5} onChange={event => setSelectedDocs(previous => event.target.checked ? [...previous, doc.id] : previous.filter(id => id !== doc.id))} /><span>{doc.filename}</span></label><button type="button" className="cw-text-button" disabled={Boolean(busy)} aria-label={`Delete upload ${doc.filename}`} onClick={async () => {
           if (!window.confirm(`Delete the uploaded file “${doc.filename}”? Existing drafts will remain.`)) return;

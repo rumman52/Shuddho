@@ -1,6 +1,6 @@
 # Part 3, wave A: everyday and professional work services
 
-This implementation continues from merged Parts 1 and 2 in the same repository. It adds the first Part 3 service wave. The remaining presentation, spreadsheet, research, external-action and operations waves are still pending. This is code for a staged release, not evidence of a production rollout or universal language quality.
+This implementation continues from merged Parts 1 and 2 in the same repository. Wave A was merged in PR #103. [Wave B](PART_3_PRESENTATIONS_SPREADSHEETS.md) adds presentations, spreadsheets and broader file snapshots. Research, external-action and operations waves remain pending. This is code for a staged release, not evidence of a production rollout or universal language quality.
 
 ## Available work
 
