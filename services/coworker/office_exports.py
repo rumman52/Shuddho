@@ -5,6 +5,8 @@ import csv
 import html
 import io
 import json
+import math
+import unicodedata
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -13,6 +15,15 @@ from .exports import RTL_LANGUAGES, font_for
 
 INK, ACCENT, MUTED = "172C36", "4D46B8", "586C77"
 FORMATS = {"text": "@", "number": "#,##0.00;-#,##0.00;0.00", "integer": "#,##0;-#,##0;0", "percent": "0.0%;-0.0%;0.0%"}
+
+
+def text_height(text, width, font_size):
+    """Conservative row height in points, including wide scripts and line breaks."""
+    lines = 0
+    for line in text.split("\n"):
+        units = sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in line)
+        lines += max(1, math.ceil(units * font_size * .62 / (width * 5.25)))
+    return max(font_size * 1.5, lines * font_size * 1.45 + 8)
 
 
 def type_empty_formula_results(body):
@@ -199,21 +210,25 @@ def spreadsheet_files(draft):
                "font_color": "#215C9E" if i < len(draft.columns) else "#" + INK}) for i, c in enumerate(columns)]
     totals = [book.add_format(base | {"num_format": FORMATS[c.format], "bold": True, "top": 2, "font_color": "#" + INK}) for c in columns]
     end = max(1, len(columns) - 1)
+    widths = [28 if column.format == "text" else max(22, max(len(display(row[i], column.format)) for row in table["rows"]) * 1.2 + 2)
+              for i, column in enumerate(columns)]
+    merged_width = sum(widths) + (28 if len(columns) == 1 else 0)
+    if len(columns) == 1:
+        sheet.set_column(1, 1, 28)
     sheet.merge_range(0, 0, 0, end, draft.title, title)
-    sheet.set_row(0, 56)
+    sheet.set_row(0, max(56, text_height(draft.title, merged_width, 20)))
     sheet.merge_range(1, 0, 3, end, draft.summary, summary)
-    sheet.set_row(1, 32)
-    sheet.set_row(2, 32)
-    sheet.set_row(3, 32)
+    for row in (1, 2, 3):
+        sheet.set_row(row, max(24, text_height(draft.summary, merged_width, 11) / 3))
     header_row, first = 4, 5  # Excel header row 5; data starts on row 6.
-    sheet.set_row(header_row, 48)
+    sheet.set_row(header_row, max(48, *(text_height(column.label, widths[i], 11) for i, column in enumerate(columns))))
     for index, column in enumerate(columns):
         sheet.write_string(header_row, index, column.label, header)
-        sheet.set_column(index, index, 28 if column.format == "text" else 22)
+        sheet.set_column(index, index, widths[index])
     for offset, row in enumerate(table["rows"]):
         number = first + offset
         addresses = {column.id: xl_rowcol_to_cell(number, i) for i, column in enumerate(columns)}
-        sheet.set_row(number, 84 if any(isinstance(value, str) and len(value) > 70 for value in row) else 44)
+        sheet.set_row(number, max(44, *(text_height(value, widths[i], 11) if isinstance(value, str) else 0 for i, value in enumerate(row))))
         for index, (column, value) in enumerate(zip(columns, row)):
             if index >= len(draft.columns):
                 sheet.write_formula(number, index, row_formula(column, addresses), formats[index], "" if value is None else value)
@@ -227,6 +242,7 @@ def spreadsheet_files(draft):
     total_row = last + 2
     if draft.summary_label:
         sheet.merge_range(total_row, 0, total_row, end, draft.summary_label, summary)
+        sheet.set_row(total_row, text_height(draft.summary_label, merged_width, 11))
         for index, column in enumerate(columns):
             if column.aggregate != "none":
                 cached = table["totals"][index]
@@ -249,12 +265,15 @@ def spreadsheet_files(draft):
                               "categories": [draft.sheet_name, first, indexes[draft.chart.category], last, indexes[draft.chart.category]],
                               "values": [draft.sheet_name, first, index, last, index]})
         chart.set_title({"name": draft.chart.title, "name_font": {"name": font_for(draft.output_language), "size": 16}})
-        chart.set_legend({"position": "bottom"})
+        chart_font = {"name": font_for(draft.output_language), "size": 11}
+        chart.set_legend({"position": "bottom", "font": chart_font})
+        chart.set_x_axis({"num_font": chart_font})
+        chart.set_y_axis({"num_font": chart_font})
         chart.show_blanks_as("gap")
         chart.set_style(10)
         sheet.insert_chart(total_row + 3, 0, chart, {"x_scale": 1.35, "y_scale": 1.15})
         chart_end += 21
-    sheet.print_area(0, 0, chart_end, len(columns) - 1)
+    sheet.print_area(0, 0, chart_end, end)
     book.close()
     body = type_empty_formula_results(output.getvalue())
     check = load_workbook(io.BytesIO(body), read_only=True, data_only=False)

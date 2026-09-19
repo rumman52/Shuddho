@@ -132,6 +132,7 @@ def test_text_injection_stays_text_in_native_file_and_csv():
     value["rows"][0][0] = '=HYPERLINK("https://example.test", "click")'
     value["rows"][1][0] = "  @SUM(1,2)"
     value["columns"][0]["label"] = "+danger"
+    value["chart"] = None
     files = {n: b for n, _, b in render_in_subprocess(parse_draft("spreadsheet", value), [], skill_id="spreadsheet")}
     sheet = load_workbook(io.BytesIO(files["spreadsheet.xlsx"])).active
     assert sheet["A6"].data_type == "s" and sheet["A6"].hyperlink is None

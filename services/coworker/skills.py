@@ -46,7 +46,7 @@ SKILLS = {
                   "Select calculations only from sum, difference, product, ratio with existing numeric column IDs. "
                   "Calculated columns may refer only to earlier numeric columns. Never output Excel formula strings or URLs as formulas. "
                   "Percent format uses fractional values (0.25 means 25%). Do not sum rates or unrelated units. "
-                  "Include a chart only when every selected category and series value is known; otherwise use chart=null. "
+                  "Include a chart only for at most 8 rows, short category labels, and known category/series values; otherwise use chart=null. "
                   "Use aggregate=sum or average only when appropriate, otherwise none. Do not claim analysis unsupported by the source. "
                   "If the requested table exceeds the limits, list that in missing_information and ask for a smaller selection.",
                   "Editable XLSX, CSV values, PDF table", "spreadsheet"),

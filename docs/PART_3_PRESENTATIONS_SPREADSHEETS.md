@@ -7,7 +7,7 @@ This wave extends the existing repository after merged PR #103. It adds editable
 | Service | Output | Current limits |
 | --- | --- | --- |
 | Presentations (`presentation`) | Native editable PPTX text and bar/line charts; speaker notes; PDF reading handout; TXT content/notes | 1–8 slides; cover, content, or chart layouts; up to three short points per content slide; source-grounded numeric charts |
-| Spreadsheets (`spreadsheet`) | Native XLSX input cells, formulas, summary calculations and optional chart; CSV data values; PDF table | One worksheet; 1–40 rows; up to 8 input columns, 3 calculated columns, and 10 total columns |
+| Spreadsheets (`spreadsheet`) | Native XLSX input cells, formulas, summary calculations and optional chart; CSV data values; PDF table | One worksheet; 1–40 rows; up to 8 input columns, 3 calculated columns, and 10 total columns; charts for up to 8 rows with short labels |
 
 Each also produces `source-manifest.json`, without source text. It identifies sources and missing information. Source labels appear beside the preview, not as internal IDs inside the user's presentation or table. Files require owner-authorized downloads.
 
@@ -92,7 +92,7 @@ npm run build
 PYTHONPATH=.:tests .venv/bin/python tests/verify_office_native.py /tmp/shuddho-office-qa
 ```
 
-Native QA renders English, Bangla and Arabic workbooks/decks plus a dense Chinese deck. It edits spreadsheet inputs, recalculates them in LibreOffice, checks known totals, missing/zero/negative cases, and confirms formulas and live chart references survive. Rendered pages and browser screenshots are CI artifacts for visual review. Fixtures are deterministic test data, not production fallback responses or a multilingual quality benchmark.
+Native QA renders English, Bangla and Arabic workbooks/decks plus a dense Chinese deck and a long-cell Chinese workbook. It edits spreadsheet inputs, recalculates them in LibreOffice, checks known totals, missing/zero/negative cases, and confirms formulas and live chart references survive. Rendered pages and browser screenshots are CI artifacts for visual review. Fixtures are deterministic test data, not production fallback responses or a multilingual quality benchmark.
 
 Reference choices: [python-pptx speaker notes](https://python-pptx.readthedocs.io/en/latest/user/notes.html), [XlsxWriter formula caches and recalculation](https://xlsxwriter.readthedocs.io/working_with_formulas.html), [openpyxl loading options](https://openpyxl.readthedocs.io/en/stable/tutorial.html). The bounded contracts and rollout policy are Shuddho design decisions.
 

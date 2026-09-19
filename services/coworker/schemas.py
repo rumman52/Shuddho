@@ -220,6 +220,8 @@ class SlideChart(StrictModel):
 
     @model_validator(mode="after")
     def dimensions(self):
+        if any(any(char in value for char in "\n\r\t") for value in [self.unit, *self.categories, *[series.label for series in self.series]]):
+            raise ValueError("Chart labels use one paragraph each")
         if any(len(series.values) != len(self.categories) for series in self.series):
             raise ValueError("Every chart series must match the categories")
         return self
@@ -235,6 +237,8 @@ class PresentationSlide(StrictModel):
 
     @model_validator(mode="after")
     def layout_content(self):
+        if any(any(char in value for char in "\n\r\t") for value in [self.title, *self.bullets]):
+            raise ValueError("Slide headings and bullets use one paragraph each; put extra lines in speaker notes")
         if (self.layout == "chart") != (self.chart is not None):
             raise ValueError("Only chart slides contain chart data")
         if self.layout in {"cover", "chart"} and len(self.bullets) > 1:
@@ -290,6 +294,8 @@ class SpreadsheetPackage(DraftContent):
         if re.search(r"[\[\]:*?/\\]", self.sheet_name) or self.sheet_name.startswith("'") or self.sheet_name.endswith("'") or self.sheet_name.lower() == "history":
             raise ValueError("Unsupported worksheet name")
         columns = self.columns + self.calculations
+        if self.title.count("\n") > 1 or self.summary.count("\n") > 12 or self.summary_label.count("\n") > 1 or any(column.label.count("\n") > 1 for column in columns):
+            raise ValueError("Keep worksheet titles, labels, and summaries concise")
         ids = [column.id for column in columns]
         if len(ids) != len(set(ids)) or len(columns) > 10:
             raise ValueError("Use unique column IDs and at most ten total columns")
@@ -301,6 +307,8 @@ class SpreadsheetPackage(DraftContent):
             if len(row) != len(self.columns):
                 raise ValueError("Row width must match the input columns")
             for value, column in zip(row, self.columns):
+                if isinstance(value, str) and value.count("\n") > 4:
+                    raise ValueError("Use at most five text lines per cell")
                 if value is not None and ((column.format == "text") != isinstance(value, str)):
                     raise ValueError("Use typed numbers and text in the matching columns")
                 if value is not None and column.format == "integer" and int(value) != value:
@@ -317,6 +325,11 @@ class SpreadsheetPackage(DraftContent):
         from .calculations import table_values
         preview = table_values(self)  # Reject excessive calculated values before saving a draft.
         if self.chart:
+            if len(self.rows) > 8:
+                raise ValueError("Charts support up to eight rows; omit the chart for a larger table")
+            category = ids.index(self.chart.category)
+            if any(isinstance(row[category], str) and (len(row[category]) > 35 or any(c in row[category] for c in "\n\r\t")) for row in preview["rows"]):
+                raise ValueError("Chart categories require short single-paragraph labels")
             indexes = [ids.index(key) for key in [self.chart.category, *self.chart.series]]
             if any(row[index] is None for row in preview["rows"] for index in indexes):
                 raise ValueError("Charts require known category and series values; omit the chart when data are missing")

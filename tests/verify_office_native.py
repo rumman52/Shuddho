@@ -58,6 +58,12 @@ def main(folder):
     path = originals / "presentation-zh-dense.pptx"
     path.write_bytes(next(body for name, _, body in render_in_subprocess(draft, [], skill_id="presentation") if name.endswith(".pptx")))
     expected_slides[path.stem] = len(draft.slides)
+    value = work_draft("spreadsheet").model_dump()
+    value.update(output_language="zh", title="跨语言项目报告" * 15, summary="根据提供的资料核对数据并记录后续计划。" * 25,
+                 columns=[{"id": "text", "label": "项目说明与后续工作" * 5, "format": "text"}],
+                 rows=[["团队已经完成审查并记录结果请根据资料安排后续工作" * 6]], calculations=[], chart=None, summary_label="")
+    draft = parse_draft("spreadsheet", value)
+    (originals / "spreadsheet-zh-long.xlsx").write_bytes(next(body for name, _, body in render_in_subprocess(draft, [], skill_id="spreadsheet") if name.endswith(".xlsx")))
     pdfs = convert(sorted(originals.glob("*.pptx")) + sorted(originals.glob("*.xlsx")), "pdf", rendered)
     for pdf in pdfs:
         reader = PdfReader(pdf)
@@ -93,7 +99,7 @@ def main(folder):
         outcomes[path.stem] = {"cost": expected_cost, "total": expected_total, "recalculated": True}
     (folder / "native-results.json").write_text(json.dumps({"rendered": [path.name for path in pdfs], "formula_edits": outcomes}, indent=2))
     shutil.rmtree(profile, ignore_errors=True)
-    print("Native Office QA passed: 4 PPTX decks and 3 XLSX workbooks rendered; changed, zero, missing, and negative inputs recalculated; formula cells and live chart references preserved.")
+    print("Native Office QA passed: 4 PPTX decks and 4 XLSX workbooks rendered; changed, zero, missing, and negative inputs recalculated; formula cells and live chart references preserved.")
 
 
 if __name__ == "__main__":
