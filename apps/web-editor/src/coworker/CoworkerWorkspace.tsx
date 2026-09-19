@@ -149,13 +149,13 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     <div className="cw-layout"><section className="cw-compose" aria-label="Create a coworker task">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>Give your coworker a brief</h2><p>Bring the facts. Describe the outcome.</p></div></div>
       <form onSubmit={submit}>
-        {(skills.length > 1 || !activeSkill) && <label>Work service<select value={skillId} disabled={Boolean(busy)} onChange={event => {
+        {(skills.length > 1 || !activeSkill) && <div className="cw-service-field"><label htmlFor="cw-work-service">Work service</label><select id="cw-work-service" aria-describedby="cw-service-description" value={skillId} disabled={Boolean(busy)} onChange={event => {
           const next = skills.find(skill => skill.id === event.target.value);
           if (!next) return;
           // Preserve a customized brief; replace only an untouched preset.
           if (instruction === activeSkill?.instruction || !instruction.trim()) setInstruction(next.instruction);
           setSkillId(next.id); submission.current = undefined;
-        }}>{skills.map(skill => <option value={skill.id} key={skill.id}>{skill.name}</option>)}{!activeSkill && <option value={skillId} disabled>Service currently unavailable</option>}</select><span className="cw-service-description">{activeSkill?.description ?? "Choose an available service to create a new task. Your saved draft remains available."}</span></label>}
+        }}>{skills.map(skill => <option value={skill.id} key={skill.id}>{skill.name}</option>)}{!activeSkill && <option value={skillId} disabled>Service currently unavailable</option>}</select><span id="cw-service-description" className="cw-service-description">{activeSkill?.description ?? "Choose an available service to create a new task. Your saved draft remains available."}</span></div>}
         <label>What would you like to create?<textarea dir="auto" rows={3} value={instruction} minLength={3} maxLength={2000} required onChange={event => setInstruction(event.target.value)} /></label>
         <label>Your notes{skillId !== "report_email" && " (optional)"}<textarea ref={notesInput} dir="auto" rows={8} maxLength={20000} value={notes} required={skillId === "report_email" && !selectedDocs.length} onChange={event => setNotes(event.target.value)} placeholder="Paste notes, useful facts, or details you would like your coworker to use…" /><span className="cw-field-meta">{notes.length.toLocaleString()} / 20,000 characters</span></label>
         <label className="cw-upload">Add source files<input type="file" multiple accept=".txt,.docx,.pdf" disabled={Boolean(busy) || selectedDocs.length >= 5 || !workspace} onChange={async event => {

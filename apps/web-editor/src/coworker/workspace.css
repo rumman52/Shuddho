@@ -32,7 +32,7 @@
 .cw-auth-links { display: grid; gap: 9px; margin-top: 22px; }
 .cw-auth-links button { color: #705b92; background: none; font-size: 12px; cursor: pointer; padding: 4px 0; text-align: left; }
 .cw-auth form, .cw-compose form { display: grid; gap: 19px; }
-.cw-auth label, .cw-compose form > label { display: grid; gap: 8px; font-size: 12px; font-weight: 600; color: #4d415d; }
+.cw-auth label, .cw-compose form > label, .cw-service-field { display: grid; gap: 8px; font-size: 12px; font-weight: 600; color: #4d415d; }
 .cw-auth input, .cw-compose textarea, .cw-compose select, .cw-compose input:not([type="file"]):not([type="checkbox"]) { border: 1px solid #ded8e8; border-radius: 8px; width: 100%; padding: 11px 12px; background: #fdfcfe; color: #332c40; font-size: 13px; line-height: 1.6; font-weight: 400; }
 .cw-compose textarea { resize: vertical; min-height: 80px; }
 .cw-auth label small, .cw-upload small, .cw-field-meta { font-size: 10px; font-weight: 400; color: #8a8095; line-height: 1.6; }
