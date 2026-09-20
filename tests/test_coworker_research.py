@@ -199,6 +199,11 @@ def test_research_resumes_with_owned_native_citations_and_discards_raw_pages(con
         if artifact["filename"].endswith(".docx"):
             word = Document(io.BytesIO(body))
             assert "https://example.org/project-update" in [rel.target_ref for rel in word.part.rels.values() if rel.is_external]
+            date = value["research"]["retrieved_at"][:10]
+            date_runs = [run for paragraph in word.paragraphs for run in paragraph.runs if run.text == date]
+            assert len(date_runs) == 2
+            if language == "ar":
+                assert all(run.font.rtl is False for run in date_runs)
         elif artifact["filename"].endswith(".pdf"):
             pdf = PdfReader(io.BytesIO(body))
             urls = [item.get_object().get("/A", {}).get("/URI") for page in pdf.pages for item in page.get("/Annots", [])]
