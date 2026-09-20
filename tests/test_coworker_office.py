@@ -78,6 +78,7 @@ def test_editable_files_and_intake_roundtrip(skill, language):
         assert len(deck.slides) == 3
         assert draft.slides[1].title in [shape.text for shape in deck.slides[1].shapes if shape.has_text_frame]
         assert deck.slides[1].notes_slide.notes_text_frame.text == draft.slides[1].speaker_notes
+        assert deck.slides[1].shapes[0].text_frame.paragraphs[0]._p.get_or_add_pPr().get("rtl") == "0"
         chart = next(shape.chart for shape in deck.slides[2].shapes if shape.has_chart)
         assert list(chart.series[0].values) == [12, 8]
         for slide in deck.slides:
@@ -91,6 +92,9 @@ def test_editable_files_and_intake_roundtrip(skill, language):
         assert sheet["D6"].data_type == "f" and "B6*C6" in sheet["D6"].value
         assert sheet["A6"].value == "A" and sheet["B6"].value == 3
         assert sheet.freeze_panes == "A6" and len(sheet._charts) == 1
+        assert "A2:E2" in {str(merge) for merge in sheet.merged_cells}
+        assert not sheet.sheet_properties.pageSetUpPr.fitToPage and sheet.row_breaks.brk[0].id == 12
+        assert sheet["A6"].alignment.horizontal == ("right" if language == "ar" else "left")
         assert sheet.sheet_view.rightToLeft == (True if language == "ar" else None)
         cached = load_workbook(io.BytesIO(files["spreadsheet.xlsx"]), data_only=True).active
         assert cached["D6"].value == 37.5 and cached["D7"].value == 16 and cached["D8"].value == 0

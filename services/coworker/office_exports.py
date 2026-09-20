@@ -99,7 +99,8 @@ def presentation_files(draft):
     deck.core_properties.author = "Shuddho"
     rtl = draft.output_language.split("-")[0].lower() in RTL_LANGUAGES
 
-    def textbox(slide, text, x, y, width, height, size, *, bold=False, color=INK, bullet=False):
+    def textbox(slide, text, x, y, width, height, size, *, bold=False, color=INK, bullet=False, direction=None):
+        right_to_left = rtl if direction is None else direction
         frame = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(width), Inches(height)).text_frame
         frame.word_wrap = True
         frame.margin_left = frame.margin_right = frame.margin_top = frame.margin_bottom = 0
@@ -112,9 +113,9 @@ def presentation_files(draft):
             paragraph.font.color.rgb = RGBColor.from_string(color)
             paragraph.space_after = Pt(16 if bullet else 8)
             paragraph.line_spacing = 1.1
-            paragraph.alignment = PP_ALIGN.RIGHT if rtl else PP_ALIGN.LEFT
+            paragraph.alignment = PP_ALIGN.RIGHT if right_to_left else PP_ALIGN.LEFT
             properties = paragraph._p.get_or_add_pPr()
-            properties.set("rtl", "1" if rtl else "0")
+            properties.set("rtl", "1" if right_to_left else "0")
             if bullet:
                 properties.set("marL", str(Pt(24)))
                 properties.set("indent", str(-Pt(18)))
@@ -136,7 +137,7 @@ def presentation_files(draft):
         slide = deck.slides.add_slide(deck.slide_layouts[6])
         slide.background.fill.solid()
         slide.background.fill.fore_color.rgb = RGBColor.from_string("FFFFFF")
-        textbox(slide, f"{index + 1:02d} / {len(draft.slides):02d}", .75, .38, 2, .35, 12, color=ACCENT)
+        textbox(slide, f"{index + 1:02d} / {len(draft.slides):02d}", .75, .38, 2, .35, 12, color=ACCENT, direction=False)
         if item.layout == "cover":
             textbox(slide, item.title, .8, 1.4, 11.7, 3.0, 44, bold=True)
             textbox(slide, item.bullets, .8, 4.7, 11.7, 1.65, 24, color=MUTED)
@@ -199,7 +200,8 @@ def spreadsheet_files(draft):
     book.set_properties({"title": draft.title, "author": "Shuddho"})
     book.set_calc_mode("auto")
     sheet = book.add_worksheet(draft.sheet_name)
-    if draft.output_language.split("-")[0].lower() in RTL_LANGUAGES:
+    rtl = draft.output_language.split("-")[0].lower() in RTL_LANGUAGES
+    if rtl:
         sheet.right_to_left()
     base = {"font_name": font_for(draft.output_language), "font_size": 11, "valign": "top"}
     title = book.add_format(base | {"font_size": 20, "bold": True, "font_color": "#" + INK, "text_wrap": True})
@@ -207,19 +209,26 @@ def spreadsheet_files(draft):
     header = book.add_format(base | {"bold": True, "bg_color": "#" + INK, "font_color": "white", "text_wrap": True})
     # Inputs are blue; formulas are ink. Typed strings can never become formulas.
     formats = [book.add_format(base | {"num_format": FORMATS[c.format], "text_wrap": c.format == "text",
+               "align": "right" if rtl or c.format != "text" else "left", "indent": 1,
                "font_color": "#215C9E" if i < len(draft.columns) else "#" + INK}) for i, c in enumerate(columns)]
     totals = [book.add_format(base | {"num_format": FORMATS[c.format], "bold": True, "top": 2, "font_color": "#" + INK}) for c in columns]
     end = max(1, len(columns) - 1)
     widths = [28 if column.format == "text" else max(22, max(len(display(row[i], column.format)) for row in table["rows"]) * 1.2 + 2)
               for i, column in enumerate(columns)]
     merged_width = sum(widths) + (28 if len(columns) == 1 else 0)
+    if merged_width < 80:
+        widths[0] += 80 - merged_width
+        merged_width = 80
     if len(columns) == 1:
         sheet.set_column(1, 1, 28)
     sheet.merge_range(0, 0, 0, end, draft.title, title)
     sheet.set_row(0, max(56, text_height(draft.title, merged_width, 20)))
-    sheet.merge_range(1, 0, 3, end, draft.summary, summary)
-    for row in (1, 2, 3):
-        sheet.set_row(row, max(24, text_height(draft.summary, merged_width, 11) / 3))
+    # A single wrapped row moves together at a page boundary. Merging vertically
+    # across rows can cut a line in half when a long summary crosses a page.
+    sheet.merge_range(1, 0, 1, end, draft.summary, summary)
+    sheet.set_row(1, max(24, text_height(draft.summary, merged_width, 11)))
+    sheet.set_row(2, 12)
+    sheet.set_row(3, 12)
     header_row, first = 4, 5  # Excel header row 5; data starts on row 6.
     sheet.set_row(header_row, max(48, *(text_height(column.label, widths[i], 11) for i, column in enumerate(columns))))
     for index, column in enumerate(columns):
@@ -253,10 +262,18 @@ def spreadsheet_files(draft):
     sheet.hide_gridlines(2)
     sheet.set_landscape()
     sheet.set_paper(9)
+    sheet.set_margins(.5, .5, .5, .5)
     sheet.fit_to_pages(1, 0)
     sheet.repeat_rows(header_row)
     chart_end = total_row + 2
     if draft.chart:
+        # fit_to_pages overrides manual breaks. Set an explicit width scale so
+        # a chart starts intact on the next printed page rather than splitting.
+        print_width = sum(width * 5.25 + 4 for width in widths)
+        if print_width > 740:
+            sheet.set_paper(8)  # A3 landscape for wider tables.
+        sheet.set_print_scale(min(100, int((1100 if print_width > 740 else 740) / print_width * 100)))
+        sheet.set_h_pagebreaks([total_row + 3])
         indexes = {column.id: index for index, column in enumerate(columns)}
         chart = book.add_chart({"type": "column" if draft.chart.kind == "bar" else "line"})
         for key in draft.chart.series:
