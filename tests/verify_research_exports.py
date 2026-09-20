@@ -1,5 +1,6 @@
 """Produce multilingual native files/PDF previews for manual CI artifact review."""
 import copy
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,14 @@ def main(folder):
             (folder / f"{language}-{name}").write_bytes(body)
         subprocess.run(["pdftoppm", "-scale-to", "1400", "-png", str(folder / f"{language}-research-report.pdf"),
                         str(folder / language)], check=True, capture_output=True, timeout=30)
+        layout = subprocess.run(["pdftotext", "-layout", str(folder / f"{language}-research-report.pdf"), "-"],
+                                check=True, capture_output=True, text=True, timeout=30).stdout
+        date = evidence.sources[0]["retrieved_at"][:10]
+        assert layout.count(date) == 10, f"ISO date order changed in {language}"
+        # Every source stays on the same page as its URL and both dates.
+        for page in layout.split("\f"):
+            count = len(re.findall(r"https://example\.org/", page))
+            assert page.count(date) == count * 2, f"Source metadata split across pages in {language}"
     print("Research export previews ready: English, Bangla, Arabic, five sources, clickable links, long text.")
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import io
 import json
+import re
 from dataclasses import dataclass
 
 from docx import Document
@@ -51,7 +52,7 @@ def content_blocks(draft, sources=None):
             blocks.append(Block(f'[{index}] {source["label"]}', "reference", url))
             blocks.append(Block(url, "url", url))
             blocks.append(Block(f'{draft.labels.retrieved}: {source["retrieved_at"][:10]} · '
-                                f'{draft.labels.source_date}: {source["source_date"][:10] if source.get("source_date") else draft.labels.undated}', "meta"))
+                                f'{draft.labels.source_date}: {source["source_date"][:10] if source.get("source_date") else draft.labels.undated}', "source-meta"))
     elif isinstance(draft, DocumentPackage):
         title = draft.document.title
         if draft.document.summary:
@@ -142,8 +143,13 @@ def render_document(title: str, blocks: list[Block], language: str):
     doc.styles["Normal"].paragraph_format.line_spacing = 1.35
     doc.styles["Normal"].paragraph_format.space_after = Pt(9)
 
-    def paragraph(text, style=None):
-        value = doc.add_paragraph(text, style)
+    date_pattern = r"(\d{4}-\d{2}-\d{2})"
+
+    def paragraph(text, style=None, dates=False):
+        value = doc.add_paragraph(style=style)
+        for part in (re.split(date_pattern, text) if dates else [text]):
+            if part:
+                value.add_run(part)
         if rtl:
             bidi = OxmlElement("w:bidi")
             bidi.set(qn("w:val"), "1")
@@ -154,15 +160,19 @@ def render_document(title: str, blocks: list[Block], language: str):
             lang.set(qn("w:bidi"), language)
             run._r.get_or_add_rPr().append(lang)
             if rtl:
-                run.font.rtl = True
+                run.font.rtl = not (dates and re.fullmatch(date_pattern, run.text))
         return value
 
     paragraph(title, "Title")
     markup = [f"<h1>{html.escape(title)}</h1>"]
     for block in blocks:
         text = ("☐ " if block.kind == "check" else "") + block.text
-        value = paragraph(text, "Heading 1" if block.kind == "heading" else "List Bullet" if block.kind == "bullet" else None)
-        if block.kind == "meta":
+        value = paragraph(text, "Heading 1" if block.kind == "heading" else "List Bullet" if block.kind == "bullet" else None,
+                          dates=block.kind == "source-meta")
+        if block.kind in {"reference", "url"}:
+            value.paragraph_format.keep_with_next = True
+            value.paragraph_format.keep_together = True
+        if block.kind in {"meta", "source-meta"}:
             for run in value.runs:
                 run.font.size = Pt(9)
                 run.font.color.rgb = RGBColor.from_string("62717B")
@@ -185,6 +195,8 @@ def render_document(title: str, blocks: list[Block], language: str):
                     bidi.set(qn("w:val"), "0")
         tag = "h2" if block.kind == "heading" else "p"
         escaped = html.escape(text)
+        if block.kind == "source-meta":
+            escaped = re.sub(date_pattern, r'<span class="iso-date">\1</span>', escaped)
         if block.kind == "bullet":
             escaped = "• " + escaped
         if block.url:
@@ -202,8 +214,10 @@ def render_document(title: str, blocks: list[Block], language: str):
       h1 {{ font-size: 25pt; line-height: 1.3; margin: 0 0 7mm; color: #423570; }}
       h2 {{ font-size: 13pt; margin: 6mm 0 2mm; break-after: avoid; }}
       p {{ white-space: pre-wrap; orphans: 3; widows: 3; margin: 0 0 3mm; }}
-      .meta {{ font-size: 9pt; color: #62717b; }} .bullet, .check {{ padding-inline-start: 3mm; }}
+      .meta, .source-meta {{ font-size: 9pt; color: #62717b; }} .bullet, .check {{ padding-inline-start: 3mm; }}
       a {{ color: #423570; }} .url {{ font-size: 9pt; direction: ltr; text-align: left; word-break: break-all; }}
+      .reference, .url {{ break-after: avoid; break-inside: avoid; }}
+      .iso-date {{ direction: ltr; unicode-bidi: embed; }}
     </style></head><body>{''.join(markup)}</body></html>"""
 
     def no_external_resources(*_args, **_kwargs):
