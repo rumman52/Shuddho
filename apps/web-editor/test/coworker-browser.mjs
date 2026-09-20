@@ -107,6 +107,7 @@ try {
         await current.getByText("costs.csv", { exact: false }).first().waitFor();
       } else {
         assert.equal(await current.getByRole("article").count(), 3);
+        assert.equal(await current.locator(".cw-slide-preview .cw-eyebrow").first().getAttribute("dir"), "ltr");
         await current.getByText("Speaker notes", { exact: true }).first().click();
       }
     }

@@ -46,7 +46,7 @@ export default function DraftPreview({ draft, sources, preview }: { draft: Cowor
   if (draft.kind === "presentation") return <div className="cw-draft-tabs"><details open><summary>Presentation preview</summary>
     <p className="cw-fineprint">{draft.slides.length} slides · Editable text and charts in the PPTX. The PDF is a reading handout.</p>
     {draft.slides.map((slide, index) => <article className="cw-paper cw-slide-preview" key={index} {...language} aria-label={`Slide ${index + 1}`}>
-      <span className="cw-eyebrow">{String(index + 1).padStart(2, "0")} / {String(draft.slides.length).padStart(2, "0")}</span><h3>{slide.title}</h3>
+      <span className="cw-eyebrow" dir="ltr">{String(index + 1).padStart(2, "0")} / {String(draft.slides.length).padStart(2, "0")}</span><h3>{slide.title}</h3>
       {slide.bullets.length > 0 && <ul>{slide.bullets.map((text, i) => <li key={i}>{text}</li>)}</ul>}
       {slide.chart && <div className="cw-table-scroll" role="region" aria-label={`Slide ${index + 1} chart data`} tabIndex={0}><table><caption>{slide.chart.unit}</caption><thead><tr><th scope="col" aria-label="Category"></th>{slide.chart.series.map((series, i) => <th scope="col" key={i}>{series.label}</th>)}</tr></thead><tbody>{slide.chart.categories.map((category, i) => <tr key={i}><th scope="row">{category}</th>{slide.chart!.series.map((series, j) => <td key={j}>{series.values[i]}</td>)}</tr>)}</tbody></table></div>}
       {slide.speaker_notes && <details><summary>Speaker notes</summary><p>{slide.speaker_notes}</p></details>}{references(slide.source_ids)}
