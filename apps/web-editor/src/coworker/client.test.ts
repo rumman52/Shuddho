@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CoworkerClient, WorkspaceError, parseProgress, trustedBase } from "./client";
+import { CoworkerClient, WorkspaceError, parseProgress, sourceLink, trustedBase } from "./client";
 import { publicAuthConfig } from "./authConfig";
+
+test("research links cannot become script, local, credential-bearing, or nonstandard-port links", () => {
+  assert.equal(sourceLink("https://example.org/research?q=বাংলা"), "https://example.org/research?q=%E0%A6%AC%E0%A6%BE%E0%A6%82%E0%A6%B2%E0%A6%BE");
+  for (const value of [undefined, "javascript:alert(1)", "data:text/html,bad", "file:///etc/passwd", "http://127.0.0.1/", "http://[::1]/",
+    "http://2130706433/", "https://user:secret@example.org/", "https://example.org:8443/", "https://localhost/", "https://api.internal/", "https://example.org\\@localhost/", "https://example.org/%0aheader"]) {
+    assert.equal(sourceLink(value), undefined);
+  }
+});
 
 test("browser identity rejects secret keys and credential-bearing origins", () => {
   assert.equal(publicAuthConfig("https://identity.test", "sb_publishable_test"), true);

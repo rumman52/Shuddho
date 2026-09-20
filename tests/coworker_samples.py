@@ -13,7 +13,16 @@ def work_draft(skill_id, language="en", source_ids=None, missing=False):
         "ar": ("تحديث المشروع", "أكمل الفريق 12 مراجعة.", "الصباح"),
     }[language]
     value = {"output_language": language, "missing_information": ["Please provide the missing recipient."] if missing else []}
-    if skill_id == "presentation":
+    if skill_id == "research":
+        labels = {
+            "en": ["Sources", "Evidence", "Retrieved", "Source date (estimated)", "Unknown", "Evidence gaps"],
+            "bn": ["তথ্যসূত্র", "প্রমাণ", "সংগ্রহের তারিখ", "সূত্রের আনুমানিক তারিখ", "অজানা", "তথ্যের ঘাটতি"],
+            "ar": ["المصادر", "الأدلة", "تاريخ الاسترجاع", "تاريخ المصدر التقديري", "غير معروف", "نقص المعلومات"],
+        }[language]
+        value.update(title=title, labels=dict(zip(["sources", "evidence", "retrieved", "source_date", "undated", "gaps"], labels)),
+                     findings=[{"heading": title, "text": sentence,
+                                "citations": [{"source_id": "web-1", "quote": "The team completed 12 reviews."}]}])
+    elif skill_id == "presentation":
         value.update(title=title, slides=[
             {"layout": "cover", "title": title, "bullets": [sentence], "speaker_notes": sentence, "source_ids": ids},
             {"layout": "content", "title": title, "bullets": [sentence, sentence, sentence], "speaker_notes": sentence, "source_ids": ids},

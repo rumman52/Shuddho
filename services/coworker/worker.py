@@ -18,7 +18,7 @@ from .drafting import DraftFailure
 from .errors import CoworkerError
 from .repository import TERMINAL
 from .runner import DocumentRunner
-from .workflow import ReportEmailWorkflow, WorkServicesWorkflow
+from .workflow import ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 logger = logging.getLogger("shuddho.coworker")
 
@@ -35,15 +35,19 @@ class Activities:
     async def work_phase(self, value: dict):
         return await self.run_phase(value, legacy=False)
 
-    async def checked_phase(self, value: dict, legacy: bool):
+    @activity.defn(name="shuddho_research_phase_v1")
+    async def research_phase(self, value: dict):
+        return await self.run_phase(value, legacy=False, research=True)
+
+    async def checked_phase(self, value: dict, legacy: bool, research: bool = False):
         task = await asyncio.to_thread(self.runner.repo.worker_task, value["task_id"], False)
-        if (task["workflow_version"] == "report_email_v1") != legacy:
+        if (task["workflow_version"] == "report_email_v1") != legacy or (task["skill_id"] == "research") != research:
             raise CoworkerError("workflow_version", "The task was routed to an incompatible workflow. Please contact support.")
         await self.runner.phase(value["task_id"], value["phase"])
 
-    async def run_phase(self, value: dict, *, legacy: bool):
+    async def run_phase(self, value: dict, *, legacy: bool, research: bool = False):
         task_id = value["task_id"]
-        operation = asyncio.create_task(self.checked_phase(value, legacy))
+        operation = asyncio.create_task(self.checked_phase(value, legacy, research))
         try:
             while True:
                 activity.heartbeat()
@@ -89,7 +93,8 @@ class Dispatcher:
             if task["state"] not in TERMINAL:
                 try:
                     await self.client.start_workflow(
-                        ReportEmailWorkflow.run if task["skill_id"] == "report_email" else WorkServicesWorkflow.run,
+                        (ReportEmailWorkflow.run if task["skill_id"] == "report_email" else
+                         ResearchWorkflow.run if task["skill_id"] == "research" else WorkServicesWorkflow.run),
                         task_id, id="shuddho-task-" + task_id,
                         task_queue=self.container.settings.task_queue,
                         execution_timeout=timedelta(seconds=self.container.settings.task_timeout_seconds),
@@ -134,8 +139,8 @@ async def main():
             loop.add_signal_handler(name, stop.set)
         except NotImplementedError:
             pass
-    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow],
-                      activities=[activities.phase, activities.work_phase, activities.failed],
+    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow],
+                      activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed],
                       # Four short deterministic steps: replay is inexpensive.
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,

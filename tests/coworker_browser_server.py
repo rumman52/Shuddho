@@ -20,6 +20,7 @@ from temporalio.testing import WorkflowEnvironment
 
 from test_coworker import FakeModel, draft
 from coworker_samples import work_draft
+from research_samples import SimulatedResearch
 from test_coworker_temporal import make_worker
 from services.coworker.api import mount
 from services.coworker.auth import JwtVerifier
@@ -37,7 +38,7 @@ folder.mkdir(parents=True, exist_ok=True)
 issuer = "https://identity.example.test/auth/v1"
 settings = Settings(database_url=f"sqlite:///{folder / 'browser.sqlite3'}", auth_issuer=issuer,
                     environment="development", storage_backend="local", local_storage_path=folder / "files", work_services_enabled=True,
-                    artifact_services_enabled=True)
+                    artifact_services_enabled=True, research_services_enabled=True, search_api_key="fixture-only-search-key")
 upgrade(settings.database_url)
 container = Container.create(settings)
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -74,7 +75,7 @@ class BrowserModel(FakeModel):
 async def lifespan(_app):
     async with await WorkflowEnvironment.start_time_skipping() as env:
         stop = asyncio.Event()
-        async with make_worker(env, DocumentRunner(container, BrowserModel())):
+        async with make_worker(env, DocumentRunner(container, BrowserModel(), research=SimulatedResearch(settings))):
             dispatcher = asyncio.create_task(Dispatcher(container, env.client).run(stop))
             try:
                 yield

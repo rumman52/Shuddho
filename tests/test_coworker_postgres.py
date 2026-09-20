@@ -81,3 +81,18 @@ def test_daily_token_reservation_and_settlement_are_atomic(repository):
         list(pool.map(lambda _: repository.settle_model(task_id, 1, 100, 10, "completed"), range(4)))
     with repository.sessions() as db:
         assert db.scalar(text("SELECT allocated_tokens FROM cw_daily_usage WHERE owner_id=:owner"), {"owner": identity}) == 100
+
+
+def test_paid_search_reservation_is_atomic_under_duplicate_delivery(repository):
+    repository.settings = replace(repository.settings, research_services_enabled=True)
+    task = repository.create_task(owner(repository), TaskCreate(skill_id="research", instruction="Compare the evidence",
+                                                                research={"query": "public project update"}), str(uuid4()))[0]
+    def reserve(_index):
+        try:
+            repository.reserve_search(task["id"])
+            return "reserved"
+        except CoworkerError as error:
+            return error.code
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(reserve, range(6)))
+    assert results.count("reserved") == 1 and results.count("search_outcome_unknown") == 5

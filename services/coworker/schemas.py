@@ -28,15 +28,30 @@ class UploadRequest(StrictModel):
         return value
 
 
+class ResearchOptions(StrictModel):
+    query: str = Field(min_length=3, max_length=400)
+    time_range: Literal["any", "day", "week", "month", "year"] = "any"
+
+    @field_validator("query")
+    @classmethod
+    def plain_query(cls, value):
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("Use a single-line search query")
+        return value
+
+
 class TaskCreate(StrictModel):
     skill_id: SkillId = "report_email"
     instruction: str = Field(min_length=3, max_length=2000)
     notes: str = Field(default="", max_length=20000)
     document_ids: list[UUID] = Field(default_factory=list, max_length=5)
     output_language: str = Field(default="en", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
+    research: ResearchOptions | None = None
 
     @model_validator(mode="after")
     def input_required(self):
+        if (self.skill_id == "research") != (self.research is not None):
+            raise ValueError("Only research tasks require explicit public search options")
         if self.skill_id == "report_email" and not self.notes and not self.document_ids:
             raise ValueError("Add notes or a supported document")
         if len(set(self.document_ids)) != len(self.document_ids):
@@ -336,12 +351,46 @@ class SpreadsheetPackage(DraftContent):
         return self
 
 
-AnyDraft = DraftPackage | EmailPackage | DocumentPackage | SocialPackage | MeetingPackage | PlanPackage | PresentationPackage | SpreadsheetPackage
+class ResearchCitation(StrictModel):
+    source_id: str = Field(pattern=r"^web-[1-5]$")
+    quote: str = Field(min_length=20, max_length=200)
+
+
+class ResearchFinding(StrictModel):
+    heading: str = Field(min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=1800)
+    citations: list[ResearchCitation] = Field(min_length=1, max_length=3)
+
+
+class ResearchLabels(StrictModel):
+    sources: Label
+    evidence: Label
+    retrieved: Label
+    source_date: Label
+    undated: Label
+    gaps: Label
+
+
+class ResearchPackage(DraftContent):
+    kind: Literal["research"] = "research"
+    title: str = Field(min_length=1, max_length=180)
+    labels: ResearchLabels
+    findings: list[ResearchFinding] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def evidence_or_gap(self):
+        if not self.findings and not self.missing_information:
+            raise ValueError("Provide cited findings or explain the missing evidence")
+        return self
+
+
+AnyDraft = DraftPackage | EmailPackage | DocumentPackage | SocialPackage | MeetingPackage | PlanPackage | PresentationPackage | SpreadsheetPackage | ResearchPackage
 DRAFT_TYPES = {
     "report_email": DraftPackage, "email": EmailPackage, "document": DocumentPackage,
     "career": DocumentPackage, "social": SocialPackage, "meeting": MeetingPackage,
     "daily_plan": PlanPackage, "personal_plan": PlanPackage,
     "presentation": PresentationPackage, "spreadsheet": SpreadsheetPackage,
+    "research": ResearchPackage,
 }
 
 
@@ -353,6 +402,8 @@ def source_references(draft: AnyDraft) -> set[str]:
     def collect(value):
         if isinstance(value, dict):
             found = set(value.get("source_ids", []))
+            if "source_id" in value:
+                found.add(value["source_id"])
             for item in value.values():
                 found.update(collect(item))
             return found

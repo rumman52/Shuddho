@@ -139,7 +139,7 @@ def test_deepseek_contract_selects_requested_service_and_rejects_wrong_output(co
     model = DeepSeekDraftModel(replace(container.settings, deepseek_api_key="test-only"), httpx.MockTransport(transport), skill_id=skill_id)
     messages = model.messages({"instruction": SKILLS[skill_id].instruction, "output_language": "bn"}, [{"id": "notes", "text": "Source data"}])
     assert SKILLS[skill_id].guidance in messages[0]["content"]
-    result = asyncio.run(model.generate(messages, "bn", {"notes"}))
+    result = asyncio.run(model.generate(messages, "bn", {"web-1"} if skill_id == "research" else {"notes"}))
     assert type(result.draft) is type(output) and result.total_tokens == 123
     assert calls[0]["response_format"] == {"type": "json_object"}
     response_draft = draft("bn").model_dump()

@@ -21,7 +21,7 @@ Working plan, 13 September 2026. Continue in the existing `rumman52/Shuddho` rep
 | --- | --- | --- |
 | 1. Reliable writing foundation | Existing editor + configurable DeepSeek + correct suggestion application + clear failure states | Merged in PR #100; CI passed; live API and staging verification pending |
 | 2. Coworker foundation | Authenticated workspace, durable tasks/files, and one useful document workflow | Merged in PR #101; CI passed; feature flags remain off pending the staging gates in the Part 2 report |
-| 3. Full services and measured scale | Remaining skills, approved integrations, reliability operations, and regional expansion | Wave A merged in PR #103; wave B presentation/spreadsheet implementation added behind an independent flag; staging and later waves remain pending |
+| 3. Full services and measured scale | Remaining skills, approved integrations, reliability operations, and regional expansion | Waves A/B merged through PR #105; wave C research implemented behind its own disabled flag; staging and later waves remain pending |
 
 These are three release tracks with smaller steps, not a single rewrite or three enormous launches.
 
@@ -120,7 +120,7 @@ Wave A is implemented in [the Part 3 work-services report](PART_3_WORK_SERVICES.
 | --- | --- | --- |
 | A | Email drafts, social posts, careers/CVs, official documents, meeting agendas/minutes, daily/personal plans | Reuse the authenticated text/document workflow. Keep user facts and deadlines explicit; mark missing facts rather than inventing them. |
 | B | Presentations, spreadsheets, broader file transformations | [Implemented scope and release gates](PART_3_PRESENTATIONS_SPREADSHEETS.md): existing durable workers create editable PPTX/XLSX, charts, notes and exports. Bounded CSV/XLSX/PPTX snapshots; native rendering and recalculation checks. |
-| C | Web research, travel research, comparisons | Controlled search/fetch tool, source records, citations linked to actual retrieved pages, recency checks, and evidence-based synthesis. Web content cannot authorize tools or account changes. |
+| C | Web research, travel research, comparisons | [Implemented scope and gates](PART_3_RESEARCH.md): one explicit search, provider-retrieved page text, validated citation excerpts, source dates and cited native reports. Web content cannot authorize tools or account changes. |
 | D | Calendar events, reminders, approved email sending, document sharing, approved social publishing | OAuth connectors, server-side permissions, exact action preview, approval, execution receipt, and audit history. Provider access and publishing permissions must be verified. |
 
 Reminders and calendar events require a persisted timezone-aware schedule. A generated checklist alone does not create a reminder. Reading transcripts does not imply audio transcription; add and evaluate that capability separately.
