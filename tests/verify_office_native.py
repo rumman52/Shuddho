@@ -19,8 +19,8 @@ from services.coworker.schemas import parse_draft
 
 def main(folder):
     office = shutil.which("libreoffice") or shutil.which("soffice")
-    if not office or not shutil.which("pdftoppm"):
-        raise RuntimeError("Native QA requires LibreOffice and pdftoppm; this gate cannot be skipped")
+    if not office or not shutil.which("pdftoppm") or not shutil.which("pdftotext"):
+        raise RuntimeError("Native QA requires LibreOffice and Poppler; this gate cannot be skipped")
     folder.mkdir(parents=True, exist_ok=True)
     originals, rendered, edited, recalculated = [folder / name for name in ("originals", "rendered", "edited", "recalculated")]
     for path in (originals, rendered, edited, recalculated):
@@ -69,6 +69,16 @@ def main(folder):
         reader = PdfReader(pdf)
         assert len(reader.pages) == expected_slides.get(pdf.stem, len(reader.pages))
         assert all(page.extract_text().strip() for page in reader.pages), pdf.name
+        if pdf.stem == "presentation-ar":
+            # PDF content-stream order can differ from displayed bidi order.
+            visual_text = subprocess.run(["pdftotext", "-f", "2", "-l", "2", "-layout", str(pdf), "-"],
+                check=True, capture_output=True, text=True, timeout=10).stdout
+            assert "02 / 03" in visual_text
+        if pdf.stem == "spreadsheet-en":
+            assert len(reader.pages) == 2
+            # Chart categories and the highest tick must be on the same page.
+            chart_text = reader.pages[1].extract_text()
+            assert all(value in chart_text for value in ("A", "B", "C", "40"))
         subprocess.run(["pdftoppm", "-scale-to", "1400", "-png", str(pdf), str(rendered / pdf.stem)], check=True, capture_output=True, timeout=30)
     outcomes = {}
     cases = {"changed": (7, 87.5, 103.5), "zero": (0, 0, 16), "missing": (None, None, None), "negative": (-3, -37.5, -21.5)}

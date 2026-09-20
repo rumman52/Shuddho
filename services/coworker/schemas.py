@@ -294,7 +294,7 @@ class SpreadsheetPackage(DraftContent):
         if re.search(r"[\[\]:*?/\\]", self.sheet_name) or self.sheet_name.startswith("'") or self.sheet_name.endswith("'") or self.sheet_name.lower() == "history":
             raise ValueError("Unsupported worksheet name")
         columns = self.columns + self.calculations
-        if self.title.count("\n") > 1 or self.summary.count("\n") > 12 or self.summary_label.count("\n") > 1 or any(column.label.count("\n") > 1 for column in columns):
+        if self.title.count("\n") > 1 or self.summary.count("\n") > 4 or self.summary_label.count("\n") > 1 or any(column.label.count("\n") > 1 for column in columns):
             raise ValueError("Keep worksheet titles, labels, and summaries concise")
         ids = [column.id for column in columns]
         if len(ids) != len(set(ids)) or len(columns) > 10:
