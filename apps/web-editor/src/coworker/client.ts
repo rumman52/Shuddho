@@ -2,7 +2,9 @@ import { fetchWithTimeout } from "../lib/fetchWithTimeout";
 
 export type TaskState = "queued" | "running" | "cancelling" | "completed" | "needs_input" | "failed" | "cancelled";
 export type Artifact = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
-export type SkillId = "report_email" | "email" | "document" | "career" | "social" | "meeting" | "daily_plan" | "personal_plan" | "presentation" | "spreadsheet";
+export type SkillId = "report_email" | "email" | "document" | "career" | "social" | "meeting" | "daily_plan" | "personal_plan" | "presentation" | "spreadsheet" | "research";
+export type ResearchOptions = { query: string; time_range: "any" | "day" | "week" | "month" | "year" };
+export type ResearchSource = { id: string; label: string; sha256: string; kind?: "web"; url?: string; retrieved_at?: string; source_date?: string | null; truncated?: boolean };
 export type WorkSkill = { id: SkillId; name: string; description: string; instruction: string; output: string };
 export type DraftMetadata = { output_language: string; missing_information: string[] };
 export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
@@ -22,28 +24,43 @@ export type CoworkerDraft = DraftMetadata & (
   | { kind: "presentation"; title: string; slides: { layout: "cover" | "content" | "chart"; title: string; bullets: string[]; speaker_notes: string; source_ids: string[];
       chart: { kind: "bar" | "line"; categories: string[]; series: { label: string; values: number[] }[]; unit: string } | null }[] }
   | { kind: "spreadsheet"; title: string; summary: string; summary_label: string; sheet_name: string; source_ids: string[]; chart: { title: string } | null }
+  | { kind: "research"; title: string; labels: Record<"sources" | "evidence" | "retrieved" | "source_date" | "undated" | "gaps", string>;
+      findings: { heading: string; text: string; citations: { source_id: string; quote: string }[] }[] }
 );
 export type CoworkerTask = {
   id: string; state: TaskState; phase: string; message: string; error_code: string | null;
   instruction: string; output_language: string; created_at: string; event_sequence: number;
   skill_id?: SkillId; workflow_version?: string;
-  input: { notes: string; document_ids: string[] } | null;
+  input: { notes: string; document_ids: string[]; research?: ResearchOptions } | null;
   artifacts: Artifact[]; usage: { model_attempts: number; accounted_tokens: number };
   draft: CoworkerDraft | null;
   preview?: TablePreview | null;
-  sources: { id: string; label: string; sha256: string }[];
+  sources: ResearchSource[];
+  research?: (ResearchOptions & { retrieved_at: string; skipped_results: number }) | null;
 };
 export type Workspace = {
   account_id: string; workspace_name: string; preferences: { language?: string };
   usage: { tasks_today: number }; limits: { daily_tasks: number; upload_bytes: number };
 };
 export type SourceDocument = { id: string; filename: string; state: string; byte_size: number };
-export type TaskInput = { skill_id?: SkillId; instruction: string; notes: string; document_ids: string[]; output_language: string };
+export type TaskInput = { skill_id?: SkillId; instruction: string; notes: string; document_ids: string[]; output_language: string; research?: ResearchOptions };
 export type ProgressEvent = { sequence: number; state: TaskState; phase: string; message: string };
 export const terminal = (state: TaskState) => ["completed", "needs_input", "failed", "cancelled"].includes(state);
 
 export class WorkspaceError extends Error {
   constructor(message: string, readonly status = 0) { super(message); }
+}
+
+export function sourceLink(value?: string): string | undefined {
+  if (!value || value.length > 2048 || /[\s\\\x00-\x1f\x7f]/.test(value)) return;
+  try {
+    if (/[\x00-\x1f\x7f\\]/.test(decodeURIComponent(value))) return;
+    const url = new URL(value);
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.port ||
+        !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/.test(url.hostname) ||
+        /\.(localhost|local|internal|lan|home|invalid|test|onion)$/.test(url.hostname)) return;
+    return url.href;
+  } catch { return; }
 }
 
 export function trustedBase(base: string): string {

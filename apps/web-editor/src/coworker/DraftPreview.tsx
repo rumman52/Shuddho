@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { CoworkerDraft, CoworkerTask, EmailDraft } from "./client";
+import { sourceLink } from "./client";
 
 export function draftTitle(draft: CoworkerDraft): string {
   if ("report" in draft) return draft.report.title;
@@ -20,6 +21,23 @@ export default function DraftPreview({ draft, sources, preview }: { draft: Cowor
   const language = { dir: "auto", lang: draft.output_language } as const;
   const references = (ids: string[]) => <p className="cw-reference">{ids.map(id => sources.find(source => source.id === id)?.label ?? id).join(" · ")}</p>;
   const email = (value: EmailDraft) => <><article className="cw-email" {...language}><h3>{value.subject}</h3><p>{value.body}</p></article><CopyButton text={value.subject + "\n\n" + value.body} label="Copy email" /></>;
+  if (draft.kind === "research") {
+    const cited = [...new Set(draft.findings.flatMap(finding => finding.citations.map(citation => citation.source_id)))];
+    return <div className="cw-draft-tabs"><details open><summary>Research report</summary><article className="cw-paper cw-research-report" {...language}>
+      <h3>{draft.title}</h3>{draft.findings.map((finding, index) => <section key={index}><h4>{finding.heading}</h4><p>{finding.text}</p>
+        <details className="cw-evidence"><summary>{draft.labels.evidence} · {finding.citations.map(citation => `[${cited.indexOf(citation.source_id) + 1}]`).join(" ")}</summary>
+          {finding.citations.map((citation, i) => <blockquote key={i} dir="auto"><p>{citation.quote}</p><cite>{sources.find(source => source.id === citation.source_id)?.label ?? citation.source_id}</cite></blockquote>)}
+        </details></section>)}
+      {cited.length > 0 && <section className="cw-web-sources" aria-label="Web sources"><h4>{draft.labels.sources}</h4><ol>{cited.map(id => {
+        const source = sources.find(item => item.id === id);
+        const href = sourceLink(source?.url);
+        return <li key={id}>{href ? <a href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{source?.label}<span aria-hidden="true"> ↗</span></a> : <span>{source?.label ?? id}</span>}
+          {href && <span className="cw-source-domain" dir="ltr">{new URL(href).hostname}</span>}
+          <p>{draft.labels.retrieved}: <bdi>{source?.retrieved_at?.slice(0, 10) ?? "—"}</bdi> · {draft.labels.source_date}: <bdi>{source?.source_date?.slice(0, 10) ?? draft.labels.undated}</bdi></p>
+          {source?.truncated && <small>Only an excerpt of this page was used.</small>}</li>;
+      })}</ol></section>}
+    </article></details></div>;
+  }
   if ("report" in draft) return <div className="cw-draft-tabs">
     <details open><summary>Report preview</summary><article className="cw-paper" {...language}>
       <h3>{draft.report.title}</h3><p className="cw-report-summary">{draft.report.summary}</p>

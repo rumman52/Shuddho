@@ -13,7 +13,7 @@ from .config import Settings
 from .errors import CoworkerError
 from .models import Account, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, Workspace, utcnow
 from .schemas import TaskCreate, UploadRequest
-from .skills import ARTIFACT_SKILLS, SKILLS, skill_for_version
+from .skills import SKILLS, service_enabled, skill_for_version
 
 TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
@@ -160,6 +160,8 @@ class Repository:
     def create_task(self, owner: str, request: TaskCreate, idempotency_key: str) -> tuple[dict, bool]:
         self.expire_tasks(owner)
         payload = request.model_dump(mode="json")
+        if request.research is None:
+            payload.pop("research")  # Preserve fingerprints for every pre-research service.
         # Preserve the exact Part 2 fingerprint when the legacy service is selected.
         if request.skill_id == "report_email":
             payload.pop("skill_id")
@@ -171,8 +173,8 @@ class Repository:
                 if previous.fingerprint != fingerprint:
                     raise CoworkerError("idempotency_conflict", "This request key belongs to different input. Submit a new task.", 409)
                 return self._task_dto(db, previous), False
-            enabled = (self.settings.artifact_services_enabled if request.skill_id in ARTIFACT_SKILLS
-                       else self.settings.work_services_enabled or request.skill_id == "report_email")
+            enabled = service_enabled(request.skill_id, self.settings.work_services_enabled,
+                                      self.settings.artifact_services_enabled, self.settings.research_services_enabled)
             if not enabled:
                 raise CoworkerError("service_unavailable", "This work service is not available yet. Please choose another service.", 409)
             active = db.scalar(select(func.count()).select_from(Task).where(Task.owner_id == owner, Task.state.not_in(TERMINAL)))
@@ -201,6 +203,9 @@ class Repository:
                         deadline_at=utcnow() + timedelta(seconds=self.settings.task_timeout_seconds))
             db.add(task)
             db.flush()
+            if request.research:
+                # Immutable task options, committed atomically with the task/outbox.
+                db.add(Step(task_id=task.id, phase="research_input", output=request.research.model_dump()))
             usage.task_count += 1
             db.add(Outbox(task_id=task.id))
             self._event(db, task, "queued", "queued", "Queued for your coworker.")
@@ -211,6 +216,8 @@ class Repository:
         artifacts = db.scalars(select(Artifact).where(Artifact.task_id == task.id, Artifact.owner_id == task.owner_id)).all()
         draft_step = db.get(Step, (task.id, "draft")) if detail else None
         usage = db.scalars(select(ModelAttempt).where(ModelAttempt.task_id == task.id)).all()
+        research_input = db.get(Step, (task.id, "research_input")) if task.workflow_version == "work_research_v1" else None
+        search_attempt = db.get(Step, (task.id, "search_attempt")) if research_input else None
         return {"id": task.id, "state": task.state, "phase": task.phase, "message": task.message,
                 "error_code": task.error_code, "output_language": task.output_language,
                 "skill_id": skill_for_version(task.workflow_version).id, "workflow_version": task.workflow_version,
@@ -221,10 +228,12 @@ class Repository:
                 "draft": draft_step.output.get("draft") if draft_step else None,
                 "preview": draft_step.output.get("preview") if draft_step else None,
                 "sources": draft_step.output.get("sources", []) if draft_step else [],
+                "research": draft_step.output.get("research") if draft_step else None,
                 "input": {"notes": task.notes, "document_ids": list(db.scalars(select(DocumentVersion.document_id).where(
                     DocumentVersion.id.in_(task.input_versions), DocumentVersion.owner_id == task.owner_id,
-                )))} if detail else None,
-                "usage": {"model_attempts": len(usage), "accounted_tokens": sum(item.charged_tokens for item in usage)}}
+                ))), **({"research": research_input.output} if research_input else {})} if detail else None,
+                "usage": {"model_attempts": len(usage), "accounted_tokens": sum(item.charged_tokens for item in usage),
+                          **({"search": search_attempt.output} if search_attempt else {})}}
 
     def get_task(self, owner, task_id):
         self.expire_tasks(owner)
@@ -333,6 +342,29 @@ class Repository:
             item = db.get(Step, (task_id, phase))
             return item.output if item else None
 
+    def reserve_search(self, task_id):
+        """At most one paid search per accepted task, including worker loss."""
+        with self.sessions.begin() as db:
+            task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
+            self._check_live(task)
+            if task.workflow_version != "work_research_v1":
+                raise CoworkerError("workflow_version", "This task cannot use web research.")
+            if db.get(Step, (task_id, "search_attempt")):
+                raise CoworkerError("search_outcome_unknown", "The previous search could not be recovered. Create a new task to search again.", 409)
+            db.add(Step(task_id=task_id, phase="search_attempt", output={
+                "provider": self.settings.search_provider, "state": "reserved", "reserved_credits": 1,
+                "actual_credits": None, "accounted_credits": 1,
+            }))
+            self._audit(db, task.owner_id, task_id, "search_budget_reserved")
+
+    def settle_search(self, task_id, state, credits=None):
+        with self.sessions.begin() as db:
+            row = db.scalar(select(Step).where(Step.task_id == task_id, Step.phase == "search_attempt").with_for_update())
+            if row is not None and row.output["state"] == "reserved":
+                actual = credits if type(credits) is int and 0 <= credits <= 100 else None
+                row.output = row.output | {"state": state, "actual_credits": actual,
+                                          "accounted_credits": actual if actual is not None else 1}
+
     def reserve_model(self, task_id, token_upper_bound):
         owner = self.worker_task(task_id)["owner_id"]
         with self.sessions.begin() as db:
@@ -391,12 +423,15 @@ class Repository:
             self._discard_extracted_text(db, task_id)
 
     def _discard_extracted_text(self, db, task_id):
-        step = db.get(Step, (task_id, "extract"))
-        if step:
-            # Finished tasks keep provenance, original pasted notes, and drafts.
-            # The extra full-text copy of uploaded files is no longer needed.
-            step.output = {"sources": [{key: value for key, value in source.items() if key != "text"}
-                                        for source in step.output.get("sources", [])]}
+        attempt = db.get(Step, (task_id, "search_attempt"))
+        if attempt and attempt.output["state"] == "reserved":
+            attempt.output = attempt.output | {"state": "unknown"}
+        for phase in ("extract", "research"):
+            step = db.get(Step, (task_id, phase))
+            if step:
+                # Retain provenance and short cited evidence, not full extracted pages/files.
+                step.output = step.output | {"sources": [{key: value for key, value in source.items() if key != "text"}
+                                                        for source in step.output.get("sources", [])]}
 
     def fail(self, task_id, code, message):
         with self.sessions.begin() as db:

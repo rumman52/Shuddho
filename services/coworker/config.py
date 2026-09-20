@@ -28,6 +28,10 @@ class Settings:
     task_queue: str = "shuddho-documents-v1"
     work_services_enabled: bool = False
     artifact_services_enabled: bool = False
+    research_services_enabled: bool = False
+    search_provider: str = "tavily"
+    search_api_key: str = field(default="", repr=False)
+    search_timeout_seconds: int = 40
     max_upload_bytes: int = 8 * 1024 * 1024
     max_account_bytes: int = 256 * 1024 * 1024
     max_source_chars: int = 20000
@@ -61,6 +65,9 @@ class Settings:
             task_queue=os.getenv("SHUDDHO_TEMPORAL_TASK_QUEUE", "shuddho-documents-v1"),
             work_services_enabled=os.getenv("SHUDDHO_WORK_SERVICES_ENABLED", "false").lower() == "true",
             artifact_services_enabled=os.getenv("SHUDDHO_ARTIFACT_SERVICES_ENABLED", "false").lower() == "true",
+            research_services_enabled=os.getenv("SHUDDHO_RESEARCH_SERVICES_ENABLED", "false").lower() == "true",
+            search_provider=os.getenv("SHUDDHO_SEARCH_PROVIDER", "tavily"),
+            search_api_key=os.getenv("TAVILY_API_KEY", ""),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
             max_daily_tasks=int(os.getenv("SHUDDHO_COWORKER_DAILY_TASKS", "20")),
@@ -73,6 +80,8 @@ class Settings:
         return value
 
     def validate(self) -> None:
+        if self.research_services_enabled and (self.search_provider != "tavily" or not self.search_api_key):
+            raise ValueError("Research requires SHUDDHO_SEARCH_PROVIDER=tavily and backend-only TAVILY_API_KEY")
         if not self.database_url:
             raise ValueError("SHUDDHO_COWORKER_DATABASE_URL is required")
         issuer = urlparse(self.auth_issuer)

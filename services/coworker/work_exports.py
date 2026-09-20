@@ -9,10 +9,11 @@ from dataclasses import dataclass
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.shared import Inches, Pt, RGBColor
 from pypdf import PdfReader
 
-from .schemas import DocumentPackage, EmailPackage, MeetingPackage, PlanPackage, SocialPackage, parse_draft
+from .schemas import DocumentPackage, EmailPackage, MeetingPackage, PlanPackage, ResearchPackage, SocialPackage, parse_draft
 from .skills import SKILLS
 
 
@@ -20,11 +21,38 @@ from .skills import SKILLS
 class Block:
     text: str
     kind: str = "paragraph"
+    url: str | None = None
 
 
-def content_blocks(draft):
+def content_blocks(draft, sources=None):
     blocks = []
-    if isinstance(draft, DocumentPackage):
+    if isinstance(draft, ResearchPackage):
+        from .research import public_source_url
+        title = draft.title
+        by_id = {source["id"]: source for source in sources or [] if source.get("kind") == "web"}
+        cited = []
+        for finding in draft.findings:
+            blocks.extend([Block(finding.heading, "heading"), Block(finding.text)])
+            for citation in finding.citations:
+                if citation.source_id not in by_id:
+                    raise ValueError("Missing research source")
+                if citation.source_id not in cited:
+                    cited.append(citation.source_id)
+                number = cited.index(citation.source_id) + 1
+                blocks.append(Block(f'{draft.labels.evidence} [{number}]: “{citation.quote}”', "meta"))
+        if draft.missing_information:
+            blocks.append(Block(draft.labels.gaps, "heading"))
+            blocks.extend(Block(text, "bullet") for text in draft.missing_information)
+        if cited:
+            blocks.append(Block(draft.labels.sources, "heading"))
+        for index, source_id in enumerate(cited, 1):
+            source = by_id[source_id]
+            url = public_source_url(source["url"])
+            blocks.append(Block(f'[{index}] {source["label"]}', "reference", url))
+            blocks.append(Block(url, "url", url))
+            blocks.append(Block(f'{draft.labels.retrieved}: {source["retrieved_at"][:10]} · '
+                                f'{draft.labels.source_date}: {source["source_date"][:10] if source.get("source_date") else draft.labels.undated}', "meta"))
+    elif isinstance(draft, DocumentPackage):
         title = draft.document.title
         if draft.document.summary:
             blocks.append(Block(draft.document.summary))
@@ -78,7 +106,7 @@ def render_work_artifacts(skill_id, draft, sources):
     # Validate the requested service again inside the renderer process. Filenames,
     # markup and object destinations are never accepted from model output.
     draft = parse_draft(skill_id, draft.model_dump())
-    title, blocks = content_blocks(draft)
+    title, blocks = content_blocks(draft, sources)
     docx, pdf = render_document(title, blocks, draft.output_language)
     stem = SKILLS[skill_id].filename
     text = title + "\n\n" + "\n\n".join(
@@ -138,10 +166,29 @@ def render_document(title: str, blocks: list[Block], language: str):
             for run in value.runs:
                 run.font.size = Pt(9)
                 run.font.color.rgb = RGBColor.from_string("62717B")
+        if block.url:
+            # Only server-owned validated source URLs become native hyperlinks.
+            from .research import public_source_url
+            url = public_source_url(block.url)
+            hyperlink = OxmlElement("w:hyperlink")
+            hyperlink.set(qn("r:id"), value.part.relate_to(url, RT.HYPERLINK, is_external=True))
+            for run in list(value.runs):
+                run.font.color.rgb = RGBColor.from_string("423570")
+                run.font.underline = True
+                if block.kind == "url":
+                    run.font.rtl = False
+                hyperlink.append(run._r)
+            value._p.append(hyperlink)
+            if block.kind == "url":
+                bidi = value._p.get_or_add_pPr().find(qn("w:bidi"))
+                if bidi is not None:
+                    bidi.set(qn("w:val"), "0")
         tag = "h2" if block.kind == "heading" else "p"
         escaped = html.escape(text)
         if block.kind == "bullet":
             escaped = "• " + escaped
+        if block.url:
+            escaped = f'<a href="{html.escape(url, quote=True)}">{escaped}</a>'
         markup.append(f"<{tag} class='{block.kind}'>{escaped}</{tag}>")
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -156,6 +203,7 @@ def render_document(title: str, blocks: list[Block], language: str):
       h2 {{ font-size: 13pt; margin: 6mm 0 2mm; break-after: avoid; }}
       p {{ white-space: pre-wrap; orphans: 3; widows: 3; margin: 0 0 3mm; }}
       .meta {{ font-size: 9pt; color: #62717b; }} .bullet, .check {{ padding-inline-start: 3mm; }}
+      a {{ color: #423570; }} .url {{ font-size: 9pt; direction: ltr; text-align: left; word-break: break-all; }}
     </style></head><body>{''.join(markup)}</body></html>"""
 
     def no_external_resources(*_args, **_kwargs):

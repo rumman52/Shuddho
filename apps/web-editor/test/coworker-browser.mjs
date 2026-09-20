@@ -78,11 +78,17 @@ try {
     ["personal_plan", "en", "Proposed plan", "personal-plan.txt"],
     ["presentation", "bn", "Presentation preview", "presentation.pptx"],
     ["spreadsheet", "ar", "Spreadsheet preview", "spreadsheet.xlsx"],
+    ["research", "bn", "Research report", "research-report.docx"],
   ]) {
     await page.getByLabel("Work service", { exact: true }).selectOption(skill);
     await page.getByLabel("What would you like to create?").fill(`Prepare ${skill} from my project notes.`);
     await page.getByLabel("Your notes").fill("The team completed 12 reviews. Draft only; no external actions.");
     await page.getByLabel("Output language").selectOption(language);
+    if (skill === "research") {
+      await page.getByLabel("Public search query").fill("public project reviews");
+      await page.getByLabel("Source date range").selectOption("week");
+      assert.match(await page.locator("#cw-search-help").innerText(), /not sent to web search/);
+    }
     if (skill === "spreadsheet") {
       assert.match(await page.getByLabel("Add source files").getAttribute("accept"), /\.xlsx/);
       await page.getByLabel("Add source files").setInputFiles({ name: "costs.csv", mimeType: "text/csv", buffer: Buffer.from("Item,Quantity,Unit price\nA,3,12.5\nB,2,8\nC,0,15\n") });
@@ -122,9 +128,25 @@ try {
       assert.equal(await page.getByLabel("Work service", { exact: true }).inputValue(), "social");
       assert.equal(await page.getByLabel("Your notes").inputValue(), "The team completed 12 reviews. Draft only; no external actions.");
     }
+    if (skill === "research") {
+      const link = current.getByRole("link", { name: /Example project update/ });
+      assert.equal(await link.getAttribute("href"), "https://example.org/project-update");
+      assert.equal(await link.getAttribute("rel"), "noopener noreferrer");
+      assert.equal(await link.getAttribute("referrerpolicy"), "no-referrer");
+      await current.locator(".cw-evidence summary").click();
+      assert.equal(await current.locator("blockquote p").textContent(), "The team completed 12 reviews.");
+      await downloaded.saveAs(join(folder, "screenshots", filename));
+      await page.reload();
+      await current.getByText("Ready", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Use these sources for a new draft" }).click();
+      assert.equal(await page.getByLabel("Work service", { exact: true }).inputValue(), "research");
+      assert.equal(await page.getByLabel("Public search query").inputValue(), "public project reviews");
+      assert.equal(await page.getByLabel("Source date range").inputValue(), "week");
+      await current.locator(".cw-evidence summary").click();
+    }
     await page.locator(".workspace-coworker").evaluate(element => { element.scrollTop = 0; });
     await page.screenshot({ path: join(folder, `screenshots/service-${skill}.png`), fullPage: true });
-    if (["social", "meeting", "daily_plan", "presentation", "spreadsheet"].includes(skill)) {
+    if (["social", "meeting", "daily_plan", "presentation", "spreadsheet", "research"].includes(skill)) {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole("button", { name: "View current task", exact: true }).click();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
@@ -132,7 +154,7 @@ try {
       await page.setViewportSize({ width: 1365, height: 960 });
     }
   }
-  assert.equal(await page.locator(".cw-history li").count(), 10);
+  assert.equal(await page.locator(".cw-history li").count(), 11);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   assert.equal(await page.getByText("প্রকল্পের অগ্রগতি", { exact: true }).count(), 0);
@@ -144,7 +166,7 @@ try {
   assert.equal(await page.locator(".cw-history li").count(), 0);
   assert.equal(await page.locator(".cw-file-chips li").count(), 0);
   assert.deepEqual(failures, []);
-  console.log("Browser workflow passed: login, uploads, all ten work services, writing tab, refresh recovery, service-aware revision, Bangla and RTL previews, editable PPTX/XLSX downloads, formula values, copy post, mobile layout, sign-out and account switch.");
+  console.log("Browser workflow passed: login, uploads, all eleven work services, writing tab, refresh recovery, service-aware revision, Bangla and RTL previews, editable PPTX/XLSX downloads, formula values, research citations and query restoration, copy post, mobile layout, sign-out and account switch.");
 } finally {
   await context.close();
   await browser.close();

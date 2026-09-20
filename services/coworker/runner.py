@@ -10,11 +10,13 @@ from .drafting import DeepSeekDraftModel, DraftFailure, DraftModel
 from .errors import CoworkerError
 from .extraction import extract_in_subprocess
 from .exports import render_in_subprocess
-from .schemas import parse_draft, source_references
+from .schemas import ResearchOptions, parse_draft, source_references
+from .research import ResearchProvider, SearchFailure, TavilyResearchProvider, validate_evidence
 from .skills import skill_for_version
 
 PHASE_MESSAGES = {
     "extract": "Reading your source material.",
+    "research": "Searching the web and collecting source evidence.",
     "draft": "Preparing your draft.",
     "export": "Creating your downloadable documents.",
     "complete": "Checking your downloads.",
@@ -22,11 +24,13 @@ PHASE_MESSAGES = {
 
 
 class DocumentRunner:
-    def __init__(self, container: Container, model: DraftModel | None = None, renderer=render_in_subprocess):
+    def __init__(self, container: Container, model: DraftModel | None = None, renderer=render_in_subprocess,
+                 research: ResearchProvider | None = None):
         self.container = container
         self.repo = container.repository
         self.model = model or DeepSeekDraftModel(container.settings)
         self.renderer = renderer
+        self.research_provider = research or TavilyResearchProvider(container.settings)
 
     async def phase(self, task_id: str, phase: str):
         task = await asyncio.to_thread(self.repo.worker_task, task_id, False)
@@ -36,11 +40,15 @@ class DocumentRunner:
         skill_for_version(task["workflow_version"])
         if phase not in PHASE_MESSAGES:
             raise CoworkerError("workflow_version", "This task uses an unsupported workflow version.")
+        if phase == "research" and task["skill_id"] != "research":
+            raise CoworkerError("workflow_version", "This task cannot use web research.")
         checkpoint = await asyncio.to_thread(self.repo.begin_phase, task_id, phase, PHASE_MESSAGES[phase])
         if checkpoint is not None:
             return
         if phase == "extract":
             await self.extract(task)
+        elif phase == "research":
+            await self.research(task)
         elif phase == "draft":
             await self.draft(task)
         elif phase == "export":
@@ -71,17 +79,45 @@ class DocumentRunner:
             raise CoworkerError("source_too_large", "The combined source is too long. Use up to 20,000 characters per task.", 413)
         await asyncio.to_thread(self.repo.save_step, task["id"], "extract", {"sources": sources})
 
+    async def research(self, task):
+        if isinstance(self.model, DeepSeekDraftModel) and not self.container.settings.deepseek_api_key:
+            raise CoworkerError("model_not_configured", "Your coworker is temporarily unavailable. Please try again later.", 503)
+        options = await asyncio.to_thread(self.repo.step, task["id"], "research_input")
+        if options is None:
+            raise CoworkerError("checkpoint_missing", "The search query could not be recovered. Please create a new task.")
+        if isinstance(self.research_provider, TavilyResearchProvider):
+            self.research_provider.configured()
+        await asyncio.to_thread(self.repo.reserve_search, task["id"])
+        try:
+            result = await self.research_provider.retrieve(ResearchOptions.model_validate(options))
+        except SearchFailure as error:
+            await asyncio.to_thread(self.repo.settle_search, task["id"], "failed", error.credits)
+            raise
+        except BaseException:
+            await asyncio.shield(asyncio.to_thread(self.repo.settle_search, task["id"], "unknown"))
+            raise
+        await asyncio.to_thread(self.repo.settle_search, task["id"], "completed", result.credits)
+        await asyncio.to_thread(self.repo.save_step, task["id"], "research", {
+            "sources": result.sources, "metadata": result.metadata,
+        })
+
     async def draft(self, task):
         extracted = await asyncio.to_thread(self.repo.step, task["id"], "extract")
         if extracted is None:
             raise CoworkerError("checkpoint_missing", "Your source could not be recovered. Please create a new task.")
         if isinstance(self.model, DeepSeekDraftModel) and not self.container.settings.deepseek_api_key:
             raise CoworkerError("model_not_configured", "Your coworker is temporarily unavailable. Please try again later.", 503)
-        sources = extracted["sources"]
+        sources = list(extracted["sources"])
+        research = None
+        if task["skill_id"] == "research":
+            research = await asyncio.to_thread(self.repo.step, task["id"], "research")
+            if not research or not research.get("sources"):
+                raise CoworkerError("checkpoint_missing", "Web evidence could not be recovered. Please create a new task.")
+            sources.extend(research["sources"])
         skill = skill_for_version(task["workflow_version"])
         model = (DeepSeekDraftModel(self.container.settings, self.model.transport, skill_id=skill.id)
                  if isinstance(self.model, DeepSeekDraftModel) else self.model)
-        messages = model.messages(task, sources)
+        messages = model.messages(task | ({"research": research["metadata"]} if research else {}), sources)
         # Conservative UTF-8 byte bound, with room for chat framing and output.
         reservation = len(json.dumps(messages, ensure_ascii=False).encode()) + self.container.settings.max_output_tokens + 512
         attempt = await asyncio.to_thread(self.repo.reserve_model, task["id"], reservation)
@@ -90,6 +126,8 @@ class DocumentRunner:
             result = await model.generate(messages, task["output_language"], source_ids)
             try:
                 validated = parse_draft(skill.id, result.draft.model_dump())
+                if skill.id == "research":
+                    validate_evidence(validated, sources)
                 if not source_references(validated).issubset(source_ids) or (
                     task["output_language"] != "auto" and validated.output_language.lower() != task["output_language"].lower()
                 ):
@@ -110,6 +148,7 @@ class DocumentRunner:
         preview = table_values(validated) if skill.id == "spreadsheet" else None
         await asyncio.to_thread(self.repo.save_step, task["id"], "draft", {
             "draft": validated.model_dump(), "sources": manifest, "preview": preview,
+            "research": research["metadata"] if research else None,
         })
 
     async def export(self, task):
@@ -146,6 +185,8 @@ class DocumentRunner:
         """Same business steps for deterministic tests; never an HTTP background job."""
         try:
             for phase in PHASE_MESSAGES:
+                if phase == "research" and (await asyncio.to_thread(self.repo.worker_task, task_id, False))["skill_id"] != "research":
+                    continue
                 await self.phase(task_id, phase)
         except CoworkerError as error:
             await asyncio.to_thread(self.repo.fail, task_id, error.code, error.message)

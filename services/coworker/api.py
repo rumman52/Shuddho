@@ -49,7 +49,7 @@ def preferences(payload: PreferencesRequest, identity: Identity, services: Servi
 @router.get("/skills")
 def skills(identity: Identity, services: Services):
     artifacts = services.settings.artifact_services_enabled
-    return {"skills": available_skills(services.settings.work_services_enabled, artifacts),
+    return {"skills": available_skills(services.settings.work_services_enabled, artifacts, services.settings.research_services_enabled),
             "upload_formats": ["txt", "docx", "pdf"] + (["csv", "xlsx", "pptx"] if artifacts else [])}
 
 

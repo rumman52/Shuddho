@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, WorkspaceError, terminal, type CoworkerTask, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
+import { CoworkerClient, WorkspaceError, terminal, type CoworkerTask, type ResearchOptions, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
 import DraftPreview, { draftTitle } from "./DraftPreview";
 
 const originalService: WorkSkill = {
@@ -29,13 +29,14 @@ export function TaskResult({ task, client, revise }: { task: CoworkerTask; clien
     <div className="cw-result-heading"><div><span className="cw-eyebrow">Your work</span><h2 dir="auto" lang={draft?.output_language}>{draft ? draftTitle(draft) : "Your draft"}</h2></div><span className={`cw-status cw-status-${task.state}`}>{labels[task.state]}</span></div>
     <p role="status" className={task.state === "failed" ? "cw-error" : "cw-task-message"}>{task.message}</p>
     {!terminal(task.state) && <ol className="cw-steps" aria-label="Task progress">
-      {[["extract", "Read sources"], ["draft", "Prepare drafts"], ["export", "Create files"], ["complete", "Check downloads"]].map(([phase, label], index) =>
+      {[["extract", "Read sources"], ...(task.skill_id === "research" ? [["research", "Search the web"]] : []), ["draft", "Prepare drafts"], ["export", "Create files"], ["complete", "Check downloads"]].map(([phase, label], index) =>
         <li key={phase} aria-current={task.phase === phase ? "step" : undefined}><span>{index + 1}</span>{label}</li>)}
     </ol>}
     {draft && <>
       {draft.missing_information.length > 0 && <aside className="cw-missing"><strong>A few details need your input</strong><ul>{draft.missing_information.map((item, index) => <li key={index} dir="auto">{item}</li>)}</ul><button type="button" className="cw-secondary" onClick={revise}>Add details & revise</button></aside>}
       <DraftPreview draft={draft} sources={task.sources} preview={task.preview} />
-      <p className="cw-fineprint">Review the facts and wording before using these drafts. Source references point to your provided material.</p>
+      {task.research && <p className="cw-fineprint">Search: <bdi>{task.research.query}</bdi> · Date range: {task.research.time_range === "any" ? "Any time" : `Past ${task.research.time_range}`}. {task.research.skipped_results > 0 && `${task.research.skipped_results} results were excluded because usable evidence was unavailable, duplicated, or outside the date range.`}</p>}
+      <p className="cw-fineprint">{task.skill_id === "research" ? "Review each finding against its evidence. Source dates are estimates of publication or update; retrieval today does not establish current accuracy." : "Review the facts and wording before using these drafts. Source references point to your provided material."}</p>
     </>}
     {task.artifacts.length > 0 && <div className="cw-downloads" aria-label="Downloads">{task.artifacts.map(artifact => <button type="button" className="cw-secondary" key={artifact.id} disabled={Boolean(downloading)} onClick={async () => {
       setDownloadError(""); setDownloading(artifact.id);
@@ -52,6 +53,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
   const [skills, setSkills] = useState<WorkSkill[]>([originalService]);
   const [uploadFormats, setUploadFormats] = useState(["txt", "docx", "pdf"]);
   const [skillId, setSkillId] = useState<SkillId>("report_email");
+  const [research, setResearch] = useState<ResearchOptions>({ query: "", time_range: "any" });
   const [history, setHistory] = useState<CoworkerTask[]>([]);
   const [documents, setDocuments] = useState<SourceDocument[]>([]);
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
@@ -115,7 +117,8 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     event.preventDefault();
     if (busy) return;
     setBusy("submit"); setError(""); setNotice("");
-    const input = { ...(skillId === "report_email" ? {} : { skill_id: skillId }), instruction, notes, document_ids: selectedDocs, output_language: language === "custom" ? customLanguage : language };
+    const input = { ...(skillId === "report_email" ? {} : { skill_id: skillId }), instruction, notes, document_ids: selectedDocs, output_language: language === "custom" ? customLanguage : language,
+      ...(skillId === "research" ? { research } : {}) };
     const fingerprint = JSON.stringify(input);
     if (submission.current?.fingerprint !== fingerprint) submission.current = { fingerprint, key: crypto.randomUUID() };
     try {
@@ -133,6 +136,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     if (!task?.input) return;
     setSkillId(task.skill_id ?? "report_email");
     setInstruction(task.instruction); setNotes(task.input.notes); setSelectedDocs(task.input.document_ids);
+    setResearch(task.input.research ?? { query: "", time_range: "any" });
     if (languages.some(([code]) => code === task.output_language)) setLanguage(task.output_language);
     else { setLanguage("custom"); setCustomLanguage(task.output_language); }
     submission.current = undefined;
@@ -159,6 +163,13 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
           setSkillId(next.id); submission.current = undefined;
         }}>{skills.map(skill => <option value={skill.id} key={skill.id}>{skill.name}</option>)}{!activeSkill && <option value={skillId} disabled>Service currently unavailable</option>}</select><span id="cw-service-description" className="cw-service-description">{activeSkill?.description ?? "Choose an available service to create a new task. Your saved draft remains available."}</span></div>}
         <label>What would you like to create?<textarea dir="auto" rows={3} value={instruction} minLength={3} maxLength={2000} required onChange={event => setInstruction(event.target.value)} /></label>
+        {skillId === "research" && <fieldset className="cw-research-options"><legend>Web research</legend>
+          <label>Public search query<input dir="auto" value={research.query} minLength={3} maxLength={400} required aria-describedby="cw-search-help" onChange={event => setResearch(previous => ({ ...previous, query: event.target.value }))} placeholder="For example, compare public transport options in Dhaka" /></label>
+          <p className="cw-fineprint" id="cw-search-help">This query is sent to our search provider. Keep private details in your notes or files; those are not sent to web search.</p>
+          <label>Source date range<select value={research.time_range} onChange={event => setResearch(previous => ({ ...previous, time_range: event.target.value as ResearchOptions["time_range"] }))}>
+            <option value="any">Any time</option><option value="day">Past day</option><option value="week">Past week</option><option value="month">Past month</option><option value="year">Past year</option>
+          </select></label><p className="cw-fineprint">Research uses up to five pages. A date range excludes pages without a usable publication or update date.</p>
+        </fieldset>}
         <label>Your notes{skillId !== "report_email" && " (optional)"}<textarea ref={notesInput} dir="auto" rows={8} maxLength={20000} value={notes} required={skillId === "report_email" && !selectedDocs.length} onChange={event => setNotes(event.target.value)} placeholder="Paste notes, useful facts, or details you would like your coworker to use…" /><span className="cw-field-meta">{notes.length.toLocaleString()} / 20,000 characters</span></label>
         <label className="cw-upload">Add source files<input type="file" multiple accept={uploadFormats.map(format => "." + format).join(",")} disabled={Boolean(busy) || selectedDocs.length >= 5 || !workspace} onChange={async event => {
           const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = "";
