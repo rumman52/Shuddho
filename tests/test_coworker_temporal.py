@@ -440,12 +440,12 @@ def test_agent_workflow_replans_once_when_capability_changes(container):
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
                     await asyncio.wait_for(handle.result(), 30)
+                history = (await handle.fetch_history()).to_json()
         saved = container.agent.get(owner, run["id"])
         assert saved["state"] == "completed"
         assert saved["planner_mode"] == "replanned"
         assert saved["planner_calls"] == 2
         assert planner.calls == 2
         assert [step["tool"] for step in saved["steps"]] == ["report.create"]
-        history = (await handle.fetch_history()).to_json()
         assert "Draft a professional follow-up email." not in history
     asyncio.run(scenario())
