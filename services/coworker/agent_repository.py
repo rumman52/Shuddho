@@ -432,6 +432,13 @@ class AgentRepository:
                 raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            action = db.scalar(select(ExternalAction).where(
+                ExternalAction.id == action_id,
+                ExternalAction.owner_id == run.owner_id,
+            ).with_for_update())
+            if action is None or action.agent_run_id != run_id or action_id not in set(run.action_ids):
+                raise CoworkerError("action_scope", "This action is not bound to the agent run.", 409)
+            action.agent_ready = True
             step.output = {"resource_type": "action", "resource_id": action_id}
             if action_state == "awaiting_approval":
                 changed = invocation.state != "awaiting_approval" or run.state != "awaiting_approval"
@@ -482,11 +489,17 @@ class AgentRepository:
                 return
             run.error_code = code
             now = utcnow()
+            for action in db.scalars(select(ExternalAction).where(
+                ExternalAction.agent_run_id == run_id,
+                ExternalAction.state.in_({"awaiting_approval", "queued"}),
+            ).with_for_update()):
+                action.state, action.finished_at = "cancelled", now
+                self._audit(db, run.owner_id, action.id, "action.cancelled_agent_failure")
             for invocation, step in db.execute(select(ToolInvocation, AgentStep).join(
                 AgentStep, AgentStep.id == ToolInvocation.step_id,
             ).where(
                 ToolInvocation.run_id == run_id,
-                ToolInvocation.state.in_({"prepared", "running"}),
+                ToolInvocation.state.in_({"prepared", "running", "awaiting_approval"}),
             )):
                 invocation.state = "failed"
                 invocation.finished_at = now
