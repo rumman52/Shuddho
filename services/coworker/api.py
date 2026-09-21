@@ -20,6 +20,7 @@ from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
+from .agent_schemas import AgentRunCreate
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -35,6 +36,35 @@ async def account(request: Request, principal: Annotated[Principal, Depends(requ
 
 Identity = Annotated[Principal, Depends(account)]
 Services = Annotated[Container, Depends(get_container)]
+
+
+@router.get("/agent-tools")
+def agent_tools(identity: Identity, services: Services):
+    return {"enabled": services.settings.agent_runtime_enabled, "tools": services.agent.tools()}
+
+
+@router.post("/agent-runs", status_code=202)
+def create_agent_run(payload: AgentRunCreate, identity: Identity, services: Services, response: Response,
+                     idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
+    run, created = services.agent.create(identity.account_id, payload, idempotency_key)
+    response.headers["Location"] = f'/api/v1/agent-runs/{run["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return run
+
+
+@router.get("/agent-runs")
+def list_agent_runs(identity: Identity, services: Services):
+    return {"runs": services.agent.list(identity.account_id)}
+
+
+@router.get("/agent-runs/{run_id}")
+def get_agent_run(run_id: UUID, identity: Identity, services: Services):
+    return services.agent.get(identity.account_id, str(run_id))
+
+
+@router.post("/agent-runs/{run_id}/cancel")
+def cancel_agent_run(run_id: UUID, identity: Identity, services: Services):
+    return services.agent.cancel(identity.account_id, str(run_id))
 
 
 @router.get("/connections")
