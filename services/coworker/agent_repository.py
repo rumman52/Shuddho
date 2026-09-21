@@ -66,6 +66,8 @@ class AgentRepository:
     def create(self, owner: str, request: AgentRunCreate, idempotency_key: str) -> tuple[dict, bool]:
         if not self.settings.agent_runtime_enabled:
             raise CoworkerError("agent_runtime_unavailable", "Agent runs are not enabled in this workspace yet.", 409)
+        if request.memory_namespaces and not self.settings.agent_memory_enabled:
+            raise CoworkerError("agent_memory_unavailable", "Structured memory is not enabled in this workspace yet.", 409)
         payload = request.model_dump(mode="json")
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
@@ -129,6 +131,7 @@ class AgentRepository:
                 output_language=request.output_language,
                 input_versions=versions,
                 action_ids=action_ids,
+                memory_namespaces=list(request.memory_namespaces),
                 state="queued",
                 phase="planning",
                 message="Agent run created. Waiting for the bounded planner runtime.",
@@ -167,6 +170,7 @@ class AgentRepository:
             "output_language": run.output_language,
             "document_ids": documents,
             "action_ids": list(run.action_ids),
+            "memory_namespaces": list(run.memory_namespaces),
             "state": run.state,
             "phase": run.phase,
             "message": run.message,
