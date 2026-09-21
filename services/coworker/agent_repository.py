@@ -189,6 +189,7 @@ class AgentRepository:
                 "tool": step.tool_name,
                 "state": step.state,
                 "error_code": step.error_code,
+                "depends_on": list(step.depends_on_ordinals),
             } for step in steps],
             "tool_invocations": [{
                 "id": item.id,
@@ -267,6 +268,43 @@ class AgentRepository:
             run.planner_mode = mode
             run.updated_at = utcnow()
 
+    def _dependency_ordinals(self, ordinal: int, planned: AgentPlanStep) -> list[int]:
+        """Derive a bounded dependency edge without trusting model-selected IDs."""
+        if not self.settings.agent_dependency_graph_enabled or ordinal <= 1:
+            return []
+        spec = tool(planned.tool)
+        # Consequential actions retain their explicit approval/action binding and do
+        # not gain implicit content dependencies in this increment.
+        if spec.kind == "approved_action" or spec.consequential or spec.approval_required:
+            return []
+        # Research is an upstream source producer, not a consumer of generated
+        # task content. Other task steps depend on the nearest prior task step.
+        if spec.skill_id == "research":
+            return []
+        return [ordinal - 1]
+
+    def dependency_state(self, owner: str, run_id: str, ordinal: int) -> dict:
+        with self.sessions() as db:
+            run = self._run(db, owner, run_id)
+            current = db.scalar(select(AgentStep).where(
+                AgentStep.run_id == run.id, AgentStep.owner_id == owner, AgentStep.ordinal == ordinal,
+            ))
+            if current is None:
+                raise not_found()
+            dependencies = list(current.depends_on_ordinals or [])
+            if not dependencies:
+                return {"ready": True, "depends_on": [], "blocked_by": []}
+            rows = db.scalars(select(AgentStep).where(
+                AgentStep.run_id == run.id,
+                AgentStep.owner_id == owner,
+                AgentStep.ordinal.in_(dependencies),
+            )).all()
+            states = {step.ordinal: step.state for step in rows}
+            if len(states) != len(dependencies):
+                raise CoworkerError("dependency_invalid", "An agent step dependency is missing.", 409)
+            blocked = [value for value in dependencies if states.get(value) != "completed"]
+            return {"ready": not blocked, "depends_on": dependencies, "blocked_by": blocked}
+
     def replace_remaining_plan(self, owner: str, run_id: str, from_ordinal: int,
                                steps: list[AgentPlanStep]) -> dict:
         if not 1 <= len(steps) <= 8 or from_ordinal - 1 + len(steps) > 8:
@@ -320,6 +358,7 @@ class AgentRepository:
                     id=str(uuid4()), run_id=run.id, owner_id=owner, ordinal=ordinal,
                     tool_name=spec.name, state="planned",
                     input={"arguments": validated.model_dump(mode="json")}, output={},
+                    depends_on_ordinals=self._dependency_ordinals(ordinal, planned),
                 )
                 db.add(step)
                 db.flush()
@@ -374,6 +413,7 @@ class AgentRepository:
                     id=str(uuid4()), run_id=run.id, owner_id=owner, ordinal=ordinal,
                     tool_name=spec.name, state="planned",
                     input={"arguments": validated.model_dump(mode="json")}, output={},
+                    depends_on_ordinals=self._dependency_ordinals(ordinal, planned),
                 )
                 db.add(step)
                 db.flush()
