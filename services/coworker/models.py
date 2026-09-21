@@ -245,6 +245,7 @@ class AgentRun(Base):
     output_language: Mapped[str] = mapped_column(String(35))
     input_versions: Mapped[list[str]] = mapped_column(JSON, default=list)
     action_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    memory_namespaces: Mapped[list[str]] = mapped_column(JSON, default=list)
     state: Mapped[str] = mapped_column(String(30), default="queued")
     phase: Mapped[str] = mapped_column(String(30), default="planning")
     message: Mapped[str] = mapped_column(String(300), default="Queued for planning.")
