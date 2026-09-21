@@ -788,6 +788,9 @@ def test_agent_memory_is_ephemeral_and_receipt_keeps_only_provenance(container):
     fact = container.memory.create(owner, MemoryFactCreate(
         namespace="preferences", key="writing.tone", value="MEMORY-PRIVATE-SENTINEL", language="en"
     ))
+    profile_fact = container.memory.create(owner, MemoryFactCreate(
+        namespace="profile", key="display_name", value="PROFILE-PRIVATE-SENTINEL", language="en"
+    ))
 
     class CaptureModel(FakeModel):
         def __init__(self):
@@ -812,7 +815,9 @@ def test_agent_memory_is_ephemeral_and_receipt_keeps_only_provenance(container):
     }]]
     receipt = saved["tool_invocations"][0]["receipt"]
     assert receipt["summary"]["memory"] == [{"id": fact["id"], "version": 1}]
+    assert profile_fact["id"] not in json.dumps(receipt)
     assert "MEMORY-PRIVATE-SENTINEL" not in json.dumps(receipt)
+    assert "PROFILE-PRIVATE-SENTINEL" not in json.dumps(receipt)
 
     container.memory.delete(owner, fact["id"])
     second, _ = container.agent.create(owner, AgentRunCreate(
@@ -909,3 +914,29 @@ def test_agent_memory_requires_explicit_namespace_scope(container):
     runtime.plan(run["id"])
     asyncio.run(runtime.execute_step(run["id"], 1))
     assert model.memory_seen == [None]
+
+
+
+def test_expired_memory_stays_user_visible_but_not_in_agent_context(container):
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.memory_schemas import MemoryFactCreate
+    from services.coworker.models import MemoryFact
+
+    enabled = replace(container.settings, agent_runtime_enabled=True, agent_memory_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    fact = container.memory.create(owner, MemoryFactCreate(
+        namespace="preferences", key="old.preference", value="Expired value", language="en"
+    ))
+    with container.repository.sessions.begin() as db:
+        db.get(MemoryFact, fact["id"]).expires_at = utcnow() - timedelta(seconds=1)
+
+    listed = container.memory.list(owner)
+    assert listed[0]["id"] == fact["id"] and listed[0]["active"] is False
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Prepare a project report.", memory_namespaces=["preferences"], output_language="en"
+    ), "expired-memory-scope")
+    assert container.memory.context_for_run(owner, run["id"]) == {"facts": [], "provenance": []}
