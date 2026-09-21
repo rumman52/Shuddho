@@ -553,3 +553,45 @@ def test_agent_runtime_model_matches_migration(container):
     model_columns = set(AgentRun.__table__.columns.keys())
     assert database_columns == model_columns
     assert "event_sequence" in model_columns
+
+
+
+def test_deterministic_agent_planner_routes_only_enabled_non_consequential_tools(container):
+    from services.coworker.agent_planner import deterministic_plan
+    enabled = replace(container.settings, work_services_enabled=True, artifact_services_enabled=True,
+                      research_services_enabled=True, actions_enabled=True)
+    plan = deterministic_plan(
+        "Research competitors and prepare a presentation with a follow-up email.",
+        [], "en", enabled,
+    )
+    assert [step.tool for step in plan] == ["research.search", "presentation.create", "email.draft"]
+    assert all(step.tool not in {"email.send", "calendar.create"} for step in plan)
+    assert all(step.arguments["output_language"] == "en" for step in plan)
+
+
+def test_agent_outbox_is_crash_safe_and_flag_independent(container):
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.models import AgentOutbox
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Draft a professional email.", output_language="en"
+    ), "agent-outbox-test")
+    claimed = container.agent.claim_outbox()
+    assert claimed == [run["id"]]
+    with container.repository.sessions.begin() as db:
+        row = db.get(AgentOutbox, run["id"])
+        row.lease_until = utcnow() - timedelta(seconds=1)
+    assert container.agent.claim_outbox() == [run["id"]]
+    container.agent.delivered(run["id"])
+    assert container.agent.claim_outbox() == []
+
+
+def test_agent_outbox_model_matches_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import AgentOutbox
+    database_columns = {item["name"] for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_agent_outbox")}
+    assert database_columns == set(AgentOutbox.__table__.columns.keys())
