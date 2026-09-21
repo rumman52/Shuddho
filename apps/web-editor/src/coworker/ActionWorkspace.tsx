@@ -66,9 +66,14 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
     finally { setBusy(""); }
   }
 
-  function showAction(value: ExternalAction) {
-    setAction(value); setComposing(false); setChecked(false);
+  function updateAction(value: ExternalAction) {
+    setAction(value); setChecked(false);
     setHistory(previous => [value, ...previous.filter(item => item.id !== value.id)]);
+  }
+
+  function openAction(value: ExternalAction) {
+    setComposing(false);
+    updateAction(value);
   }
 
   function startNewAction() {
@@ -83,7 +88,7 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
       { kind: "calendar_create", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees) } };
     const fingerprint = JSON.stringify(input);
     if (submission.current?.fingerprint !== fingerprint) submission.current = { fingerprint, key: crypto.randomUUID() };
-    await run("prepare", async () => showAction(await client.prepareAction(input, submission.current!.key)));
+    await run("prepare", async () => openAction(await client.prepareAction(input, submission.current!.key)));
   }
 
   async function edit() {
@@ -107,7 +112,7 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
       return <div className="cw-connection" key={capability}><div><strong>{capability === "email" ? "Gmail" : "Google Calendar"}</strong><small>{connected?.email ?? (capability === "email" ? "Send emails you approve" : "Create events in your primary calendar")}</small></div>
         {connected ? <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => {
           if (!window.confirm(`Disconnect ${connected.email} for ${capability}? Pending actions will be cancelled. An action already executing may still finish.`)) return;
-          void run("disconnect", async () => { const result = await client.disconnect(connected.id); setNotice(result.message); setReload(x => x + 1); if (action) showAction(await client.action(action.id)); });
+          void run("disconnect", async () => { const result = await client.disconnect(connected.id); setNotice(result.message); setReload(x => x + 1); if (action) updateAction(await client.action(action.id)); });
         }}>Disconnect {capability === "email" ? "Gmail" : "Calendar"}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => beginGoogleConnection(client, account, capability))}>Connect {capability === "email" ? "Gmail" : "Calendar"}</button>}
       </div>;
     })}</div>
@@ -152,16 +157,16 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
         {action.state === "awaiting_approval" && <>
           <p className="cw-fineprint">Preview expires {new Date(action.preview.expires_at).toLocaleTimeString()}. Approval starts execution within five minutes.</p>
           <label className="cw-approval-check"><input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />I reviewed the account, recipients, content and timing.</label>
-          <button className="cw-primary" disabled={!checked || !enabled || Boolean(busy)} onClick={() => void run("approve", async () => showAction(await client.approveAction(action)))}>{busy === "approve" ? "Approving…" : action.kind === "email_send" ? "Approve & send email" : "Approve & create event"}</button>
+          <button className="cw-primary" disabled={!checked || !enabled || Boolean(busy)} onClick={() => void run("approve", async () => updateAction(await client.approveAction(action)))}>{busy === "approve" ? "Approving…" : action.kind === "email_send" ? "Approve & send email" : "Approve & create event"}</button>
         </>}
-        {["awaiting_approval", "queued"].includes(action.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void run("cancel", async () => showAction(await client.cancelAction(action.id)))}>Cancel action</button>}
-        {action.state === "outcome_unknown" && action.kind === "calendar_create" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => showAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? "Checking calendar…" : "Check calendar result"}</button>}
+        {["awaiting_approval", "queued"].includes(action.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void run("cancel", async () => updateAction(await client.cancelAction(action.id)))}>Cancel action</button>}
+        {action.state === "outcome_unknown" && action.kind === "calendar_create" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => updateAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? "Checking calendar…" : "Check calendar result"}</button>}
         {action.receipt && <div className="cw-receipt"><strong>{action.kind === "email_send" ? "Accepted by Gmail" : "Created in Google Calendar"}</strong><p>{action.kind === "email_send" ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed."}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small><code>Receipt: {action.receipt.provider_id}</code></div>}
         {action.audit && <details className="cw-action-audit"><summary>Action history</summary><ol>{action.audit.map((item, index) => <li key={index}>{item.action.replace("action.", "").replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</li>)}</ol></details>}
       </>}
     </section>
-    <section className="cw-history"><div className="cw-history-title"><h2>Recent actions</h2><button className="cw-text-button" onClick={() => { setReload(x => x + 1); if (action) void run("refresh", async () => showAction(await client.action(action.id))); }}>Refresh actions</button></div>
-      {history.length ? <ul>{history.map(item => <li key={item.id}><button aria-pressed={action?.id === item.id} disabled={Boolean(busy)} onClick={() => void run("open", async () => showAction(await client.action(item.id)))}><div><strong dir="auto">{title(item)}</strong><small>{item.kind === "email_send" ? "Email" : "Calendar"} · {item.preview.account}</small></div><span className="cw-status">{labels[item.state]}</span></button></li>)}</ul> : <p className="cw-fineprint">Your approved actions and receipts will appear here.</p>}
+    <section className="cw-history"><div className="cw-history-title"><h2>Recent actions</h2><button className="cw-text-button" onClick={() => { setReload(x => x + 1); if (action) void run("refresh", async () => updateAction(await client.action(action.id))); }}>Refresh actions</button></div>
+      {history.length ? <ul>{history.map(item => <li key={item.id}><button aria-pressed={action?.id === item.id} disabled={Boolean(busy)} onClick={() => void run("open", async () => openAction(await client.action(item.id)))}><div><strong dir="auto">{title(item)}</strong><small>{item.kind === "email_send" ? "Email" : "Calendar"} · {item.preview.account}</small></div><span className="cw-status">{labels[item.state]}</span></button></li>)}</ul> : <p className="cw-fineprint">Your approved actions and receipts will appear here.</p>}
       {!composing && action && <button type="button" className="cw-secondary cw-new-action" disabled={Boolean(busy)} onClick={startNewAction}>Prepare another action</button>}
     </section></div></div>
   </section>;
