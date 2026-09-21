@@ -21,6 +21,7 @@ from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import AgentRunCreate
+from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -36,6 +37,26 @@ async def account(request: Request, principal: Annotated[Principal, Depends(requ
 
 Identity = Annotated[Principal, Depends(account)]
 Services = Annotated[Container, Depends(get_container)]
+
+
+@router.get("/memory")
+def list_memory(identity: Identity, services: Services):
+    return {"enabled": services.settings.agent_memory_enabled, "facts": services.memory.list(identity.account_id)}
+
+
+@router.post("/memory", status_code=201)
+def create_memory(payload: MemoryFactCreate, identity: Identity, services: Services):
+    return services.memory.create(identity.account_id, payload)
+
+
+@router.put("/memory/{fact_id}")
+def update_memory(fact_id: UUID, payload: MemoryFactUpdate, identity: Identity, services: Services):
+    return services.memory.update(identity.account_id, str(fact_id), payload)
+
+
+@router.delete("/memory/{fact_id}")
+def delete_memory(fact_id: UUID, identity: Identity, services: Services):
+    return services.memory.delete(identity.account_id, str(fact_id))
 
 
 @router.get("/agent-tools")
