@@ -66,7 +66,7 @@ class AgentRuntime:
             research=research,
         )
         task, _ = self.container.repository.create_task(
-            run["owner_id"], request, f"agent:{run_id}:{ordinal}", enqueue=False
+            run["owner_id"], request, f"agent:{run_id}:{ordinal}", enqueue=False, agent_run_id=run_id
         )
         self.repo.link_invocation_resource(run_id, ordinal, "task", task["id"])
         worker_task = self.container.repository.worker_task(task["id"], False)
@@ -76,10 +76,12 @@ class AgentRuntime:
         result = self.container.repository.get_task(run["owner_id"], task["id"])
         if result["state"] not in {"completed", "needs_input"}:
             raise CoworkerError("agent_tool_failed", "An agent tool did not complete successfully.", 409)
+        draft_step = self.container.repository.step(task["id"], "draft") or {}
         summary = {
             "task_state": result["state"],
             "artifact_count": len(result["artifacts"]),
             "has_missing_information": result["state"] == "needs_input",
+            "memory": draft_step.get("memory_provenance", []),
         }
         self.repo.finish_invocation(run_id, ordinal, "task", task["id"], summary)
         return {"status": "completed"}
