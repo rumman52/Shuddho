@@ -119,7 +119,9 @@ class AgentActivities:
     @activity.defn(name="shuddho_agent_replan_v1")
     async def replan(self, value: dict):
         try:
-            return await self.runtime.replan(value["run_id"], int(value["from_ordinal"]))
+            return await self.runtime.replan(
+                value["run_id"], int(value["from_ordinal"]), str(value.get("reason", "capability_changed"))
+            )
         except CoworkerError as error:
             raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
         except Exception:

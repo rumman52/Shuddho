@@ -1272,3 +1272,70 @@ def test_research_step_never_receives_prior_agent_handoff(container):
     assert all("agent_invocation_id" not in source for source in research_sources)
     receipt = container.agent.get(owner, run["id"])["tool_invocations"][1]["receipt"]
     assert receipt["summary"]["handoff"] == []
+
+
+def test_agent_incomplete_result_requests_replan_only_after_completed_step(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_outcome_replan_enabled=True,
+        work_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a project document and then draft a follow-up email.",
+        output_language="en",
+    ), "agent-outcome-replan")
+    container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    container.agent.set_planner_mode(run["id"], "intelligent")
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel(missing=True)))
+    result = asyncio.run(runtime.execute_step(run["id"], 1))
+    assert result == {"status": "outcome_replan_required"}
+    saved = container.agent.get(owner, run["id"])
+    assert saved["steps"][0]["state"] == "completed"
+    assert saved["tool_invocations"][0]["receipt"]["summary"]["has_missing_information"] is True
+    assert saved["tool_invocations"][1]["state"] == "prepared"
+
+
+def test_agent_incomplete_result_does_not_replan_when_flag_is_off(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_outcome_replan_enabled=False,
+        work_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a project document.", output_language="en"
+    ), "agent-outcome-replan-off")
+    container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    container.agent.set_planner_mode(run["id"], "intelligent")
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel(missing=True)))
+    assert asyncio.run(runtime.execute_step(run["id"], 1)) == {"status": "completed"}

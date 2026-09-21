@@ -8,6 +8,9 @@ from .runner import DocumentRunner
 from .schemas import ResearchOptions, TaskCreate
 
 
+REPLAN_REASONS = {"capability_changed", "result_incomplete"}
+
+
 class AgentRuntime:
     def __init__(self, container, runner: DocumentRunner, planner=None):
         self.container = container
@@ -61,7 +64,9 @@ class AgentRuntime:
             saved = self.repo.save_plan(run["owner_id"], run_id, steps)
             return len(saved["tool_invocations"])
 
-    async def replan(self, run_id: str, from_ordinal: int) -> int:
+    async def replan(self, run_id: str, from_ordinal: int, reason: str = "capability_changed") -> int:
+        if reason not in REPLAN_REASONS:
+            raise CoworkerError("invalid_replan_reason", "The agent replan reason is not supported.", 422)
         if not self.container.settings.intelligent_planner_enabled:
             raise CoworkerError("replan_unavailable", "Intelligent replanning is not enabled.", 409)
         run = self.repo.worker_run(run_id)
@@ -72,7 +77,7 @@ class AgentRuntime:
         if not tools:
             raise CoworkerError("no_agent_tool", "No suitable agent tool is currently enabled.", 409)
         self.repo.reserve_planner(run_id, self._planner_reservation())
-        proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason="capability_changed")
+        proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason=reason)
         completed_actions = {
             receipt["resource_id"] for receipt in (
                 item.get("receipt") for item in current["tool_invocations"] if item.get("receipt")
@@ -151,6 +156,12 @@ class AgentRuntime:
             "handoff": draft_step.get("handoff_provenance", []),
         }
         self.repo.finish_invocation(run_id, ordinal, "task", task["id"], summary)
+        if (result["state"] == "needs_input"
+                and self.container.settings.agent_outcome_replan_enabled
+                and self.container.settings.intelligent_planner_enabled):
+            current = self.repo.get(run["owner_id"], run_id)
+            if current["planner_mode"] in {"intelligent", "replanned"}:
+                return {"status": "outcome_replan_required"}
         return {"status": "completed"}
 
     def complete(self, run_id: str):

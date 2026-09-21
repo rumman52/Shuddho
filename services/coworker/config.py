@@ -34,6 +34,7 @@ class Settings:
     agent_memory_enabled: bool = False
     intelligent_planner_enabled: bool = False
     agent_handoffs_enabled: bool = False
+    agent_outcome_replan_enabled: bool = False
     google_client_id: str = ""
     google_client_secret: str = field(default="", repr=False)
     google_redirect_uri: str = ""
@@ -90,6 +91,7 @@ class Settings:
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
+            agent_outcome_replan_enabled=os.getenv("SHUDDHO_AGENT_OUTCOME_REPLAN_ENABLED", "false").lower() == "true",
             google_client_id=os.getenv("SHUDDHO_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("SHUDDHO_GOOGLE_CLIENT_SECRET", ""),
             google_redirect_uri=os.getenv("SHUDDHO_GOOGLE_REDIRECT_URI", ""),

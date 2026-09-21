@@ -130,17 +130,29 @@ class AgentWorkflow:
                         ordinal += 1
                         break
                     status = result.get("status")
-                    if status == "replan_required":
+                    if status in {"replan_required", "outcome_replan_required"}:
                         if replanned:
+                            if status == "outcome_replan_required":
+                                ordinal += 1
+                                break
                             raise ApplicationError("The agent already used its one replan.", type="replan_limit")
+                        from_ordinal = ordinal if status == "replan_required" else ordinal + 1
+                        if from_ordinal > count:
+                            ordinal += 1
+                            break
+                        reason = "capability_changed" if status == "replan_required" else "result_incomplete"
                         replacement_count = await workflow.execute_activity(
-                            "shuddho_agent_replan_v1", {"run_id": run_id, "from_ordinal": ordinal},
+                            "shuddho_agent_replan_v1",
+                            {"run_id": run_id, "from_ordinal": from_ordinal, "reason": reason},
                             start_to_close_timeout=timedelta(seconds=45),
                             schedule_to_close_timeout=timedelta(minutes=2),
                             retry_policy=RetryPolicy(maximum_attempts=1),
                         )
-                        count = ordinal - 1 + replacement_count
+                        count = from_ordinal - 1 + replacement_count
                         replanned = True
+                        if status == "outcome_replan_required":
+                            ordinal += 1
+                            break
                         continue
                     if status not in {"awaiting_approval", "executing"}:
                         raise ApplicationError("Agent step returned an unsupported state.", type="agent_step_state")
