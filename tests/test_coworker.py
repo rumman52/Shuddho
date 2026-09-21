@@ -722,13 +722,21 @@ def test_structured_memory_owned_versioned_expiring_and_hard_deletable(container
         expires_at=utcnow() + timedelta(days=1),
     ))
     assert updated["version"] == 2
-    context = container.memory.context(alice)
+    from services.coworker.agent_schemas import AgentRunCreate
+    container.settings = replace(enabled, agent_runtime_enabled=True)
+    container.repository.settings = container.settings
+    container.agent.settings = container.settings
+    container.memory.settings = container.settings
+    scoped_run, _ = container.agent.create(alice, AgentRunCreate(
+        goal="Use my preferences.", memory_namespaces=["preferences"], output_language="en"
+    ), "memory-context-scope")
+    context = container.memory.context_for_run(alice, scoped_run["id"])
     assert context["facts"][0]["value"] == "Use concise professional US English."
     assert context["provenance"] == [{"id": fact["id"], "version": 2}]
 
     container.memory.delete(alice, fact["id"])
     assert container.memory.list(alice) == []
-    assert container.memory.context(alice) == {"facts": [], "provenance": []}
+    assert container.memory.context_for_run(alice, scoped_run["id"]) == {"facts": [], "provenance": []}
     with container.repository.sessions() as db:
         assert db.get(MemoryFact, fact["id"]) is None
         audits = db.scalars(select(AuditEvent).where(AuditEvent.resource_id == fact["id"])).all()
@@ -790,7 +798,7 @@ def test_agent_memory_is_ephemeral_and_receipt_keeps_only_provenance(container):
             return super().messages(task, sources)
 
     run, _ = container.agent.create(owner, AgentRunCreate(
-        goal="Prepare a project report.", output_language="en"
+        goal="Prepare a project report.", memory_namespaces=["preferences"], output_language="en"
     ), "agent-memory-run")
     model = CaptureModel()
     runtime = AgentRuntime(container, DocumentRunner(container, model))
@@ -808,7 +816,7 @@ def test_agent_memory_is_ephemeral_and_receipt_keeps_only_provenance(container):
 
     container.memory.delete(owner, fact["id"])
     second, _ = container.agent.create(owner, AgentRunCreate(
-        goal="Prepare another project report.", output_language="en"
+        goal="Prepare another project report.", memory_namespaces=["preferences"], output_language="en"
     ), "agent-memory-run-2")
     second_model = CaptureModel()
     second_runtime = AgentRuntime(container, DocumentRunner(container, second_model))
@@ -868,3 +876,36 @@ def test_memory_api_is_owner_scoped_and_user_controlled(signed_client, container
     assert updated.status_code == 200 and updated.json()["version"] == 2
     assert client.delete(f'/api/v1/memory/{fact["id"]}', headers=alice).json()["deleted"] is True
     assert client.get("/api/v1/memory", headers=alice).json()["facts"] == []
+
+
+def test_agent_memory_requires_explicit_namespace_scope(container):
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.memory_schemas import MemoryFactCreate
+
+    enabled = replace(container.settings, agent_runtime_enabled=True, agent_memory_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    container.memory.create(owner, MemoryFactCreate(
+        namespace="preferences", key="writing.tone", value="PRIVATE-MEMORY", language="en"
+    ))
+
+    class CaptureModel(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.memory_seen = []
+        def messages(self, task, sources):
+            self.memory_seen.append(task.get("memory"))
+            return super().messages(task, sources)
+
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Prepare a project report.", output_language="en"
+    ), "agent-memory-no-scope")
+    model = CaptureModel()
+    runtime = AgentRuntime(container, DocumentRunner(container, model))
+    runtime.plan(run["id"])
+    asyncio.run(runtime.execute_step(run["id"], 1))
+    assert model.memory_seen == [None]
