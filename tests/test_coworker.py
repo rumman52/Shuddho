@@ -553,6 +553,7 @@ def test_agent_runtime_model_matches_migration(container):
     model_columns = set(AgentRun.__table__.columns.keys())
     assert database_columns == model_columns
     assert "event_sequence" in model_columns
+    assert {"planner_calls", "planner_tokens", "planner_mode"} <= model_columns
 
 
 
@@ -940,3 +941,187 @@ def test_expired_memory_stays_user_visible_but_not_in_agent_context(container):
         goal="Prepare a project report.", memory_namespaces=["preferences"], output_language="en"
     ), "expired-memory-scope")
     assert container.memory.context_for_run(owner, run["id"]) == {"facts": [], "provenance": []}
+
+
+
+def test_intelligent_planner_reconstructs_server_owned_arguments(container):
+    from services.coworker.agent_planner import proposal_to_plan
+    from services.coworker.agent_schemas import AgentPlannerProposal
+    enabled = replace(container.settings, work_services_enabled=True, research_services_enabled=True)
+    proposal = AgentPlannerProposal.model_validate({
+        "steps": [
+            {"tool": "research.search", "objective": "Compare the current market."},
+            {"tool": "email.draft", "objective": "Draft a concise follow-up."},
+        ]
+    })
+    plan = proposal_to_plan(proposal, "Private original goal", [], "bn", enabled)
+    assert [step.tool for step in plan] == ["research.search", "email.draft"]
+    assert plan[0].arguments["query"] == "Private original goal"
+    assert plan[0].arguments["instruction"] == "Private original goal"
+    assert plan[1].arguments["instruction"] == "Private original goal"
+    assert "Compare the current market." not in json.dumps([step.arguments for step in plan])
+    assert plan[0].arguments["document_ids"] == []
+    assert plan[0].arguments["output_language"] == "bn"
+    assert "recipient" not in json.dumps([step.arguments for step in plan]).lower()
+
+
+def test_intelligent_planner_rejects_model_invented_tool(container):
+    from services.coworker.agent_planner import proposal_to_plan
+    from services.coworker.agent_schemas import AgentPlannerProposal
+    proposal = AgentPlannerProposal.model_validate({
+        "steps": [{"tool": "shell.run", "objective": "Run a command."}]
+    })
+    with pytest.raises(CoworkerError) as error:
+        proposal_to_plan(proposal, "Do work", [], "en", replace(container.settings, work_services_enabled=True))
+    assert error.value.code == "planner_tool_scope"
+
+
+def test_agent_intelligent_plan_falls_back_deterministically(container):
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.agent_planning_model import PlannerFailure
+
+    enabled = replace(container.settings, agent_runtime_enabled=True, intelligent_planner_enabled=True,
+                      work_services_enabled=True, max_agent_planner_calls=2, agent_planner_token_budget=16000)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Draft a professional follow-up email.", output_language="en"
+    ), "intelligent-fallback")
+
+    class FailingPlanner:
+        async def propose(self, *_args, **_kwargs):
+            raise PlannerFailure("planner_unavailable", "temporary", retryable=True)
+
+    runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()), planner=FailingPlanner())
+    assert asyncio.run(runtime.plan_for_worker(run["id"])) == 1
+    saved = container.agent.get(owner, run["id"])
+    assert saved["planner_mode"] == "fallback"
+    assert saved["planner_calls"] == 1
+    assert saved["planner_tokens"] == 8000
+    assert saved["steps"][0]["tool"] == "email.draft"
+
+
+def test_agent_planner_budget_is_reserved_before_provider_call(container):
+    from services.coworker.agent_schemas import AgentRunCreate
+    enabled = replace(container.settings, agent_runtime_enabled=True, intelligent_planner_enabled=True,
+                      work_services_enabled=True, max_agent_planner_calls=2, agent_planner_token_budget=100)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(goal="Create a document.", output_language="en"),
+                                    "planner-budget")
+    first = container.agent.reserve_planner(run["id"], 50)
+    assert first["call"] == 1
+    second = container.agent.reserve_planner(run["id"], 50)
+    assert second["call"] == 2
+    with pytest.raises(CoworkerError) as limit:
+        container.agent.reserve_planner(run["id"], 1)
+    assert limit.value.code == "planner_call_limit"
+    saved = container.agent.get(owner, run["id"])
+    assert saved["planner_tokens"] == 100
+
+
+def test_agent_step_requests_replan_only_for_disabled_prepared_tool(container):
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentRunCreate
+    enabled = replace(container.settings, agent_runtime_enabled=True, intelligent_planner_enabled=True,
+                      work_services_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Draft a professional email.", output_language="en"
+    ), "replan-disabled-tool")
+    runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()))
+    assert runtime.plan(run["id"]) == 1
+    container.settings = replace(enabled, work_services_enabled=False)
+    container.repository.settings = container.settings
+    container.agent.settings = container.settings
+    result = asyncio.run(runtime.execute_step(run["id"], 1))
+    assert result == {"status": "replan_required"}
+
+
+
+def test_intelligent_planner_http_contract_is_bounded_and_private(container):
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+    settings = replace(container.settings, deepseek_api_key="test-only-placeholder",
+                       agent_planner_max_output_tokens=1200)
+    seen = {}
+    def respond(request):
+        body = json.loads(request.content)
+        seen.update(body)
+        assert body["thinking"] == {"type": "disabled"}
+        assert body["response_format"] == {"type": "json_object"}
+        user = json.loads(body["messages"][1]["content"])
+        assert user["available_tools"] == ["email.draft", "report.create"]
+        assert "PRIVATE-MEMORY" not in request.content.decode()
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
+                "steps": [{"tool": "email.draft", "objective": "Draft a concise update."}]
+            })}}],
+            "usage": {"total_tokens": 321},
+        })
+    planner = DeepSeekAgentPlanner(settings, httpx.MockTransport(respond))
+    proposal, tokens, _latency = asyncio.run(planner.propose(
+        "Prepare an update.", ["email.draft", "report.create"]
+    ))
+    assert proposal.steps[0].tool == "email.draft"
+    assert tokens == 321
+    assert seen["max_tokens"] == 1200
+
+    bad = DeepSeekAgentPlanner(settings, httpx.MockTransport(lambda _: httpx.Response(200, json={
+        "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
+            "steps": [{"tool": "shell.run", "objective": "Run command."}]
+        })}}],
+        "usage": {"total_tokens": 12},
+    })))
+    with pytest.raises(PlannerFailure) as invalid:
+        asyncio.run(bad.propose("Do work", ["email.draft"]))
+    assert invalid.value.code == "invalid_planner_output"
+
+    busy = DeepSeekAgentPlanner(settings, httpx.MockTransport(
+        lambda _: httpx.Response(429, text="PRIVATE PROVIDER BODY")
+    ))
+    with pytest.raises(PlannerFailure) as failure:
+        asyncio.run(busy.propose("Do work", ["email.draft"]))
+    assert failure.value.retryable and "PRIVATE" not in failure.value.message
+
+
+
+def test_agent_runtime_replan_replaces_unstarted_step_directly(container):
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlannerProposal, AgentRunCreate
+
+    enabled = replace(container.settings, agent_runtime_enabled=True, intelligent_planner_enabled=True,
+                      work_services_enabled=True, max_agent_planner_calls=2,
+                      agent_planner_token_budget=16000)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Draft a professional follow-up email.", output_language="en"
+    ), "direct-replan")
+    runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()))
+    assert runtime.plan(run["id"]) == 1
+
+    class Planner:
+        async def propose(self, *_args, **_kwargs):
+            return AgentPlannerProposal.model_validate({
+                "steps": [{"tool": "report.create", "objective": "Prepare a professional update."}]
+            }), 10, 1
+
+    changed = replace(enabled, work_services_enabled=False)
+    container.settings = changed
+    container.repository.settings = changed
+    container.agent.settings = changed
+    runtime.planner = Planner()
+    assert asyncio.run(runtime.replan(run["id"], 1)) == 1
+    saved = container.agent.get(owner, run["id"])
+    assert [step["tool"] for step in saved["steps"]] == ["report.create"]
+    assert saved["planner_mode"] == "replanned"

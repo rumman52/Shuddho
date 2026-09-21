@@ -113,9 +113,11 @@ class AgentWorkflow:
                 "shuddho_agent_plan_v1", run_id,
                 start_to_close_timeout=timedelta(seconds=30),
                 schedule_to_close_timeout=timedelta(minutes=2),
-                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=3),
+                retry_policy=RetryPolicy(maximum_attempts=1),
             )
-            for ordinal in range(1, count + 1):
+            ordinal = 1
+            replanned = False
+            while ordinal <= count:
                 while True:
                     result = await workflow.execute_activity(
                         "shuddho_agent_step_v1", {"run_id": run_id, "ordinal": ordinal},
@@ -125,8 +127,22 @@ class AgentWorkflow:
                         retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), maximum_attempts=2),
                     )
                     if not result or result.get("status") == "completed":
+                        ordinal += 1
                         break
-                    if result.get("status") not in {"awaiting_approval", "executing"}:
+                    status = result.get("status")
+                    if status == "replan_required":
+                        if replanned:
+                            raise ApplicationError("The agent already used its one replan.", type="replan_limit")
+                        replacement_count = await workflow.execute_activity(
+                            "shuddho_agent_replan_v1", {"run_id": run_id, "from_ordinal": ordinal},
+                            start_to_close_timeout=timedelta(seconds=45),
+                            schedule_to_close_timeout=timedelta(minutes=2),
+                            retry_policy=RetryPolicy(maximum_attempts=1),
+                        )
+                        count = ordinal - 1 + replacement_count
+                        replanned = True
+                        continue
+                    if status not in {"awaiting_approval", "executing"}:
                         raise ApplicationError("Agent step returned an unsupported state.", type="agent_step_state")
                     await workflow.sleep(timedelta(seconds=5))
             await workflow.execute_activity(
@@ -135,8 +151,8 @@ class AgentWorkflow:
                 schedule_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
-        except ActivityError as error:
-            cause = error.cause
+        except (ActivityError, ApplicationError) as error:
+            cause = error.cause if isinstance(error, ActivityError) else error
             code = cause.type if isinstance(cause, ApplicationError) else "agent_workflow_failed"
             message = str(cause.message) if isinstance(cause, ApplicationError) else "This agent run could not finish. Please try again."
             await workflow.execute_activity(

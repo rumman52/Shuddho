@@ -23,14 +23,14 @@ from services.coworker.worker import ActionActivities, Activities, AgentActiviti
 from services.coworker.workflow import AgentWorkflow, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 
-def make_worker(env, runner):
+def make_worker(env, runner, agent_runtime=None):
     activities = Activities(runner)
     actions = ActionActivities(runner.container.actions)
-    agent = AgentActivities(AgentRuntime(runner.container, runner))
+    agent = AgentActivities(agent_runtime or AgentRuntime(runner.container, runner))
     return Worker(env.client, task_queue=runner.container.settings.task_queue,
                   workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow],
                   activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, actions.execute, actions.interrupted,
-                              agent.plan, agent.step, agent.complete, agent.failed],
+                              agent.plan, agent.replan, agent.step, agent.complete, agent.failed],
                   max_cached_workflows=0,
                   graceful_shutdown_timeout=timedelta(seconds=2))
 
@@ -389,3 +389,63 @@ def test_agent_action_cancel_before_approval_never_dispatches(container):
     assert container.actions.repo.get(owner, action["id"])["state"] == "cancelled"
     assert container.actions.repo.claim_outbox() == []
     assert provider.sent == []
+
+
+
+def test_agent_workflow_replans_once_when_capability_changes(container):
+    from services.coworker.agent_schemas import AgentPlannerProposal
+    async def scenario():
+        enabled = replace(container.settings, agent_runtime_enabled=True, intelligent_planner_enabled=True,
+                          work_services_enabled=True, max_agent_planner_calls=2,
+                          agent_planner_token_budget=16000)
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(owner, AgentRunCreate(
+            goal="Draft a professional follow-up email.", output_language="en"
+        ), "temporal-intelligent-replan")
+
+        class Planner:
+            def __init__(self):
+                self.calls = 0
+            async def propose(self, *_args, **kwargs):
+                self.calls += 1
+                tool = "email.draft" if self.calls == 1 else "report.create"
+                return AgentPlannerProposal.model_validate({
+                    "steps": [{"tool": tool, "objective": "Prepare the requested professional update."}]
+                }), 50, 1
+
+        gate = asyncio.Event()
+        planner = Planner()
+        runner = DocumentRunner(container, FakeModel())
+
+        class GatedRuntime(AgentRuntime):
+            async def execute_step(self, run_id, ordinal):
+                if planner.calls == 1:
+                    gate.set()
+                    await asyncio.sleep(0.1)
+                return await super().execute_step(run_id, ordinal)
+
+        runtime = GatedRuntime(container, runner, planner=planner)
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, runner, runtime):
+                await Dispatcher(container, env.client).tick()
+                await asyncio.wait_for(gate.wait(), 30)
+                changed = replace(enabled, work_services_enabled=False)
+                container.settings = changed
+                container.repository.settings = changed
+                container.agent.settings = changed
+                runtime.container.settings = changed
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+                history = (await handle.fetch_history()).to_json()
+        saved = container.agent.get(owner, run["id"])
+        assert saved["state"] == "completed"
+        assert saved["planner_mode"] == "replanned"
+        assert saved["planner_calls"] == 2
+        assert planner.calls == 2
+        assert [step["tool"] for step in saved["steps"]] == ["report.create"]
+        assert "Draft a professional follow-up email." not in history
+    asyncio.run(scenario())

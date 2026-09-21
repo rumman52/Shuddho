@@ -90,3 +90,17 @@ class AgentPlanStep(AgentModel):
         if len(encoded.encode("utf-8")) > 32768:
             raise ValueError("Tool arguments exceed the 32 KiB limit")
         return self
+
+
+class AgentPlannerChoice(AgentModel):
+    tool: str = Field(min_length=3, max_length=80, pattern=r"^[a-z][a-z0-9_.-]+$")
+    objective: str = Field(min_length=3, max_length=500)
+
+    @field_validator("objective")
+    @classmethod
+    def safe_objective(cls, value: str) -> str:
+        return _safe_text(value)
+
+
+class AgentPlannerProposal(AgentModel):
+    steps: list[AgentPlannerChoice] = Field(min_length=1, max_length=3)

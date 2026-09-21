@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from .agent_planner import deterministic_plan
+from .agent_planner import deterministic_plan, intelligent_tool_names, proposal_to_plan
 from .agent_tools import tool
+from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
 from .errors import CoworkerError
 from .runner import DocumentRunner
 from .schemas import ResearchOptions, TaskCreate
 
 
 class AgentRuntime:
-    def __init__(self, container, runner: DocumentRunner):
+    def __init__(self, container, runner: DocumentRunner, planner=None):
         self.container = container
         self.runner = runner
         self.repo = container.agent
+        self.planner = planner or DeepSeekAgentPlanner(container.settings)
 
     def plan(self, run_id: str) -> int:
         run = self.repo.worker_run(run_id)
@@ -23,8 +25,67 @@ class AgentRuntime:
         steps = deterministic_plan(
             run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"]
         )
+        self.repo.set_planner_mode(run_id, "deterministic")
         saved = self.repo.save_plan(run["owner_id"], run_id, steps)
         return len(saved["tool_invocations"])
+
+    def _planner_reservation(self) -> int:
+        per_call = max(1, self.container.settings.agent_planner_token_budget // self.container.settings.max_agent_planner_calls)
+        return min(per_call, self.container.settings.agent_planner_token_budget)
+
+    async def plan_for_worker(self, run_id: str) -> int:
+        if not self.container.settings.intelligent_planner_enabled:
+            return self.plan(run_id)
+        run = self.repo.worker_run(run_id)
+        current = self.repo.get(run["owner_id"], run_id)
+        if current["tool_invocations"]:
+            return len(current["tool_invocations"])
+        tools = intelligent_tool_names(self.container.settings)
+        if not tools:
+            return self.plan(run_id)
+        self.repo.reserve_planner(run_id, self._planner_reservation())
+        try:
+            proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason="initial")
+            steps = proposal_to_plan(
+                proposal, run["goal"], run["document_ids"], run["output_language"],
+                self.container.settings, run["actions"],
+            )
+            saved = self.repo.save_plan(run["owner_id"], run_id, steps)
+            self.repo.set_planner_mode(run_id, "intelligent")
+            return len(saved["tool_invocations"])
+        except PlannerFailure:
+            self.repo.set_planner_mode(run_id, "fallback")
+            steps = deterministic_plan(
+                run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"]
+            )
+            saved = self.repo.save_plan(run["owner_id"], run_id, steps)
+            return len(saved["tool_invocations"])
+
+    async def replan(self, run_id: str, from_ordinal: int) -> int:
+        if not self.container.settings.intelligent_planner_enabled:
+            raise CoworkerError("replan_unavailable", "Intelligent replanning is not enabled.", 409)
+        run = self.repo.worker_run(run_id)
+        current = self.repo.get(run["owner_id"], run_id)
+        if current["planner_calls"] >= self.container.settings.max_agent_planner_calls:
+            raise CoworkerError("planner_call_limit", "This agent run reached its planner call limit.", 429)
+        tools = intelligent_tool_names(self.container.settings)
+        if not tools:
+            raise CoworkerError("no_agent_tool", "No suitable agent tool is currently enabled.", 409)
+        self.repo.reserve_planner(run_id, self._planner_reservation())
+        proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason="capability_changed")
+        completed_actions = {
+            receipt["resource_id"] for receipt in (
+                item.get("receipt") for item in current["tool_invocations"] if item.get("receipt")
+            ) if receipt and receipt.get("resource_type") == "action"
+        }
+        remaining_actions = [action for action in run["actions"] if action["id"] not in completed_actions]
+        steps = proposal_to_plan(
+            proposal, run["goal"], run["document_ids"], run["output_language"],
+            self.container.settings, remaining_actions,
+        )
+        saved = self.repo.replace_remaining_plan(run["owner_id"], run_id, from_ordinal, steps)
+        self.repo.set_planner_mode(run_id, "replanned")
+        return len([step for step in saved["steps"] if step["ordinal"] >= from_ordinal])
 
     async def execute_step(self, run_id: str, ordinal: int) -> dict:
         run = self.repo.worker_run(run_id)
@@ -32,6 +93,10 @@ class AgentRuntime:
         if invocation["state"] == "completed":
             return {"status": "completed"}
         spec = tool(invocation["tool"])
+        if not spec.enabled(self.container.settings) and spec.kind == "task":
+            if self.container.settings.intelligent_planner_enabled and invocation["state"] == "prepared":
+                return {"status": "replan_required"}
+            raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
         args = spec.validate(invocation["arguments"])
         if spec.kind == "approved_action":
             action = self.container.actions.repo.get(run["owner_id"], str(args.action_id))

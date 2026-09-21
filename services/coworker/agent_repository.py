@@ -11,7 +11,7 @@ from .agent_schemas import AgentPlanStep, AgentRunCreate
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Document, DocumentVersion, ExternalAction, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import iso, not_found
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
@@ -177,6 +177,9 @@ class AgentRepository:
             "error_code": run.error_code,
             "cancel_requested": run.cancel_requested,
             "event_sequence": run.event_sequence,
+            "planner_calls": run.planner_calls,
+            "planner_tokens": run.planner_tokens,
+            "planner_mode": run.planner_mode,
             "created_at": iso(run.created_at),
             "updated_at": iso(run.updated_at),
             "deadline_at": iso(run.deadline_at),
@@ -226,6 +229,109 @@ class AgentRepository:
                 "terminal": run.state in {"completed", "failed", "cancelled"},
                 "sequence": run.event_sequence,
             }
+
+    def reserve_planner(self, run_id: str, reserve_tokens: int) -> dict:
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            if run.cancel_requested or run.state == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            if run.planner_calls >= self.settings.max_agent_planner_calls:
+                raise CoworkerError("planner_call_limit", "This agent run reached its planner call limit.", 429)
+            if reserve_tokens < 1 or run.planner_tokens + reserve_tokens > self.settings.agent_planner_token_budget:
+                raise CoworkerError("planner_budget", "This agent run reached its planner token budget.", 429)
+            if db.scalar(select(Account.id).where(Account.id == run.owner_id).with_for_update()) is None:
+                raise not_found()
+            day = utcnow().date().isoformat()
+            daily = db.get(DailyUsage, (run.owner_id, day))
+            if daily is None:
+                daily = DailyUsage(owner_id=run.owner_id, day=day, allocated_tokens=0, task_count=0)
+                db.add(daily)
+            if daily.allocated_tokens + reserve_tokens > self.settings.daily_token_budget:
+                raise CoworkerError("daily_limit", "Your daily coworker model budget has been reached.", 429)
+            daily.allocated_tokens += reserve_tokens
+            run.planner_calls += 1
+            run.planner_tokens += reserve_tokens
+            run.planner_mode = "intelligent"
+            self._audit(db, run.owner_id, run.id, "agent_planner_budget_reserved")
+            return {"call": run.planner_calls, "reserved_tokens": reserve_tokens, "day": day}
+
+    def set_planner_mode(self, run_id: str, mode: str):
+        if mode not in {"deterministic", "intelligent", "fallback", "replanned"}:
+            raise CoworkerError("planner_mode", "Unsupported planner mode.", 422)
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            run.planner_mode = mode
+            run.updated_at = utcnow()
+
+    def replace_remaining_plan(self, owner: str, run_id: str, from_ordinal: int,
+                               steps: list[AgentPlanStep]) -> dict:
+        if not 1 <= len(steps) <= 8 or from_ordinal - 1 + len(steps) > 8:
+            raise CoworkerError("invalid_plan", "An agent plan must contain at most eight total steps.", 422)
+        with self.sessions.begin() as db:
+            run = self._run(db, owner, run_id, lock=True)
+            if run.cancel_requested or run.state == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            if from_ordinal < 1:
+                raise CoworkerError("invalid_replan", "The replan boundary is invalid.", 422)
+            prior = db.scalars(select(AgentStep).where(
+                AgentStep.run_id == run_id, AgentStep.ordinal < from_ordinal,
+            )).all()
+            if any(step.state != "completed" for step in prior):
+                raise CoworkerError("invalid_replan", "Only completed steps may precede a replan.", 409)
+            remaining_steps = db.scalars(select(AgentStep).where(
+                AgentStep.run_id == run_id, AgentStep.ordinal >= from_ordinal,
+            ).order_by(AgentStep.ordinal).with_for_update()).all()
+            for step in remaining_steps:
+                invocation = db.scalar(select(ToolInvocation).where(ToolInvocation.step_id == step.id).with_for_update())
+                if invocation is not None and invocation.state not in {"prepared"}:
+                    raise CoworkerError("replan_started_step", "A started agent step cannot be replaced.", 409)
+                if invocation is not None:
+                    db.delete(invocation)
+                    # There is intentionally no ORM relationship here. Flush the
+                    # FK child before deleting its AgentStep parent.
+                    db.flush()
+                db.delete(step)
+                db.flush()
+            run_docs = self._run_document_ids(db, run)
+            for offset, planned in enumerate(steps):
+                ordinal = from_ordinal + offset
+                spec = tool(planned.tool)
+                if not spec.enabled(self.settings):
+                    raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
+                validated = spec.validate(planned.arguments)
+                if hasattr(validated, "document_ids"):
+                    requested = {str(value) for value in validated.document_ids}
+                    if not requested.issubset(run_docs):
+                        raise CoworkerError("tool_source_scope", "An agent tool can use only sources attached to this run.", 409)
+                if spec.kind == "approved_action":
+                    if str(validated.action_id) not in set(run.action_ids):
+                        raise CoworkerError("action_scope", "This action was not attached to the agent run.", 409)
+                    action = db.scalar(select(ExternalAction).where(
+                        ExternalAction.id == str(validated.action_id), ExternalAction.owner_id == owner,
+                    ))
+                    expected = "email_send" if spec.capability == "email" else "calendar_create"
+                    if action is None or action.kind != expected or action.agent_run_id != run.id:
+                        raise CoworkerError("action_scope", "The approved action is not available to this agent run.", 409)
+                step = AgentStep(
+                    id=str(uuid4()), run_id=run.id, owner_id=owner, ordinal=ordinal,
+                    tool_name=spec.name, state="planned",
+                    input={"arguments": validated.model_dump(mode="json")}, output={},
+                )
+                db.add(step)
+                db.flush()
+                db.add(ToolInvocation(
+                    id=str(uuid4()), run_id=run.id, step_id=step.id, owner_id=owner,
+                    tool_name=spec.name, tool_version=spec.version,
+                    arguments=validated.model_dump(mode="json"), state="prepared",
+                    consequential=spec.consequential, approval_required=spec.approval_required,
+                ))
+            self._event(db, run, "planning", "replanned", f"Plan updated from step {from_ordinal}.")
+            self._audit(db, owner, run.id, "agent_plan_replanned")
+            return self._dto(db, run)
 
     def save_plan(self, owner: str, run_id: str, steps: list[AgentPlanStep]) -> dict:
         if not 1 <= len(steps) <= 8:
