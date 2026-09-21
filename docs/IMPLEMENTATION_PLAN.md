@@ -141,7 +141,9 @@ PR #117 adds [bounded multi-source handoffs](PART_3_MULTI_HANDOFFS.md): a later 
 
 PR #118 adds a [bounded dependency graph](PART_3_DEPENDENCY_GRAPH.md). Durable dependency metadata is derived by trusted server code after plan validation; model-selected step IDs and arbitrary DAG edges remain out of scope.
 
-Issue #120 / the next runtime PR adds [bounded parallel execution](PART_3_PARALLEL_EXECUTION.md): new runs may use the versioned `shuddho_agent_run_v2` path when both graph and parallel flags are enabled, with server-owned readiness, bounded fan-out/fan-in, serialized approved actions, deterministic failure behavior, and v1 fallback when the flag is off. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #121 adds [bounded parallel execution](PART_3_PARALLEL_EXECUTION.md): new runs may use the versioned `shuddho_agent_run_v2` path when both graph and parallel flags are enabled, with server-owned readiness, bounded fan-out/fan-in, serialized approved actions, deterministic failure behavior, and v1 fallback when the flag is off.
+
+The next release-readiness increment adds [Agent Evaluation and Production Staging Gates](PART_3_AGENT_EVAL_STAGING_GATES.md): CI-safe routing evaluation, opt-in live planner evaluation, and an explicit machine-readable GO/NO-GO gate before enabling Coworker or Agent Runtime for production traffic. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
