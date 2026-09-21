@@ -62,6 +62,39 @@ def get_agent_run(run_id: UUID, identity: Identity, services: Services):
     return services.agent.get(identity.account_id, str(run_id))
 
 
+@router.get("/agent-runs/{run_id}/events")
+async def agent_run_events(run_id: UUID, request: Request, identity: Identity, services: Services,
+                           after: int = Query(default=0, ge=0), stream: bool = False,
+                           last_event_id: Annotated[str | None, Header()] = None):
+    if last_event_id:
+        if not last_event_id.isdecimal() or len(last_event_id) > 12:
+            raise CoworkerError("invalid_cursor", "Invalid agent event cursor.")
+        after = max(after, int(last_event_id))
+    initial = await run_in_threadpool(services.agent.events, identity.account_id, str(run_id), after)
+    if not stream:
+        return initial
+
+    async def generate():
+        cursor = after
+        current = initial
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and time.time() < identity.expires_at:
+            if await request.is_disconnected():
+                return
+            for event in current["events"]:
+                cursor = event["sequence"]
+                yield f'id: {cursor}\nevent: progress\ndata: {json.dumps(event, ensure_ascii=False)}\n\n'
+            if current["terminal"]:
+                return
+            yield ": keepalive\n\n"
+            await asyncio.sleep(1)
+            current = await run_in_threadpool(services.agent.events, identity.account_id, str(run_id), cursor)
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+    })
+
+
 @router.post("/agent-runs/{run_id}/cancel")
 def cancel_agent_run(run_id: UUID, identity: Identity, services: Services):
     return services.agent.cancel(identity.account_id, str(run_id))
