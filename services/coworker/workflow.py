@@ -113,7 +113,7 @@ class AgentWorkflow:
                 "shuddho_agent_plan_v1", run_id,
                 start_to_close_timeout=timedelta(seconds=30),
                 schedule_to_close_timeout=timedelta(minutes=2),
-                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=3),
+                retry_policy=RetryPolicy(maximum_attempts=1),
             )
             ordinal = 1
             replanned = False
@@ -137,7 +137,7 @@ class AgentWorkflow:
                             "shuddho_agent_replan_v1", {"run_id": run_id, "from_ordinal": ordinal},
                             start_to_close_timeout=timedelta(seconds=45),
                             schedule_to_close_timeout=timedelta(minutes=2),
-                            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=2),
+                            retry_policy=RetryPolicy(maximum_attempts=1),
                         )
                         count = ordinal - 1 + replacement_count
                         replanned = True
