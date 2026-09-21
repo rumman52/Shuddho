@@ -27,6 +27,7 @@ def upgrade():
         sa.Column("phase", sa.String(length=30), nullable=False),
         sa.Column("message", sa.String(length=300), nullable=False),
         sa.Column("cancel_requested", sa.Boolean(), nullable=False),
+        sa.Column("event_sequence", sa.Integer(), nullable=False),
         sa.Column("error_code", sa.String(length=60), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -60,6 +61,21 @@ def upgrade():
     )
     op.create_index(op.f("ix_cw_agent_steps_owner_id"), "cw_agent_steps", ["owner_id"], unique=False)
     op.create_index(op.f("ix_cw_agent_steps_run_id"), "cw_agent_steps", ["run_id"], unique=False)
+
+    op.create_table(
+        "cw_agent_events",
+        sa.Column("run_id", sa.String(length=36), nullable=False),
+        sa.Column("sequence", sa.Integer(), nullable=False),
+        sa.Column("owner_id", sa.String(length=64), nullable=False),
+        sa.Column("state", sa.String(length=30), nullable=False),
+        sa.Column("phase", sa.String(length=30), nullable=False),
+        sa.Column("message", sa.String(length=300), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["owner_id"], ["cw_accounts.id"]),
+        sa.ForeignKeyConstraint(["run_id"], ["cw_agent_runs.id"]),
+        sa.PrimaryKeyConstraint("run_id", "sequence"),
+    )
+    op.create_index(op.f("ix_cw_agent_events_owner_id"), "cw_agent_events", ["owner_id"], unique=False)
 
     op.create_table(
         "cw_tool_invocations",
@@ -112,6 +128,8 @@ def downgrade():
     op.drop_index(op.f("ix_cw_tool_invocations_run_id"), table_name="cw_tool_invocations")
     op.drop_index(op.f("ix_cw_tool_invocations_owner_id"), table_name="cw_tool_invocations")
     op.drop_table("cw_tool_invocations")
+    op.drop_index(op.f("ix_cw_agent_events_owner_id"), table_name="cw_agent_events")
+    op.drop_table("cw_agent_events")
     op.drop_index(op.f("ix_cw_agent_steps_run_id"), table_name="cw_agent_steps")
     op.drop_index(op.f("ix_cw_agent_steps_owner_id"), table_name="cw_agent_steps")
     op.drop_table("cw_agent_steps")
