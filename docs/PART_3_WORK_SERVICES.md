@@ -1,6 +1,6 @@
 # Part 3, wave A: everyday and professional work services
 
-This implementation continues from merged Parts 1 and 2 in the same repository. Wave A was merged in PR #103. [Wave B](PART_3_PRESENTATIONS_SPREADSHEETS.md) adds presentations, spreadsheets and broader file snapshots; [Wave C](PART_3_RESEARCH.md) adds cited web research. External actions and operations waves remain pending. This is code for a staged release, not evidence of a production rollout or universal language quality.
+This implementation continues from merged Parts 1 and 2 in the same repository. Wave A was merged in PR #103. [Wave B](PART_3_PRESENTATIONS_SPREADSHEETS.md) adds presentations, spreadsheets and broader file snapshots; [Wave C](PART_3_RESEARCH.md) adds cited web research. [Wave D's first increment](PART_3_APPROVED_ACTIONS.md) adds approved Google email and calendar actions. Broader actions and operations work remain pending. This is code for a staged release, not evidence of a production rollout or universal language quality.
 
 ## Available work
 
@@ -103,6 +103,6 @@ Automated checks cover native output for all new services, English/Bangla/Arabic
 
 Before release, record for each service/language: source fidelity, missing-information handling, usable formatting, task completion, latency and token cost. Include at least one realistic long CV, a multi-page official document, mixed-script text, and RTL output. Human assessment is required for semantic quality; declaring the requested language code does not prove the text is in that language.
 
-Waves B/C now provide editable PPTX/XLSX, broader file snapshots and cited research behind separate flags. Later Part 3 waves remain: approved email/calendar/social actions with receipts; then measured capacity, cleanup/retention, backup restoration, monitoring and regional expansion. Existing Part 2 retention and operations gaps still apply. No pricing, benchmark or billion-user capacity claim changes in this wave.
+Waves B/C provide editable PPTX/XLSX, broader file snapshots and cited research behind separate flags. Wave D adds approved Google email/calendar actions behind another flag. Social publishing, sharing and reminders remain pending, alongside measured capacity, cleanup/retention, backup restoration, monitoring and regional expansion. Existing Part 2 retention and operations gaps still apply. No pricing, benchmark or billion-user capacity claim changes in this wave.
 
 The structured-output boundary follows [DeepSeek's JSON-mode guidance](https://api-docs.deepseek.com/guides/json_mode/); a JSON response still needs application validation. Deployment constraints follow [Temporal's task-queue registration rules](https://docs.temporal.io/task-queue) and [Python workflow versioning guidance](https://docs.temporal.io/develop/python/workflows/versioning).

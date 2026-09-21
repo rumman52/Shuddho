@@ -1610,6 +1610,7 @@ dependencies = [
 coworker = [
     { name = "alembic" },
     { name = "boto3" },
+    { name = "cryptography" },
     { name = "openpyxl" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyjwt", extra = ["crypto"] },
@@ -1636,6 +1637,7 @@ dev = [
 requires-dist = [
     { name = "alembic", marker = "extra == 'coworker'", specifier = ">=1.16,<2.0" },
     { name = "boto3", marker = "extra == 'coworker'", specifier = ">=1.40,<2.0" },
+    { name = "cryptography", marker = "extra == 'coworker'", specifier = ">=45,<51" },
     { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
     { name = "google-genai", specifier = ">=1.75.0,<2.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },

@@ -21,6 +21,7 @@ from temporalio.testing import WorkflowEnvironment
 from test_coworker import FakeModel, draft
 from coworker_samples import work_draft
 from research_samples import SimulatedResearch
+from action_samples import enable_actions
 from test_coworker_temporal import make_worker
 from services.coworker.api import mount
 from services.coworker.auth import JwtVerifier
@@ -41,6 +42,7 @@ settings = Settings(database_url=f"sqlite:///{folder / 'browser.sqlite3'}", auth
                     artifact_services_enabled=True, research_services_enabled=True, search_api_key="fixture-only-search-key")
 upgrade(settings.database_url)
 container = Container.create(settings)
+google_fixture = enable_actions(container)
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 jwk = jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key(), as_dict=True) | {"kid": "browser-test", "alg": "RS256"}
 container.verifier = JwtVerifier(issuer, "authenticated", httpx.MockTransport(lambda _: httpx.Response(200, json={"keys": [jwk]})))
@@ -92,6 +94,17 @@ mount(app, container)
 @app.get("/health")
 def health():
     return {"status": "ok", "fixture": True}
+
+
+@app.get("/fixture/actions/counts")
+def action_counts():
+    return {"emails": len(google_fixture.sent), "events": len(google_fixture.events)}
+
+
+@app.post("/fixture/actions/lose-reply")
+def lose_reply():
+    google_fixture.lose_reply = True
+    return {"fixture": True}
 
 
 if __name__ == "__main__":

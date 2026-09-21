@@ -6,6 +6,25 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
 
+@workflow.defn(name="shuddho_approved_action_v1")
+class ApprovedActionWorkflow:
+    @workflow.run
+    async def run(self, action_id: str):
+        try:
+            await workflow.execute_activity(
+                "shuddho_execute_action_v1", action_id,
+                start_to_close_timeout=timedelta(seconds=100),
+                schedule_to_close_timeout=timedelta(minutes=4),
+                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), maximum_attempts=3),
+            )
+        except ActivityError:
+            await workflow.execute_activity(
+                "shuddho_action_interrupted_v1", action_id,
+                start_to_close_timeout=timedelta(seconds=20), schedule_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+
 @workflow.defn(name="shuddho_report_email_v1")
 class ReportEmailWorkflow:
     @workflow.run

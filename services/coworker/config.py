@@ -29,6 +29,12 @@ class Settings:
     work_services_enabled: bool = False
     artifact_services_enabled: bool = False
     research_services_enabled: bool = False
+    actions_enabled: bool = False
+    google_client_id: str = ""
+    google_client_secret: str = field(default="", repr=False)
+    google_redirect_uri: str = ""
+    connector_encryption_key: str = field(default="", repr=False)
+    max_daily_actions: int = 20
     search_provider: str = "tavily"
     search_api_key: str = field(default="", repr=False)
     search_timeout_seconds: int = 40
@@ -66,6 +72,12 @@ class Settings:
             work_services_enabled=os.getenv("SHUDDHO_WORK_SERVICES_ENABLED", "false").lower() == "true",
             artifact_services_enabled=os.getenv("SHUDDHO_ARTIFACT_SERVICES_ENABLED", "false").lower() == "true",
             research_services_enabled=os.getenv("SHUDDHO_RESEARCH_SERVICES_ENABLED", "false").lower() == "true",
+            actions_enabled=os.getenv("SHUDDHO_ACTIONS_ENABLED", "false").lower() == "true",
+            google_client_id=os.getenv("SHUDDHO_GOOGLE_CLIENT_ID", ""),
+            google_client_secret=os.getenv("SHUDDHO_GOOGLE_CLIENT_SECRET", ""),
+            google_redirect_uri=os.getenv("SHUDDHO_GOOGLE_REDIRECT_URI", ""),
+            connector_encryption_key=os.getenv("SHUDDHO_CONNECTOR_ENCRYPTION_KEY", ""),
+            max_daily_actions=int(os.getenv("SHUDDHO_COWORKER_DAILY_ACTIONS", "20")),
             search_provider=os.getenv("SHUDDHO_SEARCH_PROVIDER", "tavily"),
             search_api_key=os.getenv("TAVILY_API_KEY", ""),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"),
@@ -80,6 +92,16 @@ class Settings:
         return value
 
     def validate(self) -> None:
+        if self.actions_enabled:
+            from .action_security import TokenVault
+            TokenVault(self.connector_encryption_key)
+            callback = urlparse(self.google_redirect_uri)
+            local = self.environment == "development" and callback.hostname in {"localhost", "127.0.0.1"}
+            if (not self.google_client_id or not self.google_client_secret or not callback.netloc or
+                    callback.scheme != "https" and not (local and callback.scheme == "http") or
+                    callback.username or callback.password or callback.query or callback.fragment or
+                    callback.path != "/oauth/google/callback"):
+                raise ValueError("Actions require Google OAuth credentials and an HTTPS frontend /oauth/google/callback redirect URI")
         if self.research_services_enabled and (self.search_provider != "tavily" or not self.search_api_key):
             raise ValueError("Research requires SHUDDHO_SEARCH_PROVIDER=tavily and backend-only TAVILY_API_KEY")
         if not self.database_url:
@@ -88,7 +110,7 @@ class Settings:
         if issuer.scheme != "https" or not issuer.netloc or issuer.username or issuer.password or issuer.query or issuer.fragment:
             raise ValueError("SHUDDHO_AUTH_ISSUER must be the HTTPS issuer of the managed identity provider")
         if min(self.max_daily_tasks, self.max_active_tasks, self.daily_token_budget,
-               self.task_token_budget, self.max_account_bytes) < 1:
+               self.task_token_budget, self.max_account_bytes, self.max_daily_actions) < 1:
             raise ValueError("Coworker limits must be positive")
         if self.storage_backend not in {"s3", "local"}:
             raise ValueError("Unsupported coworker storage backend")
