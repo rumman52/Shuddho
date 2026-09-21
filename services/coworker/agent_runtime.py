@@ -21,7 +21,7 @@ class AgentRuntime:
         if current["tool_invocations"]:
             return len(current["tool_invocations"])
         steps = deterministic_plan(
-            run["goal"], run["document_ids"], run["output_language"], self.container.settings
+            run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"]
         )
         saved = self.repo.save_plan(run["owner_id"], run_id, steps)
         return len(saved["tool_invocations"])
@@ -32,12 +32,27 @@ class AgentRuntime:
         if invocation["state"] == "completed":
             return {"status": "completed"}
         spec = tool(invocation["tool"])
+        args = spec.validate(invocation["arguments"])
+        if spec.kind == "approved_action":
+            action = self.container.actions.repo.get(run["owner_id"], str(args.action_id))
+            state = action["state"]
+            if state == "succeeded":
+                summary = {"action_state": state, "provider_confirmed": True}
+                self.repo.finish_invocation(run_id, ordinal, "action", action["id"], summary)
+                return {"status": "completed"}
+            if state == "outcome_unknown":
+                raise CoworkerError("action_outcome_unknown", "The provider result is uncertain. Check the connected service before continuing.", 409)
+            if state in {"failed", "cancelled", "expired"}:
+                raise CoworkerError("action_" + state, "The attached action did not complete successfully.", 409)
+            if state not in {"awaiting_approval", "queued", "executing"}:
+                raise CoworkerError("action_state", "The attached action is not in a resumable state.", 409)
+            self.repo.action_waiting(run_id, ordinal, action["id"], state)
+            return {"status": "awaiting_approval" if state == "awaiting_approval" else "executing"}
         if spec.consequential or spec.approval_required:
-            raise CoworkerError("approval_required", "This runtime does not execute consequential tools yet.", 409)
+            raise CoworkerError("approval_required", "This consequential tool must use the approved-action path.", 409)
         if spec.kind != "task" or not spec.skill_id:
             raise CoworkerError("unsupported_agent_tool", "This agent tool is not executable in this runtime.", 409)
 
-        args = spec.validate(invocation["arguments"])
         self.repo.begin_invocation(run_id, ordinal)
         research = None
         if spec.skill_id == "research":

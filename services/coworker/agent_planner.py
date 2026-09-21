@@ -20,7 +20,7 @@ _RULES = (
 )
 
 
-def deterministic_plan(goal: str, document_ids: list[str], output_language: str, settings: Settings) -> list[AgentPlanStep]:
+def deterministic_plan(goal: str, document_ids: list[str], output_language: str, settings: Settings, actions: list[dict] | None = None) -> list[AgentPlanStep]:
     normalized = " ".join(goal.lower().split())
     selected: list[str] = []
     for name, phrases in _RULES:
@@ -28,7 +28,8 @@ def deterministic_plan(goal: str, document_ids: list[str], output_language: str,
             spec = tool(name)
             if spec.enabled(settings) and not spec.consequential:
                 selected.append(name)
-    if not selected:
+    actions = list(actions or [])
+    if not selected and not actions:
         fallback = tool("document.create")
         if not fallback.enabled(settings):
             raise CoworkerError("no_agent_tool", "No suitable non-consequential agent tool is enabled.", 409)
@@ -47,4 +48,12 @@ def deterministic_plan(goal: str, document_ids: list[str], output_language: str,
             arguments["query"] = goal[:400]
             arguments["time_range"] = "any"
         steps.append(AgentPlanStep(tool=name, arguments=arguments))
+    for action in actions[:3]:
+        name = "email.send" if action["kind"] == "email_send" else "calendar.create"
+        spec = tool(name)
+        if not spec.enabled(settings):
+            raise CoworkerError("tool_unavailable", "The attached action capability is not enabled.", 409)
+        steps.append(AgentPlanStep(tool=name, arguments={"action_id": action["id"]}))
+    if not 1 <= len(steps) <= 8:
+        raise CoworkerError("invalid_plan", "The bounded agent plan is too large.", 422)
     return steps

@@ -595,3 +595,104 @@ def test_agent_outbox_model_matches_migration(container):
     from services.coworker.models import AgentOutbox
     database_columns = {item["name"] for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_agent_outbox")}
     assert database_columns == set(AgentOutbox.__table__.columns.keys())
+
+
+
+def test_agent_run_binds_only_owned_pending_actions(container):
+    from action_samples import enable_actions, connected, action_request
+    from services.coworker.agent_schemas import AgentRunCreate
+    provider = enable_actions(container)
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+    action = container.actions.repo.prepare(owner, action_request(connection), "agent-bound-preview")
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Complete the attached external action.",
+        action_ids=[action["id"]],
+        output_language="en",
+    ), "agent-action-run")
+    assert run["action_ids"] == [action["id"]]
+    assert provider.sent == []
+
+    with pytest.raises(CoworkerError) as duplicate_state:
+        approved = container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+        container.agent.create(owner, AgentRunCreate(
+            goal="Try to attach an already approved action.",
+            action_ids=[approved["id"]],
+            output_language="en",
+        ), "agent-action-approved")
+    assert duplicate_state.value.code == "action_not_awaiting_approval"
+
+
+def test_agent_plan_rejects_unattached_action(container):
+    from action_samples import enable_actions, connected, action_request
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    enable_actions(container)
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+    action = container.actions.repo.prepare(owner, action_request(connection), "agent-unbound-preview")
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a document.",
+        output_language="en",
+    ), "agent-unbound-run")
+    with pytest.raises(CoworkerError) as scope:
+        container.agent.save_plan(owner, run["id"], [
+            AgentPlanStep(tool="email.send", arguments={"action_id": action["id"]}),
+        ])
+    assert scope.value.code == "action_scope"
+
+
+def test_agent_action_binding_model_matches_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import AgentRun
+    columns = {item["name"] for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_agent_runs")}
+    assert columns == set(AgentRun.__table__.columns.keys())
+    assert "action_ids" in columns
+
+
+
+def test_agent_bound_action_cannot_dispatch_before_its_step(container):
+    from action_samples import enable_actions, connected, action_request
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    provider = enable_actions(container)
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+    action = container.actions.repo.prepare(owner, action_request(connection), "agent-early-approval-preview")
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Complete the attached external action.",
+        action_ids=[action["id"]],
+        output_language="en",
+    ), "agent-early-approval-run")
+
+    approved = container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+    assert approved["state"] == "queued"
+    assert container.actions.repo.claim_outbox() == []
+    assert provider.sent == []
+
+    container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="email.send", arguments={"action_id": action["id"]}),
+    ])
+    container.agent.action_waiting(run["id"], 1, action["id"], "queued")
+    assert container.actions.repo.claim_outbox() == [action["id"]]
+
+
+def test_external_action_binding_model_matches_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import ExternalAction
+    columns = {item["name"] for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_external_actions")}
+    assert columns == set(ExternalAction.__table__.columns.keys())
+    assert {"agent_run_id", "agent_ready"} <= columns

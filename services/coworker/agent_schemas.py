@@ -21,6 +21,7 @@ def _safe_text(value: str) -> str:
 class AgentRunCreate(AgentModel):
     goal: str = Field(min_length=3, max_length=4000)
     document_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    action_ids: list[UUID] = Field(default_factory=list, max_length=3)
     output_language: str = Field(default="en", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
 
     @field_validator("goal")
@@ -32,6 +33,8 @@ class AgentRunCreate(AgentModel):
     def unique_documents(self):
         if len(set(self.document_ids)) != len(self.document_ids):
             raise ValueError("A document may be included only once")
+        if len(set(self.action_ids)) != len(self.action_ids):
+            raise ValueError("An action may be included only once")
         return self
 
 

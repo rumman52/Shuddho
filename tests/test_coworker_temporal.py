@@ -306,3 +306,86 @@ def test_agent_worker_restart_reuses_child_task_checkpoint(container):
             assert final["state"] == "completed"
             assert model.calls == 1
     asyncio.run(scenario())
+
+
+
+def test_agent_action_waits_for_exact_approval_then_resumes_once(container):
+    from action_samples import enable_actions, connected, action_request
+    async def scenario():
+        provider = enable_actions(container)
+        enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        container.actions.repo.settings = enabled
+        owner = account(container)
+        connection = connected(container.actions.repo, owner)
+        action = container.actions.repo.prepare(owner, action_request(connection), "agent-temporal-action-preview")
+        run, _ = container.agent.create(owner, AgentRunCreate(
+            goal="Complete the attached external action.",
+            action_ids=[action["id"]],
+            output_language="en",
+        ), "agent-temporal-action-run")
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, DocumentRunner(container, WorkModel())):
+                await Dispatcher(container, env.client).tick()
+                for _ in range(100):
+                    if container.agent.get(owner, run["id"])["state"] == "awaiting_approval":
+                        break
+                    await asyncio.sleep(0.05)
+                waiting = container.agent.get(owner, run["id"])
+                assert waiting["state"] == "awaiting_approval"
+                assert waiting["steps"][0]["tool"] == "email.send"
+                assert waiting["tool_invocations"][0]["state"] == "awaiting_approval"
+                assert provider.sent == []
+
+                approved = container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+                assert approved["state"] == "queued"
+                await Dispatcher(container, env.client).tick()
+
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+
+            final = container.agent.get(owner, run["id"])
+            assert final["state"] == "completed"
+            assert final["tool_invocations"][0]["state"] == "completed"
+            receipt = final["tool_invocations"][0]["receipt"]
+            assert receipt["resource_type"] == "action"
+            assert receipt["resource_id"] == action["id"]
+            assert receipt["summary"]["provider_confirmed"] is True
+            assert len(provider.sent) == 1
+            history = (await handle.fetch_history()).to_json()
+            for private in ["recipient@example.org", "private@example.org", "প্রকল্পের অগ্রগতি", "simulated-access-token"]:
+                assert private not in history
+    asyncio.run(scenario())
+
+
+def test_agent_action_cancel_before_approval_never_dispatches(container):
+    from action_samples import enable_actions, connected, action_request
+    provider = enable_actions(container)
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+    action = container.actions.repo.prepare(owner, action_request(connection), "agent-cancel-action-preview")
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Complete the attached external action.",
+        action_ids=[action["id"]],
+        output_language="en",
+    ), "agent-cancel-action-run")
+    container.agent.save_plan(owner, run["id"], [
+        __import__("services.coworker.agent_schemas", fromlist=["AgentPlanStep"]).AgentPlanStep(
+            tool="email.send", arguments={"action_id": action["id"]}
+        )
+    ])
+    container.agent.action_waiting(run["id"], 1, action["id"], "awaiting_approval")
+    cancelled = container.agent.cancel(owner, run["id"])
+    assert cancelled["state"] == "cancelled"
+    assert container.actions.repo.get(owner, action["id"])["state"] == "cancelled"
+    assert container.actions.repo.claim_outbox() == []
+    assert provider.sent == []

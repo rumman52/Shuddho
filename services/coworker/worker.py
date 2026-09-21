@@ -125,8 +125,7 @@ class AgentActivities:
                 activity.heartbeat()
                 done, _ = await asyncio.wait({operation}, timeout=1)
                 if done:
-                    await operation
-                    return
+                    return await operation
         except CoworkerError as error:
             raise ApplicationError(error.message, type=error.code,
                                    non_retryable=not isinstance(error, DraftFailure) or not error.retryable) from None

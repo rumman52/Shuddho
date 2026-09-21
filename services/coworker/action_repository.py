@@ -344,8 +344,12 @@ class ActionRepository:
             db.execute(update(OAuthAttempt).where(OAuthAttempt.expires_at <= now, OAuthAttempt.verifier_ciphertext != "").values(verifier_ciphertext="", consumed=True))
             if not self.settings.actions_enabled:
                 return []
-            rows = db.scalars(select(ExternalAction).where(ExternalAction.state == "queued", ExternalAction.delivered.is_(False),
-                              or_(ExternalAction.lease_until.is_(None), ExternalAction.lease_until < now)).order_by(ExternalAction.created_at).limit(20).with_for_update(skip_locked=True)).all()
+            rows = db.scalars(select(ExternalAction).where(
+                ExternalAction.state == "queued",
+                ExternalAction.delivered.is_(False),
+                or_(ExternalAction.agent_run_id.is_(None), ExternalAction.agent_ready.is_(True)),
+                or_(ExternalAction.lease_until.is_(None), ExternalAction.lease_until < now),
+            ).order_by(ExternalAction.created_at).limit(20).with_for_update(skip_locked=True)).all()
             for row in rows:
                 row.lease_until = now + timedelta(seconds=30)
             return [row.id for row in rows]
