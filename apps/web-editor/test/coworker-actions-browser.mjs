@@ -56,8 +56,13 @@ export async function verifyActions(page, folder) {
   assert.equal((await (await page.request.get("http://127.0.0.1:8000/fixture/actions/counts")).json()).emails, 1);
   await page.screenshot({ path: join(folder, "screenshots/actions-email-receipt.png"), fullPage: true });
   await area.getByRole("button", { name: "Prepare another action" }).click();
-  await area.getByLabel("Action type", { exact: true }).waitFor();
-  assert.equal(await area.getByLabel("Action type", { exact: true }).inputValue(), "email");
+  await page.screenshot({ path: join(folder, "screenshots/actions-new-action-reset.png"), fullPage: true });
+  const actionType = area.getByLabel("Action type", { exact: true });
+  const actionTypeCount = await actionType.count();
+  const composerText = await area.locator(".cw-action-compose").innerText();
+  assert.equal(actionTypeCount, 1, `Action composer did not reset after a completed receipt. Composer: ${composerText}`);
+  await actionType.waitFor();
+  assert.equal(await actionType.inputValue(), "email");
   await area.getByLabel("Action type", { exact: true }).selectOption("calendar");
   await area.getByLabel("Event title", { exact: true }).fill("مراجعة المشروع");
   const day = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
