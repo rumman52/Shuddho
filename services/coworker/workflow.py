@@ -116,13 +116,19 @@ class AgentWorkflow:
                 retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=3),
             )
             for ordinal in range(1, count + 1):
-                await workflow.execute_activity(
-                    "shuddho_agent_step_v1", {"run_id": run_id, "ordinal": ordinal},
-                    start_to_close_timeout=timedelta(minutes=8),
-                    schedule_to_close_timeout=timedelta(minutes=12),
-                    heartbeat_timeout=timedelta(seconds=15),
-                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), maximum_attempts=2),
-                )
+                while True:
+                    result = await workflow.execute_activity(
+                        "shuddho_agent_step_v1", {"run_id": run_id, "ordinal": ordinal},
+                        start_to_close_timeout=timedelta(minutes=8),
+                        schedule_to_close_timeout=timedelta(minutes=12),
+                        heartbeat_timeout=timedelta(seconds=15),
+                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), maximum_attempts=2),
+                    )
+                    if not result or result.get("status") == "completed":
+                        break
+                    if result.get("status") not in {"awaiting_approval", "executing"}:
+                        raise ApplicationError("Agent step returned an unsupported state.", type="agent_step_state")
+                    await workflow.sleep(timedelta(seconds=5))
             await workflow.execute_activity(
                 "shuddho_agent_complete_v1", run_id,
                 start_to_close_timeout=timedelta(seconds=30),
