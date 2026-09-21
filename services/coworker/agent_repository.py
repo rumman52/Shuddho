@@ -268,7 +268,8 @@ class AgentRepository:
             run.planner_mode = mode
             run.updated_at = utcnow()
 
-    def _dependency_ordinals(self, ordinal: int, planned: AgentPlanStep) -> list[int]:
+    def _dependency_ordinals(self, db, run_id: str, owner: str, ordinal: int,
+                             planned: AgentPlanStep) -> list[int]:
         """Derive a bounded dependency edge without trusting model-selected IDs."""
         if not self.settings.agent_dependency_graph_enabled or ordinal <= 1:
             return []
@@ -278,10 +279,23 @@ class AgentRepository:
         if spec.kind == "approved_action" or spec.consequential or spec.approval_required:
             return []
         # Research is an upstream source producer, not a consumer of generated
-        # task content. Other task steps depend on the nearest prior task step.
+        # task content. A later task depends on the nearest prior non-consequential
+        # task step, skipping independent research/action nodes when necessary.
         if spec.skill_id == "research":
             return []
-        return [ordinal - 1]
+        prior = db.scalars(select(AgentStep).where(
+            AgentStep.run_id == run_id,
+            AgentStep.owner_id == owner,
+            AgentStep.ordinal < ordinal,
+        ).order_by(AgentStep.ordinal.desc())).all()
+        for candidate in prior:
+            if candidate.tool_name is None:
+                continue
+            candidate_spec = tool(candidate.tool_name)
+            if (candidate_spec.kind == "task" and not candidate_spec.consequential
+                    and not candidate_spec.approval_required):
+                return [candidate.ordinal]
+        return []
 
     def dependency_state(self, owner: str, run_id: str, ordinal: int) -> dict:
         with self.sessions() as db:
@@ -358,7 +372,7 @@ class AgentRepository:
                     id=str(uuid4()), run_id=run.id, owner_id=owner, ordinal=ordinal,
                     tool_name=spec.name, state="planned",
                     input={"arguments": validated.model_dump(mode="json")}, output={},
-                    depends_on_ordinals=self._dependency_ordinals(ordinal, planned),
+                    depends_on_ordinals=self._dependency_ordinals(db, run.id, owner, ordinal, planned),
                 )
                 db.add(step)
                 db.flush()
@@ -413,7 +427,7 @@ class AgentRepository:
                     id=str(uuid4()), run_id=run.id, owner_id=owner, ordinal=ordinal,
                     tool_name=spec.name, state="planned",
                     input={"arguments": validated.model_dump(mode="json")}, output={},
-                    depends_on_ordinals=self._dependency_ordinals(ordinal, planned),
+                    depends_on_ordinals=self._dependency_ordinals(db, run.id, owner, ordinal, planned),
                 )
                 db.add(step)
                 db.flush()
