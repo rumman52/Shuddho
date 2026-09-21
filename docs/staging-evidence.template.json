@@ -1,0 +1,15 @@
+{
+  "ci": {"status": "pending", "evidence": ""},
+  "identity": {"status": "pending", "evidence": ""},
+  "database": {"status": "pending", "evidence": ""},
+  "storage": {"status": "pending", "evidence": ""},
+  "temporal": {"status": "pending", "evidence": ""},
+  "model": {"status": "pending", "evidence": ""},
+  "backup_restore": {"status": "pending", "evidence": ""},
+  "deletion": {"status": "pending", "evidence": ""},
+  "parallel_restart": {"status": "pending", "evidence": ""},
+  "fan_in": {"status": "pending", "evidence": ""},
+  "flag_rollback": {"status": "pending", "evidence": ""},
+  "research": {"status": "pending", "evidence": ""},
+  "actions": {"status": "pending", "evidence": ""}
+}
