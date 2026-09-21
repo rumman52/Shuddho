@@ -521,12 +521,14 @@ class AgentRepository:
                 if truncated:
                     text_value += "\n[handoff truncated]"
                 source_id = "agent-step-" + invocation.id
+                text_bytes = text_value.encode("utf-8")
                 return {
                     "sources": [{
                         "id": source_id,
                         "label": f"Prior {invocation.tool_name} result",
                         "text": text_value,
-                        "sha256": hashlib.sha256(raw).hexdigest(),
+                        "sha256": hashlib.sha256(text_bytes).hexdigest(),
+                        "upstream_sha256": hashlib.sha256(raw).hexdigest(),
                         "agent_invocation_id": invocation.id,
                         "task_id": task.id,
                         "tool": invocation.tool_name,
