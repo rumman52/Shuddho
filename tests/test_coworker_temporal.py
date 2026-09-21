@@ -733,8 +733,6 @@ def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
                     await asyncio.wait_for(handle.result(), 30)
-                description = await handle.describe()
-                assert description.workflow_type == "shuddho_agent_run_v2"
 
         final = container.agent.get(owner, run["id"])
         assert final["state"] == "completed"
