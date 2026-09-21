@@ -120,7 +120,7 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
     <div className="cw-layout"><div className="cw-compose cw-action-compose">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>{composing ? "Prepare an action" : "Action details"}</h2><p>{composing ? "Nothing is sent when you prepare a preview." : "This preview is saved exactly as shown."}</p></div></div>
       {composing ? <form onSubmit={prepare}>
-        <label>Action type<select value={mode} onChange={event => setMode(event.target.value as "email" | "calendar")} disabled={Boolean(busy)}><option value="email">Send an email</option><option value="calendar">Create a calendar event</option></select></label>
+        <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "calendar")} disabled={Boolean(busy)}><option value="email">Send an email</option><option value="calendar">Create a calendar event</option></select></label>
         <p className="cw-action-account">{currentConnection ? <>From <strong>{currentConnection.email}</strong>{mode === "calendar" && " · Primary calendar"}</> : `Connect ${mode === "email" ? "Gmail" : "Google Calendar"} above to continue.`}</p>
         {mode === "email" ? <>
           <label>To<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required maxLength={5100} placeholder="name@example.com" /></label>
