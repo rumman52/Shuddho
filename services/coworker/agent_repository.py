@@ -288,14 +288,20 @@ class AgentRepository:
             AgentStep.owner_id == owner,
             AgentStep.ordinal < ordinal,
         ).order_by(AgentStep.ordinal.desc())).all()
+        research_fan_in: list[int] = []
         for candidate in prior:
             if candidate.tool_name is None:
                 continue
             candidate_spec = tool(candidate.tool_name)
-            if (candidate_spec.kind == "task" and not candidate_spec.consequential
-                    and not candidate_spec.approval_required):
-                return [candidate.ordinal]
-        return []
+            if candidate_spec.kind != "task" or candidate_spec.consequential or candidate_spec.approval_required:
+                continue
+            if candidate_spec.skill_id == "research":
+                research_fan_in.append(candidate.ordinal)
+                continue
+            if research_fan_in:
+                return sorted(research_fan_in)
+            return [candidate.ordinal]
+        return sorted(research_fan_in)
 
     def dependency_state(self, owner: str, run_id: str, ordinal: int) -> dict:
         with self.sessions() as db:
