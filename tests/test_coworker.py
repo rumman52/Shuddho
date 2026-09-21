@@ -1087,3 +1087,38 @@ def test_intelligent_planner_http_contract_is_bounded_and_private(container):
     with pytest.raises(PlannerFailure) as failure:
         asyncio.run(busy.propose("Do work", ["email.draft"]))
     assert failure.value.retryable and "PRIVATE" not in failure.value.message
+
+
+
+def test_agent_runtime_replan_replaces_unstarted_step_directly(container):
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlannerProposal, AgentRunCreate
+
+    enabled = replace(container.settings, agent_runtime_enabled=True, intelligent_planner_enabled=True,
+                      work_services_enabled=True, max_agent_planner_calls=2,
+                      agent_planner_token_budget=16000)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Draft a professional follow-up email.", output_language="en"
+    ), "direct-replan")
+    runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()))
+    assert runtime.plan(run["id"]) == 1
+
+    class Planner:
+        async def propose(self, *_args, **_kwargs):
+            return AgentPlannerProposal.model_validate({
+                "steps": [{"tool": "report.create", "objective": "Prepare a professional update."}]
+            }), 10, 1
+
+    changed = replace(enabled, work_services_enabled=False)
+    container.settings = changed
+    container.repository.settings = changed
+    container.agent.settings = changed
+    runtime.planner = Planner()
+    assert asyncio.run(runtime.replan(run["id"], 1)) == 1
+    saved = container.agent.get(owner, run["id"])
+    assert [step["tool"] for step in saved["steps"]] == ["report.create"]
+    assert saved["planner_mode"] == "replanned"
