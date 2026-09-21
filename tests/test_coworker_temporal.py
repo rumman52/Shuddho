@@ -16,6 +16,7 @@ from test_coworker import container, account, new_task, FakeModel
 from coworker_samples import WorkModel
 from research_samples import SimulatedResearch
 from services.coworker.drafting import DraftFailure
+from services.coworker.errors import CoworkerError
 from services.coworker.runner import DocumentRunner
 from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentRunCreate
