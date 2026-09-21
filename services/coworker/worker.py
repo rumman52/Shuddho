@@ -175,20 +175,21 @@ class Dispatcher:
             except WorkflowAlreadyStartedError:
                 pass
             await asyncio.to_thread(actions.delivered, action_id)
-        for run_id in await asyncio.to_thread(agent.claim_outbox):
-            run = await asyncio.to_thread(agent.worker_run, run_id)
-            if run["state"] not in {"completed", "failed", "cancelled"}:
-                try:
-                    await self.client.start_workflow(
-                        AgentWorkflow.run, run_id, id="shuddho-agent-" + run_id,
-                        task_queue=self.container.settings.task_queue,
-                        execution_timeout=timedelta(seconds=self.container.settings.agent_run_timeout_seconds),
-                        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-                        rpc_timeout=timedelta(seconds=10),
-                    )
-                except WorkflowAlreadyStartedError:
-                    pass
-            await asyncio.to_thread(agent.delivered, run_id)
+        if self.container.settings.agent_runtime_enabled:
+            for run_id in await asyncio.to_thread(agent.claim_outbox):
+                run = await asyncio.to_thread(agent.worker_run, run_id)
+                if run["state"] not in {"completed", "failed", "cancelled"}:
+                    try:
+                        await self.client.start_workflow(
+                            AgentWorkflow.run, run_id, id="shuddho-agent-" + run_id,
+                            task_queue=self.container.settings.task_queue,
+                            execution_timeout=timedelta(seconds=self.container.settings.agent_run_timeout_seconds),
+                            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                            rpc_timeout=timedelta(seconds=10),
+                        )
+                    except WorkflowAlreadyStartedError:
+                        pass
+                await asyncio.to_thread(agent.delivered, run_id)
         await asyncio.to_thread(repo.expire_tasks)
         for task_id in await asyncio.to_thread(repo.claim_outbox):
             task = await asyncio.to_thread(repo.worker_task, task_id, False)
