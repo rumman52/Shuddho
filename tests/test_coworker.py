@@ -1339,3 +1339,86 @@ def test_agent_incomplete_result_does_not_replan_when_flag_is_off(container):
     container.agent.set_planner_mode(run["id"], "intelligent")
     runtime = AgentRuntime(container, DocumentRunner(container, WorkModel(missing=True)))
     assert asyncio.run(runtime.execute_step(run["id"], 1)) == {"status": "completed"}
+
+
+def test_agent_multi_handoff_uses_two_prior_results_under_one_byte_budget(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_handoffs_enabled=True,
+        agent_multi_handoffs_enabled=True,
+        work_services_enabled=True,
+        max_agent_handoff_sources=2,
+        max_agent_handoff_bytes=12000,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a document, social update, and follow-up email.",
+        output_language="en",
+    ), "agent-multi-handoff")
+    saved = container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="social.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    asyncio.run(runtime.execute_step(run["id"], 1))
+    asyncio.run(runtime.execute_step(run["id"], 2))
+    handoff = container.agent.handoff_context(owner, run["id"], saved["steps"][2]["id"])
+    assert len(handoff["sources"]) == 2
+    assert [item["ordinal"] for item in handoff["provenance"]] == [1, 2]
+    assert sum(len(item["text"].encode("utf-8")) for item in handoff["sources"]) <= 12000
+    assert all(item["sha256"] == hashlib.sha256(item["text"].encode()).hexdigest()
+               for item in handoff["sources"])
+
+
+def test_agent_multi_handoff_flag_off_preserves_nearest_prior_behavior(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_handoffs_enabled=True,
+        agent_multi_handoffs_enabled=False,
+        work_services_enabled=True,
+        max_agent_handoff_sources=2,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create three work outputs.", output_language="en"
+    ), "agent-multi-handoff-off")
+    saved = container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="social.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    asyncio.run(runtime.execute_step(run["id"], 1))
+    asyncio.run(runtime.execute_step(run["id"], 2))
+    handoff = container.agent.handoff_context(owner, run["id"], saved["steps"][2]["id"])
+    assert len(handoff["sources"]) == 1
+    assert handoff["provenance"][0]["ordinal"] == 2

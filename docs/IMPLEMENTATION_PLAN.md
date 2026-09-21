@@ -135,7 +135,9 @@ PR #114 adds [bounded intelligent planning](PART_3_INTELLIGENT_PLANNER.md): the 
 
 PR #115 adds [typed Agent Step Handoffs](PART_3_AGENT_HANDOFFS.md). A later non-research task may consume a bounded live source derived from the nearest prior completed task in the same owner/run. Handoff text is not copied into Temporal history, task notes, tool arguments or durable receipts; only provenance is persisted.
 
-The next increment adds [bounded incomplete-result replanning](PART_3_OUTCOME_REPLAN.md). The existing structured `needs_input` state may trigger the run's single automatic replan for later unstarted steps only; completed work remains immutable and no draft content is exposed to the planner. General dependency graphs, subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #116 adds [bounded incomplete-result replanning](PART_3_OUTCOME_REPLAN.md). The existing structured `needs_input` state may trigger the run's single automatic replan for later unstarted steps only; completed work remains immutable and no draft content is exposed to the planner.
+
+The next increment adds [bounded multi-source handoffs](PART_3_MULTI_HANDOFFS.md): a later non-research task may consume up to two server-selected prior completed task results under one shared handoff byte budget. Planner-selected dependency IDs, arbitrary DAGs, subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
