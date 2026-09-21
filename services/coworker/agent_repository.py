@@ -395,6 +395,8 @@ class AgentRepository:
             ).with_for_update()) if step is not None else None
             if run is None or step is None or invocation is None:
                 raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
+            if run.cancel_requested or run.state == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
             if db.get(ToolReceipt, invocation.id) is None:
                 db.add(ToolReceipt(
                     invocation_id=invocation.id, run_id=run_id, owner_id=run.owner_id,
