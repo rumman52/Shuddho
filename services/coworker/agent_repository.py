@@ -5,13 +5,13 @@ import json
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from .agent_schemas import AgentPlanStep, AgentRunCreate
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, AgentEvent, AgentRun, AgentStep, AuditEvent, Document, DocumentVersion, ExternalAction, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Document, DocumentVersion, ExternalAction, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import iso, not_found
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
@@ -123,6 +123,7 @@ class AgentRepository:
                 input={"kind": "goal", "output_language": request.output_language},
                 output={},
             ))
+            db.add(AgentOutbox(run_id=run.id))
             self._event(db, run, "queued", "planning", "Agent run created. Waiting for the bounded planner runtime.")
             self._audit(db, owner, run.id, "agent_run_created")
             return self._dto(db, run), True
@@ -281,3 +282,131 @@ class AgentRepository:
         if not self.settings.agent_runtime_enabled:
             return []
         return available_tools(self.settings)
+
+
+    # Trusted worker/dispatcher boundary.
+    def claim_outbox(self, limit: int = 10) -> list[str]:
+        with self.sessions.begin() as db:
+            now = utcnow()
+            rows = db.scalars(select(AgentOutbox).where(
+                AgentOutbox.delivered.is_(False),
+                or_(AgentOutbox.lease_until.is_(None), AgentOutbox.lease_until < now),
+            ).limit(limit).with_for_update(skip_locked=True)).all()
+            for row in rows:
+                row.lease_until = now + timedelta(seconds=30)
+                row.attempts += 1
+            return [row.run_id for row in rows]
+
+    def delivered(self, run_id: str):
+        with self.sessions.begin() as db:
+            row = db.get(AgentOutbox, run_id)
+            if row is not None:
+                row.delivered = True
+
+    def worker_run(self, run_id: str) -> dict:
+        with self.sessions() as db:
+            run = db.get(AgentRun, run_id)
+            if run is None:
+                raise not_found()
+            documents = list(db.scalars(select(DocumentVersion.document_id).where(
+                DocumentVersion.id.in_(run.input_versions), DocumentVersion.owner_id == run.owner_id,
+            ))) if run.input_versions else []
+            return {
+                "id": run.id, "owner_id": run.owner_id, "goal": run.goal,
+                "output_language": run.output_language, "document_ids": documents,
+                "state": run.state, "phase": run.phase, "cancel_requested": run.cancel_requested,
+            }
+
+    def invocation_for_step(self, run_id: str, ordinal: int) -> dict:
+        with self.sessions() as db:
+            row = db.execute(select(ToolInvocation, AgentStep).join(
+                AgentStep, AgentStep.id == ToolInvocation.step_id,
+            ).where(
+                ToolInvocation.run_id == run_id,
+                AgentStep.ordinal == ordinal,
+            )).first()
+            if row is None:
+                raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
+            invocation, step = row
+            return {
+                "id": invocation.id, "run_id": invocation.run_id, "step_id": step.id,
+                "ordinal": step.ordinal, "tool": invocation.tool_name,
+                "arguments": invocation.arguments, "state": invocation.state,
+                "consequential": invocation.consequential,
+                "approval_required": invocation.approval_required,
+            }
+
+    def begin_invocation(self, run_id: str, ordinal: int):
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            if run.cancel_requested or run.state == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            step = db.scalar(select(AgentStep).where(
+                AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
+            ).with_for_update())
+            invocation = db.scalar(select(ToolInvocation).where(
+                ToolInvocation.step_id == step.id,
+            ).with_for_update()) if step is not None else None
+            if step is None or invocation is None:
+                raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
+            if invocation.state == "completed":
+                return
+            if invocation.consequential or invocation.approval_required:
+                raise CoworkerError("approval_required", "This agent runtime cannot execute consequential tools yet.", 409)
+            now = utcnow()
+            invocation.state = "running"
+            invocation.started_at = invocation.started_at or now
+            step.state = "running"
+            step.started_at = step.started_at or now
+            self._event(db, run, "running", f"step_{ordinal}", f"Running agent step {ordinal}.")
+
+    def finish_invocation(self, run_id: str, ordinal: int, resource_type: str, resource_id: str, summary: dict):
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            step = db.scalar(select(AgentStep).where(
+                AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
+            ).with_for_update())
+            invocation = db.scalar(select(ToolInvocation).where(
+                ToolInvocation.step_id == step.id,
+            ).with_for_update()) if step is not None else None
+            if run is None or step is None or invocation is None:
+                raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
+            if db.get(ToolReceipt, invocation.id) is None:
+                db.add(ToolReceipt(
+                    invocation_id=invocation.id, run_id=run_id, owner_id=run.owner_id,
+                    tool_name=invocation.tool_name, status="completed",
+                    resource_type=resource_type, resource_id=resource_id, summary=summary,
+                ))
+            now = utcnow()
+            invocation.state = "completed"
+            invocation.finished_at = now
+            step.state = "completed"
+            step.finished_at = now
+            step.output = {"resource_type": resource_type, "resource_id": resource_id}
+            self._event(db, run, "running", f"step_{ordinal}", f"Agent step {ordinal} completed.")
+
+    def fail_run(self, run_id: str, code: str, message: str):
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None or run.state in {"completed", "failed", "cancelled"}:
+                return
+            run.error_code = code
+            self._event(db, run, "failed", run.phase, message[:300])
+            self._audit(db, run.owner_id, run.id, "agent_run_failed")
+
+    def complete_run(self, run_id: str):
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None or run.state == "completed":
+                return
+            if run.cancel_requested or run.state == "cancelled":
+                return
+            remaining = db.scalar(select(func.count()).select_from(ToolInvocation).where(
+                ToolInvocation.run_id == run_id, ToolInvocation.state != "completed",
+            ))
+            if remaining:
+                raise CoworkerError("agent_incomplete", "The agent run still has unfinished steps.", 409)
+            self._event(db, run, "completed", "complete", "Agent run completed.")
+            self._audit(db, run.owner_id, run.id, "agent_run_completed")
