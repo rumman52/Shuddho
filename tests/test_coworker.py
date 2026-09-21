@@ -543,3 +543,13 @@ def test_agent_plan_limits_step_count(container):
     with pytest.raises(CoworkerError) as too_many:
         container.agent.save_plan(owner, run["id"], [step] * 9)
     assert too_many.value.code == "invalid_plan"
+
+
+
+def test_agent_runtime_model_matches_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import AgentRun
+    database_columns = {item["name"] for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_agent_runs")}
+    model_columns = set(AgentRun.__table__.columns.keys())
+    assert database_columns == model_columns
+    assert "event_sequence" in model_columns
