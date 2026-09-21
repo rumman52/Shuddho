@@ -35,6 +35,7 @@ class Settings:
     intelligent_planner_enabled: bool = False
     agent_handoffs_enabled: bool = False
     agent_multi_handoffs_enabled: bool = False
+    agent_dependency_graph_enabled: bool = False
     agent_outcome_replan_enabled: bool = False
     google_client_id: str = ""
     google_client_secret: str = field(default="", repr=False)
@@ -94,6 +95,7 @@ class Settings:
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_multi_handoffs_enabled=os.getenv("SHUDDHO_AGENT_MULTI_HANDOFFS_ENABLED", "false").lower() == "true",
+            agent_dependency_graph_enabled=os.getenv("SHUDDHO_AGENT_DEPENDENCY_GRAPH_ENABLED", "false").lower() == "true",
             agent_outcome_replan_enabled=os.getenv("SHUDDHO_AGENT_OUTCOME_REPLAN_ENABLED", "false").lower() == "true",
             google_client_id=os.getenv("SHUDDHO_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("SHUDDHO_GOOGLE_CLIENT_SECRET", ""),
