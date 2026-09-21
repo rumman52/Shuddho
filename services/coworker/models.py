@@ -70,6 +70,7 @@ class Task(Base):
     notes: Mapped[str] = mapped_column(Text)
     output_language: Mapped[str] = mapped_column(String(35))
     input_versions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    agent_run_id: Mapped[str | None] = mapped_column(String(36), index=True)
     state: Mapped[str] = mapped_column(String(30), default="queued")
     phase: Mapped[str] = mapped_column(String(30), default="queued")
     event_sequence: Mapped[int] = mapped_column(Integer, default=0)
@@ -211,6 +212,28 @@ class ExternalAction(Base):
     )
 
 
+class MemoryFact(Base):
+    __tablename__ = "cw_memory_facts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    namespace: Mapped[str] = mapped_column(String(60))
+    key: Mapped[str] = mapped_column(String(100))
+    value: Mapped[str] = mapped_column(Text)
+    language: Mapped[str] = mapped_column(String(35), default="auto")
+    provenance_type: Mapped[str] = mapped_column(String(30), default="user")
+    provenance_ref: Mapped[str | None] = mapped_column(String(128))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "workspace_id", "namespace", "key"),
+        Index("cw_memory_owner_updated", "owner_id", "updated_at"),
+        Index("cw_memory_workspace_namespace", "workspace_id", "namespace"),
+    )
+
+
 class AgentRun(Base):
     __tablename__ = "cw_agent_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -222,6 +245,7 @@ class AgentRun(Base):
     output_language: Mapped[str] = mapped_column(String(35))
     input_versions: Mapped[list[str]] = mapped_column(JSON, default=list)
     action_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    memory_namespaces: Mapped[list[str]] = mapped_column(JSON, default=list)
     state: Mapped[str] = mapped_column(String(30), default="queued")
     phase: Mapped[str] = mapped_column(String(30), default="planning")
     message: Mapped[str] = mapped_column(String(300), default="Queued for planning.")

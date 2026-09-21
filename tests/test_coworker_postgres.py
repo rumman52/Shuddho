@@ -137,3 +137,28 @@ def test_daily_action_approval_limit_is_atomic(repository):
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(approve, values))
     assert results.count("queued") == 1 and results.count("action_limit") == 5
+
+
+
+def test_structured_memory_limit_is_atomic(repository):
+    from services.coworker.memory_repository import MemoryRepository
+    from services.coworker.memory_schemas import MemoryFactCreate
+    settings = replace(repository.settings, agent_memory_enabled=True, max_memory_facts=1)
+    memory = MemoryRepository(repository.sessions, settings)
+    identity = owner(repository)
+
+    def create(index):
+        try:
+            return memory.create(identity, MemoryFactCreate(
+                namespace="preferences",
+                key=f"preference-{index}",
+                value=f"value-{index}",
+                language="en",
+            ))["key"]
+        except CoworkerError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(create, range(6)))
+    assert sum(value.startswith("preference-") for value in results) == 1
+    assert results.count("memory_limit") == 5

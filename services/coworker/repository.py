@@ -157,7 +157,7 @@ class Repository:
                 self._audit(db, owner, document_id, "source_deletion_requested")
             return {"id": document_id, "state": "deleted", "message": "Upload removed. Existing drafts remain in your task history."}
 
-    def create_task(self, owner: str, request: TaskCreate, idempotency_key: str, *, enqueue: bool = True) -> tuple[dict, bool]:
+    def create_task(self, owner: str, request: TaskCreate, idempotency_key: str, *, enqueue: bool = True, agent_run_id: str | None = None) -> tuple[dict, bool]:
         self.expire_tasks(owner)
         payload = request.model_dump(mode="json")
         if request.research is None:
@@ -198,6 +198,7 @@ class Repository:
                 versions.append(row[0].id)
             task = Task(id=str(uuid4()), owner_id=owner, workspace_id=self._workspace(db, owner),
                         idempotency_key=idempotency_key, fingerprint=fingerprint, instruction=request.instruction,
+                        agent_run_id=agent_run_id,
                         notes=request.notes, output_language=request.output_language, input_versions=versions,
                         workflow_version=SKILLS[request.skill_id].version,
                         deadline_at=utcnow() + timedelta(seconds=self.settings.task_timeout_seconds))
@@ -308,6 +309,7 @@ class Repository:
             return {"id": task.id, "owner_id": task.owner_id, "instruction": task.instruction,
                     "workflow_version": task.workflow_version, "skill_id": skill_for_version(task.workflow_version).id,
                     "notes": task.notes, "output_language": task.output_language, "documents": documents,
+                    "agent_run_id": task.agent_run_id,
                     "state": task.state, "deadline_at": iso(task.deadline_at)}
 
     def _check_live(self, task):

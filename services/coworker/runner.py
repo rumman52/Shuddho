@@ -115,9 +115,14 @@ class DocumentRunner:
                 raise CoworkerError("checkpoint_missing", "Web evidence could not be recovered. Please create a new task.")
             sources.extend(research["sources"])
         skill = skill_for_version(task["workflow_version"])
+        memory = (await asyncio.to_thread(self.container.memory.context_for_run, task["owner_id"], task["agent_run_id"])
+                  if task.get("agent_run_id") else {"facts": [], "provenance": []})
         model = (DeepSeekDraftModel(self.container.settings, self.model.transport, skill_id=skill.id)
                  if isinstance(self.model, DeepSeekDraftModel) else self.model)
-        messages = model.messages(task | ({"research": research["metadata"]} if research else {}), sources)
+        prompt_task = task | ({"research": research["metadata"]} if research else {})
+        if memory["facts"]:
+            prompt_task = prompt_task | {"memory": memory["facts"]}
+        messages = model.messages(prompt_task, sources)
         # Conservative UTF-8 byte bound, with room for chat framing and output.
         reservation = len(json.dumps(messages, ensure_ascii=False).encode()) + self.container.settings.max_output_tokens + 512
         attempt = await asyncio.to_thread(self.repo.reserve_model, task["id"], reservation)
@@ -149,6 +154,7 @@ class DocumentRunner:
         await asyncio.to_thread(self.repo.save_step, task["id"], "draft", {
             "draft": validated.model_dump(), "sources": manifest, "preview": preview,
             "research": research["metadata"] if research else None,
+            "memory_provenance": memory["provenance"],
         })
 
     async def export(self, task):
