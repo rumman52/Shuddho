@@ -31,6 +31,7 @@ class Settings:
     research_services_enabled: bool = False
     actions_enabled: bool = False
     agent_runtime_enabled: bool = False
+    agent_memory_enabled: bool = False
     google_client_id: str = ""
     google_client_secret: str = field(default="", repr=False)
     google_redirect_uri: str = ""
@@ -38,6 +39,9 @@ class Settings:
     max_daily_actions: int = 20
     max_active_agent_runs: int = 2
     agent_run_timeout_seconds: int = 1800
+    max_memory_facts: int = 200
+    max_memory_context_facts: int = 20
+    max_memory_context_bytes: int = 8192
     search_provider: str = "tavily"
     search_api_key: str = field(default="", repr=False)
     search_timeout_seconds: int = 40
@@ -77,6 +81,7 @@ class Settings:
             research_services_enabled=os.getenv("SHUDDHO_RESEARCH_SERVICES_ENABLED", "false").lower() == "true",
             actions_enabled=os.getenv("SHUDDHO_ACTIONS_ENABLED", "false").lower() == "true",
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
+            agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             google_client_id=os.getenv("SHUDDHO_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("SHUDDHO_GOOGLE_CLIENT_SECRET", ""),
             google_redirect_uri=os.getenv("SHUDDHO_GOOGLE_REDIRECT_URI", ""),
@@ -84,6 +89,9 @@ class Settings:
             max_daily_actions=int(os.getenv("SHUDDHO_COWORKER_DAILY_ACTIONS", "20")),
             max_active_agent_runs=int(os.getenv("SHUDDHO_COWORKER_ACTIVE_AGENT_RUNS", "2")),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
+            max_memory_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_FACTS", "200")),
+            max_memory_context_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_FACTS", "20")),
+            max_memory_context_bytes=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_BYTES", "8192")),
             search_provider=os.getenv("SHUDDHO_SEARCH_PROVIDER", "tavily"),
             search_api_key=os.getenv("TAVILY_API_KEY", ""),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"),
@@ -117,7 +125,8 @@ class Settings:
             raise ValueError("SHUDDHO_AUTH_ISSUER must be the HTTPS issuer of the managed identity provider")
         if min(self.max_daily_tasks, self.max_active_tasks, self.daily_token_budget,
                self.task_token_budget, self.max_account_bytes, self.max_daily_actions,
-               self.max_active_agent_runs, self.agent_run_timeout_seconds) < 1:
+               self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_memory_facts,
+               self.max_memory_context_facts, self.max_memory_context_bytes) < 1:
             raise ValueError("Coworker limits must be positive")
         if self.storage_backend not in {"s3", "local"}:
             raise ValueError("Unsupported coworker storage backend")
