@@ -18,9 +18,29 @@ from .drafting import DraftFailure
 from .errors import CoworkerError
 from .repository import TERMINAL
 from .runner import DocumentRunner
-from .workflow import ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from .workflow import ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 logger = logging.getLogger("shuddho.coworker")
+
+
+class ActionActivities:
+    def __init__(self, service):
+        self.service = service
+
+    @activity.defn(name="shuddho_execute_action_v1")
+    async def execute(self, action_id: str):
+        try:
+            await self.service.execute(action_id)
+        except Exception:
+            # Never serialize OAuth tokens or recipient/content into failures.
+            raise ApplicationError("The action worker was interrupted.", type="action_interrupted") from None
+
+    @activity.defn(name="shuddho_action_interrupted_v1")
+    async def interrupted(self, action_id: str):
+        try:
+            await asyncio.to_thread(self.service.repo.finish, action_id, "outcome_unknown", error_code="worker_interrupted")
+        except Exception:
+            raise ApplicationError("Could not record action status.", type="action_status_unavailable") from None
 
 
 class Activities:
@@ -87,6 +107,17 @@ class Dispatcher:
 
     async def tick(self):
         repo = self.container.repository
+        actions = self.container.actions.repo
+        for action_id in await asyncio.to_thread(actions.claim_outbox):
+            try:
+                await self.client.start_workflow(
+                    ApprovedActionWorkflow.run, action_id, id="shuddho-action-" + action_id,
+                    task_queue=self.container.settings.task_queue, execution_timeout=timedelta(minutes=6),
+                    id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE, rpc_timeout=timedelta(seconds=10),
+                )
+            except WorkflowAlreadyStartedError:
+                pass
+            await asyncio.to_thread(actions.delivered, action_id)
         await asyncio.to_thread(repo.expire_tasks)
         for task_id in await asyncio.to_thread(repo.claim_outbox):
             task = await asyncio.to_thread(repo.worker_task, task_id, False)
@@ -132,6 +163,7 @@ async def main():
     client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace,
                                   api_key=settings.temporal_api_key or None, tls=settings.temporal_tls)
     activities = Activities(DocumentRunner(container))
+    action_activities = ActionActivities(container.actions)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for name in (signal.SIGTERM, signal.SIGINT):
@@ -139,8 +171,8 @@ async def main():
             loop.add_signal_handler(name, stop.set)
         except NotImplementedError:
             pass
-    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow],
-                      activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed],
+    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow],
+                      activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted],
                       # Four short deterministic steps: replay is inexpensive.
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,

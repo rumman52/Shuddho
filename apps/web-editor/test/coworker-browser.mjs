@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { verifyActions } from "./coworker-actions-browser.mjs";
 
 const folder = process.env.SHUDDHO_TEST_WORKDIR;
 if (!folder) throw new Error("SHUDDHO_TEST_WORKDIR must point to the local browser fixture directory.");
@@ -155,6 +156,7 @@ try {
     }
   }
   assert.equal(await page.locator(".cw-history li").count(), 11);
+  await verifyActions(page, folder);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   assert.equal(await page.getByText("প্রকল্পের অগ্রগতি", { exact: true }).count(), 0);
@@ -165,6 +167,10 @@ try {
   await page.getByRole("button", { name: "Create report & email draft" }).waitFor();
   assert.equal(await page.locator(".cw-history li").count(), 0);
   assert.equal(await page.locator(".cw-file-chips li").count(), 0);
+  await page.getByRole("button", { name: "Email & calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Connect Gmail", exact: true }).waitFor();
+  assert.equal(await page.locator(".cw-actions .cw-history li").count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Disconnect Calendar", exact: true }).count(), 0);
   assert.deepEqual(failures, []);
   console.log("Browser workflow passed: login, uploads, all eleven work services, writing tab, refresh recovery, service-aware revision, Bangla and RTL previews, editable PPTX/XLSX downloads, formula values, research citations and query restoration, copy post, mobile layout, sign-out and account switch.");
 } finally {

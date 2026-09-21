@@ -17,17 +17,57 @@ from coworker_samples import WorkModel
 from research_samples import SimulatedResearch
 from services.coworker.drafting import DraftFailure
 from services.coworker.runner import DocumentRunner
-from services.coworker.worker import Activities, Dispatcher
-from services.coworker.workflow import ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from services.coworker.worker import ActionActivities, Activities, Dispatcher
+from services.coworker.workflow import ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 
 def make_worker(env, runner):
     activities = Activities(runner)
+    actions = ActionActivities(runner.container.actions)
     return Worker(env.client, task_queue=runner.container.settings.task_queue,
-                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow],
-                  activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed],
+                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow],
+                  activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, actions.execute, actions.interrupted],
                   max_cached_workflows=0,
                   graceful_shutdown_timeout=timedelta(seconds=2))
+
+
+@pytest.mark.parametrize("capability", ["email", "calendar"])
+def test_action_worker_restart_after_provider_acceptance_never_resends(container, capability):
+    from action_samples import enable_actions, approved
+    from services.coworker.google_actions import SEND_URL, EVENTS_URL
+    async def scenario():
+        provider = enable_actions(container)
+        repo = container.actions.repo
+        owner = account(container)
+        value = approved(repo, owner, capability)
+        accepted = asyncio.Event()
+        execute = container.actions.provider.execute
+        async def interrupted(action, token):
+            await execute(action, token)
+            accepted.set()
+            # Lose both the response and the activity acknowledgement.
+            await asyncio.Event().wait()
+        container.actions.provider.execute = interrupted
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            first = make_worker(env, DocumentRunner(container, FakeModel()))
+            first_run = asyncio.create_task(first.run())
+            await Dispatcher(container, env.client).tick()
+            await asyncio.wait_for(accepted.wait(), 30)
+            await first.shutdown()
+            await first_run
+            assert repo.get(owner, value["id"])["state"] == "executing"
+            container.actions.provider.execute = execute
+            async with make_worker(env, DocumentRunner(container, FakeModel())):
+                handle = env.client.get_workflow_handle("shuddho-action-" + value["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+            result = repo.get(owner, value["id"])
+            assert result["state"] == ("succeeded" if capability == "calendar" else "outcome_unknown")
+            assert len([r for r in provider.requests if r.method == "POST" and str(r.url).split("?")[0] in {SEND_URL, EVENTS_URL}]) == 1
+            history = (await handle.fetch_history()).to_json()
+            for private in ["simulated-refresh-token", "simulated-access-token", "recipient@example.org", "guest@example.org", "alice@example.test", "Review twelve items"]:
+                assert private not in history
+    asyncio.run(scenario())
 
 
 async def run_handle(env, task_id):

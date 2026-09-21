@@ -96,3 +96,44 @@ def test_paid_search_reservation_is_atomic_under_duplicate_delivery(repository):
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(reserve, range(6)))
     assert results.count("reserved") == 1 and results.count("search_outcome_unknown") == 5
+
+
+def action_repository(repository):
+    import base64
+    from services.coworker.action_repository import ActionRepository
+    settings = replace(repository.settings, actions_enabled=True,
+                       connector_encryption_key=base64.urlsafe_b64encode(b"\x22" * 32).decode())
+    return ActionRepository(repository.sessions, settings)
+
+
+def test_simultaneous_action_previews_approvals_and_execution_claims(repository):
+    from action_samples import connected, action_request
+    actions, identity = action_repository(repository), owner(repository)
+    connection = connected(actions, identity)
+    request = action_request(connection)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        previews = list(pool.map(lambda _: actions.prepare(identity, request, "same-action-key"), range(6)))
+    assert len({p["id"] for p in previews}) == 1
+    value = previews[0]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        approvals = list(pool.map(lambda _: actions.approve(identity, value["id"], value["preview_hash"]), range(6)))
+    assert len({p["approved_at"] for p in approvals}) == 1
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        claims = list(pool.map(lambda _: actions.claim_execution(value["id"]), range(6)))
+    assert sum(claim is not None for claim in claims) == 1
+
+
+def test_daily_action_approval_limit_is_atomic(repository):
+    from action_samples import connected, action_request
+    actions, identity = action_repository(repository), owner(repository)
+    actions.settings = replace(actions.settings, max_daily_actions=1)
+    connection = connected(actions, identity)
+    values = [actions.prepare(identity, action_request(connection), str(uuid4())) for _ in range(6)]
+    def approve(value):
+        try:
+            return actions.approve(identity, value["id"], value["preview_hash"])["state"]
+        except CoworkerError as error:
+            return error.code
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(approve, values))
+    assert results.count("queued") == 1 and results.count("action_limit") == 5

@@ -19,6 +19,7 @@ from .container import Container
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
+from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -34,6 +35,57 @@ async def account(request: Request, principal: Annotated[Principal, Depends(requ
 
 Identity = Annotated[Principal, Depends(account)]
 Services = Annotated[Container, Depends(get_container)]
+
+
+@router.get("/connections")
+def connections(identity: Identity, services: Services):
+    return {"enabled": services.settings.actions_enabled, "connections": services.actions.repo.connections(identity.account_id)}
+
+
+@router.post("/connections/google/start")
+async def connect_google(payload: OAuthStart, identity: Identity, services: Services):
+    return await services.actions.connect(identity.account_id, payload)
+
+
+@router.post("/connections/google/finish")
+async def finish_google(payload: OAuthFinish, identity: Identity, services: Services):
+    return await services.actions.finish_connect(identity.account_id, payload)
+
+
+@router.delete("/connections/{connection_id}")
+def disconnect(connection_id: UUID, identity: Identity, services: Services):
+    return services.actions.repo.disconnect(identity.account_id, str(connection_id))
+
+
+@router.post("/actions", status_code=201)
+def prepare_action(payload: ActionPrepare, identity: Identity, services: Services,
+                   idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
+    return services.actions.repo.prepare(identity.account_id, payload, idempotency_key)
+
+
+@router.get("/actions")
+def list_actions(identity: Identity, services: Services):
+    return {"actions": services.actions.repo.list(identity.account_id)}
+
+
+@router.get("/actions/{action_id}")
+def get_action(action_id: UUID, identity: Identity, services: Services):
+    return services.actions.repo.get(identity.account_id, str(action_id))
+
+
+@router.post("/actions/{action_id}/approve", status_code=202)
+def approve_action(action_id: UUID, payload: ActionApproval, identity: Identity, services: Services):
+    return services.actions.repo.approve(identity.account_id, str(action_id), payload.preview_hash)
+
+
+@router.post("/actions/{action_id}/cancel")
+def cancel_action(action_id: UUID, identity: Identity, services: Services):
+    return services.actions.repo.cancel(identity.account_id, str(action_id))
+
+
+@router.post("/actions/{action_id}/reconcile")
+async def reconcile_action(action_id: UUID, identity: Identity, services: Services):
+    return await services.actions.reconcile_owned(identity.account_id, str(action_id))
 
 
 @router.get("/me")
@@ -177,7 +229,9 @@ def mount(app, container: Container):
         if not request.url.path.startswith("/api/v1/") and previous_validation_handler:
             return await previous_validation_handler(request, error)
         # Pydantic errors can include the original document or non-JSON values.
-        return JSONResponse({"error": {"code": "invalid_request", "message": "Check the required fields, language code, and file limits."},
+        message = ("Check the full email addresses, required content, start/end times and IANA time zone. A time skipped or repeated by daylight saving needs a different time or an explicit UTC offset."
+                   if request.url.path.startswith("/api/v1/actions") else "Check the required fields, language code, and file limits.")
+        return JSONResponse({"error": {"code": "invalid_request", "message": message},
                              "fields": [list(item["loc"]) for item in error.errors()]}, status_code=422)
 
     @app.exception_handler(CoworkerError)

@@ -9,6 +9,19 @@ export type WorkSkill = { id: SkillId; name: string; description: string; instru
 export type DraftMetadata = { output_language: string; missing_information: string[] };
 export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
 export type EmailDraft = { subject: string; body: string };
+export type ConnectedAccount = { id: string; provider: "google"; capability: "email" | "calendar"; email: string; active: boolean };
+export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
+export type CalendarAction = { kind: "calendar_create"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[] };
+export type ActionInput = { connection_id: string; payload: EmailAction | CalendarAction };
+export type ExternalAction = {
+  id: string; connection_id: string; kind: EmailAction["kind"] | CalendarAction["kind"];
+  state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
+  preview: { account: string; provider: "google"; payload: EmailAction | CalendarAction; expires_at: string; calendar: string | null; guest_notifications: string | null };
+  preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
+  approved_at: string | null; finished_at: string | null;
+  receipt: { provider: string; provider_id: string; status: string; confirmed_at: string; message_id?: string } | null;
+  audit?: { action: string; created_at: string }[];
+};
 export type CellFormat = "text" | "number" | "integer" | "percent";
 export type TablePreview = { columns: { id: string; label: string; format: CellFormat; aggregate: string; calculated: boolean }[]; rows: (string | number | null)[][]; totals: (number | null)[] };
 export type CoworkerDraft = DraftMetadata & (
@@ -137,6 +150,24 @@ export class CoworkerClient {
   deleteDocument(id: string) { return this.json<{ message: string }>(`/api/v1/documents/${identifier(id)}`, { method: "DELETE" }); }
   task(id: string, signal?: AbortSignal) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}`, { signal }); }
   cancel(id: string) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}/cancel`, { method: "POST" }); }
+  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
+  connectGoogle(capability: "email" | "calendar") {
+    return this.json<{ authorization_url: string; state: string }>("/api/v1/connections/google/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capability }) });
+  }
+  finishGoogle(code: string, state: string) {
+    return this.response("/api/v1/connections/google/finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) }, 45000).then(response => response.json() as Promise<ConnectedAccount>);
+  }
+  disconnect(id: string) { return this.json<{ message: string }>(`/api/v1/connections/${identifier(id)}`, { method: "DELETE" }); }
+  actions(signal?: AbortSignal) { return this.json<{ actions: ExternalAction[] }>("/api/v1/actions", { signal }); }
+  action(id: string, signal?: AbortSignal) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}`, { signal }); }
+  prepareAction(input: ActionInput, key: string) {
+    return this.json<ExternalAction>("/api/v1/actions", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+  approveAction(action: ExternalAction) {
+    return this.json<ExternalAction>(`/api/v1/actions/${identifier(action.id)}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preview_hash: action.preview_hash }) });
+  }
+  cancelAction(id: string) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}/cancel`, { method: "POST" }); }
+  reconcileAction(id: string) { return this.response(`/api/v1/actions/${identifier(id)}/reconcile`, { method: "POST" }, 65000).then(response => response.json() as Promise<ExternalAction>); }
   create(input: TaskInput, key: string) {
     return this.json<CoworkerTask>("/api/v1/tasks", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
   }
