@@ -19,9 +19,9 @@ from services.coworker.drafting import DraftFailure
 from services.coworker.errors import CoworkerError
 from services.coworker.runner import DocumentRunner
 from services.coworker.agent_runtime import AgentRuntime
-from services.coworker.agent_schemas import AgentRunCreate
+from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.worker import ActionActivities, Activities, AgentActivities, Dispatcher
-from services.coworker.workflow import AgentWorkflow, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from services.coworker.workflow import AgentWorkflow, AgentWorkflowV2, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 
 def make_worker(env, runner, agent_runtime=None):
@@ -29,9 +29,9 @@ def make_worker(env, runner, agent_runtime=None):
     actions = ActionActivities(runner.container.actions)
     agent = AgentActivities(agent_runtime or AgentRuntime(runner.container, runner))
     return Worker(env.client, task_queue=runner.container.settings.task_queue,
-                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow],
+                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow, AgentWorkflowV2],
                   activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, actions.execute, actions.interrupted,
-                              agent.plan, agent.replan, agent.step, agent.complete, agent.failed],
+                              agent.plan, agent.replan, agent.readiness, agent.step, agent.complete, agent.failed],
                   max_cached_workflows=0,
                   graceful_shutdown_timeout=timedelta(seconds=2))
 
