@@ -100,3 +100,42 @@ class ResearchWorkflow:
                 schedule_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=5),
             )
+
+
+@workflow.defn(name="shuddho_agent_run_v1")
+class AgentWorkflow:
+    """Bounded agent orchestration. Temporal history contains IDs and safe status only."""
+
+    @workflow.run
+    async def run(self, run_id: str):
+        try:
+            count = await workflow.execute_activity(
+                "shuddho_agent_plan_v1", run_id,
+                start_to_close_timeout=timedelta(seconds=30),
+                schedule_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=3),
+            )
+            for ordinal in range(1, count + 1):
+                await workflow.execute_activity(
+                    "shuddho_agent_step_v1", {"run_id": run_id, "ordinal": ordinal},
+                    start_to_close_timeout=timedelta(minutes=8),
+                    schedule_to_close_timeout=timedelta(minutes=12),
+                    heartbeat_timeout=timedelta(seconds=15),
+                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), maximum_attempts=2),
+                )
+            await workflow.execute_activity(
+                "shuddho_agent_complete_v1", run_id,
+                start_to_close_timeout=timedelta(seconds=30),
+                schedule_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        except ActivityError as error:
+            cause = error.cause
+            code = cause.type if isinstance(cause, ApplicationError) else "agent_workflow_failed"
+            message = str(cause.message) if isinstance(cause, ApplicationError) else "This agent run could not finish. Please try again."
+            await workflow.execute_activity(
+                "shuddho_agent_failed_v1", {"run_id": run_id, "code": code, "message": message},
+                start_to_close_timeout=timedelta(seconds=30),
+                schedule_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=5),
+            )
