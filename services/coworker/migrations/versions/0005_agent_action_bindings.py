@@ -14,10 +14,8 @@ depends_on = None
 
 def upgrade():
     op.add_column("cw_agent_runs", sa.Column("action_ids", sa.JSON(), nullable=False, server_default=sa.text("'[]'")))
-    op.alter_column("cw_agent_runs", "action_ids", server_default=None)
     op.add_column("cw_external_actions", sa.Column("agent_run_id", sa.String(length=36), nullable=True))
     op.add_column("cw_external_actions", sa.Column("agent_ready", sa.Boolean(), nullable=False, server_default=sa.false()))
-    op.alter_column("cw_external_actions", "agent_ready", server_default=None)
     op.create_index(op.f("ix_cw_external_actions_agent_run_id"), "cw_external_actions", ["agent_run_id"], unique=False)
 
 
