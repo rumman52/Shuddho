@@ -34,6 +34,7 @@ class Settings:
     agent_memory_enabled: bool = False
     intelligent_planner_enabled: bool = False
     agent_handoffs_enabled: bool = False
+    agent_multi_handoffs_enabled: bool = False
     agent_outcome_replan_enabled: bool = False
     google_client_id: str = ""
     google_client_secret: str = field(default="", repr=False)
@@ -49,6 +50,7 @@ class Settings:
     agent_planner_token_budget: int = 16000
     agent_planner_max_output_tokens: int = 1200
     max_agent_handoff_bytes: int = 12000
+    max_agent_handoff_sources: int = 2
     search_provider: str = "tavily"
     search_api_key: str = field(default="", repr=False)
     search_timeout_seconds: int = 40
@@ -91,6 +93,7 @@ class Settings:
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
+            agent_multi_handoffs_enabled=os.getenv("SHUDDHO_AGENT_MULTI_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_outcome_replan_enabled=os.getenv("SHUDDHO_AGENT_OUTCOME_REPLAN_ENABLED", "false").lower() == "true",
             google_client_id=os.getenv("SHUDDHO_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("SHUDDHO_GOOGLE_CLIENT_SECRET", ""),
@@ -106,6 +109,7 @@ class Settings:
             agent_planner_token_budget=int(os.getenv("SHUDDHO_AGENT_PLANNER_TOKEN_BUDGET", "16000")),
             agent_planner_max_output_tokens=int(os.getenv("SHUDDHO_AGENT_PLANNER_MAX_OUTPUT_TOKENS", "1200")),
             max_agent_handoff_bytes=int(os.getenv("SHUDDHO_AGENT_HANDOFF_BYTES", "12000")),
+            max_agent_handoff_sources=int(os.getenv("SHUDDHO_AGENT_HANDOFF_SOURCES", "2")),
             search_provider=os.getenv("SHUDDHO_SEARCH_PROVIDER", "tavily"),
             search_api_key=os.getenv("TAVILY_API_KEY", ""),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"),
@@ -142,7 +146,7 @@ class Settings:
                self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_memory_facts,
                self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens,
-               self.max_agent_handoff_bytes) < 1:
+               self.max_agent_handoff_bytes, self.max_agent_handoff_sources) < 1:
             raise ValueError("Coworker limits must be positive")
         if self.storage_backend not in {"s3", "local"}:
             raise ValueError("Unsupported coworker storage backend")
