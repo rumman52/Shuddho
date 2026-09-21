@@ -97,6 +97,9 @@ class AgentRuntime:
         invocation = self.repo.invocation_for_step(run_id, ordinal)
         if invocation["state"] == "completed":
             return {"status": "completed"}
+        dependency = self.repo.dependency_state(run["owner_id"], run_id, ordinal)
+        if not dependency["ready"]:
+            raise CoworkerError("dependency_blocked", "This agent step is waiting for its required prior step.", 409)
         spec = tool(invocation["tool"])
         if not spec.enabled(self.container.settings) and spec.kind == "task":
             if self.container.settings.intelligent_planner_enabled and invocation["state"] == "prepared":
