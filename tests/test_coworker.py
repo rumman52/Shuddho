@@ -1216,3 +1216,58 @@ def test_agent_handoff_is_empty_when_feature_is_disabled(container):
     assert container.agent.handoff_context(owner, run["id"], saved["steps"][1]["id"]) == {
         "sources": [], "provenance": [],
     }
+
+
+
+def test_research_step_never_receives_prior_agent_handoff(container):
+    from coworker_samples import WorkModel
+    from research_samples import SimulatedResearch
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_handoffs_enabled=True,
+        work_services_enabled=True,
+        research_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a project document, then research the public project update.",
+        output_language="en",
+    ), "agent-handoff-research")
+    container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="research.search", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+            "query": "public project update", "time_range": "any",
+        }),
+    ])
+
+    class CaptureWorkModel(WorkModel):
+        def __init__(self):
+            super().__init__()
+            self.seen = []
+        def messages(self, task, sources):
+            self.seen.append((task["skill_id"], [dict(source) for source in sources]))
+            return super().messages(task, sources)
+
+    model = CaptureWorkModel()
+    runtime = AgentRuntime(
+        container,
+        DocumentRunner(container, model, research=SimulatedResearch(enabled)),
+    )
+    asyncio.run(runtime.execute_step(run["id"], 1))
+    asyncio.run(runtime.execute_step(run["id"], 2))
+    assert [skill for skill, _sources in model.seen] == ["document", "research"]
+    research_sources = model.seen[1][1]
+    assert any(source["id"] == "web-1" for source in research_sources)
+    assert all("agent_invocation_id" not in source for source in research_sources)
+    receipt = container.agent.get(owner, run["id"])["tool_invocations"][1]["receipt"]
+    assert receipt["summary"]["handoff"] == []
