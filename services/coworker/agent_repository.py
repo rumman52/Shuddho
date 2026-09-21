@@ -257,6 +257,16 @@ class AgentRepository:
             self._audit(db, run.owner_id, run.id, "agent_planner_budget_reserved")
             return {"call": run.planner_calls, "reserved_tokens": reserve_tokens, "day": day}
 
+    def set_planner_mode(self, run_id: str, mode: str):
+        if mode not in {"deterministic", "intelligent", "fallback", "replanned"}:
+            raise CoworkerError("planner_mode", "Unsupported planner mode.", 422)
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            run.planner_mode = mode
+            run.updated_at = utcnow()
+
     def replace_remaining_plan(self, owner: str, run_id: str, from_ordinal: int,
                                steps: list[AgentPlanStep]) -> dict:
         if not 1 <= len(steps) <= 8:
