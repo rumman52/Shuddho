@@ -956,7 +956,10 @@ def test_intelligent_planner_reconstructs_server_owned_arguments(container):
     })
     plan = proposal_to_plan(proposal, "Private original goal", [], "bn", enabled)
     assert [step.tool for step in plan] == ["research.search", "email.draft"]
-    assert plan[0].arguments["query"] == "Compare the current market."
+    assert plan[0].arguments["query"] == "Private original goal"
+    assert plan[0].arguments["instruction"] == "Private original goal"
+    assert plan[1].arguments["instruction"] == "Private original goal"
+    assert "Compare the current market." not in json.dumps([step.arguments for step in plan])
     assert plan[0].arguments["document_ids"] == []
     assert plan[0].arguments["output_language"] == "bn"
     assert "recipient" not in json.dumps([step.arguments for step in plan]).lower()
