@@ -39,7 +39,7 @@ def deterministic_plan(goal: str, document_ids: list[str], output_language: str,
         spec = tool(name)
         arguments = {
             "instruction": goal,
-            "notes": "",
+            "notes": goal if name == "report.create" else "",
             "document_ids": document_ids,
             "output_language": output_language,
         }
