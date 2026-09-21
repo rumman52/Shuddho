@@ -127,9 +127,9 @@ Reminders and calendar events require a persisted timezone-aware schedule. A gen
 
 ### Agent Runtime foundation
 
-The first goal-driven runtime increment is documented in [the Agent Runtime foundation report](PART_3_AGENT_RUNTIME_FOUNDATION.md). It adds owned agent runs, steps, typed tool invocations, receipts, resumable events and a server-owned tool registry. The feature remains disabled by default. It does not yet add a model planner or autonomous execution.
+The first goal-driven runtime increment is documented in [the Agent Runtime foundation report](PART_3_AGENT_RUNTIME_FOUNDATION.md). It adds owned agent runs, steps, typed tool invocations, receipts, resumable events and a server-owned tool registry.
 
-The following increment should add a deterministic bounded planner and a Temporal AgentWorkflow over non-consequential registered tools before approval-aware external actions are connected.
+The next increment adds a code-owned deterministic planner, crash-safe agent outbox and Temporal `AgentWorkflow` over non-consequential registered tools. It reuses existing Coworker checkpoints, model/search budgets and artifact validation. The feature remains disabled by default. Approval-aware Gmail/Calendar execution, model-generated planning, replanning and memory remain later increments.
 
 ### Consequential actions
 
