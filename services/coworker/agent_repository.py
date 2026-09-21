@@ -100,6 +100,7 @@ class AgentRepository:
                     raise not_found()
                 versions.append(row[0].id)
 
+            run_id = str(uuid4())
             action_ids: list[str] = []
             if request.action_ids and not self.settings.actions_enabled:
                 raise CoworkerError("actions_disabled", "Email and calendar actions are not available in this deployment.", 503)
@@ -111,11 +112,15 @@ class AgentRepository:
                     raise not_found()
                 if action.state != "awaiting_approval":
                     raise CoworkerError("action_not_awaiting_approval", "Attach only actions that are still awaiting your approval.", 409)
+                if action.agent_run_id is not None:
+                    raise CoworkerError("action_already_bound", "This action is already attached to another agent run.", 409)
+                action.agent_run_id = run_id
+                action.agent_ready = False
                 action_ids.append(action.id)
 
             now = utcnow()
             run = AgentRun(
-                id=str(uuid4()),
+                id=run_id,
                 owner_id=owner,
                 workspace_id=self._workspace(db, owner),
                 idempotency_key=idempotency_key,
