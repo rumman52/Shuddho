@@ -21,7 +21,7 @@ Working plan, 13 September 2026. Continue in the existing `rumman52/Shuddho` rep
 | --- | --- | --- |
 | 1. Reliable writing foundation | Existing editor + configurable DeepSeek + correct suggestion application + clear failure states | Merged in PR #100; CI passed; live API and staging verification pending |
 | 2. Coworker foundation | Authenticated workspace, durable tasks/files, and one useful document workflow | Merged in PR #101; CI passed; feature flags remain off pending the staging gates in the Part 2 report |
-| 3. Full services and measured scale | Remaining skills, approved integrations, reliability operations, and regional expansion | Waves A/B merged through PR #105; wave C research implemented behind its own disabled flag; staging and later waves remain pending |
+| 3. Full services and measured scale | Remaining skills, approved integrations, agent runtime, reliability operations, and regional expansion | Waves A/B/C and the first Wave D approved-action increment are merged through PR #109; Agent Runtime foundation is implemented in the next disabled-by-default increment; staging and later execution waves remain pending |
 
 These are three release tracks with smaller steps, not a single rewrite or three enormous launches.
 
@@ -124,6 +124,12 @@ Wave A is implemented in [the Part 3 work-services report](PART_3_WORK_SERVICES.
 | D | Calendar events, reminders, approved email sending, document sharing, approved social publishing | [First increment](PART_3_APPROVED_ACTIONS.md): Google email sending and single calendar events, encrypted OAuth connections, exact previews, explicit approval, durable execution, receipts and audit history. Reminders, sharing and social publishing remain later increments. Live provider validation is required before enabling. |
 
 Reminders and calendar events require a persisted timezone-aware schedule. A generated checklist alone does not create a reminder. Reading transcripts does not imply audio transcription; add and evaluate that capability separately.
+
+### Agent Runtime foundation
+
+The first goal-driven runtime increment is documented in [the Agent Runtime foundation report](PART_3_AGENT_RUNTIME_FOUNDATION.md). It adds owned agent runs, steps, typed tool invocations, receipts, resumable events and a server-owned tool registry. The feature remains disabled by default. It does not yet add a model planner or autonomous execution.
+
+The following increment should add a deterministic bounded planner and a Temporal AgentWorkflow over non-consequential registered tools before approval-aware external actions are connected.
 
 ### Consequential actions
 

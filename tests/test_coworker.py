@@ -394,3 +394,162 @@ def test_outbox_recovery_does_not_start_another_workflow(container):
     assert started == {task["id"]}
     with container.repository.sessions() as db:
         assert db.get(Outbox, task["id"]).delivered
+
+
+
+def test_agent_runtime_is_fail_closed_by_default(signed_client):
+    client, headers = signed_client
+    tools = client.get("/api/v1/agent-tools", headers=headers())
+    assert tools.status_code == 200
+    assert tools.json() == {"enabled": False, "tools": []}
+    response = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-disabled"},
+                           json={"goal": "Prepare an investor meeting pack.", "output_language": "en"})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "agent_runtime_unavailable"
+
+
+def test_agent_runtime_owned_idempotent_and_cancelable(signed_client, container):
+    from services.coworker.agent_tools import TOOLS
+    client, headers = signed_client
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True,
+                      artifact_services_enabled=True, research_services_enabled=False, actions_enabled=False)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+
+    catalog = client.get("/api/v1/agent-tools", headers=headers()).json()
+    names = {item["name"] for item in catalog["tools"]}
+    assert catalog["enabled"] is True
+    assert {"document.create", "email.draft", "meeting.prepare", "presentation.create", "spreadsheet.create"} <= names
+    assert "research.search" not in names and "email.send" not in names and "calendar.create" not in names
+    assert TOOLS["email.send"].consequential and TOOLS["email.send"].approval_required
+    assert TOOLS["calendar.create"].consequential and TOOLS["calendar.create"].approval_required
+
+    payload = {"goal": "Prepare an investor meeting pack from my current sources.", "output_language": "en"}
+    first = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-run-once"}, json=payload)
+    assert first.status_code == 202
+    run = first.json()
+    assert first.headers["Idempotent-Replayed"] == "false"
+    assert run["state"] == "queued" and run["phase"] == "planning"
+    assert run["steps"][0]["ordinal"] == 0 and run["steps"][0]["tool"] is None
+    assert run["tool_invocations"] == []
+
+    replay = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-run-once"}, json=payload)
+    assert replay.status_code == 202
+    assert replay.json()["id"] == run["id"]
+    assert replay.headers["Idempotent-Replayed"] == "true"
+    conflict = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-run-once"},
+                           json=payload | {"goal": "Prepare a different goal."})
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "idempotency_conflict"
+
+    assert client.get(f'/api/v1/agent-runs/{run["id"]}', headers=headers("bob")).status_code == 404
+    assert client.post(f'/api/v1/agent-runs/{run["id"]}/cancel', headers=headers("bob")).status_code == 404
+    cancelled = client.post(f'/api/v1/agent-runs/{run["id"]}/cancel', headers=headers())
+    assert cancelled.status_code == 200
+    assert cancelled.json()["state"] == "cancelled"
+    assert cancelled.json()["steps"][0]["state"] == "cancelled"
+    assert client.get("/api/v1/agent-runs", headers=headers()).json()["runs"][0]["id"] == run["id"]
+
+
+def test_agent_runtime_requires_owned_uploaded_documents(signed_client, container):
+    client, headers = signed_client
+    enabled = replace(container.settings, agent_runtime_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    missing = "11111111-1111-1111-1111-111111111111"
+    response = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-missing-doc"},
+                           json={"goal": "Summarize this source.", "document_ids": [missing], "output_language": "en"})
+    assert response.status_code == 404
+
+
+
+def test_agent_plan_is_bounded_registered_and_source_scoped(signed_client, container):
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    client, headers = signed_client
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True, max_active_agent_runs=10)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Prepare a professional follow-up email.", output_language="en"
+    ), "agent-plan-ledger")
+    events = client.get(f'/api/v1/agent-runs/{run["id"]}/events', headers=headers()).json()
+    assert events["sequence"] == 1 and events["events"][0]["phase"] == "planning"
+
+    planned = container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": "Draft a concise follow-up email.",
+            "notes": "Thank the team for the project review.",
+            "document_ids": [],
+            "output_language": "en",
+        }),
+    ])
+    assert planned["phase"] == "planned"
+    assert planned["event_sequence"] == 2
+    assert planned["steps"][0]["tool"] == "email.draft"
+    invocation = planned["tool_invocations"][0]
+    assert invocation["tool"] == "email.draft"
+    assert invocation["state"] == "prepared"
+    assert invocation["consequential"] is False
+    assert invocation["approval_required"] is False
+    assert invocation["receipt"] is None
+
+    after = client.get(f'/api/v1/agent-runs/{run["id"]}/events?after=1', headers=headers()).json()
+    assert [item["sequence"] for item in after["events"]] == [2]
+    assert after["events"][0]["phase"] == "planned"
+    assert client.get(f'/api/v1/agent-runs/{run["id"]}/events', headers=headers("bob")).status_code == 404
+
+    with pytest.raises(CoworkerError) as repeated:
+        container.agent.save_plan(owner, run["id"], [AgentPlanStep(tool="email.draft", arguments={
+            "instruction": "Draft another email.", "notes": "", "document_ids": [], "output_language": "en",
+        })])
+    assert repeated.value.code == "plan_already_saved"
+
+    other, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Use only the sources attached to this run.", output_language="en"
+    ), "agent-plan-source-scope")
+    with pytest.raises(CoworkerError) as scope:
+        container.agent.save_plan(owner, other["id"], [AgentPlanStep(tool="document.create", arguments={
+            "instruction": "Create a memo.",
+            "notes": "",
+            "document_ids": ["11111111-1111-1111-1111-111111111111"],
+            "output_language": "en",
+        })])
+    assert scope.value.code == "tool_source_scope"
+
+    third, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Reject model-invented tools.", output_language="en"
+    ), "agent-plan-tool-scope")
+    with pytest.raises(CoworkerError) as unknown:
+        container.agent.save_plan(owner, third["id"], [AgentPlanStep(tool="shell.run", arguments={})])
+    assert unknown.value.code == "unknown_tool"
+
+
+def test_agent_plan_limits_step_count(container):
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(goal="Prepare several outputs.", output_language="en"), "agent-plan-limit")
+    step = AgentPlanStep(tool="email.draft", arguments={
+        "instruction": "Draft an email.", "notes": "", "document_ids": [], "output_language": "en",
+    })
+    with pytest.raises(CoworkerError) as too_many:
+        container.agent.save_plan(owner, run["id"], [step] * 9)
+    assert too_many.value.code == "invalid_plan"
+
+
+
+def test_agent_runtime_model_matches_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import AgentRun
+    database_columns = {item["name"] for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_agent_runs")}
+    model_columns = set(AgentRun.__table__.columns.keys())
+    assert database_columns == model_columns
+    assert "event_sequence" in model_columns

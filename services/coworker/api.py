@@ -20,6 +20,7 @@ from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
+from .agent_schemas import AgentRunCreate
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -35,6 +36,68 @@ async def account(request: Request, principal: Annotated[Principal, Depends(requ
 
 Identity = Annotated[Principal, Depends(account)]
 Services = Annotated[Container, Depends(get_container)]
+
+
+@router.get("/agent-tools")
+def agent_tools(identity: Identity, services: Services):
+    return {"enabled": services.settings.agent_runtime_enabled, "tools": services.agent.tools()}
+
+
+@router.post("/agent-runs", status_code=202)
+def create_agent_run(payload: AgentRunCreate, identity: Identity, services: Services, response: Response,
+                     idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
+    run, created = services.agent.create(identity.account_id, payload, idempotency_key)
+    response.headers["Location"] = f'/api/v1/agent-runs/{run["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return run
+
+
+@router.get("/agent-runs")
+def list_agent_runs(identity: Identity, services: Services):
+    return {"runs": services.agent.list(identity.account_id)}
+
+
+@router.get("/agent-runs/{run_id}")
+def get_agent_run(run_id: UUID, identity: Identity, services: Services):
+    return services.agent.get(identity.account_id, str(run_id))
+
+
+@router.get("/agent-runs/{run_id}/events")
+async def agent_run_events(run_id: UUID, request: Request, identity: Identity, services: Services,
+                           after: int = Query(default=0, ge=0), stream: bool = False,
+                           last_event_id: Annotated[str | None, Header()] = None):
+    if last_event_id:
+        if not last_event_id.isdecimal() or len(last_event_id) > 12:
+            raise CoworkerError("invalid_cursor", "Invalid agent event cursor.")
+        after = max(after, int(last_event_id))
+    initial = await run_in_threadpool(services.agent.events, identity.account_id, str(run_id), after)
+    if not stream:
+        return initial
+
+    async def generate():
+        cursor = after
+        current = initial
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and time.time() < identity.expires_at:
+            if await request.is_disconnected():
+                return
+            for event in current["events"]:
+                cursor = event["sequence"]
+                yield f'id: {cursor}\nevent: progress\ndata: {json.dumps(event, ensure_ascii=False)}\n\n'
+            if current["terminal"]:
+                return
+            yield ": keepalive\n\n"
+            await asyncio.sleep(1)
+            current = await run_in_threadpool(services.agent.events, identity.account_id, str(run_id), cursor)
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+    })
+
+
+@router.post("/agent-runs/{run_id}/cancel")
+def cancel_agent_run(run_id: UUID, identity: Identity, services: Services):
+    return services.agent.cancel(identity.account_id, str(run_id))
 
 
 @router.get("/connections")
