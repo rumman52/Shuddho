@@ -394,3 +394,71 @@ def test_outbox_recovery_does_not_start_another_workflow(container):
     assert started == {task["id"]}
     with container.repository.sessions() as db:
         assert db.get(Outbox, task["id"]).delivered
+
+
+
+def test_agent_runtime_is_fail_closed_by_default(signed_client):
+    client, headers = signed_client
+    tools = client.get("/api/v1/agent-tools", headers=headers())
+    assert tools.status_code == 200
+    assert tools.json() == {"enabled": False, "tools": []}
+    response = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-disabled"},
+                           json={"goal": "Prepare an investor meeting pack.", "output_language": "en"})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "agent_runtime_unavailable"
+
+
+def test_agent_runtime_owned_idempotent_and_cancelable(signed_client, container):
+    from services.coworker.agent_tools import TOOLS
+    client, headers = signed_client
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True,
+                      artifact_services_enabled=True, research_services_enabled=False, actions_enabled=False)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+
+    catalog = client.get("/api/v1/agent-tools", headers=headers()).json()
+    names = {item["name"] for item in catalog["tools"]}
+    assert catalog["enabled"] is True
+    assert {"document.create", "email.draft", "meeting.prepare", "presentation.create", "spreadsheet.create"} <= names
+    assert "research.search" not in names and "email.send" not in names and "calendar.create" not in names
+    assert TOOLS["email.send"].consequential and TOOLS["email.send"].approval_required
+    assert TOOLS["calendar.create"].consequential and TOOLS["calendar.create"].approval_required
+
+    payload = {"goal": "Prepare an investor meeting pack from my current sources.", "output_language": "en"}
+    first = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-run-once"}, json=payload)
+    assert first.status_code == 202
+    run = first.json()
+    assert first.headers["Idempotent-Replayed"] == "false"
+    assert run["state"] == "queued" and run["phase"] == "planning"
+    assert run["steps"][0]["ordinal"] == 0 and run["steps"][0]["tool"] is None
+    assert run["tool_invocations"] == []
+
+    replay = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-run-once"}, json=payload)
+    assert replay.status_code == 202
+    assert replay.json()["id"] == run["id"]
+    assert replay.headers["Idempotent-Replayed"] == "true"
+    conflict = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-run-once"},
+                           json=payload | {"goal": "Prepare a different goal."})
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "idempotency_conflict"
+
+    assert client.get(f'/api/v1/agent-runs/{run["id"]}', headers=headers("bob")).status_code == 404
+    assert client.post(f'/api/v1/agent-runs/{run["id"]}/cancel', headers=headers("bob")).status_code == 404
+    cancelled = client.post(f'/api/v1/agent-runs/{run["id"]}/cancel', headers=headers())
+    assert cancelled.status_code == 200
+    assert cancelled.json()["state"] == "cancelled"
+    assert cancelled.json()["steps"][0]["state"] == "cancelled"
+    assert client.get("/api/v1/agent-runs", headers=headers()).json()["runs"][0]["id"] == run["id"]
+
+
+def test_agent_runtime_requires_owned_uploaded_documents(signed_client, container):
+    client, headers = signed_client
+    enabled = replace(container.settings, agent_runtime_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    missing = "11111111-1111-1111-1111-111111111111"
+    response = client.post("/api/v1/agent-runs", headers=headers() | {"Idempotency-Key": "agent-missing-doc"},
+                           json={"goal": "Summarize this source.", "document_ids": [missing], "output_language": "en"})
+    assert response.status_code == 404
