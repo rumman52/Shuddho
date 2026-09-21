@@ -162,3 +162,33 @@ def test_structured_memory_limit_is_atomic(repository):
         results = list(pool.map(create, range(6)))
     assert sum(value.startswith("preference-") for value in results) == 1
     assert results.count("memory_limit") == 5
+
+
+
+def test_agent_planner_call_limit_and_daily_budget_are_atomic(repository):
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_schemas import AgentRunCreate
+    settings = replace(repository.settings, agent_runtime_enabled=True,
+                       max_agent_planner_calls=1, agent_planner_token_budget=1000,
+                       daily_token_budget=5000)
+    agent = AgentRepository(repository.sessions, settings)
+    identity = owner(repository)
+    run, _ = agent.create(identity, AgentRunCreate(
+        goal="Prepare a professional update.", output_language="en"
+    ), "planner-race")
+
+    def reserve(_index):
+        try:
+            return agent.reserve_planner(run["id"], 1000)["call"]
+        except CoworkerError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(reserve, range(6)))
+    assert results.count(1) == 1
+    assert results.count("planner_call_limit") == 5
+    with repository.sessions() as db:
+        allocated = db.scalar(text(
+            "SELECT allocated_tokens FROM cw_daily_usage WHERE owner_id=:owner"
+        ), {"owner": identity})
+        assert allocated == 1000
