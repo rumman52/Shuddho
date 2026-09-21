@@ -30,7 +30,7 @@ def make_worker(env, runner):
     return Worker(env.client, task_queue=runner.container.settings.task_queue,
                   workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow],
                   activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, actions.execute, actions.interrupted,
-                              agent.plan, agent.step, agent.complete, agent.failed],
+                              agent.plan, agent.replan, agent.step, agent.complete, agent.failed],
                   max_cached_workflows=0,
                   graceful_shutdown_timeout=timedelta(seconds=2))
 
