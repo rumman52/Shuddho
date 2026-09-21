@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from .config import Settings
 from .errors import CoworkerError
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
-from .models import AuditEvent, MemoryFact, Workspace, utcnow
+from .models import Account, AuditEvent, MemoryFact, Workspace, utcnow
 from .repository import aware, iso, not_found
 
 
@@ -46,6 +46,8 @@ class MemoryRepository:
     def create(self, owner: str, request: MemoryFactCreate) -> dict:
         self._enabled()
         with self.sessions.begin() as db:
+            if db.scalar(select(Account.id).where(Account.id == owner).with_for_update()) is None:
+                raise not_found()
             workspace_id = self._workspace(db, owner)
             if db.scalar(select(func.count()).select_from(MemoryFact).where(MemoryFact.owner_id == owner)) >= self.settings.max_memory_facts:
                 raise CoworkerError("memory_limit", "Your structured memory fact limit has been reached.", 429)
