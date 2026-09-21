@@ -17,16 +17,20 @@ from coworker_samples import WorkModel
 from research_samples import SimulatedResearch
 from services.coworker.drafting import DraftFailure
 from services.coworker.runner import DocumentRunner
-from services.coworker.worker import ActionActivities, Activities, Dispatcher
-from services.coworker.workflow import ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from services.coworker.agent_runtime import AgentRuntime
+from services.coworker.agent_schemas import AgentRunCreate
+from services.coworker.worker import ActionActivities, Activities, AgentActivities, Dispatcher
+from services.coworker.workflow import AgentWorkflow, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 
 def make_worker(env, runner):
     activities = Activities(runner)
     actions = ActionActivities(runner.container.actions)
+    agent = AgentActivities(AgentRuntime(runner.container, runner))
     return Worker(env.client, task_queue=runner.container.settings.task_queue,
-                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow],
-                  activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, actions.execute, actions.interrupted],
+                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow],
+                  activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, actions.execute, actions.interrupted,
+                              agent.plan, agent.step, agent.complete, agent.failed],
                   max_cached_workflows=0,
                   graceful_shutdown_timeout=timedelta(seconds=2))
 
@@ -228,4 +232,77 @@ def test_cancelled_search_stops_before_model_and_retains_unknown_credit(containe
             value = container.repository.get_task(account(container), task["id"])
             assert value["state"] == "cancelled" and stopped.is_set() and model.calls == 0
             assert value["usage"]["search"]["state"] == "unknown" and value["usage"]["search"]["accounted_credits"] == 1
+    asyncio.run(scenario())
+
+
+
+def test_agent_workflow_executes_bounded_email_draft_once(container):
+    async def scenario():
+        enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(owner, AgentRunCreate(
+            goal="Draft a professional follow-up email to the team.",
+            output_language="en",
+        ), "agent-temporal-email")
+        model = WorkModel()
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, DocumentRunner(container, model)):
+                await Dispatcher(container, env.client).tick()
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+            saved = container.agent.get(owner, run["id"])
+            assert saved["state"] == "completed"
+            assert [step["tool"] for step in saved["steps"]] == ["email.draft"]
+            assert saved["tool_invocations"][0]["state"] == "completed"
+            assert saved["tool_invocations"][0]["receipt"]["resource_type"] == "task"
+            assert model.calls == 1
+            history = (await handle.fetch_history()).to_json()
+            assert "Draft a professional follow-up email to the team." not in history
+    asyncio.run(scenario())
+
+
+def test_agent_worker_restart_reuses_child_task_checkpoint(container):
+    async def scenario():
+        enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(owner, AgentRunCreate(
+            goal="Draft a professional email update.",
+            output_language="en",
+        ), "agent-temporal-restart")
+        model = WorkModel()
+        checkpoint = asyncio.Event()
+
+        class LostAfterDraft(DocumentRunner):
+            async def draft(self, task):
+                await super().draft(task)
+                checkpoint.set()
+                await asyncio.Event().wait()
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            first = make_worker(env, LostAfterDraft(container, model))
+            first_run = asyncio.create_task(first.run())
+            await Dispatcher(container, env.client).tick()
+            await asyncio.wait_for(checkpoint.wait(), 30)
+            await first.shutdown()
+            await first_run
+
+            saved = container.agent.get(owner, run["id"])
+            task_id = saved["steps"][0]["state"] == "running" and container.agent.step_resource(run["id"], 1)["resource_id"]
+            assert task_id
+            assert container.repository.step(task_id, "draft") is not None
+
+            async with make_worker(env, DocumentRunner(container, model)):
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+            final = container.agent.get(owner, run["id"])
+            assert final["state"] == "completed"
+            assert model.calls == 1
     asyncio.run(scenario())
