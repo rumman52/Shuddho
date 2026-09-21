@@ -53,6 +53,7 @@ class AgentRuntime:
         task, _ = self.container.repository.create_task(
             run["owner_id"], request, f"agent:{run_id}:{ordinal}", enqueue=False
         )
+        self.repo.link_invocation_resource(run_id, ordinal, "task", task["id"])
         try:
             await self.runner.run_for_test(task["id"])
         except CoworkerError:
