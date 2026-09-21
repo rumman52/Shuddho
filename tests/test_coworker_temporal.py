@@ -537,7 +537,7 @@ def test_agent_workflow_replans_remaining_steps_after_incomplete_result(containe
                         {"tool": "email.draft", "objective": "Draft the follow-up email."},
                     ]
                     if len(self.calls) == 1 else
-                    [{"tool": "report.create", "objective": "Prepare a report despite missing details."}]
+                    [{"tool": "social.draft", "objective": "Prepare a concise update despite missing details."}]
                 )
                 return AgentPlannerProposal.model_validate({"steps": steps}), 40, 1
 
@@ -556,7 +556,7 @@ def test_agent_workflow_replans_remaining_steps_after_incomplete_result(containe
         assert saved["state"] == "completed"
         assert saved["planner_calls"] == 2
         assert planner.calls == ["initial", "result_incomplete"]
-        assert [step["tool"] for step in saved["steps"]] == ["document.create", "report.create"]
+        assert [step["tool"] for step in saved["steps"]] == ["document.create", "social.draft"]
         assert saved["steps"][0]["state"] == "completed"
         assert "Please provide the missing recipient." not in history
         assert "The team completed 12 reviews." not in history
