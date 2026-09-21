@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timezone
+import json
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -120,7 +120,7 @@ class MemoryRepository:
             facts, provenance, used = [], [], 0
             for row in rows:
                 entry = {"namespace": row.namespace, "key": row.key, "value": row.value, "language": row.language}
-                encoded = str(entry).encode("utf-8")
+                encoded = json.dumps(entry, ensure_ascii=False, sort_keys=True).encode("utf-8")
                 if used + len(encoded) > self.settings.max_memory_context_bytes:
                     continue
                 used += len(encoded)
