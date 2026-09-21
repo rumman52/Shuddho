@@ -553,6 +553,7 @@ def test_agent_runtime_model_matches_migration(container):
     model_columns = set(AgentRun.__table__.columns.keys())
     assert database_columns == model_columns
     assert "event_sequence" in model_columns
+    assert {"planner_calls", "planner_tokens", "planner_mode"} <= model_columns
 
 
 
