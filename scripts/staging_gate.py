@@ -39,12 +39,18 @@ def evaluate(evidence: dict, *, require_research: bool, require_actions: bool) -
     checks = []
     for key, description in required.items():
         record = evidence.get(key)
-        passed = isinstance(record, dict) and record.get("status") == "passed"
+        evidence_ref = record.get("evidence") if isinstance(record, dict) else None
+        passed = (
+            isinstance(record, dict)
+            and record.get("status") == "passed"
+            and isinstance(evidence_ref, str)
+            and bool(evidence_ref.strip())
+        )
         checks.append({
             "id": key,
             "passed": passed,
             "description": description,
-            "evidence": record.get("evidence") if isinstance(record, dict) else None,
+            "evidence": evidence_ref,
         })
     missing = [item["id"] for item in checks if not item["passed"]]
     return {
