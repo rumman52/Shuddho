@@ -139,7 +139,9 @@ PR #116 adds [bounded incomplete-result replanning](PART_3_OUTCOME_REPLAN.md). T
 
 PR #117 adds [bounded multi-source handoffs](PART_3_MULTI_HANDOFFS.md): a later non-research task may consume up to two server-selected prior completed task results under one shared handoff byte budget.
 
-The next increment adds a [bounded dependency graph](PART_3_DEPENDENCY_GRAPH.md). Durable dependency metadata is derived by trusted server code after plan validation; model-selected step IDs and arbitrary DAG edges remain out of scope. This establishes the scheduling contract needed before bounded fan-out/fan-in execution. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #118 adds a [bounded dependency graph](PART_3_DEPENDENCY_GRAPH.md). Durable dependency metadata is derived by trusted server code after plan validation; model-selected step IDs and arbitrary DAG edges remain out of scope.
+
+Issue #120 / the next runtime PR adds [bounded parallel execution](PART_3_PARALLEL_EXECUTION.md): new runs may use the versioned `shuddho_agent_run_v2` path when both graph and parallel flags are enabled, with server-owned readiness, bounded fan-out/fan-in, serialized approved actions, deterministic failure behavior, and v1 fallback when the flag is off. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 

@@ -19,9 +19,9 @@ from services.coworker.drafting import DraftFailure
 from services.coworker.errors import CoworkerError
 from services.coworker.runner import DocumentRunner
 from services.coworker.agent_runtime import AgentRuntime
-from services.coworker.agent_schemas import AgentRunCreate
+from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.worker import ActionActivities, Activities, AgentActivities, Dispatcher
-from services.coworker.workflow import AgentWorkflow, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from services.coworker.workflow import AgentWorkflow, AgentWorkflowV2, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 
 def make_worker(env, runner, agent_runtime=None):
@@ -29,9 +29,9 @@ def make_worker(env, runner, agent_runtime=None):
     actions = ActionActivities(runner.container.actions)
     agent = AgentActivities(agent_runtime or AgentRuntime(runner.container, runner))
     return Worker(env.client, task_queue=runner.container.settings.task_queue,
-                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow],
+                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow, AgentWorkflowV2],
                   activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, actions.execute, actions.interrupted,
-                              agent.plan, agent.replan, agent.step, agent.complete, agent.failed],
+                              agent.plan, agent.replan, agent.readiness, agent.step, agent.complete, agent.failed],
                   max_cached_workflows=0,
                   graceful_shutdown_timeout=timedelta(seconds=2))
 
@@ -671,3 +671,211 @@ def test_agent_dependency_graph_replan_rebuilds_only_unstarted_edges(container):
     assert replaced["steps"][0]["state"] == "completed"
     assert replaced["steps"][1]["depends_on"] == [1]
     assert replaced["steps"][2]["depends_on"] == [2]
+
+
+def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
+    async def scenario():
+        enabled = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            agent_dependency_graph_enabled=True,
+            agent_parallel_execution_enabled=True,
+            research_services_enabled=True,
+            work_services_enabled=True,
+            max_agent_parallel_steps=2,
+        )
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(owner, AgentRunCreate(
+            goal="Research two sources and create a project document.", output_language="en"
+        ), "agent-parallel-fan-in")
+        saved = container.agent.save_plan(owner, run["id"], [
+            AgentPlanStep(tool="research.search", arguments={
+                "instruction": "Research the first public update.", "notes": "", "document_ids": [],
+                "output_language": "en", "query": "first public project update", "time_range": "any",
+            }),
+            AgentPlanStep(tool="research.search", arguments={
+                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
+                "output_language": "en", "query": "second public project update", "time_range": "any",
+            }),
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create the combined project document.", "notes": "",
+                "document_ids": [], "output_language": "en",
+            }),
+        ])
+        assert [step["depends_on"] for step in saved["steps"]] == [[], [], [1, 2]]
+
+        entered = set()
+        finished = set()
+        both_started = asyncio.Event()
+        runner = DocumentRunner(container, WorkModel(), research=SimulatedResearch(enabled))
+
+        class ObservedRuntime(AgentRuntime):
+            async def execute_step(self, run_id, ordinal):
+                if ordinal in {1, 2}:
+                    entered.add(ordinal)
+                    if entered == {1, 2}:
+                        both_started.set()
+                    await asyncio.wait_for(both_started.wait(), 10)
+                    result = await super().execute_step(run_id, ordinal)
+                    finished.add(ordinal)
+                    return result
+                if ordinal == 3:
+                    assert finished == {1, 2}
+                return await super().execute_step(run_id, ordinal)
+
+        runtime = ObservedRuntime(container, runner)
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, runner, runtime):
+                await Dispatcher(container, env.client).tick()
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+
+        final = container.agent.get(owner, run["id"])
+        assert final["state"] == "completed"
+        assert entered == {1, 2}
+        assert finished == {1, 2}
+        assert all(step["state"] == "completed" for step in final["steps"])
+
+    asyncio.run(scenario())
+
+
+def test_agent_v2_failed_branch_preserves_completed_independent_work_and_blocks_fan_in(container):
+    async def scenario():
+        enabled = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            agent_dependency_graph_enabled=True,
+            agent_parallel_execution_enabled=True,
+            research_services_enabled=True,
+            work_services_enabled=True,
+            max_agent_parallel_steps=2,
+        )
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(owner, AgentRunCreate(
+            goal="Research two sources and create a project document.", output_language="en"
+        ), "agent-parallel-failure")
+        container.agent.save_plan(owner, run["id"], [
+            AgentPlanStep(tool="research.search", arguments={
+                "instruction": "Research the first public update.", "notes": "", "document_ids": [],
+                "output_language": "en", "query": "first public project update", "time_range": "any",
+            }),
+            AgentPlanStep(tool="research.search", arguments={
+                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
+                "output_language": "en", "query": "second public project update", "time_range": "any",
+            }),
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create the combined project document.", "notes": "",
+                "document_ids": [], "output_language": "en",
+            }),
+        ])
+        runner = DocumentRunner(container, WorkModel(), research=SimulatedResearch(enabled))
+
+        class OneBranchFails(AgentRuntime):
+            async def execute_step(self, run_id, ordinal):
+                if ordinal == 1:
+                    await asyncio.sleep(0.05)
+                    raise CoworkerError("simulated_branch_failure", "A simulated branch failed.", 409)
+                return await super().execute_step(run_id, ordinal)
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, runner, OneBranchFails(container, runner)):
+                await Dispatcher(container, env.client).tick()
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+
+        final = container.agent.get(owner, run["id"])
+        assert final["state"] == "failed"
+        assert final["error_code"] == "simulated_branch_failure"
+        assert final["steps"][0]["state"] == "failed"
+        assert final["steps"][1]["state"] == "completed"
+        assert final["steps"][2]["state"] == "failed"
+        assert final["tool_invocations"][1]["receipt"]["resource_type"] == "task"
+
+    asyncio.run(scenario())
+
+
+def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container):
+    async def scenario():
+        enabled = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            agent_dependency_graph_enabled=True,
+            agent_parallel_execution_enabled=True,
+            research_services_enabled=True,
+            work_services_enabled=True,
+            max_agent_parallel_steps=2,
+        )
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(owner, AgentRunCreate(
+            goal="Research two sources and create a project document.", output_language="en"
+        ), "agent-parallel-restart")
+        container.agent.save_plan(owner, run["id"], [
+            AgentPlanStep(tool="research.search", arguments={
+                "instruction": "Research the first public update.", "notes": "", "document_ids": [],
+                "output_language": "en", "query": "first public project update", "time_range": "any",
+            }),
+            AgentPlanStep(tool="research.search", arguments={
+                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
+                "output_language": "en", "query": "second public project update", "time_range": "any",
+            }),
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create the combined project document.", "notes": "",
+                "document_ids": [], "output_language": "en",
+            }),
+        ])
+        model = WorkModel()
+        search = SimulatedResearch(enabled)
+        checkpoint = asyncio.Event()
+        drafted = set()
+
+        class LostAfterParallelDraft(DocumentRunner):
+            async def draft(self, task):
+                await super().draft(task)
+                worker_task = self.container.repository.worker_task(task["id"], False)
+                if worker_task["skill_id"] == "research":
+                    drafted.add(task["id"])
+                    if len(drafted) == 2:
+                        checkpoint.set()
+                    await asyncio.Event().wait()
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            first_runner = LostAfterParallelDraft(container, model, research=search)
+            first = make_worker(env, first_runner, AgentRuntime(container, first_runner))
+            first_run = asyncio.create_task(first.run())
+            await Dispatcher(container, env.client).tick()
+            await asyncio.wait_for(checkpoint.wait(), 30)
+            await first.shutdown()
+            await first_run
+
+            midway = container.agent.get(owner, run["id"])
+            resources = [container.agent.step_resource(run["id"], ordinal) for ordinal in (1, 2)]
+            assert all(resource and resource["resource_type"] == "task" for resource in resources)
+            assert len({resource["resource_id"] for resource in resources}) == 2
+            assert all(container.repository.step(resource["resource_id"], "draft") is not None for resource in resources)
+            assert model.calls == 2
+            assert midway["steps"][2]["state"] == "planned"
+
+            runner = DocumentRunner(container, model, research=search)
+            async with make_worker(env, runner, AgentRuntime(container, runner)):
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+
+        final = container.agent.get(owner, run["id"])
+        assert final["state"] == "completed"
+        assert model.calls == 3
+        assert search.calls == 2
+        assert all(step["state"] == "completed" for step in final["steps"])
+
+    asyncio.run(scenario())

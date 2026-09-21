@@ -288,14 +288,20 @@ class AgentRepository:
             AgentStep.owner_id == owner,
             AgentStep.ordinal < ordinal,
         ).order_by(AgentStep.ordinal.desc())).all()
+        research_fan_in: list[int] = []
         for candidate in prior:
             if candidate.tool_name is None:
                 continue
             candidate_spec = tool(candidate.tool_name)
-            if (candidate_spec.kind == "task" and not candidate_spec.consequential
-                    and not candidate_spec.approval_required):
-                return [candidate.ordinal]
-        return []
+            if candidate_spec.kind != "task" or candidate_spec.consequential or candidate_spec.approval_required:
+                continue
+            if candidate_spec.skill_id == "research":
+                research_fan_in.append(candidate.ordinal)
+                continue
+            if research_fan_in:
+                return sorted(research_fan_in)
+            return [candidate.ordinal]
+        return sorted(research_fan_in)
 
     def dependency_state(self, owner: str, run_id: str, ordinal: int) -> dict:
         with self.sessions() as db:
@@ -318,6 +324,79 @@ class AgentRepository:
                 raise CoworkerError("dependency_invalid", "An agent step dependency is missing.", 409)
             blocked = [value for value in dependencies if states.get(value) != "completed"]
             return {"ready": not blocked, "depends_on": dependencies, "blocked_by": blocked}
+
+    def runnable_steps(self, run_id: str, limit: int) -> dict:
+        """Return a deterministic server-owned scheduling snapshot for AgentWorkflow v2."""
+        bounded = max(1, min(int(limit), self.settings.max_agent_parallel_steps))
+        with self.sessions() as db:
+            run = db.get(AgentRun, run_id)
+            if run is None:
+                raise not_found()
+            if run.cancel_requested or run.state == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            rows = db.execute(select(AgentStep, ToolInvocation).join(
+                ToolInvocation, ToolInvocation.step_id == AgentStep.id,
+            ).where(
+                AgentStep.run_id == run.id,
+                AgentStep.owner_id == run.owner_id,
+                ToolInvocation.owner_id == run.owner_id,
+            ).order_by(AgentStep.ordinal)).all()
+            states = {step.ordinal: step.state for step, _invocation in rows}
+            completed = [ordinal for ordinal, state in states.items() if state == "completed"]
+            runnable = []
+            blocked = {}
+            replan_ordinal = None
+            for step, invocation in rows:
+                if invocation.state == "completed":
+                    continue
+                dependencies = list(step.depends_on_ordinals or [])
+                if any(value >= step.ordinal for value in dependencies):
+                    raise CoworkerError("dependency_invalid", "Agent dependencies must point to earlier steps.", 409)
+                if any(value not in states for value in dependencies):
+                    raise CoworkerError("dependency_invalid", "An agent step dependency is missing.", 409)
+                failed = [value for value in dependencies if states[value] in {"failed", "cancelled"}]
+                if failed:
+                    blocked[step.ordinal] = failed
+                    continue
+                waiting = [value for value in dependencies if states[value] != "completed"]
+                if waiting:
+                    blocked[step.ordinal] = waiting
+                    continue
+                spec = tool(invocation.tool_name)
+                if (spec.kind == "task" and not spec.enabled(self.settings)
+                        and self.settings.intelligent_planner_enabled
+                        and invocation.state == "prepared"):
+                    replan_ordinal = step.ordinal
+                    break
+                runnable.append({
+                    "ordinal": step.ordinal,
+                    "approved_action": bool(
+                        spec.kind == "approved_action" or invocation.consequential or invocation.approval_required
+                    ),
+                })
+            if replan_ordinal is not None:
+                return {
+                    "runnable": [], "completed": completed, "blocked": blocked,
+                    "replan_ordinal": replan_ordinal, "cancelled": False,
+                }
+            if not runnable:
+                return {"runnable": [], "completed": completed, "blocked": blocked, "replan_ordinal": None, "cancelled": False}
+            runnable.sort(key=lambda item: item["ordinal"])
+            first_action = next((item for item in runnable if item["approved_action"]), None)
+            if first_action is not None:
+                before = [item for item in runnable if not item["approved_action"] and item["ordinal"] < first_action["ordinal"]]
+                chosen = before[:bounded] if before else [first_action]
+            else:
+                chosen = runnable[:bounded]
+            if self.settings.agent_outcome_replan_enabled:
+                chosen = chosen[:1]
+            return {
+                "runnable": [item["ordinal"] for item in chosen],
+                "completed": completed,
+                "blocked": blocked,
+                "replan_ordinal": None,
+                "cancelled": False,
+            }
 
     def replace_remaining_plan(self, owner: str, run_id: str, from_ordinal: int,
                                steps: list[AgentPlanStep]) -> dict:

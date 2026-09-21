@@ -19,7 +19,7 @@ from .errors import CoworkerError
 from .repository import TERMINAL
 from .agent_runtime import AgentRuntime
 from .runner import DocumentRunner
-from .workflow import AgentWorkflow, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from .workflow import AgentWorkflow, AgentWorkflowV2, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 logger = logging.getLogger("shuddho.coworker")
 
@@ -128,6 +128,18 @@ class AgentActivities:
             logger.error("Agent replanning failed run=%s", value.get("run_id"))
             raise ApplicationError("Agent replanning is temporarily unavailable.", type="agent_replanning_unavailable") from None
 
+    @activity.defn(name="shuddho_agent_readiness_v2")
+    async def readiness(self, value: dict):
+        try:
+            return await asyncio.to_thread(
+                self.runtime.repo.runnable_steps, str(value["run_id"]), int(value["limit"])
+            )
+        except CoworkerError as error:
+            raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
+        except Exception:
+            logger.error("Agent readiness failed run=%s", value.get("run_id"))
+            raise ApplicationError("Agent scheduling is temporarily unavailable.", type="agent_scheduling_unavailable") from None
+
     @activity.defn(name="shuddho_agent_step_v1")
     async def step(self, value: dict):
         run_id, ordinal = value["run_id"], int(value["ordinal"])
@@ -191,8 +203,17 @@ class Dispatcher:
                 run = await asyncio.to_thread(agent.worker_run, run_id)
                 if run["state"] not in {"completed", "failed", "cancelled"}:
                     try:
+                        parallel = (
+                            self.container.settings.agent_dependency_graph_enabled
+                            and self.container.settings.agent_parallel_execution_enabled
+                        )
+                        workflow_entry = AgentWorkflowV2.run if parallel else AgentWorkflow.run
+                        workflow_input = (
+                            {"run_id": run_id, "max_parallel_steps": self.container.settings.max_agent_parallel_steps}
+                            if parallel else run_id
+                        )
                         await self.client.start_workflow(
-                            AgentWorkflow.run, run_id, id="shuddho-agent-" + run_id,
+                            workflow_entry, workflow_input, id="shuddho-agent-" + run_id,
                             task_queue=self.container.settings.task_queue,
                             execution_timeout=timedelta(seconds=self.container.settings.agent_run_timeout_seconds),
                             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
@@ -255,9 +276,9 @@ async def main():
             loop.add_signal_handler(name, stop.set)
         except NotImplementedError:
             pass
-    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow],
+    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow, AgentWorkflowV2],
                       activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted,
-                                  agent_activities.plan, agent_activities.replan, agent_activities.step, agent_activities.complete, agent_activities.failed],
+                                  agent_activities.plan, agent_activities.replan, agent_activities.readiness, agent_activities.step, agent_activities.complete, agent_activities.failed],
                       # Four short deterministic steps: replay is inexpensive.
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,
