@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import ssl
 import uuid
 from pathlib import Path
 
@@ -67,23 +66,22 @@ def probe_storage(settings: Settings) -> dict:
     key = f"{PROBE_PREFIX}/{uuid.uuid4().hex}.txt"
     payload = b"shuddho-staging-probe"
     store = S3ObjectStore(settings)
-    cleanup_error = None
     try:
         store.put(key, payload, "text/plain")
         downloaded = store.get(key, 1024)
         if downloaded != payload:
             return failed("private object storage round trip returned unexpected bytes")
-        return passed("private object storage write/read/delete round trip succeeded")
     except Exception as error:
-        return failed(f"private object storage probe failed: {type(error).__name__}")
-    finally:
         try:
             store.delete(key)
-        except Exception as error:
-            cleanup_error = type(error).__name__
-        if cleanup_error:
-            # Never expose object keys or provider response bodies.
+        except Exception:
             pass
+        return failed(f"private object storage probe failed: {type(error).__name__}")
+    try:
+        store.delete(key)
+    except Exception as error:
+        return failed(f"private object storage cleanup failed: {type(error).__name__}")
+    return passed("private object storage write/read/delete round trip succeeded")
 
 
 async def probe_temporal(settings: Settings) -> dict:
@@ -94,9 +92,8 @@ async def probe_temporal(settings: Settings) -> dict:
             api_key=settings.temporal_api_key or None,
             tls=settings.temporal_tls,
         )
-        await client.service_client.workflow_service.describe_namespace(
-            {"namespace": settings.temporal_namespace}
-        )
+        async for _workflow in client.list_workflows(page_size=1):
+            break
         return passed(f"Temporal namespace reachable over TLS: {settings.temporal_namespace}")
     except Exception as error:
         return failed(f"Temporal probe failed: {type(error).__name__}")
