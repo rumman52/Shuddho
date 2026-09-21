@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from .config import Settings
 from .errors import CoworkerError
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
-from .models import Account, AuditEvent, MemoryFact, Workspace, utcnow
+from .models import Account, AgentRun, AuditEvent, MemoryFact, Workspace, utcnow
 from .repository import aware, iso, not_found
 
 
@@ -37,6 +37,7 @@ class MemoryRepository:
             "expires_at": iso(row.expires_at) if row.expires_at else None,
             "created_at": iso(row.created_at),
             "updated_at": iso(row.updated_at),
+            "active": row.expires_at is None or aware(row.expires_at) > utcnow(),
         }
 
     def _enabled(self):
@@ -74,10 +75,8 @@ class MemoryRepository:
 
     def list(self, owner: str) -> list[dict]:
         with self.sessions() as db:
-            now = utcnow()
             rows = db.scalars(select(MemoryFact).where(
                 MemoryFact.owner_id == owner,
-                (MemoryFact.expires_at.is_(None) | (MemoryFact.expires_at > now)),
             ).order_by(MemoryFact.namespace, MemoryFact.key)).all()
             return [self._dto(row) for row in rows]
 
@@ -110,13 +109,23 @@ class MemoryRepository:
             self._audit(db, owner, fact_id, "memory.deleted")
         return {"deleted": True, "id": fact_id}
 
-    def context(self, owner: str) -> dict:
+    def context_for_run(self, owner: str, run_id: str) -> dict:
         if not self.settings.agent_memory_enabled:
             return {"facts": [], "provenance": []}
         with self.sessions() as db:
+            run = db.scalar(select(AgentRun).where(
+                AgentRun.id == run_id, AgentRun.owner_id == owner,
+            ))
+            if run is None:
+                raise not_found()
+            namespaces = list(run.memory_namespaces or [])
+            if not namespaces:
+                return {"facts": [], "provenance": []}
             now = utcnow()
             rows = db.scalars(select(MemoryFact).where(
                 MemoryFact.owner_id == owner,
+                MemoryFact.workspace_id == run.workspace_id,
+                MemoryFact.namespace.in_(namespaces),
                 (MemoryFact.expires_at.is_(None) | (MemoryFact.expires_at > now)),
             ).order_by(MemoryFact.updated_at.desc()).limit(self.settings.max_memory_context_facts)).all()
             facts, provenance, used = [], [], 0
