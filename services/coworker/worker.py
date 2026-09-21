@@ -109,12 +109,22 @@ class AgentActivities:
     @activity.defn(name="shuddho_agent_plan_v1")
     async def plan(self, run_id: str):
         try:
-            return await asyncio.to_thread(self.runtime.plan, run_id)
+            return await self.runtime.plan_for_worker(run_id)
         except CoworkerError as error:
             raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
         except Exception:
             logger.error("Agent planning failed run=%s", run_id)
             raise ApplicationError("Agent planning is temporarily unavailable.", type="agent_planning_unavailable") from None
+
+    @activity.defn(name="shuddho_agent_replan_v1")
+    async def replan(self, value: dict):
+        try:
+            return await self.runtime.replan(value["run_id"], int(value["from_ordinal"]))
+        except CoworkerError as error:
+            raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
+        except Exception:
+            logger.error("Agent replanning failed run=%s", value.get("run_id"))
+            raise ApplicationError("Agent replanning is temporarily unavailable.", type="agent_replanning_unavailable") from None
 
     @activity.defn(name="shuddho_agent_step_v1")
     async def step(self, value: dict):
@@ -245,7 +255,7 @@ async def main():
             pass
     async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow],
                       activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted,
-                                  agent_activities.plan, agent_activities.step, agent_activities.complete, agent_activities.failed],
+                                  agent_activities.plan, agent_activities.replan, agent_activities.step, agent_activities.complete, agent_activities.failed],
                       # Four short deterministic steps: replay is inexpensive.
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,
