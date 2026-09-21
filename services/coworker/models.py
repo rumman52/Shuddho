@@ -202,6 +202,8 @@ class ExternalAction(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     delivered: Mapped[bool] = mapped_column(Boolean, default=False)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    agent_run_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    agent_ready: Mapped[bool] = mapped_column(Boolean, default=False)
     __table_args__ = (
         UniqueConstraint("owner_id", "idempotency_key"),
         Index("cw_actions_owner_created", "owner_id", "created_at"),
