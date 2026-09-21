@@ -207,3 +207,75 @@ class ExternalAction(Base):
         Index("cw_actions_owner_created", "owner_id", "created_at"),
         Index("cw_actions_dispatch", "state", "delivered", "lease_until"),
     )
+
+
+class AgentRun(Base):
+    __tablename__ = "cw_agent_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    goal: Mapped[str] = mapped_column(Text)
+    output_language: Mapped[str] = mapped_column(String(35))
+    input_versions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    state: Mapped[str] = mapped_column(String(30), default="queued")
+    phase: Mapped[str] = mapped_column(String(30), default="planning")
+    message: Mapped[str] = mapped_column(String(300), default="Queued for planning.")
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    error_code: Mapped[str | None] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key"),
+        Index("cw_agent_runs_owner_created", "owner_id", "created_at"),
+        Index("cw_agent_runs_state_deadline", "state", "deadline_at"),
+    )
+
+
+class AgentStep(Base):
+    __tablename__ = "cw_agent_steps"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    tool_name: Mapped[str | None] = mapped_column(String(80))
+    state: Mapped[str] = mapped_column(String(30), default="planned")
+    input: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    output: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (UniqueConstraint("run_id", "ordinal"),)
+
+
+class ToolInvocation(Base):
+    __tablename__ = "cw_tool_invocations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    step_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_steps.id"), unique=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    tool_name: Mapped[str] = mapped_column(String(80))
+    tool_version: Mapped[str] = mapped_column(String(20))
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(30), default="prepared")
+    consequential: Mapped[bool] = mapped_column(Boolean, default=False)
+    approval_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ToolReceipt(Base):
+    __tablename__ = "cw_tool_receipts"
+    invocation_id: Mapped[str] = mapped_column(ForeignKey("cw_tool_invocations.id"), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    tool_name: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(30))
+    resource_type: Mapped[str | None] = mapped_column(String(40))
+    resource_id: Mapped[str | None] = mapped_column(String(64))
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
