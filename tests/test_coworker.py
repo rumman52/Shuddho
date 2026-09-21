@@ -468,7 +468,7 @@ def test_agent_runtime_requires_owned_uploaded_documents(signed_client, containe
 def test_agent_plan_is_bounded_registered_and_source_scoped(signed_client, container):
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
     client, headers = signed_client
-    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True, max_active_agent_runs=10)
     container.settings = enabled
     container.repository.settings = enabled
     container.agent.settings = enabled
