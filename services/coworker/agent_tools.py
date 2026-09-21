@@ -53,7 +53,12 @@ class ToolSpec:
 
 TOOLS = {
     spec.name: spec for spec in (
+        ToolSpec("report.create", "1", "task", TaskToolInput, skill_id="report_email"),
         ToolSpec("document.create", "1", "task", TaskToolInput, skill_id="document"),
+        ToolSpec("career.create", "1", "task", TaskToolInput, skill_id="career"),
+        ToolSpec("social.draft", "1", "task", TaskToolInput, skill_id="social"),
+        ToolSpec("daily_plan.create", "1", "task", TaskToolInput, skill_id="daily_plan"),
+        ToolSpec("personal_plan.create", "1", "task", TaskToolInput, skill_id="personal_plan"),
         ToolSpec("email.draft", "1", "task", TaskToolInput, skill_id="email"),
         ToolSpec("meeting.prepare", "1", "task", TaskToolInput, skill_id="meeting"),
         ToolSpec("presentation.create", "1", "task", TaskToolInput, skill_id="presentation", timeout_seconds=240),
