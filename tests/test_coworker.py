@@ -696,3 +696,147 @@ def test_external_action_binding_model_matches_migration(container):
     columns = {item["name"] for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_external_actions")}
     assert columns == set(ExternalAction.__table__.columns.keys())
     assert {"agent_run_id", "agent_ready"} <= columns
+
+
+
+def test_structured_memory_owned_versioned_expiring_and_hard_deletable(container):
+    from services.coworker.memory_schemas import MemoryFactCreate, MemoryFactUpdate
+    from services.coworker.models import AuditEvent, MemoryFact
+    enabled = replace(container.settings, agent_memory_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.memory.settings = enabled
+    alice, bob = account(container), account(container, "bob")
+
+    fact = container.memory.create(alice, MemoryFactCreate(
+        namespace="preferences", key="writing.tone", value="Use concise professional English.", language="en"
+    ))
+    assert fact["version"] == 1
+    assert container.memory.list(bob) == []
+    with pytest.raises(CoworkerError):
+        container.memory.update(bob, fact["id"], MemoryFactUpdate(value="tamper", language="en"))
+
+    updated = container.memory.update(alice, fact["id"], MemoryFactUpdate(
+        value="Use concise professional US English.", language="en",
+        expires_at=utcnow() + timedelta(days=1),
+    ))
+    assert updated["version"] == 2
+    context = container.memory.context(alice)
+    assert context["facts"][0]["value"] == "Use concise professional US English."
+    assert context["provenance"] == [{"id": fact["id"], "version": 2}]
+
+    container.memory.delete(alice, fact["id"])
+    assert container.memory.list(alice) == []
+    assert container.memory.context(alice) == {"facts": [], "provenance": []}
+    with container.repository.sessions() as db:
+        assert db.get(MemoryFact, fact["id"]) is None
+        audits = db.scalars(select(AuditEvent).where(AuditEvent.resource_id == fact["id"])).all()
+        assert [event.action for event in audits] == ["memory.created", "memory.updated", "memory.deleted"]
+        assert all("professional" not in event.action for event in audits)
+
+
+def test_memory_create_update_disabled_but_delete_remains_available(container):
+    from services.coworker.memory_schemas import MemoryFactCreate
+    enabled = replace(container.settings, agent_memory_enabled=True)
+    container.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    fact = container.memory.create(owner, MemoryFactCreate(
+        namespace="profile", key="display_name", value="Alice", language="en"
+    ))
+    container.memory.settings = replace(enabled, agent_memory_enabled=False)
+    with pytest.raises(CoworkerError) as disabled:
+        container.memory.create(owner, MemoryFactCreate(
+            namespace="profile", key="company", value="Example", language="en"
+        ))
+    assert disabled.value.code == "agent_memory_unavailable"
+    assert container.memory.list(owner)[0]["id"] == fact["id"]
+    assert container.memory.delete(owner, fact["id"])["deleted"] is True
+
+
+def test_memory_model_matches_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import MemoryFact, Task
+    inspector = inspect(container.repository.sessions.kw["bind"])
+    memory_columns = {item["name"] for item in inspector.get_columns("cw_memory_facts")}
+    task_columns = {item["name"] for item in inspector.get_columns("cw_tasks")}
+    assert memory_columns == set(MemoryFact.__table__.columns.keys())
+    assert task_columns == set(Task.__table__.columns.keys())
+    assert "agent_run_id" in task_columns
+
+
+def test_agent_memory_is_ephemeral_and_receipt_keeps_only_provenance(container):
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.memory_schemas import MemoryFactCreate
+
+    enabled = replace(container.settings, agent_runtime_enabled=True, agent_memory_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    fact = container.memory.create(owner, MemoryFactCreate(
+        namespace="preferences", key="writing.tone", value="MEMORY-PRIVATE-SENTINEL", language="en"
+    ))
+
+    class CaptureModel(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.memory_seen = []
+        def messages(self, task, sources):
+            self.memory_seen.append(task.get("memory"))
+            return super().messages(task, sources)
+
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Prepare a project report.", output_language="en"
+    ), "agent-memory-run")
+    model = CaptureModel()
+    runtime = AgentRuntime(container, DocumentRunner(container, model))
+    assert runtime.plan(run["id"]) == 1
+    asyncio.run(runtime.execute_step(run["id"], 1))
+    runtime.complete(run["id"])
+    saved = container.agent.get(owner, run["id"])
+    assert model.memory_seen == [[{
+        "namespace": "preferences", "key": "writing.tone",
+        "value": "MEMORY-PRIVATE-SENTINEL", "language": "en",
+    }]]
+    receipt = saved["tool_invocations"][0]["receipt"]
+    assert receipt["summary"]["memory"] == [{"id": fact["id"], "version": 1}]
+    assert "MEMORY-PRIVATE-SENTINEL" not in json.dumps(receipt)
+
+    container.memory.delete(owner, fact["id"])
+    second, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Prepare another project report.", output_language="en"
+    ), "agent-memory-run-2")
+    second_model = CaptureModel()
+    second_runtime = AgentRuntime(container, DocumentRunner(container, second_model))
+    second_runtime.plan(second["id"])
+    asyncio.run(second_runtime.execute_step(second["id"], 1))
+    assert second_model.memory_seen == [None]
+
+
+def test_standalone_task_never_receives_agent_memory(container):
+    from services.coworker.memory_schemas import MemoryFactCreate
+    enabled = replace(container.settings, agent_memory_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    container.memory.create(owner, MemoryFactCreate(
+        namespace="preferences", key="writing.tone", value="Do not leak into standalone task.", language="en"
+    ))
+
+    class CaptureModel(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.memory_seen = []
+        def messages(self, task, sources):
+            self.memory_seen.append(task.get("memory"))
+            return super().messages(task, sources)
+
+    task = new_task(container, owner)
+    model = CaptureModel()
+    asyncio.run(DocumentRunner(container, model).run_for_test(task["id"]))
+    assert model.memory_seen == [None]
