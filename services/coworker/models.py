@@ -235,6 +235,14 @@ class AgentRun(Base):
     )
 
 
+class AgentOutbox(Base):
+    __tablename__ = "cw_agent_outbox"
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), primary_key=True)
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class AgentStep(Base):
     __tablename__ = "cw_agent_steps"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

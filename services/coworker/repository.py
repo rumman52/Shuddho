@@ -157,7 +157,7 @@ class Repository:
                 self._audit(db, owner, document_id, "source_deletion_requested")
             return {"id": document_id, "state": "deleted", "message": "Upload removed. Existing drafts remain in your task history."}
 
-    def create_task(self, owner: str, request: TaskCreate, idempotency_key: str) -> tuple[dict, bool]:
+    def create_task(self, owner: str, request: TaskCreate, idempotency_key: str, *, enqueue: bool = True) -> tuple[dict, bool]:
         self.expire_tasks(owner)
         payload = request.model_dump(mode="json")
         if request.research is None:
@@ -207,7 +207,8 @@ class Repository:
                 # Immutable task options, committed atomically with the task/outbox.
                 db.add(Step(task_id=task.id, phase="research_input", output=request.research.model_dump()))
             usage.task_count += 1
-            db.add(Outbox(task_id=task.id))
+            if enqueue:
+                db.add(Outbox(task_id=task.id))
             self._event(db, task, "queued", "queued", "Queued for your coworker.")
             self._audit(db, owner, task.id, "task_created")
             return self._task_dto(db, task), True
