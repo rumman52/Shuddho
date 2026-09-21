@@ -562,3 +562,111 @@ def test_agent_workflow_replans_remaining_steps_after_incomplete_result(containe
         assert "The team completed 12 reviews." not in history
 
     asyncio.run(scenario())
+
+
+def test_agent_dependency_graph_is_server_owned_and_blocks_out_of_order_execution(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_dependency_graph_enabled=True,
+        work_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a document and then an email draft.", output_language="en"
+    ), "agent-dependency-graph")
+    saved = container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    assert saved["steps"][0]["depends_on"] == []
+    assert saved["steps"][1]["depends_on"] == [1]
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    with pytest.raises(CoworkerError) as blocked:
+        asyncio.run(runtime.execute_step(run["id"], 2))
+    assert blocked.value.code == "dependency_blocked"
+    asyncio.run(runtime.execute_step(run["id"], 1))
+    assert container.agent.dependency_state(owner, run["id"], 2)["ready"] is True
+
+
+def test_agent_dependency_graph_flag_off_preserves_linear_runtime_contract(container):
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_dependency_graph_enabled=False,
+        work_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a document and email draft.", output_language="en"
+    ), "agent-dependency-graph-off")
+    saved = container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    assert all(step["depends_on"] == [] for step in saved["steps"])
+    assert container.agent.dependency_state(owner, run["id"], 2)["ready"] is True
+
+
+def test_agent_dependency_graph_replan_rebuilds_only_unstarted_edges(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_dependency_graph_enabled=True,
+        work_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create three work outputs.", output_language="en"
+    ), "agent-dependency-replan")
+    container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="social.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    asyncio.run(runtime.execute_step(run["id"], 1))
+    replaced = container.agent.replace_remaining_plan(owner, run["id"], 2, [
+        AgentPlanStep(tool="meeting.prepare", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    assert replaced["steps"][0]["state"] == "completed"
+    assert replaced["steps"][1]["depends_on"] == [1]
+    assert replaced["steps"][2]["depends_on"] == [2]
