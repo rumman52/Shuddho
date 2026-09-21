@@ -14,6 +14,7 @@ depends_on = None
 
 def upgrade():
     op.add_column("cw_tasks", sa.Column("agent_run_id", sa.String(length=36), nullable=True))
+    op.add_column("cw_agent_runs", sa.Column("memory_namespaces", sa.JSON(), nullable=False, server_default=sa.text("'[]'")))
     op.create_index(op.f("ix_cw_tasks_agent_run_id"), "cw_tasks", ["agent_run_id"], unique=False)
     op.create_table(
         "cw_memory_facts",
@@ -48,4 +49,5 @@ def downgrade():
     op.drop_index(op.f("ix_cw_memory_facts_owner_id"), table_name="cw_memory_facts")
     op.drop_table("cw_memory_facts")
     op.drop_index(op.f("ix_cw_tasks_agent_run_id"), table_name="cw_tasks")
+    op.drop_column("cw_agent_runs", "memory_namespaces")
     op.drop_column("cw_tasks", "agent_run_id")
