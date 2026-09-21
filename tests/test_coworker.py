@@ -1177,6 +1177,7 @@ def test_agent_handoff_uses_nearest_completed_task_with_bounded_provenance(conta
     assert handoff["provenance"][0]["truncated"] is True
     assert handoff["sources"][0]["agent_invocation_id"] == handoff["provenance"][0]["invocation_id"]
     assert len(handoff["sources"][0]["text"].encode("utf-8")) <= 200
+    assert handoff["sources"][0]["sha256"] == hashlib.sha256(handoff["sources"][0]["text"].encode()).hexdigest()
     with pytest.raises(CoworkerError) as scope:
         container.agent.handoff_context(other, run["id"], saved["steps"][1]["id"])
     assert scope.value.code == "handoff_scope"
