@@ -485,7 +485,16 @@ class AgentRepository:
                 AgentStep.ordinal < current.ordinal,
                 AgentStep.state == "completed",
             ).order_by(AgentStep.ordinal.desc())).all()
+            source_limit = (
+                min(self.settings.max_agent_handoff_sources, 2)
+                if self.settings.agent_multi_handoffs_enabled else 1
+            )
+            remaining = self.settings.max_agent_handoff_bytes
+            sources = []
+            provenance = []
             for prior in prior_steps:
+                if len(sources) >= source_limit or remaining <= 0:
+                    break
                 invocation = db.scalar(select(ToolInvocation).where(
                     ToolInvocation.step_id == prior.id,
                     ToolInvocation.owner_id == owner,
@@ -514,34 +523,41 @@ class AgentRepository:
                 draft = db.get(Step, (task.id, "draft"))
                 if draft is None or not isinstance(draft.output.get("draft"), dict):
                     raise CoworkerError("handoff_missing", "The upstream agent result could not be recovered.", 409)
-                raw = json.dumps(draft.output["draft"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-                limit = self.settings.max_agent_handoff_bytes
-                truncated = len(raw) > limit
-                text_value = raw[:limit].decode("utf-8", errors="ignore")
+                raw = json.dumps(
+                    draft.output["draft"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+                truncated = len(raw) > remaining
+                text_value = raw[:remaining].decode("utf-8", errors="ignore")
+                if not text_value:
+                    break
                 if truncated:
-                    text_value += "\n[handoff truncated]"
-                source_id = "agent-step-" + invocation.id
+                    marker = "\n[handoff truncated]"
+                    marker_bytes = marker.encode("utf-8")
+                    if len(text_value.encode("utf-8")) + len(marker_bytes) <= remaining:
+                        text_value += marker
                 text_bytes = text_value.encode("utf-8")
-                return {
-                    "sources": [{
-                        "id": source_id,
-                        "label": f"Prior {invocation.tool_name} result",
-                        "text": text_value,
-                        "sha256": hashlib.sha256(text_bytes).hexdigest(),
-                        "upstream_sha256": hashlib.sha256(raw).hexdigest(),
-                        "agent_invocation_id": invocation.id,
-                        "task_id": task.id,
-                        "tool": invocation.tool_name,
-                    }],
-                    "provenance": [{
-                        "invocation_id": invocation.id,
-                        "task_id": task.id,
-                        "tool": invocation.tool_name,
-                        "ordinal": prior.ordinal,
-                        "truncated": truncated,
-                    }],
-                }
-            return {"sources": [], "provenance": []}
+                remaining -= len(text_bytes)
+                source_id = "agent-step-" + invocation.id
+                sources.append({
+                    "id": source_id,
+                    "label": f"Prior {invocation.tool_name} result",
+                    "text": text_value,
+                    "sha256": hashlib.sha256(text_bytes).hexdigest(),
+                    "upstream_sha256": hashlib.sha256(raw).hexdigest(),
+                    "agent_invocation_id": invocation.id,
+                    "task_id": task.id,
+                    "tool": invocation.tool_name,
+                })
+                provenance.append({
+                    "invocation_id": invocation.id,
+                    "task_id": task.id,
+                    "tool": invocation.tool_name,
+                    "ordinal": prior.ordinal,
+                    "truncated": truncated,
+                })
+            sources.reverse()
+            provenance.reverse()
+            return {"sources": sources, "provenance": provenance}
 
     def invocation_for_step(self, run_id: str, ordinal: int) -> dict:
         with self.sessions() as db:
