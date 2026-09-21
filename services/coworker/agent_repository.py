@@ -11,7 +11,7 @@ from .agent_schemas import AgentPlanStep, AgentRunCreate
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Document, DocumentVersion, ExternalAction, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Document, DocumentVersion, ExternalAction, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import iso, not_found
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
@@ -270,8 +270,14 @@ class AgentRepository:
             run.cancel_requested = True
             for step in db.scalars(select(AgentStep).where(
                 AgentStep.run_id == run.id, AgentStep.owner_id == owner,
-                AgentStep.state.in_({"queued", "planned"}),
+                AgentStep.state.in_({"queued", "planned", "running"}),
             )):
+                if step.state == "running" and step.output.get("resource_type") == "task":
+                    task_row = db.scalar(select(Task).where(
+                        Task.id == step.output.get("resource_id"), Task.owner_id == owner,
+                    ).with_for_update())
+                    if task_row is not None and task_row.state not in {"completed", "failed", "cancelled", "needs_input"}:
+                        task_row.cancel_requested = True
                 step.state = "cancelled"
                 step.finished_at = utcnow()
             self._event(db, run, "cancelled", "cancelled", "Agent run cancelled.")
@@ -361,6 +367,15 @@ class AgentRepository:
             step.state = "running"
             step.started_at = step.started_at or now
             self._event(db, run, "running", f"step_{ordinal}", f"Running agent step {ordinal}.")
+
+    def link_invocation_resource(self, run_id: str, ordinal: int, resource_type: str, resource_id: str):
+        with self.sessions.begin() as db:
+            step = db.scalar(select(AgentStep).where(
+                AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
+            ).with_for_update())
+            if step is None:
+                raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
+            step.output = {"resource_type": resource_type, "resource_id": resource_id}
 
     def finish_invocation(self, run_id: str, ordinal: int, resource_type: str, resource_id: str, summary: dict):
         with self.sessions.begin() as db:
