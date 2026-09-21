@@ -269,8 +269,8 @@ class AgentRepository:
 
     def replace_remaining_plan(self, owner: str, run_id: str, from_ordinal: int,
                                steps: list[AgentPlanStep]) -> dict:
-        if not 1 <= len(steps) <= 8:
-            raise CoworkerError("invalid_plan", "An agent plan must contain between one and eight steps.", 422)
+        if not 1 <= len(steps) <= 8 or from_ordinal - 1 + len(steps) > 8:
+            raise CoworkerError("invalid_plan", "An agent plan must contain at most eight total steps.", 422)
         with self.sessions.begin() as db:
             run = self._run(db, owner, run_id, lock=True)
             if run.cancel_requested or run.state == "cancelled":
