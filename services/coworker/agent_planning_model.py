@@ -74,7 +74,10 @@ class DeepSeekAgentPlanner:
             choices = data["choices"]
             if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
                 raise ValueError()
-            proposal = AgentPlannerProposal.model_validate_json(choices[0]["message"]["content"])
+            message = choices[0]["message"]
+            if message.get("tool_calls") or message.get("refusal"):
+                raise ValueError()
+            proposal = AgentPlannerProposal.model_validate_json(message["content"])
             allowed = set(tools)
             if any(step.tool not in allowed for step in proposal.steps):
                 raise ValueError()
