@@ -70,6 +70,7 @@ class Task(Base):
     notes: Mapped[str] = mapped_column(Text)
     output_language: Mapped[str] = mapped_column(String(35))
     input_versions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    agent_run_id: Mapped[str | None] = mapped_column(String(36), index=True)
     state: Mapped[str] = mapped_column(String(30), default="queued")
     phase: Mapped[str] = mapped_column(String(30), default="queued")
     event_sequence: Mapped[int] = mapped_column(Integer, default=0)
