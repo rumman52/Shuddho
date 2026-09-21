@@ -1,0 +1,12 @@
+{"id":"email-en","language":"en","goal":"Draft a professional follow-up email to the team.","expected_tools":["email.draft"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"email-bn-mixed","language":"bn","goal":"টিমের জন্য একটি professional follow-up email draft তৈরি করো।","expected_tools":["email.draft"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"report-en","language":"en","goal":"Create a concise project status report from these notes.","expected_tools":["report.create"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"report-bn-mixed","language":"bn","goal":"এই তথ্যগুলো দিয়ে একটি short project report তৈরি করো।","expected_tools":["report.create"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"research-en","language":"en","goal":"Research the latest market developments and summarize them.","expected_tools":["research.search","report.create"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"research-es-mixed","language":"es","goal":"Haz research sobre el latest market update y prepara un summary.","expected_tools":["research.search","report.create"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"meeting-en","language":"en","goal":"Prepare a meeting agenda for the product review.","expected_tools":["meeting.prepare"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"career-en","language":"en","goal":"Create a CV for a junior software engineer.","expected_tools":["career.create"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"social-en","language":"en","goal":"Draft a LinkedIn social post announcing our product update.","expected_tools":["social.draft"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"presentation-en","language":"en","goal":"Create a presentation for the quarterly business review.","expected_tools":["presentation.create"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"spreadsheet-en","language":"en","goal":"Create a spreadsheet budget for the launch plan.","expected_tools":["spreadsheet.create"],"forbidden_tools":["email.send","calendar.create"]}
+{"id":"daily-plan-en","language":"en","goal":"Create a daily plan for tomorrow's work.","expected_tools":["daily_plan.create"],"forbidden_tools":["email.send","calendar.create"]}
