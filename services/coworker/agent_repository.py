@@ -368,6 +368,13 @@ class AgentRepository:
             step.started_at = step.started_at or now
             self._event(db, run, "running", f"step_{ordinal}", f"Running agent step {ordinal}.")
 
+    def step_resource(self, run_id: str, ordinal: int) -> dict | None:
+        with self.sessions() as db:
+            step = db.scalar(select(AgentStep).where(
+                AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
+            ))
+            return dict(step.output) if step is not None and step.output else None
+
     def link_invocation_resource(self, run_id: str, ordinal: int, resource_type: str, resource_id: str):
         with self.sessions.begin() as db:
             step = db.scalar(select(AgentStep).where(
