@@ -291,8 +291,11 @@ class AgentRepository:
                     raise CoworkerError("replan_started_step", "A started agent step cannot be replaced.", 409)
                 if invocation is not None:
                     db.delete(invocation)
+                    # There is intentionally no ORM relationship here. Flush the
+                    # FK child before deleting its AgentStep parent.
+                    db.flush()
                 db.delete(step)
-            db.flush()
+                db.flush()
             run_docs = self._run_document_ids(db, run)
             for offset, planned in enumerate(steps):
                 ordinal = from_ordinal + offset
