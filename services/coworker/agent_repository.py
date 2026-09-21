@@ -101,6 +101,8 @@ class AgentRepository:
                 versions.append(row[0].id)
 
             action_ids: list[str] = []
+            if request.action_ids and not self.settings.actions_enabled:
+                raise CoworkerError("actions_disabled", "Email and calendar actions are not available in this deployment.", 503)
             for action_id in request.action_ids:
                 action = db.scalar(select(ExternalAction).where(
                     ExternalAction.id == str(action_id), ExternalAction.owner_id == owner,
@@ -339,13 +341,15 @@ class AgentRepository:
             documents = list(db.scalars(select(DocumentVersion.document_id).where(
                 DocumentVersion.id.in_(run.input_versions), DocumentVersion.owner_id == run.owner_id,
             ))) if run.input_versions else []
+            action_rows = {action.id: action for action in db.scalars(select(ExternalAction).where(
+                ExternalAction.id.in_(run.action_ids), ExternalAction.owner_id == run.owner_id,
+            ))} if run.action_ids else {}
             return {
                 "id": run.id, "owner_id": run.owner_id, "goal": run.goal,
                 "output_language": run.output_language, "document_ids": documents,
-                "actions": [{"id": action.id, "kind": action.kind, "state": action.state}
-                            for action in db.scalars(select(ExternalAction).where(
-                                ExternalAction.id.in_(run.action_ids), ExternalAction.owner_id == run.owner_id,
-                            ))] if run.action_ids else [],
+                "actions": [{"id": action_rows[action_id].id, "kind": action_rows[action_id].kind,
+                             "state": action_rows[action_id].state}
+                            for action_id in run.action_ids if action_id in action_rows],
                 "state": run.state, "phase": run.phase, "cancel_requested": run.cancel_requested,
             }
 
