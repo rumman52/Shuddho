@@ -57,10 +57,7 @@ export async function verifyActions(page, folder) {
   await page.screenshot({ path: join(folder, "screenshots/actions-email-receipt.png"), fullPage: true });
   await area.getByRole("button", { name: "Prepare another action" }).click();
   await page.screenshot({ path: join(folder, "screenshots/actions-new-action-reset.png"), fullPage: true });
-  const actionType = area.getByLabel("Action type", { exact: true });
-  const actionTypeCount = await actionType.count();
-  const composerText = await area.locator(".cw-action-compose").innerText();
-  assert.equal(actionTypeCount, 1, `Action composer did not reset after a completed receipt. Composer: ${composerText}`);
+  const actionType = area.getByRole("combobox", { name: "Action type", exact: true });
   await actionType.waitFor();
   assert.equal(await actionType.inputValue(), "email");
   await area.getByLabel("Action type", { exact: true }).selectOption("calendar");
