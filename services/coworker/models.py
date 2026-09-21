@@ -74,6 +74,7 @@ class Task(Base):
     phase: Mapped[str] = mapped_column(String(30), default="queued")
     event_sequence: Mapped[int] = mapped_column(Integer, default=0)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    event_sequence: Mapped[int] = mapped_column(Integer, default=0)
     error_code: Mapped[str | None] = mapped_column(String(60))
     message: Mapped[str] = mapped_column(String(300), default="Queued for your coworker.")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -249,6 +250,17 @@ class AgentStep(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (UniqueConstraint("run_id", "ordinal"),)
+
+
+class AgentEvent(Base):
+    __tablename__ = "cw_agent_events"
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    state: Mapped[str] = mapped_column(String(30))
+    phase: Mapped[str] = mapped_column(String(30))
+    message: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class ToolInvocation(Base):
