@@ -415,6 +415,18 @@ class AgentRepository:
             if run is None or run.state in {"completed", "failed", "cancelled"}:
                 return
             run.error_code = code
+            now = utcnow()
+            for invocation, step in db.execute(select(ToolInvocation, AgentStep).join(
+                AgentStep, AgentStep.id == ToolInvocation.step_id,
+            ).where(
+                ToolInvocation.run_id == run_id,
+                ToolInvocation.state.in_({"prepared", "running"}),
+            )):
+                invocation.state = "failed"
+                invocation.finished_at = now
+                step.state = "failed"
+                step.error_code = code
+                step.finished_at = now
             self._event(db, run, "failed", run.phase, message[:300])
             self._audit(db, run.owner_id, run.id, "agent_run_failed")
 
