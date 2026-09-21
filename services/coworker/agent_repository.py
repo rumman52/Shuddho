@@ -11,7 +11,7 @@ from .agent_schemas import AgentPlanStep, AgentRunCreate
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import AgentEvent, AgentRun, AgentStep, AuditEvent, Document, DocumentVersion, ExternalAction, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, AgentEvent, AgentRun, AgentStep, AuditEvent, Document, DocumentVersion, ExternalAction, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import iso, not_found
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
@@ -69,6 +69,8 @@ class AgentRepository:
         payload = request.model_dump(mode="json")
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
+            if db.scalar(select(Account.id).where(Account.id == owner).with_for_update()) is None:
+                raise not_found()
             previous = db.scalar(select(AgentRun).where(
                 AgentRun.owner_id == owner, AgentRun.idempotency_key == idempotency_key,
             ))
