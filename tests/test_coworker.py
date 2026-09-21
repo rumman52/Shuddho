@@ -840,3 +840,31 @@ def test_standalone_task_never_receives_agent_memory(container):
     model = CaptureModel()
     asyncio.run(DocumentRunner(container, model).run_for_test(task["id"]))
     assert model.memory_seen == [None]
+
+
+
+def test_memory_api_is_owner_scoped_and_user_controlled(signed_client, container):
+    client, headers = signed_client
+    enabled = replace(container.settings, agent_memory_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.memory.settings = enabled
+    alice, bob = headers(), headers("bob")
+    created = client.post("/api/v1/memory", headers=alice, json={
+        "namespace": "preferences", "key": "writing.tone",
+        "value": "Concise professional English.", "language": "en",
+    })
+    assert created.status_code == 201
+    fact = created.json()
+    assert client.get("/api/v1/memory", headers=bob).json()["facts"] == []
+    assert client.put(f'/api/v1/memory/{fact["id"]}', headers=bob, json={
+        "value": "tamper", "language": "en",
+    }).status_code == 404
+    assert client.delete(f'/api/v1/memory/{fact["id"]}', headers=bob).status_code == 404
+    updated = client.put(f'/api/v1/memory/{fact["id"]}', headers=alice, json={
+        "value": "Concise professional US English.", "language": "en",
+    })
+    assert updated.status_code == 200 and updated.json()["version"] == 2
+    assert client.delete(f'/api/v1/memory/{fact["id"]}', headers=alice).json()["deleted"] is True
+    assert client.get("/api/v1/memory", headers=alice).json()["facts"] == []
