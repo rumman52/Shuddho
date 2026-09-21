@@ -151,8 +151,8 @@ class AgentWorkflow:
                 schedule_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
-        except ActivityError as error:
-            cause = error.cause
+        except (ActivityError, ApplicationError) as error:
+            cause = error.cause if isinstance(error, ActivityError) else error
             code = cause.type if isinstance(cause, ApplicationError) else "agent_workflow_failed"
             message = str(cause.message) if isinstance(cause, ApplicationError) else "This agent run could not finish. Please try again."
             await workflow.execute_activity(
