@@ -258,7 +258,7 @@ class AgentRepository:
                         ExternalAction.id == str(validated.action_id), ExternalAction.owner_id == owner,
                     ))
                     expected = "email_send" if spec.capability == "email" else "calendar_create"
-                    if action is None or action.kind != expected:
+                    if action is None or action.kind != expected or action.agent_run_id != run.id:
                         raise CoworkerError("action_scope", "The approved action is not available to this agent run.", 409)
                 step = AgentStep(
                     id=str(uuid4()), run_id=run.id, owner_id=owner, ordinal=ordinal,
