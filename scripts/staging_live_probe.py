@@ -26,6 +26,10 @@ def failed(evidence: str) -> dict:
     return {"status": "failed", "evidence": evidence}
 
 
+def partial(evidence: str) -> dict:
+    return {"status": "partial", "evidence": evidence}
+
+
 async def probe_identity(settings: Settings) -> dict:
     url = settings.auth_issuer + "/.well-known/jwks.json"
     try:
@@ -39,7 +43,7 @@ async def probe_identity(settings: Settings) -> dict:
         ]
         if not keys:
             return failed("managed identity JWKS reachable but no supported asymmetric signing key was found")
-        return passed(f"managed identity JWKS reachable with {len(keys)} supported asymmetric signing key(s)")
+        return partial(f"managed identity JWKS reachable with {len(keys)} supported asymmetric signing key(s); owner isolation still requires an authenticated staging exercise")
     except Exception as error:
         return failed(f"managed identity JWKS probe failed: {type(error).__name__}")
 
@@ -81,7 +85,7 @@ def probe_storage(settings: Settings) -> dict:
         store.delete(key)
     except Exception as error:
         return failed(f"private object storage cleanup failed: {type(error).__name__}")
-    return passed("private object storage write/read/delete round trip succeeded")
+    return partial("private object storage write/read/delete round trip succeeded; owner-scoped signed download authorization still requires an API staging exercise")
 
 
 async def probe_temporal(settings: Settings) -> dict:
@@ -94,7 +98,7 @@ async def probe_temporal(settings: Settings) -> dict:
         )
         async for _workflow in client.list_workflows(page_size=1):
             break
-        return passed(f"Temporal namespace reachable over TLS: {settings.temporal_namespace}")
+        return partial(f"Temporal namespace reachable over TLS: {settings.temporal_namespace}; worker restart/replay still requires a staging workflow exercise")
     except Exception as error:
         return failed(f"Temporal probe failed: {type(error).__name__}")
 
@@ -128,13 +132,21 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--live-model", action="store_true")
     parser.add_argument("--cases", type=Path, default=Path("tests/fixtures/agent_eval_cases.jsonl"))
+    parser.add_argument("--base-evidence", type=Path, help="Optional existing staging evidence JSON to merge without deleting manual checks.")
     args = parser.parse_args()
 
     settings = Settings.from_env()
-    evidence = asyncio.run(collect(settings, live_model=args.live_model, cases=args.cases))
+    evidence = {}
+    if args.base_evidence:
+        value = json.loads(args.base_evidence.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise SystemExit("Base staging evidence must be a JSON object.")
+        evidence.update(value)
+    live = asyncio.run(collect(settings, live_model=args.live_model, cases=args.cases))
+    evidence.update(live)
     args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"written": str(args.output), "checks": {key: value["status"] for key, value in evidence.items()}}, indent=2))
-    if any(value["status"] != "passed" for value in evidence.values()):
+    print(json.dumps({"written": str(args.output), "checks": {key: value["status"] for key, value in live.items()}}, indent=2))
+    if any(value["status"] == "failed" for value in live.values()):
         raise SystemExit("One or more live staging probes failed.")
 
 
