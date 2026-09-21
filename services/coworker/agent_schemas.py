@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .memory_schemas import Namespace
+
 
 class AgentModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -22,6 +24,7 @@ class AgentRunCreate(AgentModel):
     goal: str = Field(min_length=3, max_length=4000)
     document_ids: list[UUID] = Field(default_factory=list, max_length=5)
     action_ids: list[UUID] = Field(default_factory=list, max_length=3)
+    memory_namespaces: list[Namespace] = Field(default_factory=list, max_length=5)
     output_language: str = Field(default="en", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
 
     @field_validator("goal")
@@ -35,6 +38,8 @@ class AgentRunCreate(AgentModel):
             raise ValueError("A document may be included only once")
         if len(set(self.action_ids)) != len(self.action_ids):
             raise ValueError("An action may be included only once")
+        if len(set(self.memory_namespaces)) != len(self.memory_namespaces):
+            raise ValueError("A memory namespace may be included only once")
         return self
 
 
