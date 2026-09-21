@@ -54,10 +54,10 @@ class AgentRuntime:
             run["owner_id"], request, f"agent:{run_id}:{ordinal}", enqueue=False
         )
         self.repo.link_invocation_resource(run_id, ordinal, "task", task["id"])
-        try:
-            await self.runner.run_for_test(task["id"])
-        except CoworkerError:
-            raise
+        worker_task = self.container.repository.worker_task(task["id"], False)
+        phases = ["extract"] + (["research"] if worker_task["skill_id"] == "research" else []) + ["draft", "export", "complete"]
+        for phase in phases:
+            await self.runner.phase(task["id"], phase)
         result = self.container.repository.get_task(run["owner_id"], task["id"])
         if result["state"] not in {"completed", "needs_input"}:
             raise CoworkerError("agent_tool_failed", "An agent tool did not complete successfully.", 409)
@@ -73,4 +73,13 @@ class AgentRuntime:
         self.repo.complete_run(run_id)
 
     def fail(self, run_id: str, code: str, message: str):
+        run = self.repo.worker_run(run_id)
+        for ordinal in range(1, 9):
+            try:
+                invocation = self.repo.invocation_for_step(run_id, ordinal)
+            except CoworkerError:
+                break
+            step = self.repo.step_resource(run_id, ordinal)
+            if step and step.get("resource_type") == "task":
+                self.container.repository.fail(step["resource_id"], code, message)
         self.repo.fail_run(run_id, code, message)
