@@ -75,13 +75,13 @@ def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: li
         if choice.tool not in allowed:
             raise CoworkerError("planner_tool_scope", "The planner selected a tool outside the allowed registry.", 409)
         arguments = {
-            "instruction": choice.objective,
+            "instruction": goal,
             "notes": goal if choice.tool == "report.create" else "",
             "document_ids": document_ids,
             "output_language": output_language,
         }
         if choice.tool == "research.search":
-            arguments["query"] = choice.objective[:400]
+            arguments["query"] = goal[:400]
             arguments["time_range"] = "any"
         steps.append(AgentPlanStep(tool=choice.tool, arguments=arguments))
     for action in list(actions or [])[:3]:
