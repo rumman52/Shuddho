@@ -93,6 +93,7 @@ class Step(Base):
     task_id: Mapped[str] = mapped_column(ForeignKey("cw_tasks.id"), primary_key=True)
     phase: Mapped[str] = mapped_column(String(30), primary_key=True)
     output: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    depends_on_ordinals: Mapped[list[int]] = mapped_column(JSON, default=list)
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
