@@ -93,7 +93,6 @@ class Step(Base):
     task_id: Mapped[str] = mapped_column(ForeignKey("cw_tasks.id"), primary_key=True)
     phase: Mapped[str] = mapped_column(String(30), primary_key=True)
     output: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    depends_on_ordinals: Mapped[list[int]] = mapped_column(JSON, default=list)
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -285,6 +284,7 @@ class AgentStep(Base):
     state: Mapped[str] = mapped_column(String(30), default="planned")
     input: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     output: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    depends_on_ordinals: Mapped[list[int]] = mapped_column(JSON, default=list)
     error_code: Mapped[str | None] = mapped_column(String(60))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
