@@ -45,11 +45,11 @@ Create/update require `SHUDDHO_AGENT_MEMORY_ENABLED=true`.
 
 List and hard-delete remain available even if memory use is later disabled so existing facts can still be inspected and removed.
 
-Delete removes the memory row. Audit records retain only the resource ID and action name, never the memory value.
+Delete removes the memory row. Audit records retain only the resource ID and action name, never the memory value. Deletion prevents future memory lookup; it does not retroactively erase text that the user already generated into a separate task draft or artifact using that fact.
 
 ## Runtime use
 
-Memory is consumed only by agent-owned child tasks.
+Memory is consumed only by agent-owned child tasks, and only when that agent run explicitly opts into one or more memory namespaces. An empty namespace scope means no memory is used.
 
 ```text
 Agent run
@@ -91,7 +91,7 @@ SHUDDHO_AGENT_MEMORY_CONTEXT_BYTES=8192
 
 Context is selected by most recently updated active facts and stops at both the fact-count and UTF-8 byte limits.
 
-Expired facts are excluded from list/context use.
+Expired facts remain visible through the memory list so the user can inspect or delete them, but they are excluded from runtime context.
 
 ## Provenance
 
