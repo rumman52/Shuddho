@@ -1040,3 +1040,49 @@ def test_agent_step_requests_replan_only_for_disabled_prepared_tool(container):
     container.agent.settings = container.settings
     result = asyncio.run(runtime.execute_step(run["id"], 1))
     assert result == {"status": "replan_required"}
+
+
+
+def test_intelligent_planner_http_contract_is_bounded_and_private(container):
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+    settings = replace(container.settings, deepseek_api_key="test-only-placeholder",
+                       agent_planner_max_output_tokens=1200)
+    seen = {}
+    def respond(request):
+        body = json.loads(request.content)
+        seen.update(body)
+        assert body["thinking"] == {"type": "disabled"}
+        assert body["response_format"] == {"type": "json_object"}
+        user = json.loads(body["messages"][1]["content"])
+        assert user["available_tools"] == ["email.draft", "report.create"]
+        assert "PRIVATE-MEMORY" not in request.content.decode()
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
+                "steps": [{"tool": "email.draft", "objective": "Draft a concise update."}]
+            })}}],
+            "usage": {"total_tokens": 321},
+        })
+    planner = DeepSeekAgentPlanner(settings, httpx.MockTransport(respond))
+    proposal, tokens, _latency = asyncio.run(planner.propose(
+        "Prepare an update.", ["email.draft", "report.create"]
+    ))
+    assert proposal.steps[0].tool == "email.draft"
+    assert tokens == 321
+    assert seen["max_tokens"] == 1200
+
+    bad = DeepSeekAgentPlanner(settings, httpx.MockTransport(lambda _: httpx.Response(200, json={
+        "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
+            "steps": [{"tool": "shell.run", "objective": "Run command."}]
+        })}}],
+        "usage": {"total_tokens": 12},
+    })))
+    with pytest.raises(PlannerFailure) as invalid:
+        asyncio.run(bad.propose("Do work", ["email.draft"]))
+    assert invalid.value.code == "invalid_planner_output"
+
+    busy = DeepSeekAgentPlanner(settings, httpx.MockTransport(
+        lambda _: httpx.Response(429, text="PRIVATE PROVIDER BODY")
+    ))
+    with pytest.raises(PlannerFailure) as failure:
+        asyncio.run(busy.propose("Do work", ["email.draft"]))
+    assert failure.value.retryable and "PRIVATE" not in failure.value.message
