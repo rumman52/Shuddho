@@ -17,8 +17,9 @@ from .container import Container
 from .drafting import DraftFailure
 from .errors import CoworkerError
 from .repository import TERMINAL
+from .agent_runtime import AgentRuntime
 from .runner import DocumentRunner
-from .workflow import ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from .workflow import AgentWorkflow, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 logger = logging.getLogger("shuddho.coworker")
 
@@ -101,6 +102,61 @@ class Activities:
             raise ApplicationError("Could not update task status.", type="status_unavailable") from None
 
 
+class AgentActivities:
+    def __init__(self, runtime: AgentRuntime):
+        self.runtime = runtime
+
+    @activity.defn(name="shuddho_agent_plan_v1")
+    async def plan(self, run_id: str):
+        try:
+            return await asyncio.to_thread(self.runtime.plan, run_id)
+        except CoworkerError as error:
+            raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
+        except Exception:
+            logger.error("Agent planning failed run=%s", run_id)
+            raise ApplicationError("Agent planning is temporarily unavailable.", type="agent_planning_unavailable") from None
+
+    @activity.defn(name="shuddho_agent_step_v1")
+    async def step(self, value: dict):
+        run_id, ordinal = value["run_id"], int(value["ordinal"])
+        operation = asyncio.create_task(self.runtime.execute_step(run_id, ordinal))
+        try:
+            while True:
+                activity.heartbeat()
+                done, _ = await asyncio.wait({operation}, timeout=1)
+                if done:
+                    await operation
+                    return
+        except CoworkerError as error:
+            raise ApplicationError(error.message, type=error.code,
+                                   non_retryable=not isinstance(error, DraftFailure) or not error.retryable) from None
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("Agent step failed run=%s ordinal=%s", run_id, ordinal)
+            raise ApplicationError("An agent tool was unavailable. Please try again.", type="agent_tool_unavailable") from None
+        finally:
+            if not operation.done():
+                operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+
+    @activity.defn(name="shuddho_agent_complete_v1")
+    async def complete(self, run_id: str):
+        try:
+            await asyncio.to_thread(self.runtime.complete, run_id)
+        except CoworkerError as error:
+            raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
+        except Exception:
+            raise ApplicationError("Could not finalize the agent run.", type="agent_status_unavailable") from None
+
+    @activity.defn(name="shuddho_agent_failed_v1")
+    async def failed(self, value: dict):
+        try:
+            await asyncio.to_thread(self.runtime.fail, value["run_id"], value["code"], value["message"])
+        except Exception:
+            raise ApplicationError("Could not record agent status.", type="agent_status_unavailable") from None
+
+
 class Dispatcher:
     def __init__(self, container: Container, client):
         self.container, self.client = container, client
@@ -108,6 +164,7 @@ class Dispatcher:
     async def tick(self):
         repo = self.container.repository
         actions = self.container.actions.repo
+        agent = self.container.agent
         for action_id in await asyncio.to_thread(actions.claim_outbox):
             try:
                 await self.client.start_workflow(
@@ -118,6 +175,20 @@ class Dispatcher:
             except WorkflowAlreadyStartedError:
                 pass
             await asyncio.to_thread(actions.delivered, action_id)
+        for run_id in await asyncio.to_thread(agent.claim_outbox):
+            run = await asyncio.to_thread(agent.worker_run, run_id)
+            if run["state"] not in {"completed", "failed", "cancelled"}:
+                try:
+                    await self.client.start_workflow(
+                        AgentWorkflow.run, run_id, id="shuddho-agent-" + run_id,
+                        task_queue=self.container.settings.task_queue,
+                        execution_timeout=timedelta(seconds=self.container.settings.agent_run_timeout_seconds),
+                        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                        rpc_timeout=timedelta(seconds=10),
+                    )
+                except WorkflowAlreadyStartedError:
+                    pass
+            await asyncio.to_thread(agent.delivered, run_id)
         await asyncio.to_thread(repo.expire_tasks)
         for task_id in await asyncio.to_thread(repo.claim_outbox):
             task = await asyncio.to_thread(repo.worker_task, task_id, False)
@@ -164,6 +235,7 @@ async def main():
                                   api_key=settings.temporal_api_key or None, tls=settings.temporal_tls)
     activities = Activities(DocumentRunner(container))
     action_activities = ActionActivities(container.actions)
+    agent_activities = AgentActivities(AgentRuntime(container, DocumentRunner(container)))
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for name in (signal.SIGTERM, signal.SIGINT):
@@ -171,8 +243,9 @@ async def main():
             loop.add_signal_handler(name, stop.set)
         except NotImplementedError:
             pass
-    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow],
-                      activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted],
+    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow],
+                      activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted,
+                                  agent_activities.plan, agent_activities.step, agent_activities.complete, agent_activities.failed],
                       # Four short deterministic steps: replay is inexpensive.
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,
