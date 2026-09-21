@@ -772,7 +772,7 @@ def test_memory_model_matches_migration(container):
     task_columns = {item["name"] for item in inspector.get_columns("cw_tasks")}
     assert memory_columns == set(MemoryFact.__table__.columns.keys())
     assert task_columns == set(Task.__table__.columns.keys())
-    assert "agent_run_id" in task_columns
+    assert {"agent_run_id", "agent_step_id"} <= task_columns
 
 
 def test_agent_memory_is_ephemeral_and_receipt_keeps_only_provenance(container):
@@ -1125,3 +1125,150 @@ def test_agent_runtime_replan_replaces_unstarted_step_directly(container):
     saved = container.agent.get(owner, run["id"])
     assert [step["tool"] for step in saved["steps"]] == ["report.create"]
     assert saved["planner_mode"] == "replanned"
+
+
+
+def test_agent_handoff_uses_nearest_completed_task_with_bounded_provenance(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_handoffs_enabled=True,
+        work_services_enabled=True,
+        max_agent_handoff_bytes=160,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    other = account(container, "bob")
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a project document and then draft a follow-up email.",
+        output_language="en",
+    ), "agent-handoff-run")
+    saved = container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+
+    class CaptureWorkModel(WorkModel):
+        def __init__(self):
+            super().__init__()
+            self.seen = []
+        def messages(self, task, sources):
+            self.seen.append((task["skill_id"], [dict(source) for source in sources]))
+            return super().messages(task, sources)
+
+    model = CaptureWorkModel()
+    runtime = AgentRuntime(container, DocumentRunner(container, model))
+    asyncio.run(runtime.execute_step(run["id"], 1))
+
+    handoff = container.agent.handoff_context(owner, run["id"], saved["steps"][1]["id"])
+    assert len(handoff["sources"]) == 1
+    assert handoff["provenance"][0]["ordinal"] == 1
+    assert handoff["provenance"][0]["tool"] == "document.create"
+    assert handoff["provenance"][0]["truncated"] is True
+    assert handoff["sources"][0]["agent_invocation_id"] == handoff["provenance"][0]["invocation_id"]
+    assert len(handoff["sources"][0]["text"].encode("utf-8")) <= 200
+    assert handoff["sources"][0]["sha256"] == hashlib.sha256(handoff["sources"][0]["text"].encode()).hexdigest()
+    with pytest.raises(CoworkerError) as scope:
+        container.agent.handoff_context(other, run["id"], saved["steps"][1]["id"])
+    assert scope.value.code == "handoff_scope"
+
+    asyncio.run(runtime.execute_step(run["id"], 2))
+    final = container.agent.get(owner, run["id"])
+    assert [skill for skill, _sources in model.seen] == ["document", "email"]
+    second_sources = model.seen[1][1]
+    chained = [source for source in second_sources if source.get("agent_invocation_id")]
+    assert len(chained) == 1
+    assert chained[0]["id"].startswith("agent-step-")
+    receipt = final["tool_invocations"][1]["receipt"]
+    assert receipt["summary"]["handoff"] == handoff["provenance"]
+    assert "The team completed 12 reviews." not in json.dumps(receipt)
+    assert handoff["sources"][0]["text"] not in json.dumps(receipt)
+
+
+def test_agent_handoff_is_empty_when_feature_is_disabled(container):
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True,
+                      agent_handoffs_enabled=False)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create two work outputs.", output_language="en"
+    ), "agent-handoff-disabled")
+    saved = container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="email.draft", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+    ])
+    assert container.agent.handoff_context(owner, run["id"], saved["steps"][1]["id"]) == {
+        "sources": [], "provenance": [],
+    }
+
+
+
+def test_research_step_never_receives_prior_agent_handoff(container):
+    from coworker_samples import WorkModel
+    from research_samples import SimulatedResearch
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_handoffs_enabled=True,
+        work_services_enabled=True,
+        research_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Create a project document, then research the public project update.",
+        output_language="en",
+    ), "agent-handoff-research")
+    container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="document.create", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+        }),
+        AgentPlanStep(tool="research.search", arguments={
+            "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",
+            "query": "public project update", "time_range": "any",
+        }),
+    ])
+
+    class CaptureWorkModel(WorkModel):
+        def __init__(self):
+            super().__init__()
+            self.seen = []
+        def messages(self, task, sources):
+            self.seen.append((task["skill_id"], [dict(source) for source in sources]))
+            return super().messages(task, sources)
+
+    model = CaptureWorkModel()
+    runtime = AgentRuntime(
+        container,
+        DocumentRunner(container, model, research=SimulatedResearch(enabled)),
+    )
+    asyncio.run(runtime.execute_step(run["id"], 1))
+    asyncio.run(runtime.execute_step(run["id"], 2))
+    assert [skill for skill, _sources in model.seen] == ["document", "research"]
+    research_sources = model.seen[1][1]
+    assert any(source["id"] == "web-1" for source in research_sources)
+    assert all("agent_invocation_id" not in source for source in research_sources)
+    receipt = container.agent.get(owner, run["id"])["tool_invocations"][1]["receipt"]
+    assert receipt["summary"]["handoff"] == []

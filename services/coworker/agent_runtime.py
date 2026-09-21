@@ -131,7 +131,8 @@ class AgentRuntime:
             research=research,
         )
         task, _ = self.container.repository.create_task(
-            run["owner_id"], request, f"agent:{run_id}:{ordinal}", enqueue=False, agent_run_id=run_id
+            run["owner_id"], request, f"agent:{run_id}:{ordinal}", enqueue=False,
+            agent_run_id=run_id, agent_step_id=invocation["step_id"]
         )
         self.repo.link_invocation_resource(run_id, ordinal, "task", task["id"])
         worker_task = self.container.repository.worker_task(task["id"], False)
@@ -147,6 +148,7 @@ class AgentRuntime:
             "artifact_count": len(result["artifacts"]),
             "has_missing_information": result["state"] == "needs_input",
             "memory": draft_step.get("memory_provenance", []),
+            "handoff": draft_step.get("handoff_provenance", []),
         }
         self.repo.finish_invocation(run_id, ordinal, "task", task["id"], summary)
         return {"status": "completed"}

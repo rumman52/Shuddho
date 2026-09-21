@@ -115,6 +115,13 @@ class DocumentRunner:
                 raise CoworkerError("checkpoint_missing", "Web evidence could not be recovered. Please create a new task.")
             sources.extend(research["sources"])
         skill = skill_for_version(task["workflow_version"])
+        handoff = {"sources": [], "provenance": []}
+        if (task["skill_id"] != "research" and task.get("agent_run_id") and task.get("agent_step_id")):
+            handoff = await asyncio.to_thread(
+                self.container.agent.handoff_context,
+                task["owner_id"], task["agent_run_id"], task["agent_step_id"],
+            )
+            sources.extend(handoff["sources"])
         memory = (await asyncio.to_thread(self.container.memory.context_for_run, task["owner_id"], task["agent_run_id"])
                   if task.get("agent_run_id") else {"facts": [], "provenance": []})
         model = (DeepSeekDraftModel(self.container.settings, self.model.transport, skill_id=skill.id)
@@ -155,6 +162,7 @@ class DocumentRunner:
             "draft": validated.model_dump(), "sources": manifest, "preview": preview,
             "research": research["metadata"] if research else None,
             "memory_provenance": memory["provenance"],
+            "handoff_provenance": handoff["provenance"],
         })
 
     async def export(self, task):

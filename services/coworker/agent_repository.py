@@ -11,7 +11,7 @@ from .agent_schemas import AgentPlanStep, AgentRunCreate
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import iso, not_found
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
@@ -467,6 +467,81 @@ class AgentRepository:
                             for action_id in run.action_ids if action_id in action_rows],
                 "state": run.state, "phase": run.phase, "cancel_requested": run.cancel_requested,
             }
+
+    def handoff_context(self, owner: str, run_id: str, step_id: str) -> dict:
+        if not self.settings.agent_handoffs_enabled:
+            return {"sources": [], "provenance": []}
+        with self.sessions() as db:
+            current = db.scalar(select(AgentStep).where(
+                AgentStep.id == step_id,
+                AgentStep.run_id == run_id,
+                AgentStep.owner_id == owner,
+            ))
+            if current is None:
+                raise CoworkerError("handoff_scope", "The agent handoff step is not available.", 409)
+            prior_steps = db.scalars(select(AgentStep).where(
+                AgentStep.run_id == run_id,
+                AgentStep.owner_id == owner,
+                AgentStep.ordinal < current.ordinal,
+                AgentStep.state == "completed",
+            ).order_by(AgentStep.ordinal.desc())).all()
+            for prior in prior_steps:
+                invocation = db.scalar(select(ToolInvocation).where(
+                    ToolInvocation.step_id == prior.id,
+                    ToolInvocation.owner_id == owner,
+                    ToolInvocation.state == "completed",
+                    ToolInvocation.consequential.is_(False),
+                    ToolInvocation.approval_required.is_(False),
+                ))
+                if invocation is None:
+                    continue
+                receipt = db.scalar(select(ToolReceipt).where(
+                    ToolReceipt.invocation_id == invocation.id,
+                    ToolReceipt.owner_id == owner,
+                    ToolReceipt.status == "completed",
+                    ToolReceipt.resource_type == "task",
+                ))
+                if receipt is None or not receipt.resource_id:
+                    continue
+                task = db.scalar(select(Task).where(
+                    Task.id == receipt.resource_id,
+                    Task.owner_id == owner,
+                    Task.agent_run_id == run_id,
+                    Task.agent_step_id == prior.id,
+                ))
+                if task is None or task.state not in {"completed", "needs_input"}:
+                    raise CoworkerError("handoff_scope", "The upstream agent task could not be verified.", 409)
+                draft = db.get(Step, (task.id, "draft"))
+                if draft is None or not isinstance(draft.output.get("draft"), dict):
+                    raise CoworkerError("handoff_missing", "The upstream agent result could not be recovered.", 409)
+                raw = json.dumps(draft.output["draft"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                limit = self.settings.max_agent_handoff_bytes
+                truncated = len(raw) > limit
+                text_value = raw[:limit].decode("utf-8", errors="ignore")
+                if truncated:
+                    text_value += "\n[handoff truncated]"
+                source_id = "agent-step-" + invocation.id
+                text_bytes = text_value.encode("utf-8")
+                return {
+                    "sources": [{
+                        "id": source_id,
+                        "label": f"Prior {invocation.tool_name} result",
+                        "text": text_value,
+                        "sha256": hashlib.sha256(text_bytes).hexdigest(),
+                        "upstream_sha256": hashlib.sha256(raw).hexdigest(),
+                        "agent_invocation_id": invocation.id,
+                        "task_id": task.id,
+                        "tool": invocation.tool_name,
+                    }],
+                    "provenance": [{
+                        "invocation_id": invocation.id,
+                        "task_id": task.id,
+                        "tool": invocation.tool_name,
+                        "ordinal": prior.ordinal,
+                        "truncated": truncated,
+                    }],
+                }
+            return {"sources": [], "provenance": []}
 
     def invocation_for_step(self, run_id: str, ordinal: int) -> dict:
         with self.sessions() as db:

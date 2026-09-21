@@ -131,7 +131,9 @@ The first goal-driven runtime increment is documented in [the Agent Runtime foun
 
 PR #111 adds the code-owned deterministic planner, crash-safe agent outbox and Temporal `AgentWorkflow`. PR #112 adds approval-aware Gmail/Calendar steps that pause and resume through the existing immutable action approval path. PR #113 adds [structured Agent Memory](PART_3_AGENT_MEMORY.md) with explicit user-owned facts, scoped runtime use, versioned provenance, expiry and hard deletion.
 
-The next increment adds [bounded intelligent planning](PART_3_INTELLIGENT_PLANNER.md): the model may select only server-provided non-consequential tool names and short objectives; Shuddho reconstructs and validates executable arguments. Initial planner failures fall back to deterministic routing. A run may automatically replan once only when an unstarted capability becomes unavailable. Open-ended loops, result-quality replanning, model-selected external actions and multi-agent delegation remain later increments.
+PR #114 adds [bounded intelligent planning](PART_3_INTELLIGENT_PLANNER.md): the model may select only server-provided non-consequential tool names; Shuddho reconstructs and validates executable arguments. Initial planner failures fall back to deterministic routing, and a run may automatically replan once only when an unstarted capability becomes unavailable.
+
+The next increment adds [typed Agent Step Handoffs](PART_3_AGENT_HANDOFFS.md). A later non-research task may consume a bounded live source derived from the nearest prior completed task in the same owner/run. Handoff text is not copied into Temporal history, task notes, tool arguments or durable receipts; only provenance is persisted. General dependency graphs, result-quality replanning, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 

@@ -449,3 +449,56 @@ def test_agent_workflow_replans_once_when_capability_changes(container):
         assert [step["tool"] for step in saved["steps"]] == ["report.create"]
         assert "Draft a professional follow-up email." not in history
     asyncio.run(scenario())
+
+
+
+def test_agent_workflow_chains_prior_task_output_without_temporal_payload_leak(container):
+    from services.coworker.agent_schemas import AgentPlannerProposal
+
+    async def scenario():
+        enabled = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            intelligent_planner_enabled=True,
+            agent_handoffs_enabled=True,
+            work_services_enabled=True,
+        )
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(owner, AgentRunCreate(
+            goal="Create a project document and then draft a follow-up email.",
+            output_language="en",
+        ), "temporal-agent-handoff")
+
+        class Planner:
+            async def propose(self, *_args, **_kwargs):
+                return AgentPlannerProposal.model_validate({
+                    "steps": [
+                        {"tool": "document.create", "objective": "Create the project document."},
+                        {"tool": "email.draft", "objective": "Draft the follow-up email."},
+                    ]
+                }), 40, 1
+
+        runner = DocumentRunner(container, WorkModel())
+        runtime = AgentRuntime(container, runner, planner=Planner())
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, runner, runtime):
+                await Dispatcher(container, env.client).tick()
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+                history = (await handle.fetch_history()).to_json()
+
+        saved = container.agent.get(owner, run["id"])
+        assert saved["state"] == "completed"
+        assert [step["tool"] for step in saved["steps"]] == ["document.create", "email.draft"]
+        handoff = saved["tool_invocations"][1]["receipt"]["summary"]["handoff"]
+        assert len(handoff) == 1
+        assert handoff[0]["tool"] == "document.create"
+        assert handoff[0]["ordinal"] == 1
+        assert "The team completed 12 reviews." not in history
+        assert "Project update" not in history
+
+    asyncio.run(scenario())
