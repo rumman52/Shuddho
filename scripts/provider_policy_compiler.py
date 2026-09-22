@@ -110,6 +110,14 @@ def load_plan(path: Path) -> dict:
         raise ProviderPolicyError("current provider policy has an unexpected schema.")
     for key in CURRENT_KEYS:
         positive_int(current[key], f"current.{key}")
+    if current["provider_max_concurrent_per_workspace"] > current["provider_max_concurrent_calls"]:
+        raise ProviderPolicyError("current workspace concurrency exceeds current global concurrency.")
+    if current["provider_max_reserved_tokens_per_workspace"] > current["provider_max_reserved_tokens"]:
+        raise ProviderPolicyError("current workspace reserve exceeds current global reserve.")
+    if current["daily_token_budget"] > current["provider_daily_token_budget"]:
+        raise ProviderPolicyError("current workspace daily budget exceeds current global provider daily budget.")
+    if current["provider_lease_seconds"] <= value["model_timeout_seconds"]:
+        raise ProviderPolicyError("current provider lease must exceed the model timeout.")
     return value
 
 
@@ -193,6 +201,14 @@ def compile_policy(plan: dict, decision: dict, review: dict, capacity: dict) -> 
             "threshold": threshold,
             "reason": reason,
         })
+
+    if measured_average_tokens > plan["task_token_budget"]:
+        fail(
+            "measured_average_tokens_per_task",
+            measured_average_tokens,
+            plan["task_token_budget"],
+            "Measured average provider usage already exceeds the configured task token budget.",
+        )
 
     budget_ceiling = approved_budget * plan["max_budget_utilization_ratio"]
     if estimated_cost > budget_ceiling:
@@ -312,7 +328,12 @@ def compile_policy(plan: dict, decision: dict, review: dict, capacity: dict) -> 
     }
     lower = [key for key in proposed if proposed[key] < current[key]]
     higher = [key for key in proposed if proposed[key] > current[key]]
-    direction = "reduce" if lower else "increase" if higher else "hold"
+    direction = (
+        "mixed" if lower and higher
+        else "reduce" if lower
+        else "increase" if higher
+        else "hold"
+    )
 
     return {
         "decision": (
