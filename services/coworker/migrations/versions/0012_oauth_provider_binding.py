@@ -22,11 +22,9 @@ def upgrade():
             server_default="google",
         ),
     )
-    op.alter_column(
-        "cw_oauth_attempts",
-        "provider",
-        server_default=None,
-    )
+    # Keep the database default for backward compatibility with any older
+    # API/worker binary still draining during a coordinated rollout. SQLite
+    # also cannot DROP DEFAULT with PostgreSQL's ALTER COLUMN syntax.
 
 
 def downgrade():
