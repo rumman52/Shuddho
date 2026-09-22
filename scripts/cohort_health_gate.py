@@ -19,6 +19,7 @@ from services.coworker.models import (
     Task,
     utcnow,
 )
+from services.coworker.provider_capacity import provider_capacity_snapshot
 
 TASK_TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 AGENT_TERMINAL = {"completed", "failed", "cancelled"}
@@ -169,6 +170,9 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
                 Account.id.in_(owners)
             )) or 0
 
+        with sessions.begin() as db:
+            provider_capacity = provider_capacity_snapshot(db)
+
         active_created = (
             [item.created_at for item in active_tasks]
             + [item.created_at for item in active_agents]
@@ -200,6 +204,9 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
                 "p95_latency_ms": percentile95(latencies),
                 "window_tokens": tokens,
                 "reserved_attempts": reserved_attempts,
+                "active_leases": provider_capacity["active_calls"],
+                "reserved_lease_tokens": provider_capacity["reserved_tokens"],
+                "oldest_lease_age_seconds": provider_capacity["oldest_lease_age_seconds"],
             },
             "agents": {
                 "samples": len(measured_agents),
