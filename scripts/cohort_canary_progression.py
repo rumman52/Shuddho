@@ -309,15 +309,35 @@ def load_recovery_epoch(
         raise CanaryProgressionError(f"Release ledger verification failed: {error}") from None
     if state.get("release_id") != release_id:
         raise CanaryProgressionError("Release ledger release_id does not match recovery release.")
-    recovery_entries = [
-        item for item in entries
+    recovery_indexes = [
+        index for index, item in enumerate(entries)
         if item.get("event_type") == "recovery_verified"
     ]
-    if not recovery_entries:
+    if not recovery_indexes:
         raise CanaryProgressionError("Release ledger has no recovery_verified entry.")
-    entry = recovery_entries[-1]
+    recovery_index = recovery_indexes[-1]
+    entry = entries[recovery_index]
     if entry.get("current_stage") != current_stage:
         raise CanaryProgressionError("Ledger recovery stage does not match current_stage.")
+    prior = entries[:recovery_index]
+    rollback_indexes = [
+        index for index, item in enumerate(prior)
+        if item.get("event_type") == "rollback_completed"
+        and item.get("current_stage") == current_stage
+    ]
+    if not rollback_indexes:
+        raise CanaryProgressionError(
+            "Ledger recovery has no earlier rollback_completed event for this stage."
+        )
+    rollback_index = rollback_indexes[-1]
+    if not any(
+        item.get("event_type") == "stop_rollout"
+        and item.get("current_stage") == current_stage
+        for item in prior[:rollback_index]
+    ):
+        raise CanaryProgressionError(
+            "Ledger recovery has no earlier stop_rollout event for this stage."
+        )
     artifacts = entry.get("artifact_sha256")
     if not isinstance(artifacts, dict) or artifacts.get("recovery_verification") != file_sha256(recovery_path):
         raise CanaryProgressionError(
