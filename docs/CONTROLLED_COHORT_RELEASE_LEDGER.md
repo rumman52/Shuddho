@@ -42,12 +42,14 @@ uv run python scripts/cohort_release_ledger.py append \
   --operator-status /secure/release/shuddho-coworker-status.json
 ```
 
-Supported event types:
+Supported schema-v1 event types:
 
 - `hold` → progression decision must be `HOLD`;
 - `eligible_for_expansion` → decision must be `ELIGIBLE_FOR_EXPANSION`;
 - `stage_approved` → decision must be `ELIGIBLE_FOR_EXPANSION` and the target must be the immediately following canary stage;
 - `stop_rollout` → decision must be `STOP_ROLLOUT`.
+
+Schema v2 adds only `rollback_completed`. It must follow an existing STOP event for the same release/stage and bind the same rollout manifest, canary plan and STOP progression decision plus the exact rollback-completion evidence. Existing schema-v1 entries are not migrated or rewritten.
 
 The command atomically rewrites the ledger only after verifying the full existing chain.
 

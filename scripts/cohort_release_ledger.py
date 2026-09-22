@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+ROLLBACK_SCHEMA_VERSION = 2
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -23,6 +24,7 @@ ARTIFACT_KEYS = {
     "progression_decision",
     "operator_status",
 }
+ROLLBACK_ARTIFACT_KEYS = ARTIFACT_KEYS | {"rollback_completion"}
 
 
 class ReleaseLedgerError(RuntimeError):
@@ -226,7 +228,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
         }
         if set(entry) != required:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unexpected schema.")
-        if entry["schema_version"] != SCHEMA_VERSION:
+        version = entry["schema_version"]
+        if version not in {SCHEMA_VERSION, ROLLBACK_SCHEMA_VERSION}:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
             raise ReleaseLedgerError(f"Ledger entry {index} has an invalid sequence.")
@@ -234,8 +237,11 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             datetime.fromisoformat(str(entry["created_at"]).replace("Z", "+00:00"))
         except ValueError:
             raise ReleaseLedgerError(f"Ledger entry {index} has an invalid timestamp.") from None
-        if entry["event_type"] not in EVENT_DECISIONS:
+        event_type = entry["event_type"]
+        if version == SCHEMA_VERSION and event_type not in EVENT_DECISIONS:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported event type.")
+        if version == ROLLBACK_SCHEMA_VERSION and event_type != "rollback_completed":
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v2 event type.")
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -245,7 +251,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
         if entry["next_stage"] is not None and not isinstance(entry["next_stage"], str):
             raise ReleaseLedgerError(f"Ledger entry {index} has an invalid next stage.")
         artifacts = entry["artifact_sha256"]
-        if not isinstance(artifacts, dict) or set(artifacts) != ARTIFACT_KEYS:
+        expected_artifacts = ARTIFACT_KEYS if version == SCHEMA_VERSION else ROLLBACK_ARTIFACT_KEYS
+        if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
             raise ReleaseLedgerError(f"Ledger entry {index} has invalid artifact hashes.")
         if any(not valid_hash(value) for value in artifacts.values()):
             raise ReleaseLedgerError(f"Ledger entry {index} contains an invalid artifact SHA-256.")
@@ -352,6 +359,107 @@ def append_event(
     return entry
 
 
+
+def append_rollback_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    rollout: Path,
+    canary_plan: Path,
+    progression_decision: Path,
+    operator_status: Path,
+    rollback_completion: Path,
+    created_at: str | None = None,
+) -> dict:
+    if not actor_reference.strip() or len(actor_reference) > 500:
+        raise ReleaseLedgerError("actor_reference must be non-empty and at most 500 characters.")
+    if not change_reference.strip() or len(change_reference) > 500:
+        raise ReleaseLedgerError("change_reference must be non-empty and at most 500 characters.")
+
+    rollout_value = load_json_object(rollout, "rollout manifest")
+    plan_value = load_json_object(canary_plan, "canary plan")
+    decision_value = load_json_object(progression_decision, "progression decision")
+    status_value = load_json_object(operator_status, "post-rollback operator status")
+    rollback_value = load_json_object(rollback_completion, "rollback completion evidence")
+
+    for label, value in (
+        ("rollout manifest", rollout_value),
+        ("canary plan", plan_value),
+        ("progression decision", decision_value),
+        ("operator status", status_value),
+        ("rollback completion evidence", rollback_value),
+    ):
+        if value.get("release_id") != release_id:
+            raise ReleaseLedgerError(f"{label} release_id does not match {release_id!r}.")
+
+    if decision_value.get("decision") != "STOP_ROLLOUT":
+        raise ReleaseLedgerError("rollback_completed requires a STOP_ROLLOUT progression decision.")
+    if decision_value.get("current_stage") != current_stage or decision_value.get("next_stage") is not None:
+        raise ReleaseLedgerError("Rollback completion stage does not match the STOP decision.")
+    if status_value.get("decision") != "CONTINUE_COHORT" or status_value.get("breaches") != []:
+        raise ReleaseLedgerError("rollback_completed requires a healthy post-rollback operator status.")
+    if rollback_value.get("status") != "rollback_completed":
+        raise ReleaseLedgerError("Rollback completion evidence has not passed.")
+
+    rollback_hashes = rollback_value.get("artifact_sha256")
+    if not isinstance(rollback_hashes, dict):
+        raise ReleaseLedgerError("Rollback completion evidence has no artifact hashes.")
+    if rollback_hashes.get("rollout_manifest") != file_sha256(rollout):
+        raise ReleaseLedgerError("Rollback completion evidence does not bind this rollout manifest.")
+    if rollback_hashes.get("operator_status") != file_sha256(operator_status):
+        raise ReleaseLedgerError("Rollback completion evidence does not bind this operator status.")
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if state["release_id"] is not None and state["release_id"] != release_id:
+        raise ReleaseLedgerError("Ledger release_id does not match the rollback event.")
+    stop_entries = [item for item in entries if item.get("event_type") == "stop_rollout"]
+    if not stop_entries:
+        raise ReleaseLedgerError("rollback_completed requires an earlier stop_rollout ledger entry.")
+    stop = stop_entries[-1]
+    expected_common = {
+        "rollout_manifest": file_sha256(rollout),
+        "canary_plan": file_sha256(canary_plan),
+        "progression_decision": file_sha256(progression_decision),
+    }
+    for name, value in expected_common.items():
+        if stop["artifact_sha256"].get(name) != value:
+            raise ReleaseLedgerError(
+                f"rollback_completed does not bind the same {name} as the latest STOP event."
+            )
+    if stop.get("current_stage") != current_stage:
+        raise ReleaseLedgerError("rollback_completed current stage differs from the latest STOP event.")
+
+    core = {
+        "schema_version": ROLLBACK_SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": "rollback_completed",
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": None,
+        "artifact_sha256": {
+            **artifact_hashes(rollout, canary_plan, progression_decision, operator_status),
+            "rollback_completion": file_sha256(rollback_completion),
+        },
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {**core, "entry_hash": entry_hash, "hmac_sha256": tag}
+    serialized = "".join(
+        json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Maintain a tamper-evident Shuddho controlled-cohort release ledger."
@@ -371,6 +479,18 @@ def main() -> None:
     append_parser.add_argument("--progression-decision", type=Path, required=True)
     append_parser.add_argument("--operator-status", type=Path, required=True)
 
+    rollback_parser = sub.add_parser("append-rollback")
+    rollback_parser.add_argument("--ledger", type=Path, required=True)
+    rollback_parser.add_argument("--release-id", required=True)
+    rollback_parser.add_argument("--actor-reference", required=True)
+    rollback_parser.add_argument("--change-reference", required=True)
+    rollback_parser.add_argument("--current-stage", required=True)
+    rollback_parser.add_argument("--rollout", type=Path, required=True)
+    rollback_parser.add_argument("--canary-plan", type=Path, required=True)
+    rollback_parser.add_argument("--progression-decision", type=Path, required=True)
+    rollback_parser.add_argument("--operator-status", type=Path, required=True)
+    rollback_parser.add_argument("--rollback-completion", type=Path, required=True)
+
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--ledger", type=Path, required=True)
 
@@ -379,6 +499,27 @@ def main() -> None:
         key = ledger_key()
         if args.command == "verify":
             result = verify_entries(read_entries(args.ledger), key)
+        elif args.command == "append-rollback":
+            entry = append_rollback_event(
+                ledger=args.ledger,
+                key=key,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                rollout=args.rollout,
+                canary_plan=args.canary_plan,
+                progression_decision=args.progression_decision,
+                operator_status=args.operator_status,
+                rollback_completion=args.rollback_completion,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
         else:
             entry = append_event(
                 ledger=args.ledger,
