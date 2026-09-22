@@ -67,6 +67,33 @@ The stage remains `HOLD` when:
 
 This prevents expansion based only on time passing with little or no real usage.
 
+## Progression after a verified recovery
+
+A historical STOP remains permanently recorded in the release ledger, but it must not permanently prevent a recovered release from ever accumulating new canary evidence.
+
+After a schema-v3 `recovery_verified` event, run the progression gate with both:
+
+```bash
+--recovery-verification /secure/release/recovery-verification.json \
+--release-ledger /secure/release/coworker-cohort-001.jsonl
+```
+
+Both arguments are required together.
+
+The gate verifies the ledger with `SHUDDHO_RELEASE_LEDGER_HMAC_KEY` and requires the same stage to contain this ordered history:
+
+1. `stop_rollout`;
+2. `rollback_completed`;
+3. `recovery_verified`.
+
+The ledger's latest recovery entry must SHA-256-bind the exact recovery-verification artifact supplied to the progression command.
+
+Only health snapshots generated **after** the recovery artifact's `verified_at` timestamp count toward future progression. All pre-recovery health, including the original STOP, remains preserved but is outside the new observation epoch.
+
+If there are no post-recovery health windows, the result is `HOLD` with `no_post_recovery_health`.
+
+This does not reset the canary stage or lower its minimums. The recovered stage must re-earn the full healthy-window, observation-time and sample requirements before it can become `ELIGIBLE_FOR_EXPANSION`.
+
 ## Expansion procedure
 
 `ELIGIBLE_FOR_EXPANSION` means an operator may review the evidence and approve the next planned cohort size.
