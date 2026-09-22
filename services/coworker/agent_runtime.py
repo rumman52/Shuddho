@@ -46,7 +46,7 @@ class AgentRuntime:
         tools = intelligent_tool_names(self.container.settings)
         if not tools:
             return self.plan(run_id)
-        self.repo.reserve_planner(run_id, self._planner_reservation())
+        reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
         try:
             proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason="initial")
             steps = proposal_to_plan(
@@ -63,6 +63,8 @@ class AgentRuntime:
             )
             saved = self.repo.save_plan(run["owner_id"], run_id, steps)
             return len(saved["tool_invocations"])
+        finally:
+            self.repo.release_planner_capacity(run_id, reservation["call"])
 
     async def replan(self, run_id: str, from_ordinal: int, reason: str = "capability_changed") -> int:
         if reason not in REPLAN_REASONS:
@@ -76,8 +78,11 @@ class AgentRuntime:
         tools = intelligent_tool_names(self.container.settings)
         if not tools:
             raise CoworkerError("no_agent_tool", "No suitable agent tool is currently enabled.", 409)
-        self.repo.reserve_planner(run_id, self._planner_reservation())
-        proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason=reason)
+        reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
+        try:
+            proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason=reason)
+        finally:
+            self.repo.release_planner_capacity(run_id, reservation["call"])
         completed_actions = {
             receipt["resource_id"] for receipt in (
                 item.get("receipt") for item in current["tool_invocations"] if item.get("receipt")

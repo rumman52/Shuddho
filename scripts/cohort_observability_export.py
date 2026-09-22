@@ -93,6 +93,9 @@ def render_openmetrics(result: dict) -> str:
     add(sample("shuddho_coworker_cohort_model_failure_ratio", "Model/provider failed-or-unknown ratio in the current observation window.", provider["failure_rate"]))
     add(sample("shuddho_coworker_cohort_model_p95_latency_ms", "Observed p95 model/provider latency in milliseconds.", provider["p95_latency_ms"]))
     add(sample("shuddho_coworker_cohort_model_window_tokens", "Conservatively accounted model tokens in the current observation window, including in-flight reservations.", provider["window_tokens"]))
+    add(sample("shuddho_coworker_provider_active_leases", "Active shared provider-capacity leases across Coworker workers.", provider.get("active_leases", 0)))
+    add(sample("shuddho_coworker_provider_reserved_lease_tokens", "Tokens reserved by active shared provider-capacity leases.", provider.get("reserved_lease_tokens", 0)))
+    add(sample("shuddho_coworker_provider_oldest_lease_age_seconds", "Age in seconds of the oldest active provider-capacity lease.", provider.get("oldest_lease_age_seconds", 0)))
     add(sample("shuddho_coworker_cohort_model_reserved_attempts", "In-flight reserved model attempts in the current observation window.", provider["reserved_attempts"]))
 
     agents = snapshot["agents"]

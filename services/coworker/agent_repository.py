@@ -13,6 +13,7 @@ from .config import Settings
 from .errors import CoworkerError
 from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import iso, not_found
+from .provider_capacity import acquire_provider_lease, release_provider_lease
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
 
@@ -251,12 +252,23 @@ class AgentRepository:
                 db.add(daily)
             if daily.allocated_tokens + reserve_tokens > self.settings.daily_token_budget:
                 raise CoworkerError("daily_limit", "Your daily coworker model budget has been reached.", 429)
+            call = run.planner_calls + 1
+            acquire_provider_lease(
+                db, self.settings, owner_id=run.owner_id, kind="planner",
+                resource_id=run.id, sequence=call, reserved_tokens=reserve_tokens,
+            )
             daily.allocated_tokens += reserve_tokens
-            run.planner_calls += 1
+            run.planner_calls = call
             run.planner_tokens += reserve_tokens
             run.planner_mode = "intelligent"
             self._audit(db, run.owner_id, run.id, "agent_planner_budget_reserved")
             return {"call": run.planner_calls, "reserved_tokens": reserve_tokens, "day": day}
+
+    def release_planner_capacity(self, run_id: str, call: int) -> None:
+        with self.sessions.begin() as db:
+            release_provider_lease(
+                db, kind="planner", resource_id=run_id, sequence=call,
+            )
 
     def set_planner_mode(self, run_id: str, mode: str):
         if mode not in {"deterministic", "intelligent", "fallback", "replanned"}:

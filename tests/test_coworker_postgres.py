@@ -187,8 +187,154 @@ def test_agent_planner_call_limit_and_daily_budget_are_atomic(repository):
         results = list(pool.map(reserve, range(6)))
     assert results.count(1) == 1
     assert results.count("planner_call_limit") == 5
+    agent.release_planner_capacity(run["id"], 1)
     with repository.sessions() as db:
         allocated = db.scalar(text(
             "SELECT allocated_tokens FROM cw_daily_usage WHERE owner_id=:owner"
         ), {"owner": identity})
         assert allocated == 1000
+
+
+def test_provider_global_capacity_is_atomic_across_workspaces(repository):
+    settings = replace(
+        repository.settings,
+        daily_token_budget=500000,
+        task_token_budget=100000,
+        provider_max_concurrent_calls=1,
+        provider_max_concurrent_per_workspace=1,
+        provider_max_reserved_tokens=200000,
+        provider_max_reserved_tokens_per_workspace=100000,
+    )
+    repository.settings = settings
+    owners = [owner(repository), owner(repository)]
+    tasks = [
+        repository.create_task(
+            identity,
+            TaskCreate(instruction="Create report", notes="Source"),
+            str(uuid4()),
+        )[0]
+        for identity in owners
+    ]
+
+    def reserve(task):
+        try:
+            return task["id"], repository.reserve_model(task["id"], 10000)
+        except CoworkerError as error:
+            return task["id"], error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(reserve, tasks))
+
+    assert sum(value == 1 for _task_id, value in results) == 1
+    assert sum(value == "provider_capacity_busy" for _task_id, value in results) == 1
+
+    admitted = next(task_id for task_id, value in results if value == 1)
+    blocked = next(task_id for task_id, value in results if value == "provider_capacity_busy")
+    repository.settle_model(admitted, 1, 100, 10, "completed")
+    assert repository.reserve_model(blocked, 10000) == 1
+    repository.settle_model(blocked, 1, 100, 10, "completed")
+
+
+def test_provider_workspace_fair_share_is_atomic(repository):
+    repository.settings = replace(
+        repository.settings,
+        daily_token_budget=500000,
+        task_token_budget=100000,
+        provider_max_concurrent_calls=4,
+        provider_max_concurrent_per_workspace=1,
+        provider_max_reserved_tokens=400000,
+        provider_max_reserved_tokens_per_workspace=100000,
+    )
+    identity = owner(repository)
+    tasks = [
+        repository.create_task(
+            identity,
+            TaskCreate(instruction="Create report", notes="Source"),
+            str(uuid4()),
+        )[0]
+        for _ in range(2)
+    ]
+
+    def reserve(task):
+        try:
+            return repository.reserve_model(task["id"], 10000)
+        except CoworkerError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(reserve, tasks))
+
+    assert results.count(1) == 1
+    assert results.count("workspace_provider_busy") == 1
+    admitted = next(task for task in tasks if repository.get_task(identity, task["id"])["usage"]["model_attempts"] == 1)
+    repository.settle_model(admitted["id"], 1, 100, 10, "completed")
+
+
+def test_expired_provider_lease_releases_shared_capacity(repository):
+    repository.settings = replace(
+        repository.settings,
+        daily_token_budget=500000,
+        task_token_budget=100000,
+        provider_max_concurrent_calls=1,
+        provider_max_concurrent_per_workspace=1,
+        provider_max_reserved_tokens=200000,
+        provider_max_reserved_tokens_per_workspace=100000,
+    )
+    first_owner, second_owner = owner(repository), owner(repository)
+    first = repository.create_task(
+        first_owner, TaskCreate(instruction="Create report", notes="Source"), str(uuid4())
+    )[0]
+    second = repository.create_task(
+        second_owner, TaskCreate(instruction="Create report", notes="Source"), str(uuid4())
+    )[0]
+    assert repository.reserve_model(first["id"], 10000) == 1
+
+    with repository.sessions.begin() as db:
+        db.execute(text(
+            "UPDATE cw_provider_leases SET expires_at = now() - interval '1 second'"
+        ))
+
+    assert repository.reserve_model(second["id"], 10000) == 1
+    repository.settle_model(second["id"], 1, 100, 10, "completed")
+
+
+def test_planner_and_draft_share_one_provider_capacity_pool(repository):
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_schemas import AgentRunCreate
+
+    settings = replace(
+        repository.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        max_agent_planner_calls=2,
+        agent_planner_token_budget=20000,
+        daily_token_budget=500000,
+        task_token_budget=100000,
+        provider_max_concurrent_calls=1,
+        provider_max_concurrent_per_workspace=1,
+        provider_max_reserved_tokens=200000,
+        provider_max_reserved_tokens_per_workspace=100000,
+    )
+    repository.settings = settings
+    agent = AgentRepository(repository.sessions, settings)
+    planner_owner = owner(repository)
+    task_owner = owner(repository)
+    run, _ = agent.create(
+        planner_owner,
+        AgentRunCreate(goal="Prepare a professional update.", output_language="en"),
+        "shared-provider-pool",
+    )
+    task = repository.create_task(
+        task_owner,
+        TaskCreate(instruction="Create report", notes="Source"),
+        str(uuid4()),
+    )[0]
+
+    reservation = agent.reserve_planner(run["id"], 10000)
+    with pytest.raises(CoworkerError) as blocked:
+        repository.reserve_model(task["id"], 10000)
+    assert blocked.value.code == "provider_capacity_busy"
+
+    agent.release_planner_capacity(run["id"], reservation["call"])
+    assert repository.reserve_model(task["id"], 10000) == 1
+    repository.settle_model(task["id"], 1, 100, 10, "completed")

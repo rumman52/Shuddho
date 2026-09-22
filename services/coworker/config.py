@@ -73,6 +73,11 @@ class Settings:
     deepseek_api_key: str = field(default="", repr=False)
     model_timeout_seconds: int = 90
     max_output_tokens: int = 4096
+    provider_max_concurrent_calls: int = 8
+    provider_max_concurrent_per_workspace: int = 2
+    provider_max_reserved_tokens: int = 800000
+    provider_max_reserved_tokens_per_workspace: int = 200000
+    provider_lease_seconds: int = 120
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -135,6 +140,11 @@ class Settings:
             daily_token_budget=int(os.getenv("SHUDDHO_COWORKER_DAILY_TOKENS", "500000")),
             task_token_budget=int(os.getenv("SHUDDHO_COWORKER_TASK_TOKENS", "100000")),
             max_account_bytes=int(os.getenv("SHUDDHO_COWORKER_STORAGE_BYTES", "268435456")),
+            provider_max_concurrent_calls=int(os.getenv("SHUDDHO_PROVIDER_MAX_CONCURRENT_CALLS", "8")),
+            provider_max_concurrent_per_workspace=int(os.getenv("SHUDDHO_PROVIDER_MAX_CONCURRENT_PER_WORKSPACE", "2")),
+            provider_max_reserved_tokens=int(os.getenv("SHUDDHO_PROVIDER_MAX_RESERVED_TOKENS", "800000")),
+            provider_max_reserved_tokens_per_workspace=int(os.getenv("SHUDDHO_PROVIDER_MAX_RESERVED_TOKENS_PER_WORKSPACE", "200000")),
+            provider_lease_seconds=int(os.getenv("SHUDDHO_PROVIDER_LEASE_SECONDS", "120")),
         )
         value.validate()
         return value
@@ -163,8 +173,17 @@ class Settings:
                self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens,
                self.max_agent_handoff_bytes, self.max_agent_handoff_sources,
-               self.max_agent_parallel_steps, self.cohort_max_users) < 1:
+               self.max_agent_parallel_steps, self.cohort_max_users,
+               self.provider_max_concurrent_calls, self.provider_max_concurrent_per_workspace,
+               self.provider_max_reserved_tokens, self.provider_max_reserved_tokens_per_workspace,
+               self.provider_lease_seconds) < 1:
             raise ValueError("Coworker limits must be positive")
+        if self.provider_max_concurrent_per_workspace > self.provider_max_concurrent_calls:
+            raise ValueError("Per-workspace provider concurrency cannot exceed global concurrency")
+        if self.provider_max_reserved_tokens_per_workspace > self.provider_max_reserved_tokens:
+            raise ValueError("Per-workspace provider token reserve cannot exceed the global reserve")
+        if self.provider_lease_seconds <= self.model_timeout_seconds:
+            raise ValueError("SHUDDHO_PROVIDER_LEASE_SECONDS must exceed the model timeout")
         if self.max_agent_parallel_steps > 4:
             raise ValueError("SHUDDHO_AGENT_MAX_PARALLEL_STEPS must be between 1 and 4")
         if self.cohort_enforced:

@@ -12,6 +12,7 @@ from .auth import Principal
 from .config import Settings
 from .errors import CoworkerError
 from .models import Account, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, Workspace, utcnow
+from .provider_capacity import acquire_provider_lease, release_provider_lease
 from .schemas import TaskCreate, UploadRequest
 from .skills import SKILLS, service_enabled, skill_for_version
 
@@ -386,8 +387,12 @@ class Repository:
                 db.add(daily)
             if daily.allocated_tokens + token_upper_bound > self.settings.daily_token_budget:
                 raise CoworkerError("daily_limit", "Your daily coworker model budget has been reached.", 429)
-            daily.allocated_tokens += token_upper_bound
             number = len(attempts) + 1
+            acquire_provider_lease(
+                db, self.settings, owner_id=owner, kind="draft",
+                resource_id=task_id, sequence=number, reserved_tokens=token_upper_bound,
+            )
+            daily.allocated_tokens += token_upper_bound
             db.add(ModelAttempt(task_id=task_id, attempt=number, owner_id=owner, day=day,
                                 reserved_tokens=token_upper_bound, charged_tokens=token_upper_bound,
                                 model=self.settings.deepseek_model))
@@ -400,12 +405,18 @@ class Repository:
             self._account(db, owner)
             row = db.scalar(select(ModelAttempt).where(ModelAttempt.task_id == task_id, ModelAttempt.attempt == attempt).with_for_update())
             if row.state != "reserved":
+                release_provider_lease(
+                    db, kind="draft", resource_id=task_id, sequence=attempt,
+                )
                 return
             # Unknown network outcomes retain the whole reservation; no free retry.
             charged = actual_tokens if isinstance(actual_tokens, int) and not isinstance(actual_tokens, bool) and actual_tokens >= 0 else row.reserved_tokens
             daily = db.get(DailyUsage, (row.owner_id, row.day))
             daily.allocated_tokens += charged - row.charged_tokens
             row.charged_tokens, row.latency_ms, row.state = charged, latency_ms, state
+            release_provider_lease(
+                db, kind="draft", resource_id=task_id, sequence=attempt,
+            )
 
     def complete(self, task_id, artifacts, needs_input=False):
         owner = self.worker_task(task_id, check_live=False)["owner_id"]
