@@ -305,6 +305,20 @@ class MicrosoftActions:
                 raise ValueError()
             if result.get("subject") != expected["subject"]:
                 raise ValueError()
+            if result.get("location", {}).get("displayName", "") != expected["location"]["displayName"]:
+                raise ValueError()
+            if result.get("start") != expected["start"] or result.get("end") != expected["end"]:
+                raise ValueError()
+            actual_attendees = {
+                item.get("emailAddress", {}).get("address", "").casefold()
+                for item in result.get("attendees", [])
+            }
+            expected_attendees = {
+                item["emailAddress"]["address"].casefold()
+                for item in expected["attendees"]
+            }
+            if actual_attendees != expected_attendees:
+                raise ValueError()
             if result.get("transactionId") not in {
                 None,
                 expected["transactionId"],
