@@ -205,6 +205,8 @@ The next frontend increment adds a default-off Microsoft provider selector and s
 
 The next control-plane increment adds [Microsoft rollout activation verification](MICROSOFT_ROLLOUT_ACTIVATION.md): the exact live `microsoft_actions` staging evidence is SHA-bound to an approved deployment record, backend Google/Microsoft action flags are checked from the deployed runtime, and the deployed frontend is verified through a build-generated rollout manifest containing the exact source revision plus Coworker/Microsoft UI flags. Fresh post-deploy operator health is required before the rollout becomes `microsoft_rollout_verified`.
 
+The following release-evidence increment extends the existing tamper-evident controlled-cohort ledger with schema v6 `microsoft_rollout_verified`. The exact Microsoft staging evidence, reviewed deployment, post-deploy operator status, and activation artifact are chained into the same release ID/stage already used for production cohort control; duplicate activation recording and unattached stage claims fail closed.
+
 Model-selected external actions and broader connector expansion remain later increments.
 
 ### Consequential actions
