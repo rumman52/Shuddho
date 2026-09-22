@@ -107,6 +107,55 @@ def signed_client(container):
         yield client, headers
 
 
+
+
+def test_server_enforced_cohort_admission_precedes_account_creation(container, signed_client):
+    client, headers = signed_client
+    allowed = principal("alice").account_id
+    denied = principal("bob").account_id
+    container.settings = replace(
+        container.settings,
+        cohort_enforced=True,
+        cohort_account_ids=frozenset({allowed}),
+        cohort_max_users=1,
+    )
+
+    admitted = client.get("/api/v1/me", headers=headers("alice"))
+    assert admitted.status_code == 200
+    rejected = client.get("/api/v1/me", headers=headers("bob"))
+    assert rejected.status_code == 403
+    assert rejected.json()["error"]["code"] == "cohort_not_enabled"
+
+    with container.repository.sessions() as db:
+        assert db.get(Account, allowed) is not None
+        assert db.get(Account, denied) is None
+
+
+def test_cohort_configuration_is_fail_closed(container):
+    with pytest.raises(ValueError, match="requires SHUDDHO_COWORKER_COHORT_ACCOUNT_IDS"):
+        replace(
+            container.settings,
+            cohort_enforced=True,
+            cohort_account_ids=frozenset(),
+        ).validate()
+
+    valid_a = principal("cohort-a").account_id
+    valid_b = principal("cohort-b").account_id
+    with pytest.raises(ValueError, match="exceeds SHUDDHO_COWORKER_COHORT_MAX_USERS"):
+        replace(
+            container.settings,
+            cohort_enforced=True,
+            cohort_account_ids=frozenset({valid_a, valid_b}),
+            cohort_max_users=1,
+        ).validate()
+
+    with pytest.raises(ValueError, match="64-character lowercase SHA-256"):
+        replace(
+            container.settings,
+            cohort_enforced=True,
+            cohort_account_ids=frozenset({"not-an-account-id"}),
+        ).validate()
+
 def test_auth_validation_and_private_errors(signed_client):
     client, headers = signed_client
     assert client.get("/api/v1/me").status_code == 401
