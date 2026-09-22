@@ -31,7 +31,14 @@ def get_container(request: Request) -> Container:
 
 
 async def account(request: Request, principal: Annotated[Principal, Depends(require_principal)]):
-    await run_in_threadpool(get_container(request).repository.ensure_account, principal)
+    container = get_container(request)
+    if container.settings.cohort_enforced and principal.account_id not in container.settings.cohort_account_ids:
+        raise CoworkerError(
+            "cohort_not_enabled",
+            "Coworker access is not enabled for this account yet.",
+            403,
+        )
+    await run_in_threadpool(container.repository.ensure_account, principal)
     return principal
 
 
