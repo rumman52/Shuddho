@@ -42,6 +42,7 @@ for (const testFile of tests) {
       "import.meta.env.VITE_ENABLE_LOCAL_FALLBACK": '"false"',
       "import.meta.env.VITE_API_BASE_URL": '"https://shuddho-api.onrender.com"',
       "import.meta.env.VITE_COMPETITION_DEMO_MODE": '"true"',
+      "import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED": '"false"',
     },
   });
   await import(pathToFileURL(outfile));
