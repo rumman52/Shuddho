@@ -54,7 +54,9 @@ def acquire_provider_lease(
     _serialize(db)
     _cleanup_expired(db, now)
 
-    existing = db.get(ProviderLease, key)
+    existing = db.scalar(
+        select(ProviderLease).where(ProviderLease.lease_key == key)
+    )
     if existing is not None:
         if existing.owner_id != owner_id or existing.reserved_tokens != reserved_tokens:
             raise CoworkerError("provider_reservation", "The provider reservation could not be recovered.", 409)
