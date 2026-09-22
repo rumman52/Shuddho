@@ -192,6 +192,15 @@ class ActionRepository:
                 return action_dto(old)
             self.enabled()
             connection = self._connection(db, owner, str(request.connection_id))
+            if (
+                connection.provider == "microsoft"
+                and not self.settings.microsoft_actions_enabled
+            ):
+                raise CoworkerError(
+                    "connection_provider_disabled",
+                    "Microsoft actions are not enabled in this deployment.",
+                    503,
+                )
             spec = action_spec(request.payload.kind, connection.provider)
             capability = spec.capability
             if not connection.active or connection.capability != capability:
