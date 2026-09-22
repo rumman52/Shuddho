@@ -232,6 +232,7 @@ def test_provider_global_capacity_is_atomic_across_workspaces(repository):
     blocked = next(task_id for task_id, value in results if value == "provider_capacity_busy")
     repository.settle_model(admitted, 1, 100, 10, "completed")
     assert repository.reserve_model(blocked, 10000) == 1
+    repository.settle_model(blocked, 1, 100, 10, "completed")
 
 
 def test_provider_workspace_fair_share_is_atomic(repository):
