@@ -136,14 +136,18 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
             ]
             research_failed = sum(item.state == "failed" for item in research_tasks)
 
-            attempts = list(db.scalars(select(ModelAttempt).where(
+            all_attempts = list(db.scalars(select(ModelAttempt).where(
                 ModelAttempt.owner_id.in_(owners),
                 ModelAttempt.created_at >= cutoff,
-                ModelAttempt.state.in_(MODEL_MEASURED),
             )).all())
+            attempts = [item for item in all_attempts if item.state in MODEL_MEASURED]
             provider_failed = sum(item.state in {"failed", "unknown"} for item in attempts)
             latencies = [int(item.latency_ms) for item in attempts if item.latency_ms is not None]
-            tokens = sum(int(item.charged_tokens) for item in attempts)
+            # charged_tokens starts as the conservative reservation and is replaced
+            # by actual usage only after a known provider result. Include reserved
+            # attempts so in-flight spend cannot disappear from the stop gate.
+            tokens = sum(int(item.charged_tokens) for item in all_attempts)
+            reserved_attempts = sum(item.state == "reserved" for item in all_attempts)
 
             agent_runs = list(db.scalars(select(AgentRun).where(
                 AgentRun.owner_id.in_(owners),
@@ -195,6 +199,7 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
                 "failure_rate": rate(provider_failed, len(attempts)),
                 "p95_latency_ms": percentile95(latencies),
                 "window_tokens": tokens,
+                "reserved_attempts": reserved_attempts,
             },
             "agents": {
                 "samples": len(measured_agents),
