@@ -580,6 +580,23 @@ def test_recovery_must_bind_ledger_recorded_rollback_artifact(tmp_path):
         )
 
 
+
+def seed_cohort_25_ledger(ledger, tmp_path):
+    rollout, plan, progression, status = artifacts(
+        tmp_path,
+        decision="HOLD",
+        current_stage="cohort-25",
+        next_stage=None,
+    )
+    append(
+        ledger,
+        (rollout, plan, progression, status),
+        event_type="hold",
+        current_stage="cohort-25",
+        next_stage=None,
+        created_at="2026-09-22T11:50:00+00:00",
+    )
+
 def scale_files(tmp_path):
     decision = write_json(tmp_path / "scale-decision.json", {
         "decision": "ELIGIBLE_FOR_BOUNDED_EXPANSION",
@@ -631,6 +648,7 @@ def scale_files(tmp_path):
 def test_schema_v4_scale_activation_is_hash_chained(tmp_path):
     ledger = tmp_path / "release-ledger.jsonl"
     decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
     entry = append_scale_event(
         ledger=ledger,
         key=KEY,
@@ -654,6 +672,7 @@ def test_schema_v4_scale_activation_is_hash_chained(tmp_path):
 def test_schema_v4_scale_activation_rejects_unbound_activation(tmp_path):
     ledger = tmp_path / "release-ledger.jsonl"
     decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
     value = json.loads(activation.read_text(encoding="utf-8"))
     value["artifact_sha256"]["deployment_change"] = "0" * 64
     activation.write_text(json.dumps(value), encoding="utf-8")
@@ -676,6 +695,7 @@ def test_schema_v4_scale_activation_rejects_unbound_activation(tmp_path):
 def test_schema_v4_scale_activation_cannot_record_same_stage_twice(tmp_path):
     ledger = tmp_path / "release-ledger.jsonl"
     decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
     kwargs = dict(
         ledger=ledger,
         key=KEY,
@@ -692,3 +712,22 @@ def test_schema_v4_scale_activation_cannot_record_same_stage_twice(tmp_path):
     append_scale_event(**kwargs)
     with pytest.raises(ReleaseLedgerError, match="already recorded"):
         append_scale_event(**kwargs)
+
+
+def test_schema_v4_scale_activation_requires_existing_stage_chain(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    with pytest.raises(ReleaseLedgerError, match="existing ledger chain"):
+        append_scale_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="change-42",
+            current_stage="cohort-25",
+            next_stage="cohort-40",
+            scale_decision=decision,
+            deployment_change=deployment,
+            operator_status=status,
+            scale_activation=activation,
+        )
