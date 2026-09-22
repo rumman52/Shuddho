@@ -11,8 +11,11 @@ class ActionService:
     def __init__(self, repository: ActionRepository, providers: dict[str, object]):
         self.repo = repository
         self.providers = dict(providers)
+        # Backward-compatible internal surface for existing Google-only
+        # workers/tests while multi-provider routing uses provider_for().
+        self.provider = self.providers.get("google")
 
-    def provider(self, name: str):
+    def provider_for(self, name: str):
         value = self.providers.get(name)
         if value is None:
             raise CoworkerError(
@@ -23,7 +26,7 @@ class ActionService:
         return value
 
     async def connect(self, owner, request, provider="google"):
-        adapter = self.provider(provider)
+        adapter = self.provider_for(provider)
         state, verifier = await asyncio.to_thread(
             self.repo.start_oauth,
             owner,
@@ -51,7 +54,7 @@ class ActionService:
                 "This connection callback belongs to a different provider.",
                 409,
             )
-        adapter = self.provider(provider)
+        adapter = self.provider_for(provider)
         try:
             token = await adapter.exchange(
                 request.code,
@@ -82,7 +85,7 @@ class ActionService:
 
     async def access(self, action):
         provider_name = action["preview"]["provider"]
-        adapter = self.provider(provider_name)
+        adapter = self.provider_for(provider_name)
         credentials = await asyncio.to_thread(
             self.repo.credentials,
             action["connection_id"],
