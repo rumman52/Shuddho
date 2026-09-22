@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+pytest.importorskip("sqlalchemy", reason="Install the coworker extra for cohort observability tests")
+
 from scripts.cohort_observability_export import atomic_write, operator_status, render_openmetrics
 
 
