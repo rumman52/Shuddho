@@ -47,8 +47,9 @@ class AgentRuntime:
         if not tools:
             return self.plan(run_id)
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
+        actual_tokens = None
         try:
-            proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason="initial")
+            proposal, actual_tokens, _latency = await self.planner.propose(run["goal"], tools, reason="initial")
             steps = proposal_to_plan(
                 proposal, run["goal"], run["document_ids"], run["output_language"],
                 self.container.settings, run["actions"],
@@ -56,7 +57,8 @@ class AgentRuntime:
             saved = self.repo.save_plan(run["owner_id"], run_id, steps)
             self.repo.set_planner_mode(run_id, "intelligent")
             return len(saved["tool_invocations"])
-        except PlannerFailure:
+        except PlannerFailure as error:
+            actual_tokens = error.total_tokens
             self.repo.set_planner_mode(run_id, "fallback")
             steps = deterministic_plan(
                 run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"]
@@ -64,7 +66,9 @@ class AgentRuntime:
             saved = self.repo.save_plan(run["owner_id"], run_id, steps)
             return len(saved["tool_invocations"])
         finally:
-            self.repo.release_planner_capacity(run_id, reservation["call"])
+            self.repo.settle_planner_capacity(
+                run_id, reservation["call"], actual_tokens,
+            )
 
     async def replan(self, run_id: str, from_ordinal: int, reason: str = "capability_changed") -> int:
         if reason not in REPLAN_REASONS:
@@ -79,10 +83,16 @@ class AgentRuntime:
         if not tools:
             raise CoworkerError("no_agent_tool", "No suitable agent tool is currently enabled.", 409)
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
+        actual_tokens = None
         try:
-            proposal, _tokens, _latency = await self.planner.propose(run["goal"], tools, reason=reason)
+            proposal, actual_tokens, _latency = await self.planner.propose(run["goal"], tools, reason=reason)
+        except PlannerFailure as error:
+            actual_tokens = error.total_tokens
+            raise
         finally:
-            self.repo.release_planner_capacity(run_id, reservation["call"])
+            self.repo.settle_planner_capacity(
+                run_id, reservation["call"], actual_tokens,
+            )
         completed_actions = {
             receipt["resource_id"] for receipt in (
                 item.get("receipt") for item in current["tool_invocations"] if item.get("receipt")
