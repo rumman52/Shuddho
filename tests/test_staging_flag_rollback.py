@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -37,8 +38,7 @@ def test_verify_requires_parallel_flag_off_but_runtime_on():
         rollback.require_verify_flags(settings(agent_parallel_execution_enabled=False, agent_runtime_enabled=False))
 
 
-@pytest.mark.asyncio
-async def test_workflow_type_reads_temporal_visibility_string():
+def test_workflow_type_reads_temporal_visibility_string():
     class Client:
         def list_workflows(self, query):
             assert 'WorkflowId = "shuddho-agent-123"' == query
@@ -46,22 +46,20 @@ async def test_workflow_type_reads_temporal_visibility_string():
                 yield SimpleNamespace(workflow_type="shuddho_agent_run_v2")
             return rows()
 
-    assert await rollback.workflow_type(Client(), "shuddho-agent-123") == "shuddho_agent_run_v2"
+    assert asyncio.run(rollback.workflow_type(Client(), "shuddho-agent-123")) == "shuddho_agent_run_v2"
 
 
-@pytest.mark.asyncio
-async def test_workflow_type_accepts_named_workflow_type_object():
+def test_workflow_type_accepts_named_workflow_type_object():
     class Client:
         def list_workflows(self, query):
             async def rows():
                 yield SimpleNamespace(workflow_type=SimpleNamespace(name="shuddho_agent_run_v1"))
             return rows()
 
-    assert await rollback.workflow_type(Client(), "shuddho-agent-456") == "shuddho_agent_run_v1"
+    assert asyncio.run(rollback.workflow_type(Client(), "shuddho-agent-456")) == "shuddho_agent_run_v1"
 
 
-@pytest.mark.asyncio
-async def test_workflow_type_fails_closed_when_visibility_missing():
+def test_workflow_type_fails_closed_when_visibility_missing():
     class Client:
         def list_workflows(self, query):
             async def rows():
@@ -70,7 +68,7 @@ async def test_workflow_type_fails_closed_when_visibility_missing():
             return rows()
 
     with pytest.raises(rollback.RollbackFailure, match="did not return a workflow type"):
-        await rollback.workflow_type(Client(), "missing")
+        asyncio.run(rollback.workflow_type(Client(), "missing"))
 
 
 def test_simple_plan_is_one_non_consequential_document_task():
