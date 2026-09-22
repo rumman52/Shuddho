@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import timedelta
 
 import pytest
 
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for cohort health tests")
 
-from scripts.cohort_health_gate import evaluate, percentile95, rate
+from scripts.cohort_health_gate import collect_snapshot, evaluate, percentile95, rate
+from services.coworker.auth import Principal
+from services.coworker.config import Settings
+from services.coworker.container import Container
+from services.coworker.migrate import upgrade
+from services.coworker.models import ModelAttempt, Task, utcnow
+from services.coworker.schemas import TaskCreate
 
 
 def snapshot():
@@ -128,3 +135,77 @@ def test_percentile_and_rate_helpers_are_deterministic():
     assert rate(0, 0) is None
     assert percentile95([]) is None
     assert percentile95([10, 20, 30, 40, 50]) == 50
+
+
+def test_collect_snapshot_scopes_metrics_to_configured_cohort(tmp_path):
+    issuer = "https://identity.example.test/auth/v1"
+    invited = Principal(issuer, "cohort-health-invited", 0)
+    outsider = Principal(issuer, "cohort-health-outsider", 0)
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'health.sqlite3'}",
+        auth_issuer=issuer,
+        environment="development",
+        storage_backend="local",
+        local_storage_path=tmp_path / "objects",
+        cohort_enforced=True,
+        cohort_account_ids=frozenset({invited.account_id}),
+        cohort_max_users=25,
+    )
+    upgrade(settings.database_url)
+    container = Container.create(settings)
+    try:
+        container.repository.ensure_account(invited)
+        container.repository.ensure_account(outsider)
+        invited_task, _ = container.repository.create_task(
+            invited.account_id,
+            TaskCreate(instruction="Synthetic cohort health task.", notes="", output_language="en"),
+            "health-invited",
+        )
+        outsider_task, _ = container.repository.create_task(
+            outsider.account_id,
+            TaskCreate(instruction="Synthetic outsider task.", notes="", output_language="en"),
+            "health-outsider",
+        )
+        now = utcnow()
+        with container.repository.sessions.begin() as db:
+            invited_row = db.get(Task, invited_task["id"])
+            invited_row.state = "completed"
+            invited_row.updated_at = now
+            outsider_row = db.get(Task, outsider_task["id"])
+            outsider_row.state = "failed"
+            outsider_row.updated_at = now
+            db.add(ModelAttempt(
+                task_id=invited_task["id"],
+                attempt=1,
+                owner_id=invited.account_id,
+                day=now.date().isoformat(),
+                reserved_tokens=100,
+                charged_tokens=80,
+                state="completed",
+                model="deepseek-flash",
+                latency_ms=500,
+                created_at=now,
+            ))
+            db.add(ModelAttempt(
+                task_id=outsider_task["id"],
+                attempt=1,
+                owner_id=outsider.account_id,
+                day=now.date().isoformat(),
+                reserved_tokens=100,
+                charged_tokens=100,
+                state="failed",
+                model="deepseek-flash",
+                latency_ms=99999,
+                created_at=now,
+            ))
+        value = collect_snapshot(settings, window_minutes=15, now=now + timedelta(seconds=1))
+        assert value["cohort_members_configured"] == 1
+        assert value["tasks"]["samples"] == 1
+        assert value["tasks"]["completed"] == 1
+        assert value["tasks"]["failed"] == 0
+        assert value["provider"]["samples"] == 1
+        assert value["provider"]["failure_rate"] == 0.0
+        assert value["provider"]["p95_latency_ms"] == 500
+        assert value["provider"]["window_tokens"] == 80
+    finally:
+        container.repository.sessions.kw["bind"].dispose()
