@@ -55,3 +55,10 @@ uv run python scripts/cohort_scale_review.py \
 The only successful decision is `ELIGIBLE_FOR_BOUNDED_EXPANSION`. Any policy or evidence failure returns `HOLD_AT_CURRENT_COHORT` or fails closed on invalid evidence.
 
 A passing decision still requires a separate human/deployment change to alter cohort membership. It does not authorize automatic expansion or a global-scale claim.
+
+
+## Scale activation verification
+
+A passing scale review does not prove the reviewed change was deployed correctly. After the separate deployment change, run [controlled cohort scale activation verification](CONTROLLED_COHORT_SCALE_ACTIVATION.md).
+
+That verifier checks the actual deployed cohort ceiling and membership bounds, re-runs the allowed/denied admission boundary against the deployed API, requires fresh post-deploy health, and produces a SHA-256-bound activation artifact for the release ledger.
