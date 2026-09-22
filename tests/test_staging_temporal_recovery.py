@@ -5,6 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("sqlalchemy", reason="Install the coworker extra for staging Temporal recovery tests")
+pytest.importorskip("temporalio", reason="Install the coworker extra for staging Temporal recovery tests")
+
 from scripts import staging_temporal_recovery as recovery
 
 
