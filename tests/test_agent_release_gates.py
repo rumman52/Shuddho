@@ -13,13 +13,14 @@ def test_staging_gate_is_no_go_without_live_evidence():
     result = evaluate({}, require_research=True, require_actions=True)
     assert result["decision"] == "NO-GO"
     assert "model" in result["missing"]
+    assert "quality" in result["missing"]
     assert "research" in result["missing"]
     assert "actions" in result["missing"]
 
 
 def test_staging_gate_go_requires_every_requested_check():
     required = {
-        "ci", "identity", "database", "storage", "temporal", "model", "backup_restore",
+        "ci", "identity", "database", "storage", "temporal", "model", "quality", "backup_restore",
         "deletion", "parallel_restart", "fan_in", "flag_rollback", "research", "actions",
     }
     evidence = {key: {"status": "passed", "evidence": "staging-verification"} for key in required}
