@@ -136,3 +136,21 @@ uv run python scripts/cohort_release_ledger.py append-scale \
 ```
 
 A schema-v4 entry is evidence that a reviewed bounded stage was deployed and verified. It does not authorize the next expansion.
+
+
+## Provider policy verification
+
+Schema v5 adds one event type: `provider_policy_verified`.
+
+It binds by SHA-256:
+
+- the exact `ELIGIBLE_FOR_POLICY_REVIEW` provider-policy proposal;
+- the exact provider-policy deployment record;
+- the fresh post-policy operator status;
+- the provider-policy activation verification artifact.
+
+The event must extend an existing chain that already reached the current cohort stage. A duplicate record for the same exact policy activation is rejected.
+
+A later schema-v4 `bounded_expansion_verified` event is accepted only when its scale-activation evidence binds a provider-policy activation that already has exactly one matching schema-v5 ledger record for the same current → proposed stage.
+
+This makes the order explicit: runtime policy is verified first, cohort membership expands second.

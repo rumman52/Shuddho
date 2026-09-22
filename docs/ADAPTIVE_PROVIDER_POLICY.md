@@ -57,3 +57,12 @@ uv run python scripts/provider_policy_compiler.py \
 ```
 
 The proposal should be reviewed with the same change process used for cohort expansion. A later activation check must compare the deployed environment to the exact approved proposal before it is treated as production evidence.
+
+
+## Activation verification
+
+A proposal is not production evidence. After an approved deployment, run [Provider Policy Activation Verification](PROVIDER_POLICY_ACTIVATION.md).
+
+That verifier compares the real deployed Coworker settings to every proposed provider-policy value, checks aggregate live provider counters against those limits, requires fresh clean post-deploy health, and produces a SHA-256-bound activation artifact.
+
+The activation artifact must be appended to the tamper-evident release ledger before a cohort expansion may be verified.

@@ -1,0 +1,8 @@
+{
+  "release_id": "coworker-cohort-001",
+  "change_reference": "provider-policy-change-001",
+  "deployed_at": "2026-09-22T13:00:00+00:00",
+  "current_stage": "cohort-25",
+  "proposed_stage": "cohort-next",
+  "provider_policy_sha256": "replace-with-sha256-of-provider-policy-proposal"
+}

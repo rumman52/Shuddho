@@ -10,6 +10,7 @@ from scripts.cohort_release_ledger import (
     append_rollback_event,
     append_recovery_event,
     append_scale_event,
+    append_provider_policy_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -597,7 +598,92 @@ def seed_cohort_25_ledger(ledger, tmp_path):
         created_at="2026-09-22T11:50:00+00:00",
     )
 
+
+
+def policy_files(tmp_path):
+    policy = write_json(tmp_path / "provider-policy.json", {
+        "decision": "ELIGIBLE_FOR_POLICY_REVIEW",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "failures": [],
+        "proposed_policy": {
+            "provider_max_concurrent_calls": 12,
+            "provider_max_concurrent_per_workspace": 3,
+            "provider_max_reserved_tokens": 1200000,
+            "provider_max_reserved_tokens_per_workspace": 300000,
+            "provider_daily_token_budget": 7500000,
+            "daily_token_budget": 375000,
+            "provider_lease_seconds": 120,
+        },
+    })
+    deployment = write_json(tmp_path / "provider-policy-deployment.json", {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "policy-change-1",
+        "deployed_at": "2026-09-22T12:05:00+00:00",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "provider_policy_sha256": file_sha256(policy),
+    })
+    status = write_json(tmp_path / "provider-policy-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-22T12:08:00+00:00",
+        "breaches": [],
+    })
+    activation = write_json(tmp_path / "provider-policy-activation.json", {
+        "schema_version": 1,
+        "status": "provider_policy_verified",
+        "release_id": "coworker-cohort-001",
+        "verified_at": "2026-09-22T12:09:00+00:00",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "change_reference": "policy-change-1",
+        "deployment_deployed_at": "2026-09-22T12:05:00+00:00",
+        "operator_status_generated_at": "2026-09-22T12:08:00+00:00",
+        "deployed_policy": {
+            "provider_max_concurrent_calls": 12,
+            "provider_max_concurrent_per_workspace": 3,
+            "provider_max_reserved_tokens": 1200000,
+            "provider_max_reserved_tokens_per_workspace": 300000,
+            "provider_daily_token_budget": 7500000,
+            "daily_token_budget": 375000,
+            "provider_lease_seconds": 120,
+        },
+        "runtime": {
+            "active_calls": 1,
+            "reserved_tokens": 100000,
+            "daily_allocated_tokens": 500000,
+        },
+        "artifact_sha256": {
+            "provider_policy": file_sha256(policy),
+            "deployment_change": file_sha256(deployment),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return policy, deployment, status, activation
+
+
+def seed_provider_policy_ledger(ledger, tmp_path):
+    policy, deployment, status, activation = policy_files(tmp_path)
+    entry = append_provider_policy_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="policy-change-1",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        provider_policy=policy,
+        deployment_change=deployment,
+        operator_status=status,
+        policy_activation=activation,
+        created_at="2026-09-22T12:09:30+00:00",
+    )
+    return policy, deployment, status, activation, entry
+
 def scale_files(tmp_path):
+    _policy, _policy_deployment, _policy_status, policy_activation = policy_files(tmp_path)
     decision = write_json(tmp_path / "scale-decision.json", {
         "decision": "ELIGIBLE_FOR_BOUNDED_EXPANSION",
         "release_id": "coworker-cohort-001",
@@ -640,6 +726,7 @@ def scale_files(tmp_path):
             "scale_decision": file_sha256(decision),
             "deployment_change": file_sha256(deployment),
             "operator_status": file_sha256(status),
+            "provider_policy_activation": file_sha256(policy_activation),
         },
     })
     return decision, deployment, status, activation
@@ -649,6 +736,7 @@ def test_schema_v4_scale_activation_is_hash_chained(tmp_path):
     ledger = tmp_path / "release-ledger.jsonl"
     decision, deployment, status, activation = scale_files(tmp_path)
     seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
     entry = append_scale_event(
         ledger=ledger,
         key=KEY,
@@ -673,6 +761,7 @@ def test_schema_v4_scale_activation_rejects_unbound_activation(tmp_path):
     ledger = tmp_path / "release-ledger.jsonl"
     decision, deployment, status, activation = scale_files(tmp_path)
     seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
     value = json.loads(activation.read_text(encoding="utf-8"))
     value["artifact_sha256"]["deployment_change"] = "0" * 64
     activation.write_text(json.dumps(value), encoding="utf-8")
@@ -696,6 +785,7 @@ def test_schema_v4_scale_activation_cannot_record_same_stage_twice(tmp_path):
     ledger = tmp_path / "release-ledger.jsonl"
     decision, deployment, status, activation = scale_files(tmp_path)
     seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
     kwargs = dict(
         ledger=ledger,
         key=KEY,
@@ -718,6 +808,62 @@ def test_schema_v4_scale_activation_requires_existing_stage_chain(tmp_path):
     ledger = tmp_path / "release-ledger.jsonl"
     decision, deployment, status, activation = scale_files(tmp_path)
     with pytest.raises(ReleaseLedgerError, match="existing ledger chain"):
+        append_scale_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="change-42",
+            current_stage="cohort-25",
+            next_stage="cohort-40",
+            scale_decision=decision,
+            deployment_change=deployment,
+            operator_status=status,
+            scale_activation=activation,
+        )
+
+
+def test_schema_v5_provider_policy_is_hash_chained(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    policy, deployment, status, activation, entry = seed_provider_policy_ledger(
+        ledger, tmp_path
+    )
+    assert entry["schema_version"] == 5
+    assert entry["event_type"] == "provider_policy_verified"
+    assert entry["artifact_sha256"]["provider_policy"] == file_sha256(policy)
+    assert entry["artifact_sha256"]["policy_activation"] == file_sha256(activation)
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == entry["entry_hash"]
+
+
+def test_schema_v5_provider_policy_rejects_unbound_activation(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    policy, deployment, status, activation = policy_files(tmp_path)
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["artifact_sha256"]["provider_policy"] = "0" * 64
+    activation.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ReleaseLedgerError, match="does not bind this provider_policy"):
+        append_provider_policy_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="policy-change-1",
+            current_stage="cohort-25",
+            next_stage="cohort-40",
+            provider_policy=policy,
+            deployment_change=deployment,
+            operator_status=status,
+            policy_activation=activation,
+        )
+
+
+def test_schema_v4_scale_requires_matching_provider_policy_event(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    with pytest.raises(ReleaseLedgerError, match="provider_policy_verified"):
         append_scale_event(
             ledger=ledger,
             key=KEY,

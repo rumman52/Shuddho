@@ -9,6 +9,7 @@ This increment closes that gap.
 After a human-approved deployment change, the verifier requires:
 
 - the exact scale-review artifact to say `ELIGIBLE_FOR_BOUNDED_EXPANSION`;
+- the exact provider-policy activation for this current → proposed stage to already be recorded as schema-v5 `provider_policy_verified` in the release ledger;
 - a deployment-change record for the same release, stage, reviewed max users, and change reference;
 - the deployment timestamp to be after the scale-review decision;
 - backend cohort enforcement to remain enabled;
@@ -32,11 +33,13 @@ uv run --extra coworker python scripts/cohort_scale_activation.py \
   --scale-decision /secure/release/bounded-scale-decision.json \
   --deployment-change /secure/release/cohort-scale-deployment.json \
   --operator-status /secure/release/post-scale-operator-status.json \
+  --provider-policy-activation /secure/release/provider-policy-activation.json \
+  --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --freshness-minutes 30 \
   --output /secure/release/bounded-scale-activation.json
 ```
 
-The verifier reads the real deployed Coworker settings and the deployed HTTPS API. It does not update the allowlist or any feature flag.
+The verifier reads the real deployed Coworker settings, verifies the tamper-evident release ledger, and checks the deployed HTTPS API. It does not update the allowlist, provider policy, or any feature flag.
 
 ## Release ledger
 
