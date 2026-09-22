@@ -24,7 +24,9 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false); const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
-  const currentConnection = connections.find(value => value.capability === mode);
+  // Microsoft is backend/staging-only in this increment. Keep the current
+  // UI explicitly Google-only until the separate provider-picker rollout.
+  const currentConnection = connections.find(value => value.provider === "google" && value.capability === mode);
   const pending = action?.state === "queued" || action?.state === "executing";
 
   useEffect(() => {
@@ -108,7 +110,7 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
     {error && <p className="cw-error" role="alert">{error}</p>}{notice && <p className="cw-notice" role="status">{notice}</p>}
     {!loaded ? <p role="status">Loading connections…</p> : !enabled && <p className="cw-notice">New actions are not enabled in this workspace. Saved previews and receipts remain available.</p>}
     <div className="cw-connection-grid">{(["email", "calendar"] as const).map(capability => {
-      const connected = connections.find(value => value.capability === capability);
+      const connected = connections.find(value => value.provider === "google" && value.capability === capability);
       return <div className="cw-connection" key={capability}><div><strong>{capability === "email" ? "Gmail" : "Google Calendar"}</strong><small>{connected?.email ?? (capability === "email" ? "Send emails you approve" : "Create events in your primary calendar")}</small></div>
         {connected ? <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => {
           if (!window.confirm(`Disconnect ${connected.email} for ${capability}? Pending actions will be cancelled. An action already executing may still finish.`)) return;
@@ -161,7 +163,7 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
         </>}
         {["awaiting_approval", "queued"].includes(action.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void run("cancel", async () => updateAction(await client.cancelAction(action.id)))}>Cancel action</button>}
         {action.state === "outcome_unknown" && action.kind === "calendar_create" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => updateAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? "Checking calendar…" : "Check calendar result"}</button>}
-        {action.receipt && <div className="cw-receipt"><strong>{action.kind === "email_send" ? "Accepted by Gmail" : "Created in Google Calendar"}</strong><p>{action.kind === "email_send" ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed."}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small><code>Receipt: {action.receipt.provider_id}</code></div>}
+        {action.receipt && <div className="cw-receipt"><strong>{action.preview.provider === "microsoft" ? (action.kind === "email_send" ? "Accepted by Microsoft Graph" : "Created in Microsoft Calendar") : (action.kind === "email_send" ? "Accepted by Gmail" : "Created in Google Calendar")}</strong><p>{action.preview.provider === "microsoft" ? (action.kind === "email_send" ? "This confirms Microsoft Graph accepted the send request. It does not confirm delivery or reading." : "Microsoft Graph confirmed the event. Guest attendance is not yet confirmed.") : (action.kind === "email_send" ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed.")}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small>{action.receipt.provider_id && <code>Receipt: {action.receipt.provider_id}</code>}</div>}
         {action.audit && <details className="cw-action-audit"><summary>Action history</summary><ol>{action.audit.map((item, index) => <li key={index}>{item.action.replace("action.", "").replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</li>)}</ol></details>}
       </>}
     </section>
