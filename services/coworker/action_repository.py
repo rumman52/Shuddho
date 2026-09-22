@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select, update
 
+from .action_registry import action_spec, build_approval_scope, validate_approval_scope
 from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .errors import CoworkerError
@@ -184,23 +185,29 @@ class ActionRepository:
                 return action_dto(old)
             self.enabled()
             connection = self._connection(db, owner, str(request.connection_id))
-            capability = "email" if request.payload.kind == "email_send" else "calendar"
-            if not connection.active or connection.capability != capability or connection.provider != "google":
-                raise CoworkerError("connection_removed", "Connect the matching Google service before preparing this action.", 409)
+            spec = action_spec(request.payload.kind, connection.provider)
+            capability = spec.capability
+            if not connection.active or connection.capability != capability:
+                raise CoworkerError("connection_removed", "Connect the matching service before preparing this action.", 409)
             today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             count = db.scalar(select(func.count()).select_from(ExternalAction).where(ExternalAction.owner_id == owner, ExternalAction.created_at >= today))
             if count >= 100:
                 raise CoworkerError("preview_limit", "Your daily action-preview limit has been reached.", 429)
-            if capability == "calendar":
+            if spec.requires_future_start:
                 self._future(request.payload.start_at)
             action_id = str(uuid4())
-            expires = utcnow() + timedelta(minutes=15)
-            preview = {"version": 1, "provider": "google", "connection_id": connection.id,
-                       "account": connection.email, "subject_id": connection.subject,
-                       "payload": body["payload"], "execution": "immediately_after_approval",
-                       "attachments": [], "calendar": "primary" if capability == "calendar" else None,
-                       "guest_notifications": "all" if capability == "calendar" else None,
-                       "reminders": "none", "expires_at": iso(expires)}
+            expires = utcnow() + timedelta(seconds=spec.approval_ttl_seconds)
+            preview = {
+                "version": 2,
+                "provider": connection.provider,
+                "connection_id": connection.id,
+                "account": connection.email,
+                "subject_id": connection.subject,
+                "payload": body["payload"],
+                **spec.policy_manifest(),
+                "expires_at": iso(expires),
+            }
+            preview["approval_scope"] = build_approval_scope(preview)
             row = ExternalAction(id=action_id, owner_id=owner, connection_id=connection.id, idempotency_key=key,
                                  fingerprint=fingerprint, kind=request.payload.kind, preview=preview,
                                  preview_hash=digest(preview), expires_at=expires)
@@ -222,12 +229,13 @@ class ActionRepository:
             row = self._action(db, owner, action_id)
             if not hmac.compare_digest(row.preview_hash, preview_hash) or digest(row.preview) != row.preview_hash:
                 raise CoworkerError("approval_changed", "The preview changed. Review it again before approving.", 409)
+            spec = validate_approval_scope(row.preview)
             if row.approved_at:  # Replayed approval never dispatches a new action.
                 return action_dto(row)
             self.enabled()
             if row.state != "awaiting_approval" or aware(row.expires_at) <= utcnow() or not connection.active:
                 raise CoworkerError("approval_expired", "This preview is no longer available for approval. Prepare a new one.", 409)
-            if row.kind == "calendar_create":
+            if spec.requires_future_start:
                 from datetime import datetime
                 self._future(datetime.fromisoformat(row.preview["payload"]["start_at"]))
             today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -235,7 +243,10 @@ class ActionRepository:
             if count >= self.settings.max_daily_actions:
                 raise CoworkerError("action_limit", "Your daily email and calendar action limit has been reached.", 429)
             row.state, row.approved_at = "queued", utcnow()
-            row.expires_at = min(aware(row.expires_at), utcnow() + timedelta(minutes=5))
+            row.expires_at = min(
+                aware(row.expires_at),
+                utcnow() + timedelta(seconds=spec.execution_ttl_seconds),
+            )
             self._audit(db, owner, action_id, "action.approved")
             return action_dto(row)
 
@@ -271,8 +282,9 @@ class ActionRepository:
     def reserve_reconciliation(self, owner, action_id):
         with self.sessions.begin() as db:
             row = self._action(db, owner, action_id)
-            if row.state != "outcome_unknown" or row.kind != "calendar_create":
-                raise CoworkerError("reconciliation_unavailable", "Only uncertain calendar results can be checked with this connection.", 409)
+            spec = validate_approval_scope(row.preview)
+            if row.state != "outcome_unknown" or not spec.reconcile_supported:
+                raise CoworkerError("reconciliation_unavailable", "This uncertain action cannot be reconciled with its connected service.", 409)
             checks = db.scalars(select(AuditEvent).where(AuditEvent.owner_id == owner, AuditEvent.resource_id == action_id,
                                 AuditEvent.action == "action.reconciliation_requested").order_by(AuditEvent.created_at.desc()).limit(10)).all()
             if len(checks) >= 10 or checks and aware(checks[0].created_at) > utcnow() - timedelta(minutes=1):
@@ -302,7 +314,10 @@ class ActionRepository:
                     row.preview["connection_id"] != connection.id or row.preview["account"] != connection.email or
                     row.preview["subject_id"] != connection.subject):
                 raise CoworkerError("approval_changed", "Action approval could not be verified.", 409)
-            if row.kind == "calendar_create":
+            spec = validate_approval_scope(row.preview)
+            if connection.provider not in spec.providers or connection.capability != spec.capability:
+                raise CoworkerError("approval_changed", "Action authorization no longer matches the connection.", 409)
+            if spec.requires_future_start:
                 from datetime import datetime
                 try:
                     self._future(datetime.fromisoformat(row.preview["payload"]["start_at"]))

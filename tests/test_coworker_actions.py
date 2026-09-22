@@ -22,6 +22,7 @@ from sqlalchemy import select
 from test_coworker import container, account, signed_client
 from action_samples import enable_actions, connected, action_request, approved
 from services.coworker.action_schemas import ActionPrepare, CalendarCreate, EmailSend, OAuthFinish, OAuthStart
+from services.coworker.action_repository import digest
 from services.coworker.action_security import TokenVault
 from services.coworker.errors import CoworkerError
 from services.coworker.google_actions import GoogleFailure, GoogleActions, SEND_URL, EVENTS_URL, event_id, event_body
@@ -339,3 +340,28 @@ def test_provider_never_follows_redirect_or_accepts_arbitrary_url(container):
     assert len(requests) == 1
     with pytest.raises(ValueError):
         asyncio.run(provider.request("GET", "https://other.example.org/", token="private-access-token"))
+
+
+def test_execution_revalidates_server_owned_approval_scope(container):
+    enable_actions(container)
+    repo, owner = container.actions.repo, account(container)
+    connection = connected(repo, owner)
+    request = action_request(connection)
+    action = repo.prepare(owner, request, "scope-revalidation")
+    assert action["preview"]["approval_scope"]["payload_sha256"]
+    repo.approve(owner, action["id"], action["preview_hash"])
+
+    with repo.sessions.begin() as db:
+        row = db.get(ExternalAction, action["id"])
+        preview = dict(row.preview)
+        payload = dict(preview["payload"])
+        payload["body"] = "Changed after approval."
+        preview["payload"] = payload
+        row.preview = preview
+        # Simulate a storage-layer rewrite that also recomputed preview_hash.
+        # The independent approval_scope must still fail execution.
+        row.preview_hash = digest(preview)
+
+    with pytest.raises(CoworkerError) as error:
+        repo.claim_execution(action["id"])
+    assert error.value.code == "approval_changed"

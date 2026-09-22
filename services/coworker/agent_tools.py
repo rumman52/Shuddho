@@ -6,6 +6,7 @@ from typing import Literal, Type
 
 from pydantic import BaseModel
 
+from .action_registry import action_spec
 from .agent_schemas import ApprovedActionToolInput, ResearchToolInput, TaskToolInput
 from .config import Settings
 from .errors import CoworkerError
@@ -24,6 +25,20 @@ class ToolSpec:
     consequential: bool = False
     approval_required: bool = False
     timeout_seconds: int = 180
+
+    def __post_init__(self):
+        if self.kind == "approved_action":
+            expected_kind = {
+                "email.send": "email_send",
+                "calendar.create": "calendar_create",
+            }.get(self.name)
+            if expected_kind is None:
+                raise ValueError("Approved Agent tool must map to a registered action kind")
+            registered = action_spec(expected_kind)
+            if registered.capability != self.capability:
+                raise ValueError("Agent tool capability does not match the action registry")
+            if not self.consequential or not self.approval_required:
+                raise ValueError("Registered consequential Agent tools require explicit approval")
 
     def public(self) -> dict:
         return {
