@@ -82,7 +82,7 @@ Migration `0012` adds the provider identity to OAuth attempts. Existing OAuth at
 
 Do not enable Microsoft in production from this PR alone.
 
-Before UI exposure or cohort use:
+Before UI exposure or cohort use, complete the [controlled live Microsoft staging gate](CONTROLLED_STAGING_LIVE_MICROSOFT_ACTIONS.md).
 
 1. configure a Microsoft Entra app with the required delegated permissions;
 2. run an explicit staging OAuth test with authorized Microsoft test accounts;
