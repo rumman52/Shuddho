@@ -659,7 +659,6 @@ def policy_files(tmp_path):
             "provider_policy": file_sha256(policy),
             "deployment_change": file_sha256(deployment),
             "operator_status": file_sha256(status),
-            "provider_policy_activation": file_sha256(policy_activation),
         },
     })
     return policy, deployment, status, activation
