@@ -104,6 +104,7 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
     await run("edit", async () => {
       if (action.state === "awaiting_approval") await client.cancelAction(action.id);
       const p = action.preview.payload;
+      setProvider(action.preview.provider);
       if (p.kind === "email_send") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); }
       else { setMode("calendar"); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
       startNewAction(); setReload(x => x + 1);
