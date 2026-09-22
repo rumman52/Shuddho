@@ -2,7 +2,7 @@ from scripts.cohort_release_gate import evaluate_release, validate_rollout
 
 
 BASE_GATES = {
-    "ci", "identity", "database", "storage", "temporal", "model",
+    "ci", "identity", "database", "storage", "temporal", "model", "quality",
     "backup_restore", "deletion", "parallel_restart", "fan_in", "flag_rollback",
     "cohort_admission",
 }
