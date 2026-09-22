@@ -74,6 +74,8 @@ uv run --extra coworker python scripts/cohort_recovery_verification.py \
   --deployment-reference deploy-recovery-20260922-01 \
   --deployed-at 2026-09-22T08:00:00+00:00 \
   --status-output /secure/release/post-recovery-status.json \
+  --microsoft-rollout-activation /secure/release/post-rollback-microsoft-rollout-activation.json \
+  --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --output /secure/release/recovery-verification.json
 ```
 
@@ -139,3 +141,24 @@ It does not:
 - bypass the normal health/observability scheduler.
 
 Resume health collection from the recovered stage. Any later cohort expansion remains a separate reviewed decision.
+
+
+## Microsoft-enabled recovery
+
+Google-only recovery remains unchanged when `SHUDDHO_MICROSOFT_ACTIONS_ENABLED=false`.
+
+When the recovered backend has `SHUDDHO_MICROSOFT_ACTIONS_ENABLED=true`, recovery now fails closed unless a **fresh post-rollback Microsoft rollout activation** is supplied and recorded in the same tamper-evident release ledger.
+
+The recovery verifier requires:
+
+- the Microsoft activation status to be `microsoft_rollout_verified`;
+- the same release ID as the recovery;
+- backend global actions and Microsoft actions enabled;
+- Coworker frontend and Microsoft provider UI enabled;
+- the Microsoft deployment to occur no earlier than the recovery deployment;
+- Microsoft verification to occur after that Microsoft deployment and after rollback completion;
+- the exact rollback-completion artifact to have one matching schema-v2 `rollback_completed` ledger event;
+- the exact Microsoft activation artifact to have one matching schema-v6 `microsoft_rollout_verified` event for the current stage;
+- the schema-v6 event sequence to be later than the exact rollback-completion ledger event.
+
+The resulting recovery artifact records the exact Microsoft activation SHA-256 and the matching ledger sequence/head reference. The existing schema-v3 `recovery_verified` ledger event then hashes the complete recovery artifact, so Microsoft proof becomes part of the established recovery chain without introducing a new ledger schema.

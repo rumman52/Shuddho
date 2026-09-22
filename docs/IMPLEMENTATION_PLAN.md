@@ -209,6 +209,8 @@ The following release-evidence increment extends the existing tamper-evident con
 
 The next enforcement increment makes bounded production cohort activation consume that schema-v6 proof whenever Microsoft actions are deployed. Google-only releases remain unchanged; Microsoft-enabled scale progression fails closed unless the exact `microsoft_rollout_verified` artifact has one matching schema-v6 ledger event for the current stage, and the resulting bounded-scale activation artifact records that Microsoft proof SHA-256.
 
+The following recovery-safety increment applies the same invariant after global rollback: if Microsoft actions are re-enabled during recovery, recovery fails closed unless a fresh post-rollback `microsoft_rollout_verified` artifact is ledgered as schema v6 after the exact schema-v2 rollback-completion event. The schema-v3 recovery artifact binds that Microsoft proof by SHA-256.
+
 Model-selected external actions and broader connector expansion remain later increments.
 
 ### Consequential actions
