@@ -180,6 +180,74 @@ def validate_provider_policy_activation(
     return value
 
 
+
+def validate_microsoft_rollout_activation(
+    path: Path | None,
+    ledger_path: Path,
+    decision: dict,
+    settings: Settings,
+) -> dict | None:
+    if not settings.microsoft_actions_enabled:
+        return None
+    if path is None:
+        raise ScaleActivationError(
+            "Microsoft actions are enabled but --microsoft-rollout-activation is required."
+        )
+
+    value = load_json(path, "Microsoft rollout activation")
+    if value.get("status") != "microsoft_rollout_verified":
+        raise ScaleActivationError(
+            "Microsoft rollout activation has not been verified."
+        )
+    if value.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError(
+            "Microsoft rollout activation release_id does not match."
+        )
+    backend = value.get("backend")
+    frontend = value.get("frontend")
+    if (
+        not isinstance(backend, dict)
+        or backend.get("actions_enabled") is not True
+        or backend.get("microsoft_actions_enabled") is not True
+        or not isinstance(frontend, dict)
+        or frontend.get("coworker_enabled") is not True
+        or frontend.get("microsoft_actions_enabled") is not True
+    ):
+        raise ScaleActivationError(
+            "Microsoft rollout activation does not prove enabled backend/frontend controls."
+        )
+
+    try:
+        entries = read_entries(ledger_path)
+        state = verify_entries(entries, ledger_key())
+    except Exception as error:
+        raise ScaleActivationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    if state.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError(
+            "Release ledger release_id does not match the scale decision."
+        )
+
+    activation_hash = ledger_file_sha256(path)
+    matches = [
+        item
+        for item in entries
+        if item.get("schema_version") == 6
+        and item.get("event_type") == "microsoft_rollout_verified"
+        and item.get("current_stage") == decision["current_stage"]
+        and item.get("next_stage") is None
+        and item.get("artifact_sha256", {}).get("rollout_activation")
+        == activation_hash
+    ]
+    if len(matches) != 1:
+        raise ScaleActivationError(
+            "Microsoft-enabled expansion requires exactly one matching "
+            "schema-v6 microsoft_rollout_verified ledger event."
+        )
+    return value
+
+
 def require_deployed_configuration(settings: Settings, decision: dict, allowed_id: str, denied_id: str) -> None:
     if not settings.cohort_enforced:
         raise ScaleActivationError("SHUDDHO_COWORKER_COHORT_ENFORCED must remain true.")
@@ -207,8 +275,26 @@ def build_evidence(
     deployment_change_path: Path,
     operator_status_path: Path,
     provider_policy_activation_path: Path,
+    microsoft_rollout_activation_path: Path | None = None,
     now: datetime,
 ) -> dict:
+    artifact_sha256 = {
+        "scale_decision": sha256_file(scale_decision_path),
+        "deployment_change": sha256_file(deployment_change_path),
+        "operator_status": sha256_file(operator_status_path),
+        "provider_policy_activation": sha256_file(
+            provider_policy_activation_path
+        ),
+    }
+    if settings.microsoft_actions_enabled:
+        if microsoft_rollout_activation_path is None:
+            raise ScaleActivationError(
+                "Microsoft rollout activation evidence is required when Microsoft actions are enabled."
+            )
+        artifact_sha256["microsoft_rollout_activation"] = sha256_file(
+            microsoft_rollout_activation_path
+        )
+
     return {
         "schema_version": 1,
         "status": "bounded_expansion_verified",
@@ -223,14 +309,7 @@ def build_evidence(
         "change_reference": deployment["change_reference"],
         "deployment_deployed_at": deployment["deployed_at"],
         "operator_status_generated_at": operator_status["generated_at"],
-        "artifact_sha256": {
-            "scale_decision": sha256_file(scale_decision_path),
-            "deployment_change": sha256_file(deployment_change_path),
-            "operator_status": sha256_file(operator_status_path),
-            "provider_policy_activation": sha256_file(
-                provider_policy_activation_path
-            ),
-        },
+        "artifact_sha256": artifact_sha256,
     }
 
 
@@ -242,6 +321,7 @@ def main() -> None:
     parser.add_argument("--deployment-change", type=Path, required=True)
     parser.add_argument("--operator-status", type=Path, required=True)
     parser.add_argument("--provider-policy-activation", type=Path, required=True)
+    parser.add_argument("--microsoft-rollout-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--freshness-minutes", type=int, default=30)
     parser.add_argument("--output", type=Path, required=True)
@@ -274,6 +354,12 @@ def main() -> None:
         )
 
         settings = Settings.from_env()
+        validate_microsoft_rollout_activation(
+            args.microsoft_rollout_activation,
+            args.release_ledger,
+            decision,
+            settings,
+        )
         base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
         allowed_token = env_secret("SHUDDHO_SCALE_VERIFY_TOKEN_ALLOWED")
         denied_token = env_secret("SHUDDHO_SCALE_VERIFY_TOKEN_DENIED")
@@ -319,6 +405,7 @@ def main() -> None:
             deployment_change_path=args.deployment_change,
             operator_status_path=args.operator_status,
             provider_policy_activation_path=args.provider_policy_activation,
+            microsoft_rollout_activation_path=args.microsoft_rollout_activation,
             now=now,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
