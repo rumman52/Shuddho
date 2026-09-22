@@ -38,6 +38,9 @@ class Settings:
     agent_dependency_graph_enabled: bool = False
     agent_parallel_execution_enabled: bool = False
     agent_outcome_replan_enabled: bool = False
+    cohort_enforced: bool = False
+    cohort_account_ids: frozenset[str] = field(default_factory=frozenset)
+    cohort_max_users: int = 25
     google_client_id: str = ""
     google_client_secret: str = field(default="", repr=False)
     google_redirect_uri: str = ""
@@ -100,6 +103,13 @@ class Settings:
             agent_dependency_graph_enabled=os.getenv("SHUDDHO_AGENT_DEPENDENCY_GRAPH_ENABLED", "false").lower() == "true",
             agent_parallel_execution_enabled=os.getenv("SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED", "false").lower() == "true",
             agent_outcome_replan_enabled=os.getenv("SHUDDHO_AGENT_OUTCOME_REPLAN_ENABLED", "false").lower() == "true",
+            cohort_enforced=os.getenv("SHUDDHO_COWORKER_COHORT_ENFORCED", "false").lower() == "true",
+            cohort_account_ids=frozenset(
+                value.strip().lower()
+                for value in os.getenv("SHUDDHO_COWORKER_COHORT_ACCOUNT_IDS", "").split(",")
+                if value.strip()
+            ),
+            cohort_max_users=int(os.getenv("SHUDDHO_COWORKER_COHORT_MAX_USERS", "25")),
             google_client_id=os.getenv("SHUDDHO_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("SHUDDHO_GOOGLE_CLIENT_SECRET", ""),
             google_redirect_uri=os.getenv("SHUDDHO_GOOGLE_REDIRECT_URI", ""),
@@ -153,10 +163,18 @@ class Settings:
                self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens,
                self.max_agent_handoff_bytes, self.max_agent_handoff_sources,
-               self.max_agent_parallel_steps) < 1:
+               self.max_agent_parallel_steps, self.cohort_max_users) < 1:
             raise ValueError("Coworker limits must be positive")
         if self.max_agent_parallel_steps > 4:
             raise ValueError("SHUDDHO_AGENT_MAX_PARALLEL_STEPS must be between 1 and 4")
+        if self.cohort_enforced:
+            if not self.cohort_account_ids:
+                raise ValueError("Cohort enforcement requires SHUDDHO_COWORKER_COHORT_ACCOUNT_IDS")
+            if len(self.cohort_account_ids) > self.cohort_max_users:
+                raise ValueError("Configured Coworker cohort exceeds SHUDDHO_COWORKER_COHORT_MAX_USERS")
+            if any(len(value) != 64 or any(char not in "0123456789abcdef" for char in value)
+                   for value in self.cohort_account_ids):
+                raise ValueError("Coworker cohort account IDs must be 64-character lowercase SHA-256 hex values")
         if self.storage_backend not in {"s3", "local"}:
             raise ValueError("Unsupported coworker storage backend")
         if self.environment != "development":
