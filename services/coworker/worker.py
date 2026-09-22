@@ -22,6 +22,7 @@ from .runner import DocumentRunner
 from .workflow import AgentWorkflow, AgentWorkflowV2, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 logger = logging.getLogger("shuddho.coworker")
+TRANSIENT_CAPACITY_ERRORS = {"provider_capacity_busy", "workspace_provider_busy"}
 
 
 class ActionActivities:
@@ -80,8 +81,13 @@ class Activities:
                 if task["state"] not in {"completed", "needs_input"}:
                     await asyncio.to_thread(self.runner.repo.worker_task, task_id)
         except CoworkerError as error:
-            raise ApplicationError(error.message, type=error.code,
-                                   non_retryable=not isinstance(error, DraftFailure) or not error.retryable) from None
+            retryable = (
+                error.code in TRANSIENT_CAPACITY_ERRORS
+                or isinstance(error, DraftFailure) and error.retryable
+            )
+            raise ApplicationError(
+                error.message, type=error.code, non_retryable=not retryable
+            ) from None
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -111,7 +117,10 @@ class AgentActivities:
         try:
             return await self.runtime.plan_for_worker(run_id)
         except CoworkerError as error:
-            raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
+            raise ApplicationError(
+                error.message, type=error.code,
+                non_retryable=error.code not in TRANSIENT_CAPACITY_ERRORS,
+            ) from None
         except Exception:
             logger.error("Agent planning failed run=%s", run_id)
             raise ApplicationError("Agent planning is temporarily unavailable.", type="agent_planning_unavailable") from None
@@ -123,7 +132,10 @@ class AgentActivities:
                 value["run_id"], int(value["from_ordinal"]), str(value.get("reason", "capability_changed"))
             )
         except CoworkerError as error:
-            raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
+            raise ApplicationError(
+                error.message, type=error.code,
+                non_retryable=error.code not in TRANSIENT_CAPACITY_ERRORS,
+            ) from None
         except Exception:
             logger.error("Agent replanning failed run=%s", value.get("run_id"))
             raise ApplicationError("Agent replanning is temporarily unavailable.", type="agent_replanning_unavailable") from None
@@ -151,8 +163,13 @@ class AgentActivities:
                 if done:
                     return await operation
         except CoworkerError as error:
-            raise ApplicationError(error.message, type=error.code,
-                                   non_retryable=not isinstance(error, DraftFailure) or not error.retryable) from None
+            retryable = (
+                error.code in TRANSIENT_CAPACITY_ERRORS
+                or isinstance(error, DraftFailure) and error.retryable
+            )
+            raise ApplicationError(
+                error.message, type=error.code, non_retryable=not retryable
+            ) from None
         except asyncio.CancelledError:
             raise
         except Exception:
