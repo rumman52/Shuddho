@@ -178,6 +178,28 @@ def build_approval_scope(preview: dict) -> dict:
 def validate_approval_scope(preview: dict) -> ActionSpec:
     scope = preview.get("approval_scope")
     if not isinstance(scope, dict):
+        # Backward compatibility only for previews persisted before this
+        # contract existed. Their immutable preview_hash still binds all v1
+        # fields. New v2+ previews must always carry approval_scope.
+        if preview.get("version") == 1:
+            payload = preview.get("payload")
+            provider = preview.get("provider")
+            if not isinstance(payload, dict) or not isinstance(provider, str):
+                raise CoworkerError(
+                    "approval_changed",
+                    "The legacy action approval could not be verified.",
+                    409,
+                )
+            spec = action_spec(str(payload.get("kind", "")), provider)
+            manifest = spec.policy_manifest()
+            for key, expected in manifest.items():
+                if preview.get(key) != expected:
+                    raise CoworkerError(
+                        "approval_changed",
+                        "The legacy action policy changed.",
+                        409,
+                    )
+            return spec
         raise CoworkerError(
             "approval_changed",
             "The action approval scope is missing.",
