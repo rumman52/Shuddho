@@ -147,7 +147,9 @@ PR #123/#124 add [Agent Evaluation and Production Staging Gates](PART_3_AGENT_EV
 
 PR #126 adds [live infrastructure probes](CONTROLLED_STAGING_LIVE_PROBES.md): non-destructive validation for managed identity JWKS, TLS PostgreSQL + migrations, private object storage round trips, Temporal namespace connectivity, and optional live DeepSeek planner evaluation.
 
-The next staging increment adds the [authenticated API exercise](CONTROLLED_STAGING_API_EXERCISE.md): two-account owner-isolation checks across workspace/document/task/event/cancel boundaries plus an optional live artifact authorization/download path that can promote identity and storage evidence from partial to passed. Temporal restart/replay, backup/restore, deletion, provider actions and rollback remain separate gates. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #127 adds the [authenticated API exercise](CONTROLLED_STAGING_API_EXERCISE.md): two-account owner-isolation checks across workspace/document/task/event/cancel boundaries plus an optional live artifact authorization/download path that can promote identity and storage evidence from partial to passed.
+
+The next reliability increment adds the [Temporal recovery exercise](CONTROLLED_STAGING_TEMPORAL_RECOVERY.md): a real AgentWorkflow v2 two-branch fan-out/fan-in run with a deliberate staging worker replacement, exact child-task idempotency checks, persisted dependency timing checks, and fail-closed promotion of temporal, parallel_restart and fan_in evidence. Backup/restore, deletion, provider actions and v2→v1 rollback remain separate gates. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
