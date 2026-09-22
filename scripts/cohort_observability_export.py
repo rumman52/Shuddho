@@ -96,6 +96,7 @@ def render_openmetrics(result: dict) -> str:
     add(sample("shuddho_coworker_provider_active_leases", "Active shared provider-capacity leases across Coworker workers.", provider.get("active_leases", 0)))
     add(sample("shuddho_coworker_provider_reserved_lease_tokens", "Tokens reserved by active shared provider-capacity leases.", provider.get("reserved_lease_tokens", 0)))
     add(sample("shuddho_coworker_provider_oldest_lease_age_seconds", "Age in seconds of the oldest active provider-capacity lease.", provider.get("oldest_lease_age_seconds", 0)))
+    add(sample("shuddho_coworker_provider_daily_allocated_tokens", "Conservatively allocated provider tokens for the current UTC day across all workspaces.", provider.get("daily_allocated_tokens", 0)))
     add(sample("shuddho_coworker_cohort_model_reserved_attempts", "In-flight reserved model attempts in the current observation window.", provider["reserved_attempts"]))
 
     agents = snapshot["agents"]
