@@ -1,0 +1,43 @@
+{
+  "release_id": "coworker-cohort-001",
+  "max_gap_minutes": 10,
+  "stale_after_minutes": 10,
+  "stages": [
+    {
+      "name": "canary-5",
+      "min_members": 5,
+      "max_users": 5,
+      "min_healthy_windows": 6,
+      "min_observation_minutes": 25,
+      "min_task_samples": 10,
+      "min_provider_samples": 10,
+      "min_agent_samples": 3,
+      "min_research_samples": 0,
+      "min_action_samples": 0
+    },
+    {
+      "name": "canary-10",
+      "min_members": 10,
+      "max_users": 10,
+      "min_healthy_windows": 12,
+      "min_observation_minutes": 55,
+      "min_task_samples": 25,
+      "min_provider_samples": 25,
+      "min_agent_samples": 8,
+      "min_research_samples": 0,
+      "min_action_samples": 0
+    },
+    {
+      "name": "cohort-25",
+      "min_members": 25,
+      "max_users": 25,
+      "min_healthy_windows": 24,
+      "min_observation_minutes": 115,
+      "min_task_samples": 60,
+      "min_provider_samples": 60,
+      "min_agent_samples": 20,
+      "min_research_samples": 0,
+      "min_action_samples": 0
+    }
+  ]
+}
