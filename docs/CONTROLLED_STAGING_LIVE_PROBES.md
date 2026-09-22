@@ -46,6 +46,7 @@ After the live probe succeeds, complete and record:
 5. retention/deletion exercise covering source cleanup, task/account erasure and orphan object cleanup;
 6. v2 parallel fan-in/no-duplicate validation and flag rollback to v1;
 7. live Tavily evidence checks if research will be enabled;
-8. live Google approval/execution/receipt checks if actions will be enabled.
+8. live Google approval/execution/receipt checks if Google actions will be enabled;
+9. live Microsoft Graph approval/execution/receipt checks if Microsoft actions will be enabled.
 
-Only after those evidence records are updated to `passed` should `scripts/staging_gate.py` return `GO`.
+Only after the requested evidence records are updated to `passed` should `scripts/staging_gate.py` return `GO`. Microsoft uses its own `--require-microsoft-actions` gate so Google evidence cannot implicitly authorize Microsoft rollout.
