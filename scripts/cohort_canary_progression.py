@@ -6,6 +6,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.cohort_release_gate import load_rollout
+from scripts.cohort_release_ledger import (
+    file_sha256,
+    ledger_key,
+    read_entries,
+    verify_entries,
+)
 
 
 class CanaryProgressionError(RuntimeError):
@@ -115,6 +121,7 @@ def evaluate_progression(
     *,
     current_stage: str,
     now: datetime | None = None,
+    epoch_start: datetime | None = None,
 ) -> dict:
     if rollout.get("release_id") != plan["release_id"]:
         raise CanaryProgressionError("Rollout manifest and canary plan release_id do not match.")
@@ -126,6 +133,23 @@ def evaluate_progression(
         raise CanaryProgressionError("Canary plan exceeds the approved rollout manifest cohort maximum.")
 
     release_id = rollout["release_id"]
+    if epoch_start is not None:
+        epoch_start = epoch_start.astimezone(timezone.utc)
+        history = [
+            item for item in history
+            if parse_time(item["snapshot"]["generated_at"]) > epoch_start
+        ]
+        if not history:
+            return {
+                "decision": "HOLD",
+                "release_id": release_id,
+                "current_stage": current_stage,
+                "next_stage": plan["stages"][stage_index + 1]["name"] if stage_index + 1 < len(plan["stages"]) else None,
+                "reasons": ["no_post_recovery_health"],
+                "summary": {"healthy_windows": 0, "epoch_start": epoch_start.isoformat()},
+                "rollback": None,
+            }
+
     for item in history:
         if item.get("release_id") != release_id:
             raise CanaryProgressionError("Health history contains a different release_id.")
@@ -252,20 +276,88 @@ def evaluate_progression(
     }
 
 
+def load_recovery_epoch(
+    recovery_path: Path,
+    ledger_path: Path,
+    *,
+    release_id: str,
+    current_stage: str,
+) -> datetime:
+    try:
+        recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise CanaryProgressionError(
+            f"Could not read recovery verification: {type(error).__name__}"
+        ) from None
+    if not isinstance(recovery, dict):
+        raise CanaryProgressionError("Recovery verification must contain a JSON object.")
+    if recovery.get("status") != "recovery_verified":
+        raise CanaryProgressionError("Recovery verification has not passed.")
+    if recovery.get("release_id") != release_id:
+        raise CanaryProgressionError("Recovery verification release_id does not match.")
+    if recovery.get("current_stage") != current_stage:
+        raise CanaryProgressionError("Recovery verification stage does not match current_stage.")
+    verified_at = recovery.get("verified_at")
+    if not isinstance(verified_at, str):
+        raise CanaryProgressionError("Recovery verification has no verified_at timestamp.")
+    epoch = parse_time(verified_at)
+
+    entries = read_entries(ledger_path)
+    try:
+        state = verify_entries(entries, ledger_key())
+    except Exception as error:
+        raise CanaryProgressionError(f"Release ledger verification failed: {error}") from None
+    if state.get("release_id") != release_id:
+        raise CanaryProgressionError("Release ledger release_id does not match recovery release.")
+    recovery_entries = [
+        item for item in entries
+        if item.get("event_type") == "recovery_verified"
+    ]
+    if not recovery_entries:
+        raise CanaryProgressionError("Release ledger has no recovery_verified entry.")
+    entry = recovery_entries[-1]
+    if entry.get("current_stage") != current_stage:
+        raise CanaryProgressionError("Ledger recovery stage does not match current_stage.")
+    artifacts = entry.get("artifact_sha256")
+    if not isinstance(artifacts, dict) or artifacts.get("recovery_verification") != file_sha256(recovery_path):
+        raise CanaryProgressionError(
+            "Release ledger does not bind this recovery-verification artifact."
+        )
+    return epoch
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate sustained health before controlled Coworker cohort expansion.")
     parser.add_argument("--history-dir", type=Path, required=True)
     parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--current-stage", required=True)
+    parser.add_argument("--recovery-verification", type=Path)
+    parser.add_argument("--release-ledger", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
+    rollout = load_rollout(args.rollout)
+    plan = load_plan(args.plan)
+    if bool(args.recovery_verification) != bool(args.release_ledger):
+        raise SystemExit("--recovery-verification and --release-ledger must be provided together.")
+    epoch_start = None
+    if args.recovery_verification:
+        try:
+            epoch_start = load_recovery_epoch(
+                args.recovery_verification,
+                args.release_ledger,
+                release_id=rollout.get("release_id"),
+                current_stage=args.current_stage,
+            )
+        except CanaryProgressionError as error:
+            raise SystemExit(str(error)) from None
     result = evaluate_progression(
         load_history(args.history_dir),
-        load_rollout(args.rollout),
-        load_plan(args.plan),
+        rollout,
+        plan,
         current_stage=args.current_stage,
+        epoch_start=epoch_start,
     )
     encoded = json.dumps(result, indent=2)
     if args.output:
