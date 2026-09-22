@@ -77,6 +77,7 @@ class Settings:
     provider_max_concurrent_per_workspace: int = 2
     provider_max_reserved_tokens: int = 800000
     provider_max_reserved_tokens_per_workspace: int = 200000
+    provider_daily_token_budget: int = 5000000
     provider_lease_seconds: int = 120
 
     @classmethod
@@ -144,6 +145,7 @@ class Settings:
             provider_max_concurrent_per_workspace=int(os.getenv("SHUDDHO_PROVIDER_MAX_CONCURRENT_PER_WORKSPACE", "2")),
             provider_max_reserved_tokens=int(os.getenv("SHUDDHO_PROVIDER_MAX_RESERVED_TOKENS", "800000")),
             provider_max_reserved_tokens_per_workspace=int(os.getenv("SHUDDHO_PROVIDER_MAX_RESERVED_TOKENS_PER_WORKSPACE", "200000")),
+            provider_daily_token_budget=int(os.getenv("SHUDDHO_PROVIDER_DAILY_TOKEN_BUDGET", "5000000")),
             provider_lease_seconds=int(os.getenv("SHUDDHO_PROVIDER_LEASE_SECONDS", "120")),
         )
         value.validate()
@@ -176,7 +178,7 @@ class Settings:
                self.max_agent_parallel_steps, self.cohort_max_users,
                self.provider_max_concurrent_calls, self.provider_max_concurrent_per_workspace,
                self.provider_max_reserved_tokens, self.provider_max_reserved_tokens_per_workspace,
-               self.provider_lease_seconds) < 1:
+               self.provider_daily_token_budget, self.provider_lease_seconds) < 1:
             raise ValueError("Coworker limits must be positive")
         if self.provider_max_concurrent_per_workspace > self.provider_max_concurrent_calls:
             raise ValueError("Per-workspace provider concurrency cannot exceed global concurrency")
