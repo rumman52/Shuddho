@@ -198,7 +198,7 @@ class ActionRepository:
             action_id = str(uuid4())
             expires = utcnow() + timedelta(seconds=spec.approval_ttl_seconds)
             preview = {
-                "version": 1,
+                "version": 2,
                 "provider": connection.provider,
                 "connection_id": connection.id,
                 "account": connection.email,
