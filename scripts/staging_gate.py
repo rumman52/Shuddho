@@ -11,6 +11,7 @@ REQUIRED_GATES = {
     "storage": "Private object storage is configured and owner-scoped download checks pass.",
     "temporal": "Production Temporal is reachable and worker restart/replay has been verified.",
     "model": "A live DeepSeek call and planner evaluation have passed in staging.",
+    "quality": "Curated multilingual live Coworker quality/fidelity evaluation passed with recorded latency and token evidence.",
     "backup_restore": "Database/object backup and restore has been exercised successfully.",
     "deletion": "Retention/deletion operations have been verified against owned data.",
     "parallel_restart": "Two-branch AgentWorkflow v2 restart completes without duplicate child tasks or artifacts.",
