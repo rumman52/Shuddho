@@ -7,6 +7,8 @@ import pytest
 from scripts.cohort_release_ledger import (
     ReleaseLedgerError,
     append_event,
+    append_rollback_event,
+    file_sha256,
     read_entries,
     verify_entries,
 )
@@ -181,4 +183,148 @@ def test_one_ledger_cannot_mix_release_ids(tmp_path):
             progression_decision=files[2],
             operator_status=files[3],
             created_at="2026-09-22T07:00:00+00:00",
+        )
+
+
+def rollback_files(tmp_path):
+    rollout = write_json(tmp_path / "rollback-rollout.json", {
+        "release_id": "coworker-cohort-001",
+        "cohort": {"max_users": 25},
+    })
+    plan = write_json(tmp_path / "rollback-plan.json", {
+        "release_id": "coworker-cohort-001",
+        "stages": [
+            {"name": "canary-5"},
+            {"name": "canary-10"},
+            {"name": "cohort-25"},
+        ],
+    })
+    progression = write_json(tmp_path / "rollback-progression.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "STOP_ROLLOUT",
+        "current_stage": "canary-5",
+        "next_stage": None,
+    })
+    stop_status = write_json(tmp_path / "rollback-stop-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "STOP_ROLLOUT",
+    })
+    post_status = write_json(tmp_path / "rollback-post-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "breaches": [],
+    })
+    completion = write_json(tmp_path / "rollback-completion.json", {
+        "schema_version": 1,
+        "release_id": "coworker-cohort-001",
+        "status": "rollback_completed",
+        "mode": "global",
+        "artifact_sha256": {
+            "rollout_manifest": file_sha256(rollout),
+            "operator_status": file_sha256(post_status),
+        },
+    })
+    return rollout, plan, progression, stop_status, post_status, completion
+
+
+def test_schema_v2_rollback_completion_chains_after_v1_stop(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    rollout, plan, progression, stop_status, post_status, completion = rollback_files(tmp_path)
+
+    stop = append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+        created_at="2026-09-22T07:00:00+00:00",
+    )
+    completed = append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=post_status,
+        rollback_completion=completion,
+        created_at="2026-09-22T07:20:00+00:00",
+    )
+
+    assert stop["schema_version"] == 1
+    assert completed["schema_version"] == 2
+    assert completed["event_type"] == "rollback_completed"
+    assert completed["previous_entry_hash"] == stop["entry_hash"]
+    assert completed["artifact_sha256"]["rollback_completion"] == file_sha256(completion)
+
+    result = verify_entries(read_entries(ledger), KEY)
+    assert result["entries"] == 2
+    assert result["head_entry_hash"] == completed["entry_hash"]
+    assert result["verified"] is True
+
+
+def test_rollback_completion_requires_prior_stop(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    rollout, plan, progression, _stop_status, post_status, completion = rollback_files(tmp_path)
+    with pytest.raises(ReleaseLedgerError, match="earlier stop_rollout"):
+        append_rollback_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="incident-123",
+            current_stage="canary-5",
+            rollout=rollout,
+            canary_plan=plan,
+            progression_decision=progression,
+            operator_status=post_status,
+            rollback_completion=completion,
+        )
+
+
+def test_rollback_completion_must_bind_same_stop_artifacts(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    rollout, plan, progression, stop_status, post_status, completion = rollback_files(tmp_path)
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+    )
+    plan.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "stages": [{"name": "canary-5"}, {"name": "cohort-25"}],
+    }), encoding="utf-8")
+
+    with pytest.raises(ReleaseLedgerError, match="same canary_plan"):
+        append_rollback_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="incident-123",
+            current_stage="canary-5",
+            rollout=rollout,
+            canary_plan=plan,
+            progression_decision=progression,
+            operator_status=post_status,
+            rollback_completion=completion,
         )
