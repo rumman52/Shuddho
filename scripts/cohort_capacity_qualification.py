@@ -259,7 +259,7 @@ def validate_final_stage(progression: dict, plan: dict, release_id: str) -> None
     )
     if not (original_final_canary or dynamic_requalification):
         raise CapacityQualificationError(
-            "Capacity qualification requires either a fully earned final canary stage "
+            "Capacity qualification requires final_stage_reached for the original canary "
             "or an eligible post-scale observation epoch."
         )
 
