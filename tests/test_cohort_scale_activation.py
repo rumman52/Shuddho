@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+import json
 
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for scale activation tests")
 pytest.importorskip("jwt", reason="Install the coworker extra for scale activation tests")
@@ -13,6 +14,7 @@ from scripts.cohort_scale_activation import (
     validate_deployment_change,
     validate_operator_status,
     validate_provider_policy_activation,
+    validate_microsoft_rollout_activation,
     validate_scale_decision,
 )
 
@@ -53,7 +55,7 @@ def operator():
     }
 
 
-def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"):
+def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False):
     ids = {allowed}
     ids.update(f"member-{index}" for index in range(max(0, members - 1)))
     if denied in ids:
@@ -62,6 +64,7 @@ def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"
         cohort_enforced=enforced,
         cohort_account_ids=frozenset(ids),
         cohort_max_users=max_users,
+        microsoft_actions_enabled=microsoft,
     )
 
 
@@ -256,3 +259,203 @@ def test_scale_activation_requires_ledgered_provider_policy(monkeypatch, tmp_pat
         decision(),
     )
     assert value["status"] == "provider_policy_verified"
+
+
+def microsoft_activation_file(tmp_path):
+    path = tmp_path / "microsoft-rollout-activation.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "microsoft_rollout_verified",
+        "release_id": "coworker-cohort-001",
+        "verified_at": "2026-09-22T12:00:00+00:00",
+        "change_reference": "microsoft-change-1",
+        "deployed_at": "2026-09-22T11:50:00+00:00",
+        "frontend_base_url": "https://staging.example.com",
+        "frontend_source_revision": "abcdef1234567",
+        "backend": {
+            "actions_enabled": True,
+            "microsoft_actions_enabled": True,
+        },
+        "frontend": {
+            "coworker_enabled": True,
+            "microsoft_actions_enabled": True,
+        },
+        "artifact_sha256": {
+            "staging_evidence": "a" * 64,
+            "operator_status": "b" * 64,
+        },
+    }), encoding="utf-8")
+    return path
+
+
+def seed_microsoft_rollout_ledger(monkeypatch, tmp_path, activation_path):
+    from scripts.cohort_release_ledger import (
+        append_event,
+        append_microsoft_rollout_event,
+        file_sha256,
+    )
+    monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", "k" * 32)
+    ledger = tmp_path / "microsoft-ledger.jsonl"
+
+    rollout = tmp_path / "microsoft-base-rollout.json"
+    plan_path = tmp_path / "microsoft-plan.json"
+    progression = tmp_path / "microsoft-progression.json"
+    base_status = tmp_path / "microsoft-base-status.json"
+    rollout.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "cohort": {"max_users": 25},
+    }), encoding="utf-8")
+    plan_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "stages": [{"name": "cohort-25"}],
+    }), encoding="utf-8")
+    progression.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "HOLD",
+        "current_stage": "cohort-25",
+        "next_stage": None,
+    }), encoding="utf-8")
+    base_status.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+    }), encoding="utf-8")
+    append_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        event_type="hold",
+        actor_reference="oncall",
+        change_reference="cohort-25-hold",
+        current_stage="cohort-25",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan_path,
+        progression_decision=progression,
+        operator_status=base_status,
+    )
+
+    staging = tmp_path / "microsoft-staging.json"
+    deployment_path = tmp_path / "microsoft-deploy.json"
+    status_path = tmp_path / "microsoft-status.json"
+    staging.write_text(json.dumps({
+        "microsoft_actions": {
+            "status": "passed",
+            "evidence": "live Microsoft actions passed",
+            "verified_at": "2026-09-22T11:40:00+00:00",
+        },
+    }), encoding="utf-8")
+    deployment_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "change_reference": "microsoft-change-1",
+        "deployed_at": "2026-09-22T11:50:00+00:00",
+        "frontend_base_url": "https://staging.example.com",
+        "frontend_source_revision": "abcdef1234567",
+        "staging_evidence_sha256": file_sha256(staging),
+    }), encoding="utf-8")
+    status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-22T11:55:00+00:00",
+        "breaches": [],
+    }), encoding="utf-8")
+    value = json.loads(activation_path.read_text(encoding="utf-8"))
+    value["artifact_sha256"] = {
+        "staging_evidence": file_sha256(staging),
+        "operator_status": file_sha256(status_path),
+    }
+    activation_path.write_text(json.dumps(value), encoding="utf-8")
+
+    append_microsoft_rollout_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall",
+        change_reference="microsoft-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        deployment_change=deployment_path,
+        operator_status=status_path,
+        rollout_activation=activation_path,
+    )
+    return ledger
+
+
+def test_google_only_scale_activation_does_not_require_microsoft_proof(tmp_path):
+    missing = tmp_path / "missing.json"
+    assert validate_microsoft_rollout_activation(
+        missing,
+        tmp_path / "missing-ledger.jsonl",
+        decision(),
+        settings(microsoft=False),
+    ) is None
+
+
+def test_microsoft_enabled_scale_activation_requires_argument(tmp_path):
+    with pytest.raises(ScaleActivationError, match="required"):
+        validate_microsoft_rollout_activation(
+            None,
+            tmp_path / "ledger.jsonl",
+            decision(),
+            settings(microsoft=True),
+        )
+
+
+def test_microsoft_enabled_scale_activation_requires_matching_schema_v6(monkeypatch, tmp_path):
+    activation = microsoft_activation_file(tmp_path)
+    ledger = seed_microsoft_rollout_ledger(monkeypatch, tmp_path, activation)
+    value = validate_microsoft_rollout_activation(
+        activation,
+        ledger,
+        decision(),
+        settings(microsoft=True),
+    )
+    assert value["status"] == "microsoft_rollout_verified"
+
+    changed = json.loads(activation.read_text(encoding="utf-8"))
+    changed["verified_at"] = "2026-09-22T12:01:00+00:00"
+    activation.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ScaleActivationError, match="schema-v6"):
+        validate_microsoft_rollout_activation(
+            activation,
+            ledger,
+            decision(),
+            settings(microsoft=True),
+        )
+
+
+def test_activation_evidence_binds_microsoft_proof_only_when_enabled(tmp_path):
+    scale_path = tmp_path / "scale.json"
+    deploy_path = tmp_path / "deploy.json"
+    status_path = tmp_path / "status.json"
+    policy_path = tmp_path / "policy.json"
+    microsoft_path = tmp_path / "microsoft.json"
+    for path in (scale_path, deploy_path, status_path, policy_path, microsoft_path):
+        path.write_text("{}", encoding="utf-8")
+
+    google_only = build_evidence(
+        decision=decision(),
+        deployment=deployment(),
+        operator_status=operator(),
+        settings=settings(microsoft=False),
+        scale_decision_path=scale_path,
+        deployment_change_path=deploy_path,
+        operator_status_path=status_path,
+        provider_policy_activation_path=policy_path,
+        microsoft_rollout_activation_path=None,
+        now=NOW,
+    )
+    assert "microsoft_rollout_activation" not in google_only["artifact_sha256"]
+
+    microsoft = build_evidence(
+        decision=decision(),
+        deployment=deployment(),
+        operator_status=operator(),
+        settings=settings(microsoft=True),
+        scale_decision_path=scale_path,
+        deployment_change_path=deploy_path,
+        operator_status_path=status_path,
+        provider_policy_activation_path=policy_path,
+        microsoft_rollout_activation_path=microsoft_path,
+        now=NOW,
+    )
+    assert "microsoft_rollout_activation" in microsoft["artifact_sha256"]
