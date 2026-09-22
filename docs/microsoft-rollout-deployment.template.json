@@ -1,5 +1,5 @@
 {
-  "release_id": "coworker-microsoft-rollout-001",
+  "release_id": "coworker-cohort-001",
   "change_reference": "change-microsoft-rollout-001",
   "deployed_at": "2026-09-22T16:30:00+00:00",
   "frontend_base_url": "https://staging.example.com",

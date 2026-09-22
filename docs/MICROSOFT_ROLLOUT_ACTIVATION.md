@@ -143,3 +143,29 @@ live Microsoft provider proof
 → deployed frontend/backend proof
 → rollout activation verified
 ```
+
+
+## Record the verified rollout in the release ledger
+
+A standalone `microsoft_rollout_verified` JSON file is necessary but not sufficient for production release evidence.
+
+Use the **same `release_id` as the active controlled-cohort release ledger** in the Microsoft deployment record, operator status, and activation artifact. After the activation verifier passes, append schema-v6 evidence:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-microsoft-rollout \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-microsoft-rollout-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.microsoft-actions.json \
+  --deployment-change /secure/release/microsoft-rollout-deployment.json \
+  --operator-status /secure/release/post-microsoft-rollout-status.json \
+  --rollout-activation /secure/release/microsoft-rollout-activation.json
+```
+
+The schema-v6 event is accepted only when the existing verified ledger has already reached `current_stage`. It SHA-256 binds the exact Microsoft live-staging evidence, deployment record, post-deploy operator status, and rollout activation artifact. Recording the exact same activation twice is rejected.
+
+After the append, verify the full ledger and copy the returned `head_entry_hash` to the independent change/deployment record used as the external anchor.
+
+This event records release evidence only. It does not enable Microsoft, change cohort membership, grant provider permissions, or authorize a later external action.

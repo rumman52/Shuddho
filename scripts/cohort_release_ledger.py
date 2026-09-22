@@ -14,6 +14,7 @@ ROLLBACK_SCHEMA_VERSION = 2
 RECOVERY_SCHEMA_VERSION = 3
 SCALE_SCHEMA_VERSION = 4
 PROVIDER_POLICY_SCHEMA_VERSION = 5
+MICROSOFT_ROLLOUT_SCHEMA_VERSION = 6
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -40,6 +41,12 @@ PROVIDER_POLICY_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "policy_activation",
+}
+MICROSOFT_ROLLOUT_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "deployment_change",
+    "operator_status",
+    "rollout_activation",
 }
 
 
@@ -251,6 +258,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             RECOVERY_SCHEMA_VERSION,
             SCALE_SCHEMA_VERSION,
             PROVIDER_POLICY_SCHEMA_VERSION,
+            MICROSOFT_ROLLOUT_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -275,6 +283,13 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(
                 f"Ledger entry {index} has an unsupported schema-v5 event type."
             )
+        if (
+            version == MICROSOFT_ROLLOUT_SCHEMA_VERSION
+            and event_type != "microsoft_rollout_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v6 event type."
+            )
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -290,6 +305,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             else RECOVERY_ARTIFACT_KEYS if version == RECOVERY_SCHEMA_VERSION
             else SCALE_ARTIFACT_KEYS if version == SCALE_SCHEMA_VERSION
             else PROVIDER_POLICY_ARTIFACT_KEYS
+            if version == PROVIDER_POLICY_SCHEMA_VERSION
+            else MICROSOFT_ROLLOUT_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
             raise ReleaseLedgerError(f"Ledger entry {index} has invalid artifact hashes.")
@@ -946,6 +963,210 @@ def append_provider_policy_event(
     return entry
 
 
+
+def append_microsoft_rollout_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    staging_evidence: Path,
+    deployment_change: Path,
+    operator_status: Path,
+    rollout_activation: Path,
+    created_at: str | None = None,
+) -> dict:
+    if not actor_reference.strip() or len(actor_reference) > 500:
+        raise ReleaseLedgerError(
+            "actor_reference must be non-empty and at most 500 characters."
+        )
+    if not change_reference.strip() or len(change_reference) > 500:
+        raise ReleaseLedgerError(
+            "change_reference must be non-empty and at most 500 characters."
+        )
+    if not current_stage.strip() or len(current_stage) > 100:
+        raise ReleaseLedgerError(
+            "Microsoft rollout ledger event requires a valid current_stage."
+        )
+
+    staging = load_json_object(
+        staging_evidence,
+        "Microsoft live staging evidence",
+    )
+    deployment = load_json_object(
+        deployment_change,
+        "Microsoft rollout deployment change",
+    )
+    status = load_json_object(
+        operator_status,
+        "post-Microsoft-rollout operator status",
+    )
+    activation = load_json_object(
+        rollout_activation,
+        "Microsoft rollout activation evidence",
+    )
+
+    for label, value in (
+        ("deployment change", deployment),
+        ("operator status", status),
+        ("Microsoft rollout activation evidence", activation),
+    ):
+        if value.get("release_id") != release_id:
+            raise ReleaseLedgerError(
+                f"{label} release_id does not match {release_id!r}."
+            )
+
+    staged = staging.get("microsoft_actions")
+    if (
+        not isinstance(staged, dict)
+        or staged.get("status") != "passed"
+        or not isinstance(staged.get("evidence"), str)
+        or not staged["evidence"].strip()
+        or not isinstance(staged.get("verified_at"), str)
+    ):
+        raise ReleaseLedgerError(
+            "microsoft_rollout_verified requires passed timestamped Microsoft live staging evidence."
+        )
+
+    if deployment.get("change_reference") != change_reference:
+        raise ReleaseLedgerError(
+            "Microsoft rollout deployment change reference does not match."
+        )
+    if deployment.get("staging_evidence_sha256") != file_sha256(
+        staging_evidence
+    ):
+        raise ReleaseLedgerError(
+            "Microsoft rollout deployment does not bind this staging evidence."
+        )
+    if (
+        status.get("decision") != "CONTINUE_COHORT"
+        or status.get("breaches") != []
+    ):
+        raise ReleaseLedgerError(
+            "microsoft_rollout_verified requires a clean post-deploy operator status."
+        )
+    if activation.get("status") != "microsoft_rollout_verified":
+        raise ReleaseLedgerError(
+            "Microsoft rollout activation evidence has not passed."
+        )
+    if activation.get("change_reference") != change_reference:
+        raise ReleaseLedgerError(
+            "Microsoft rollout activation change reference does not match."
+        )
+
+    expected_deployment = {
+        "deployed_at": deployment.get("deployed_at"),
+        "frontend_base_url": deployment.get("frontend_base_url"),
+        "frontend_source_revision": deployment.get(
+            "frontend_source_revision"
+        ),
+    }
+    for name, value in expected_deployment.items():
+        if activation.get(name) != value:
+            raise ReleaseLedgerError(
+                f"Microsoft rollout activation does not bind deployment field {name}."
+            )
+
+    backend = activation.get("backend")
+    frontend = activation.get("frontend")
+    if (
+        not isinstance(backend, dict)
+        or backend.get("actions_enabled") is not True
+        or backend.get("microsoft_actions_enabled") is not True
+        or not isinstance(frontend, dict)
+        or frontend.get("coworker_enabled") is not True
+        or frontend.get("microsoft_actions_enabled") is not True
+    ):
+        raise ReleaseLedgerError(
+            "Microsoft rollout activation does not prove enabled backend/frontend rollout controls."
+        )
+
+    hashes = activation.get("artifact_sha256")
+    if not isinstance(hashes, dict):
+        raise ReleaseLedgerError(
+            "Microsoft rollout activation evidence has no artifact hashes."
+        )
+    expected_bound = {
+        "staging_evidence": file_sha256(staging_evidence),
+        "operator_status": file_sha256(operator_status),
+    }
+    for name, value in expected_bound.items():
+        if hashes.get(name) != value:
+            raise ReleaseLedgerError(
+                f"Microsoft rollout activation does not bind this {name}."
+            )
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if (
+        state["release_id"] is not None
+        and state["release_id"] != release_id
+    ):
+        raise ReleaseLedgerError(
+            "Ledger release_id does not match the Microsoft rollout event."
+        )
+    if not entries or not any(
+        item.get("current_stage") == current_stage
+        or item.get("next_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "microsoft_rollout_verified requires an existing ledger chain that reached current_stage."
+        )
+
+    activation_hash = file_sha256(rollout_activation)
+    duplicates = [
+        item
+        for item in entries
+        if item.get("schema_version") == MICROSOFT_ROLLOUT_SCHEMA_VERSION
+        and item.get("event_type") == "microsoft_rollout_verified"
+        and item.get("artifact_sha256", {}).get("rollout_activation")
+        == activation_hash
+    ]
+    if duplicates:
+        raise ReleaseLedgerError(
+            "This Microsoft rollout activation is already recorded in the release ledger."
+        )
+
+    core = {
+        "schema_version": MICROSOFT_ROLLOUT_SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": "microsoft_rollout_verified",
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": None,
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging_evidence),
+            "deployment_change": file_sha256(deployment_change),
+            "operator_status": file_sha256(operator_status),
+            "rollout_activation": activation_hash,
+        },
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {
+        **core,
+        "entry_hash": entry_hash,
+        "hmac_sha256": tag,
+    }
+    serialized = "".join(
+        json.dumps(
+            item,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Maintain a tamper-evident Shuddho controlled-cohort release ledger."
@@ -1014,6 +1235,17 @@ def main() -> None:
     policy_parser.add_argument("--operator-status", type=Path, required=True)
     policy_parser.add_argument("--policy-activation", type=Path, required=True)
 
+    microsoft_parser = sub.add_parser("append-microsoft-rollout")
+    microsoft_parser.add_argument("--ledger", type=Path, required=True)
+    microsoft_parser.add_argument("--release-id", required=True)
+    microsoft_parser.add_argument("--actor-reference", required=True)
+    microsoft_parser.add_argument("--change-reference", required=True)
+    microsoft_parser.add_argument("--current-stage", required=True)
+    microsoft_parser.add_argument("--staging-evidence", type=Path, required=True)
+    microsoft_parser.add_argument("--deployment-change", type=Path, required=True)
+    microsoft_parser.add_argument("--operator-status", type=Path, required=True)
+    microsoft_parser.add_argument("--rollout-activation", type=Path, required=True)
+
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--ledger", type=Path, required=True)
 
@@ -1056,6 +1288,26 @@ def main() -> None:
                 deployment_change=args.deployment_change,
                 operator_status=args.operator_status,
                 policy_activation=args.policy_activation,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        elif args.command == "append-microsoft-rollout":
+            entry = append_microsoft_rollout_event(
+                ledger=args.ledger,
+                key=key,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                staging_evidence=args.staging_evidence,
+                deployment_change=args.deployment_change,
+                operator_status=args.operator_status,
+                rollout_activation=args.rollout_activation,
             )
             result = {
                 "appended": True,

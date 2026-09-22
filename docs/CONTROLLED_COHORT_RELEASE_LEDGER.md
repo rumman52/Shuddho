@@ -154,3 +154,36 @@ The event must extend an existing chain that already reached the current cohort 
 A later schema-v4 `bounded_expansion_verified` event is accepted only when its scale-activation evidence binds a provider-policy activation that already has exactly one matching schema-v5 ledger record for the same current → proposed stage.
 
 This makes the order explicit: runtime policy is verified first, cohort membership expands second.
+
+
+## Microsoft rollout activation evidence
+
+Schema v6 adds one event type: `microsoft_rollout_verified`.
+
+It is appended only after the independent Microsoft live-provider gate and the deployed frontend/backend activation verifier both pass. The event requires the same release ID as the existing controlled-cohort ledger and an existing chain that has already reached the supplied current stage.
+
+It binds by SHA-256:
+
+- the exact timestamped `microsoft_actions` live-staging evidence;
+- the exact reviewed Microsoft rollout deployment record;
+- the fresh post-deploy operator status;
+- the exact `microsoft_rollout_verified` activation artifact.
+
+The deployment record must itself bind the exact live-staging evidence. The activation artifact must prove that global actions, backend Microsoft actions, Coworker frontend exposure, and the Microsoft frontend selector are all enabled for the reviewed deployment revision. Duplicate recording of the same exact rollout activation is rejected.
+
+Example:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-microsoft-rollout \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-microsoft-rollout-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.microsoft-actions.json \
+  --deployment-change /secure/release/microsoft-rollout-deployment.json \
+  --operator-status /secure/release/post-microsoft-rollout-status.json \
+  --rollout-activation /secure/release/microsoft-rollout-activation.json
+```
+
+A schema-v6 event is evidence that the reviewed Microsoft provider rollout was deployed and verified inside the existing release chain. It does not authorize cohort expansion or any consequential user action.
