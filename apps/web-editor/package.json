@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/write-rollout-manifest.mjs",
     "build:web-editor": "npm run build",
     "test": "node test/run-tests.mjs",
     "preview": "vite preview"

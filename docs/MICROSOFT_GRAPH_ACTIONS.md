@@ -102,3 +102,10 @@ Official Microsoft references used for this adapter:
 - Microsoft Graph `user: post events`;
 - Microsoft Graph `GET /me`;
 - Microsoft Graph permissions reference for `Mail.Send`, `Calendars.ReadWrite`, and `User.Read`.
+
+
+## Rollout activation
+
+After the independent live Microsoft staging gate passes and the frontend selector is deployed, run [Microsoft Rollout Activation Verification](MICROSOFT_ROLLOUT_ACTIVATION.md).
+
+That gate verifies the exact staging evidence SHA, deployed backend Microsoft flags, the deployed frontend build manifest/revision, and fresh post-deploy operator health before the rollout is treated as verified.
