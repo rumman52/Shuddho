@@ -135,12 +135,22 @@ def connections(identity: Identity, services: Services):
 
 @router.post("/connections/google/start")
 async def connect_google(payload: OAuthStart, identity: Identity, services: Services):
-    return await services.actions.connect(identity.account_id, payload)
+    return await services.actions.connect(identity.account_id, payload, "google")
 
 
 @router.post("/connections/google/finish")
 async def finish_google(payload: OAuthFinish, identity: Identity, services: Services):
-    return await services.actions.finish_connect(identity.account_id, payload)
+    return await services.actions.finish_connect(identity.account_id, payload, "google")
+
+
+@router.post("/connections/microsoft/start")
+async def connect_microsoft(payload: OAuthStart, identity: Identity, services: Services):
+    return await services.actions.connect(identity.account_id, payload, "microsoft")
+
+
+@router.post("/connections/microsoft/finish")
+async def finish_microsoft(payload: OAuthFinish, identity: Identity, services: Services):
+    return await services.actions.finish_connect(identity.account_id, payload, "microsoft")
 
 
 @router.delete("/connections/{connection_id}")
