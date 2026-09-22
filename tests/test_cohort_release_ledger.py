@@ -727,6 +727,7 @@ def scale_files(tmp_path):
             "scale_decision": file_sha256(decision),
             "deployment_change": file_sha256(deployment),
             "operator_status": file_sha256(status),
+            "provider_policy_activation": file_sha256(policy_activation),
         },
     })
     return decision, deployment, status, activation
