@@ -12,6 +12,7 @@ from scripts.cohort_post_scale_observation import (
 )
 from scripts.cohort_release_ledger import (
     append_event,
+    append_provider_policy_event,
     append_scale_event,
     file_sha256,
 )
@@ -127,6 +128,54 @@ def build_ledger(tmp_path, monkeypatch):
         created_at="2026-09-22T12:00:00+00:00",
     )
 
+    provider_policy = write_json(tmp_path / "provider-policy.json", {
+        "decision": "ELIGIBLE_FOR_POLICY_REVIEW",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "failures": [],
+    })
+    policy_deployment = write_json(tmp_path / "provider-policy-deployment.json", {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "policy-change-42",
+        "deployed_at": "2026-09-22T12:20:00+00:00",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "provider_policy_sha256": file_sha256(provider_policy),
+    })
+    policy_status = write_json(tmp_path / "provider-policy-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-22T12:25:00+00:00",
+        "breaches": [],
+    })
+    policy_activation = write_json(tmp_path / "provider-policy-activation.json", {
+        "status": "provider_policy_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "change_reference": "policy-change-42",
+        "artifact_sha256": {
+            "provider_policy": file_sha256(provider_policy),
+            "deployment_change": file_sha256(policy_deployment),
+            "operator_status": file_sha256(policy_status),
+        },
+    })
+    append_provider_policy_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall",
+        change_reference="policy-change-42",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        provider_policy=provider_policy,
+        deployment_change=policy_deployment,
+        operator_status=policy_status,
+        policy_activation=policy_activation,
+        created_at="2026-09-22T12:26:00+00:00",
+    )
+
     scale_decision = write_json(tmp_path / "scale-decision.json", {
         "decision": "ELIGIBLE_FOR_BOUNDED_EXPANSION",
         "release_id": "coworker-cohort-001",
@@ -157,6 +206,7 @@ def build_ledger(tmp_path, monkeypatch):
         "scale_decision": file_sha256(scale_decision),
         "deployment_change": file_sha256(deployment),
         "operator_status": file_sha256(post_status),
+        "provider_policy_activation": file_sha256(policy_activation),
     }
     activation_path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
 
