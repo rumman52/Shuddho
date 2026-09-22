@@ -211,6 +211,8 @@ The next enforcement increment makes bounded production cohort activation consum
 
 The following recovery-safety increment applies the same invariant after global rollback: if Microsoft actions are re-enabled during recovery, recovery fails closed unless a fresh post-rollback `microsoft_rollout_verified` artifact is ledgered as schema v6 after the exact schema-v2 rollback-completion event. The schema-v3 recovery artifact binds that Microsoft proof by SHA-256.
 
+The next release-admission increment makes the final controlled-cohort manifest provider-aware. Legacy action releases remain Google-only; a release that explicitly declares Microsoft must also pass the independent `microsoft_actions` live gate before `GO_CONTROLLED_COHORT`, and the decision records the exact approved provider set.
+
 Model-selected external actions and broader connector expansion remain later increments.
 
 ### Consequential actions
