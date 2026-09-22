@@ -59,6 +59,21 @@ def _graph_datetime(value: str) -> dict:
     return {"dateTime": utc.isoformat(timespec="seconds"), "timeZone": "UTC"}
 
 
+def _same_graph_time(actual: dict, expected: dict) -> bool:
+    try:
+        if actual.get("timeZone") != "UTC" or expected.get("timeZone") != "UTC":
+            return False
+        left = datetime.fromisoformat(str(actual["dateTime"]).replace("Z", "+00:00"))
+        right = datetime.fromisoformat(str(expected["dateTime"]).replace("Z", "+00:00"))
+        if left.tzinfo is None:
+            left = left.replace(tzinfo=timezone.utc)
+        if right.tzinfo is None:
+            right = right.replace(tzinfo=timezone.utc)
+        return left.astimezone(timezone.utc) == right.astimezone(timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def event_transaction_id(action_id: str) -> str:
     return "shuddho-" + hashlib.sha256(action_id.encode()).hexdigest()[:48]
 
@@ -307,7 +322,9 @@ class MicrosoftActions:
                 raise ValueError()
             if result.get("location", {}).get("displayName", "") != expected["location"]["displayName"]:
                 raise ValueError()
-            if result.get("start") != expected["start"] or result.get("end") != expected["end"]:
+            if not _same_graph_time(result.get("start", {}), expected["start"]):
+                raise ValueError()
+            if not _same_graph_time(result.get("end", {}), expected["end"]):
                 raise ValueError()
             actual_attendees = {
                 item.get("emailAddress", {}).get("address", "").casefold()
