@@ -1,0 +1,141 @@
+# Controlled Cohort Recovery Verification
+
+Recovery after a completed rollback is a separate release decision. A disabled system becoming healthy does not automatically authorize traffic to return.
+
+This verifier proves that Coworker was re-enabled **only with the previously approved rollout shape**, then exercises a real synthetic workflow before accepting the recovered state.
+
+## Preconditions
+
+Recovery is allowed only after:
+
+- a passed global rollback-completion artifact;
+- the same rollout manifest and canary plan used by the stopped release;
+- an explicit recovery deployment/change record;
+- the current cohort stage still exists in the approved canary plan.
+
+The recovery deployment must occur after rollback completion was verified.
+
+## Required deployed state
+
+The verifier requires:
+
+- `SHUDDHO_COWORKER_ENABLED=true`;
+- backend cohort enforcement still enabled;
+- configured cohort size inside the current canary-stage bounds;
+- configured cohort size not above the rollout-manifest maximum;
+- every capability flag to match the approved rollout manifest exactly.
+
+This prevents recovery from silently enabling Research, Actions, memory, parallel execution, or another capability that was not part of the approved release.
+
+## Live recovery probe
+
+Provide two short-lived staging/production verification identities:
+
+```bash
+SHUDDHO_RECOVERY_API_BASE_URL=https://api.example.com
+SHUDDHO_RECOVERY_TOKEN_ALLOWED=<approved cohort member token>
+SHUDDHO_RECOVERY_TOKEN_DENIED=<non-member token>
+```
+
+The verifier confirms:
+
+1. approved identity receives HTTP 200 from `/api/v1/me`;
+2. denied identity receives HTTP 403 `cohort_not_enabled`;
+3. the approved identity creates one synthetic `report_email` task;
+4. the task completes through API → durable queue/Temporal → worker → model;
+5. the task produces at least one artifact;
+6. the approved identity can retrieve non-empty artifact content;
+7. the smoke task completed after the recovery deployment.
+
+No real Gmail send, Calendar creation, social publishing or other consequential action is performed.
+
+## Post-recovery health ordering
+
+Only after the synthetic task completes does the verifier collect a fresh health snapshot using the existing cohort-health evaluator.
+
+Recovery fails unless that new status:
+
+- returns `CONTINUE_COHORT`;
+- contains zero breaches;
+- reports the same configured cohort count;
+- was generated after the smoke task completed.
+
+This prevents an old pre-recovery health file from being reused as recovery proof.
+
+## Run
+
+```bash
+uv run --extra coworker python scripts/cohort_recovery_verification.py \
+  --rollout /secure/release/cohort-rollout.json \
+  --canary-plan /secure/release/cohort-canary-plan.json \
+  --rollback-completion /secure/release/rollback-completion.json \
+  --thresholds /secure/release/cohort-health-thresholds.json \
+  --current-stage canary-5 \
+  --deployment-reference deploy-recovery-20260922-01 \
+  --deployed-at 2026-09-22T08:00:00+00:00 \
+  --status-output /secure/release/post-recovery-status.json \
+  --output /secure/release/recovery-verification.json
+```
+
+The evidence output is sanitized. It records:
+
+- release/stage and deployment reference;
+- configured member count;
+- declared capability booleans;
+- synthetic task state, artifact count and aggregate model accounting;
+- admission HTTP outcomes;
+- post-recovery health timestamp/decision;
+- SHA-256 hashes of the rollout manifest, canary plan, rollback completion and post-recovery status.
+
+It does not store tokens, account IDs, prompts from real users, OAuth secrets, provider response bodies, email/calendar content or artifact bytes.
+
+## Release ledger
+
+Schema v3 adds only `recovery_verified`.
+
+Existing ledger history remains:
+
+- schema v1: HOLD / expansion / STOP;
+- schema v2: rollback_completed;
+- schema v3: recovery_verified.
+
+A recovery entry requires:
+
+- an earlier `stop_rollout`;
+- an earlier `rollback_completed`;
+- the same release ID and current stage;
+- the same rollout manifest, canary plan and original STOP progression decision;
+- the exact rollback-completion artifact already recorded in the v2 entry;
+- the exact post-recovery status and recovery-verification artifact.
+
+Append:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-recovery \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference incident-123 \
+  --current-stage canary-5 \
+  --rollout /secure/release/cohort-rollout.json \
+  --canary-plan /secure/release/cohort-canary-plan.json \
+  --progression-decision /secure/release/stop-progression.json \
+  --operator-status /secure/release/post-recovery-status.json \
+  --rollback-completion /secure/release/rollback-completion.json \
+  --recovery-verification /secure/release/recovery-verification.json
+```
+
+Anchor the returned ledger head hash in the independent incident/change record.
+
+## After recovery
+
+Recovery returns the release only to its **existing canary stage**.
+
+It does not:
+
+- advance from 5 → 10 or 10 → 25 users;
+- reset prior STOP history for progression calculations;
+- authorize a new capability;
+- bypass the normal health/observability scheduler.
+
+Resume health collection from the recovered stage. Any later cohort expansion remains a separate reviewed decision.
