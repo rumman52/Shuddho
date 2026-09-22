@@ -104,3 +104,35 @@ A valid ledger entry does not itself:
 - replace the rollout manifest or canary progression gate.
 
 It is evidence of an operations decision, not a deployment control plane.
+
+
+## Post-25 bounded expansion verification
+
+Schema v4 adds one event type: `bounded_expansion_verified`.
+
+It is appended only after the post-25 bounded scale review has passed and the reviewed deployment has been independently verified. The entry binds by SHA-256:
+
+- the exact bounded scale decision;
+- the exact deployment-change record;
+- the post-deployment operator status;
+- the bounded scale-activation verification artifact.
+
+The ledger verifies older schema-v1, v2 and v3 entries unchanged.
+
+Example:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-scale \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-42 \
+  --current-stage cohort-25 \
+  --next-stage cohort-40 \
+  --scale-decision /secure/release/bounded-scale-decision.json \
+  --deployment-change /secure/release/cohort-scale-deployment.json \
+  --operator-status /secure/release/post-scale-operator-status.json \
+  --scale-activation /secure/release/bounded-scale-activation.json
+```
+
+A schema-v4 entry is evidence that a reviewed bounded stage was deployed and verified. It does not authorize the next expansion.
