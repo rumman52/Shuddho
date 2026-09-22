@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 
-from scripts.cohort_canary_progression import evaluate_progression
+import pytest
+
+from scripts.cohort_canary_progression import evaluate_progression, load_recovery_epoch
+from scripts.cohort_release_ledger import (
+    append_event,
+    append_recovery_event,
+    append_rollback_event,
+    file_sha256,
+)
 
 
 def rollout():
@@ -201,3 +210,192 @@ def test_stop_before_full_enrollment_still_stops_release():
     )
     assert result["decision"] == "STOP_ROLLOUT"
     assert result["reasons"] == ["health_history_contains_stop"]
+
+
+KEY = b"k" * 32
+
+
+def write_json(path, value):
+    path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def recovery_epoch_files(tmp_path):
+    rollout_path = write_json(tmp_path / "rollout.json", {
+        "release_id": "coworker-cohort-001",
+        "cohort": {"max_users": 25},
+    })
+    plan_path = write_json(tmp_path / "plan.json", {
+        "release_id": "coworker-cohort-001",
+        "stages": [{"name": "canary-5"}, {"name": "canary-10"}],
+    })
+    progression = write_json(tmp_path / "stop.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "STOP_ROLLOUT",
+        "current_stage": "canary-5",
+        "next_stage": None,
+    })
+    stop_status = write_json(tmp_path / "stop-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "STOP_ROLLOUT",
+    })
+    rollback_status = write_json(tmp_path / "rollback-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "breaches": [],
+    })
+    rollback_completion = write_json(tmp_path / "rollback-completion.json", {
+        "schema_version": 1,
+        "release_id": "coworker-cohort-001",
+        "status": "rollback_completed",
+        "mode": "global",
+        "artifact_sha256": {
+            "rollout_manifest": file_sha256(rollout_path),
+            "operator_status": file_sha256(rollback_status),
+        },
+    })
+    recovery_status = write_json(tmp_path / "recovery-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "breaches": [],
+    })
+    recovery_verification = write_json(tmp_path / "recovery.json", {
+        "schema_version": 1,
+        "release_id": "coworker-cohort-001",
+        "status": "recovery_verified",
+        "current_stage": "canary-5",
+        "verified_at": "2026-09-22T05:00:00+00:00",
+        "artifact_sha256": {
+            "rollout_manifest": file_sha256(rollout_path),
+            "canary_plan": file_sha256(plan_path),
+            "rollback_completion": file_sha256(rollback_completion),
+            "operator_status": file_sha256(recovery_status),
+        },
+    })
+    return (
+        rollout_path,
+        plan_path,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    )
+
+
+def build_recovery_ledger(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", KEY.decode())
+    (
+        rollout_path,
+        plan_path,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_epoch_files(tmp_path)
+    ledger = tmp_path / "ledger.jsonl"
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-1",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout_path,
+        canary_plan=plan_path,
+        progression_decision=progression,
+        operator_status=stop_status,
+    )
+    append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-1",
+        current_stage="canary-5",
+        rollout=rollout_path,
+        canary_plan=plan_path,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+    )
+    append_recovery_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-1",
+        current_stage="canary-5",
+        rollout=rollout_path,
+        canary_plan=plan_path,
+        progression_decision=progression,
+        operator_status=recovery_status,
+        rollback_completion=rollback_completion,
+        recovery_verification=recovery_verification,
+    )
+    return ledger, recovery_verification
+
+
+def test_post_recovery_epoch_excludes_historical_stop(monkeypatch, tmp_path):
+    ledger, recovery_verification = build_recovery_ledger(tmp_path, monkeypatch)
+    epoch = load_recovery_epoch(
+        recovery_verification,
+        ledger,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+    )
+    history = [
+        row(datetime(2026, 9, 22, 4, 55, tzinfo=timezone.utc), decision="STOP_ROLLOUT"),
+        row(datetime(2026, 9, 22, 5, 5, tzinfo=timezone.utc)),
+        row(datetime(2026, 9, 22, 5, 10, tzinfo=timezone.utc)),
+        row(datetime(2026, 9, 22, 5, 15, tzinfo=timezone.utc)),
+    ]
+    result = evaluate_progression(
+        history,
+        rollout(),
+        plan(),
+        current_stage="canary-5",
+        now=datetime(2026, 9, 22, 5, 17, tzinfo=timezone.utc),
+        epoch_start=epoch,
+    )
+    assert result["decision"] == "ELIGIBLE_FOR_EXPANSION"
+    assert result["reasons"] == []
+
+
+def test_recovery_epoch_requires_fresh_post_recovery_health(monkeypatch, tmp_path):
+    ledger, recovery_verification = build_recovery_ledger(tmp_path, monkeypatch)
+    epoch = load_recovery_epoch(
+        recovery_verification,
+        ledger,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+    )
+    result = evaluate_progression(
+        [row(datetime(2026, 9, 22, 4, 55, tzinfo=timezone.utc), decision="STOP_ROLLOUT")],
+        rollout(),
+        plan(),
+        current_stage="canary-5",
+        now=datetime(2026, 9, 22, 5, 2, tzinfo=timezone.utc),
+        epoch_start=epoch,
+    )
+    assert result["decision"] == "HOLD"
+    assert result["reasons"] == ["no_post_recovery_health"]
+
+
+def test_unledgered_recovery_cannot_create_progression_epoch(monkeypatch, tmp_path):
+    monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", KEY.decode())
+    *_files, recovery_verification = recovery_epoch_files(tmp_path)
+    ledger = tmp_path / "empty-ledger.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    with pytest.raises(Exception, match="ledger"):
+        load_recovery_epoch(
+            recovery_verification,
+            ledger,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+        )
