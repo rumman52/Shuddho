@@ -150,6 +150,19 @@ class ModelAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ProviderLease(Base):
+    __tablename__ = "cw_provider_leases"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    lease_key: Mapped[str] = mapped_column(String(160), unique=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    resource_id: Mapped[str] = mapped_column(String(64))
+    sequence: Mapped[int] = mapped_column(Integer)
+    reserved_tokens: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AuditEvent(Base):
     __tablename__ = "cw_audit_events"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
