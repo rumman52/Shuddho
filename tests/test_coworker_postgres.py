@@ -338,3 +338,69 @@ def test_planner_and_draft_share_one_provider_capacity_pool(repository):
     agent.release_planner_capacity(run["id"], reservation["call"])
     assert repository.reserve_model(task["id"], 10000) == 1
     repository.settle_model(task["id"], 1, 100, 10, "completed")
+
+
+def test_global_provider_daily_budget_is_atomic_across_workspaces(repository):
+    with repository.sessions() as db:
+        baseline = db.scalar(text(
+            "SELECT COALESCE(allocated_tokens, 0) FROM cw_provider_daily_usage WHERE day = to_char(now() at time zone 'utc', 'YYYY-MM-DD')"
+        )) or 0
+    repository.settings = replace(
+        repository.settings,
+        daily_token_budget=500000,
+        task_token_budget=100000,
+        provider_max_concurrent_calls=4,
+        provider_max_concurrent_per_workspace=2,
+        provider_max_reserved_tokens=400000,
+        provider_max_reserved_tokens_per_workspace=200000,
+        provider_daily_token_budget=int(baseline) + 15000,
+    )
+    identities = [owner(repository), owner(repository)]
+    tasks = [
+        repository.create_task(
+            identity,
+            TaskCreate(instruction="Create report", notes="Source"),
+            str(uuid4()),
+        )[0]
+        for identity in identities
+    ]
+
+    def reserve(task):
+        try:
+            return task["id"], repository.reserve_model(task["id"], 10000)
+        except CoworkerError as error:
+            return task["id"], error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(reserve, tasks))
+
+    assert sum(value == 1 for _task_id, value in results) == 1
+    assert sum(value == "provider_daily_budget" for _task_id, value in results) == 1
+    admitted = next(task_id for task_id, value in results if value == 1)
+    repository.settle_model(admitted, 1, 100, 10, "completed")
+
+
+def test_known_usage_reduces_global_daily_reservation(repository):
+    with repository.sessions() as db:
+        baseline = db.scalar(text(
+            "SELECT COALESCE(allocated_tokens, 0) FROM cw_provider_daily_usage WHERE day = to_char(now() at time zone 'utc', 'YYYY-MM-DD')"
+        )) or 0
+    repository.settings = replace(
+        repository.settings,
+        daily_token_budget=500000,
+        task_token_budget=100000,
+        provider_daily_token_budget=int(baseline) + 50000,
+    )
+    identity = owner(repository)
+    task = repository.create_task(
+        identity,
+        TaskCreate(instruction="Create report", notes="Source"),
+        str(uuid4()),
+    )[0]
+    repository.reserve_model(task["id"], 10000)
+    repository.settle_model(task["id"], 1, 250, 10, "completed")
+    with repository.sessions() as db:
+        total = db.scalar(text(
+            "SELECT allocated_tokens FROM cw_provider_daily_usage WHERE day = to_char(now() at time zone 'utc', 'YYYY-MM-DD')"
+        ))
+    assert total == int(baseline) + 250
