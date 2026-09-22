@@ -13,7 +13,7 @@ from .config import Settings
 from .errors import CoworkerError
 from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import iso, not_found
-from .provider_capacity import acquire_provider_lease, release_provider_lease
+from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
 
@@ -264,11 +264,15 @@ class AgentRepository:
             self._audit(db, run.owner_id, run.id, "agent_planner_budget_reserved")
             return {"call": run.planner_calls, "reserved_tokens": reserve_tokens, "day": day}
 
-    def release_planner_capacity(self, run_id: str, call: int) -> None:
+    def settle_planner_capacity(self, run_id: str, call: int, actual_tokens: int | None) -> None:
         with self.sessions.begin() as db:
-            release_provider_lease(
+            settle_provider_lease(
                 db, kind="planner", resource_id=run_id, sequence=call,
+                actual_tokens=actual_tokens,
             )
+
+    def release_planner_capacity(self, run_id: str, call: int) -> None:
+        self.settle_planner_capacity(run_id, call, None)
 
     def set_planner_mode(self, run_id: str, mode: str):
         if mode not in {"deterministic", "intelligent", "fallback", "replanned"}:

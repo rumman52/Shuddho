@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import delete, func, select, text
 
 from .errors import CoworkerError
-from .models import ProviderLease, utcnow
+from .models import ProviderDailyUsage, ProviderLease, utcnow
 
 
 # One transaction-wide lock serializes capacity admission across all worker replicas.
@@ -73,6 +73,19 @@ def acquire_provider_lease(
         )
     ) or 0)
 
+    day = now.date().isoformat()
+    daily = db.get(ProviderDailyUsage, day)
+    if daily is None:
+        daily = ProviderDailyUsage(day=day, allocated_tokens=0)
+        db.add(daily)
+        db.flush()
+    if daily.allocated_tokens + reserved_tokens > settings.provider_daily_token_budget:
+        raise CoworkerError(
+            "provider_daily_budget",
+            "The shared model budget for today has been reached. Try again later.",
+            429,
+        )
+
     if (
         active_calls >= settings.provider_max_concurrent_calls
         or reserved + reserved_tokens > settings.provider_max_reserved_tokens
@@ -103,14 +116,54 @@ def acquire_provider_lease(
         expires_at=now + timedelta(seconds=settings.provider_lease_seconds),
     )
     db.add(lease)
+    daily.allocated_tokens += reserved_tokens
     db.flush()
     return lease.id
 
 
-def release_provider_lease(db, *, kind: str, resource_id: str, sequence: int) -> None:
+def settle_provider_lease(
+    db,
+    *,
+    kind: str,
+    resource_id: str,
+    sequence: int,
+    actual_tokens: int | None,
+) -> None:
     key = lease_key(kind, resource_id, sequence)
     _serialize(db)
-    db.execute(delete(ProviderLease).where(ProviderLease.lease_key == key))
+    lease = db.scalar(
+        select(ProviderLease).where(ProviderLease.lease_key == key)
+    )
+    if lease is None:
+        return
+    charged = (
+        actual_tokens
+        if isinstance(actual_tokens, int)
+        and not isinstance(actual_tokens, bool)
+        and actual_tokens >= 0
+        else lease.reserved_tokens
+    )
+    created_at = lease.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    day = created_at.astimezone(timezone.utc).date().isoformat()
+    daily = db.get(ProviderDailyUsage, day)
+    if daily is None:
+        daily = ProviderDailyUsage(day=day, allocated_tokens=lease.reserved_tokens)
+        db.add(daily)
+        db.flush()
+    daily.allocated_tokens += charged - lease.reserved_tokens
+    db.delete(lease)
+
+
+def release_provider_lease(db, *, kind: str, resource_id: str, sequence: int) -> None:
+    settle_provider_lease(
+        db,
+        kind=kind,
+        resource_id=resource_id,
+        sequence=sequence,
+        actual_tokens=None,
+    )
 
 
 def provider_capacity_snapshot(db) -> dict:
@@ -119,6 +172,7 @@ def provider_capacity_snapshot(db) -> dict:
     expired = _cleanup_expired(db, now)
     active = int(db.scalar(select(func.count()).select_from(ProviderLease)) or 0)
     reserved = int(db.scalar(select(func.coalesce(func.sum(ProviderLease.reserved_tokens), 0))) or 0)
+    daily = db.get(ProviderDailyUsage, now.date().isoformat())
     oldest = db.scalar(select(func.min(ProviderLease.created_at)))
     oldest_age_seconds = 0
     if oldest is not None:
@@ -130,4 +184,5 @@ def provider_capacity_snapshot(db) -> dict:
         "reserved_tokens": reserved,
         "oldest_lease_age_seconds": oldest_age_seconds,
         "expired_leases_reaped": expired,
+        "daily_allocated_tokens": int(daily.allocated_tokens) if daily is not None else 0,
     }

@@ -1498,3 +1498,18 @@ def test_provider_capacity_settings_fail_closed():
             model_timeout_seconds=90,
             provider_lease_seconds=90,
         ).validate()
+
+
+def test_global_provider_daily_budget_configuration_is_bounded():
+    base = dict(
+        database_url="sqlite://",
+        auth_issuer=ISSUER,
+        environment="development",
+        storage_backend="local",
+    )
+    with pytest.raises(ValueError, match="global provider daily budget"):
+        Settings(
+            **base,
+            daily_token_budget=1000000,
+            provider_daily_token_budget=500000,
+        ).validate()

@@ -150,6 +150,12 @@ class ModelAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ProviderDailyUsage(Base):
+    __tablename__ = "cw_provider_daily_usage"
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    allocated_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
 class ProviderLease(Base):
     __tablename__ = "cw_provider_leases"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

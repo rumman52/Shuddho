@@ -1,0 +1,24 @@
+{
+  "release_id": "coworker-cohort-001",
+  "max_growth_ratio": 1.5,
+  "runtime_quota_headroom_ratio": 1.25,
+  "demand_headroom_ratio": 1.1,
+  "max_workspace_concurrency_share": 0.25,
+  "max_workspace_daily_token_share": 0.05,
+  "max_budget_utilization_ratio": 0.8,
+  "blended_token_cost_usd_per_million": 1.0,
+  "days_per_month": 30,
+  "task_token_budget": 100000,
+  "planner_call_token_budget": 8000,
+  "model_timeout_seconds": 90,
+  "lease_margin_seconds": 30,
+  "current": {
+    "provider_max_concurrent_calls": 8,
+    "provider_max_concurrent_per_workspace": 2,
+    "provider_max_reserved_tokens": 800000,
+    "provider_max_reserved_tokens_per_workspace": 200000,
+    "provider_daily_token_budget": 5000000,
+    "daily_token_budget": 500000,
+    "provider_lease_seconds": 120
+  }
+}
