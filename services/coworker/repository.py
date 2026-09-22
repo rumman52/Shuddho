@@ -12,7 +12,7 @@ from .auth import Principal
 from .config import Settings
 from .errors import CoworkerError
 from .models import Account, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, Workspace, utcnow
-from .provider_capacity import acquire_provider_lease, release_provider_lease
+from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 from .schemas import TaskCreate, UploadRequest
 from .skills import SKILLS, service_enabled, skill_for_version
 
@@ -414,8 +414,9 @@ class Repository:
             daily = db.get(DailyUsage, (row.owner_id, row.day))
             daily.allocated_tokens += charged - row.charged_tokens
             row.charged_tokens, row.latency_ms, row.state = charged, latency_ms, state
-            release_provider_lease(
+            settle_provider_lease(
                 db, kind="draft", resource_id=task_id, sequence=attempt,
+                actual_tokens=actual_tokens if state != "unknown" else None,
             )
 
     def complete(self, task_id, artifacts, needs_input=False):
