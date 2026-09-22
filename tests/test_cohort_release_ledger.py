@@ -9,6 +9,7 @@ from scripts.cohort_release_ledger import (
     append_event,
     append_rollback_event,
     append_recovery_event,
+    append_scale_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -577,3 +578,117 @@ def test_recovery_must_bind_ledger_recorded_rollback_artifact(tmp_path):
             rollback_completion=rollback_completion,
             recovery_verification=recovery_verification,
         )
+
+
+def scale_files(tmp_path):
+    decision = write_json(tmp_path / "scale-decision.json", {
+        "decision": "ELIGIBLE_FOR_BOUNDED_EXPANSION",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "current_max_users": 25,
+        "proposed_stage": "cohort-40",
+        "proposed_max_users": 40,
+        "failures": [],
+        "generated_at": "2026-09-22T12:00:00+00:00",
+        "references": {"change_reference": "change-42"},
+    })
+    deployment = write_json(tmp_path / "scale-deployment.json", {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "change-42",
+        "deployed_at": "2026-09-22T12:10:00+00:00",
+        "stage": "cohort-40",
+        "max_users": 40,
+    })
+    status = write_json(tmp_path / "scale-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-22T12:20:00+00:00",
+        "breaches": [],
+    })
+    activation = write_json(tmp_path / "scale-activation.json", {
+        "schema_version": 1,
+        "status": "bounded_expansion_verified",
+        "release_id": "coworker-cohort-001",
+        "verified_at": "2026-09-22T12:25:00+00:00",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "current_max_users": 25,
+        "proposed_max_users": 40,
+        "configured_members": 30,
+        "configured_max_users": 40,
+        "change_reference": "change-42",
+        "deployment_deployed_at": "2026-09-22T12:10:00+00:00",
+        "operator_status_generated_at": "2026-09-22T12:20:00+00:00",
+        "artifact_sha256": {
+            "scale_decision": file_sha256(decision),
+            "deployment_change": file_sha256(deployment),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return decision, deployment, status, activation
+
+
+def test_schema_v4_scale_activation_is_hash_chained(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    entry = append_scale_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="change-42",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        scale_decision=decision,
+        deployment_change=deployment,
+        operator_status=status,
+        scale_activation=activation,
+        created_at="2026-09-22T12:30:00+00:00",
+    )
+    assert entry["schema_version"] == 4
+    assert entry["event_type"] == "bounded_expansion_verified"
+    assert entry["artifact_sha256"]["scale_activation"] == file_sha256(activation)
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == entry["entry_hash"]
+
+
+def test_schema_v4_scale_activation_rejects_unbound_activation(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["artifact_sha256"]["deployment_change"] = "0" * 64
+    activation.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ReleaseLedgerError, match="does not bind this deployment_change"):
+        append_scale_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="change-42",
+            current_stage="cohort-25",
+            next_stage="cohort-40",
+            scale_decision=decision,
+            deployment_change=deployment,
+            operator_status=status,
+            scale_activation=activation,
+        )
+
+
+def test_schema_v4_scale_activation_cannot_record_same_stage_twice(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    kwargs = dict(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="change-42",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        scale_decision=decision,
+        deployment_change=deployment,
+        operator_status=status,
+        scale_activation=activation,
+    )
+    append_scale_event(**kwargs)
+    with pytest.raises(ReleaseLedgerError, match="already recorded"):
+        append_scale_event(**kwargs)
