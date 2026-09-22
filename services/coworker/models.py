@@ -183,6 +183,7 @@ class OAuthAttempt(Base):
     state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
     capability: Mapped[str] = mapped_column(String(20))
+    provider: Mapped[str] = mapped_column(String(20), default="google")
     verifier_ciphertext: Mapped[str] = mapped_column(Text)
     consumed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
