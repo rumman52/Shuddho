@@ -1,0 +1,44 @@
+{
+  "release_id": "coworker-cohort-001",
+  "environment": "production",
+  "cohort": {
+    "reference": "approved-cohort-list-or-ticket",
+    "max_users": 25
+  },
+  "capabilities": {
+    "coworker": true,
+    "work_services": true,
+    "artifact_services": true,
+    "agent_runtime": true,
+    "intelligent_planner": true,
+    "memory": false,
+    "handoffs": true,
+    "multi_handoffs": true,
+    "dependency_graph": true,
+    "parallel_execution": true,
+    "outcome_replan": true,
+    "research": false,
+    "actions": false
+  },
+  "rollback": {
+    "runbook_reference": "deployment-runbook-or-ticket",
+    "global_kill_switch": "SHUDDHO_COWORKER_ENABLED=false",
+    "agent_kill_switch": "SHUDDHO_AGENT_RUNTIME_ENABLED=false",
+    "parallel_kill_switch": "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false",
+    "research_kill_switch": "SHUDDHO_RESEARCH_SERVICES_ENABLED=false",
+    "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false"
+  },
+  "monitoring": {
+    "queue_age": "dashboard-or-alert-reference",
+    "task_success": "dashboard-or-alert-reference",
+    "provider_errors": "dashboard-or-alert-reference",
+    "latency": "dashboard-or-alert-reference",
+    "token_cost": "dashboard-or-alert-reference",
+    "storage_growth": "dashboard-or-alert-reference",
+    "agent_failures": "dashboard-or-alert-reference"
+  },
+  "incident": {
+    "oncall_reference": "oncall-rotation-or-owner",
+    "change_reference": "change-ticket-or-deployment-reference"
+  }
+}
