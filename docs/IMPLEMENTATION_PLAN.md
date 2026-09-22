@@ -207,6 +207,8 @@ The next control-plane increment adds [Microsoft rollout activation verification
 
 The following release-evidence increment extends the existing tamper-evident controlled-cohort ledger with schema v6 `microsoft_rollout_verified`. The exact Microsoft staging evidence, reviewed deployment, post-deploy operator status, and activation artifact are chained into the same release ID/stage already used for production cohort control; duplicate activation recording and unattached stage claims fail closed.
 
+The next enforcement increment makes bounded production cohort activation consume that schema-v6 proof whenever Microsoft actions are deployed. Google-only releases remain unchanged; Microsoft-enabled scale progression fails closed unless the exact `microsoft_rollout_verified` artifact has one matching schema-v6 ledger event for the current stage, and the resulting bounded-scale activation artifact records that Microsoft proof SHA-256.
+
 Model-selected external actions and broader connector expansion remain later increments.
 
 ### Consequential actions
