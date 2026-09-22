@@ -45,8 +45,9 @@ def test_cohort_configuration_requires_invited_and_denied_boundaries():
     with pytest.raises(admission.CohortAdmissionFailure, match="must be true"):
         admission.require_configuration(settings(allowed={invited}, enforced=False), invited, denied)
 
+    other = Principal(ISSUER, "charlie", 0).account_id
     with pytest.raises(admission.CohortAdmissionFailure, match="not in the backend cohort allowlist"):
-        admission.require_configuration(settings(allowed=set()), invited, denied)
+        admission.require_configuration(settings(allowed={other}), invited, denied)
 
     with pytest.raises(admission.CohortAdmissionFailure, match="unexpectedly in"):
         admission.require_configuration(settings(allowed={invited, denied}), invited, denied)
