@@ -44,6 +44,7 @@ def test_vercel_config_deploys_web_editor_spa_from_repo_root() -> None:
     assert config["installCommand"] == "npm install"
     assert config["buildCommand"] == "npm run build:web-editor"
     assert config["outputDirectory"] == "apps/web-editor/dist"
+    assert config["ignoreCommand"] == "git diff --quiet HEAD^ HEAD -- apps/web-editor/ shared/ package.json package-lock.json vercel.json"
     assert config["rewrites"] == [
         {
             "source": "/backend/:path*",
