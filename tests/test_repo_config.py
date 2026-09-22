@@ -45,6 +45,7 @@ def test_vercel_config_deploys_web_editor_spa_from_repo_root() -> None:
     assert config["buildCommand"] == "npm run build:web-editor"
     assert config["outputDirectory"] == "apps/web-editor/dist"
     assert config["ignoreCommand"] == "git diff --quiet HEAD^ HEAD -- apps/web-editor/ shared/ package.json package-lock.json vercel.json"
+    assert config["git"] == {"deploymentEnabled": {"*": False, "main": True}}
     assert config["rewrites"] == [
         {
             "source": "/backend/:path*",
@@ -148,3 +149,8 @@ def test_root_workspace_includes_gateway_web_and_packages() -> None:
     assert "dev:python-api" in root_package["scripts"]
     assert "build:agent" not in root_package["scripts"]
     assert "start:agent" not in root_package["scripts"]
+
+
+def test_app_local_vercel_config_matches_production_only_git_policy() -> None:
+    config = json.loads(Path("apps/web-editor/vercel.json").read_text(encoding="utf-8"))
+    assert config["git"] == {"deploymentEnabled": {"*": False, "main": True}}
