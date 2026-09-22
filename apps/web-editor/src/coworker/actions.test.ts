@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { CoworkerClient, type ExternalAction } from "./client";
 import { googleAuthorizationURL } from "./googleCallback";
+import { microsoftAuthorizationURL } from "./microsoftCallback";
 
 test("Google redirect must match the provider, current site, callback path and returned state", () => {
   const state = "a".repeat(43);
@@ -32,4 +33,59 @@ test("approval sends only the persisted preview hash to the owned API with the c
     assert.equal(requests[0].init.redirect, "error");
     assert.equal(requests[0].init.credentials, "omit");
   } finally { globalThis.fetch = original; }
+});
+
+
+test("Microsoft redirect must match login host, tenant path, current site, callback path and returned state", () => {
+  const state = "b".repeat(43);
+  const base = new URL("https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize");
+  base.searchParams.set("state", state);
+  base.searchParams.set("redirect_uri", "https://shuddho.example.org/oauth/microsoft/callback");
+  assert.equal(
+    microsoftAuthorizationURL(base.href, state, "https://shuddho.example.org"),
+    base.href,
+  );
+  for (const changed of [
+    base.href.replace("login.microsoftonline.com", "attacker.test"),
+    base.href.replace("/oauth2/v2.0/authorize", "/oauth2/v2.0/token"),
+    base.href.replace(state, "c".repeat(43)),
+    base.href.replace("shuddho.example.org", "attacker.test"),
+    base.href.replace("/oauth/microsoft/callback", "/oauth/google/callback"),
+  ]) {
+    assert.throws(() =>
+      microsoftAuthorizationURL(changed, state, "https://shuddho.example.org"),
+    );
+  }
+});
+
+test("Microsoft connection client uses only fixed backend start and finish routes", async () => {
+  const original = globalThis.fetch;
+  const requests: string[] = [];
+  globalThis.fetch = (async (url) => {
+    requests.push(String(url));
+    if (String(url).endsWith("/start")) {
+      return new Response(JSON.stringify({
+        authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+        state: "b".repeat(43),
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({
+      id: "11111111-1111-1111-1111-111111111111",
+      provider: "microsoft",
+      capability: "email",
+      email: "user@example.test",
+      active: true,
+    }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("https://api.test", async () => "token");
+    await client.connectMicrosoft("email");
+    await client.finishMicrosoft("code", "b".repeat(43));
+    assert.deepEqual(requests, [
+      "https://api.test/api/v1/connections/microsoft/start",
+      "https://api.test/api/v1/connections/microsoft/finish",
+    ]);
+  } finally {
+    globalThis.fetch = original;
+  }
 });
