@@ -151,7 +151,9 @@ PR #127 adds the [authenticated API exercise](CONTROLLED_STAGING_API_EXERCISE.md
 
 PR #128/#129 add the [Temporal recovery exercise](CONTROLLED_STAGING_TEMPORAL_RECOVERY.md): a real AgentWorkflow v2 two-branch fan-out/fan-in run with a deliberate staging worker replacement, exact child-task idempotency checks, persisted dependency timing checks, and fail-closed promotion of temporal, parallel_restart and fan_in evidence.
 
-The next production-readiness gate adds the [isolated backup/restore drill](CONTROLLED_STAGING_BACKUP_RESTORE.md): synthetic Coworker database/object state is snapshotted through real managed backup mechanisms, restored into separate targets, and accepted only when relational records plus private object bytes match the pre-backup manifest and SHA-256. Deletion/orphan cleanup, provider actions and v2→v1 rollback remain separate gates. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #130 adds the [isolated backup/restore drill](CONTROLLED_STAGING_BACKUP_RESTORE.md): synthetic Coworker database/object state is snapshotted through real managed backup mechanisms, restored into separate targets, and accepted only when relational records plus private object bytes match the pre-backup manifest and SHA-256.
+
+The next operations gate adds [retention, deletion and orphan cleanup](CONTROLLED_STAGING_RETENTION_DELETION.md): first-class administrative task/account erasure, durable referenced-object inventory, dry-run and age-bounded orphan cleanup, and a synthetic staging exercise that promotes the deletion gate only after database rows and private objects are actually removed. Provider actions and v2→v1 rollback remain separate gates. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
