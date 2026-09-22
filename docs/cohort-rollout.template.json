@@ -5,6 +5,7 @@
     "reference": "approved-cohort-list-or-ticket",
     "max_users": 25
   },
+  "action_providers": [],
   "capabilities": {
     "coworker": true,
     "work_services": true,
