@@ -203,6 +203,8 @@ The next release-safety increment adds [controlled live Microsoft action validat
 
 The next frontend increment adds a default-off Microsoft provider selector and secure `/oauth/microsoft/callback` handler. It validates Microsoft login origin/path, exact state and exact same-origin callback before redirect, stores only state/account in session storage, calls only fixed backend Microsoft start/finish routes, and preserves provider identity when editing saved actions. The UI remains Google-only unless `VITE_MICROSOFT_ACTIONS_ENABLED=true`, so shipping the code does not itself authorize Microsoft rollout.
 
+The next control-plane increment adds [Microsoft rollout activation verification](MICROSOFT_ROLLOUT_ACTIVATION.md): the exact live `microsoft_actions` staging evidence is SHA-bound to an approved deployment record, backend Google/Microsoft action flags are checked from the deployed runtime, and the deployed frontend is verified through a build-generated rollout manifest containing the exact source revision plus Coworker/Microsoft UI flags. Fresh post-deploy operator health is required before the rollout becomes `microsoft_rollout_verified`.
+
 Model-selected external actions and broader connector expansion remain later increments.
 
 ### Consequential actions
