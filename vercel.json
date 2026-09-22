@@ -13,7 +13,6 @@
       "destination": "/index.html"
     }
   ],
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- apps/web-editor/ shared/ package.json package-lock.json vercel.json",
   "git": {
     "deploymentEnabled": {
       "*": false,
