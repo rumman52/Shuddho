@@ -168,3 +168,36 @@ def test_final_stage_never_auto_expands():
     assert result["decision"] == "HOLD"
     assert result["next_stage"] is None
     assert result["reasons"] == ["final_stage_reached"]
+
+
+def test_latest_membership_drop_holds_even_after_earlier_healthy_windows():
+    history = healthy_history()
+    history.append(row(datetime(2026, 9, 22, 4, 15, tzinfo=timezone.utc), members=4))
+    result = evaluate_progression(
+        history,
+        rollout(),
+        plan(),
+        current_stage="canary-5",
+        now=datetime(2026, 9, 22, 4, 17, tzinfo=timezone.utc),
+    )
+    assert result["decision"] == "HOLD"
+    assert result["reasons"] == ["stage_not_fully_enrolled"]
+
+
+def test_stop_before_full_enrollment_still_stops_release():
+    start = datetime(2026, 9, 22, 4, 0, tzinfo=timezone.utc)
+    history = [
+        row(start, members=4, decision="STOP_ROLLOUT"),
+        row(start + timedelta(minutes=5), members=5),
+        row(start + timedelta(minutes=10), members=5),
+        row(start + timedelta(minutes=15), members=5),
+    ]
+    result = evaluate_progression(
+        history,
+        rollout(),
+        plan(),
+        current_stage="canary-5",
+        now=datetime(2026, 9, 22, 4, 17, tzinfo=timezone.utc),
+    )
+    assert result["decision"] == "STOP_ROLLOUT"
+    assert result["reasons"] == ["health_history_contains_stop"]
