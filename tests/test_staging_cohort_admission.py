@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import jwt
 import pytest
 
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for cohort admission staging tests")
+jwt = pytest.importorskip("jwt", reason="Install the coworker extra for cohort admission staging tests")
 
 from scripts import staging_cohort_admission as admission
 from services.coworker.auth import Principal
