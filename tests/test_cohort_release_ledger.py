@@ -11,6 +11,7 @@ from scripts.cohort_release_ledger import (
     append_recovery_event,
     append_scale_event,
     append_provider_policy_event,
+    append_microsoft_rollout_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -877,3 +878,141 @@ def test_schema_v4_scale_requires_matching_provider_policy_event(tmp_path):
             operator_status=status,
             scale_activation=activation,
         )
+
+
+def microsoft_rollout_files(tmp_path):
+    staging = write_json(tmp_path / "microsoft-staging.json", {
+        "microsoft_actions": {
+            "status": "passed",
+            "evidence": "live Microsoft actions passed",
+            "verified_at": "2026-09-22T13:00:00+00:00",
+        },
+    })
+    deployment = write_json(tmp_path / "microsoft-deployment.json", {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "microsoft-change-1",
+        "deployed_at": "2026-09-22T13:10:00+00:00",
+        "frontend_base_url": "https://staging.example.com",
+        "frontend_source_revision": "abcdef1234567",
+        "staging_evidence_sha256": file_sha256(staging),
+    })
+    status = write_json(tmp_path / "microsoft-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-22T13:15:00+00:00",
+        "breaches": [],
+    })
+    activation = write_json(tmp_path / "microsoft-activation.json", {
+        "schema_version": 1,
+        "status": "microsoft_rollout_verified",
+        "release_id": "coworker-cohort-001",
+        "verified_at": "2026-09-22T13:16:00+00:00",
+        "change_reference": "microsoft-change-1",
+        "deployed_at": "2026-09-22T13:10:00+00:00",
+        "frontend_base_url": "https://staging.example.com",
+        "frontend_source_revision": "abcdef1234567",
+        "backend": {
+            "actions_enabled": True,
+            "microsoft_actions_enabled": True,
+        },
+        "frontend": {
+            "coworker_enabled": True,
+            "microsoft_actions_enabled": True,
+        },
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return staging, deployment, status, activation
+
+
+def test_schema_v6_microsoft_rollout_is_hash_chained(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, deployment, status, activation = microsoft_rollout_files(tmp_path)
+
+    entry = append_microsoft_rollout_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="microsoft-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        deployment_change=deployment,
+        operator_status=status,
+        rollout_activation=activation,
+        created_at="2026-09-22T13:17:00+00:00",
+    )
+
+    assert entry["schema_version"] == 6
+    assert entry["event_type"] == "microsoft_rollout_verified"
+    assert entry["next_stage"] is None
+    assert entry["artifact_sha256"]["staging_evidence"] == file_sha256(staging)
+    assert entry["artifact_sha256"]["deployment_change"] == file_sha256(deployment)
+    assert entry["artifact_sha256"]["rollout_activation"] == file_sha256(activation)
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == entry["entry_hash"]
+
+
+def test_schema_v6_microsoft_rollout_rejects_unbound_activation(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, deployment, status, activation = microsoft_rollout_files(tmp_path)
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["artifact_sha256"]["staging_evidence"] = "0" * 64
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(ReleaseLedgerError, match="does not bind this staging_evidence"):
+        append_microsoft_rollout_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="microsoft-change-1",
+            current_stage="cohort-25",
+            staging_evidence=staging,
+            deployment_change=deployment,
+            operator_status=status,
+            rollout_activation=activation,
+        )
+
+
+def test_schema_v6_microsoft_rollout_requires_existing_stage_chain(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    staging, deployment, status, activation = microsoft_rollout_files(tmp_path)
+
+    with pytest.raises(ReleaseLedgerError, match="existing ledger chain"):
+        append_microsoft_rollout_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="microsoft-change-1",
+            current_stage="cohort-25",
+            staging_evidence=staging,
+            deployment_change=deployment,
+            operator_status=status,
+            rollout_activation=activation,
+        )
+
+
+def test_schema_v6_microsoft_rollout_cannot_record_same_activation_twice(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, deployment, status, activation = microsoft_rollout_files(tmp_path)
+    kwargs = dict(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="microsoft-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        deployment_change=deployment,
+        operator_status=status,
+        rollout_activation=activation,
+    )
+    append_microsoft_rollout_event(**kwargs)
+    with pytest.raises(ReleaseLedgerError, match="already recorded"):
+        append_microsoft_rollout_event(**kwargs)
