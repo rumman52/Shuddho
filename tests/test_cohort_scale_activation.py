@@ -12,6 +12,7 @@ from scripts.cohort_scale_activation import (
     require_deployed_configuration,
     validate_deployment_change,
     validate_operator_status,
+    validate_provider_policy_activation,
     validate_scale_decision,
 )
 
@@ -121,9 +122,11 @@ def test_activation_evidence_contains_only_aggregate_cohort_state(tmp_path):
     scale_path = tmp_path / "scale.json"
     deploy_path = tmp_path / "deploy.json"
     status_path = tmp_path / "status.json"
+    policy_activation_path = tmp_path / "policy-activation.json"
     scale_path.write_text("{}", encoding="utf-8")
     deploy_path.write_text("{}", encoding="utf-8")
     status_path.write_text("{}", encoding="utf-8")
+    policy_activation_path.write_text("{}", encoding="utf-8")
     value = build_evidence(
         decision=decision(),
         deployment=deployment(),
@@ -132,6 +135,7 @@ def test_activation_evidence_contains_only_aggregate_cohort_state(tmp_path):
         scale_decision_path=scale_path,
         deployment_change_path=deploy_path,
         operator_status_path=status_path,
+        provider_policy_activation_path=policy_activation_path,
         now=NOW,
     )
     assert value["status"] == "bounded_expansion_verified"
@@ -139,3 +143,109 @@ def test_activation_evidence_contains_only_aggregate_cohort_state(tmp_path):
     encoded = str(value)
     assert "member-1" not in encoded
     assert "cohort_account_ids" not in encoded
+
+
+def test_scale_activation_requires_ledgered_provider_policy(monkeypatch, tmp_path):
+    from scripts.cohort_release_ledger import (
+        append,
+        append_provider_policy_event,
+        file_sha256,
+    )
+    import json
+
+    monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", "k" * 32)
+    ledger = tmp_path / "ledger.jsonl"
+
+    rollout = tmp_path / "rollout.json"
+    plan_path = tmp_path / "plan.json"
+    progression = tmp_path / "progression.json"
+    base_status = tmp_path / "base-status.json"
+    rollout.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "cohort": {"max_users": 25},
+    }), encoding="utf-8")
+    plan_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "stages": [{"name": "cohort-25"}],
+    }), encoding="utf-8")
+    progression.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "HOLD",
+        "current_stage": "cohort-25",
+        "next_stage": None,
+        "reasons": ["final_stage_reached"],
+    }), encoding="utf-8")
+    base_status.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "breaches": [],
+    }), encoding="utf-8")
+    append(
+        ledger,
+        (rollout, plan_path, progression, base_status),
+        event_type="hold",
+        current_stage="cohort-25",
+        next_stage=None,
+    )
+
+    policy = tmp_path / "policy.json"
+    deployment_path = tmp_path / "policy-deploy.json"
+    status_path = tmp_path / "policy-status.json"
+    activation_path = tmp_path / "policy-activation.json"
+    policy.write_text(json.dumps({
+        "decision": "ELIGIBLE_FOR_POLICY_REVIEW",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "failures": [],
+    }), encoding="utf-8")
+    deployment_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "change_reference": "policy-change",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+    }), encoding="utf-8")
+    status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "breaches": [],
+    }), encoding="utf-8")
+    activation_path.write_text(json.dumps({
+        "status": "provider_policy_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "proposed_stage": "cohort-40",
+        "change_reference": "policy-change",
+        "artifact_sha256": {
+            "provider_policy": file_sha256(policy),
+            "deployment_change": file_sha256(deployment_path),
+            "operator_status": file_sha256(status_path),
+        },
+    }), encoding="utf-8")
+
+    with pytest.raises(ScaleActivationError, match="provider_policy_verified"):
+        validate_provider_policy_activation(
+            activation_path,
+            ledger,
+            decision(),
+        )
+
+    append_provider_policy_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall",
+        change_reference="policy-change",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        provider_policy=policy,
+        deployment_change=deployment_path,
+        operator_status=status_path,
+        policy_activation=activation_path,
+    )
+    value = validate_provider_policy_activation(
+        activation_path,
+        ledger,
+        decision(),
+    )
+    assert value["status"] == "provider_policy_verified"
