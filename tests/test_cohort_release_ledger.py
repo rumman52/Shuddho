@@ -558,6 +558,9 @@ def test_recovery_must_bind_ledger_recorded_rollback_artifact(tmp_path):
         },
         "changed": True,
     }), encoding="utf-8")
+    recovery_value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    recovery_value["artifact_sha256"]["rollback_completion"] = file_sha256(rollback_completion)
+    recovery_verification.write_text(json.dumps(recovery_value), encoding="utf-8")
 
     with pytest.raises(ReleaseLedgerError, match="rollback-completion artifact recorded"):
         append_recovery_event(
