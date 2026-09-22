@@ -695,6 +695,26 @@ def append_scale_event(
     state = verify_entries(entries, key)
     if state["release_id"] is not None and state["release_id"] != release_id:
         raise ReleaseLedgerError("Ledger release_id does not match the scale event.")
+    policy_activation_hash = hashes.get("provider_policy_activation")
+    if not valid_hash(policy_activation_hash):
+        raise ReleaseLedgerError(
+            "Scale activation evidence does not bind a provider policy activation."
+        )
+    matching_policy_entries = [
+        item
+        for item in entries
+        if item.get("schema_version") == PROVIDER_POLICY_SCHEMA_VERSION
+        and item.get("event_type") == "provider_policy_verified"
+        and item.get("current_stage") == current_stage
+        and item.get("next_stage") == next_stage
+        and item.get("artifact_sha256", {}).get("policy_activation")
+        == policy_activation_hash
+    ]
+    if len(matching_policy_entries) != 1:
+        raise ReleaseLedgerError(
+            "bounded_expansion_verified requires the matching provider_policy_verified ledger event."
+        )
+
     if not entries or not any(
         item.get("current_stage") == current_stage or item.get("next_stage") == current_stage
         for item in entries
