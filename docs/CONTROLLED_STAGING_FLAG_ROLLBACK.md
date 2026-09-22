@@ -21,7 +21,7 @@ After rollback deployment:
 - the real dispatcher records a newly created Agent run as `shuddho_agent_run_v1`;
 - both runs complete against the same durable database schema.
 
-Temporal exposes `WorkflowType` as a built-in visibility field, which is why the exercise verifies the server-recorded workflow type rather than inferring it only from local configuration. citeturn899479search4turn857286search0
+Temporal exposes `WorkflowType` as a built-in visibility field, so the exercise verifies the server-recorded workflow type rather than inferring it only from local configuration.
 
 ## Phase 1 — prepare with v2 enabled
 
