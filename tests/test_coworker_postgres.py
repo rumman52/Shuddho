@@ -187,6 +187,7 @@ def test_agent_planner_call_limit_and_daily_budget_are_atomic(repository):
         results = list(pool.map(reserve, range(6)))
     assert results.count(1) == 1
     assert results.count("planner_call_limit") == 5
+    agent.release_planner_capacity(run["id"], 1)
     with repository.sessions() as db:
         allocated = db.scalar(text(
             "SELECT allocated_tokens FROM cw_daily_usage WHERE owner_id=:owner"
@@ -264,6 +265,8 @@ def test_provider_workspace_fair_share_is_atomic(repository):
 
     assert results.count(1) == 1
     assert results.count("workspace_provider_busy") == 1
+    admitted = next(task for task in tasks if repository.get_task(identity, task["id"])["usage"]["model_attempts"] == 1)
+    repository.settle_model(admitted["id"], 1, 100, 10, "completed")
 
 
 def test_expired_provider_lease_releases_shared_capacity(repository):
@@ -291,6 +294,7 @@ def test_expired_provider_lease_releases_shared_capacity(repository):
         ))
 
     assert repository.reserve_model(second["id"], 10000) == 1
+    repository.settle_model(second["id"], 1, 100, 10, "completed")
 
 
 def test_planner_and_draft_share_one_provider_capacity_pool(repository):
@@ -332,3 +336,4 @@ def test_planner_and_draft_share_one_provider_capacity_pool(repository):
 
     agent.release_planner_capacity(run["id"], reservation["call"])
     assert repository.reserve_model(task["id"], 10000) == 1
+    repository.settle_model(task["id"], 1, 100, 10, "completed")
