@@ -157,6 +157,12 @@ export class CoworkerClient {
   finishGoogle(code: string, state: string) {
     return this.response("/api/v1/connections/google/finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) }, 45000).then(response => response.json() as Promise<ConnectedAccount>);
   }
+  connectMicrosoft(capability: "email" | "calendar") {
+    return this.json<{ authorization_url: string; state: string }>("/api/v1/connections/microsoft/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capability }) });
+  }
+  finishMicrosoft(code: string, state: string) {
+    return this.response("/api/v1/connections/microsoft/finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) }, 45000).then(response => response.json() as Promise<ConnectedAccount>);
+  }
   disconnect(id: string) { return this.json<{ message: string }>(`/api/v1/connections/${identifier(id)}`, { method: "DELETE" }); }
   actions(signal?: AbortSignal) { return this.json<{ actions: ExternalAction[] }>("/api/v1/actions", { signal }); }
   action(id: string, signal?: AbortSignal) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}`, { signal }); }
