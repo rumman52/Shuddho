@@ -121,11 +121,12 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
       const connected = connections.find(value => value.provider === provider && value.capability === capability);
       const google = provider === "google";
       const label = capability === "email" ? (google ? "Gmail" : "Outlook / Microsoft Mail") : (google ? "Google Calendar" : "Microsoft Calendar");
+      const controlLabel = microsoftEnabled ? label : (capability === "email" ? "Gmail" : "Calendar");
       return <div className="cw-connection" key={provider + capability}><div><strong>{label}</strong><small>{connected?.email ?? (capability === "email" ? "Send emails you approve" : "Create events in your primary calendar")}</small></div>
         {connected ? <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => {
           if (!window.confirm(`Disconnect ${connected.email} for ${capability}? Pending actions will be cancelled. An action already executing may still finish.`)) return;
           void run("disconnect", async () => { const result = await client.disconnect(connected.id); setNotice(result.message); setReload(x => x + 1); if (action) updateAction(await client.action(action.id)); });
-        }}>Disconnect {label}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => provider === "google" ? beginGoogleConnection(client, account, capability) : beginMicrosoftConnection(client, account, capability))}>Connect {label}</button>}
+        }}>Disconnect {controlLabel}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => provider === "google" ? beginGoogleConnection(client, account, capability) : beginMicrosoftConnection(client, account, capability))}>Connect {controlLabel}</button>}
       </div>;
     })}</div>
     <p className="cw-fineprint">{provider === "google" ? <>Google permissions can also be removed in your <a href="https://myaccount.google.com/connections" target="_blank" rel="noreferrer">Google Account</a>.</> : <>Microsoft permissions can also be reviewed in your Microsoft account's app permissions.</>}</p>
