@@ -21,6 +21,7 @@ REQUIRED_GATES = {
 CONDITIONAL_GATES = {
     "research": "Live search provider retrieval/citation validation passed.",
     "actions": "Live Google approval/execution/receipt validation passed without auto-approval.",
+    "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
 }
 
 
@@ -31,12 +32,20 @@ def load_evidence(path: Path) -> dict:
     return value
 
 
-def evaluate(evidence: dict, *, require_research: bool, require_actions: bool) -> dict:
+def evaluate(
+    evidence: dict,
+    *,
+    require_research: bool,
+    require_actions: bool,
+    require_microsoft_actions: bool = False,
+) -> dict:
     required = dict(REQUIRED_GATES)
     if require_research:
         required["research"] = CONDITIONAL_GATES["research"]
     if require_actions:
         required["actions"] = CONDITIONAL_GATES["actions"]
+    if require_microsoft_actions:
+        required["microsoft_actions"] = CONDITIONAL_GATES["microsoft_actions"]
     checks = []
     for key, description in required.items():
         record = evidence.get(key)
@@ -68,9 +77,15 @@ def main() -> None:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--require-research", action="store_true")
     parser.add_argument("--require-actions", action="store_true")
+    parser.add_argument("--require-microsoft-actions", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = evaluate(load_evidence(args.evidence), require_research=args.require_research, require_actions=args.require_actions)
+    result = evaluate(
+        load_evidence(args.evidence),
+        require_research=args.require_research,
+        require_actions=args.require_actions,
+        require_microsoft_actions=args.require_microsoft_actions,
+    )
     encoded = json.dumps(result, indent=2)
     if args.output:
         args.output.write_text(encoded + "\n", encoding="utf-8")
