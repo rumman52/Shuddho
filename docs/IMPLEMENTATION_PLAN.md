@@ -163,7 +163,9 @@ PR #135 adds [live Google approved-action validation](CONTROLLED_STAGING_LIVE_GO
 
 PR #136 adds the [controlled cohort GO/NO-GO gate](FINAL_CONTROLLED_COHORT_GATE.md): combine completed staging evidence with an explicit rollout manifest, bounded first-cohort size, capability dependencies, exact kill switches, monitoring references and incident ownership.
 
-The next rollout-safety increment adds [server-enforced cohort admission](SERVER_COHORT_ADMISSION.md): a backend-only account allowlist with a hard cohort-size ceiling, fail-closed configuration validation, denial before workspace provisioning, and a live invited-vs-fresh-non-member staging proof. This closes the gap between a documented 25-user cohort and an actually enforced 25-user cohort. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #137 adds [server-enforced cohort admission](SERVER_COHORT_ADMISSION.md): a backend-only account allowlist with a hard cohort-size ceiling, fail-closed configuration validation, denial before workspace provisioning, and a live invited-vs-fresh-non-member staging proof.
+
+The next rollout-operations increment adds the [controlled cohort health and stop gate](CONTROLLED_COHORT_HEALTH_GATE.md): a read-only aggregate health snapshot over the enforced cohort plus explicit thresholds for queue age, task/provider/Agent/Research/action failures, model latency, token use, storage and uncertain consequential actions. It returns `CONTINUE_COHORT` or `STOP_ROLLOUT` and exposes the existing kill switches without giving application code deployment-admin credentials. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
