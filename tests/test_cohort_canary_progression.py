@@ -310,6 +310,7 @@ def build_recovery_ledger(tmp_path, monkeypatch):
         canary_plan=plan_path,
         progression_decision=progression,
         operator_status=stop_status,
+        created_at="2026-09-22T04:50:00+00:00",
     )
     append_rollback_event(
         ledger=ledger,
@@ -323,6 +324,7 @@ def build_recovery_ledger(tmp_path, monkeypatch):
         progression_decision=progression,
         operator_status=rollback_status,
         rollback_completion=rollback_completion,
+        created_at="2026-09-22T04:58:00+00:00",
     )
     append_recovery_event(
         ledger=ledger,
@@ -337,6 +339,7 @@ def build_recovery_ledger(tmp_path, monkeypatch):
         operator_status=recovery_status,
         rollback_completion=rollback_completion,
         recovery_verification=recovery_verification,
+        created_at="2026-09-22T05:00:00+00:00",
     )
     return ledger, recovery_verification
 
