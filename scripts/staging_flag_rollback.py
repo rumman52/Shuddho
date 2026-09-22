@@ -121,7 +121,7 @@ async def create_and_dispatch(container: Container, client: Client, owner: str, 
         key_prefix + "-" + uuid.uuid4().hex,
     )
     container.agent.save_plan(owner, run["id"], simple_plan())
-    await Dispatcher(container, client).tick()
+    await Dispatcher(container, client).dispatch_agent_run(run["id"])
     workflow_id = "shuddho-agent-" + run["id"]
     return {"run_id": run["id"], "workflow_id": workflow_id}
 
