@@ -391,6 +391,7 @@ def qualify(
     )
     return {
         "decision": "ELIGIBLE_FOR_CAPACITY_REVIEW" if not failures else "CAPACITY_NOT_QUALIFIED",
+        "generated_at": now.isoformat(),
         "release_id": release_id,
         "final_stage": capacity_plan["final_stage"],
         "expected_peak_concurrency": capacity_plan["expected_peak_concurrency"],
