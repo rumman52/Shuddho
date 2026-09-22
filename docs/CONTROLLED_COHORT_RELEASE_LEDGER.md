@@ -49,7 +49,11 @@ Supported schema-v1 event types:
 - `stage_approved` → decision must be `ELIGIBLE_FOR_EXPANSION` and the target must be the immediately following canary stage;
 - `stop_rollout` → decision must be `STOP_ROLLOUT`.
 
-Schema v2 adds only `rollback_completed`. It must follow an existing STOP event for the same release/stage and bind the same rollout manifest, canary plan and STOP progression decision plus the exact rollback-completion evidence. Existing schema-v1 entries are not migrated or rewritten.
+Schema v2 adds only `rollback_completed`. It must follow an existing STOP event for the same release/stage and bind the same rollout manifest, canary plan and STOP progression decision plus the exact rollback-completion evidence.
+
+Schema v3 adds only `recovery_verified`. It must follow the recorded rollback completion and bind the same release/stage, original STOP artifacts, exact rollback-completion artifact, post-recovery operator status and recovery-verification evidence.
+
+Existing schema-v1/v2 entries are not migrated or rewritten.
 
 The command atomically rewrites the ledger only after verifying the full existing chain.
 
