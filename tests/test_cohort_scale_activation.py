@@ -3,6 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("sqlalchemy", reason="Install the coworker extra for scale activation tests")
+pytest.importorskip("jwt", reason="Install the coworker extra for scale activation tests")
+
 from scripts.cohort_scale_activation import (
     ScaleActivationError,
     build_evidence,
