@@ -6,6 +6,8 @@ from pathlib import Path
 
 from scripts.staging_gate import evaluate as evaluate_staging, load_evidence
 
+ACTION_PROVIDERS = {"google", "microsoft"}
+
 CAPABILITY_KEYS = {
     "coworker",
     "work_services",
@@ -58,9 +60,36 @@ def load_rollout(path: Path) -> dict:
     return value
 
 
+def declared_action_providers(rollout: dict) -> set[str]:
+    capabilities = rollout.get("capabilities") if isinstance(rollout, dict) else {}
+    actions_enabled = (
+        isinstance(capabilities, dict)
+        and capabilities.get("actions") is True
+    )
+    value = rollout.get("action_providers") if isinstance(rollout, dict) else None
+    if value is None:
+        return {"google"} if actions_enabled else set()
+    if (
+        not isinstance(value, list)
+        or any(not isinstance(item, str) for item in value)
+    ):
+        return set()
+    return set(value)
+
+
 def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
     failures: list[str] = []
-    if set(rollout) != {"release_id", "environment", "cohort", "capabilities", "rollback", "monitoring", "incident"}:
+    required_keys = {
+        "release_id",
+        "environment",
+        "cohort",
+        "capabilities",
+        "rollback",
+        "monitoring",
+        "incident",
+    }
+    allowed_keys = required_keys | {"action_providers"}
+    if not required_keys.issubset(rollout) or not set(rollout).issubset(allowed_keys):
         failures.append("manifest_shape")
         return failures
 
@@ -100,6 +129,28 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
                 failures.append("parallel_dependency")
             if capabilities["outcome_replan"] and not capabilities["intelligent_planner"]:
                 failures.append("replan_dependency")
+
+    providers_value = rollout.get("action_providers")
+    if providers_value is not None:
+        providers_valid = (
+            isinstance(providers_value, list)
+            and len(providers_value) == len(set(providers_value))
+            and all(
+                isinstance(item, str) and item in ACTION_PROVIDERS
+                for item in providers_value
+            )
+        )
+        if not providers_valid:
+            failures.append("action_providers")
+        else:
+            actions_enabled = (
+                isinstance(capabilities, dict)
+                and capabilities.get("actions") is True
+            )
+            if not actions_enabled and providers_value:
+                failures.append("action_providers_without_actions")
+            if actions_enabled and "google" not in providers_value:
+                failures.append("action_providers_google_required")
 
     rollback = rollout["rollback"]
     if not isinstance(rollback, dict) or set(rollback) != ROLLBACK_KEYS:
@@ -144,10 +195,15 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
     capabilities = rollout.get("capabilities") if isinstance(rollout, dict) else {}
     require_research = isinstance(capabilities, dict) and capabilities.get("research") is True
     require_actions = isinstance(capabilities, dict) and capabilities.get("actions") is True
+    action_providers = declared_action_providers(rollout)
+    require_microsoft_actions = (
+        require_actions and "microsoft" in action_providers
+    )
     staging = evaluate_staging(
         evidence,
         require_research=require_research,
         require_actions=require_actions,
+        require_microsoft_actions=require_microsoft_actions,
     )
     cohort_record = evidence.get("cohort_admission")
     cohort_ref = cohort_record.get("evidence") if isinstance(cohort_record, dict) else None
@@ -183,7 +239,9 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         "required_provider_gates": {
             "research": require_research,
             "actions": require_actions,
+            "microsoft_actions": require_microsoft_actions,
         },
+        "action_providers": sorted(action_providers),
     }
 
 

@@ -1,3 +1,5 @@
+import pytest
+
 from scripts.cohort_release_gate import evaluate_release, validate_rollout
 
 
@@ -8,16 +10,18 @@ BASE_GATES = {
 }
 
 
-def evidence(*, research=False, actions=False):
+def evidence(*, research=False, actions=False, microsoft=False):
     keys = set(BASE_GATES)
     if research:
         keys.add("research")
     if actions:
         keys.add("actions")
+    if microsoft:
+        keys.add("microsoft_actions")
     return {key: {"status": "passed", "evidence": "staging-proof"} for key in keys}
 
 
-def rollout(*, research=False, actions=False, users=25):
+def rollout(*, research=False, actions=False, users=25, providers=None):
     monitoring = {
         "queue_age": "queue-dashboard",
         "task_success": "task-dashboard",
@@ -31,7 +35,7 @@ def rollout(*, research=False, actions=False, users=25):
         monitoring["research"] = "research-dashboard"
     if actions:
         monitoring["actions"] = "actions-dashboard"
-    return {
+    value = {
         "release_id": "coworker-cohort-001",
         "environment": "production",
         "cohort": {"reference": "cohort-ticket", "max_users": users},
@@ -64,6 +68,9 @@ def rollout(*, research=False, actions=False, users=25):
             "change_reference": "change-123",
         },
     }
+    if providers is not None:
+        value["action_providers"] = providers
+    return value
 
 
 def test_controlled_cohort_gate_go_without_optional_provider_capabilities():
@@ -71,7 +78,12 @@ def test_controlled_cohort_gate_go_without_optional_provider_capabilities():
     assert result["decision"] == "GO_CONTROLLED_COHORT"
     assert result["staging"]["missing"] == []
     assert result["rollout_failures"] == []
-    assert result["required_provider_gates"] == {"research": False, "actions": False}
+    assert result["required_provider_gates"] == {
+        "research": False,
+        "actions": False,
+        "microsoft_actions": False,
+    }
+    assert result["action_providers"] == []
 
 
 def test_provider_evidence_is_required_only_when_enabled():
@@ -136,3 +148,53 @@ def test_controlled_cohort_gate_requires_server_admission_evidence():
     result = evaluate_release(value, rollout())
     assert result["decision"] == "NO-GO"
     assert "cohort_admission" in result["staging"]["missing"]
+
+
+def test_legacy_google_actions_remain_backward_compatible():
+    result = evaluate_release(
+        evidence(actions=True),
+        rollout(actions=True),
+    )
+    assert result["decision"] == "GO_CONTROLLED_COHORT"
+    assert result["required_provider_gates"]["microsoft_actions"] is False
+    assert result["action_providers"] == ["google"]
+
+
+def test_declared_microsoft_requires_independent_live_gate():
+    value = rollout(
+        actions=True,
+        providers=["google", "microsoft"],
+    )
+    missing = evaluate_release(
+        evidence(actions=True),
+        value,
+    )
+    assert missing["decision"] == "NO-GO"
+    assert missing["staging"]["missing"] == ["microsoft_actions"]
+    assert missing["required_provider_gates"]["microsoft_actions"] is True
+    assert missing["action_providers"] == ["google", "microsoft"]
+
+    passed = evaluate_release(
+        evidence(actions=True, microsoft=True),
+        value,
+    )
+    assert passed["decision"] == "GO_CONTROLLED_COHORT"
+    assert passed["staging"]["missing"] == []
+
+
+@pytest.mark.parametrize("providers", [
+    ["microsoft"],
+    ["google", "google"],
+    ["google", "slack"],
+    "google",
+])
+def test_invalid_action_provider_declarations_fail_closed(providers):
+    value = rollout(actions=True, providers=providers)
+    failures = validate_rollout(value, max_cohort_users=25)
+    assert "action_providers" in failures or "action_providers_google_required" in failures
+
+
+def test_action_providers_cannot_be_declared_when_actions_are_disabled():
+    value = rollout(actions=False, providers=["google"])
+    failures = validate_rollout(value, max_cohort_users=25)
+    assert "action_providers_without_actions" in failures

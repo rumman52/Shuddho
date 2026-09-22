@@ -55,6 +55,10 @@ Research evidence is required only if `research=true` in the rollout manifest.
 
 Live Google action evidence is required only if `actions=true`.
 
+The rollout manifest may additionally declare `action_providers`. Legacy manifests without this field remain Google-only when actions are enabled. A manifest that declares Microsoft must use `["google", "microsoft"]`; Microsoft cannot replace the existing Google action baseline in this increment.
+
+When `microsoft` is declared, the independent `microsoft_actions` live staging gate is also mandatory before `GO_CONTROLLED_COHORT`.
+
 ## First-cohort bounds
 
 The gate defaults to a maximum of **25 users**.
@@ -131,3 +135,20 @@ It does **not** mean:
 - demonstrated billion-user scale.
 
 After cohort activation, watch actual p50/p95/p99 latency, queue age, error rates, retry rates, token/provider spend, storage growth, research citation issues and consequential-action outcomes. If predefined thresholds are breached, use the documented kill switches rather than widening the cohort.
+
+
+## Provider-aware consequential-action admission
+
+The final cohort decision now records the exact approved action-provider set.
+
+Rules:
+
+- actions disabled + no provider list → no provider gate;
+- legacy actions enabled + no provider list → Google only;
+- explicit `["google"]` → Google only;
+- explicit `["google", "microsoft"]` → Google and Microsoft;
+- Microsoft without Google → NO-GO;
+- duplicate, unknown, or malformed providers → NO-GO;
+- providers declared while `actions=false` → NO-GO.
+
+This is a release-control contract only. Declaring a provider does not enable its runtime flag, create OAuth connections, approve an action, or execute an action.
