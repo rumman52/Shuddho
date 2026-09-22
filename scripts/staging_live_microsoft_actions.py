@@ -30,7 +30,11 @@ class MicrosoftActionValidationFailure(RuntimeError):
 
 
 def passed(evidence: str) -> dict:
-    return {"status": "passed", "evidence": evidence}
+    return {
+        "status": "passed",
+        "evidence": evidence,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def require_guard() -> None:
