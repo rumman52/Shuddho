@@ -8,6 +8,12 @@ from pathlib import Path
 
 import httpx
 
+from scripts.cohort_release_ledger import (
+    file_sha256 as ledger_file_sha256,
+    ledger_key,
+    read_entries,
+    verify_entries,
+)
 from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_cohort_admission import assert_denied_unprovisioned, token_account_id
 from services.coworker.config import Settings
@@ -121,6 +127,59 @@ def validate_operator_status(
     return generated
 
 
+
+def validate_provider_policy_activation(
+    path: Path,
+    ledger_path: Path,
+    decision: dict,
+) -> dict:
+    value = load_json(path, "provider policy activation")
+    if value.get("status") != "provider_policy_verified":
+        raise ScaleActivationError(
+            "Provider policy activation has not been verified."
+        )
+    if value.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError(
+            "Provider policy activation release_id does not match."
+        )
+    if (
+        value.get("current_stage") != decision["current_stage"]
+        or value.get("proposed_stage") != decision["proposed_stage"]
+    ):
+        raise ScaleActivationError(
+            "Provider policy activation stages do not match the scale decision."
+        )
+
+    try:
+        entries = read_entries(ledger_path)
+        state = verify_entries(entries, ledger_key())
+    except Exception as error:
+        raise ScaleActivationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    if state.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError(
+            "Release ledger release_id does not match the scale decision."
+        )
+
+    activation_hash = ledger_file_sha256(path)
+    matches = [
+        item
+        for item in entries
+        if item.get("schema_version") == 5
+        and item.get("event_type") == "provider_policy_verified"
+        and item.get("current_stage") == decision["current_stage"]
+        and item.get("next_stage") == decision["proposed_stage"]
+        and item.get("artifact_sha256", {}).get("policy_activation")
+        == activation_hash
+    ]
+    if len(matches) != 1:
+        raise ScaleActivationError(
+            "Release ledger must contain exactly one matching provider_policy_verified event."
+        )
+    return value
+
+
 def require_deployed_configuration(settings: Settings, decision: dict, allowed_id: str, denied_id: str) -> None:
     if not settings.cohort_enforced:
         raise ScaleActivationError("SHUDDHO_COWORKER_COHORT_ENFORCED must remain true.")
@@ -147,6 +206,7 @@ def build_evidence(
     scale_decision_path: Path,
     deployment_change_path: Path,
     operator_status_path: Path,
+    provider_policy_activation_path: Path,
     now: datetime,
 ) -> dict:
     return {
@@ -167,6 +227,9 @@ def build_evidence(
             "scale_decision": sha256_file(scale_decision_path),
             "deployment_change": sha256_file(deployment_change_path),
             "operator_status": sha256_file(operator_status_path),
+            "provider_policy_activation": sha256_file(
+                provider_policy_activation_path
+            ),
         },
     }
 
@@ -178,6 +241,8 @@ def main() -> None:
     parser.add_argument("--scale-decision", type=Path, required=True)
     parser.add_argument("--deployment-change", type=Path, required=True)
     parser.add_argument("--operator-status", type=Path, required=True)
+    parser.add_argument("--provider-policy-activation", type=Path, required=True)
+    parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--freshness-minutes", type=int, default=30)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -192,6 +257,11 @@ def main() -> None:
             deployment,
             decision,
             not_before=decision_time,
+        )
+        validate_provider_policy_activation(
+            args.provider_policy_activation,
+            args.release_ledger,
+            decision,
         )
         operator_status = load_json(args.operator_status, "operator status")
         now = datetime.now(timezone.utc)
@@ -248,6 +318,7 @@ def main() -> None:
             scale_decision_path=args.scale_decision,
             deployment_change_path=args.deployment_change,
             operator_status_path=args.operator_status,
+            provider_policy_activation_path=args.provider_policy_activation,
             now=now,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
