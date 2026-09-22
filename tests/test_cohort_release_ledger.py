@@ -8,6 +8,7 @@ from scripts.cohort_release_ledger import (
     ReleaseLedgerError,
     append_event,
     append_rollback_event,
+    append_recovery_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -327,4 +328,252 @@ def test_rollback_completion_must_bind_same_stop_artifacts(tmp_path):
             progression_decision=progression,
             operator_status=post_status,
             rollback_completion=completion,
+        )
+
+
+def recovery_files(tmp_path):
+    rollout = write_json(tmp_path / "recovery-rollout.json", {
+        "release_id": "coworker-cohort-001",
+        "cohort": {"max_users": 25},
+    })
+    plan = write_json(tmp_path / "recovery-plan.json", {
+        "release_id": "coworker-cohort-001",
+        "stages": [
+            {"name": "canary-5"},
+            {"name": "canary-10"},
+            {"name": "cohort-25"},
+        ],
+    })
+    progression = write_json(tmp_path / "recovery-progression.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "STOP_ROLLOUT",
+        "current_stage": "canary-5",
+        "next_stage": None,
+    })
+    stop_status = write_json(tmp_path / "recovery-stop-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "STOP_ROLLOUT",
+    })
+    rollback_status = write_json(tmp_path / "recovery-rollback-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "breaches": [],
+    })
+    rollback_completion = write_json(tmp_path / "recovery-rollback-completion.json", {
+        "schema_version": 1,
+        "release_id": "coworker-cohort-001",
+        "status": "rollback_completed",
+        "mode": "global",
+        "artifact_sha256": {
+            "rollout_manifest": file_sha256(rollout),
+            "operator_status": file_sha256(rollback_status),
+        },
+    })
+    recovery_status = write_json(tmp_path / "recovery-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "breaches": [],
+    })
+    recovery_verification = write_json(tmp_path / "recovery-verification.json", {
+        "schema_version": 1,
+        "release_id": "coworker-cohort-001",
+        "status": "recovery_verified",
+        "current_stage": "canary-5",
+        "artifact_sha256": {
+            "rollout_manifest": file_sha256(rollout),
+            "canary_plan": file_sha256(plan),
+            "rollback_completion": file_sha256(rollback_completion),
+            "operator_status": file_sha256(recovery_status),
+        },
+    })
+    return (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    )
+
+
+def test_schema_v3_recovery_chains_after_v2_rollback(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+
+    stop = append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+        created_at="2026-09-22T07:00:00+00:00",
+    )
+    rollback_entry = append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+        created_at="2026-09-22T07:20:00+00:00",
+    )
+    recovered = append_recovery_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=recovery_status,
+        rollback_completion=rollback_completion,
+        recovery_verification=recovery_verification,
+        created_at="2026-09-22T08:00:00+00:00",
+    )
+
+    assert stop["schema_version"] == 1
+    assert rollback_entry["schema_version"] == 2
+    assert recovered["schema_version"] == 3
+    assert recovered["event_type"] == "recovery_verified"
+    assert recovered["previous_entry_hash"] == rollback_entry["entry_hash"]
+    assert recovered["artifact_sha256"]["recovery_verification"] == file_sha256(recovery_verification)
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == recovered["entry_hash"]
+
+
+def test_recovery_requires_prior_rollback_completion(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        _rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+    )
+    with pytest.raises(ReleaseLedgerError, match="earlier rollback_completed"):
+        append_recovery_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="incident-123",
+            current_stage="canary-5",
+            rollout=rollout,
+            canary_plan=plan,
+            progression_decision=progression,
+            operator_status=recovery_status,
+            rollback_completion=rollback_completion,
+            recovery_verification=recovery_verification,
+        )
+
+
+def test_recovery_must_bind_ledger_recorded_rollback_artifact(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+    )
+    append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-123",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+    )
+    rollback_completion.write_text(json.dumps({
+        "schema_version": 1,
+        "release_id": "coworker-cohort-001",
+        "status": "rollback_completed",
+        "mode": "global",
+        "artifact_sha256": {
+            "rollout_manifest": file_sha256(rollout),
+            "operator_status": file_sha256(rollback_status),
+        },
+        "changed": True,
+    }), encoding="utf-8")
+    recovery_value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    recovery_value["artifact_sha256"]["rollback_completion"] = file_sha256(rollback_completion)
+    recovery_verification.write_text(json.dumps(recovery_value), encoding="utf-8")
+
+    with pytest.raises(ReleaseLedgerError, match="rollback-completion artifact recorded"):
+        append_recovery_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="incident-123",
+            current_stage="canary-5",
+            rollout=rollout,
+            canary_plan=plan,
+            progression_decision=progression,
+            operator_status=recovery_status,
+            rollback_completion=rollback_completion,
+            recovery_verification=recovery_verification,
         )
