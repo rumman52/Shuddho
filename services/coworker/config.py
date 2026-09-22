@@ -184,6 +184,8 @@ class Settings:
             raise ValueError("Per-workspace provider concurrency cannot exceed global concurrency")
         if self.provider_max_reserved_tokens_per_workspace > self.provider_max_reserved_tokens:
             raise ValueError("Per-workspace provider token reserve cannot exceed the global reserve")
+        if self.daily_token_budget > self.provider_daily_token_budget:
+            raise ValueError("Per-workspace daily token budget cannot exceed the global provider daily budget")
         if self.provider_lease_seconds <= self.model_timeout_seconds:
             raise ValueError("SHUDDHO_PROVIDER_LEASE_SECONDS must exceed the model timeout")
         if self.max_agent_parallel_steps > 4:
