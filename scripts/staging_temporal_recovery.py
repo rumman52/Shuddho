@@ -195,10 +195,10 @@ def validate_persisted_recovery(
     if {item.idempotency_key for item in tasks} != expected_keys:
         raise RecoveryFailure("Child task idempotency keys do not match the server-owned run/ordinal contract.")
 
-    start = _utc(run.created_at) - timedelta(seconds=30)
+    active_start = min(_utc(item.started_at) for item in ordered)
     finish = _utc(run.updated_at) + timedelta(seconds=30)
-    if not start <= restart_at <= finish:
-        raise RecoveryFailure("Recorded worker restart did not occur during the recovery run window.")
+    if not active_start <= restart_at <= finish:
+        raise RecoveryFailure("Recorded worker restart did not occur after agent execution started and before the recovery run finished.")
     return {
         "fan_in_started_at": _utc(ordered[2].started_at).isoformat(),
         "branch_finished_at": [_utc(ordered[0].finished_at).isoformat(), _utc(ordered[1].finished_at).isoformat()],
