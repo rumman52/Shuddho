@@ -5,6 +5,7 @@
   "storage": {"status": "pending", "evidence": ""},
   "temporal": {"status": "pending", "evidence": ""},
   "model": {"status": "pending", "evidence": ""},
+  "quality": {"status": "pending", "evidence": ""},
   "backup_restore": {"status": "pending", "evidence": ""},
   "deletion": {"status": "pending", "evidence": ""},
   "parallel_restart": {"status": "pending", "evidence": ""},
