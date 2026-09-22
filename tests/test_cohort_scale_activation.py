@@ -147,7 +147,7 @@ def test_activation_evidence_contains_only_aggregate_cohort_state(tmp_path):
 
 def test_scale_activation_requires_ledgered_provider_policy(monkeypatch, tmp_path):
     from scripts.cohort_release_ledger import (
-        append,
+        append_event,
         append_provider_policy_event,
         file_sha256,
     )
@@ -180,12 +180,19 @@ def test_scale_activation_requires_ledgered_provider_policy(monkeypatch, tmp_pat
         "decision": "CONTINUE_COHORT",
         "breaches": [],
     }), encoding="utf-8")
-    append(
-        ledger,
-        (rollout, plan_path, progression, base_status),
+    append_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
         event_type="hold",
+        actor_reference="oncall",
+        change_reference="cohort-25-hold",
         current_stage="cohort-25",
         next_stage=None,
+        rollout=rollout,
+        canary_plan=plan_path,
+        progression_decision=progression,
+        operator_status=base_status,
     )
 
     policy = tmp_path / "policy.json"
