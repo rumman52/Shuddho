@@ -184,6 +184,31 @@ class Dispatcher:
     def __init__(self, container: Container, client):
         self.container, self.client = container, client
 
+    async def dispatch_agent_run(self, run_id: str):
+        agent = self.container.agent
+        run = await asyncio.to_thread(agent.worker_run, run_id)
+        if run["state"] not in {"completed", "failed", "cancelled"}:
+            try:
+                parallel = (
+                    self.container.settings.agent_dependency_graph_enabled
+                    and self.container.settings.agent_parallel_execution_enabled
+                )
+                workflow_entry = AgentWorkflowV2.run if parallel else AgentWorkflow.run
+                workflow_input = (
+                    {"run_id": run_id, "max_parallel_steps": self.container.settings.max_agent_parallel_steps}
+                    if parallel else run_id
+                )
+                await self.client.start_workflow(
+                    workflow_entry, workflow_input, id="shuddho-agent-" + run_id,
+                    task_queue=self.container.settings.task_queue,
+                    execution_timeout=timedelta(seconds=self.container.settings.agent_run_timeout_seconds),
+                    id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                    rpc_timeout=timedelta(seconds=10),
+                )
+            except WorkflowAlreadyStartedError:
+                pass
+        await asyncio.to_thread(agent.delivered, run_id)
+
     async def tick(self):
         repo = self.container.repository
         actions = self.container.actions.repo
@@ -200,28 +225,7 @@ class Dispatcher:
             await asyncio.to_thread(actions.delivered, action_id)
         if self.container.settings.agent_runtime_enabled:
             for run_id in await asyncio.to_thread(agent.claim_outbox):
-                run = await asyncio.to_thread(agent.worker_run, run_id)
-                if run["state"] not in {"completed", "failed", "cancelled"}:
-                    try:
-                        parallel = (
-                            self.container.settings.agent_dependency_graph_enabled
-                            and self.container.settings.agent_parallel_execution_enabled
-                        )
-                        workflow_entry = AgentWorkflowV2.run if parallel else AgentWorkflow.run
-                        workflow_input = (
-                            {"run_id": run_id, "max_parallel_steps": self.container.settings.max_agent_parallel_steps}
-                            if parallel else run_id
-                        )
-                        await self.client.start_workflow(
-                            workflow_entry, workflow_input, id="shuddho-agent-" + run_id,
-                            task_queue=self.container.settings.task_queue,
-                            execution_timeout=timedelta(seconds=self.container.settings.agent_run_timeout_seconds),
-                            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-                            rpc_timeout=timedelta(seconds=10),
-                        )
-                    except WorkflowAlreadyStartedError:
-                        pass
-                await asyncio.to_thread(agent.delivered, run_id)
+                await self.dispatch_agent_run(run_id)
         await asyncio.to_thread(repo.expire_tasks)
         for task_id in await asyncio.to_thread(repo.claim_outbox):
             task = await asyncio.to_thread(repo.worker_task, task_id, False)
