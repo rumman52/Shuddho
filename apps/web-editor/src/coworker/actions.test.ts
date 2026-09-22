@@ -38,19 +38,41 @@ test("approval sends only the persisted preview hash to the owned API with the c
 
 test("Microsoft redirect must match login host, tenant path, current site, callback path and returned state", () => {
   const state = "b".repeat(43);
-  const base = new URL("https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize");
-  base.searchParams.set("state", state);
-  base.searchParams.set("redirect_uri", "https://shuddho.example.org/oauth/microsoft/callback");
+  const valid = () => {
+    const value = new URL("https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize");
+    value.searchParams.set("state", state);
+    value.searchParams.set("redirect_uri", "https://shuddho.example.org/oauth/microsoft/callback");
+    return value;
+  };
+  const base = valid();
   assert.equal(
     microsoftAuthorizationURL(base.href, state, "https://shuddho.example.org"),
     base.href,
   );
+
+  const badHost = valid();
+  badHost.hostname = "attacker.test";
+  const badPath = valid();
+  badPath.pathname = "/organizations/oauth2/v2.0/token";
+  const badState = valid();
+  badState.searchParams.set("state", "c".repeat(43));
+  const badRedirectOrigin = valid();
+  badRedirectOrigin.searchParams.set(
+    "redirect_uri",
+    "https://attacker.test/oauth/microsoft/callback",
+  );
+  const badRedirectPath = valid();
+  badRedirectPath.searchParams.set(
+    "redirect_uri",
+    "https://shuddho.example.org/oauth/google/callback",
+  );
+
   for (const changed of [
-    base.href.replace("login.microsoftonline.com", "attacker.test"),
-    base.href.replace("/oauth2/v2.0/authorize", "/oauth2/v2.0/token"),
-    base.href.replace(state, "c".repeat(43)),
-    base.href.replace("shuddho.example.org", "attacker.test"),
-    base.href.replace("/oauth/microsoft/callback", "/oauth/google/callback"),
+    badHost.href,
+    badPath.href,
+    badState.href,
+    badRedirectOrigin.href,
+    badRedirectPath.href,
   ]) {
     assert.throws(() =>
       microsoftAuthorizationURL(changed, state, "https://shuddho.example.org"),
