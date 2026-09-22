@@ -4,6 +4,8 @@ import hashlib
 import os
 import re
 import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -17,10 +19,18 @@ def validate_key(key: str) -> str:
     return key
 
 
+@dataclass(frozen=True)
+class StoredObject:
+    key: str
+    modified_at: datetime
+    byte_size: int
+
+
 class ObjectStore(Protocol):
     def put(self, key: str, data: bytes, content_type: str) -> None: ...
     def get(self, key: str, max_bytes: int) -> bytes: ...
     def delete(self, key: str) -> None: ...
+    def inventory(self, prefix: str = "") -> list[StoredObject]: ...
     def download_url(self, key: str, filename: str, content_type: str) -> str | None: ...
 
 
@@ -60,6 +70,23 @@ class LocalObjectStore:
     def delete(self, key):
         self.path(key).unlink(missing_ok=True)
 
+    def inventory(self, prefix=""):
+        prefix = validate_key(prefix) if prefix else ""
+        result = []
+        for path in self.root.rglob("*"):
+            if not path.is_file():
+                continue
+            key = path.relative_to(self.root).as_posix()
+            if prefix and not key.startswith(prefix):
+                continue
+            stat = path.stat()
+            result.append(StoredObject(
+                key=key,
+                modified_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc),
+                byte_size=stat.st_size,
+            ))
+        return sorted(result, key=lambda item: item.key)
+
     def download_url(self, key, filename, content_type):
         return None
 
@@ -95,6 +122,33 @@ class S3ObjectStore:
 
     def delete(self, key):
         self.client.delete_object(Bucket=self.bucket, Key=validate_key(key))
+
+    def inventory(self, prefix=""):
+        prefix = validate_key(prefix) if prefix else ""
+        token = None
+        result = []
+        while True:
+            request = {"Bucket": self.bucket, "Prefix": prefix, "MaxKeys": 1000}
+            if token:
+                request["ContinuationToken"] = token
+            response = self.client.list_objects_v2(**request)
+            for item in response.get("Contents", []):
+                modified = item.get("LastModified")
+                if not isinstance(modified, datetime):
+                    continue
+                if modified.tzinfo is None:
+                    modified = modified.replace(tzinfo=timezone.utc)
+                result.append(StoredObject(
+                    key=validate_key(str(item["Key"])),
+                    modified_at=modified.astimezone(timezone.utc),
+                    byte_size=int(item.get("Size", 0)),
+                ))
+            if not response.get("IsTruncated"):
+                break
+            token = response.get("NextContinuationToken")
+            if not token:
+                break
+        return result
 
     def download_url(self, key, filename, content_type):
         # Filename comes from our exporter, never from the request's query string.
