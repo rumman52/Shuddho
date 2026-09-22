@@ -145,7 +145,9 @@ PR #121 adds [bounded parallel execution](PART_3_PARALLEL_EXECUTION.md): new run
 
 PR #123/#124 add [Agent Evaluation and Production Staging Gates](PART_3_AGENT_EVAL_STAGING_GATES.md): CI-safe routing evaluation, opt-in live planner evaluation, and an explicit machine-readable GO/NO-GO gate before enabling Coworker or Agent Runtime for production traffic.
 
-The next controlled-staging increment adds [live infrastructure probes](CONTROLLED_STAGING_LIVE_PROBES.md): non-destructive validation for managed identity JWKS, TLS PostgreSQL + migrations, private object storage round trips, Temporal namespace connectivity, and optional live DeepSeek planner evaluation. Connectivity-only checks remain partial until owner isolation, signed-download authorization, restart/replay, backup/restore, deletion, provider actions and rollback exercises are recorded. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #126 adds [live infrastructure probes](CONTROLLED_STAGING_LIVE_PROBES.md): non-destructive validation for managed identity JWKS, TLS PostgreSQL + migrations, private object storage round trips, Temporal namespace connectivity, and optional live DeepSeek planner evaluation.
+
+The next staging increment adds the [authenticated API exercise](CONTROLLED_STAGING_API_EXERCISE.md): two-account owner-isolation checks across workspace/document/task/event/cancel boundaries plus an optional live artifact authorization/download path that can promote identity and storage evidence from partial to passed. Temporal restart/replay, backup/restore, deletion, provider actions and rollback remain separate gates. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
