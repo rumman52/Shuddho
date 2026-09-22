@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("sqlalchemy", reason="Install the coworker extra for provider policy activation tests")
+
 from scripts.provider_policy_activation import (
     ProviderPolicyActivationError,
     build_evidence,
