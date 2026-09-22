@@ -1,6 +1,7 @@
 """Explicit user commands only; models have no access to this executor."""
 import asyncio
 
+from .action_registry import action_spec
 from .action_repository import ActionRepository, TERMINAL
 from .errors import CoworkerError
 from .google_actions import GoogleActions, GoogleFailure, SCOPES
@@ -28,7 +29,7 @@ class ActionService:
 
     async def access(self, action):
         credentials = await asyncio.to_thread(self.repo.credentials, action["connection_id"])
-        capability = "email" if action["kind"] == "email_send" else "calendar"
+        capability = action_spec(action["kind"], action["preview"]["provider"]).capability
         if SCOPES[capability] not in credentials["scopes"]:
             raise GoogleFailure("connection_scope_missing", definitive=True)
         token = await self.provider.refresh(credentials["refresh_token"])
@@ -73,7 +74,8 @@ class ActionService:
 
     async def reconcile(self, action, token=None):
         receipt = None
-        if action["kind"] == "calendar_create" and self.repo.settings.actions_enabled:
+        spec = action_spec(action["kind"], action["preview"]["provider"])
+        if spec.reconcile_supported and self.repo.settings.actions_enabled:
             try:
                 token = token or await self.access(action)
                 receipt = await self.provider.reconcile(action, token)
