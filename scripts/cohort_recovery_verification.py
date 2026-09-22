@@ -16,6 +16,12 @@ from scripts.cohort_canary_progression import load_plan
 from scripts.cohort_health_gate import collect_snapshot, evaluate, load_thresholds
 from scripts.cohort_observability_export import atomic_write, operator_status
 from scripts.cohort_release_gate import load_rollout
+from scripts.cohort_release_ledger import (
+    file_sha256 as ledger_file_sha256,
+    ledger_key,
+    read_entries,
+    verify_entries,
+)
 from scripts.staging_cohort_admission import token_account_id
 from services.coworker.config import Settings, enabled as coworker_enabled
 
@@ -178,6 +184,144 @@ def validate_recovery_configuration(
     }
 
 
+
+def validate_microsoft_recovery_activation(
+    *,
+    settings: Settings,
+    activation_path: Path | None,
+    ledger_path: Path | None,
+    release_id: str,
+    current_stage: str,
+    rollback_completion: dict,
+    rollback_path: Path,
+    recovery_deployed_at: datetime,
+) -> dict | None:
+    if not getattr(settings, "microsoft_actions_enabled", False):
+        return None
+    if activation_path is None or ledger_path is None:
+        raise RecoveryVerificationError(
+            "Microsoft actions are enabled but fresh Microsoft rollout activation "
+            "and the release ledger are required for recovery."
+        )
+
+    activation = load_json(
+        activation_path,
+        "post-rollback Microsoft rollout activation",
+    )
+    if activation.get("status") != "microsoft_rollout_verified":
+        raise RecoveryVerificationError(
+            "Post-rollback Microsoft rollout activation has not been verified."
+        )
+    if activation.get("release_id") != release_id:
+        raise RecoveryVerificationError(
+            "Post-rollback Microsoft rollout activation release_id does not match."
+        )
+
+    backend = activation.get("backend")
+    frontend = activation.get("frontend")
+    if (
+        not isinstance(backend, dict)
+        or backend.get("actions_enabled") is not True
+        or backend.get("microsoft_actions_enabled") is not True
+        or not isinstance(frontend, dict)
+        or frontend.get("coworker_enabled") is not True
+        or frontend.get("microsoft_actions_enabled") is not True
+    ):
+        raise RecoveryVerificationError(
+            "Post-rollback Microsoft activation does not prove enabled backend/frontend controls."
+        )
+
+    deployed_at = activation.get("deployed_at")
+    verified_at = activation.get("verified_at")
+    if not isinstance(deployed_at, str) or not isinstance(verified_at, str):
+        raise RecoveryVerificationError(
+            "Post-rollback Microsoft activation is missing deployment/verification timestamps."
+        )
+    microsoft_deployed = parse_time(
+        deployed_at,
+        "Microsoft rollout deployed_at",
+    )
+    microsoft_verified = parse_time(
+        verified_at,
+        "Microsoft rollout verified_at",
+    )
+    rollback_verified_at = rollback_completion.get("verified_at")
+    if not isinstance(rollback_verified_at, str):
+        raise RecoveryVerificationError(
+            "Rollback completion has no verified_at timestamp."
+        )
+    rollback_verified = parse_time(
+        rollback_verified_at,
+        "rollback verified_at",
+    )
+    if microsoft_deployed < recovery_deployed_at:
+        raise RecoveryVerificationError(
+            "Microsoft rollout activation predates the recovery deployment."
+        )
+    if microsoft_verified < microsoft_deployed:
+        raise RecoveryVerificationError(
+            "Microsoft rollout activation was verified before its deployment."
+        )
+    if microsoft_verified <= rollback_verified:
+        raise RecoveryVerificationError(
+            "Microsoft rollout activation must be freshly verified after rollback completion."
+        )
+
+    try:
+        entries = read_entries(ledger_path)
+        state = verify_entries(entries, ledger_key())
+    except Exception as error:
+        raise RecoveryVerificationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    if state.get("release_id") != release_id:
+        raise RecoveryVerificationError(
+            "Release ledger release_id does not match recovery."
+        )
+
+    rollback_hash = ledger_file_sha256(rollback_path)
+    rollback_entries = [
+        item
+        for item in entries
+        if item.get("schema_version") == 2
+        and item.get("event_type") == "rollback_completed"
+        and item.get("current_stage") == current_stage
+        and item.get("artifact_sha256", {}).get("rollback_completion")
+        == rollback_hash
+    ]
+    if len(rollback_entries) != 1:
+        raise RecoveryVerificationError(
+            "Recovery requires exactly one ledgered rollback_completed event "
+            "for the exact rollback evidence."
+        )
+    rollback_entry = rollback_entries[0]
+
+    activation_hash = ledger_file_sha256(activation_path)
+    microsoft_entries = [
+        item
+        for item in entries
+        if item.get("schema_version") == 6
+        and item.get("event_type") == "microsoft_rollout_verified"
+        and item.get("current_stage") == current_stage
+        and item.get("next_stage") is None
+        and item.get("artifact_sha256", {}).get("rollout_activation")
+        == activation_hash
+        and item.get("sequence", 0) > rollback_entry.get("sequence", 0)
+    ]
+    if len(microsoft_entries) != 1:
+        raise RecoveryVerificationError(
+            "Microsoft-enabled recovery requires exactly one fresh schema-v6 "
+            "microsoft_rollout_verified event after the exact rollback completion."
+        )
+
+    return {
+        "activation": activation,
+        "ledger_sequence": microsoft_entries[0]["sequence"],
+        "ledger_entry_hash": microsoft_entries[0]["entry_hash"],
+        "activation_sha256": activation_hash,
+    }
+
+
 def expect_json(response: httpx.Response, status: int, label: str) -> dict:
     if response.status_code != status:
         raise RecoveryVerificationError(
@@ -317,6 +461,8 @@ def build_recovery_evidence(
     denied_token: str,
     task_timeout: int,
     status_output: Path,
+    microsoft_rollout_activation_path: Path | None = None,
+    release_ledger_path: Path | None = None,
 ) -> dict:
     if not deployment_reference.strip() or len(deployment_reference) > 500:
         raise RecoveryVerificationError(
@@ -331,6 +477,16 @@ def build_recovery_evidence(
         rollout_path=rollout_path,
         current_stage=current_stage,
         deployed_at=deployment_time,
+    )
+    microsoft_recovery = validate_microsoft_recovery_activation(
+        settings=settings,
+        activation_path=microsoft_rollout_activation_path,
+        ledger_path=release_ledger_path,
+        release_id=config["release_id"],
+        current_stage=current_stage,
+        rollback_completion=rollback_completion,
+        rollback_path=rollback_path,
+        recovery_deployed_at=deployment_time,
     )
 
     probe = run_live_recovery_probe(
@@ -367,6 +523,22 @@ def build_recovery_evidence(
         )
     atomic_write(status_output, json.dumps(status, indent=2) + "\n")
 
+    artifact_sha256 = {
+        "rollout_manifest": sha256_file(rollout_path),
+        "canary_plan": sha256_file(plan_path),
+        "rollback_completion": sha256_file(rollback_path),
+        "operator_status": sha256_file(status_output),
+    }
+    microsoft_summary = None
+    if microsoft_recovery is not None:
+        artifact_sha256["microsoft_rollout_activation"] = (
+            microsoft_recovery["activation_sha256"]
+        )
+        microsoft_summary = {
+            "ledger_sequence": microsoft_recovery["ledger_sequence"],
+            "ledger_entry_hash": microsoft_recovery["ledger_entry_hash"],
+        }
+
     return {
         "schema_version": 1,
         "release_id": config["release_id"],
@@ -383,12 +555,8 @@ def build_recovery_evidence(
             "decision": status["decision"],
             "breaches": len(status["breaches"]),
         },
-        "artifact_sha256": {
-            "rollout_manifest": sha256_file(rollout_path),
-            "canary_plan": sha256_file(plan_path),
-            "rollback_completion": sha256_file(rollback_path),
-            "operator_status": sha256_file(status_output),
-        },
+        "microsoft_rollout": microsoft_summary,
+        "artifact_sha256": artifact_sha256,
     }
 
 
@@ -405,6 +573,8 @@ def main() -> None:
     parser.add_argument("--deployed-at", required=True)
     parser.add_argument("--task-timeout", type=int, default=180)
     parser.add_argument("--status-output", type=Path, required=True)
+    parser.add_argument("--microsoft-rollout-activation", type=Path)
+    parser.add_argument("--release-ledger", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -431,6 +601,8 @@ def main() -> None:
             denied_token=secret("SHUDDHO_RECOVERY_TOKEN_DENIED"),
             task_timeout=max(30, args.task_timeout),
             status_output=args.status_output,
+            microsoft_rollout_activation_path=args.microsoft_rollout_activation,
+            release_ledger_path=args.release_ledger,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
         print(json.dumps({
