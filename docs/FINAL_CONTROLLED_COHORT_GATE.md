@@ -48,7 +48,8 @@ The first cohort always requires:
 - retention/deletion + orphan cleanup;
 - AgentWorkflow v2 restart with no duplicate child tasks;
 - persisted fan-in timing proof;
-- v2 → v1 feature-flag rollback proof.
+- v2 → v1 feature-flag rollback proof;
+- server-enforced cohort admission proof showing an invited account succeeds and a fresh non-member is denied before Coworker provisioning.
 
 Research evidence is required only if `research=true` in the rollout manifest.
 
