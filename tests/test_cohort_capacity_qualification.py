@@ -100,6 +100,7 @@ def test_capacity_gate_qualifies_measured_reserve():
     assert value["decision"] == "ELIGIBLE_FOR_CAPACITY_REVIEW"
     assert value["required_test_concurrency"] == 15
     assert value["failures"] == []
+    assert value["generated_at"] == "2026-09-22T08:45:00+00:00"
 
 
 def test_capacity_gate_requires_final_stage_to_be_fully_earned():

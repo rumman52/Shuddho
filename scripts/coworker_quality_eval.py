@@ -1,5 +1,6 @@
 from __future__ import annotations
-import argparse, asyncio, json, math, os, unicodedata
+import argparse, asyncio, hashlib, json, math, os, unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 from services.coworker.config import Settings
 from services.coworker.drafting import DeepSeekDraftModel, DraftFailure
@@ -7,6 +8,13 @@ from services.coworker.schemas import parse_draft, source_references
 from services.coworker.skills import SKILLS
 
 DEFAULT_CASES=Path("tests/fixtures/coworker_quality_eval_cases.jsonl")
+
+def sha256_file(path):
+    digest=hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024*1024),b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 KEYS={"id","skill_id","language","instruction","sources","required_terms","forbidden_terms","required_source_ids","missing_information","empty_paths","draft"}
 
 def norm(v): return unicodedata.normalize("NFKC",v).casefold()
@@ -74,13 +82,18 @@ async def evaluate_live(cases):
         except DraftFailure as e: out.append({"id":c["id"],"skill_id":c["skill_id"],"language":c["language"],"passed":False,"model_error":e.code,"tokens":e.total_tokens,"latency_ms":None,"facts_total":len(c["required_terms"]),"facts_matched":0,"checks":{"model_generation":False}})
     return aggregate("live",cases,out)
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("--cases",type=Path,default=DEFAULT_CASES); p.add_argument("--live",action="store_true"); p.add_argument("--min-pass-rate",type=float,default=1.0); p.add_argument("--min-fact-recall",type=float,default=1.0); p.add_argument("--max-average-tokens",type=float); p.add_argument("--max-p95-latency-ms",type=int); p.add_argument("--output",type=Path); a=p.parse_args()
+    p=argparse.ArgumentParser(); p.add_argument("--cases",type=Path,default=DEFAULT_CASES); p.add_argument("--live",action="store_true"); p.add_argument("--release-id",default="ci-quality-contract"); p.add_argument("--min-pass-rate",type=float,default=1.0); p.add_argument("--min-fact-recall",type=float,default=1.0); p.add_argument("--max-average-tokens",type=float); p.add_argument("--max-p95-latency-ms",type=int); p.add_argument("--output",type=Path); a=p.parse_args()
     cases=load_cases(a.cases); r=asyncio.run(evaluate_live(cases)) if a.live else evaluate_offline(cases); failures=[]
     if r["pass_rate"]<a.min_pass_rate: failures.append("pass_rate")
     if r["required_fact_recall"]<a.min_fact_recall: failures.append("required_fact_recall")
     if a.live and a.max_average_tokens is not None and (r["average_tokens"] is None or r["average_tokens"]>a.max_average_tokens): failures.append("average_tokens")
     if a.live and a.max_p95_latency_ms is not None and (r["p95_latency_ms"] is None or r["p95_latency_ms"]>a.max_p95_latency_ms): failures.append("p95_latency_ms")
-    r["gate_decision"]="PASS" if not failures else "FAIL"; r["gate_failures"]=failures; enc=json.dumps(r,ensure_ascii=False,indent=2)
+    r["gate_decision"]="PASS" if not failures else "FAIL"; r["gate_failures"]=failures
+    r["release_id"]=a.release_id
+    r["generated_at"]=datetime.now(timezone.utc).isoformat()
+    r["fixture_sha256"]=sha256_file(a.cases)
+    r["provider_model"]=os.environ.get("DEEPSEEK_MODEL","deepseek-flash") if a.live else None
+    enc=json.dumps(r,ensure_ascii=False,indent=2)
     if a.output:a.output.write_text(enc+"\n",encoding="utf-8")
     print(enc)
     if failures: raise SystemExit("Coworker quality gate failed: "+", ".join(failures))
