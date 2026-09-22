@@ -44,6 +44,11 @@ class Settings:
     google_client_id: str = ""
     google_client_secret: str = field(default="", repr=False)
     google_redirect_uri: str = ""
+    microsoft_actions_enabled: bool = False
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = field(default="", repr=False)
+    microsoft_redirect_uri: str = ""
+    microsoft_tenant: str = "organizations"
     connector_encryption_key: str = field(default="", repr=False)
     max_daily_actions: int = 20
     max_active_agent_runs: int = 2
@@ -119,6 +124,11 @@ class Settings:
             google_client_id=os.getenv("SHUDDHO_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("SHUDDHO_GOOGLE_CLIENT_SECRET", ""),
             google_redirect_uri=os.getenv("SHUDDHO_GOOGLE_REDIRECT_URI", ""),
+            microsoft_actions_enabled=os.getenv("SHUDDHO_MICROSOFT_ACTIONS_ENABLED", "false").lower() == "true",
+            microsoft_client_id=os.getenv("SHUDDHO_MICROSOFT_CLIENT_ID", ""),
+            microsoft_client_secret=os.getenv("SHUDDHO_MICROSOFT_CLIENT_SECRET", ""),
+            microsoft_redirect_uri=os.getenv("SHUDDHO_MICROSOFT_REDIRECT_URI", ""),
+            microsoft_tenant=os.getenv("SHUDDHO_MICROSOFT_TENANT", "organizations"),
             connector_encryption_key=os.getenv("SHUDDHO_CONNECTOR_ENCRYPTION_KEY", ""),
             max_daily_actions=int(os.getenv("SHUDDHO_COWORKER_DAILY_ACTIONS", "20")),
             max_active_agent_runs=int(os.getenv("SHUDDHO_COWORKER_ACTIVE_AGENT_RUNS", "2")),
@@ -162,6 +172,28 @@ class Settings:
                     callback.username or callback.password or callback.query or callback.fragment or
                     callback.path != "/oauth/google/callback"):
                 raise ValueError("Actions require Google OAuth credentials and an HTTPS frontend /oauth/google/callback redirect URI")
+        if self.microsoft_actions_enabled:
+            if not self.actions_enabled:
+                raise ValueError("Microsoft actions require SHUDDHO_ACTIONS_ENABLED=true")
+            callback = urlparse(self.microsoft_redirect_uri)
+            local = self.environment == "development" and callback.hostname in {"localhost", "127.0.0.1"}
+            if (
+                not self.microsoft_client_id
+                or not self.microsoft_client_secret
+                or not callback.netloc
+                or callback.scheme != "https" and not (local and callback.scheme == "http")
+                or callback.username
+                or callback.password
+                or callback.query
+                or callback.fragment
+                or callback.path != "/oauth/microsoft/callback"
+                or not self.microsoft_tenant
+                or len(self.microsoft_tenant) > 200
+                or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-" for char in self.microsoft_tenant)
+            ):
+                raise ValueError(
+                    "Microsoft actions require OAuth credentials, a safe tenant, and an HTTPS frontend /oauth/microsoft/callback redirect URI"
+                )
         if self.research_services_enabled and (self.search_provider != "tavily" or not self.search_api_key):
             raise ValueError("Research requires SHUDDHO_SEARCH_PROVIDER=tavily and backend-only TAVILY_API_KEY")
         if not self.database_url:

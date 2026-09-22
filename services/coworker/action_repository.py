@@ -86,7 +86,7 @@ class ActionRepository:
             raise not_found()
         return row
 
-    def start_oauth(self, owner, capability):
+    def start_oauth(self, owner, capability, provider="google"):
         self.enabled()
         state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
         state_hash = hashlib.sha256(state.encode()).hexdigest()
@@ -98,7 +98,7 @@ class ActionRepository:
             # One outstanding OAuth flow per account. Late callbacks cannot
             # replace a newer connection or undo a disconnect.
             db.execute(update(OAuthAttempt).where(OAuthAttempt.owner_id == owner).values(consumed=True, verifier_ciphertext=""))
-            db.add(OAuthAttempt(state_hash=state_hash, owner_id=owner, capability=capability,
+            db.add(OAuthAttempt(state_hash=state_hash, owner_id=owner, capability=capability, provider=provider,
                                verifier_ciphertext=self.vault().seal({"verifier": verifier}, owner + ":oauth:" + state_hash),
                                expires_at=utcnow() + timedelta(minutes=10)))
         return state, verifier
@@ -113,7 +113,7 @@ class ActionRepository:
                 raise CoworkerError("oauth_expired", "This connection request expired or was already used. Start again.", 409)
             value = self.vault().open(row.verifier_ciphertext, owner + ":oauth:" + state_hash)
             row.consumed, row.verifier_ciphertext = True, ""
-            return {"state_hash": state_hash, "verifier": value["verifier"], "capability": row.capability}
+            return {"state_hash": state_hash, "verifier": value["verifier"], "capability": row.capability, "provider": row.provider}
 
     def finish_connection(self, owner, attempt, profile, refresh_token, scopes):
         self.enabled()
@@ -126,11 +126,18 @@ class ActionRepository:
             latest = db.scalar(select(OAuthAttempt.state_hash).where(OAuthAttempt.owner_id == owner).order_by(OAuthAttempt.created_at.desc()).limit(1))
             if latest != row.state_hash:
                 raise CoworkerError("oauth_expired", "A newer connection request replaced this one.", 409)
-            old = db.scalars(select(Connection).where(Connection.owner_id == owner, Connection.capability == row.capability, Connection.active.is_(True)).with_for_update()).all()
+            old = db.scalars(select(Connection).where(
+                Connection.owner_id == owner,
+                Connection.capability == row.capability,
+                Connection.provider == row.provider,
+                Connection.active.is_(True),
+            ).with_for_update()).all()
             for connection in old:
                 self._disconnect(db, connection)
             connection_id = str(uuid4())
-            connection = Connection(id=connection_id, owner_id=owner, capability=attempt["capability"],
+            if attempt.get("provider") != row.provider:
+                raise CoworkerError("oauth_expired", "The connection provider changed. Start again.", 409)
+            connection = Connection(id=connection_id, owner_id=owner, provider=row.provider, capability=attempt["capability"],
                                     subject=profile["sub"], email=profile["email"], scopes=scopes,
                                     token_ciphertext=self.vault().seal({"refresh_token": refresh_token}, owner + ":connection:" + connection_id))
             db.add(connection)
@@ -156,14 +163,14 @@ class ActionRepository:
             row = self._connection(db, owner, connection_id)
             self._disconnect(db, row)
             db.execute(update(OAuthAttempt).where(OAuthAttempt.owner_id == owner).values(expires_at=utcnow(), consumed=True, verifier_ciphertext=""))
-        return {"message": "Disconnected from Shuddho. Pending actions were cancelled; an action already executing may still finish. You can also remove Shuddho's permissions in your Google Account."}
+        return {"message": "Disconnected from Shuddho. Pending actions were cancelled; an action already executing may still finish. You can also revoke Shuddho in the connected provider's account settings."}
 
     def credentials(self, connection_id):
         # Internal worker/service call only; never serialized to an API.
         with self.sessions() as db:
             row = db.get(Connection, connection_id)
             if not row or not row.active:
-                raise CoworkerError("connection_removed", "Reconnect your Google account.", 409)
+                raise CoworkerError("connection_removed", "Reconnect your connected account.", 409)
             secret = self.vault().open(row.token_ciphertext, row.owner_id + ":connection:" + row.id)
             return {"refresh_token": secret["refresh_token"], "scopes": row.scopes}
 
@@ -185,6 +192,15 @@ class ActionRepository:
                 return action_dto(old)
             self.enabled()
             connection = self._connection(db, owner, str(request.connection_id))
+            if (
+                connection.provider == "microsoft"
+                and not self.settings.microsoft_actions_enabled
+            ):
+                raise CoworkerError(
+                    "connection_provider_disabled",
+                    "Microsoft actions are not enabled in this deployment.",
+                    503,
+                )
             spec = action_spec(request.payload.kind, connection.provider)
             capability = spec.capability
             if not connection.active or connection.capability != capability:

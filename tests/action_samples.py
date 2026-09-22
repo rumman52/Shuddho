@@ -64,8 +64,10 @@ def enable_actions(container):
     container.settings.validate()
     container.repository.settings = container.settings
     provider = SimulatedGoogle()
-    container.actions = ActionService(ActionRepository(container.repository.sessions, container.settings),
-                                     GoogleActions(container.settings, httpx.MockTransport(provider.transport)))
+    container.actions = ActionService(
+        ActionRepository(container.repository.sessions, container.settings),
+        {"google": GoogleActions(container.settings, httpx.MockTransport(provider.transport))},
+    )
     return provider
 
 

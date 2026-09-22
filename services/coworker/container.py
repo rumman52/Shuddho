@@ -8,6 +8,7 @@ from .storage import make_storage
 from .action_repository import ActionRepository
 from .actions import ActionService
 from .google_actions import GoogleActions
+from .microsoft_actions import MicrosoftActions
 from .agent_repository import AgentRepository
 from .memory_repository import MemoryRepository
 from .retention import RetentionService
@@ -26,7 +27,13 @@ class Container:
 
     def __post_init__(self):
         if self.actions is None:
-            self.actions = ActionService(ActionRepository(self.repository.sessions, self.settings), GoogleActions(self.settings))
+            providers = {"google": GoogleActions(self.settings)}
+            if self.settings.microsoft_actions_enabled:
+                providers["microsoft"] = MicrosoftActions(self.settings)
+            self.actions = ActionService(
+                ActionRepository(self.repository.sessions, self.settings),
+                providers,
+            )
         if self.agent is None:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
         if self.memory is None:

@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 import httpx
 
 from .action_schemas import address
+from .connector_actions import ConnectorFailure
 
 SCOPES = {
     "email": "https://www.googleapis.com/auth/gmail.send",
@@ -28,10 +29,9 @@ SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
 
-class GoogleFailure(Exception):
+class GoogleFailure(ConnectorFailure):
     def __init__(self, code="provider_unavailable", *, definitive=False):
-        self.code, self.definitive = code, definitive
-        super().__init__("The connected service did not confirm the request.")
+        super().__init__(code, definitive=definitive)
 
 
 def event_id(action_id):
@@ -65,6 +65,8 @@ def email_raw(action):
 
 
 class GoogleActions:
+    provider_name = "google"
+    scopes = SCOPES
     def __init__(self, settings, transport=None):
         self.settings, self.transport = settings, transport
 
@@ -117,7 +119,7 @@ class GoogleActions:
             raise GoogleFailure("oauth_response_invalid", definitive=True)
         return result["access_token"]
 
-    async def refresh(self, refresh_token):
+    async def refresh(self, refresh_token, capability=None):
         result = await self.request("POST", TOKEN_URL, data={"refresh_token": refresh_token,
             "client_id": self.settings.google_client_id, "client_secret": self.settings.google_client_secret,
             "grant_type": "refresh_token"})

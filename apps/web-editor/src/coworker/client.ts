@@ -9,17 +9,17 @@ export type WorkSkill = { id: SkillId; name: string; description: string; instru
 export type DraftMetadata = { output_language: string; missing_information: string[] };
 export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
 export type EmailDraft = { subject: string; body: string };
-export type ConnectedAccount = { id: string; provider: "google"; capability: "email" | "calendar"; email: string; active: boolean };
+export type ConnectedAccount = { id: string; provider: "google" | "microsoft"; capability: "email" | "calendar"; email: string; active: boolean };
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type CalendarAction = { kind: "calendar_create"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[] };
 export type ActionInput = { connection_id: string; payload: EmailAction | CalendarAction };
 export type ExternalAction = {
   id: string; connection_id: string; kind: EmailAction["kind"] | CalendarAction["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
-  preview: { account: string; provider: "google"; payload: EmailAction | CalendarAction; expires_at: string; calendar: string | null; guest_notifications: string | null };
+  preview: { account: string; provider: "google" | "microsoft"; payload: EmailAction | CalendarAction; expires_at: string; calendar: string | null; guest_notifications: string | null };
   preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
   approved_at: string | null; finished_at: string | null;
-  receipt: { provider: string; provider_id: string; status: string; confirmed_at: string; message_id?: string } | null;
+  receipt: { provider: string; provider_id?: string; status: string; confirmed_at: string; message_id?: string } | null;
   audit?: { action: string; created_at: string }[];
 };
 export type CellFormat = "text" | "number" | "integer" | "percent";
