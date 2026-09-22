@@ -195,6 +195,10 @@ The next control-plane increment adds [provider policy activation verification](
 
 The next action-safety increment adds a [connector-neutral consequential-action policy](CONSEQUENTIAL_ACTION_POLICY.md): every external mutation kind must register a typed provider/capability/destination/reconciliation contract. Prepared actions carry a server-owned approval-scope manifest binding identity, payload SHA-256, destinations, policy and expiry; approval and execution revalidate it before any provider mutation. Existing Google email/calendar behavior remains compatible, while Outlook, document sharing, social publishing, attachments and other future connectors cannot bypass this boundary.
 
+PR #154 adds the connector-neutral consequential-action policy registry and v2 approval-scope contract for every new external mutation.
+
+The next connector increment adds a disabled-by-default [Microsoft Graph email/calendar adapter](MICROSOFT_GRAPH_ACTIONS.md): OAuth state is provider-bound, Microsoft Graph implements the same adapter interface as Google, and approved email/calendar actions reuse the exact same immutable preview, explicit approval, committed claim, identity recheck, receipt and uncertain-outcome boundaries. Microsoft frontend exposure and live staging remain separate gates.
+
 Model-selected external actions and broader connector expansion remain later increments.
 
 ### Consequential actions
