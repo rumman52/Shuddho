@@ -50,13 +50,14 @@ class ActionSpec:
         return self.reconcile_mode == "provider_receipt"
 
     def policy_manifest(self) -> dict:
+        # Preserve the existing public preview shape. Connector-neutral
+        # normalization happens inside approval_scope.
         return {
-            "attachments": "allowed" if self.attachments_allowed else "none",
+            "execution": "immediately_after_approval",
+            "attachments": [] if not self.attachments_allowed else None,
             "calendar": self.calendar,
             "guest_notifications": self.guest_notifications,
             "reminders": self.reminders,
-            "execution": "immediately_after_approval",
-            "reconcile_mode": self.reconcile_mode,
         }
 
 
@@ -160,7 +161,16 @@ def build_approval_scope(preview: dict) -> dict:
         "subject_id": preview.get("subject_id"),
         "payload_sha256": stable_digest(payload),
         "destinations": destinations(spec, payload),
-        "policy": spec.policy_manifest(),
+        "policy": {
+            "execution": preview.get("execution"),
+            "attachments": (
+                "allowed" if spec.attachments_allowed else "none"
+            ),
+            "calendar": preview.get("calendar"),
+            "guest_notifications": preview.get("guest_notifications"),
+            "reminders": preview.get("reminders"),
+            "reconcile_mode": spec.reconcile_mode,
+        },
         "expires_at": preview.get("expires_at"),
     }
 
