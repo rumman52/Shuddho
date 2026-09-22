@@ -238,16 +238,29 @@ def require_fresh(report: dict, *, freshness_minutes: int, now: datetime) -> Non
 
 def validate_final_stage(progression: dict, plan: dict, release_id: str) -> None:
     if progression.get("release_id") != release_id:
-        raise CapacityQualificationError("Canary progression release_id does not match.")
+        raise CapacityQualificationError("Progression evidence release_id does not match.")
     if progression.get("current_stage") != plan["final_stage"]:
-        raise CapacityQualificationError("Capacity qualification requires the configured final canary stage.")
-    if progression.get("decision") != "HOLD":
-        raise CapacityQualificationError("Final canary progression must be HOLD.")
-    if progression.get("next_stage") is not None:
-        raise CapacityQualificationError("Final canary progression must not have a next stage.")
-    if progression.get("reasons") != ["final_stage_reached"]:
         raise CapacityQualificationError(
-            "Final canary stage has not fully earned final_stage_reached."
+            "Capacity qualification requires progression evidence for the configured final_stage."
+        )
+    if progression.get("next_stage") is not None:
+        raise CapacityQualificationError(
+            "Capacity qualification progression evidence must not name a next stage."
+        )
+
+    decision = progression.get("decision")
+    reasons = progression.get("reasons")
+    original_final_canary = decision == "HOLD" and reasons == ["final_stage_reached"]
+    dynamic_requalification = (
+        decision == "ELIGIBLE_FOR_REQUALIFICATION"
+        and reasons == []
+        and progression.get("stage_max_users") is not None
+        and progression.get("epoch_start") is not None
+    )
+    if not (original_final_canary or dynamic_requalification):
+        raise CapacityQualificationError(
+            "Capacity qualification requires final_stage_reached for the original canary "
+            "or an eligible post-scale observation epoch."
         )
 
 

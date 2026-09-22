@@ -43,3 +43,10 @@ The verifier reads the real deployed Coworker settings and the deployed HTTPS AP
 After successful verification, append a schema-v4 `bounded_expansion_verified` event to the existing release ledger. The event binds the exact scale decision, deployment record, post-deploy operator status, and activation-verification artifact by SHA-256.
 
 That event is evidence that the reviewed stage was actually activated and verified. It still does not authorize another expansion. The newly activated stage must accumulate fresh health and demand evidence before another scale review.
+
+
+## Post-scale observation
+
+After the schema-v4 activation event is committed, begin a fresh observation epoch using [post-scale cohort observation](POST_SCALE_COHORT_OBSERVATION.md).
+
+Only health generated after the ledgered activation may count. The new stage must earn sustained healthy windows and real usage samples before it can re-enter capacity qualification for any later scale review.

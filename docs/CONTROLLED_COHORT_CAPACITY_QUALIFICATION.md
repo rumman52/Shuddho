@@ -160,3 +160,14 @@ It is **not** authorization to:
 After qualification, capacity review should decide the next bounded stage from measured demand, cost, provider quota, error budget and operational staffing.
 
 Do not hard-code a 25 → 100 or 25 → 1000 expansion before those measurements exist.
+
+
+## Dynamic post-scale requalification
+
+The original qualification path starts after the fixed `cohort-25` canary reaches `final_stage_reached`.
+
+After a schema-v4 bounded expansion has been deployed and verified, later stages are not added to the original 5 → 10 → 25 canary plan. Instead, run [post-scale cohort observation](POST_SCALE_COHORT_OBSERVATION.md).
+
+When that gate returns `ELIGIBLE_FOR_REQUALIFICATION`, set this capacity plan's `final_stage` to the exact dynamic stage name and use the post-scale observation artifact as the progression input.
+
+The same simulated and live-provider capacity thresholds then apply again. A post-scale HOLD or STOP result cannot enter capacity qualification.

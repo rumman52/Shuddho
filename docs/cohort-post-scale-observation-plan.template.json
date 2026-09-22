@@ -1,0 +1,13 @@
+{
+  "release_id": "coworker-cohort-001",
+  "max_gap_minutes": 10,
+  "stale_after_minutes": 10,
+  "min_enrollment_ratio": 0.75,
+  "min_healthy_windows": 24,
+  "min_observation_minutes": 115,
+  "min_task_samples": 100,
+  "min_provider_samples": 100,
+  "min_agent_samples": 25,
+  "min_research_samples": 0,
+  "min_action_samples": 0
+}
