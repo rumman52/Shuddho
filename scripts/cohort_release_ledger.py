@@ -12,6 +12,7 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 ROLLBACK_SCHEMA_VERSION = 2
 RECOVERY_SCHEMA_VERSION = 3
+SCALE_SCHEMA_VERSION = 4
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -27,6 +28,12 @@ ARTIFACT_KEYS = {
 }
 ROLLBACK_ARTIFACT_KEYS = ARTIFACT_KEYS | {"rollback_completion"}
 RECOVERY_ARTIFACT_KEYS = ROLLBACK_ARTIFACT_KEYS | {"recovery_verification"}
+SCALE_ARTIFACT_KEYS = {
+    "scale_decision",
+    "deployment_change",
+    "operator_status",
+    "scale_activation",
+}
 
 
 class ReleaseLedgerError(RuntimeError):
@@ -231,7 +238,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
         if set(entry) != required:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unexpected schema.")
         version = entry["schema_version"]
-        if version not in {SCHEMA_VERSION, ROLLBACK_SCHEMA_VERSION, RECOVERY_SCHEMA_VERSION}:
+        if version not in {SCHEMA_VERSION, ROLLBACK_SCHEMA_VERSION, RECOVERY_SCHEMA_VERSION, SCALE_SCHEMA_VERSION}:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
             raise ReleaseLedgerError(f"Ledger entry {index} has an invalid sequence.")
@@ -246,6 +253,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v2 event type.")
         if version == RECOVERY_SCHEMA_VERSION and event_type != "recovery_verified":
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v3 event type.")
+        if version == SCALE_SCHEMA_VERSION and event_type != "bounded_expansion_verified":
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v4 event type.")
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -258,7 +267,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
         expected_artifacts = (
             ARTIFACT_KEYS if version == SCHEMA_VERSION
             else ROLLBACK_ARTIFACT_KEYS if version == ROLLBACK_SCHEMA_VERSION
-            else RECOVERY_ARTIFACT_KEYS
+            else RECOVERY_ARTIFACT_KEYS if version == RECOVERY_SCHEMA_VERSION
+            else SCALE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
             raise ReleaseLedgerError(f"Ledger entry {index} has invalid artifact hashes.")
@@ -594,6 +604,112 @@ def append_recovery_event(
     return entry
 
 
+
+def append_scale_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    next_stage: str,
+    scale_decision: Path,
+    deployment_change: Path,
+    operator_status: Path,
+    scale_activation: Path,
+    created_at: str | None = None,
+) -> dict:
+    if not actor_reference.strip() or len(actor_reference) > 500:
+        raise ReleaseLedgerError("actor_reference must be non-empty and at most 500 characters.")
+    if not change_reference.strip() or len(change_reference) > 500:
+        raise ReleaseLedgerError("change_reference must be non-empty and at most 500 characters.")
+    if not current_stage.strip() or not next_stage.strip():
+        raise ReleaseLedgerError("Scale ledger event requires current_stage and next_stage.")
+
+    decision = load_json_object(scale_decision, "scale decision")
+    deployment = load_json_object(deployment_change, "deployment change")
+    status = load_json_object(operator_status, "post-scale operator status")
+    activation = load_json_object(scale_activation, "scale activation evidence")
+
+    for label, value in (
+        ("scale decision", decision),
+        ("deployment change", deployment),
+        ("operator status", status),
+        ("scale activation evidence", activation),
+    ):
+        if value.get("release_id") != release_id:
+            raise ReleaseLedgerError(f"{label} release_id does not match {release_id!r}.")
+
+    if decision.get("decision") != "ELIGIBLE_FOR_BOUNDED_EXPANSION":
+        raise ReleaseLedgerError("bounded_expansion_verified requires an eligible scale decision.")
+    if decision.get("current_stage") != current_stage or decision.get("proposed_stage") != next_stage:
+        raise ReleaseLedgerError("Scale decision stages do not match the ledger event.")
+    if deployment.get("stage") != next_stage:
+        raise ReleaseLedgerError("Deployment stage does not match the ledger event.")
+    if deployment.get("change_reference") != change_reference:
+        raise ReleaseLedgerError("Deployment change reference does not match the ledger event.")
+    if status.get("decision") != "CONTINUE_COHORT" or status.get("breaches") != []:
+        raise ReleaseLedgerError("bounded_expansion_verified requires a clean post-scale operator status.")
+    if activation.get("status") != "bounded_expansion_verified":
+        raise ReleaseLedgerError("Scale activation evidence has not passed.")
+    if activation.get("current_stage") != current_stage or activation.get("proposed_stage") != next_stage:
+        raise ReleaseLedgerError("Scale activation stages do not match the ledger event.")
+    if activation.get("change_reference") != change_reference:
+        raise ReleaseLedgerError("Scale activation change reference does not match the ledger event.")
+
+    hashes = activation.get("artifact_sha256")
+    if not isinstance(hashes, dict):
+        raise ReleaseLedgerError("Scale activation evidence has no artifact hashes.")
+    expected_bound = {
+        "scale_decision": file_sha256(scale_decision),
+        "deployment_change": file_sha256(deployment_change),
+        "operator_status": file_sha256(operator_status),
+    }
+    for name, value in expected_bound.items():
+        if hashes.get(name) != value:
+            raise ReleaseLedgerError(f"Scale activation evidence does not bind this {name}.")
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if state["release_id"] is not None and state["release_id"] != release_id:
+        raise ReleaseLedgerError("Ledger release_id does not match the scale event.")
+    prior_scale = [
+        item for item in entries
+        if item.get("event_type") == "bounded_expansion_verified"
+        and item.get("next_stage") == next_stage
+    ]
+    if prior_scale:
+        raise ReleaseLedgerError("This bounded expansion stage is already recorded in the release ledger.")
+
+    core = {
+        "schema_version": SCALE_SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": "bounded_expansion_verified",
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": next_stage,
+        "artifact_sha256": {
+            "scale_decision": file_sha256(scale_decision),
+            "deployment_change": file_sha256(deployment_change),
+            "operator_status": file_sha256(operator_status),
+            "scale_activation": file_sha256(scale_activation),
+        },
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {**core, "entry_hash": entry_hash, "hmac_sha256": tag}
+    serialized = "".join(
+        json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Maintain a tamper-evident Shuddho controlled-cohort release ledger."
@@ -638,6 +754,18 @@ def main() -> None:
     recovery_parser.add_argument("--rollback-completion", type=Path, required=True)
     recovery_parser.add_argument("--recovery-verification", type=Path, required=True)
 
+    scale_parser = sub.add_parser("append-scale")
+    scale_parser.add_argument("--ledger", type=Path, required=True)
+    scale_parser.add_argument("--release-id", required=True)
+    scale_parser.add_argument("--actor-reference", required=True)
+    scale_parser.add_argument("--change-reference", required=True)
+    scale_parser.add_argument("--current-stage", required=True)
+    scale_parser.add_argument("--next-stage", required=True)
+    scale_parser.add_argument("--scale-decision", type=Path, required=True)
+    scale_parser.add_argument("--deployment-change", type=Path, required=True)
+    scale_parser.add_argument("--operator-status", type=Path, required=True)
+    scale_parser.add_argument("--scale-activation", type=Path, required=True)
+
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--ledger", type=Path, required=True)
 
@@ -659,6 +787,27 @@ def main() -> None:
                 progression_decision=args.progression_decision,
                 operator_status=args.operator_status,
                 rollback_completion=args.rollback_completion,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        elif args.command == "append-scale":
+            entry = append_scale_event(
+                ledger=args.ledger,
+                key=key,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                next_stage=args.next_stage,
+                scale_decision=args.scale_decision,
+                deployment_change=args.deployment_change,
+                operator_status=args.operator_status,
+                scale_activation=args.scale_activation,
             )
             result = {
                 "appended": True,
