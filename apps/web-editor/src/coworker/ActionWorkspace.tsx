@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CoworkerClient, type ActionInput, type ConnectedAccount, type EmailDraft, type ExternalAction } from "./client";
 import { beginGoogleConnection, finishGoogleCallback } from "./googleCallback";
+import { beginMicrosoftConnection, finishMicrosoftCallback } from "./microsoftCallback";
 
 const labels: Record<ExternalAction["state"], string> = { awaiting_approval: "Needs your approval", queued: "Approved · queued", executing: "Executing", succeeded: "Confirmed", failed: "Not completed", cancelled: "Cancelled", expired: "Expired", outcome_unknown: "Result uncertain" };
 const message = (error: unknown) => error instanceof Error ? error.message : "This action could not finish. Please try again.";
@@ -13,6 +14,8 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
   const [history, setHistory] = useState<ExternalAction[]>([]);
   const [action, setAction] = useState<ExternalAction | null>(null);
   const [mode, setMode] = useState<"email" | "calendar">("email");
+  const microsoftEnabled = import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED === "true";
+  const [provider, setProvider] = useState<"google" | "microsoft">("google");
   const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [bcc, setBcc] = useState("");
   const [subject, setSubject] = useState(emailDraft?.subject ?? ""); const [body, setBody] = useState(emailDraft?.body ?? "");
   const [eventTitle, setEventTitle] = useState(""); const [description, setDescription] = useState("");
@@ -24,9 +27,9 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false); const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
-  // Microsoft is backend/staging-only in this increment. Keep the current
-  // UI explicitly Google-only until the separate provider-picker rollout.
-  const currentConnection = connections.find(value => value.provider === "google" && value.capability === mode);
+  const currentConnection = connections.find(
+    value => value.provider === provider && value.capability === mode,
+  );
   const pending = action?.state === "queued" || action?.state === "executing";
 
   useEffect(() => {
@@ -34,7 +37,10 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
     const controller = new AbortController();
     (async () => {
       const result = await finishGoogleCallback(client, account);
-      if (alive && result) setNotice(result);
+      const microsoftResult = microsoftEnabled
+        ? await finishMicrosoftCallback(client, account)
+        : null;
+      if (alive && (result || microsoftResult)) setNotice(microsoftResult ?? result ?? "");
     })().catch(failure => { if (alive) setError(message(failure)); }).finally(() => {
       if (!alive) return;
       Promise.all([client.connections(controller.signal), client.actions(controller.signal)]).then(([value, recent]) => {
@@ -98,6 +104,7 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
     await run("edit", async () => {
       if (action.state === "awaiting_approval") await client.cancelAction(action.id);
       const p = action.preview.payload;
+      setProvider(action.preview.provider);
       if (p.kind === "email_send") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); }
       else { setMode("calendar"); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
       startNewAction(); setReload(x => x + 1);
@@ -109,21 +116,24 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
     <div className="cw-action-intro"><div><span className="cw-eyebrow">Your final say</span><h2>From a good draft to done.</h2><p>Prepare an email or event, review the details, then approve the action.</p></div></div>
     {error && <p className="cw-error" role="alert">{error}</p>}{notice && <p className="cw-notice" role="status">{notice}</p>}
     {!loaded ? <p role="status">Loading connections…</p> : !enabled && <p className="cw-notice">New actions are not enabled in this workspace. Saved previews and receipts remain available.</p>}
+    {microsoftEnabled && <label>Provider<select aria-label="Action provider" value={provider} onChange={event => setProvider(event.target.value as "google" | "microsoft")} disabled={Boolean(busy)}><option value="google">Google</option><option value="microsoft">Microsoft</option></select></label>}
     <div className="cw-connection-grid">{(["email", "calendar"] as const).map(capability => {
-      const connected = connections.find(value => value.provider === "google" && value.capability === capability);
-      return <div className="cw-connection" key={capability}><div><strong>{capability === "email" ? "Gmail" : "Google Calendar"}</strong><small>{connected?.email ?? (capability === "email" ? "Send emails you approve" : "Create events in your primary calendar")}</small></div>
+      const connected = connections.find(value => value.provider === provider && value.capability === capability);
+      const google = provider === "google";
+      const label = capability === "email" ? (google ? "Gmail" : "Outlook / Microsoft Mail") : (google ? "Google Calendar" : "Microsoft Calendar");
+      return <div className="cw-connection" key={provider + capability}><div><strong>{label}</strong><small>{connected?.email ?? (capability === "email" ? "Send emails you approve" : "Create events in your primary calendar")}</small></div>
         {connected ? <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => {
           if (!window.confirm(`Disconnect ${connected.email} for ${capability}? Pending actions will be cancelled. An action already executing may still finish.`)) return;
           void run("disconnect", async () => { const result = await client.disconnect(connected.id); setNotice(result.message); setReload(x => x + 1); if (action) updateAction(await client.action(action.id)); });
-        }}>Disconnect {capability === "email" ? "Gmail" : "Calendar"}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => beginGoogleConnection(client, account, capability))}>Connect {capability === "email" ? "Gmail" : "Calendar"}</button>}
+        }}>Disconnect {label}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => provider === "google" ? beginGoogleConnection(client, account, capability) : beginMicrosoftConnection(client, account, capability))}>Connect {label}</button>}
       </div>;
     })}</div>
-    <p className="cw-fineprint">Google permissions can also be removed in your <a href="https://myaccount.google.com/connections" target="_blank" rel="noreferrer">Google Account</a>.</p>
+    <p className="cw-fineprint">{provider === "google" ? <>Google permissions can also be removed in your <a href="https://myaccount.google.com/connections" target="_blank" rel="noreferrer">Google Account</a>.</> : <>Microsoft permissions can also be reviewed in your Microsoft account's app permissions.</>}</p>
     <div className="cw-layout"><div className="cw-compose cw-action-compose">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>{composing ? "Prepare an action" : "Action details"}</h2><p>{composing ? "Nothing is sent when you prepare a preview." : "This preview is saved exactly as shown."}</p></div></div>
       {composing ? <form onSubmit={prepare}>
         <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "calendar")} disabled={Boolean(busy)}><option value="email">Send an email</option><option value="calendar">Create a calendar event</option></select></label>
-        <p className="cw-action-account">{currentConnection ? <>From <strong>{currentConnection.email}</strong>{mode === "calendar" && " · Primary calendar"}</> : `Connect ${mode === "email" ? "Gmail" : "Google Calendar"} above to continue.`}</p>
+        <p className="cw-action-account">{currentConnection ? <>From <strong>{currentConnection.email}</strong>{mode === "calendar" && " · Primary calendar"}</> : `Connect ${provider === "google" ? (mode === "email" ? "Gmail" : "Google Calendar") : (mode === "email" ? "Microsoft Mail" : "Microsoft Calendar")} above to continue.`}</p>
         {mode === "email" ? <>
           <label>To<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required maxLength={5100} placeholder="name@example.com" /></label>
           <div className="cw-action-row"><label>Cc<input dir="ltr" value={cc} onChange={event => setCc(event.target.value)} maxLength={5100} /></label><label>Bcc<input dir="ltr" value={bcc} onChange={event => setBcc(event.target.value)} maxLength={5100} /></label></div>

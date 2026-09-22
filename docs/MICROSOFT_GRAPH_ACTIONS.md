@@ -2,7 +2,7 @@
 
 This increment adds Microsoft as the second consequential-action provider behind Shuddho's connector-neutral approval boundary.
 
-It is **disabled by default** and does not expose a Microsoft connect button in the production UI yet.
+It is **disabled by default**. The frontend provider selector/callback code is also separately gated and remains hidden unless `VITE_MICROSOFT_ACTIONS_ENABLED=true`.
 
 ## Supported provider surface
 
@@ -91,7 +91,9 @@ Before UI exposure or cohort use, complete the [controlled live Microsoft stagin
 5. exercise worker loss and uncertain email/event outcomes;
 6. confirm no second provider mutation occurs after an uncertain result;
 7. record provider latency/failure/unknown-outcome evidence;
-8. then add the frontend provider picker/callback as a separate bounded increment.
+8. verify the frontend provider picker/callback with `VITE_MICROSOFT_ACTIONS_ENABLED=true` in the approved rollout environment.
+
+Frontend exposure requires both backend Microsoft enablement and the frontend rollout flag. Keep `VITE_MICROSOFT_ACTIONS_ENABLED=false` until the independent `microsoft_actions` staging gate is recorded as passed. The callback validates Microsoft login origin, tenant-shaped authorize path, exact returned state, and exact current-site `/oauth/microsoft/callback` redirect before navigation. OAuth code/state are not persisted beyond the tab-scoped connection handshake.
 
 Official Microsoft references used for this adapter:
 
