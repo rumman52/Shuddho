@@ -149,6 +149,26 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         require_research=require_research,
         require_actions=require_actions,
     )
+    cohort_record = evidence.get("cohort_admission")
+    cohort_ref = cohort_record.get("evidence") if isinstance(cohort_record, dict) else None
+    cohort_passed = (
+        isinstance(cohort_record, dict)
+        and cohort_record.get("status") == "passed"
+        and isinstance(cohort_ref, str)
+        and bool(cohort_ref.strip())
+    )
+    staging["required"] += 1
+    staging["checks"].append({
+        "id": "cohort_admission",
+        "passed": cohort_passed,
+        "description": "Backend cohort admission allows invited accounts and rejects non-members before workspace provisioning.",
+        "evidence": cohort_ref,
+    })
+    if cohort_passed:
+        staging["passed"] += 1
+    else:
+        staging["decision"] = "NO-GO"
+        staging["missing"].append("cohort_admission")
     rollout_failures = validate_rollout(rollout, max_cohort_users=max_cohort_users)
     decision = "GO_CONTROLLED_COHORT" if staging["decision"] == "GO" and not rollout_failures else "NO-GO"
     return {

@@ -10,6 +10,7 @@
   "parallel_restart": {"status": "pending", "evidence": ""},
   "fan_in": {"status": "pending", "evidence": ""},
   "flag_rollback": {"status": "pending", "evidence": ""},
+  "cohort_admission": {"status": "pending", "evidence": ""},
   "research": {"status": "pending", "evidence": ""},
   "actions": {"status": "pending", "evidence": ""}
 }
