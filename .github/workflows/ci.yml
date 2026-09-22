@@ -78,7 +78,7 @@ jobs:
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
       - name: Test accounts, real exports, PostgreSQL races, and Temporal recovery
-        run: uv run --extra coworker pytest tests/test_coworker.py tests/test_coworker_services.py tests/test_coworker_office.py tests/test_coworker_research.py tests/test_coworker_actions.py tests/test_coworker_postgres.py tests/test_coworker_temporal.py tests/test_agent_release_gates.py tests/test_staging_live_probe.py tests/test_staging_api_exercise.py tests/test_staging_temporal_recovery.py tests/test_staging_backup_restore.py tests/test_coworker_retention.py tests/test_staging_flag_rollback.py tests/test_staging_live_research.py -q
+        run: uv run --extra coworker pytest tests/test_coworker.py tests/test_coworker_services.py tests/test_coworker_office.py tests/test_coworker_research.py tests/test_coworker_actions.py tests/test_coworker_postgres.py tests/test_coworker_temporal.py tests/test_agent_release_gates.py tests/test_staging_live_probe.py tests/test_staging_api_exercise.py tests/test_staging_temporal_recovery.py tests/test_staging_backup_restore.py tests/test_coworker_retention.py tests/test_staging_flag_rollback.py tests/test_staging_live_research.py tests/test_staging_live_google_actions.py -q
       - name: Evaluate bounded agent routing contracts
         run: uv run --extra coworker python scripts/agent_eval.py --min-pass-rate 1.0
       - name: Render native Office files and verify recalculation after edits
