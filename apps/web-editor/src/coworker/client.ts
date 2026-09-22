@@ -19,7 +19,7 @@ export type ExternalAction = {
   preview: { account: string; provider: "google" | "microsoft"; payload: EmailAction | CalendarAction; expires_at: string; calendar: string | null; guest_notifications: string | null };
   preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
   approved_at: string | null; finished_at: string | null;
-  receipt: { provider: string; provider_id: string; status: string; confirmed_at: string; message_id?: string } | null;
+  receipt: { provider: string; provider_id?: string; status: string; confirmed_at: string; message_id?: string } | null;
   audit?: { action: string; created_at: string }[];
 };
 export type CellFormat = "text" | "number" | "integer" | "percent";
