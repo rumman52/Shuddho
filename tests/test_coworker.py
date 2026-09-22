@@ -1471,3 +1471,30 @@ def test_agent_multi_handoff_flag_off_preserves_nearest_prior_behavior(container
     handoff = container.agent.handoff_context(owner, run["id"], saved["steps"][2]["id"])
     assert len(handoff["sources"]) == 1
     assert handoff["provenance"][0]["ordinal"] == 2
+
+
+def test_provider_capacity_settings_fail_closed():
+    base = dict(
+        database_url="sqlite://",
+        auth_issuer=ISSUER,
+        environment="development",
+        storage_backend="local",
+    )
+    with pytest.raises(ValueError, match="Per-workspace provider concurrency"):
+        Settings(
+            **base,
+            provider_max_concurrent_calls=1,
+            provider_max_concurrent_per_workspace=2,
+        ).validate()
+    with pytest.raises(ValueError, match="token reserve"):
+        Settings(
+            **base,
+            provider_max_reserved_tokens=1000,
+            provider_max_reserved_tokens_per_workspace=2000,
+        ).validate()
+    with pytest.raises(ValueError, match="must exceed the model timeout"):
+        Settings(
+            **base,
+            model_timeout_seconds=90,
+            provider_lease_seconds=90,
+        ).validate()
