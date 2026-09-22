@@ -343,7 +343,11 @@ def load_recovery_epoch(
         raise CanaryProgressionError(
             "Release ledger does not bind this recovery-verification artifact."
         )
-    return epoch
+    created_at = entry.get("created_at")
+    if not isinstance(created_at, str):
+        raise CanaryProgressionError("Ledger recovery entry has no created_at timestamp.")
+    ledgered_at = parse_time(created_at)
+    return max(epoch, ledgered_at)
 
 
 def main() -> None:
