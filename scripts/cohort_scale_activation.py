@@ -275,8 +275,8 @@ def build_evidence(
     deployment_change_path: Path,
     operator_status_path: Path,
     provider_policy_activation_path: Path,
-    microsoft_rollout_activation_path: Path | None = None,
     now: datetime,
+    microsoft_rollout_activation_path: Path | None = None,
 ) -> dict:
     artifact_sha256 = {
         "scale_decision": sha256_file(scale_decision_path),
