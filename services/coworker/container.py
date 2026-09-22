@@ -10,6 +10,7 @@ from .actions import ActionService
 from .google_actions import GoogleActions
 from .agent_repository import AgentRepository
 from .memory_repository import MemoryRepository
+from .retention import RetentionService
 
 
 @dataclass
@@ -21,6 +22,7 @@ class Container:
     actions: ActionService | None = None
     agent: AgentRepository | None = None
     memory: MemoryRepository | None = None
+    retention: RetentionService | None = None
 
     def __post_init__(self):
         if self.actions is None:
@@ -29,6 +31,8 @@ class Container:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
         if self.memory is None:
             self.memory = MemoryRepository(self.repository.sessions, self.settings)
+        if self.retention is None:
+            self.retention = RetentionService(self.repository.sessions, self.storage)
 
     @classmethod
     def create(cls, settings: Settings):
