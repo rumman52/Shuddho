@@ -9,7 +9,6 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 
-from scripts.staging_api_exercise import staging_owner if False else None
 from scripts.staging_api_exercise import env_secret, require_https_base
 from services.coworker.config import Settings
 from services.coworker.container import Container
