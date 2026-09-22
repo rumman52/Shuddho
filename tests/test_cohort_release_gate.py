@@ -4,6 +4,7 @@ from scripts.cohort_release_gate import evaluate_release, validate_rollout
 BASE_GATES = {
     "ci", "identity", "database", "storage", "temporal", "model",
     "backup_restore", "deletion", "parallel_restart", "fan_in", "flag_rollback",
+    "cohort_admission",
 }
 
 
@@ -127,3 +128,11 @@ def test_release_manifest_rejects_missing_operational_references():
     assert result["decision"] == "NO-GO"
     assert "incident_oncall" in result["rollout_failures"]
     assert "rollback_runbook" in result["rollout_failures"]
+
+
+def test_controlled_cohort_gate_requires_server_admission_evidence():
+    value = evidence()
+    value.pop("cohort_admission")
+    result = evaluate_release(value, rollout())
+    assert result["decision"] == "NO-GO"
+    assert "cohort_admission" in result["staging"]["missing"]
