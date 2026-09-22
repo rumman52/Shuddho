@@ -207,6 +207,7 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
                 "active_leases": provider_capacity["active_calls"],
                 "reserved_lease_tokens": provider_capacity["reserved_tokens"],
                 "oldest_lease_age_seconds": provider_capacity["oldest_lease_age_seconds"],
+                "daily_allocated_tokens": provider_capacity["daily_allocated_tokens"],
             },
             "agents": {
                 "samples": len(measured_agents),
