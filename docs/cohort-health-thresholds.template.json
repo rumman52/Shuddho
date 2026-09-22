@@ -1,0 +1,18 @@
+{
+  "window_minutes": 15,
+  "max_active_work_age_seconds": 300,
+  "min_task_samples": 5,
+  "max_task_failure_rate": 0.20,
+  "min_provider_samples": 5,
+  "max_provider_failure_rate": 0.10,
+  "max_model_p95_latency_ms": 90000,
+  "max_window_tokens": 250000,
+  "max_total_storage_bytes": 2147483648,
+  "min_agent_samples": 3,
+  "max_agent_failure_rate": 0.20,
+  "min_research_samples": 3,
+  "max_research_failure_rate": 0.20,
+  "min_action_samples": 1,
+  "max_action_failure_rate": 0.10,
+  "max_action_outcome_unknown": 0
+}
