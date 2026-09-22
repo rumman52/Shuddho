@@ -1,0 +1,29 @@
+{
+  "release_id": "coworker-cohort-001",
+  "final_stage": "cohort-25",
+  "freshness_minutes": 120,
+  "expected_peak_concurrency": 10,
+  "min_reserve_ratio": 1.5,
+  "simulated": {
+    "min_accounts": 10,
+    "min_submitted": 200,
+    "min_success_rate": 0.99,
+    "max_rejection_rate": 0.01,
+    "max_submit_p95_ms": 500,
+    "max_submit_p99_ms": 1000,
+    "max_completion_p95_ms": 15000,
+    "max_completion_p99_ms": 30000,
+    "max_queue_age_seconds": 30
+  },
+  "live_provider": {
+    "min_accounts": 5,
+    "min_submitted": 20,
+    "min_success_rate": 0.95,
+    "max_rejection_rate": 0.05,
+    "max_completion_p95_ms": 120000,
+    "max_completion_p99_ms": 180000,
+    "max_provider_failure_rate": 0.05,
+    "max_provider_p95_latency_ms": 90000,
+    "max_average_tokens_per_completed_task": 20000
+  }
+}

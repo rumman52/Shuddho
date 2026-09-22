@@ -310,6 +310,7 @@ def build_recovery_ledger(tmp_path, monkeypatch):
         canary_plan=plan_path,
         progression_decision=progression,
         operator_status=stop_status,
+        created_at="2026-09-22T04:50:00+00:00",
     )
     append_rollback_event(
         ledger=ledger,
@@ -323,6 +324,7 @@ def build_recovery_ledger(tmp_path, monkeypatch):
         progression_decision=progression,
         operator_status=rollback_status,
         rollback_completion=rollback_completion,
+        created_at="2026-09-22T04:58:00+00:00",
     )
     append_recovery_event(
         ledger=ledger,
@@ -337,6 +339,7 @@ def build_recovery_ledger(tmp_path, monkeypatch):
         operator_status=recovery_status,
         rollback_completion=rollback_completion,
         recovery_verification=recovery_verification,
+        created_at="2026-09-22T05:00:00+00:00",
     )
     return ledger, recovery_verification
 
@@ -399,3 +402,22 @@ def test_unledgered_recovery_cannot_create_progression_epoch(monkeypatch, tmp_pa
             release_id="coworker-cohort-001",
             current_stage="canary-5",
         )
+
+
+def test_recovery_epoch_starts_after_ledger_entry_not_only_artifact(monkeypatch, tmp_path):
+    ledger, recovery_verification = build_recovery_ledger(tmp_path, monkeypatch)
+    entries = ledger.read_text(encoding="utf-8").splitlines()
+    last = json.loads(entries[-1])
+    last["created_at"] = "2026-09-22T05:02:00+00:00"
+    from scripts.cohort_release_ledger import entry_core, sign_entry
+    last["entry_hash"], last["hmac_sha256"] = sign_entry(entry_core(last), KEY)
+    entries[-1] = json.dumps(last, sort_keys=True, separators=(",", ":"))
+    ledger.write_text("\n".join(entries) + "\n", encoding="utf-8")
+
+    epoch = load_recovery_epoch(
+        recovery_verification,
+        ledger,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+    )
+    assert epoch == datetime(2026, 9, 22, 5, 2, tzinfo=timezone.utc)

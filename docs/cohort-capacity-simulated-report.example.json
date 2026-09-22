@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "release_id": "coworker-cohort-001",
+  "kind": "simulated",
+  "generated_at": "2026-09-22T08:00:00+00:00",
+  "duration_seconds": 600,
+  "accounts": 10,
+  "offered_concurrency": 15,
+  "submitted": 200,
+  "completed": 200,
+  "failed": 0,
+  "rejected": 0,
+  "submit_p95_ms": 120,
+  "submit_p99_ms": 250,
+  "completion_p95_ms": 8000,
+  "completion_p99_ms": 12000,
+  "max_queue_age_seconds": 4,
+  "provider_samples": 0,
+  "provider_failed": 0,
+  "provider_p95_latency_ms": null,
+  "total_tokens": 0
+}

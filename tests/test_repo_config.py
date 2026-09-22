@@ -44,6 +44,7 @@ def test_vercel_config_deploys_web_editor_spa_from_repo_root() -> None:
     assert config["installCommand"] == "npm install"
     assert config["buildCommand"] == "npm run build:web-editor"
     assert config["outputDirectory"] == "apps/web-editor/dist"
+    assert config["git"] == {"deploymentEnabled": {"*": False, "main": True}}
     assert config["rewrites"] == [
         {
             "source": "/backend/:path*",
@@ -51,6 +52,18 @@ def test_vercel_config_deploys_web_editor_spa_from_repo_root() -> None:
         },
         {"source": "/(.*)", "destination": "/index.html"},
     ]
+    assert "ignoreCommand" not in config
+    assert config["git"]["deploymentEnabled"] == {
+        "*": False,
+        "main": True,
+    }
+
+    app_config = json.loads(Path("apps/web-editor/vercel.json").read_text(encoding="utf-8"))
+    assert "ignoreCommand" not in app_config
+    assert app_config["git"]["deploymentEnabled"] == {
+        "*": False,
+        "main": True,
+    }
 
 def test_windows_backend_script_uses_repo_root_before_starting_uvicorn() -> None:
     script = Path("run_backend_windows.bat").read_text(encoding="utf-8")
@@ -147,3 +160,8 @@ def test_root_workspace_includes_gateway_web_and_packages() -> None:
     assert "dev:python-api" in root_package["scripts"]
     assert "build:agent" not in root_package["scripts"]
     assert "start:agent" not in root_package["scripts"]
+
+
+def test_app_local_vercel_config_matches_production_only_git_policy() -> None:
+    config = json.loads(Path("apps/web-editor/vercel.json").read_text(encoding="utf-8"))
+    assert config["git"] == {"deploymentEnabled": {"*": False, "main": True}}
