@@ -595,6 +595,22 @@ def test_agent_plan_limits_step_count(container):
 
 
 
+def test_oauth_provider_binding_model_matches_portable_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import OAuthAttempt
+
+    columns = {
+        item["name"]: item
+        for item in inspect(
+            container.repository.sessions.kw["bind"]
+        ).get_columns("cw_oauth_attempts")
+    }
+    assert set(columns) == set(OAuthAttempt.__table__.columns.keys())
+    assert "provider" in columns
+    assert columns["provider"]["nullable"] is False
+    assert "google" in str(columns["provider"].get("default", "")).lower()
+
+
 def test_agent_runtime_model_matches_migration(container):
     from sqlalchemy import inspect
     from services.coworker.models import AgentRun
