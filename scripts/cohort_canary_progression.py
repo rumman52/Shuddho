@@ -126,7 +126,6 @@ def evaluate_progression(
         raise CanaryProgressionError("Canary plan exceeds the approved rollout manifest cohort maximum.")
 
     release_id = rollout["release_id"]
-    relevant: list[dict] = []
     for item in history:
         if item.get("release_id") != release_id:
             raise CanaryProgressionError("Health history contains a different release_id.")
@@ -144,23 +143,11 @@ def evaluate_progression(
                 "summary": {"configured_members": members},
                 "rollback": rollout.get("rollback"),
             }
-        if members >= stage["min_members"]:
-            relevant.append(item)
-
-    if not relevant:
-        return {
-            "decision": "HOLD",
-            "release_id": release_id,
-            "current_stage": current_stage,
-            "next_stage": plan["stages"][stage_index + 1]["name"] if stage_index + 1 < len(plan["stages"]) else None,
-            "reasons": ["stage_not_fully_enrolled"],
-            "summary": {"healthy_windows": 0, "configured_members": history[-1]["snapshot"]["cohort_members_configured"]},
-            "rollback": None,
-        }
 
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    times = [parse_time(item["snapshot"]["generated_at"]) for item in relevant]
-    latest_age_minutes = (now - times[-1]).total_seconds() / 60
+    latest = history[-1]
+    latest_time = parse_time(latest["snapshot"]["generated_at"])
+    latest_age_minutes = (now - latest_time).total_seconds() / 60
     if latest_age_minutes < -1:
         raise CanaryProgressionError("Latest health snapshot is in the future.")
     if latest_age_minutes > plan["stale_after_minutes"]:
@@ -174,7 +161,7 @@ def evaluate_progression(
             "rollback": rollout.get("rollback"),
         }
 
-    stop_rows = [item for item in relevant if item.get("decision") == "STOP_ROLLOUT"]
+    stop_rows = [item for item in history if item.get("decision") == "STOP_ROLLOUT"]
     if stop_rows:
         return {
             "decision": "STOP_ROLLOUT",
@@ -188,8 +175,26 @@ def evaluate_progression(
             },
             "rollback": rollout.get("rollback"),
         }
-    if any(item.get("decision") != "CONTINUE_COHORT" for item in relevant):
+    if any(item.get("decision") != "CONTINUE_COHORT" for item in history):
         raise CanaryProgressionError("Health history contains an unknown decision value.")
+
+    latest_members = latest["snapshot"]["cohort_members_configured"]
+    if latest_members < stage["min_members"]:
+        return {
+            "decision": "HOLD",
+            "release_id": release_id,
+            "current_stage": current_stage,
+            "next_stage": plan["stages"][stage_index + 1]["name"] if stage_index + 1 < len(plan["stages"]) else None,
+            "reasons": ["stage_not_fully_enrolled"],
+            "summary": {"healthy_windows": 0, "configured_members": latest_members},
+            "rollback": None,
+        }
+
+    relevant = [
+        item for item in history
+        if item["snapshot"]["cohort_members_configured"] >= stage["min_members"]
+    ]
+    times = [parse_time(item["snapshot"]["generated_at"]) for item in relevant]
 
     gaps = [
         (times[index] - times[index - 1]).total_seconds() / 60
@@ -197,8 +202,6 @@ def evaluate_progression(
     ]
     max_gap = max(gaps, default=0)
     observation_minutes = max(0, (times[-1] - times[0]).total_seconds() / 60)
-    latest_members = relevant[-1]["snapshot"]["cohort_members_configured"]
-
     summary = {
         "configured_members": latest_members,
         "healthy_windows": len(relevant),
