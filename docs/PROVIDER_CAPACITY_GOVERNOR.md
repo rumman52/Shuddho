@@ -50,3 +50,14 @@ Existing per-task, daily-token, active-task, Agent-run, and action quotas remain
 Cohort health snapshots expose only aggregate lease counts, reserved tokens, and oldest lease age. They never expose account IDs.
 
 During rollout, compare provider admission pressure with queue age, provider p95/p99 latency, provider failures, and actual token usage. Increase limits only after measured capacity evidence; adding worker replicas alone does not create provider capacity.
+
+
+## Global daily provider budget
+
+The next governance layer adds `SHUDDHO_PROVIDER_DAILY_TOKEN_BUDGET`, an aggregate UTC-day token ceiling shared by all workspaces and all model-call types.
+
+The same serialized admission transaction reserves this global budget before a provider call. Known token usage settles the conservative reservation downward or upward to the provider-reported total. Unknown outcomes and expired worker-loss leases keep the full reservation charged so ambiguous spend cannot be retried for free.
+
+The aggregate daily allocation is exported in cohort health/OpenMetrics. Per-workspace daily budgets remain independent fairness/user-product limits and may never exceed the global provider daily ceiling.
+
+See [Adaptive Provider Quota and Cost Policy](ADAPTIVE_PROVIDER_POLICY.md) for the measured proposal workflow used to review changes to these limits.
