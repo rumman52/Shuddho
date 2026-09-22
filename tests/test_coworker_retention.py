@@ -6,9 +6,9 @@ import time
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
 
-pytest.importorskip("sqlalchemy")
+pytest.importorskip("sqlalchemy", reason="Install the coworker extra for retention tests")
+from sqlalchemy import select
 
 from services.coworker.auth import Principal
 from services.coworker.config import Settings
