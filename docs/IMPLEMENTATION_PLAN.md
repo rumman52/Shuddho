@@ -201,6 +201,8 @@ The next connector increment adds a disabled-by-default [Microsoft Graph email/c
 
 The next release-safety increment adds [controlled live Microsoft action validation](CONTROLLED_STAGING_LIVE_MICROSOFT_ACTIONS.md): one real Microsoft Graph email and one real calendar event must pass provider-bound v2 approval-scope validation, wrong-hash rejection, no-auto-approval checks, immutable preview verification, single execution audit, and Microsoft-specific receipt validation. The new `microsoft_actions` staging gate is independent from Google `actions` evidence; frontend Microsoft exposure remains blocked until it passes.
 
+The next frontend increment adds a default-off Microsoft provider selector and secure `/oauth/microsoft/callback` handler. It validates Microsoft login origin/path, exact state and exact same-origin callback before redirect, stores only state/account in session storage, calls only fixed backend Microsoft start/finish routes, and preserves provider identity when editing saved actions. The UI remains Google-only unless `VITE_MICROSOFT_ACTIONS_ENABLED=true`, so shipping the code does not itself authorize Microsoft rollout.
+
 Model-selected external actions and broader connector expansion remain later increments.
 
 ### Consequential actions
