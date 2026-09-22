@@ -153,7 +153,9 @@ PR #128/#129 add the [Temporal recovery exercise](CONTROLLED_STAGING_TEMPORAL_RE
 
 PR #130 adds the [isolated backup/restore drill](CONTROLLED_STAGING_BACKUP_RESTORE.md): synthetic Coworker database/object state is snapshotted through real managed backup mechanisms, restored into separate targets, and accepted only when relational records plus private object bytes match the pre-backup manifest and SHA-256.
 
-The next operations gate adds [retention, deletion and orphan cleanup](CONTROLLED_STAGING_RETENTION_DELETION.md): first-class administrative task/account erasure, durable referenced-object inventory, dry-run and age-bounded orphan cleanup, and a synthetic staging exercise that promotes the deletion gate only after database rows and private objects are actually removed. Provider actions and v2→v1 rollback remain separate gates. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #131/#132 add [retention, deletion and orphan cleanup](CONTROLLED_STAGING_RETENTION_DELETION.md): first-class administrative task/account erasure, durable referenced-object inventory, dry-run and age-bounded orphan cleanup, and a synthetic staging exercise that promotes the deletion gate only after database rows and private objects are actually removed.
+
+The next rollback gate adds the [Agent v2 → v1 feature-flag exercise](CONTROLLED_STAGING_FLAG_ROLLBACK.md): the real dispatcher must record v2 before rollback, current workers keep both workflow identities registered, parallel execution is disabled without schema downgrade, and a newly dispatched Agent run must be recorded by Temporal as v1 while the prior v2 execution remains valid. Live Tavily/Google provider validation remains after rollback. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
