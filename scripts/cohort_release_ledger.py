@@ -1,0 +1,411 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import hmac
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+ZERO_HASH = "0" * 64
+EVENT_DECISIONS = {
+    "hold": "HOLD",
+    "eligible_for_expansion": "ELIGIBLE_FOR_EXPANSION",
+    "stage_approved": "ELIGIBLE_FOR_EXPANSION",
+    "stop_rollout": "STOP_ROLLOUT",
+}
+ARTIFACT_KEYS = {
+    "rollout_manifest",
+    "canary_plan",
+    "progression_decision",
+    "operator_status",
+}
+
+
+class ReleaseLedgerError(RuntimeError):
+    pass
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def canonical(value: dict) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
+def valid_hash(value) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_json_object(path: Path, label: str) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ReleaseLedgerError(
+            f"Could not read {label}: {type(error).__name__}"
+        ) from None
+    if not isinstance(value, dict):
+        raise ReleaseLedgerError(f"{label} must contain a JSON object.")
+    return value
+
+
+def ledger_key() -> bytes:
+    value = os.environ.get("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", "")
+    key = value.encode("utf-8")
+    if len(key) < 32:
+        raise ReleaseLedgerError(
+            "SHUDDHO_RELEASE_LEDGER_HMAC_KEY must contain at least 32 UTF-8 bytes."
+        )
+    return key
+
+
+def artifact_hashes(
+    rollout: Path,
+    canary_plan: Path,
+    progression_decision: Path,
+    operator_status: Path,
+) -> dict[str, str]:
+    return {
+        "rollout_manifest": file_sha256(rollout),
+        "canary_plan": file_sha256(canary_plan),
+        "progression_decision": file_sha256(progression_decision),
+        "operator_status": file_sha256(operator_status),
+    }
+
+
+def validate_bound_inputs(
+    *,
+    release_id: str,
+    event_type: str,
+    current_stage: str,
+    next_stage: str | None,
+    rollout: Path,
+    canary_plan: Path,
+    progression_decision: Path,
+    operator_status: Path,
+) -> None:
+    if event_type not in EVENT_DECISIONS:
+        raise ReleaseLedgerError(f"Unsupported release ledger event type: {event_type!r}.")
+    if not release_id.strip() or len(release_id) > 200:
+        raise ReleaseLedgerError("release_id must be a non-empty string of at most 200 characters.")
+    if not current_stage.strip() or len(current_stage) > 100:
+        raise ReleaseLedgerError("current_stage must be a non-empty string of at most 100 characters.")
+    if next_stage is not None and (not next_stage.strip() or len(next_stage) > 100):
+        raise ReleaseLedgerError("next_stage must be null or a non-empty string of at most 100 characters.")
+
+    rollout_value = load_json_object(rollout, "rollout manifest")
+    plan_value = load_json_object(canary_plan, "canary plan")
+    decision_value = load_json_object(progression_decision, "progression decision")
+    status_value = load_json_object(operator_status, "operator status")
+
+    for label, value in (
+        ("rollout manifest", rollout_value),
+        ("canary plan", plan_value),
+        ("progression decision", decision_value),
+        ("operator status", status_value),
+    ):
+        if value.get("release_id") != release_id:
+            raise ReleaseLedgerError(f"{label} release_id does not match {release_id!r}.")
+
+    expected_decision = EVENT_DECISIONS[event_type]
+    if decision_value.get("decision") != expected_decision:
+        raise ReleaseLedgerError(
+            f"{event_type} requires progression decision {expected_decision!r}."
+        )
+    if decision_value.get("current_stage") != current_stage:
+        raise ReleaseLedgerError("Progression current_stage does not match the ledger event.")
+
+    decision_next = decision_value.get("next_stage")
+    if decision_next != next_stage:
+        raise ReleaseLedgerError("Progression next_stage does not match the ledger event.")
+
+    stages = plan_value.get("stages")
+    if not isinstance(stages, list):
+        raise ReleaseLedgerError("Canary plan has no valid stages list.")
+    names = [
+        item.get("name")
+        for item in stages
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    ]
+    if current_stage not in names:
+        raise ReleaseLedgerError("current_stage is not present in the canary plan.")
+    if next_stage is not None and next_stage not in names:
+        raise ReleaseLedgerError("next_stage is not present in the canary plan.")
+
+    if event_type in {"eligible_for_expansion", "stage_approved"}:
+        current_index = names.index(current_stage)
+        if current_index + 1 >= len(names) or names[current_index + 1] != next_stage:
+            raise ReleaseLedgerError("Expansion must target the immediately following canary stage.")
+    if event_type == "stage_approved" and next_stage is None:
+        raise ReleaseLedgerError("stage_approved requires a next_stage.")
+
+
+def entry_core(entry: dict) -> dict:
+    return {
+        key: entry[key]
+        for key in (
+            "schema_version",
+            "sequence",
+            "created_at",
+            "release_id",
+            "event_type",
+            "actor_reference",
+            "change_reference",
+            "current_stage",
+            "next_stage",
+            "artifact_sha256",
+            "previous_entry_hash",
+        )
+    }
+
+
+def sign_entry(core: dict, key: bytes) -> tuple[str, str]:
+    entry_hash = hashlib.sha256(canonical(core)).hexdigest()
+    tag = hmac.new(key, entry_hash.encode("ascii"), hashlib.sha256).hexdigest()
+    return entry_hash, tag
+
+
+def read_entries(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    try:
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ReleaseLedgerError(f"Ledger line {line_number} is not a JSON object.")
+            rows.append(value)
+    except json.JSONDecodeError as error:
+        raise ReleaseLedgerError(
+            f"Ledger contains invalid JSON at line {error.lineno}."
+        ) from None
+    return rows
+
+
+def verify_entries(entries: list[dict], key: bytes) -> dict:
+    previous = ZERO_HASH
+    release_id: str | None = None
+    for index, entry in enumerate(entries, start=1):
+        required = {
+            "schema_version",
+            "sequence",
+            "created_at",
+            "release_id",
+            "event_type",
+            "actor_reference",
+            "change_reference",
+            "current_stage",
+            "next_stage",
+            "artifact_sha256",
+            "previous_entry_hash",
+            "entry_hash",
+            "hmac_sha256",
+        }
+        if set(entry) != required:
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unexpected schema.")
+        if entry["schema_version"] != SCHEMA_VERSION:
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
+        if entry["sequence"] != index:
+            raise ReleaseLedgerError(f"Ledger entry {index} has an invalid sequence.")
+        try:
+            datetime.fromisoformat(str(entry["created_at"]).replace("Z", "+00:00"))
+        except ValueError:
+            raise ReleaseLedgerError(f"Ledger entry {index} has an invalid timestamp.") from None
+        if entry["event_type"] not in EVENT_DECISIONS:
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported event type.")
+        if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
+            raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
+        if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
+            raise ReleaseLedgerError(f"Ledger entry {index} has no change reference.")
+        if not isinstance(entry["current_stage"], str) or not entry["current_stage"].strip():
+            raise ReleaseLedgerError(f"Ledger entry {index} has no current stage.")
+        if entry["next_stage"] is not None and not isinstance(entry["next_stage"], str):
+            raise ReleaseLedgerError(f"Ledger entry {index} has an invalid next stage.")
+        artifacts = entry["artifact_sha256"]
+        if not isinstance(artifacts, dict) or set(artifacts) != ARTIFACT_KEYS:
+            raise ReleaseLedgerError(f"Ledger entry {index} has invalid artifact hashes.")
+        if any(not valid_hash(value) for value in artifacts.values()):
+            raise ReleaseLedgerError(f"Ledger entry {index} contains an invalid artifact SHA-256.")
+        if entry["previous_entry_hash"] != previous:
+            raise ReleaseLedgerError(f"Ledger entry {index} breaks the hash chain.")
+
+        core = entry_core(entry)
+        expected_hash, expected_tag = sign_entry(core, key)
+        if not hmac.compare_digest(entry["entry_hash"], expected_hash):
+            raise ReleaseLedgerError(f"Ledger entry {index} hash does not match its content.")
+        if not hmac.compare_digest(entry["hmac_sha256"], expected_tag):
+            raise ReleaseLedgerError(f"Ledger entry {index} HMAC verification failed.")
+
+        if release_id is None:
+            release_id = entry["release_id"]
+        elif entry["release_id"] != release_id:
+            raise ReleaseLedgerError("One ledger file may contain only one release_id.")
+        previous = entry["entry_hash"]
+
+    return {
+        "entries": len(entries),
+        "release_id": release_id,
+        "head_entry_hash": previous if entries else None,
+        "verified": True,
+    }
+
+
+def atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix="." + path.name + ".", dir=str(path.parent))
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def append_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    event_type: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    next_stage: str | None,
+    rollout: Path,
+    canary_plan: Path,
+    progression_decision: Path,
+    operator_status: Path,
+    created_at: str | None = None,
+) -> dict:
+    if not actor_reference.strip() or len(actor_reference) > 500:
+        raise ReleaseLedgerError("actor_reference must be non-empty and at most 500 characters.")
+    if not change_reference.strip() or len(change_reference) > 500:
+        raise ReleaseLedgerError("change_reference must be non-empty and at most 500 characters.")
+
+    validate_bound_inputs(
+        release_id=release_id,
+        event_type=event_type,
+        current_stage=current_stage,
+        next_stage=next_stage,
+        rollout=rollout,
+        canary_plan=canary_plan,
+        progression_decision=progression_decision,
+        operator_status=operator_status,
+    )
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if state["release_id"] is not None and state["release_id"] != release_id:
+        raise ReleaseLedgerError("Ledger release_id does not match the event release_id.")
+
+    core = {
+        "schema_version": SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": event_type,
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": next_stage,
+        "artifact_sha256": artifact_hashes(
+            rollout,
+            canary_plan,
+            progression_decision,
+            operator_status,
+        ),
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {**core, "entry_hash": entry_hash, "hmac_sha256": tag}
+    serialized = "".join(
+        json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Maintain a tamper-evident Shuddho controlled-cohort release ledger."
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    append_parser = sub.add_parser("append")
+    append_parser.add_argument("--ledger", type=Path, required=True)
+    append_parser.add_argument("--release-id", required=True)
+    append_parser.add_argument("--event-type", choices=sorted(EVENT_DECISIONS), required=True)
+    append_parser.add_argument("--actor-reference", required=True)
+    append_parser.add_argument("--change-reference", required=True)
+    append_parser.add_argument("--current-stage", required=True)
+    append_parser.add_argument("--next-stage")
+    append_parser.add_argument("--rollout", type=Path, required=True)
+    append_parser.add_argument("--canary-plan", type=Path, required=True)
+    append_parser.add_argument("--progression-decision", type=Path, required=True)
+    append_parser.add_argument("--operator-status", type=Path, required=True)
+
+    verify_parser = sub.add_parser("verify")
+    verify_parser.add_argument("--ledger", type=Path, required=True)
+
+    args = parser.parse_args()
+    try:
+        key = ledger_key()
+        if args.command == "verify":
+            result = verify_entries(read_entries(args.ledger), key)
+        else:
+            entry = append_event(
+                ledger=args.ledger,
+                key=key,
+                release_id=args.release_id,
+                event_type=args.event_type,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                next_stage=args.next_stage,
+                rollout=args.rollout,
+                canary_plan=args.canary_plan,
+                progression_decision=args.progression_decision,
+                operator_status=args.operator_status,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        print(json.dumps(result, indent=2))
+    except (ReleaseLedgerError, OSError, ValueError) as error:
+        print(json.dumps({"status": "failed", "error": str(error)}, indent=2))
+        raise SystemExit(1) from None
+
+
+if __name__ == "__main__":
+    main()

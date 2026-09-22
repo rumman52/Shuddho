@@ -169,7 +169,9 @@ PR #138 adds the [controlled cohort health and stop gate](CONTROLLED_COHORT_HEAL
 
 PR #140 adds the [controlled cohort observability export](CONTROLLED_COHORT_OBSERVABILITY.md): the same health snapshot/evaluator produces an atomic, label-free OpenMetrics textfile plus a small operator JSON status for external schedulers, dashboards and alerts. No public metrics endpoint or deployment-admin credentials are added.
 
-The next rollout-control increment adds [controlled cohort canary progression](CONTROLLED_COHORT_CANARY_PROGRESSION.md): sustained sanitized health history, freshness, monitoring continuity and real task/provider/Agent sample minimums govern whether the current stage is HOLD, ELIGIBLE_FOR_EXPANSION or STOP_ROLLOUT. The default path is 5 → 10 → 25 users; no account is added automatically. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #141 adds [controlled cohort canary progression](CONTROLLED_COHORT_CANARY_PROGRESSION.md): sustained sanitized health history, freshness, monitoring continuity and real task/provider/Agent sample minimums govern whether the current stage is HOLD, ELIGIBLE_FOR_EXPANSION or STOP_ROLLOUT. The default path is 5 → 10 → 25 users; no account is added automatically.
+
+The next operations-integrity increment adds the [tamper-evident controlled cohort release ledger](CONTROLLED_COHORT_RELEASE_LEDGER.md): every HOLD, expansion-eligibility, approved-stage, or STOP decision binds the exact rollout manifest, canary plan, progression decision and operator status through SHA-256 hashes, a chained entry hash, and an operations-only HMAC. The ledger remains evidence only; it never mutates cohort membership or deployment flags. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
