@@ -158,12 +158,12 @@ def test_collect_snapshot_scopes_metrics_to_configured_cohort(tmp_path):
         container.repository.ensure_account(outsider)
         invited_task, _ = container.repository.create_task(
             invited.account_id,
-            TaskCreate(instruction="Synthetic cohort health task.", notes="", output_language="en"),
+            TaskCreate(instruction="Synthetic cohort health task.", notes="Synthetic staging evidence.", output_language="en"),
             "health-invited",
         )
         outsider_task, _ = container.repository.create_task(
             outsider.account_id,
-            TaskCreate(instruction="Synthetic outsider task.", notes="", output_language="en"),
+            TaskCreate(instruction="Synthetic outsider task.", notes="Synthetic staging evidence.", output_language="en"),
             "health-outsider",
         )
         now = utcnow()
