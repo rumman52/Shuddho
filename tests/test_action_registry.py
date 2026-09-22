@@ -128,3 +128,16 @@ def test_unregistered_action_or_provider_fails_closed():
         action_spec("social_publish", "google")
     with pytest.raises(CoworkerError, match="cannot perform"):
         action_spec("email_send", "outlook")
+
+
+def test_legacy_v1_preview_keeps_hash_bound_compatibility():
+    preview = email_preview()
+    assert "approval_scope" not in preview
+    assert validate_approval_scope(preview).kind == "email_send"
+
+
+def test_v2_preview_cannot_omit_approval_scope():
+    preview = email_preview()
+    preview["version"] = 2
+    with pytest.raises(CoworkerError, match="approval scope is missing"):
+        validate_approval_scope(preview)
