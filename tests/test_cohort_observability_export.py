@@ -62,9 +62,11 @@ def test_openmetrics_export_is_sanitized_and_complete():
     assert "shuddho_coworker_cohort_action_failure_ratio NaN" in text
     assert text.endswith("# EOF\n")
     assert "coworker-cohort-001" not in text
-    assert "account" not in text.lower()
+    assert "owner_id" not in text
+    assert "account_id" not in text
+    assert "subject" not in text.lower()
     assert "email" not in text.lower()
-    assert "token=" not in text.lower()
+    assert "{" not in text  # No metric labels / user-derived dimensions.
 
 
 def test_stop_decision_and_breach_count_are_exported():
