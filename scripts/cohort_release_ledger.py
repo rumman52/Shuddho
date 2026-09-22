@@ -695,6 +695,14 @@ def append_scale_event(
     state = verify_entries(entries, key)
     if state["release_id"] is not None and state["release_id"] != release_id:
         raise ReleaseLedgerError("Ledger release_id does not match the scale event.")
+    if not entries or not any(
+        item.get("current_stage") == current_stage or item.get("next_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "bounded_expansion_verified requires an existing ledger chain that reached current_stage."
+        )
+
     policy_activation_hash = hashes.get("provider_policy_activation")
     if not valid_hash(policy_activation_hash):
         raise ReleaseLedgerError(
@@ -713,14 +721,6 @@ def append_scale_event(
     if len(matching_policy_entries) != 1:
         raise ReleaseLedgerError(
             "bounded_expansion_verified requires the matching provider_policy_verified ledger event."
-        )
-
-    if not entries or not any(
-        item.get("current_stage") == current_stage or item.get("next_stage") == current_stage
-        for item in entries
-    ):
-        raise ReleaseLedgerError(
-            "bounded_expansion_verified requires an existing ledger chain that reached current_stage."
         )
     prior_scale = [
         item for item in entries
