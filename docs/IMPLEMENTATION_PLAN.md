@@ -159,7 +159,9 @@ PR #133 adds the [Agent v2 → v1 feature-flag exercise](CONTROLLED_STAGING_FLAG
 
 PR #134 adds [live Tavily Research validation](CONTROLLED_STAGING_LIVE_RESEARCH.md): Shuddho's real Tavily adapter must return bounded provider-retrieved page evidence with valid provenance and exact-quote validation, then one authenticated deployed Research task must complete through the real workflow with cited sources, accounting evidence and owner-authorized non-empty artifacts before the conditional research gate can pass.
 
-The final external-provider gate adds [live Google approved-action validation](CONTROLLED_STAGING_LIVE_GOOGLE_ACTIONS.md): one real staging Gmail send and one real primary-calendar event must remain inert before exact approval, reject a wrong preview hash, preserve immutable preview/hash through execution, produce exactly one execution audit path, and finish with confirmed Google receipts before the conditional actions gate can pass. After this, the next phase is the final staging GO/NO-GO evidence review and limited cohort decision. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
+PR #135 adds [live Google approved-action validation](CONTROLLED_STAGING_LIVE_GOOGLE_ACTIONS.md): one real staging Gmail send and one real primary-calendar event must remain inert before exact approval, reject a wrong preview hash, preserve immutable preview/hash through execution, produce exactly one execution audit path, and finish with confirmed Google receipts before the conditional actions gate can pass.
+
+The final release-admission increment adds the [controlled cohort GO/NO-GO gate](FINAL_CONTROLLED_COHORT_GATE.md): combine completed staging evidence with an explicit rollout manifest, bounded first-cohort size, capability dependencies, exact kill switches, monitoring references and incident ownership. Only a fully satisfied manifest may return `GO_CONTROLLED_COHORT`; otherwise the release remains NO-GO. Subjective quality judging, model-selected external actions and multi-agent delegation remain later increments.
 
 ### Consequential actions
 
