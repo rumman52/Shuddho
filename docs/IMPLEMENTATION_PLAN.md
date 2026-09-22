@@ -199,6 +199,8 @@ PR #154 adds the connector-neutral consequential-action policy registry and v2 a
 
 The next connector increment adds a disabled-by-default [Microsoft Graph email/calendar adapter](MICROSOFT_GRAPH_ACTIONS.md): OAuth state is provider-bound, Microsoft Graph implements the same adapter interface as Google, and approved email/calendar actions reuse the exact same immutable preview, explicit approval, committed claim, identity recheck, receipt and uncertain-outcome boundaries. Microsoft frontend exposure and live staging remain separate gates.
 
+The next release-safety increment adds [controlled live Microsoft action validation](CONTROLLED_STAGING_LIVE_MICROSOFT_ACTIONS.md): one real Microsoft Graph email and one real calendar event must pass provider-bound v2 approval-scope validation, wrong-hash rejection, no-auto-approval checks, immutable preview verification, single execution audit, and Microsoft-specific receipt validation. The new `microsoft_actions` staging gate is independent from Google `actions` evidence; frontend Microsoft exposure remains blocked until it passes.
+
 Model-selected external actions and broader connector expansion remain later increments.
 
 ### Consequential actions
