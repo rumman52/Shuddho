@@ -14,7 +14,6 @@
       "destination": "/index.html"
     }
   ],
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ../../shared/ ../../package.json ../../package-lock.json ../../vercel.json",
   "git": {
     "deploymentEnabled": {
       "*": false,
