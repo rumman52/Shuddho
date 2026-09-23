@@ -2224,7 +2224,7 @@ def append_action_attachments_event(
     if (
         not isinstance(rollback, dict)
         or rollback.get("action_attachments_kill_switch")
-        != "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"
+        != "SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false"
     ):
         raise ReleaseLedgerError(
             "Reviewed rollout has no exact action-attachments rollback switch."
