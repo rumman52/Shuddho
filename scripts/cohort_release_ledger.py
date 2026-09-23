@@ -788,16 +788,18 @@ def append_recovery_event(
         )
 
     recovery_schema = recovery_value.get("schema_version")
-    if recovery_schema in {2, 3, 4}:
+    if recovery_schema in {2, 3, 4, 5}:
         requirements = recovery_value.get("runtime_requirements")
         expected_requirement_keys = {
             "microsoft_actions_enabled",
             "action_selection_enabled",
         }
-        if recovery_schema in {3, 4}:
+        if recovery_schema in {3, 4, 5}:
             expected_requirement_keys.add("action_proposals_enabled")
-        if recovery_schema == 4:
+        if recovery_schema in {4, 5}:
             expected_requirement_keys.add("action_attachments_enabled")
+        if recovery_schema == 5:
+            expected_requirement_keys.add("action_reminders_enabled")
         if (
             not isinstance(requirements, dict)
             or set(requirements) != expected_requirement_keys
@@ -886,7 +888,7 @@ def append_recovery_event(
                     "Recovery evidence contains action-proposals attestation data while action proposals are not required."
                 )
 
-        if recovery_schema == 4:
+        if recovery_schema in {4, 5}:
             attachments_required = requirements["action_attachments_enabled"]
             attachments_hash = recovery_hashes.get("action_attachments_activation")
             attachments_summary = recovery_value.get("action_attachments")
@@ -911,6 +913,33 @@ def append_recovery_event(
             elif attachments_hash is not None or attachments_summary is not None:
                 raise ReleaseLedgerError(
                     "Recovery evidence contains action-attachments attestation data while action attachments are not required."
+                )
+
+        if recovery_schema == 5:
+            reminders_required = requirements["action_reminders_enabled"]
+            reminders_hash = recovery_hashes.get("action_reminders_activation")
+            reminders_summary = recovery_value.get("action_reminders")
+            if reminders_required:
+                if not valid_hash(reminders_hash) or not isinstance(reminders_summary, dict):
+                    raise ReleaseLedgerError(
+                        "Action-reminders recovery evidence is missing its required attestation."
+                    )
+                require_exact_attested_event(
+                    entries,
+                    schema_version=ACTION_REMINDERS_SCHEMA_VERSION,
+                    event_type="action_reminders_verified",
+                    current_stage=current_stage,
+                    next_stage=None,
+                    artifact_key="action_reminders_activation",
+                    artifact_sha256=reminders_hash,
+                    after_sequence=rollback_entry["sequence"],
+                    expected_sequence=reminders_summary.get("ledger_sequence"),
+                    expected_entry_hash=reminders_summary.get("ledger_entry_hash"),
+                    label="Action-reminders recovery attestation",
+                )
+            elif reminders_hash is not None or reminders_summary is not None:
+                raise ReleaseLedgerError(
+                    "Recovery evidence contains action-reminders attestation data while action reminders are not required."
                 )
 
     core = {
@@ -1039,16 +1068,18 @@ def append_scale_event(
         )
 
     activation_schema = activation.get("schema_version")
-    if activation_schema in {2, 3, 4}:
+    if activation_schema in {2, 3, 4, 5}:
         requirements = activation.get("runtime_requirements")
         expected_requirement_keys = {
             "microsoft_actions_enabled",
             "action_selection_enabled",
         }
-        if activation_schema in {3, 4}:
+        if activation_schema in {3, 4, 5}:
             expected_requirement_keys.add("action_proposals_enabled")
-        if activation_schema == 4:
+        if activation_schema in {4, 5}:
             expected_requirement_keys.add("action_attachments_enabled")
+        if activation_schema == 5:
+            expected_requirement_keys.add("action_reminders_enabled")
         if (
             not isinstance(requirements, dict)
             or set(requirements) != expected_requirement_keys
@@ -1131,7 +1162,7 @@ def append_scale_event(
                     "Scale activation contains action-proposals attestation data while action proposals are not required."
                 )
 
-        if activation_schema == 4:
+        if activation_schema in {4, 5}:
             attachments_required = requirements["action_attachments_enabled"]
             attachments_hash = hashes.get("action_attachments_activation")
             attachments_summary = activation.get("action_attachments")
@@ -1155,6 +1186,32 @@ def append_scale_event(
             elif attachments_hash is not None or attachments_summary is not None:
                 raise ReleaseLedgerError(
                     "Scale activation contains action-attachments attestation data while action attachments are not required."
+                )
+
+        if activation_schema == 5:
+            reminders_required = requirements["action_reminders_enabled"]
+            reminders_hash = hashes.get("action_reminders_activation")
+            reminders_summary = activation.get("action_reminders")
+            if reminders_required:
+                if not valid_hash(reminders_hash) or not isinstance(reminders_summary, dict):
+                    raise ReleaseLedgerError(
+                        "Action-reminders scale activation is missing its required attestation."
+                    )
+                require_exact_attested_event(
+                    entries,
+                    schema_version=ACTION_REMINDERS_SCHEMA_VERSION,
+                    event_type="action_reminders_verified",
+                    current_stage=current_stage,
+                    next_stage=None,
+                    artifact_key="action_reminders_activation",
+                    artifact_sha256=reminders_hash,
+                    expected_sequence=reminders_summary.get("ledger_sequence"),
+                    expected_entry_hash=reminders_summary.get("ledger_entry_hash"),
+                    label="Action-reminders scale attestation",
+                )
+            elif reminders_hash is not None or reminders_summary is not None:
+                raise ReleaseLedgerError(
+                    "Scale activation contains action-reminders attestation data while action reminders are not required."
                 )
 
     prior_scale = [
