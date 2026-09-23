@@ -284,7 +284,7 @@ def cleanup(
     client: httpx.Client,
     token: str,
     run_id: str | None,
-    calendar_action_id: str | None,
+    action_ids: list[str],
 ) -> None:
     if run_id:
         try:
@@ -294,10 +294,10 @@ def cleanup(
             )
         except httpx.HTTPError:
             pass
-    if calendar_action_id:
+    for action_id in action_ids:
         try:
             client.post(
-                f"/api/v1/actions/{calendar_action_id}/cancel",
+                f"/api/v1/actions/{action_id}/cancel",
                 headers=auth(token),
             )
         except httpx.HTTPError:
@@ -355,7 +355,7 @@ def main() -> None:
     token = env_secret("SHUDDHO_STAGING_TOKEN_A")
     marker = uuid.uuid4().hex[:10]
     run_id: str | None = None
-    calendar_action_id: str | None = None
+    synthetic_action_ids: list[str] = []
 
     client = httpx.Client(
         base_url=base_url,
@@ -426,7 +426,10 @@ def main() -> None:
             },
             "live-action-selection-calendar",
         )
-        calendar_action_id = str(calendar_action["id"])
+        synthetic_action_ids = [
+            str(email_action["id"]),
+            str(calendar_action["id"]),
+        ]
         run = create_agent_run(
             client,
             token,
@@ -487,7 +490,7 @@ def main() -> None:
             client,
             token,
             run_id,
-            calendar_action_id,
+            synthetic_action_ids,
         )
         client.close()
 
