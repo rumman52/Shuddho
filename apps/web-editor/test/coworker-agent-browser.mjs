@@ -18,7 +18,7 @@ export async function verifyAgentProposals(page, folder) {
   await agent.getByRole("button", { name: "Start bounded Agent run", exact: true }).click();
   await agent.getByRole("region", { name: "Agent action proposals", exact: true }).waitFor({ timeout: 30000 });
   await agent.getByText("Nothing here is executable yet.", { exact: true }).waitFor();
-  await agent.getByText("Agent project update", { exact: true }).waitFor();
+  await agent.locator(".cw-proposal-heading strong").filter({ hasText: "Agent project update" }).waitFor();
   assert.deepEqual(
     await (await page.request.get("http://127.0.0.1:8000/fixture/actions/counts")).json(),
     before,
