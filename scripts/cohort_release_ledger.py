@@ -101,12 +101,12 @@ def normalized_action_providers(rollout: dict) -> list[str]:
         return ["google"] if actions_enabled else []
     if (
         not isinstance(providers, list)
-        or len(providers) != len(set(providers))
         or any(
             not isinstance(item, str)
             or item not in {"google", "microsoft"}
             for item in providers
         )
+        or len(providers) != len(set(providers))
     ):
         raise ReleaseLedgerError(
             "Reviewed rollout has an invalid action provider set."
