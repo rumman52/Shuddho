@@ -9,6 +9,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.cohort_release_gate import declared_action_providers
+
 SCHEMA_VERSION = 1
 ROLLBACK_SCHEMA_VERSION = 2
 RECOVERY_SCHEMA_VERSION = 3
@@ -1770,11 +1772,15 @@ def append_action_proposals_event(
             "Action-proposal activation has no runtime proof."
         )
     runtime_capabilities = runtime.get("capabilities")
+    expected_capabilities = dict(capabilities)
+    expected_capabilities.setdefault("action_selection", False)
+    expected_capabilities.setdefault("action_proposals", False)
+    expected_providers = sorted(declared_action_providers(rollout))
     if (
         runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
-        or runtime.get("action_providers") != rollout.get("action_providers")
-        or not isinstance(runtime_capabilities, dict)
+        or runtime.get("action_providers") != expected_providers
+        or runtime_capabilities != expected_capabilities
         or runtime_capabilities.get("coworker") is not True
         or runtime_capabilities.get("agent_runtime") is not True
         or runtime_capabilities.get("intelligent_planner") is not True
@@ -1782,7 +1788,7 @@ def append_action_proposals_event(
         or runtime_capabilities.get("action_proposals") is not True
     ):
         raise ReleaseLedgerError(
-            "Action-proposal activation does not prove the required reviewed runtime."
+            "Action-proposal activation does not prove the exact reviewed runtime."
         )
     cohort = runtime.get("cohort")
     if (
