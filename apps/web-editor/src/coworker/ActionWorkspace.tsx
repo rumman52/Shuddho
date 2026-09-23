@@ -112,7 +112,10 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
 
   function startNewAction(clearAttachments = true) {
     setComposing(true); setAction(null); setChecked(false); setError(""); submission.current = undefined;
-    if (clearAttachments) setAttachmentSelection([]);
+    if (clearAttachments) {
+      setAttachmentSelection([]);
+      setReminderMinutes(0);
+    }
   }
 
   async function prepare(event: FormEvent<HTMLFormElement>) {
