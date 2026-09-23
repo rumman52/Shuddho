@@ -23,6 +23,7 @@ CONDITIONAL_GATES = {
     "actions": "Live Google approval/execution/receipt validation passed without auto-approval.",
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
     "action_selection": "Live Agent planner selected only opaque attached-action handles and still paused for explicit user approval.",
+    "action_proposals": "Live Agent generated only inert typed action proposals; promotion created a separate preview and never auto-approved or executed it.",
 }
 
 
@@ -40,6 +41,7 @@ def evaluate(
     require_actions: bool,
     require_microsoft_actions: bool = False,
     require_action_selection: bool = False,
+    require_action_proposals: bool = False,
 ) -> dict:
     required = dict(REQUIRED_GATES)
     if require_research:
@@ -50,6 +52,8 @@ def evaluate(
         required["microsoft_actions"] = CONDITIONAL_GATES["microsoft_actions"]
     if require_action_selection:
         required["action_selection"] = CONDITIONAL_GATES["action_selection"]
+    if require_action_proposals:
+        required["action_proposals"] = CONDITIONAL_GATES["action_proposals"]
     checks = []
     for key, description in required.items():
         record = evidence.get(key)
@@ -83,6 +87,7 @@ def main() -> None:
     parser.add_argument("--require-actions", action="store_true")
     parser.add_argument("--require-microsoft-actions", action="store_true")
     parser.add_argument("--require-action-selection", action="store_true")
+    parser.add_argument("--require-action-proposals", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = evaluate(
@@ -91,6 +96,7 @@ def main() -> None:
         require_actions=args.require_actions,
         require_microsoft_actions=args.require_microsoft_actions,
         require_action_selection=args.require_action_selection,
+        require_action_proposals=args.require_action_proposals,
     )
     encoded = json.dumps(result, indent=2)
     if args.output:
