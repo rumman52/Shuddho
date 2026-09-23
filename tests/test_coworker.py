@@ -1529,3 +1529,173 @@ def test_global_provider_daily_budget_configuration_is_bounded():
             daily_token_budget=1000000,
             provider_daily_token_budget=500000,
         ).validate()
+
+
+def test_intelligent_planner_resolves_only_opaque_attached_action_handles(container):
+    from services.coworker.agent_planner import (
+        action_selection_candidates,
+        intelligent_tool_names,
+        proposal_to_plan,
+    )
+    from services.coworker.agent_schemas import AgentPlannerProposal
+
+    settings = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        actions_enabled=True,
+        agent_action_selection_enabled=True,
+        work_services_enabled=True,
+    )
+    actions = [
+        {"id": "11111111-1111-1111-1111-111111111111", "kind": "email_send", "state": "awaiting_approval"},
+        {"id": "22222222-2222-2222-2222-222222222222", "kind": "calendar_create", "state": "awaiting_approval"},
+    ]
+    candidates = action_selection_candidates(actions)
+    assert list(candidates) == ["attached.email.1", "attached.calendar.2"]
+    tools = intelligent_tool_names(settings, actions)
+    encoded_tools = json.dumps(tools)
+    assert "attached.email.1" in tools
+    assert "attached.calendar.2" in tools
+    assert actions[0]["id"] not in encoded_tools
+    assert actions[1]["id"] not in encoded_tools
+
+    proposal = AgentPlannerProposal.model_validate({
+        "steps": [
+            {"tool": "attached.calendar.2", "objective": "Use the attached calendar draft."},
+        ]
+    })
+    plan = proposal_to_plan(
+        proposal,
+        "Schedule the reviewed event if appropriate.",
+        [],
+        "en",
+        settings,
+        actions,
+    )
+    assert len(plan) == 1
+    assert plan[0].tool == "calendar.create"
+    assert plan[0].arguments == {"action_id": actions[1]["id"]}
+
+
+def test_agent_action_selection_releases_only_unselected_pending_drafts(container):
+    from action_samples import enable_actions, connected, action_request
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlannerProposal, AgentRunCreate
+    from services.coworker.models import ExternalAction
+
+    provider = enable_actions(container)
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        actions_enabled=True,
+        agent_action_selection_enabled=True,
+        work_services_enabled=True,
+        max_agent_planner_calls=2,
+        agent_planner_token_budget=16000,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+    first = container.actions.repo.prepare(
+        owner,
+        action_request(connection),
+        "agent-select-first",
+    )
+    second = container.actions.repo.prepare(
+        owner,
+        action_request(connection),
+        "agent-select-second",
+    )
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Use only the second attached email action draft.",
+            action_ids=[first["id"], second["id"]],
+            output_language="en",
+        ),
+        "agent-select-run",
+    )
+
+    class SelectingPlanner:
+        def __init__(self):
+            self.tools = None
+
+        async def propose(self, _goal, tools, **_kwargs):
+            self.tools = list(tools)
+            return AgentPlannerProposal.model_validate({
+                "steps": [
+                    {
+                        "tool": "attached.email.2",
+                        "objective": "Use the second attached draft.",
+                    },
+                ]
+            }), 25, 1
+
+    planner = SelectingPlanner()
+    runtime = AgentRuntime(
+        container,
+        DocumentRunner(container, FakeModel()),
+        planner=planner,
+    )
+    assert asyncio.run(runtime.plan_for_worker(run["id"])) == 1
+
+    assert planner.tools is not None
+    encoded_tools = json.dumps(planner.tools)
+    assert "attached.email.1" in planner.tools
+    assert "attached.email.2" in planner.tools
+    assert first["id"] not in encoded_tools
+    assert second["id"] not in encoded_tools
+
+    saved = container.agent.get(owner, run["id"])
+    assert saved["action_ids"] == [second["id"]]
+    assert saved["steps"][0]["tool"] == "email.send"
+    assert provider.sent == []
+
+    with container.repository.sessions() as db:
+        first_row = db.get(ExternalAction, first["id"])
+        second_row = db.get(ExternalAction, second["id"])
+        assert first_row.state == "awaiting_approval"
+        assert first_row.agent_run_id is None
+        assert first_row.agent_ready is False
+        assert second_row.state == "awaiting_approval"
+        assert second_row.agent_run_id == run["id"]
+        assert second_row.agent_ready is False
+
+
+def test_agent_action_selection_never_model_selects_already_approved_action(container):
+    from services.coworker.agent_planner import intelligent_tool_names, proposal_to_plan
+    from services.coworker.agent_schemas import AgentPlannerProposal
+
+    settings = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        actions_enabled=True,
+        agent_action_selection_enabled=True,
+        work_services_enabled=True,
+    )
+    actions = [
+        {"id": "11111111-1111-1111-1111-111111111111", "kind": "email_send", "state": "queued"},
+    ]
+    tools = intelligent_tool_names(settings, actions)
+    assert all(not name.startswith("attached.") for name in tools)
+
+    proposal = AgentPlannerProposal.model_validate({
+        "steps": [{"tool": "email.draft", "objective": "Draft supporting context."}]
+    })
+    plan = proposal_to_plan(
+        proposal,
+        "Prepare context and continue the already-approved action.",
+        [],
+        "en",
+        settings,
+        actions,
+    )
+    assert [step.tool for step in plan] == ["email.draft", "email.send"]
+    assert plan[1].arguments == {"action_id": actions[0]["id"]}

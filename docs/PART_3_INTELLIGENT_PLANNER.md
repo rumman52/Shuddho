@@ -157,3 +157,31 @@ until:
 5. Temporal capability-change replan tests pass;
 6. planner prompt/output privacy is reviewed;
 7. tool-selection evaluations show acceptable accuracy before user exposure.
+
+
+## Bounded attached-action selection increment
+
+A later gated increment adds one narrowly scoped exception to the original “non-consequential tool names only” planner contract.
+
+When `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=true`, the planner may select only opaque handles for action drafts the user explicitly attached to the run and that remain in `awaiting_approval`.
+
+Examples:
+
+```text
+attached.email.1
+attached.calendar.2
+```
+
+The model never receives the underlying action UUID, payload, recipient list, calendar details, provider account, connection, approval hash, or credentials. Shuddho resolves the handle to the already-bound action server-side and persists the normal `email.send` or `calendar.create` approved-action step.
+
+Selection is not authorization. Every selected action still pauses at the existing immutable preview and explicit user approval boundary. The model cannot approve or execute it.
+
+Unselected pending drafts are detached from the run without cancellation. Already-approved actions are excluded from model candidates and remain server-retained in the plan.
+
+The feature is disabled by default:
+
+```text
+SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false
+```
+
+It may be enabled only with Agent Runtime, Intelligent Planner, and Actions already enabled and after the dedicated staging/release gate passes.

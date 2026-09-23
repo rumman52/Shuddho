@@ -213,7 +213,9 @@ The following recovery-safety increment applies the same invariant after global 
 
 The next release-admission increment makes the final controlled-cohort manifest provider-aware. Legacy action releases remain Google-only; a release that explicitly declares Microsoft must also pass the independent `microsoft_actions` live gate before `GO_CONTROLLED_COHORT`, and the decision records the exact approved provider set.
 
-Model-selected external actions and broader connector expansion remain later increments.
+The next bounded Agent/action bridge allows the intelligent planner to select only opaque handles for user-attached, still-unapproved email/calendar drafts. Shuddho resolves handles server-side, releases unselected pending drafts, preserves already-approved actions, and keeps explicit approval/execution unchanged behind a disabled-by-default `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED` gate.
+
+Broader model-created external actions and connector expansion remain later increments.
 
 ### Consequential actions
 

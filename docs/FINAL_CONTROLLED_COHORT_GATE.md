@@ -75,7 +75,8 @@ The manifest is rejected if:
 - Agent child features are enabled while Agent Runtime is disabled;
 - multi-source handoffs are enabled without handoffs;
 - bounded parallel execution is enabled without the dependency graph;
-- outcome replanning is enabled without intelligent planning.
+- outcome replanning is enabled without intelligent planning;
+- agent action selection is enabled without Actions, Agent Runtime, and Intelligent Planner.
 
 Optional capabilities may remain disabled for the first cohort even if their staging gates have passed.
 
@@ -88,6 +89,7 @@ The manifest must contain the exact kill switches:
 - `SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false`
 - `SHUDDHO_RESEARCH_SERVICES_ENABLED=false`
 - `SHUDDHO_ACTIONS_ENABLED=false`
+- `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false` when action selection is declared.
 
 It must also contain a real rollback/runbook reference.
 
@@ -152,3 +154,24 @@ Rules:
 - providers declared while `actions=false` → NO-GO.
 
 This is a release-control contract only. Declaring a provider does not enable its runtime flag, create OAuth connections, approve an action, or execute an action.
+
+
+## Agent-selected attached action drafts
+
+The optional `action_selection=true` capability allows the bounded intelligent planner to choose among action drafts that the user explicitly attached to an Agent run and that are still awaiting approval.
+
+The planner receives only opaque handles such as `attached.email.1` or `attached.calendar.2`. It does not receive action IDs, recipients, subjects, event details, connection IDs, provider credentials, preview hashes, or approval data.
+
+Shuddho resolves a selected handle server-side to the exact already-bound action. Selection cannot create or edit a payload, choose a provider, approve an action, or execute it. The existing immutable preview and explicit user approval boundary remains mandatory.
+
+Unselected drafts that are still awaiting approval are detached from the Agent run and remain available to the user as standalone drafts. Already-approved or executing actions are never model-selectable and are never detached.
+
+Production enablement requires all of:
+
+- `actions=true`;
+- `agent_runtime=true`;
+- `intelligent_planner=true`;
+- `action_selection=true`;
+- `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=true` in the reviewed deployment;
+- passed independent `action_selection` staging evidence;
+- the exact rollback switch `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false`.

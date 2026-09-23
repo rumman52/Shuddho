@@ -536,6 +536,52 @@ class AgentRepository:
             self._audit(db, owner, run.id, "agent_plan_saved")
             return self._dto(db, run)
 
+
+    def release_unselected_actions(self, run_id: str) -> list[str]:
+        """Detach only still-unapproved bound actions that the saved plan did not select."""
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            referenced: set[str] = set()
+            rows = db.scalars(select(ToolInvocation).where(
+                ToolInvocation.run_id == run.id,
+                ToolInvocation.owner_id == run.owner_id,
+                ToolInvocation.consequential.is_(True),
+                ToolInvocation.approval_required.is_(True),
+            )).all()
+            for invocation in rows:
+                action_id = invocation.arguments.get("action_id") if isinstance(invocation.arguments, dict) else None
+                if isinstance(action_id, str):
+                    referenced.add(action_id)
+
+            kept: list[str] = []
+            released: list[str] = []
+            for action_id in list(run.action_ids):
+                action = db.scalar(select(ExternalAction).where(
+                    ExternalAction.id == action_id,
+                    ExternalAction.owner_id == run.owner_id,
+                ).with_for_update())
+                if action is None:
+                    continue
+                if (
+                    action.id not in referenced
+                    and action.state == "awaiting_approval"
+                    and action.agent_run_id == run.id
+                    and not action.agent_ready
+                ):
+                    action.agent_run_id = None
+                    action.agent_ready = False
+                    released.append(action.id)
+                    self._audit(db, run.owner_id, action.id, "action.released_unselected")
+                    continue
+                kept.append(action.id)
+            if released:
+                run.action_ids = kept
+                run.updated_at = utcnow()
+                self._audit(db, run.owner_id, run.id, "agent_action_selection_pruned")
+            return released
+
     def list(self, owner: str) -> list[dict]:
         with self.sessions() as db:
             rows = db.scalars(select(AgentRun).where(

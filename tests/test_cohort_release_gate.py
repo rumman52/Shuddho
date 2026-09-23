@@ -10,7 +10,7 @@ BASE_GATES = {
 }
 
 
-def evidence(*, research=False, actions=False, microsoft=False):
+def evidence(*, research=False, actions=False, microsoft=False, action_selection=False):
     keys = set(BASE_GATES)
     if research:
         keys.add("research")
@@ -18,10 +18,12 @@ def evidence(*, research=False, actions=False, microsoft=False):
         keys.add("actions")
     if microsoft:
         keys.add("microsoft_actions")
+    if action_selection:
+        keys.add("action_selection")
     return {key: {"status": "passed", "evidence": "staging-proof"} for key in keys}
 
 
-def rollout(*, research=False, actions=False, users=25, providers=None):
+def rollout(*, research=False, actions=False, users=25, providers=None, action_selection=False):
     monitoring = {
         "queue_age": "queue-dashboard",
         "task_success": "task-dashboard",
@@ -53,6 +55,7 @@ def rollout(*, research=False, actions=False, users=25, providers=None):
             "outcome_replan": True,
             "research": research,
             "actions": actions,
+            **({"action_selection": True} if action_selection else {}),
         },
         "rollback": {
             "runbook_reference": "rollback-runbook",
@@ -61,6 +64,9 @@ def rollout(*, research=False, actions=False, users=25, providers=None):
             "parallel_kill_switch": "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false",
             "research_kill_switch": "SHUDDHO_RESEARCH_SERVICES_ENABLED=false",
             "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false",
+            **({
+                "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
+            } if action_selection else {}),
         },
         "monitoring": monitoring,
         "incident": {
@@ -198,3 +204,28 @@ def test_action_providers_cannot_be_declared_when_actions_are_disabled():
     value = rollout(actions=False, providers=["google"])
     failures = validate_rollout(value, max_cohort_users=25)
     assert "action_providers_without_actions" in failures
+
+
+def test_action_selection_requires_its_own_live_gate_and_kill_switch():
+    value = rollout(actions=True, action_selection=True)
+    missing = evaluate_release(evidence(actions=True), value)
+    assert missing["decision"] == "NO-GO"
+    assert "action_selection" in missing["staging"]["missing"]
+    assert missing["required_feature_gates"] == {"action_selection": True}
+
+    passed = evaluate_release(
+        evidence(actions=True, action_selection=True),
+        value,
+    )
+    assert passed["decision"] == "GO_CONTROLLED_COHORT"
+
+
+def test_action_selection_dependency_is_fail_closed():
+    value = rollout(actions=False, action_selection=True)
+    failures = validate_rollout(value, max_cohort_users=25)
+    assert "action_selection_dependency" in failures
+
+    value = rollout(actions=True, action_selection=True)
+    value["rollback"].pop("action_selection_kill_switch")
+    failures = validate_rollout(value, max_cohort_users=25)
+    assert "action_selection_kill_switch" in failures

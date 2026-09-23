@@ -22,6 +22,7 @@ CONDITIONAL_GATES = {
     "research": "Live search provider retrieval/citation validation passed.",
     "actions": "Live Google approval/execution/receipt validation passed without auto-approval.",
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
+    "action_selection": "Live Agent planner selected only opaque attached-action handles and still paused for explicit user approval.",
 }
 
 
@@ -38,6 +39,7 @@ def evaluate(
     require_research: bool,
     require_actions: bool,
     require_microsoft_actions: bool = False,
+    require_action_selection: bool = False,
 ) -> dict:
     required = dict(REQUIRED_GATES)
     if require_research:
@@ -46,6 +48,8 @@ def evaluate(
         required["actions"] = CONDITIONAL_GATES["actions"]
     if require_microsoft_actions:
         required["microsoft_actions"] = CONDITIONAL_GATES["microsoft_actions"]
+    if require_action_selection:
+        required["action_selection"] = CONDITIONAL_GATES["action_selection"]
     checks = []
     for key, description in required.items():
         record = evidence.get(key)
@@ -78,6 +82,7 @@ def main() -> None:
     parser.add_argument("--require-research", action="store_true")
     parser.add_argument("--require-actions", action="store_true")
     parser.add_argument("--require-microsoft-actions", action="store_true")
+    parser.add_argument("--require-action-selection", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = evaluate(
@@ -85,6 +90,7 @@ def main() -> None:
         require_research=args.require_research,
         require_actions=args.require_actions,
         require_microsoft_actions=args.require_microsoft_actions,
+        require_action_selection=args.require_action_selection,
     )
     encoded = json.dumps(result, indent=2)
     if args.output:
