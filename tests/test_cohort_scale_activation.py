@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import hashlib
 import pytest
 import json
 
@@ -16,6 +17,7 @@ from scripts.cohort_scale_activation import (
     validate_provider_policy_activation,
     validate_microsoft_rollout_activation,
     validate_action_selection_activation,
+    validate_action_proposals_activation,
     validate_scale_decision,
     sha256_file,
 )
@@ -57,7 +59,7 @@ def operator():
     }
 
 
-def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False):
+def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False):
     ids = {allowed}
     ids.update(f"member-{index}" for index in range(max(0, members - 1)))
     if denied in ids:
@@ -68,6 +70,7 @@ def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"
         cohort_max_users=max_users,
         microsoft_actions_enabled=microsoft,
         agent_action_selection_enabled=action_selection,
+        agent_action_proposals_enabled=action_proposals,
     )
 
 
@@ -623,7 +626,7 @@ def test_action_selection_enabled_scale_requires_exact_schema_v7(monkeypatch, tm
         )
 
 
-def test_scale_v2_evidence_binds_action_selection_attestation(tmp_path):
+def test_scale_v3_evidence_preserves_action_selection_attestation(tmp_path):
     scale_path = tmp_path / "scale-v2.json"
     deploy_path = tmp_path / "deploy-v2.json"
     status_path = tmp_path / "status-v2.json"
@@ -649,10 +652,263 @@ def test_scale_v2_evidence_binds_action_selection_attestation(tmp_path):
         action_selection_attestation=attestation,
         now=NOW,
     )
-    assert value["schema_version"] == 2
+    assert value["schema_version"] == 3
     assert value["runtime_requirements"]["action_selection_enabled"] is True
+    assert value["runtime_requirements"]["action_proposals_enabled"] is False
     assert value["action_selection"] == attestation
     assert (
         value["artifact_sha256"]["action_selection_activation"]
         == sha256_file(action_path)
     )
+
+def action_proposals_activation_file(tmp_path):
+    capabilities = {
+        "coworker": True,
+        "work_services": True,
+        "artifact_services": True,
+        "agent_runtime": True,
+        "intelligent_planner": True,
+        "memory": False,
+        "handoffs": True,
+        "multi_handoffs": True,
+        "dependency_graph": True,
+        "parallel_execution": True,
+        "outcome_replan": True,
+        "research": False,
+        "actions": True,
+        "action_selection": False,
+        "action_proposals": True,
+    }
+    runtime = {
+        "schema_version": 1,
+        "source_revision": "a" * 40,
+        "environment": "production",
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "cohort": {
+            "enforced": True,
+            "configured_members": 25,
+            "max_users": 25,
+        },
+    }
+    runtime_hash = hashlib.sha256(json.dumps(
+        runtime,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    path = tmp_path / "action-proposals-scale-activation.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "action_proposals_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "verified_at": "2026-09-23T05:40:00+00:00",
+        "change_reference": "action-proposals-change-1",
+        "deployed_at": "2026-09-23T05:30:00+00:00",
+        "source_revision": "a" * 40,
+        "operator_status_generated_at": "2026-09-23T05:35:00+00:00",
+        "runtime": runtime,
+        "runtime_manifest_sha256": runtime_hash,
+        "artifact_sha256": {
+            "staging_evidence": "a" * 64,
+            "rollout_manifest": "b" * 64,
+            "deployment_change": "c" * 64,
+            "operator_status": "d" * 64,
+        },
+    }), encoding="utf-8")
+    return path
+
+
+def seed_action_proposals_scale_ledger(monkeypatch, tmp_path, activation_path):
+    from scripts.cohort_release_ledger import (
+        append_action_proposals_event,
+        append_event,
+        file_sha256,
+    )
+    monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", "k" * 32)
+    ledger = tmp_path / "action-proposals-scale-ledger.jsonl"
+
+    rollout_path = tmp_path / "proposal-scale-rollout.json"
+    plan_path = tmp_path / "proposal-scale-plan.json"
+    progression_path = tmp_path / "proposal-scale-progression.json"
+    base_status_path = tmp_path / "proposal-scale-base-status.json"
+    capabilities = {
+        "coworker": True,
+        "work_services": True,
+        "artifact_services": True,
+        "agent_runtime": True,
+        "intelligent_planner": True,
+        "memory": False,
+        "handoffs": True,
+        "multi_handoffs": True,
+        "dependency_graph": True,
+        "parallel_execution": True,
+        "outcome_replan": True,
+        "research": False,
+        "actions": True,
+        "action_selection": False,
+        "action_proposals": True,
+    }
+    rollout_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "environment": "production",
+        "cohort": {"reference": "approved-cohort", "max_users": 25},
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "rollback": {
+            "action_proposals_kill_switch":
+                "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
+        },
+        "incident": {"change_reference": "action-proposals-change-1"},
+    }), encoding="utf-8")
+    plan_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "stages": [{"name": "cohort-25"}],
+    }), encoding="utf-8")
+    progression_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "HOLD",
+        "current_stage": "cohort-25",
+        "next_stage": None,
+    }), encoding="utf-8")
+    base_status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+    }), encoding="utf-8")
+    append_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        event_type="hold",
+        actor_reference="oncall",
+        change_reference="cohort-25-hold",
+        current_stage="cohort-25",
+        next_stage=None,
+        rollout=rollout_path,
+        canary_plan=plan_path,
+        progression_decision=progression_path,
+        operator_status=base_status_path,
+    )
+
+    staging_path = tmp_path / "proposal-scale-staging.json"
+    deployment_path = tmp_path / "proposal-scale-deployment.json"
+    status_path = tmp_path / "proposal-scale-status.json"
+    staging_path.write_text(json.dumps({
+        "action_proposals": {
+            "status": "passed",
+            "evidence": "fresh inert proposal validation",
+            "verified_at": "2026-09-23T05:20:00+00:00",
+        },
+    }), encoding="utf-8")
+    deployment_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "change_reference": "action-proposals-change-1",
+        "current_stage": "cohort-25",
+        "deployed_at": "2026-09-23T05:30:00+00:00",
+        "source_revision": "a" * 40,
+        "staging_evidence_sha256": file_sha256(staging_path),
+        "rollout_manifest_sha256": file_sha256(rollout_path),
+    }), encoding="utf-8")
+    status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-23T05:35:00+00:00",
+        "breaches": [],
+    }), encoding="utf-8")
+    value = json.loads(activation_path.read_text(encoding="utf-8"))
+    value["artifact_sha256"] = {
+        "staging_evidence": file_sha256(staging_path),
+        "rollout_manifest": file_sha256(rollout_path),
+        "deployment_change": file_sha256(deployment_path),
+        "operator_status": file_sha256(status_path),
+    }
+    activation_path.write_text(json.dumps(value), encoding="utf-8")
+
+    entry = append_action_proposals_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall",
+        change_reference="action-proposals-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging_path,
+        rollout_manifest=rollout_path,
+        deployment_change=deployment_path,
+        operator_status=status_path,
+        action_proposals_activation=activation_path,
+    )
+    return ledger, entry
+
+
+def test_action_proposals_disabled_scale_does_not_require_proof(tmp_path):
+    assert validate_action_proposals_activation(
+        tmp_path / "missing.json",
+        tmp_path / "missing-ledger.jsonl",
+        decision(),
+        settings(action_proposals=False),
+    ) is None
+
+
+def test_action_proposals_enabled_scale_requires_exact_schema_v8(monkeypatch, tmp_path):
+    activation = action_proposals_activation_file(tmp_path)
+    ledger, entry = seed_action_proposals_scale_ledger(
+        monkeypatch,
+        tmp_path,
+        activation,
+    )
+    result = validate_action_proposals_activation(
+        activation,
+        ledger,
+        decision(),
+        settings(action_proposals=True),
+    )
+    assert result["ledger_sequence"] == entry["sequence"]
+    assert result["ledger_entry_hash"] == entry["entry_hash"]
+
+    changed = json.loads(activation.read_text(encoding="utf-8"))
+    changed["verified_at"] = "2026-09-23T05:41:00+00:00"
+    activation.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ScaleActivationError, match="Release ledger verification failed"):
+        validate_action_proposals_activation(
+            activation,
+            ledger,
+            decision(),
+            settings(action_proposals=True),
+        )
+
+
+def test_scale_v3_evidence_binds_action_proposals_attestation(tmp_path):
+    scale_path = tmp_path / "scale-v3.json"
+    deploy_path = tmp_path / "deploy-v3.json"
+    status_path = tmp_path / "status-v3.json"
+    policy_path = tmp_path / "policy-v3.json"
+    proposals_path = tmp_path / "action-proposals-v3.json"
+    for item in (scale_path, deploy_path, status_path, policy_path, proposals_path):
+        item.write_text("{}", encoding="utf-8")
+
+    attestation = {
+        "ledger_sequence": 10,
+        "ledger_entry_hash": "e" * 64,
+    }
+    value = build_evidence(
+        decision=decision(),
+        deployment=deployment(),
+        operator_status=operator(),
+        settings=settings(action_proposals=True),
+        scale_decision_path=scale_path,
+        deployment_change_path=deploy_path,
+        operator_status_path=status_path,
+        provider_policy_activation_path=policy_path,
+        action_proposals_activation_path=proposals_path,
+        action_proposals_attestation=attestation,
+        now=NOW,
+    )
+    assert value["schema_version"] == 3
+    assert value["runtime_requirements"]["action_proposals_enabled"] is True
+    assert value["action_proposals"] == attestation
+    assert (
+        value["artifact_sha256"]["action_proposals_activation"]
+        == sha256_file(proposals_path)
+    )
+

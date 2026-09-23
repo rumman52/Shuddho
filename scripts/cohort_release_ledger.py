@@ -751,18 +751,22 @@ def append_recovery_event(
             "Recovery does not bind the rollback-completion artifact recorded in the ledger."
         )
 
-    if recovery_value.get("schema_version") == 2:
+    recovery_schema = recovery_value.get("schema_version")
+    if recovery_schema in {2, 3}:
         requirements = recovery_value.get("runtime_requirements")
+        expected_requirement_keys = {
+            "microsoft_actions_enabled",
+            "action_selection_enabled",
+        }
+        if recovery_schema == 3:
+            expected_requirement_keys.add("action_proposals_enabled")
         if (
             not isinstance(requirements, dict)
-            or set(requirements) != {
-                "microsoft_actions_enabled",
-                "action_selection_enabled",
-            }
+            or set(requirements) != expected_requirement_keys
             or any(not isinstance(value, bool) for value in requirements.values())
         ):
             raise ReleaseLedgerError(
-                "Schema-v2 recovery evidence has invalid runtime_requirements."
+                f"Schema-v{recovery_schema} recovery evidence has invalid runtime_requirements."
             )
 
         microsoft_required = requirements["microsoft_actions_enabled"]
@@ -816,6 +820,33 @@ def append_recovery_event(
             raise ReleaseLedgerError(
                 "Recovery evidence contains action-selection attestation data while action selection is not required."
             )
+
+        if recovery_schema == 3:
+            proposals_required = requirements["action_proposals_enabled"]
+            proposals_hash = recovery_hashes.get("action_proposals_activation")
+            proposals_summary = recovery_value.get("action_proposals")
+            if proposals_required:
+                if not valid_hash(proposals_hash) or not isinstance(proposals_summary, dict):
+                    raise ReleaseLedgerError(
+                        "Action-proposals recovery evidence is missing its required attestation."
+                    )
+                require_exact_attested_event(
+                    entries,
+                    schema_version=ACTION_PROPOSALS_SCHEMA_VERSION,
+                    event_type="action_proposals_verified",
+                    current_stage=current_stage,
+                    next_stage=None,
+                    artifact_key="action_proposals_activation",
+                    artifact_sha256=proposals_hash,
+                    after_sequence=rollback_entry["sequence"],
+                    expected_sequence=proposals_summary.get("ledger_sequence"),
+                    expected_entry_hash=proposals_summary.get("ledger_entry_hash"),
+                    label="Action-proposals recovery attestation",
+                )
+            elif proposals_hash is not None or proposals_summary is not None:
+                raise ReleaseLedgerError(
+                    "Recovery evidence contains action-proposals attestation data while action proposals are not required."
+                )
 
     core = {
         "schema_version": RECOVERY_SCHEMA_VERSION,
@@ -942,18 +973,22 @@ def append_scale_event(
             "bounded_expansion_verified requires the matching provider_policy_verified ledger event."
         )
 
-    if activation.get("schema_version") == 2:
+    activation_schema = activation.get("schema_version")
+    if activation_schema in {2, 3}:
         requirements = activation.get("runtime_requirements")
+        expected_requirement_keys = {
+            "microsoft_actions_enabled",
+            "action_selection_enabled",
+        }
+        if activation_schema == 3:
+            expected_requirement_keys.add("action_proposals_enabled")
         if (
             not isinstance(requirements, dict)
-            or set(requirements) != {
-                "microsoft_actions_enabled",
-                "action_selection_enabled",
-            }
+            or set(requirements) != expected_requirement_keys
             or any(not isinstance(value, bool) for value in requirements.values())
         ):
             raise ReleaseLedgerError(
-                "Schema-v2 scale activation has invalid runtime_requirements."
+                f"Schema-v{activation_schema} scale activation has invalid runtime_requirements."
             )
 
         microsoft_required = requirements["microsoft_actions_enabled"]
@@ -1002,6 +1037,32 @@ def append_scale_event(
             raise ReleaseLedgerError(
                 "Scale activation contains action-selection attestation data while action selection is not required."
             )
+
+        if activation_schema == 3:
+            proposals_required = requirements["action_proposals_enabled"]
+            proposals_hash = hashes.get("action_proposals_activation")
+            proposals_summary = activation.get("action_proposals")
+            if proposals_required:
+                if not valid_hash(proposals_hash) or not isinstance(proposals_summary, dict):
+                    raise ReleaseLedgerError(
+                        "Action-proposals scale activation is missing its required attestation."
+                    )
+                require_exact_attested_event(
+                    entries,
+                    schema_version=ACTION_PROPOSALS_SCHEMA_VERSION,
+                    event_type="action_proposals_verified",
+                    current_stage=current_stage,
+                    next_stage=None,
+                    artifact_key="action_proposals_activation",
+                    artifact_sha256=proposals_hash,
+                    expected_sequence=proposals_summary.get("ledger_sequence"),
+                    expected_entry_hash=proposals_summary.get("ledger_entry_hash"),
+                    label="Action-proposals scale attestation",
+                )
+            elif proposals_hash is not None or proposals_summary is not None:
+                raise ReleaseLedgerError(
+                    "Scale activation contains action-proposals attestation data while action proposals are not required."
+                )
 
     prior_scale = [
         item for item in entries
