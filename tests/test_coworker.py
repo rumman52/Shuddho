@@ -1030,6 +1030,68 @@ def test_intelligent_planner_reconstructs_server_owned_arguments(container):
     assert "recipient" not in json.dumps([step.arguments for step in plan]).lower()
 
 
+
+def test_intelligent_planner_routes_only_attached_actions_by_opaque_slot(container):
+    from services.coworker.agent_planner import planner_action_candidates, proposal_to_plan
+    from services.coworker.agent_schemas import AgentPlannerProposal
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_action_planning_enabled=True,
+        actions_enabled=True,
+        work_services_enabled=True,
+    )
+    actions = [
+        {"id": "11111111-1111-4111-8111-111111111111", "kind": "email_send", "state": "awaiting_approval"},
+        {"id": "22222222-2222-4222-8222-222222222222", "kind": "calendar_create", "state": "awaiting_approval"},
+    ]
+    candidates = planner_action_candidates(enabled, actions)
+    assert candidates == [
+        {"slot": 1, "tool": "email.send"},
+        {"slot": 2, "tool": "calendar.create"},
+    ]
+    assert "11111111" not in json.dumps(candidates)
+
+    proposal = AgentPlannerProposal.model_validate({
+        "steps": [{"tool": "email.draft", "objective": "Draft the update."}],
+        "action_order": [2],
+    })
+    plan = proposal_to_plan(proposal, "Prepare and complete my attached work.", [], "en", enabled, actions)
+    assert [step.tool for step in plan] == ["email.draft", "calendar.create", "email.send"]
+    assert plan[1].arguments == {"action_id": actions[1]["id"]}
+    assert plan[2].arguments == {"action_id": actions[0]["id"]}
+    assert {step.arguments["action_id"] for step in plan[1:]} == {action["id"] for action in actions}
+
+    invalid = AgentPlannerProposal.model_validate({
+        "steps": [{"tool": "email.draft", "objective": "Draft the update."}],
+        "action_order": [3],
+    })
+    with pytest.raises(CoworkerError) as error:
+        proposal_to_plan(invalid, "Prepare work.", [], "en", enabled, actions)
+    assert error.value.code == "planner_action_scope"
+
+
+def test_intelligent_planner_action_routing_flag_off_preserves_server_order(container):
+    from services.coworker.agent_planner import planner_action_candidates, proposal_to_plan
+    from services.coworker.agent_schemas import AgentPlannerProposal
+
+    settings = replace(container.settings, actions_enabled=True, work_services_enabled=True)
+    actions = [
+        {"id": "11111111-1111-4111-8111-111111111111", "kind": "email_send", "state": "awaiting_approval"},
+        {"id": "22222222-2222-4222-8222-222222222222", "kind": "calendar_create", "state": "awaiting_approval"},
+    ]
+    proposal = AgentPlannerProposal.model_validate({
+        "steps": [{"tool": "email.draft", "objective": "Draft the update."}],
+        "action_order": [2],
+    })
+    assert planner_action_candidates(settings, actions) == []
+    plan = proposal_to_plan(proposal, "Prepare work.", [], "en", settings, actions)
+    assert [step.tool for step in plan] == ["email.draft", "email.send", "calendar.create"]
+    assert [step.arguments["action_id"] for step in plan[1:]] == [actions[0]["id"], actions[1]["id"]]
+
+
 def test_intelligent_planner_rejects_model_invented_tool(container):
     from services.coworker.agent_planner import proposal_to_plan
     from services.coworker.agent_schemas import AgentPlannerProposal
