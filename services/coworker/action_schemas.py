@@ -95,7 +95,9 @@ class CalendarCreate(Strict):
     time_zone: Annotated[str, StringConstraints(min_length=1, max_length=80)]
     attendees: list[str] = Field(default_factory=list, max_length=20)
     # Primary calendar, notifications to all listed guests, no recurrence,
-    # conference, attachment, or reminders. These policies appear in preview.
+    # conference or attachment. Base calendar_create has no reminder; the
+    # explicit reminder variant below adds one bounded reminder. These
+    # policies appear in the immutable preview.
 
     @field_validator("title", "description", "location")
     @classmethod
