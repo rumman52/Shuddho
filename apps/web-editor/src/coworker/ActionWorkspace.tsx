@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type ActionInput, type ConnectedAccount, type EmailDraft, type ExternalAction } from "./client";
+import { CoworkerClient, type ActionInput, type Artifact, type ConnectedAccount, type EmailDraft, type ExternalAction } from "./client";
 import { beginGoogleConnection, finishGoogleCallback } from "./googleCallback";
 import { beginMicrosoftConnection, finishMicrosoftCallback } from "./microsoftCallback";
 
 const labels: Record<ExternalAction["state"], string> = { awaiting_approval: "Needs your approval", queued: "Approved · queued", executing: "Executing", succeeded: "Confirmed", failed: "Not completed", cancelled: "Cancelled", expired: "Expired", outcome_unknown: "Result uncertain" };
 const message = (error: unknown) => error instanceof Error ? error.message : "This action could not finish. Please try again.";
 const recipients = (text: string) => text.split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
-const title = (item: ExternalAction) => item.preview.payload.kind === "email_send" ? item.preview.payload.subject : item.preview.payload.title;
+const isEmail = (kind: ExternalAction["kind"]) => kind !== "calendar_create";
+const title = (item: ExternalAction) => item.preview.payload.kind === "calendar_create" ? item.preview.payload.title : item.preview.payload.subject;
 
 export default function ActionWorkspace({ client, account, emailDraft, focusActionId, onFocused }: { client: CoworkerClient; account: string; emailDraft: EmailDraft | null; focusActionId?: string | null; onFocused?: () => void }) {
   const [enabled, setEnabled] = useState(false);
   const [connections, setConnections] = useState<ConnectedAccount[]>([]);
   const [history, setHistory] = useState<ExternalAction[]>([]);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [attachmentsEnabled, setAttachmentsEnabled] = useState(false);
+  const [selectedAttachments, setSelectedAttachments] = useState<string[]>([]);
   const [action, setAction] = useState<ExternalAction | null>(null);
   const [mode, setMode] = useState<"email" | "calendar">("email");
   const microsoftEnabled = import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED === "true";
@@ -43,9 +47,10 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       if (alive && (result || microsoftResult)) setNotice(microsoftResult ?? result ?? "");
     })().catch(failure => { if (alive) setError(message(failure)); }).finally(() => {
       if (!alive) return;
-      Promise.all([client.connections(controller.signal), client.actions(controller.signal)]).then(([value, recent]) => {
+      Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal)]).then(([value, recent, available]) => {
         if (!alive) return;
-        setEnabled(value.enabled); setConnections(value.connections); setHistory(recent.actions); setLoaded(true);
+        setEnabled(value.enabled); setConnections(value.connections); setHistory(recent.actions);
+        setAttachmentsEnabled(available.attachments_enabled); setArtifacts(available.artifacts); setLoaded(true);
       }).catch(failure => { if (alive) { setError(message(failure)); setLoaded(true); } });
     });
     return () => { alive = false; controller.abort(); };
@@ -95,15 +100,20 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     updateAction(value);
   }
 
-  function startNewAction() {
+  function startNewAction(clearAttachments = true) {
     setComposing(true); setAction(null); setChecked(false); setError(""); submission.current = undefined;
+    if (clearAttachments) setSelectedAttachments([]);
   }
 
-  async function prepare(event: FormEvent) {
+  async function prepare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentConnection) return;
-    const input: ActionInput = { connection_id: currentConnection.id, payload: mode === "email" ?
-      { kind: "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body } :
+    // Read checked attachment IDs from the submitted form itself. This closes
+    // the gap where a checkbox DOM change can precede React state commit and
+    // an immediate submit would otherwise prepare a plain email.
+    const attachmentIds = mode === "email" ? new FormData(event.currentTarget).getAll("attachment_id").map(String) : [];
+    const input: ActionInput = { connection_id: currentConnection.id, attachment_ids: attachmentIds, payload: mode === "email" ?
+      { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body } :
       { kind: "calendar_create", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees) } };
     const fingerprint = JSON.stringify(input);
     if (submission.current?.fingerprint !== fingerprint) submission.current = { fingerprint, key: crypto.randomUUID() };
@@ -116,9 +126,9 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       if (action.state === "awaiting_approval") await client.cancelAction(action.id);
       const p = action.preview.payload;
       setProvider(action.preview.provider);
-      if (p.kind === "email_send") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); }
-      else { setMode("calendar"); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
-      startNewAction(); setReload(x => x + 1);
+      if (p.kind !== "calendar_create") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setSelectedAttachments((action.preview.attachments ?? []).map(item => item.id)); }
+      else { setMode("calendar"); setSelectedAttachments([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
+      startNewAction(false); setReload(x => x + 1);
     });
   }
 
@@ -152,7 +162,21 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
           <small>Use full email addresses, separated by commas. Up to 20 recipients in total.</small>
           <label>Subject<input dir="auto" value={subject} onChange={event => setSubject(event.target.value)} required maxLength={300} /></label>
           <label>Message<textarea dir="auto" rows={9} value={body} onChange={event => setBody(event.target.value)} required maxLength={20000} /></label>
-          <p className="cw-fineprint">Plain-text email, sent immediately after approval. No attachments.</p>
+          {attachmentsEnabled && artifacts.length > 0 && <fieldset className="cw-agent-files"><legend>Attach Shuddho artifacts (optional)</legend>
+            {artifacts.filter(item => {
+              const type = item.content_type.split(";", 1)[0].toLowerCase();
+              return ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/plain"].includes(type);
+            }).slice(0, 30).map(item => {
+              const selected = selectedAttachments.includes(item.id);
+              const selectedBytes = artifacts.filter(value => selectedAttachments.includes(value.id)).reduce((sum, value) => sum + value.byte_size, 0);
+              const unavailable = !selected && (selectedAttachments.length >= 3 || selectedBytes + item.byte_size > 2 * 1024 * 1024);
+              return <label key={item.id}><input type="checkbox" name="attachment_id" value={item.id} checked={selected} disabled={Boolean(busy) || unavailable}
+                onChange={event => setSelectedAttachments(previous => event.target.checked ? [...previous, item.id] : previous.filter(id => id !== item.id))} />
+                <span>{item.filename} · {(item.byte_size / 1024).toFixed(0)} KB · SHA {item.sha256.slice(0, 8)}{item.created_at ? ` · ${new Date(item.created_at).toLocaleDateString()}` : ""}</span></label>;
+            })}
+            <small>Up to 3 existing Shuddho artifacts, 2 MB total. The exact artifact hashes are bound to approval.</small>
+          </fieldset>}
+          <p className="cw-fineprint">Plain-text email, sent immediately after approval.{attachmentsEnabled ? " Attachments must already exist in this Shuddho workspace." : " Attachments are disabled in this deployment."}</p>
         </> : <>
           <label>Event title<input dir="auto" required maxLength={300} value={eventTitle} onChange={event => setEventTitle(event.target.value)} /></label>
           <div className="cw-action-row"><label>Starts<input type="datetime-local" required value={start} onChange={event => setStart(event.target.value)} /></label><label>Ends<input type="datetime-local" required value={end} onChange={event => setEnd(event.target.value)} /></label></div>
@@ -166,11 +190,11 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
         <button className="cw-primary" disabled={!enabled || !currentConnection || Boolean(busy)}>{busy === "prepare" ? "Preparing…" : "Review action"}<span aria-hidden="true">→</span></button>
       </form> : action ? <>
         <dl className="cw-action-details"><dt>Account</dt><dd><bdi>{action.preview.account}</bdi></dd>
-          {payload?.kind === "email_send" ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>None</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload?.kind === "calendar_create" && <>
+          {payload && payload.kind !== "calendar_create" ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{(action.preview.attachments ?? []).length ? (action.preview.attachments ?? []).map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload?.kind === "calendar_create" && <>
             <dt>Calendar</dt><dd>Primary calendar</dd><dt>Starts</dt><dd>{payload.start_at.replace("T", " ")}</dd><dt>Ends</dt><dd>{payload.end_at.replace("T", " ")}</dd><dt>Time zone</dt><dd>{payload.time_zone}</dd><dt>Guests</dt><dd>{payload.attendees.join(", ") || "None"}</dd><dt>Invitations</dt><dd>Notify all listed guests; guests can see each other</dd><dt>Location</dt><dd dir="auto">{payload.location || "None"}</dd><dt>Reminders / video</dt><dd>None added</dd>
           </>}
         </dl>
-        <div className="cw-action-content" dir="auto"><h3>{title(action)}</h3><p>{payload?.kind === "email_send" ? payload.body : payload?.description}</p></div>
+        <div className="cw-action-content" dir="auto"><h3>{title(action)}</h3><p>{payload?.kind === "calendar_create" ? payload.description : payload?.body}</p></div>
         {action.state === "awaiting_approval" && <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => void edit()}>Edit details</button>}
       </> : null}
     </div>
@@ -181,17 +205,17 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
         {action.state === "awaiting_approval" && <>
           <p className="cw-fineprint">Preview expires {new Date(action.preview.expires_at).toLocaleTimeString()}. Approval starts execution within five minutes.</p>
           <label className="cw-approval-check"><input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />I reviewed the account, recipients, content and timing.</label>
-          <button className="cw-primary" disabled={!checked || !enabled || Boolean(busy)} onClick={() => void run("approve", async () => updateAction(await client.approveAction(action)))}>{busy === "approve" ? "Approving…" : action.kind === "email_send" ? "Approve & send email" : "Approve & create event"}</button>
+          <button className="cw-primary" disabled={!checked || !enabled || Boolean(busy)} onClick={() => void run("approve", async () => updateAction(await client.approveAction(action)))}>{busy === "approve" ? "Approving…" : isEmail(action.kind) ? "Approve & send email" : "Approve & create event"}</button>
         </>}
         {["awaiting_approval", "queued"].includes(action.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void run("cancel", async () => updateAction(await client.cancelAction(action.id)))}>Cancel action</button>}
         {action.state === "outcome_unknown" && action.kind === "calendar_create" && action.preview.provider === "google" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => updateAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? "Checking calendar…" : "Check calendar result"}</button>}
-        {action.receipt && <div className="cw-receipt"><strong>{action.preview.provider === "microsoft" ? (action.kind === "email_send" ? "Accepted by Microsoft Graph" : "Created in Microsoft Calendar") : (action.kind === "email_send" ? "Accepted by Gmail" : "Created in Google Calendar")}</strong><p>{action.preview.provider === "microsoft" ? (action.kind === "email_send" ? "This confirms Microsoft Graph accepted the send request. It does not confirm delivery or reading." : "Microsoft Graph confirmed the event. Guest attendance is not yet confirmed.") : (action.kind === "email_send" ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed.")}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small>{action.receipt.provider_id && <code>Receipt: {action.receipt.provider_id}</code>}</div>}
+        {action.receipt && <div className="cw-receipt"><strong>{action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "Accepted by Microsoft Graph" : "Created in Microsoft Calendar") : (isEmail(action.kind) ? "Accepted by Gmail" : "Created in Google Calendar")}</strong><p>{action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "This confirms Microsoft Graph accepted the send request. It does not confirm delivery or reading." : "Microsoft Graph confirmed the event. Guest attendance is not yet confirmed.") : (isEmail(action.kind) ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed.")}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small>{action.receipt.provider_id && <code>Receipt: {action.receipt.provider_id}</code>}</div>}
         {action.audit && <details className="cw-action-audit"><summary>Action history</summary><ol>{action.audit.map((item, index) => <li key={index}>{item.action.replace("action.", "").replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</li>)}</ol></details>}
       </>}
     </section>
     <section className="cw-history"><div className="cw-history-title"><h2>Recent actions</h2><button className="cw-text-button" onClick={() => { setReload(x => x + 1); if (action) void run("refresh", async () => updateAction(await client.action(action.id))); }}>Refresh actions</button></div>
-      {history.length ? <ul>{history.map(item => <li key={item.id}><button aria-pressed={action?.id === item.id} disabled={Boolean(busy)} onClick={() => void run("open", async () => openAction(await client.action(item.id)))}><div><strong dir="auto">{title(item)}</strong><small>{item.kind === "email_send" ? "Email" : "Calendar"} · {item.preview.account}</small></div><span className="cw-status">{labels[item.state]}</span></button></li>)}</ul> : <p className="cw-fineprint">Your approved actions and receipts will appear here.</p>}
-      {!composing && action && <button type="button" className="cw-secondary cw-new-action" disabled={Boolean(busy)} onClick={startNewAction}>Prepare another action</button>}
+      {history.length ? <ul>{history.map(item => <li key={item.id}><button aria-pressed={action?.id === item.id} disabled={Boolean(busy)} onClick={() => void run("open", async () => openAction(await client.action(item.id)))}><div><strong dir="auto">{title(item)}</strong><small>{isEmail(item.kind) ? "Email" : "Calendar"} · {item.preview.account}</small></div><span className="cw-status">{labels[item.state]}</span></button></li>)}</ul> : <p className="cw-fineprint">Your approved actions and receipts will appear here.</p>}
+      {!composing && action && <button type="button" className="cw-secondary cw-new-action" disabled={Boolean(busy)} onClick={() => startNewAction()}>Prepare another action</button>}
     </section></div></div>
   </section>;
 }

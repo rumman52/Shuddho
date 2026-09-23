@@ -33,6 +33,7 @@ class Container:
             self.actions = ActionService(
                 ActionRepository(self.repository.sessions, self.settings),
                 providers,
+                self.storage,
             )
         if self.agent is None:
             self.agent = AgentRepository(self.repository.sessions, self.settings)

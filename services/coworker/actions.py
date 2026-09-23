@@ -1,5 +1,6 @@
 """Explicit user commands only; models have no access to this executor."""
 import asyncio
+import hashlib
 
 from .action_registry import action_spec
 from .action_repository import ActionRepository, TERMINAL
@@ -8,9 +9,10 @@ from .errors import CoworkerError
 
 
 class ActionService:
-    def __init__(self, repository: ActionRepository, providers: dict[str, object]):
+    def __init__(self, repository: ActionRepository, providers: dict[str, object], storage=None):
         self.repo = repository
         self.providers = dict(providers)
+        self.storage = storage
         # Backward-compatible internal surface for existing Google-only
         # workers/tests while multi-provider routing uses provider_for().
         self.provider = self.providers.get("google")
@@ -132,6 +134,49 @@ class ActionService:
             )
         return adapter, token["access_token"]
 
+    async def load_attachments(self, action):
+        if action["kind"] != "email_send_with_attachments":
+            return []
+        if self.storage is None:
+            raise CoworkerError(
+                "attachment_unavailable",
+                "Approved attachments are unavailable for this worker.",
+                503,
+            )
+        metadata = await asyncio.to_thread(
+            self.repo.execution_attachments,
+            action,
+        )
+        result = []
+        for item in metadata:
+            try:
+                body = await asyncio.to_thread(
+                    self.storage.get,
+                    item["object_key"],
+                    item["byte_size"],
+                )
+            except (FileNotFoundError, CoworkerError):
+                raise CoworkerError(
+                    "attachment_unavailable",
+                    "An approved attachment is no longer available.",
+                    409,
+                ) from None
+            if (
+                len(body) != item["byte_size"]
+                or hashlib.sha256(body).hexdigest() != item["sha256"]
+            ):
+                raise CoworkerError(
+                    "attachment_changed",
+                    "An approved attachment changed after review.",
+                    409,
+                )
+            result.append({
+                key: value
+                for key, value in item.items()
+                if key != "object_key"
+            } | {"body": body})
+        return result
+
     async def execute(self, action_id):
         action = await asyncio.to_thread(
             self.repo.worker_get,
@@ -148,6 +193,17 @@ class ActionService:
         if action["state"] != "queued":
             return
         self.repo.enabled()
+        try:
+            attachments = await self.load_attachments(action)
+        except CoworkerError:
+            await asyncio.to_thread(
+                self.repo.finish,
+                action_id,
+                "failed",
+                error_code="attachment_unavailable",
+                unstarted=True,
+            )
+            return
         try:
             adapter, token = await self.access(action)
         except (ConnectorFailure, CoworkerError):
@@ -166,7 +222,12 @@ class ActionService:
         if not claimed:
             return
         try:
-            receipt = await adapter.execute(claimed, token)
+            if claimed["kind"] == "email_send_with_attachments":
+                receipt = await adapter.execute(claimed, token, attachments)
+            else:
+                # Preserve the v1 connector call shape for existing actions and
+                # persisted Temporal workflows; attachments are a new contract.
+                receipt = await adapter.execute(claimed, token)
         except ConnectorFailure as error:
             if error.definitive:
                 await asyncio.to_thread(

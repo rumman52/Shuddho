@@ -50,8 +50,9 @@ def event_body(action):
             "extendedProperties": {"private": {"shuddhoAction": action["id"], "shuddhoApproval": action["preview_hash"]}}}
 
 
-def email_raw(action):
+def email_raw(action, attachments=None):
     preview, p = action["preview"], action["preview"]["payload"]
+    attachments = attachments or []
     message = EmailMessage(policy=SMTP)
     message["From"], message["To"], message["Subject"] = preview["account"], ", ".join(p["to"]), p["subject"]
     if p["cc"]:
@@ -61,6 +62,14 @@ def email_raw(action):
     message["Message-ID"] = f'<{action["id"]}@shuddho.invalid>'
     message["Date"] = format_datetime(datetime.now(timezone.utc))
     message.set_content(p["body"], subtype="plain", charset="utf-8")
+    for attachment in attachments:
+        maintype, subtype = attachment["content_type"].split("/", 1)
+        message.add_attachment(
+            attachment["body"],
+            maintype=maintype,
+            subtype=subtype,
+            filename=attachment["filename"],
+        )
     return base64.urlsafe_b64encode(message.as_bytes()).decode()
 
 
@@ -135,9 +144,14 @@ class GoogleActions:
         except (ValueError, KeyError, TypeError):
             raise GoogleFailure("oauth_identity_invalid", definitive=True) from None
 
-    async def execute(self, action, access_token):
-        if action["kind"] == "email_send":
-            result = await self.request("POST", SEND_URL, token=access_token, body={"raw": email_raw(action)})
+    async def execute(self, action, access_token, attachments=None):
+        if action["kind"] in {"email_send", "email_send_with_attachments"}:
+            result = await self.request(
+                "POST",
+                SEND_URL,
+                token=access_token,
+                body={"raw": email_raw(action, attachments)},
+            )
             provider_id = result.get("id")
             if not isinstance(provider_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", provider_id):
                 raise GoogleFailure("provider_receipt_invalid")

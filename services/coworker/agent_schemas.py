@@ -3,12 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .action_schemas import ActionPayload
+from .action_schemas import CalendarCreate, EmailSend
 from .memory_schemas import Namespace
 
 
@@ -110,8 +110,14 @@ def action_proposal_hash(run_id: str, payload: dict, rationale: str) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+AgentProposalPayload = Annotated[
+    EmailSend | CalendarCreate,
+    Field(discriminator="kind"),
+]
+
+
 class AgentActionProposal(AgentModel):
-    payload: ActionPayload
+    payload: AgentProposalPayload
     rationale: str = Field(min_length=3, max_length=300)
 
     @field_validator("rationale")

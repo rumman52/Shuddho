@@ -67,6 +67,7 @@ def enable_actions(container):
     container.actions = ActionService(
         ActionRepository(container.repository.sessions, container.settings),
         {"google": GoogleActions(container.settings, httpx.MockTransport(provider.transport))},
+        container.storage,
     )
     return provider
 

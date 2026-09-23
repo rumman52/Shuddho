@@ -72,6 +72,17 @@ ACTION_SPECS = {
         reconcile_mode="none",
         destination_fields=("to", "cc", "bcc"),
     ),
+    "email_send_with_attachments": ActionSpec(
+        kind="email_send_with_attachments",
+        version="1",
+        capability="email",
+        providers=frozenset({"google", "microsoft"}),
+        approval_ttl_seconds=15 * 60,
+        execution_ttl_seconds=5 * 60,
+        reconcile_mode="none",
+        destination_fields=("to", "cc", "bcc"),
+        attachments_allowed=True,
+    ),
     "calendar_create": ActionSpec(
         kind="calendar_create",
         version="1",
@@ -132,6 +143,52 @@ def destinations(spec: ActionSpec, payload: dict) -> dict:
     return result
 
 
+
+def attachment_manifest(preview: dict, spec: ActionSpec) -> list[dict]:
+    value = preview.get("attachments", [])
+    if not spec.attachments_allowed:
+        if value != []:
+            raise CoworkerError(
+                "approval_changed",
+                "This action does not allow attachments.",
+                409,
+            )
+        return []
+    if not isinstance(value, list) or not 1 <= len(value) <= 3:
+        raise CoworkerError(
+            "approval_changed",
+            "The approved attachment list could not be verified.",
+            409,
+        )
+    result = []
+    required = {"id", "filename", "content_type", "byte_size", "sha256"}
+    for item in value:
+        if not isinstance(item, dict) or set(item) != required:
+            raise CoworkerError(
+                "approval_changed",
+                "The approved attachment metadata could not be verified.",
+                409,
+            )
+        if (
+            not isinstance(item["id"], str)
+            or not isinstance(item["filename"], str)
+            or not isinstance(item["content_type"], str)
+            or not isinstance(item["byte_size"], int)
+            or isinstance(item["byte_size"], bool)
+            or item["byte_size"] < 1
+            or not isinstance(item["sha256"], str)
+            or len(item["sha256"]) != 64
+            or any(char not in "0123456789abcdef" for char in item["sha256"])
+        ):
+            raise CoworkerError(
+                "approval_changed",
+                "The approved attachment metadata is invalid.",
+                409,
+            )
+        result.append(dict(item))
+    return result
+
+
 def build_approval_scope(preview: dict) -> dict:
     payload = preview.get("payload")
     if not isinstance(payload, dict):
@@ -149,9 +206,10 @@ def build_approval_scope(preview: dict) -> dict:
             409,
         )
     spec = action_spec(kind, provider)
-    return {
+    attachments = attachment_manifest(preview, spec)
+    result = {
         "contract": "shuddho.consequential-action",
-        "contract_version": 1,
+        "contract_version": 2 if spec.attachments_allowed else 1,
         "action_kind": spec.kind,
         "action_version": spec.version,
         "provider": provider,
@@ -164,7 +222,7 @@ def build_approval_scope(preview: dict) -> dict:
         "policy": {
             "execution": preview.get("execution"),
             "attachments": (
-                "allowed" if spec.attachments_allowed else "none"
+                "owned_artifacts" if spec.attachments_allowed else "none"
             ),
             "calendar": preview.get("calendar"),
             "guest_notifications": preview.get("guest_notifications"),
@@ -173,6 +231,10 @@ def build_approval_scope(preview: dict) -> dict:
         },
         "expires_at": preview.get("expires_at"),
     }
+    if spec.attachments_allowed:
+        result["attachments"] = attachments
+        result["attachments_sha256"] = stable_digest(attachments)
+    return result
 
 
 def validate_approval_scope(preview: dict) -> ActionSpec:

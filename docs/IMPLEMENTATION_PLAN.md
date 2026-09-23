@@ -235,7 +235,9 @@ The next enforcement increment makes bounded scale and post-rollback recovery co
 
 The following human-control increment adds [Agent Workspace Proposal Review](AGENT_WORKSPACE_PROPOSAL_REVIEW.md): the authenticated Coworker UI can create and observe bounded Agent runs, display inert typed action proposals, require the user to choose a matching owned connection, promote only the exact proposal hash, and then hand the immutable preview to the existing Email & Calendar approval surface. The Agent UI itself has no approval or execution control. Browser CI proves proposal display and promotion cause zero provider mutations.
 
-Broader model-created executable actions and connector expansion remain later increments.
+The next bounded Wave D action increment adds [Approved Shuddho Artifact Email Attachments](APPROVED_ARTIFACT_EMAIL_ATTACHMENTS.md): a disabled-by-default `email_send_with_attachments` consequential-action contract lets the user explicitly select up to three already-owned Shuddho artifacts. The server binds exact artifact identity/type/size/SHA-256 into a schema-v3 immutable preview and approval scope, then re-resolves metadata and re-hashes private object-store bytes before any Gmail or Microsoft Graph mutation. Agent proposals remain attachment-blind. Live staging and production activation remain a separate gate.
+
+Broader model-created executable actions, threading, reminders, sharing, social publishing and richer recipient resolution remain later increments.
 
 ### Consequential actions
 
