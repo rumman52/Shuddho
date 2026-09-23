@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -102,5 +102,16 @@ class AgentPlannerChoice(AgentModel):
         return _safe_text(value)
 
 
+ActionSlot = Annotated[int, Field(strict=True, ge=1, le=3)]
+
+
 class AgentPlannerProposal(AgentModel):
     steps: list[AgentPlannerChoice] = Field(min_length=1, max_length=3)
+    action_order: list[ActionSlot] = Field(default_factory=list, max_length=3)
+
+    @field_validator("action_order")
+    @classmethod
+    def unique_action_slots(cls, values: list[int]) -> list[int]:
+        if len(set(values)) != len(values):
+            raise ValueError("Attached action slots may be selected only once")
+        return values
