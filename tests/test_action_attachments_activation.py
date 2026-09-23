@@ -29,8 +29,8 @@ def staging(verified_at=None):
         "action_attachments": {
             "status": "passed",
             "evidence": (
-                "live inert proposal stayed outside ExternalAction until "
-                "explicit promotion and stopped at approval"
+                "live approved attachment email preserved the exact artifact manifest "
+                "through explicit approval and provider acceptance"
             ),
             "verified_at": (
                 verified_at
@@ -63,7 +63,6 @@ def rollout():
             "outcome_replan": True,
             "research": False,
             "actions": True,
-            "action_selection": False,
             "action_attachments": True,
             "action_selection": False,
             "action_proposals": False,
