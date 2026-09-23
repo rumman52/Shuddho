@@ -68,8 +68,22 @@ def delete_memory(fact_id: UUID, identity: Identity, services: Services):
 
 
 @router.get("/runtime-manifest")
-def runtime_manifest(identity: Identity, services: Services):
+def runtime_manifest(
+    response: Response,
+    principal: Annotated[Principal, Depends(require_principal)],
+    services: Services,
+):
     settings = services.settings
+    if (
+        settings.cohort_enforced
+        and principal.account_id not in settings.cohort_account_ids
+    ):
+        raise CoworkerError(
+            "cohort_not_enabled",
+            "Coworker access is not enabled for this account yet.",
+            403,
+        )
+    response.headers["Cache-Control"] = "no-store"
     capabilities = {
         "coworker": coworker_enabled(),
         "work_services": settings.work_services_enabled,
