@@ -43,7 +43,7 @@ class AgentRuntime:
         current = self.repo.get(run["owner_id"], run_id)
         if current["tool_invocations"]:
             return len(current["tool_invocations"])
-        tools = intelligent_tool_names(self.container.settings)
+        tools = intelligent_tool_names(self.container.settings, run["actions"])
         if not tools:
             return self.plan(run_id)
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
@@ -55,6 +55,8 @@ class AgentRuntime:
                 self.container.settings, run["actions"],
             )
             saved = self.repo.save_plan(run["owner_id"], run_id, steps)
+            if self.container.settings.agent_action_selection_enabled:
+                self.repo.release_unselected_actions(run_id)
             self.repo.set_planner_mode(run_id, "intelligent")
             return len(saved["tool_invocations"])
         except PlannerFailure as error:
@@ -79,7 +81,7 @@ class AgentRuntime:
         current = self.repo.get(run["owner_id"], run_id)
         if current["planner_calls"] >= self.container.settings.max_agent_planner_calls:
             raise CoworkerError("planner_call_limit", "This agent run reached its planner call limit.", 429)
-        tools = intelligent_tool_names(self.container.settings)
+        tools = intelligent_tool_names(self.container.settings, remaining_actions)
         if not tools:
             raise CoworkerError("no_agent_tool", "No suitable agent tool is currently enabled.", 409)
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
@@ -104,6 +106,8 @@ class AgentRuntime:
             self.container.settings, remaining_actions,
         )
         saved = self.repo.replace_remaining_plan(run["owner_id"], run_id, from_ordinal, steps)
+        if self.container.settings.agent_action_selection_enabled:
+            self.repo.release_unselected_actions(run_id)
         self.repo.set_planner_mode(run_id, "replanned")
         return len([step for step in saved["steps"] if step["ordinal"] >= from_ordinal])
 
