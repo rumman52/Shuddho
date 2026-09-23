@@ -207,9 +207,9 @@ def build_approval_scope(preview: dict) -> dict:
         )
     spec = action_spec(kind, provider)
     attachments = attachment_manifest(preview, spec)
-    return {
+    result = {
         "contract": "shuddho.consequential-action",
-        "contract_version": 1,
+        "contract_version": 2 if spec.attachments_allowed else 1,
         "action_kind": spec.kind,
         "action_version": spec.version,
         "provider": provider,
@@ -219,8 +219,6 @@ def build_approval_scope(preview: dict) -> dict:
         "subject_id": preview.get("subject_id"),
         "payload_sha256": stable_digest(payload),
         "destinations": destinations(spec, payload),
-        "attachments": attachments,
-        "attachments_sha256": stable_digest(attachments),
         "policy": {
             "execution": preview.get("execution"),
             "attachments": (
@@ -233,6 +231,10 @@ def build_approval_scope(preview: dict) -> dict:
         },
         "expires_at": preview.get("expires_at"),
     }
+    if spec.attachments_allowed:
+        result["attachments"] = attachments
+        result["attachments_sha256"] = stable_digest(attachments)
+    return result
 
 
 def validate_approval_scope(preview: dict) -> ActionSpec:
