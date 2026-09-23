@@ -179,9 +179,9 @@ When the approved rollout and recovered backend enable action selection, recover
 - the exact action-selection activation to have one matching schema-v7 event;
 - the schema-v7 event sequence to be later than that exact rollback-completion event.
 
-Recovery evidence is now schema v2 and records explicit `runtime_requirements`, the action-selection activation SHA-256, and the exact schema-v7 sequence/hash.
+Historical action-selection-aware recovery evidence uses schema v2. New verifier output uses schema v3, preserving those schema-v7 action-selection references and adding action-proposals requirements when applicable.
 
-When schema-v3 `recovery_verified` is appended, the ledger writer independently re-checks those requirements. A v2 recovery artifact cannot silently remove a required Microsoft or action-selection attestation after runtime verification.
+When schema-v3 `recovery_verified` is appended, the ledger writer independently re-checks historical v2 and new v3 consumer requirements. A recovery artifact cannot silently remove a required Microsoft, action-selection, or action-proposals attestation after runtime verification.
 
 ## Fresh action-proposals proof after rollback
 
