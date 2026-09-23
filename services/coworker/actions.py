@@ -225,6 +225,8 @@ class ActionService:
             if claimed["kind"] == "email_send_with_attachments":
                 receipt = await adapter.execute(claimed, token, attachments)
             else:
+                # Preserve the v1 connector call shape for existing actions and
+                # persisted Temporal workflows; attachments are a new contract.
                 receipt = await adapter.execute(claimed, token)
         except ConnectorFailure as error:
             if error.definitive:
