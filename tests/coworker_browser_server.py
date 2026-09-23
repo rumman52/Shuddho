@@ -51,6 +51,7 @@ settings = replace(
     agent_runtime_enabled=True,
     intelligent_planner_enabled=True,
     agent_action_proposals_enabled=True,
+    action_attachments_enabled=True,
 )
 settings.validate()
 container.settings = settings
