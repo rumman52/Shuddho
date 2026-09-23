@@ -223,7 +223,9 @@ The following release-evidence increment adds schema v7 `action_selection_verifi
 
 The next enforcement increment makes scale and recovery consume exact feature attestations through one reusable release-ledger verification primitive. New scale/recovery evidence is schema v2 with explicit runtime requirements and action-selection ledger sequence/hash references; the later ledger append independently re-verifies those requirements so a required schema-v7 proof cannot be stripped between verification and recording. Post-rollback recovery additionally requires the schema-v7 event to occur after the exact rollback-completion event.
 
-Broader model-created external actions and connector expansion remain later increments.
+The next bounded autonomy increment adds [non-executable Agent action proposals](AGENT_ACTION_PROPOSALS.md). The initial intelligent planner may suggest at most two typed email/calendar payloads, but the proposal is a separate inert database object with no provider, connection, outbox, approval, execution claim or receipt. The user must explicitly promote the exact proposal hash while selecting an owned connection; Shuddho then creates a separate standalone immutable action preview through the existing consequential-action boundary. Promotion never mutates the saved Agent plan and still requires the normal explicit approval before execution.
+
+Broader model-created executable actions and connector expansion remain later increments.
 
 ### Consequential actions
 

@@ -233,6 +233,28 @@ class ExternalAction(Base):
     )
 
 
+class ActionProposal(Base):
+    __tablename__ = "cw_action_proposals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    agent_run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    rationale: Mapped[str] = mapped_column(String(300))
+    proposal_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(30), default="suggested")
+    promotion_connection_id: Mapped[str | None] = mapped_column(ForeignKey("cw_connections.id"))
+    promoted_action_id: Mapped[str | None] = mapped_column(ForeignKey("cw_external_actions.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index("cw_action_proposals_run_created", "agent_run_id", "created_at"),
+        Index("cw_action_proposals_owner_state", "owner_id", "state"),
+    )
+
+
 class MemoryFact(Base):
     __tablename__ = "cw_memory_facts"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

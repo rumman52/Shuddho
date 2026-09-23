@@ -18,7 +18,7 @@ from .action_registry import action_spec, build_approval_scope, validate_approva
 from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .errors import CoworkerError
-from .models import Account, AuditEvent, Connection, ExternalAction, OAuthAttempt, utcnow
+from .models import Account, ActionProposal, AuditEvent, Connection, ExternalAction, OAuthAttempt, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
@@ -231,6 +231,148 @@ class ActionRepository:
             self._audit(db, owner, action_id, "action.prepared")
             db.flush()
             return action_dto(row)
+
+    def promote_proposal(
+        self,
+        owner: str,
+        run_id: str,
+        proposal_id: str,
+        proposal_hash: str,
+        connection_id: str,
+    ):
+        if not self.settings.agent_action_proposals_enabled:
+            raise CoworkerError(
+                "action_proposals_disabled",
+                "Agent action proposals are not enabled in this deployment.",
+                503,
+            )
+        self.enabled()
+        with self.sessions.begin() as db:
+            self._account(db, owner)
+            proposal = db.scalar(select(ActionProposal).where(
+                ActionProposal.id == proposal_id,
+                ActionProposal.owner_id == owner,
+                ActionProposal.agent_run_id == run_id,
+            ).with_for_update())
+            if proposal is None:
+                raise not_found()
+            if not hmac.compare_digest(proposal.proposal_hash, proposal_hash):
+                raise CoworkerError(
+                    "proposal_changed",
+                    "This proposal changed. Review it again before promoting.",
+                    409,
+                )
+            if proposal.state == "promoted":
+                if (
+                    proposal.promotion_connection_id != connection_id
+                    or not proposal.promoted_action_id
+                ):
+                    raise CoworkerError(
+                        "proposal_already_promoted",
+                        "This proposal was already promoted with a different connection.",
+                        409,
+                    )
+                action = self._action(
+                    db,
+                    owner,
+                    proposal.promoted_action_id,
+                    lock=False,
+                )
+                return action_dto(action)
+            if proposal.state == "suggested" and aware(proposal.expires_at) <= utcnow():
+                proposal.state = "expired"
+            if proposal.state in {"dismissed", "expired"}:
+                raise CoworkerError(
+                    "proposal_unavailable",
+                    "This proposal is no longer available for promotion.",
+                    409,
+                )
+            if proposal.state == "promoting":
+                if proposal.promotion_connection_id != connection_id:
+                    raise CoworkerError(
+                        "proposal_promotion_in_progress",
+                        "This proposal is already being promoted with another connection.",
+                        409,
+                    )
+            elif proposal.state == "suggested":
+                proposal.state = "promoting"
+                proposal.promotion_connection_id = connection_id
+                self._audit(
+                    db,
+                    owner,
+                    proposal.id,
+                    "agent_action_proposal_promotion_reserved",
+                )
+            else:
+                raise CoworkerError(
+                    "proposal_unavailable",
+                    "This proposal is not available for promotion.",
+                    409,
+                )
+            payload = dict(proposal.payload)
+
+        try:
+            request = ActionPrepare.model_validate({
+                "connection_id": connection_id,
+                "payload": payload,
+            })
+            action = self.prepare(
+                owner,
+                request,
+                "agent-proposal:" + proposal_id,
+            )
+        except Exception:
+            with self.sessions.begin() as db:
+                proposal = db.scalar(select(ActionProposal).where(
+                    ActionProposal.id == proposal_id,
+                    ActionProposal.owner_id == owner,
+                    ActionProposal.agent_run_id == run_id,
+                ).with_for_update())
+                if (
+                    proposal is not None
+                    and proposal.state == "promoting"
+                    and proposal.promoted_action_id is None
+                    and proposal.promotion_connection_id == connection_id
+                ):
+                    proposal.state = "suggested"
+                    proposal.promotion_connection_id = None
+            raise
+
+        with self.sessions.begin() as db:
+            proposal = db.scalar(select(ActionProposal).where(
+                ActionProposal.id == proposal_id,
+                ActionProposal.owner_id == owner,
+                ActionProposal.agent_run_id == run_id,
+            ).with_for_update())
+            if proposal is None:
+                raise not_found()
+            if proposal.state == "promoted":
+                if proposal.promoted_action_id != action["id"]:
+                    raise CoworkerError(
+                        "proposal_promotion_conflict",
+                        "This proposal promotion could not be reconciled.",
+                        409,
+                    )
+                return action
+            if (
+                proposal.state != "promoting"
+                or proposal.promotion_connection_id != connection_id
+            ):
+                raise CoworkerError(
+                    "proposal_promotion_conflict",
+                    "This proposal promotion could not be reconciled.",
+                    409,
+                )
+            proposal.state = "promoted"
+            proposal.promoted_action_id = action["id"]
+            proposal.promoted_at = utcnow()
+            self._audit(
+                db,
+                owner,
+                proposal.id,
+                "agent_action_proposal_promoted",
+            )
+            return action
 
     @staticmethod
     def _future(start):

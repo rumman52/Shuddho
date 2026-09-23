@@ -100,4 +100,6 @@ Tests cover authenticated isolation, encryption binding, OAuth state/PKCE/partia
 
 The backend now includes a disabled-by-default [Microsoft Graph email/calendar adapter](MICROSOFT_GRAPH_ACTIONS.md) behind the same consequential-action registry. It is not exposed in the production UI or approved for live rollout by this increment.
 
-Pending Wave D work: Microsoft frontend/staging activation, attachments and threading, reminders, document sharing, social publishing, and richer recipient resolution. These must register through the same consequential-action policy and pass the same approval/receipt boundary rather than acquiring permission from model-generated text.
+A later bounded Agent increment adds [non-executable action proposals](AGENT_ACTION_PROPOSALS.md). Model-generated proposals remain outside `cw_external_actions` and cannot be approved or executed. Only explicit user promotion through a selected owned connection creates a normal immutable action preview, which still requires the approval path described above.
+
+Pending Wave D work: attachments and threading, reminders, document sharing, social publishing, and richer recipient resolution. These must register through the same consequential-action policy and pass the same approval/receipt boundary rather than acquiring permission from model-generated text.

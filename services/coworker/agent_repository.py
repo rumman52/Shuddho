@@ -7,12 +7,12 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select
 
-from .agent_schemas import AgentPlanStep, AgentRunCreate
+from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, action_proposal_hash
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
-from .repository import iso, not_found
+from .models import Account, ActionProposal, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
@@ -151,6 +151,27 @@ class AgentRepository:
             self._audit(db, owner, run.id, "agent_run_created")
             return self._dto(db, run), True
 
+    @staticmethod
+    def _proposal_dto(row: ActionProposal) -> dict:
+        display_state = (
+            "expired"
+            if row.state == "suggested" and aware(row.expires_at) <= utcnow()
+            else row.state
+        )
+        return {
+            "id": row.id,
+            "kind": row.kind,
+            "payload": row.payload,
+            "rationale": row.rationale,
+            "proposal_hash": row.proposal_hash,
+            "state": display_state,
+            "promoted_action_id": row.promoted_action_id,
+            "created_at": iso(row.created_at),
+            "expires_at": iso(row.expires_at),
+            "promoted_at": iso(row.promoted_at) if row.promoted_at else None,
+            "dismissed_at": iso(row.dismissed_at) if row.dismissed_at else None,
+        }
+
     def _dto(self, db, run: AgentRun) -> dict:
         steps = db.scalars(select(AgentStep).where(
             AgentStep.run_id == run.id, AgentStep.owner_id == run.owner_id,
@@ -162,6 +183,10 @@ class AgentRepository:
             ToolReceipt.run_id == run.id, ToolReceipt.owner_id == run.owner_id,
         )).all()
         receipt_by_invocation = {item.invocation_id: item for item in receipts}
+        proposals = db.scalars(select(ActionProposal).where(
+            ActionProposal.agent_run_id == run.id,
+            ActionProposal.owner_id == run.owner_id,
+        ).order_by(ActionProposal.created_at)).all()
         documents = list(db.scalars(select(DocumentVersion.document_id).where(
             DocumentVersion.id.in_(run.input_versions), DocumentVersion.owner_id == run.owner_id,
         ))) if run.input_versions else []
@@ -171,6 +196,7 @@ class AgentRepository:
             "output_language": run.output_language,
             "document_ids": documents,
             "action_ids": list(run.action_ids),
+            "action_proposals": [self._proposal_dto(item) for item in proposals],
             "memory_namespaces": list(run.memory_namespaces),
             "state": run.state,
             "phase": run.phase,
@@ -481,7 +507,13 @@ class AgentRepository:
             self._audit(db, owner, run.id, "agent_plan_replanned")
             return self._dto(db, run)
 
-    def save_plan(self, owner: str, run_id: str, steps: list[AgentPlanStep]) -> dict:
+    def save_plan(
+        self,
+        owner: str,
+        run_id: str,
+        steps: list[AgentPlanStep],
+        action_proposals: list[AgentActionProposal] | None = None,
+    ) -> dict:
         if not 1 <= len(steps) <= 8:
             raise CoworkerError("invalid_plan", "An agent plan must contain between one and eight steps.", 422)
         with self.sessions.begin() as db:
@@ -532,6 +564,43 @@ class AgentRepository:
                     arguments=validated.model_dump(mode="json"), state="prepared",
                     consequential=spec.consequential, approval_required=spec.approval_required,
                 ))
+            proposals = list(action_proposals or [])
+            if proposals and not self.settings.agent_action_proposals_enabled:
+                raise CoworkerError(
+                    "action_proposals_disabled",
+                    "Agent action proposals are not enabled in this deployment.",
+                    409,
+                )
+            if len(proposals) > 2:
+                raise CoworkerError(
+                    "action_proposal_limit",
+                    "An agent run may suggest at most two action proposals.",
+                    422,
+                )
+            for proposed in proposals:
+                payload = proposed.payload.model_dump(mode="json")
+                proposal_id = str(uuid4())
+                db.add(ActionProposal(
+                    id=proposal_id,
+                    owner_id=owner,
+                    agent_run_id=run.id,
+                    kind=payload["kind"],
+                    payload=payload,
+                    rationale=proposed.rationale,
+                    proposal_hash=action_proposal_hash(
+                        run.id,
+                        payload,
+                        proposed.rationale,
+                    ),
+                    state="suggested",
+                    expires_at=utcnow() + timedelta(hours=24),
+                ))
+                self._audit(
+                    db,
+                    owner,
+                    proposal_id,
+                    "agent_action_proposal_suggested",
+                )
             self._event(db, run, "planning", "planned", f"Plan saved with {len(steps)} bounded steps.")
             self._audit(db, owner, run.id, "agent_plan_saved")
             return self._dto(db, run)
@@ -581,6 +650,48 @@ class AgentRepository:
                 run.updated_at = utcnow()
                 self._audit(db, run.owner_id, run.id, "agent_action_selection_pruned")
             return released
+
+    def dismiss_action_proposal(
+        self,
+        owner: str,
+        run_id: str,
+        proposal_id: str,
+        proposal_hash: str,
+    ) -> dict:
+        with self.sessions.begin() as db:
+            self._run(db, owner, run_id)
+            row = db.scalar(select(ActionProposal).where(
+                ActionProposal.id == proposal_id,
+                ActionProposal.owner_id == owner,
+                ActionProposal.agent_run_id == run_id,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if row.proposal_hash != proposal_hash:
+                raise CoworkerError(
+                    "proposal_changed",
+                    "This proposal changed. Review it again.",
+                    409,
+                )
+            if row.state == "suggested" and aware(row.expires_at) <= utcnow():
+                row.state = "expired"
+            if row.state == "dismissed":
+                return self._proposal_dto(row)
+            if row.state != "suggested":
+                raise CoworkerError(
+                    "proposal_unavailable",
+                    "This proposal can no longer be dismissed.",
+                    409,
+                )
+            row.state = "dismissed"
+            row.dismissed_at = utcnow()
+            self._audit(
+                db,
+                owner,
+                row.id,
+                "agent_action_proposal_dismissed",
+            )
+            return self._proposal_dto(row)
 
     def list(self, owner: str) -> list[dict]:
         with self.sessions() as db:

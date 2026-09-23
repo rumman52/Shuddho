@@ -365,3 +365,214 @@ def test_execution_revalidates_server_owned_approval_scope(container):
     with pytest.raises(CoworkerError) as error:
         repo.claim_execution(action["id"])
     assert error.value.code == "approval_changed"
+
+
+def test_action_proposal_promotion_requires_exact_hash_and_user_connection(
+    container,
+    signed_client,
+):
+    from services.coworker.agent_schemas import (
+        AgentActionProposal,
+        AgentPlanStep,
+        AgentRunCreate,
+    )
+    from services.coworker.models import ActionProposal
+
+    client, headers = signed_client
+    provider = enable_actions(container)
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_action_proposals_enabled=True,
+        work_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Prepare a project update email proposal.",
+            output_language="en",
+        ),
+        "proposal-promotion-run",
+    )
+    container.agent.save_plan(
+        owner,
+        run["id"],
+        [AgentPlanStep(tool="email.draft", arguments={
+            "instruction": "Prepare a project update email proposal.",
+            "notes": "",
+            "document_ids": [],
+            "output_language": "en",
+        })],
+        action_proposals=[AgentActionProposal.model_validate({
+            "payload": {
+                "kind": "email_send",
+                "to": ["recipient@example.org"],
+                "cc": [],
+                "bcc": [],
+                "subject": "Project update",
+                "body": "The project is ready.",
+            },
+            "rationale": "The user requested a project update email.",
+        })],
+    )
+    proposal = container.agent.get(owner, run["id"])["action_proposals"][0]
+    path = (
+        f"/api/v1/agent-runs/{run['id']}/action-proposals/"
+        f"{proposal['id']}/promote"
+    )
+    auth = headers()
+
+    wrong = client.post(
+        path,
+        headers=auth,
+        json={
+            "connection_id": connection["id"],
+            "proposal_hash": "0" * 64,
+        },
+    )
+    assert wrong.status_code == 409
+
+    other = headers("bob")
+    hidden = client.post(
+        path,
+        headers=other,
+        json={
+            "connection_id": connection["id"],
+            "proposal_hash": proposal["proposal_hash"],
+        },
+    )
+    assert hidden.status_code == 404
+
+    promoted = client.post(
+        path,
+        headers=auth,
+        json={
+            "connection_id": connection["id"],
+            "proposal_hash": proposal["proposal_hash"],
+        },
+    )
+    assert promoted.status_code == 201
+    action = promoted.json()
+    assert action["state"] == "awaiting_approval"
+    assert action["approved_at"] is None
+    assert action["receipt"] is None
+    assert provider.requests == []
+
+    replay = client.post(
+        path,
+        headers=auth,
+        json={
+            "connection_id": connection["id"],
+            "proposal_hash": proposal["proposal_hash"],
+        },
+    )
+    assert replay.status_code == 201
+    assert replay.json()["id"] == action["id"]
+
+    with container.repository.sessions() as db:
+        row = db.get(ActionProposal, proposal["id"])
+        assert row.state == "promoted"
+        assert row.promoted_action_id == action["id"]
+        assert row.promotion_connection_id == connection["id"]
+
+    approved_response = client.post(
+        f"/api/v1/actions/{action['id']}/approve",
+        headers=auth,
+        json={"preview_hash": action["preview_hash"]},
+    )
+    assert approved_response.status_code == 202
+    assert approved_response.json()["state"] == "queued"
+    assert provider.requests == []
+
+
+def test_action_proposal_dismiss_and_kill_switch_block_promotion(container):
+    from services.coworker.agent_schemas import (
+        AgentActionProposal,
+        AgentPlanStep,
+        AgentRunCreate,
+    )
+
+    enable_actions(container)
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_action_proposals_enabled=True,
+        work_services_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+
+    def make_proposal(key):
+        run, _ = container.agent.create(
+            owner,
+            AgentRunCreate(goal="Prepare an email proposal.", output_language="en"),
+            key,
+        )
+        container.agent.save_plan(
+            owner,
+            run["id"],
+            [AgentPlanStep(tool="email.draft", arguments={
+                "instruction": "Prepare an email proposal.",
+                "notes": "",
+                "document_ids": [],
+                "output_language": "en",
+            })],
+            action_proposals=[AgentActionProposal.model_validate({
+                "payload": {
+                    "kind": "email_send",
+                    "to": ["recipient@example.org"],
+                    "cc": [],
+                    "bcc": [],
+                    "subject": "Update",
+                    "body": "Ready.",
+                },
+                "rationale": "Requested by the user.",
+            })],
+        )
+        return run, container.agent.get(owner, run["id"])["action_proposals"][0]
+
+    dismissed_run, dismissed = make_proposal("proposal-dismiss-run")
+    result = container.agent.dismiss_action_proposal(
+        owner,
+        dismissed_run["id"],
+        dismissed["id"],
+        dismissed["proposal_hash"],
+    )
+    assert result["state"] == "dismissed"
+    with pytest.raises(CoworkerError) as unavailable:
+        container.actions.repo.promote_proposal(
+            owner,
+            dismissed_run["id"],
+            dismissed["id"],
+            dismissed["proposal_hash"],
+            connection["id"],
+        )
+    assert unavailable.value.code == "proposal_unavailable"
+
+    blocked_run, blocked = make_proposal("proposal-kill-switch-run")
+    container.actions.repo.settings = replace(
+        enabled,
+        agent_action_proposals_enabled=False,
+    )
+    with pytest.raises(CoworkerError) as disabled:
+        container.actions.repo.promote_proposal(
+            owner,
+            blocked_run["id"],
+            blocked["id"],
+            blocked["proposal_hash"],
+            connection["id"],
+        )
+    assert disabled.value.code == "action_proposals_disabled"

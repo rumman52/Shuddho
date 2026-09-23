@@ -76,7 +76,8 @@ The manifest is rejected if:
 - multi-source handoffs are enabled without handoffs;
 - bounded parallel execution is enabled without the dependency graph;
 - outcome replanning is enabled without intelligent planning;
-- agent action selection is enabled without Actions, Agent Runtime, and Intelligent Planner.
+- agent action selection is enabled without Actions, Agent Runtime, and Intelligent Planner;
+- agent action proposals are enabled without Actions, Agent Runtime, and Intelligent Planner.
 
 Optional capabilities may remain disabled for the first cohort even if their staging gates have passed.
 
@@ -89,7 +90,8 @@ The manifest must contain the exact kill switches:
 - `SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false`
 - `SHUDDHO_RESEARCH_SERVICES_ENABLED=false`
 - `SHUDDHO_ACTIONS_ENABLED=false`
-- `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false` when action selection is declared.
+- `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false` when action selection is declared;
+- `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false` when action proposals are declared.
 
 It must also contain a real rollback/runbook reference.
 
@@ -186,3 +188,14 @@ Before treating `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=true` as activated in pr
 The activation verifier binds the exact timestamped `action_selection` staging evidence to the reviewed deployment record, verifies the deployed runtime prerequisites plus cohort enforcement, requires a fresh clean post-deploy operator status, and emits `action_selection_verified`.
 
 This activation artifact is release evidence only. It cannot approve an action, execute a provider mutation, change the cohort, or enable a runtime flag.
+
+
+## Non-executable Agent action proposals
+
+The optional `action_proposals=true` capability allows the initial intelligent planner to suggest typed email/calendar payloads as inert proposal records.
+
+See [Non-Executable Agent Action Proposals](AGENT_ACTION_PROPOSALS.md).
+
+A proposal is not an external action. It has no provider binding, approval state, outbox or executor path. The authenticated user must select an owned connection and promote the exact proposal hash. Promotion creates a separate immutable action preview in `awaiting_approval`; normal explicit approval is still required before any provider mutation.
+
+Production enablement requires its independent `action_proposals` staging evidence and the exact rollback switch `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false`.

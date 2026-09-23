@@ -1699,3 +1699,93 @@ def test_agent_action_selection_never_model_selects_already_approved_action(cont
     )
     assert [step.tool for step in plan] == ["email.draft", "email.send"]
     assert plan[1].arguments == {"action_id": actions[0]["id"]}
+
+
+def test_intelligent_planner_action_proposal_is_persisted_but_not_executable(container):
+    from action_samples import enable_actions
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlannerProposal, AgentRunCreate
+    from services.coworker.models import ActionProposal, ExternalAction
+
+    provider = enable_actions(container)
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_action_proposals_enabled=True,
+        work_services_enabled=True,
+        max_agent_planner_calls=2,
+        agent_planner_token_budget=16000,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal=(
+                "Draft an update and suggest an email to recipient@example.org "
+                "with subject Project update and body The project is ready."
+            ),
+            output_language="en",
+        ),
+        "agent-proposal-run",
+    )
+
+    class ProposalPlanner:
+        async def propose(self, _goal, _tools, **kwargs):
+            assert kwargs["allow_action_proposals"] is True
+            return AgentPlannerProposal.model_validate({
+                "steps": [{
+                    "tool": "email.draft",
+                    "objective": "Draft the supporting email content.",
+                }],
+                "action_proposals": [{
+                    "payload": {
+                        "kind": "email_send",
+                        "to": ["recipient@example.org"],
+                        "cc": [],
+                        "bcc": [],
+                        "subject": "Project update",
+                        "body": "The project is ready.",
+                    },
+                    "rationale": "The user explicitly requested this email.",
+                }],
+            }), 40, 1
+
+    runtime = AgentRuntime(
+        container,
+        DocumentRunner(container, FakeModel()),
+        planner=ProposalPlanner(),
+    )
+    assert asyncio.run(runtime.plan_for_worker(run["id"])) == 1
+
+    saved = container.agent.get(owner, run["id"])
+    assert len(saved["action_proposals"]) == 1
+    proposal = saved["action_proposals"][0]
+    assert proposal["kind"] == "email_send"
+    assert proposal["state"] == "suggested"
+    assert proposal["promoted_action_id"] is None
+    assert len(proposal["proposal_hash"]) == 64
+
+    with container.repository.sessions() as db:
+        assert db.get(ActionProposal, proposal["id"]) is not None
+        assert db.scalars(select(ExternalAction).where(
+            ExternalAction.owner_id == owner
+        )).all() == []
+    assert provider.requests == []
+
+
+def test_agent_action_proposal_flag_dependencies_fail_closed(container):
+    base = replace(
+        container.settings,
+        actions_enabled=False,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_action_proposals_enabled=True,
+    )
+    with pytest.raises(ValueError, match="SHUDDHO_ACTIONS_ENABLED"):
+        base.validate()
