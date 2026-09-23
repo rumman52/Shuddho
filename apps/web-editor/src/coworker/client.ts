@@ -1,7 +1,7 @@
 import { fetchWithTimeout } from "../lib/fetchWithTimeout";
 
 export type TaskState = "queued" | "running" | "cancelling" | "completed" | "needs_input" | "failed" | "cancelled";
-export type Artifact = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
+export type Artifact = { id: string; filename: string; content_type: string; byte_size: number; sha256: string; created_at?: string };
 export type SkillId = "report_email" | "email" | "document" | "career" | "social" | "meeting" | "daily_plan" | "personal_plan" | "presentation" | "spreadsheet" | "research";
 export type ResearchOptions = { query: string; time_range: "any" | "day" | "week" | "month" | "year" };
 export type ResearchSource = { id: string; label: string; sha256: string; kind?: "web"; url?: string; retrieved_at?: string; source_date?: string | null; truncated?: boolean };
