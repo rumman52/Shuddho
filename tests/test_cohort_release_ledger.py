@@ -16,6 +16,7 @@ from scripts.cohort_release_ledger import (
     append_action_selection_event,
     append_action_proposals_event,
     append_action_attachments_event,
+    append_action_reminders_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -2411,3 +2412,349 @@ def test_schema_v3_recovery_v4_rejects_stripped_action_attachments_attestation(t
             rollback_completion=rollback_completion,
             recovery_verification=recovery_verification,
         )
+
+
+def action_reminders_files(tmp_path, *, current_stage="cohort-25"):
+    capabilities = {
+        "coworker": True,
+        "work_services": True,
+        "artifact_services": True,
+        "agent_runtime": True,
+        "intelligent_planner": True,
+        "memory": False,
+        "handoffs": True,
+        "multi_handoffs": True,
+        "dependency_graph": True,
+        "parallel_execution": True,
+        "outcome_replan": True,
+        "research": False,
+        "actions": True,
+        "action_attachments": False,
+        "action_reminders": True,
+        "action_selection": False,
+        "action_proposals": False,
+    }
+    rollout = write_json(tmp_path / ("action-reminders-" + current_stage + "-rollout.json"), {
+        "release_id": "coworker-cohort-001",
+        "environment": "production",
+        "cohort": {"reference": "approved-cohort", "max_users": 25},
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "rollback": {
+            "action_reminders_kill_switch":
+                "SHUDDHO_ACTION_REMINDERS_ENABLED=false",
+        },
+        "incident": {"change_reference": "action-reminders-change-1"},
+    })
+    staging = write_json(tmp_path / ("action-reminders-" + current_stage + "-staging.json"), {
+        "action_reminders_google": {
+            "status": "passed",
+            "evidence": "synthetic approved reminder reached Google Calendar exactly once",
+            "verified_at": "2026-09-23T07:00:00+00:00",
+        },
+    })
+    deployment = write_json(tmp_path / ("action-reminders-" + current_stage + "-deployment.json"), {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "action-reminders-change-1",
+        "current_stage": current_stage,
+        "deployed_at": "2026-09-23T07:10:00+00:00",
+        "source_revision": "c" * 40,
+        "staging_evidence_sha256": file_sha256(staging),
+        "rollout_manifest_sha256": file_sha256(rollout),
+    })
+    status = write_json(tmp_path / ("action-reminders-" + current_stage + "-status.json"), {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-23T07:15:00+00:00",
+        "breaches": [],
+    })
+    runtime = {
+        "schema_version": 1,
+        "source_revision": "c" * 40,
+        "environment": "production",
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "cohort": {
+            "enforced": True,
+            "configured_members": 5,
+            "max_users": 25,
+        },
+    }
+    runtime_hash = hashlib.sha256(json.dumps(
+        runtime,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    activation = write_json(tmp_path / ("action-reminders-" + current_stage + "-activation.json"), {
+        "schema_version": 1,
+        "status": "action_reminders_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": current_stage,
+        "verified_at": "2026-09-23T07:20:00+00:00",
+        "change_reference": "action-reminders-change-1",
+        "deployed_at": "2026-09-23T07:10:00+00:00",
+        "source_revision": "c" * 40,
+        "operator_status_generated_at": "2026-09-23T07:15:00+00:00",
+        "runtime": runtime,
+        "runtime_manifest_sha256": runtime_hash,
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging),
+            "rollout_manifest": file_sha256(rollout),
+            "deployment_change": file_sha256(deployment),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return staging, rollout, deployment, status, activation
+
+
+def test_schema_v10_action_reminders_is_hash_chained(tmp_path):
+    ledger = tmp_path / "release-ledger-action-reminders.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, rollout, deployment, status, activation = action_reminders_files(tmp_path)
+
+    entry = append_action_reminders_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-reminders-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        rollout_manifest=rollout,
+        deployment_change=deployment,
+        operator_status=status,
+        action_reminders_activation=activation,
+        created_at="2026-09-23T07:25:00+00:00",
+    )
+
+    assert entry["schema_version"] == 10
+    assert entry["event_type"] == "action_reminders_verified"
+    assert entry["artifact_sha256"]["action_reminders_activation"] == file_sha256(activation)
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == entry["entry_hash"]
+
+
+def test_schema_v10_action_reminders_requires_declared_provider_evidence(tmp_path):
+    ledger = tmp_path / "release-ledger-action-reminders-provider.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, rollout, deployment, status, activation = action_reminders_files(tmp_path)
+    staging.write_text(json.dumps({}), encoding="utf-8")
+    deployment_value = json.loads(deployment.read_text(encoding="utf-8"))
+    deployment_value["staging_evidence_sha256"] = file_sha256(staging)
+    deployment.write_text(json.dumps(deployment_value), encoding="utf-8")
+    activation_value = json.loads(activation.read_text(encoding="utf-8"))
+    activation_value["artifact_sha256"]["staging_evidence"] = file_sha256(staging)
+    activation_value["artifact_sha256"]["deployment_change"] = file_sha256(deployment)
+    activation.write_text(json.dumps(activation_value), encoding="utf-8")
+
+    with pytest.raises(ReleaseLedgerError, match="google reminder staging evidence"):
+        append_action_reminders_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="action-reminders-change-1",
+            current_stage="cohort-25",
+            staging_evidence=staging,
+            rollout_manifest=rollout,
+            deployment_change=deployment,
+            operator_status=status,
+            action_reminders_activation=activation,
+        )
+
+
+def test_schema_v5_scale_requires_exact_action_reminders_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v5-scale-reminders.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
+    reminder_files = action_reminders_files(tmp_path)
+    reminder_entry = append_action_reminders_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-reminders-change-1",
+        current_stage="cohort-25",
+        staging_evidence=reminder_files[0],
+        rollout_manifest=reminder_files[1],
+        deployment_change=reminder_files[2],
+        operator_status=reminder_files[3],
+        action_reminders_activation=reminder_files[4],
+    )
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["schema_version"] = 5
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": False,
+        "action_attachments_enabled": False,
+        "action_reminders_enabled": True,
+    }
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    value["action_reminders"] = {
+        "ledger_sequence": reminder_entry["sequence"],
+        "ledger_entry_hash": reminder_entry["entry_hash"],
+    }
+    value["artifact_sha256"]["action_reminders_activation"] = file_sha256(reminder_files[4])
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    entry = append_scale_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="change-42",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        scale_decision=decision,
+        deployment_change=deployment,
+        operator_status=status,
+        scale_activation=activation,
+    )
+    assert entry["event_type"] == "bounded_expansion_verified"
+
+
+def test_schema_v5_scale_rejects_stripped_action_reminders_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v5-scale-reminders-stripped.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
+    reminder_files = action_reminders_files(tmp_path)
+    append_action_reminders_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-reminders-change-1",
+        current_stage="cohort-25",
+        staging_evidence=reminder_files[0],
+        rollout_manifest=reminder_files[1],
+        deployment_change=reminder_files[2],
+        operator_status=reminder_files[3],
+        action_reminders_activation=reminder_files[4],
+    )
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["schema_version"] = 5
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": False,
+        "action_attachments_enabled": False,
+        "action_reminders_enabled": True,
+    }
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    value["action_reminders"] = None
+    value["artifact_sha256"]["action_reminders_activation"] = file_sha256(reminder_files[4])
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(ReleaseLedgerError, match="Action-reminders scale activation is missing"):
+        append_scale_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="change-42",
+            current_stage="cohort-25",
+            next_stage="cohort-40",
+            scale_decision=decision,
+            deployment_change=deployment,
+            operator_status=status,
+            scale_activation=activation,
+        )
+
+
+def test_schema_v5_recovery_requires_fresh_action_reminders_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v5-recovery-reminders.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-v5",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+        created_at="2026-09-23T04:00:00+00:00",
+    )
+    rollback_entry = append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v5",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+        created_at="2026-09-23T04:06:00+00:00",
+    )
+    reminder_files = action_reminders_files(tmp_path, current_stage="canary-5")
+    reminder_entry = append_action_reminders_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-reminders-change-1",
+        current_stage="canary-5",
+        staging_evidence=reminder_files[0],
+        rollout_manifest=reminder_files[1],
+        deployment_change=reminder_files[2],
+        operator_status=reminder_files[3],
+        action_reminders_activation=reminder_files[4],
+    )
+    assert reminder_entry["sequence"] > rollback_entry["sequence"]
+
+    value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    value["schema_version"] = 5
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": False,
+        "action_attachments_enabled": False,
+        "action_reminders_enabled": True,
+    }
+    value["microsoft_rollout"] = None
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    value["action_reminders"] = {
+        "ledger_sequence": reminder_entry["sequence"],
+        "ledger_entry_hash": reminder_entry["entry_hash"],
+    }
+    value["artifact_sha256"]["action_reminders_activation"] = file_sha256(reminder_files[4])
+    recovery_verification.write_text(json.dumps(value), encoding="utf-8")
+
+    recovered = append_recovery_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v5",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=recovery_status,
+        rollback_completion=rollback_completion,
+        recovery_verification=recovery_verification,
+    )
+    assert recovered["event_type"] == "recovery_verified"

@@ -70,6 +70,11 @@ The controlled rollout manifest understands `action_reminders` and its exact kil
 SHUDDHO_ACTION_REMINDERS_ENABLED=false
 ```
 
-but the release gate intentionally returns `action_reminders_release_gate_pending` if a reviewed production rollout attempts to set `action_reminders=true`.
+Production enablement now requires the full release-safety chain:
 
-The next release-safety increment must add independent live Google/Microsoft reminder validation, production activation evidence, and release-ledger/scale/recovery consumption before the flag can be enabled for a controlled cohort.
+1. run the controlled live reminder exercise separately for every declared action provider using `scripts/staging_live_action_reminders.py`;
+2. bind the combined provider evidence, reviewed rollout, deployment revision, authenticated runtime manifest and fresh clean cohort health with `scripts/action_reminders_activation.py`;
+3. append the exact activation as schema-v10 `action_reminders_verified` in the tamper-evident release ledger;
+4. require that exact schema-v10 attestation for reminder-enabled bounded scale and a fresh post-rollback schema-v10 attestation for recovery.
+
+The feature remains disabled by default. A rollout with `action_reminders=true` fails closed when Google reminder evidence is absent, and additionally requires Microsoft reminder evidence when Microsoft is declared as an action provider.

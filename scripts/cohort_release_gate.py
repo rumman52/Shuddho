@@ -150,13 +150,8 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
                 or not capabilities["artifact_services"]
             ):
                 failures.append("action_attachments_dependency")
-            if capabilities.get("action_reminders") is True:
-                if not capabilities["actions"]:
-                    failures.append("action_reminders_dependency")
-                # Code may ship disabled, but a reviewed production rollout
-                # cannot enable reminders until its independent live gate and
-                # activation/ledger enforcement increment lands.
-                failures.append("action_reminders_release_gate_pending")
+            if capabilities.get("action_reminders") is True and not capabilities["actions"]:
+                failures.append("action_reminders_dependency")
             if capabilities.get("action_selection") is True and (
                 not capabilities["actions"]
                 or not capabilities["agent_runtime"]
@@ -279,6 +274,10 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         require_actions=require_actions,
         require_microsoft_actions=require_microsoft_actions,
         require_action_attachments=require_action_attachments,
+        require_action_reminders=require_action_reminders,
+        require_microsoft_action_reminders=(
+            require_action_reminders and require_microsoft_actions
+        ),
         require_action_selection=require_action_selection,
         require_action_proposals=require_action_proposals,
     )

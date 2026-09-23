@@ -10,7 +10,7 @@ BASE_GATES = {
 }
 
 
-def evidence(*, research=False, actions=False, microsoft=False, action_attachments=False, action_selection=False, action_proposals=False):
+def evidence(*, research=False, actions=False, microsoft=False, action_attachments=False, action_reminders=False, microsoft_action_reminders=False, action_selection=False, action_proposals=False):
     keys = set(BASE_GATES)
     if research:
         keys.add("research")
@@ -20,6 +20,10 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
         keys.add("microsoft_actions")
     if action_attachments:
         keys.add("action_attachments")
+    if action_reminders:
+        keys.add("action_reminders_google")
+    if microsoft_action_reminders:
+        keys.add("action_reminders_microsoft")
     if action_selection:
         keys.add("action_selection")
     if action_proposals:
@@ -307,12 +311,47 @@ def test_action_attachments_require_independent_gate_dependency_and_kill_switch(
     )
 
 
-def test_calendar_reminders_cannot_enter_production_before_live_release_gate():
+def test_calendar_reminders_require_live_provider_evidence_and_kill_switch():
     value = rollout(actions=True, action_reminders=True)
-    failures = validate_rollout(value, max_cohort_users=25)
-    assert "action_reminders_release_gate_pending" in failures
+    assert validate_rollout(value, max_cohort_users=25) == []
+
+    missing = evaluate_release(evidence(actions=True), value)
+    assert missing["decision"] == "NO-GO"
+    assert "action_reminders_google" in missing["staging"]["missing"]
+
+    passed = evaluate_release(
+        evidence(actions=True, action_reminders=True),
+        value,
+    )
+    assert passed["decision"] == "GO_CONTROLLED_COHORT"
+
+    microsoft_value = rollout(
+        actions=True,
+        providers=["google", "microsoft"],
+        action_reminders=True,
+    )
+    missing_microsoft = evaluate_release(
+        evidence(
+            actions=True,
+            microsoft=True,
+            action_reminders=True,
+        ),
+        microsoft_value,
+    )
+    assert missing_microsoft["decision"] == "NO-GO"
+    assert "action_reminders_microsoft" in missing_microsoft["staging"]["missing"]
+
+    passed_microsoft = evaluate_release(
+        evidence(
+            actions=True,
+            microsoft=True,
+            action_reminders=True,
+            microsoft_action_reminders=True,
+        ),
+        microsoft_value,
+    )
+    assert passed_microsoft["decision"] == "GO_CONTROLLED_COHORT"
 
     value["rollback"].pop("action_reminders_kill_switch")
     failures = validate_rollout(value, max_cohort_users=25)
     assert "action_reminders_kill_switch" in failures
-    assert "action_reminders_release_gate_pending" in failures
