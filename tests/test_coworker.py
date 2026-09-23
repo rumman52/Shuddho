@@ -1798,6 +1798,10 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
 ):
     client, headers = signed_client
     monkeypatch.setenv("SHUDDHO_COWORKER_ENABLED", "true")
+    admitted = client.get(
+        "/api/v1/me",
+        headers=headers(),
+    ).json()["account_id"]
     current = replace(
         container.settings,
         source_revision="a" * 40,
@@ -1807,7 +1811,8 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
         intelligent_planner_enabled=True,
         actions_enabled=True,
         agent_action_proposals_enabled=True,
-        cohort_enforced=False,
+        cohort_enforced=True,
+        cohort_account_ids=frozenset({admitted}),
     )
     container.settings = current
     container.repository.settings = current
@@ -1815,6 +1820,10 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     container.actions.repo.settings = current
 
     assert client.get("/api/v1/runtime-manifest").status_code == 401
+    assert client.get(
+        "/api/v1/runtime-manifest",
+        headers=headers("bob"),
+    ).status_code == 403
     response = client.get(
         "/api/v1/runtime-manifest",
         headers=headers(),
@@ -1829,8 +1838,8 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     assert value["capabilities"]["action_selection"] is False
     assert value["action_providers"] == ["google"]
     assert value["cohort"] == {
-        "enforced": False,
-        "configured_members": 0,
+        "enforced": True,
+        "configured_members": 1,
         "max_users": current.cohort_max_users,
     }
     encoded = json.dumps(value)
