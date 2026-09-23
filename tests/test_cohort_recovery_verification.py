@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -11,7 +12,7 @@ pytest.importorskip("sqlalchemy", reason="Install the coworker extra for recover
 from scripts import cohort_recovery_verification as recovery
 
 
-def rollout(*, action_selection=False):
+def rollout(*, action_selection=False, action_proposals=False):
     value = {
         "release_id": "coworker-cohort-001",
         "cohort": {"max_users": 25},
@@ -28,11 +29,13 @@ def rollout(*, action_selection=False):
             "parallel_execution": True,
             "outcome_replan": True,
             "research": False,
-            "actions": action_selection,
+            "actions": action_selection or action_proposals,
         },
     }
     if action_selection:
         value["capabilities"]["action_selection"] = True
+    if action_proposals:
+        value["capabilities"]["action_proposals"] = True
     return value
 
 
@@ -692,3 +695,208 @@ def test_legacy_recovery_manifest_defaults_action_proposals_off(monkeypatch, tmp
         deployed_at=datetime(2026, 9, 22, 7, 5, tzinfo=timezone.utc),
     )
     assert result["capabilities"]["action_proposals"] is False
+
+def seed_recovery_action_proposals_chain(monkeypatch, tmp_path):
+    from scripts.cohort_release_ledger import (
+        append_action_proposals_event,
+        file_sha256,
+    )
+
+    ledger, rollback_path, _action_selection_activation, _ = (
+        seed_recovery_action_selection_chain(monkeypatch, tmp_path)
+    )
+
+    capabilities = {
+        "coworker": True,
+        "work_services": True,
+        "artifact_services": True,
+        "agent_runtime": True,
+        "intelligent_planner": True,
+        "memory": False,
+        "handoffs": True,
+        "multi_handoffs": True,
+        "dependency_graph": True,
+        "parallel_execution": True,
+        "outcome_replan": True,
+        "research": False,
+        "actions": True,
+        "action_selection": False,
+        "action_proposals": True,
+    }
+    rollout_path = tmp_path / "proposal-recovery-rollout.json"
+    staging_path = tmp_path / "proposal-recovery-staging.json"
+    deployment_path = tmp_path / "proposal-recovery-deployment.json"
+    status_path = tmp_path / "proposal-recovery-status.json"
+    activation_path = tmp_path / "proposal-recovery-activation.json"
+
+    rollout_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "environment": "production",
+        "cohort": {"reference": "approved-cohort", "max_users": 5},
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "rollback": {
+            "action_proposals_kill_switch":
+                "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
+        },
+        "incident": {"change_reference": "proposal-recovery-1"},
+    }), encoding="utf-8")
+    staging_path.write_text(json.dumps({
+        "action_proposals": {
+            "status": "passed",
+            "evidence": "fresh post-rollback inert proposal validation",
+            "verified_at": "2026-09-23T04:14:00+00:00",
+        },
+    }), encoding="utf-8")
+    deployment_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "change_reference": "proposal-recovery-1",
+        "current_stage": "canary-5",
+        "deployed_at": "2026-09-23T04:15:00+00:00",
+        "source_revision": "b" * 40,
+        "staging_evidence_sha256": file_sha256(staging_path),
+        "rollout_manifest_sha256": file_sha256(rollout_path),
+    }), encoding="utf-8")
+    status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-23T04:16:00+00:00",
+        "breaches": [],
+    }), encoding="utf-8")
+    runtime = {
+        "schema_version": 1,
+        "source_revision": "b" * 40,
+        "environment": "production",
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "cohort": {
+            "enforced": True,
+            "configured_members": 5,
+            "max_users": 5,
+        },
+    }
+    runtime_hash = hashlib.sha256(json.dumps(
+        runtime,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    activation_path.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "action_proposals_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "canary-5",
+        "verified_at": "2026-09-23T04:17:00+00:00",
+        "change_reference": "proposal-recovery-1",
+        "deployed_at": "2026-09-23T04:15:00+00:00",
+        "source_revision": "b" * 40,
+        "operator_status_generated_at": "2026-09-23T04:16:00+00:00",
+        "runtime": runtime,
+        "runtime_manifest_sha256": runtime_hash,
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging_path),
+            "rollout_manifest": file_sha256(rollout_path),
+            "deployment_change": file_sha256(deployment_path),
+            "operator_status": file_sha256(status_path),
+        },
+    }), encoding="utf-8")
+
+    entry = append_action_proposals_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall",
+        change_reference="proposal-recovery-1",
+        current_stage="canary-5",
+        staging_evidence=staging_path,
+        rollout_manifest=rollout_path,
+        deployment_change=deployment_path,
+        operator_status=status_path,
+        action_proposals_activation=activation_path,
+        created_at="2026-09-23T04:18:00+00:00",
+    )
+    return ledger, rollback_path, activation_path, entry
+
+
+def test_action_proposals_recovery_requires_fresh_schema_v8_after_rollback(
+    monkeypatch,
+    tmp_path,
+):
+    ledger, rollback_path, activation_path, entry = (
+        seed_recovery_action_proposals_chain(monkeypatch, tmp_path)
+    )
+    result = recovery.validate_action_proposals_recovery_activation(
+        settings=settings({"a" * 64}, action_proposals=True),
+        activation_path=activation_path,
+        ledger_path=ledger,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+        rollback_completion=json.loads(
+            rollback_path.read_text(encoding="utf-8")
+        ),
+        rollback_path=rollback_path,
+        recovery_deployed_at=datetime(
+            2026, 9, 23, 4, 9, tzinfo=timezone.utc
+        ),
+    )
+    assert result["ledger_sequence"] == entry["sequence"]
+    assert result["ledger_entry_hash"] == entry["entry_hash"]
+
+
+def test_action_proposals_recovery_rejects_tampered_activation(
+    monkeypatch,
+    tmp_path,
+):
+    ledger, rollback_path, activation_path, _ = (
+        seed_recovery_action_proposals_chain(monkeypatch, tmp_path)
+    )
+    value = json.loads(activation_path.read_text(encoding="utf-8"))
+    value["verified_at"] = "2026-09-23T04:19:00+00:00"
+    activation_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        recovery.RecoveryVerificationError,
+        match="Release ledger verification failed",
+    ):
+        recovery.validate_action_proposals_recovery_activation(
+            settings=settings({"a" * 64}, action_proposals=True),
+            activation_path=activation_path,
+            ledger_path=ledger,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollback_completion=json.loads(
+                rollback_path.read_text(encoding="utf-8")
+            ),
+            rollback_path=rollback_path,
+            recovery_deployed_at=datetime(
+                2026, 9, 23, 4, 9, tzinfo=timezone.utc
+            ),
+        )
+
+
+def test_action_proposals_recovery_rejects_activation_before_recovery_deployment(
+    monkeypatch,
+    tmp_path,
+):
+    ledger, rollback_path, activation_path, _ = (
+        seed_recovery_action_proposals_chain(monkeypatch, tmp_path)
+    )
+    with pytest.raises(
+        recovery.RecoveryVerificationError,
+        match="predates the recovery deployment",
+    ):
+        recovery.validate_action_proposals_recovery_activation(
+            settings=settings({"a" * 64}, action_proposals=True),
+            activation_path=activation_path,
+            ledger_path=ledger,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollback_completion=json.loads(
+                rollback_path.read_text(encoding="utf-8")
+            ),
+            rollback_path=rollback_path,
+            recovery_deployed_at=datetime(
+                2026, 9, 23, 4, 16, tzinfo=timezone.utc
+            ),
+        )
+
