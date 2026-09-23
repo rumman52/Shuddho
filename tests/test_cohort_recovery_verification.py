@@ -81,7 +81,7 @@ def settings(members, *, microsoft=False, action_selection=False, action_proposa
         agent_parallel_execution_enabled=True,
         agent_outcome_replan_enabled=True,
         research_services_enabled=False,
-        actions_enabled=action_selection,
+        actions_enabled=action_selection or action_proposals,
         microsoft_actions_enabled=microsoft,
         agent_action_selection_enabled=action_selection,
         agent_action_proposals_enabled=action_proposals,
