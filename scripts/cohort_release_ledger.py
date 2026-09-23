@@ -1764,6 +1764,11 @@ def append_action_proposals_event(
         raise ReleaseLedgerError(
             "Action-proposals activation does not prove the reviewed production runtime."
         )
+    runtime_hash = hashlib.sha256(canonical(runtime)).hexdigest()
+    if activation.get("runtime_manifest_sha256") != runtime_hash:
+        raise ReleaseLedgerError(
+            "Action-proposals activation runtime manifest hash does not match its runtime snapshot."
+        )
 
     hashes = activation.get("artifact_sha256")
     if not isinstance(hashes, dict):
