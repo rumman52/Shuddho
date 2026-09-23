@@ -99,6 +99,7 @@ def runtime_manifest(
         "research": settings.research_services_enabled,
         "actions": settings.actions_enabled,
         "action_attachments": settings.action_attachments_enabled,
+        "action_reminders": settings.action_reminders_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
     }
@@ -221,7 +222,11 @@ def dismiss_action_proposal(
 
 @router.get("/connections")
 def connections(identity: Identity, services: Services):
-    return {"enabled": services.settings.actions_enabled, "connections": services.actions.repo.connections(identity.account_id)}
+    return {
+        "enabled": services.settings.actions_enabled,
+        "reminders_enabled": services.settings.action_reminders_enabled,
+        "connections": services.actions.repo.connections(identity.account_id),
+    }
 
 
 @router.post("/connections/google/start")
