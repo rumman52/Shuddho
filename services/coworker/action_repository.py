@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import func, or_, select, update
@@ -69,6 +69,44 @@ class ActionRepository:
     def enabled(self):
         if not self.settings.actions_enabled:
             raise CoworkerError("actions_disabled", "Email and calendar actions are not available in this deployment.", 503)
+
+    def _optional_feature_error(self, spec):
+        if spec.attachments_allowed and not self.settings.action_attachments_enabled:
+            return (
+                "action_attachments_disabled",
+                "Email attachments are not enabled in this deployment.",
+            )
+        if spec.reminders != "none" and not self.settings.action_reminders_enabled:
+            return (
+                "action_reminders_disabled",
+                "Calendar reminders are not enabled in this deployment.",
+            )
+        return None
+
+    def _require_optional_feature(self, spec):
+        failure = self._optional_feature_error(spec)
+        if failure is not None:
+            raise CoworkerError(failure[0], failure[1], 503)
+
+    @staticmethod
+    def _require_live_reminder(payload):
+        if payload.get("kind") != "calendar_create_with_reminder":
+            return
+        try:
+            start = datetime.fromisoformat(payload["start_at"])
+            minutes = int(payload["reminder_minutes_before_start"])
+        except (KeyError, TypeError, ValueError):
+            raise CoworkerError(
+                "reminder_time",
+                "The approved reminder timing is invalid.",
+                422,
+            ) from None
+        if start - timedelta(minutes=minutes) <= utcnow():
+            raise CoworkerError(
+                "reminder_time",
+                "Choose a reminder that is still in the future.",
+                422,
+            )
 
     def vault(self):
         return TokenVault(self.settings.connector_encryption_key)
@@ -302,18 +340,7 @@ class ActionRepository:
                     503,
                 )
             spec = action_spec(request.payload.kind, connection.provider)
-            if spec.attachments_allowed and not self.settings.action_attachments_enabled:
-                raise CoworkerError(
-                    "action_attachments_disabled",
-                    "Email attachments are not enabled in this deployment.",
-                    503,
-                )
-            if spec.reminders != "none" and not self.settings.action_reminders_enabled:
-                raise CoworkerError(
-                    "action_reminders_disabled",
-                    "Calendar reminders are not enabled in this deployment.",
-                    503,
-                )
+            self._require_optional_feature(spec)
             attachments = self._attachment_manifest(
                 db,
                 owner,
@@ -334,6 +361,7 @@ class ActionRepository:
                 raise CoworkerError("preview_limit", "Your daily action-preview limit has been reached.", 429)
             if spec.requires_future_start:
                 self._future(request.payload.start_at)
+                self._require_live_reminder(body["payload"])
             action_id = str(uuid4())
             expires = utcnow() + timedelta(seconds=spec.approval_ttl_seconds)
             preview = {
@@ -512,14 +540,15 @@ class ActionRepository:
             if not hmac.compare_digest(row.preview_hash, preview_hash) or digest(row.preview) != row.preview_hash:
                 raise CoworkerError("approval_changed", "The preview changed. Review it again before approving.", 409)
             spec = validate_approval_scope(row.preview)
+            self._require_optional_feature(spec)
             if row.approved_at:  # Replayed approval never dispatches a new action.
                 return action_dto(row)
             self.enabled()
             if row.state != "awaiting_approval" or aware(row.expires_at) <= utcnow() or not connection.active:
                 raise CoworkerError("approval_expired", "This preview is no longer available for approval. Prepare a new one.", 409)
             if spec.requires_future_start:
-                from datetime import datetime
                 self._future(datetime.fromisoformat(row.preview["payload"]["start_at"]))
+                self._require_live_reminder(row.preview["payload"])
             today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             count = db.scalar(select(func.count()).select_from(ExternalAction).where(ExternalAction.owner_id == owner, ExternalAction.approved_at >= today))
             if count >= self.settings.max_daily_actions:
@@ -599,12 +628,25 @@ class ActionRepository:
             spec = validate_approval_scope(row.preview)
             if connection.provider not in spec.providers or connection.capability != spec.capability:
                 raise CoworkerError("approval_changed", "Action authorization no longer matches the connection.", 409)
+            optional_failure = self._optional_feature_error(spec)
+            if optional_failure is not None:
+                row.state, row.finished_at, row.error_code = (
+                    "cancelled",
+                    utcnow(),
+                    optional_failure[0],
+                )
+                self._audit(db, row.owner_id, row.id, "action.cancelled")
+                return None
             if spec.requires_future_start:
-                from datetime import datetime
                 try:
                     self._future(datetime.fromisoformat(row.preview["payload"]["start_at"]))
-                except CoworkerError:
-                    row.state, row.finished_at, row.error_code = "failed", utcnow(), "event_time"
+                    self._require_live_reminder(row.preview["payload"])
+                except CoworkerError as error:
+                    row.state, row.finished_at, row.error_code = (
+                        "failed",
+                        utcnow(),
+                        error.code,
+                    )
                     self._audit(db, row.owner_id, row.id, "action.failed")
                     return None
             row.state, row.started_at = "executing", utcnow()
