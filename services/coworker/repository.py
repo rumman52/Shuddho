@@ -283,6 +283,23 @@ class Repository:
                 self._audit(db, owner, task_id, "cancellation_requested")
             return self._task_dto(db, task)
 
+    def list_artifacts(self, owner, limit=100):
+        with self.sessions() as db:
+            rows = db.scalars(
+                select(Artifact)
+                .where(Artifact.owner_id == owner)
+                .order_by(Artifact.created_at.desc())
+                .limit(limit)
+            )
+            return [{
+                "id": item.id,
+                "filename": item.filename,
+                "content_type": item.content_type,
+                "byte_size": item.byte_size,
+                "sha256": item.sha256,
+                "created_at": iso(item.created_at),
+            } for item in rows]
+
     def artifact(self, owner, artifact_id):
         with self.sessions.begin() as db:
             item = db.scalar(select(Artifact).where(Artifact.id == artifact_id, Artifact.owner_id == owner))
