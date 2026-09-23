@@ -167,6 +167,7 @@ def validate_reviewed_rollout(
             "Reviewed rollout manifest has no exact action-proposals kill switch."
         )
     normalized = dict(capabilities)
+    normalized.setdefault("action_attachments", False)
     normalized.setdefault("action_selection", False)
     normalized.setdefault("action_proposals", False)
     return {
