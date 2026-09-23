@@ -2682,7 +2682,7 @@ def append_action_reminders_event(
         )
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    for optional in ("action_reminders", "action_reminders", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_selection", "action_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     if (
