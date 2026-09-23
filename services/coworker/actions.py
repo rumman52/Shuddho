@@ -250,6 +250,17 @@ class ActionService:
         self.repo.enabled()
         try:
             attachments = await self.load_attachments(action)
+        except CoworkerError:
+            # Preserve the existing external attachment error contract.
+            await asyncio.to_thread(
+                self.repo.finish,
+                action_id,
+                "failed",
+                error_code="attachment_unavailable",
+                unstarted=True,
+            )
+            return
+        try:
             shared_artifact = await self.load_shared_artifact(action)
         except CoworkerError as error:
             await asyncio.to_thread(
