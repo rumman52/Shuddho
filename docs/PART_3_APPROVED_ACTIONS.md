@@ -7,7 +7,7 @@ This increment lets a signed-in user connect Google, prepare an exact email or c
 | Action | Included | Boundaries |
 | --- | --- | --- |
 | Email | Gmail/Google Workspace account, To/Cc/Bcc, multilingual subject and plain-text body, immediate sending after approval; optional already-owned Shuddho artifact attachments behind the separate attachment flag | Up to 20 distinct recipients; attachments are capped at 3 / 2 MiB and must be immutable owned outputs; no sender aliases, mailbox reading, thread replies, or scheduled sends |
-| Calendar | One future event in the connected account's primary calendar, title/description/location, IANA time zone, start/end and optional guests | Up to 20 guests; invitations to all listed guests; guests see each other; no recurrence, reminders, all-day events, video-link creation, updates or deletions |
+| Calendar | One future event in the connected account's primary calendar, title/description/location, IANA time zone, start/end and optional guests; one explicit reminder is available behind the separate reminder flag | Up to 20 guests; invitations to all listed guests; guests see each other; no recurrence, all-day events, video-link creation, updates or deletions |
 
 The existing email draft includes **Prepare this email for sending**. Only subject and body are copied; the user supplies full addresses. In **Email & calendar**, the user connects each capability separately, fills the form, and selects **Review action**. The server returns the immutable preview. Editing cancels that preview and requires a fresh one. The final button explicitly says **Approve & send email** or **Approve & create event** and requires checking the review acknowledgement.
 
@@ -105,4 +105,6 @@ A later bounded Agent increment adds [non-executable action proposals](AGENT_ACT
 
 The first bounded Wave D increment is now [Approved Shuddho Artifact Email Attachments](APPROVED_ARTIFACT_EMAIL_ATTACHMENTS.md), disabled by default behind `SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false`. Only the signed-in user can select existing owned Shuddho artifacts; exact metadata/SHA-256 is approval-bound and private bytes are re-hashed before execution. Agent proposals remain attachment-blind. Live staging and production activation remain separate gates.
 
-Pending Wave D work: threading, reminders, document sharing, social publishing, and richer recipient resolution. These must register through the same consequential-action policy and pass the same approval/receipt boundary rather than acquiring permission from model-generated text.
+The next bounded Wave D action increment adds [Approved Calendar Reminders](APPROVED_CALENDAR_REMINDERS.md), disabled by default behind `SHUDDHO_ACTION_REMINDERS_ENABLED=false`. A user may choose one bounded reminder on a future calendar event; exact minutes are approval-hash-bound and independently checked in Google/Microsoft provider receipts. Agent proposals remain reminder-blind. The controlled release gate intentionally blocks `action_reminders=true` until the separate live-provider and production-activation increment lands.
+
+Pending Wave D work: threading, document sharing, social publishing, and richer recipient resolution. These must register through the same consequential-action policy and pass the same approval/receipt boundary rather than acquiring permission from model-generated text.
