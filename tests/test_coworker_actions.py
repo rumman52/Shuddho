@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from test_coworker import container, account, signed_client
 from action_samples import enable_actions, connected, action_request, approved
-from services.coworker.action_schemas import ActionPrepare, CalendarCreate, EmailSend, OAuthFinish, OAuthStart
+from services.coworker.action_schemas import ActionPrepare, CalendarCreate, CalendarCreateWithReminder, EmailSend, OAuthFinish, OAuthStart
 from services.coworker.action_repository import digest
 from services.coworker.action_security import TokenVault
 from services.coworker.errors import CoworkerError
@@ -126,6 +126,73 @@ def test_timezone_daylight_saving_and_bounded_events():
     explicit = CalendarCreate.model_validate(base | {"start_at": "2026-11-01T01:30-05:00", "end_at": "2026-11-01T02:30-05:00", "time_zone": "America/New_York"})
     assert explicit.start_at.utcoffset() == timedelta(hours=-5)
 
+
+
+
+def test_reminder_schema_and_feature_flag_are_bounded(container):
+    base = {
+        "kind": "calendar_create_with_reminder",
+        "title": "Meeting",
+        "start_at": "2026-10-01T10:00",
+        "end_at": "2026-10-01T11:00",
+        "time_zone": "Asia/Dhaka",
+        "reminder_minutes_before_start": 15,
+    }
+    value = CalendarCreateWithReminder.model_validate(base)
+    assert value.reminder_minutes_before_start == 15
+    for minutes in (0, 1, 45, 2880):
+        with pytest.raises(ValidationError):
+            CalendarCreateWithReminder.model_validate(
+                base | {"reminder_minutes_before_start": minutes}
+            )
+
+    provider = enable_actions(container)
+    assert provider
+    owner = account(container)
+    connection = connected(container.actions.repo, owner, "calendar")
+    request = action_request(connection, "calendar_create_with_reminder")
+    with pytest.raises(CoworkerError) as disabled:
+        container.actions.repo.prepare(owner, request, "reminder-disabled")
+    assert disabled.value.code == "action_reminders_disabled"
+
+    settings = replace(container.settings, action_reminders_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+    action = container.actions.repo.prepare(owner, request, "reminder-enabled")
+    assert action["preview"]["payload"]["reminder_minutes_before_start"] == 15
+    assert action["preview"]["reminders"] == "single_explicit"
+    assert action["preview"]["approval_scope"]["policy"]["reminders"] == "single_explicit"
+
+
+def test_google_calendar_reminder_executes_exact_approved_minutes(container):
+    provider = enable_actions(container)
+    settings = replace(container.settings, action_reminders_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner, "calendar")
+    request = action_request(connection, "calendar_create_with_reminder")
+    action = container.actions.repo.prepare(owner, request, "google-reminder")
+    action = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    asyncio.run(container.actions.execute(action["id"]))
+
+    result = container.actions.repo.get(owner, action["id"])
+    assert result["state"] == "succeeded"
+    event = next(iter(provider.events.values()))
+    assert event["reminders"] == {
+        "useDefault": False,
+        "overrides": [{"method": "popup", "minutes": 15}],
+    }
+    assert result["receipt"]["provider"] == "google"
 
 def test_api_account_isolation_approval_hash_and_no_implicit_execute(signed_client, container):
     client, headers = signed_client
