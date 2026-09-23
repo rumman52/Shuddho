@@ -91,3 +91,27 @@ If it is enabled, scale activation fails closed unless:
 Scale activation evidence is now schema v2. It records explicit `runtime_requirements`, the action-selection activation SHA-256, and the exact satisfying ledger sequence/hash.
 
 The later schema-v4 ledger append independently re-verifies the same schema-v7 proof. If schema-v2 evidence says action selection was required but its hash/ledger reference was stripped or changed, the ledger writer rejects the expansion record.
+
+## Action-proposals release attestation
+
+When `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=true`, bounded expansion now requires the exact production activation artifact to already be recorded as schema-v8 `action_proposals_verified` in the verified release ledger for the current stage.
+
+Run scale activation with:
+
+```bash
+--action-proposals-activation /secure/release/action-proposals-activation.json
+```
+
+The verifier requires:
+
+- `status == action_proposals_verified`;
+- matching release ID and current stage;
+- runtime proof with Coworker, Agent Runtime, Intelligent Planner, Actions, and Action Proposals enabled;
+- controlled-cohort enforcement enabled;
+- the exact activation SHA-256 to match exactly one schema-v8 ledger event.
+
+New scale activation evidence is schema v3. It records `action_proposals_enabled` in `runtime_requirements`, binds the activation SHA-256, and records the exact satisfying ledger sequence and entry hash.
+
+The later `append-scale` operation independently re-verifies the same schema-v8 event, sequence, entry hash, current stage, and activation SHA-256. Removing or replacing the proposal attestation after activation verification therefore fails closed.
+
+If `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false`, no proposal activation artifact is required. Historical schema-v1 and schema-v2 scale activation evidence remains verifiable; this change does not rewrite older release evidence.
