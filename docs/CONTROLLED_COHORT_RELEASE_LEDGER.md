@@ -281,3 +281,40 @@ Copy the new `head_entry_hash` to the independent release/change record.
 
 A schema-v8 event records release evidence only. It does not enable action proposals, promote a proposal, approve or execute an external action, change cohort membership, authorize expansion/recovery, or create any provider mutation.
 
+
+
+## Approved action-attachment activation evidence
+
+Schema v9 adds one event type: `action_attachments_verified`.
+
+It is appended only after the controlled live attachment staging gate and the production attachment activation verifier both pass. The event requires the same release ID as the existing controlled-cohort ledger and a chain that has already reached the supplied current stage.
+
+It binds by SHA-256:
+
+- the exact timestamped `action_attachments` live-staging evidence;
+- the exact reviewed controlled-cohort rollout manifest;
+- the exact reviewed attachment deployment record;
+- the fresh post-deploy operator status;
+- the exact `action_attachments_verified` activation artifact.
+
+Before append, the ledger writer independently verifies the reviewed artifact/action prerequisites, exact attachment kill switch, deployment source revision, exact normalized runtime capability/provider snapshot, controlled-cohort enforcement and ceiling, runtime snapshot hash, and every bound artifact hash. Duplicate recording of the same exact activation is rejected.
+
+Append:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-action-attachments \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-action-attachments-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.action-attachments.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --deployment-change /secure/release/action-attachments-deployment.json \
+  --operator-status /secure/release/post-action-attachments-status.json \
+  --action-attachments-activation /secure/release/action-attachments-activation.json
+```
+
+Then verify the complete chain and retain the new head hash independently.
+
+Schema v9 is evidence only. It does not enable attachments or approve an action. When attachments are enabled, bounded scale/recovery consume the exact schema-v9 activation SHA plus its ledger sequence/hash; recovery requires the satisfying schema-v9 event to occur after the exact rollback-completion event.
