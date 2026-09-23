@@ -17,6 +17,7 @@ from scripts.cohort_scale_activation import (
     validate_microsoft_rollout_activation,
     validate_action_selection_activation,
     validate_scale_decision,
+    sha256_file,
 )
 
 
@@ -653,5 +654,5 @@ def test_scale_v2_evidence_binds_action_selection_attestation(tmp_path):
     assert value["action_selection"] == attestation
     assert (
         value["artifact_sha256"]["action_selection_activation"]
-        == value["artifact_sha256"]["action_selection_activation"]
+        == sha256_file(action_path)
     )
