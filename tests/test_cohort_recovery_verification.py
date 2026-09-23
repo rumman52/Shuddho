@@ -63,7 +63,7 @@ def rollback_completion(tmp_path, rollout_path):
     return value, path
 
 
-def settings(members, *, microsoft=False, action_selection=False):
+def settings(members, *, microsoft=False, action_selection=False, action_proposals=False):
     return SimpleNamespace(
         cohort_enforced=True,
         cohort_account_ids=frozenset(members),
@@ -81,6 +81,7 @@ def settings(members, *, microsoft=False, action_selection=False):
         actions_enabled=action_selection,
         microsoft_actions_enabled=microsoft,
         agent_action_selection_enabled=action_selection,
+        agent_action_proposals_enabled=action_proposals,
     )
 
 
@@ -671,3 +672,23 @@ def test_legacy_recovery_manifest_defaults_action_selection_off(monkeypatch, tmp
         ),
     )
     assert result["capabilities"]["action_selection"] is False
+
+
+def test_legacy_recovery_manifest_defaults_action_proposals_off(monkeypatch, tmp_path):
+    rollout_path = tmp_path / "legacy-proposal-rollout.json"
+    value = rollout()
+    value["capabilities"].pop("action_proposals", None)
+    rollout_path.write_text(json.dumps(value), encoding="utf-8")
+    rollback_value, _ = rollback_completion(tmp_path, rollout_path)
+    monkeypatch.setenv("SHUDDHO_COWORKER_ENABLED", "true")
+    members = {"a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64}
+    result = recovery.validate_recovery_configuration(
+        settings(members, action_proposals=False),
+        value,
+        plan(),
+        rollback_value,
+        rollout_path=rollout_path,
+        current_stage="canary-5",
+        deployed_at=datetime(2026, 9, 22, 7, 5, tzinfo=timezone.utc),
+    )
+    assert result["capabilities"]["action_proposals"] is False
