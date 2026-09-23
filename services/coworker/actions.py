@@ -222,7 +222,10 @@ class ActionService:
         if not claimed:
             return
         try:
-            receipt = await adapter.execute(claimed, token, attachments)
+            if claimed["kind"] == "email_send_with_attachments":
+                receipt = await adapter.execute(claimed, token, attachments)
+            else:
+                receipt = await adapter.execute(claimed, token)
         except ConnectorFailure as error:
             if error.definitive:
                 await asyncio.to_thread(
