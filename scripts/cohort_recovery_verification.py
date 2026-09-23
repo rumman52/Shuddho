@@ -467,6 +467,139 @@ def validate_action_selection_recovery_activation(
     }
 
 
+def validate_action_proposals_recovery_activation(
+    *,
+    settings: Settings,
+    activation_path: Path | None,
+    ledger_path: Path | None,
+    release_id: str,
+    current_stage: str,
+    rollback_completion: dict,
+    rollback_path: Path,
+    recovery_deployed_at: datetime,
+) -> dict | None:
+    if not getattr(settings, "agent_action_proposals_enabled", False):
+        return None
+    if activation_path is None or ledger_path is None:
+        raise RecoveryVerificationError(
+            "Agent action proposals are enabled but a fresh action-proposals "
+            "activation and the release ledger are required for recovery."
+        )
+
+    activation = load_json(
+        activation_path,
+        "post-rollback action-proposals activation",
+    )
+    if activation.get("status") != "action_proposals_verified":
+        raise RecoveryVerificationError(
+            "Post-rollback action-proposals activation has not been verified."
+        )
+    if activation.get("release_id") != release_id:
+        raise RecoveryVerificationError(
+            "Post-rollback action-proposals activation release_id does not match."
+        )
+    if activation.get("current_stage") != current_stage:
+        raise RecoveryVerificationError(
+            "Post-rollback action-proposals activation current_stage does not match."
+        )
+
+    runtime = activation.get("runtime")
+    capabilities = runtime.get("capabilities") if isinstance(runtime, dict) else None
+    cohort = runtime.get("cohort") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(runtime, dict)
+        or not isinstance(capabilities, dict)
+        or capabilities.get("coworker") is not True
+        or capabilities.get("agent_runtime") is not True
+        or capabilities.get("intelligent_planner") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("action_proposals") is not True
+        or not isinstance(cohort, dict)
+        or cohort.get("enforced") is not True
+    ):
+        raise RecoveryVerificationError(
+            "Post-rollback action-proposals activation does not prove "
+            "required runtime controls."
+        )
+
+    deployed_at = activation.get("deployed_at")
+    verified_at = activation.get("verified_at")
+    if not isinstance(deployed_at, str) or not isinstance(verified_at, str):
+        raise RecoveryVerificationError(
+            "Post-rollback action-proposals activation is missing "
+            "deployment/verification timestamps."
+        )
+    proposals_deployed = parse_time(
+        deployed_at,
+        "action-proposals deployed_at",
+    )
+    proposals_verified = parse_time(
+        verified_at,
+        "action-proposals verified_at",
+    )
+    rollback_verified_at = rollback_completion.get("verified_at")
+    if not isinstance(rollback_verified_at, str):
+        raise RecoveryVerificationError(
+            "Rollback completion has no verified_at timestamp."
+        )
+    rollback_verified = parse_time(
+        rollback_verified_at,
+        "rollback verified_at",
+    )
+    if proposals_deployed < recovery_deployed_at:
+        raise RecoveryVerificationError(
+            "Action-proposals activation predates the recovery deployment."
+        )
+    if proposals_verified < proposals_deployed:
+        raise RecoveryVerificationError(
+            "Action-proposals activation was verified before its deployment."
+        )
+    if proposals_verified <= rollback_verified:
+        raise RecoveryVerificationError(
+            "Action-proposals activation must be freshly verified after rollback completion."
+        )
+
+    try:
+        entries, _ = verified_release_entries(
+            ledger_path,
+            release_id,
+        )
+        rollback_hash = ledger_file_sha256(rollback_path)
+        rollback_entry = require_exact_attested_event(
+            entries,
+            schema_version=2,
+            event_type="rollback_completed",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="rollback_completion",
+            artifact_sha256=rollback_hash,
+            label="Recovery rollback attestation",
+        )
+        activation_hash = ledger_file_sha256(activation_path)
+        proposals_entry = require_exact_attested_event(
+            entries,
+            schema_version=8,
+            event_type="action_proposals_verified",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="action_proposals_activation",
+            artifact_sha256=activation_hash,
+            after_sequence=rollback_entry["sequence"],
+            label="Action-proposals recovery attestation",
+        )
+    except Exception as error:
+        raise RecoveryVerificationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+
+    return {
+        "activation": activation,
+        "ledger_sequence": proposals_entry["sequence"],
+        "ledger_entry_hash": proposals_entry["entry_hash"],
+        "activation_sha256": activation_hash,
+    }
+
+
 def expect_json(response: httpx.Response, status: int, label: str) -> dict:
     if response.status_code != status:
         raise RecoveryVerificationError(
@@ -608,6 +741,7 @@ def build_recovery_evidence(
     status_output: Path,
     microsoft_rollout_activation_path: Path | None = None,
     action_selection_activation_path: Path | None = None,
+    action_proposals_activation_path: Path | None = None,
     release_ledger_path: Path | None = None,
 ) -> dict:
     if not deployment_reference.strip() or len(deployment_reference) > 500:
@@ -637,6 +771,16 @@ def build_recovery_evidence(
     action_selection_recovery = validate_action_selection_recovery_activation(
         settings=settings,
         activation_path=action_selection_activation_path,
+        ledger_path=release_ledger_path,
+        release_id=config["release_id"],
+        current_stage=current_stage,
+        rollback_completion=rollback_completion,
+        rollback_path=rollback_path,
+        recovery_deployed_at=deployment_time,
+    )
+    action_proposals_recovery = validate_action_proposals_recovery_activation(
+        settings=settings,
+        activation_path=action_proposals_activation_path,
         ledger_path=release_ledger_path,
         release_id=config["release_id"],
         current_stage=current_stage,
@@ -705,8 +849,18 @@ def build_recovery_evidence(
             "ledger_entry_hash": action_selection_recovery["ledger_entry_hash"],
         }
 
+    action_proposals_summary = None
+    if action_proposals_recovery is not None:
+        artifact_sha256["action_proposals_activation"] = (
+            action_proposals_recovery["activation_sha256"]
+        )
+        action_proposals_summary = {
+            "ledger_sequence": action_proposals_recovery["ledger_sequence"],
+            "ledger_entry_hash": action_proposals_recovery["ledger_entry_hash"],
+        }
+
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "release_id": config["release_id"],
         "status": "recovery_verified",
         "current_stage": current_stage,
@@ -732,9 +886,17 @@ def build_recovery_evidence(
                     False,
                 )
             ),
+            "action_proposals_enabled": bool(
+                getattr(
+                    settings,
+                    "agent_action_proposals_enabled",
+                    False,
+                )
+            ),
         },
         "microsoft_rollout": microsoft_summary,
         "action_selection": action_selection_summary,
+        "action_proposals": action_proposals_summary,
         "artifact_sha256": artifact_sha256,
     }
 
@@ -754,6 +916,7 @@ def main() -> None:
     parser.add_argument("--status-output", type=Path, required=True)
     parser.add_argument("--microsoft-rollout-activation", type=Path)
     parser.add_argument("--action-selection-activation", type=Path)
+    parser.add_argument("--action-proposals-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -783,6 +946,7 @@ def main() -> None:
             status_output=args.status_output,
             microsoft_rollout_activation_path=args.microsoft_rollout_activation,
             action_selection_activation_path=args.action_selection_activation,
+            action_proposals_activation_path=args.action_proposals_activation,
             release_ledger_path=args.release_ledger,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
