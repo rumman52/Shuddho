@@ -31,6 +31,8 @@ from services.coworker.models import AuditEvent, Connection, ExternalAction, OAu
 
 def test_flags_credentials_and_token_encryption(container):
     assert not container.settings.actions_enabled
+    with pytest.raises(ValueError, match="Action reminders require"):
+        replace(container.settings, action_reminders_enabled=True).validate()
     with pytest.raises(CoworkerError, match="not available"):
         container.actions.repo.start_oauth(account(container), "email")
     enable_actions(container)
