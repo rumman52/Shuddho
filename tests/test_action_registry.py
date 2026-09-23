@@ -183,3 +183,13 @@ def test_plain_email_rejects_unexpected_attachment_manifest():
     with pytest.raises(CoworkerError, match="does not allow attachments"):
         build_approval_scope(preview)
 
+def test_plain_v2_scope_keeps_exact_contract_v1_shape():
+    preview = email_preview()
+    preview["version"] = 2
+    scope = build_approval_scope(preview)
+    assert scope["contract_version"] == 1
+    assert "attachments_sha256" not in scope
+    assert "attachments" not in scope
+    preview["approval_scope"] = scope
+    assert validate_approval_scope(preview).kind == "email_send"
+
