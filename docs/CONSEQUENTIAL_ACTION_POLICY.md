@@ -64,7 +64,9 @@ No generic URL, arbitrary HTTP, shell, or unrestricted browser action is part of
 
 ## Current registered actions
 
-- `email_send` via Google Gmail send scope;
-- `calendar_create` via Google owned-events scope.
+- `email_send` via the approved email-send boundary;
+- `email_send_with_attachments`, separately gated and limited to already-owned Shuddho artifacts;
+- `calendar_create` for a future event with no reminder;
+- `calendar_create_with_reminder`, separately gated and limited to one explicit bounded reminder.
 
-The registry is an architectural safety boundary, not an indication that additional connectors are enabled.
+The registry is an architectural safety boundary, not an indication that a connector or optional action capability is enabled. Agent action proposals and Agent-bound action selection intentionally support a smaller subset: attachment and reminder variants remain under direct user review and cannot be introduced or selected by the Agent runtime.
