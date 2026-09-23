@@ -211,8 +211,26 @@ If all consequential actions must stop:
 SHUDDHO_ACTIONS_ENABLED=false
 ```
 
-## Next release-evidence step
+## Release-ledger handoff
 
-After this activation verifier is green, the exact activation artifact should be chained into the existing tamper-evident controlled-cohort release ledger as a new evidence-only schema version.
+After activation verification passes, record the exact evidence in the tamper-evident controlled-cohort release ledger:
 
-Scale/recovery should consume that ledgered proof only after the ledger increment lands. Do not make standalone `action_proposals_verified` JSON sufficient for scale or recovery.
+```bash
+uv run python scripts/cohort_release_ledger.py append-action-proposals \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-action-proposals-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.action-proposals.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --deployment-change /secure/release/action-proposals-deployment.json \
+  --operator-status /secure/release/post-action-proposals-status.json \
+  --action-proposals-activation /secure/release/action-proposals-activation.json
+```
+
+This creates schema-v8 `action_proposals_verified` evidence in the existing release chain. Verify the complete ledger afterward and externally anchor the returned head hash.
+
+The ledger event is evidence-only. It does not enable action proposals, promote a proposal, approve an action, execute a provider mutation, expand the cohort, or authorize recovery.
+
+The next enforcement increment should make scale and post-rollback recovery consume the exact schema-v8 attestation whenever action proposals are enabled. Standalone `action_proposals_verified` JSON must not be sufficient for either path.
