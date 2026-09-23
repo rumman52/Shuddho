@@ -224,3 +224,39 @@ uv run python scripts/cohort_release_ledger.py append-action-selection \
 After appending, verify the complete ledger and copy the new `head_entry_hash` to the independent release/change record.
 
 A schema-v7 event records release evidence only. It does not enable action selection, approve or execute an external action, change cohort membership, or authorize expansion/recovery by itself.
+
+## Agent action-proposals activation evidence
+
+Schema v8 adds one event type: `action_proposals_verified`.
+
+It is appended only after the controlled live action-proposal gate and the production activation verifier both pass. The event extends the same controlled-cohort release chain and requires that the chain has already reached the declared current stage.
+
+It binds by SHA-256:
+
+- the exact timestamped `action_proposals` live-staging evidence;
+- the exact reviewed rollout manifest;
+- the exact reviewed deployment record;
+- the fresh post-deploy operator status;
+- the exact `action_proposals_verified` activation artifact.
+
+The ledger append independently checks the action-proposals rollout kill switch, change/stage identity, exact staging and rollout hashes in the deployment record, the full source revision, clean cohort health, the production runtime proof embedded in the activation artifact, and the canonical runtime-manifest hash. Duplicate recording of the same exact activation is rejected.
+
+Example:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-action-proposals \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-action-proposals-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.action-proposals.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --deployment-change /secure/release/action-proposals-deployment.json \
+  --operator-status /secure/release/post-action-proposals-status.json \
+  --action-proposals-activation /secure/release/action-proposals-activation.json
+```
+
+After appending, verify the complete ledger and copy the returned `head_entry_hash` to the independent release/change record.
+
+A schema-v8 entry is release evidence only. It cannot generate or promote a proposal, approve or execute an external action, change feature flags, expand the cohort, or authorize recovery by itself.
