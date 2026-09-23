@@ -1,0 +1,7 @@
+{
+  "release_id": "coworker-cohort-001",
+  "change_reference": "change-action-selection-001",
+  "current_stage": "cohort-25",
+  "deployed_at": "2026-09-23T03:30:00+00:00",
+  "staging_evidence_sha256": "<sha256-of-exact-action-selection-staging-evidence>"
+}
