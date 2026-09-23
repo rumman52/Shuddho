@@ -8,7 +8,7 @@ from scripts.staging_gate import evaluate as evaluate_staging, load_evidence
 
 ACTION_PROVIDERS = {"google", "microsoft"}
 
-OPTIONAL_CAPABILITY_KEYS = {"action_selection"}
+OPTIONAL_CAPABILITY_KEYS = {"action_selection", "action_proposals"}
 
 CAPABILITY_KEYS = {
     "coworker",
@@ -42,7 +42,10 @@ ROLLBACK_KEYS = {
     "research_kill_switch",
     "actions_kill_switch",
 }
-OPTIONAL_ROLLBACK_KEYS = {"action_selection_kill_switch"}
+OPTIONAL_ROLLBACK_KEYS = {
+    "action_selection_kill_switch",
+    "action_proposals_kill_switch",
+}
 EXPECTED_KILL_SWITCHES = {
     "global_kill_switch": "SHUDDHO_COWORKER_ENABLED=false",
     "agent_kill_switch": "SHUDDHO_AGENT_RUNTIME_ENABLED=false",
@@ -50,6 +53,7 @@ EXPECTED_KILL_SWITCHES = {
     "research_kill_switch": "SHUDDHO_RESEARCH_SERVICES_ENABLED=false",
     "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false",
     "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
+    "action_proposals_kill_switch": "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
 }
 
 
@@ -143,6 +147,12 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
                 or not capabilities["intelligent_planner"]
             ):
                 failures.append("action_selection_dependency")
+            if capabilities.get("action_proposals") is True and (
+                not capabilities["actions"]
+                or not capabilities["agent_runtime"]
+                or not capabilities["intelligent_planner"]
+            ):
+                failures.append("action_proposals_dependency")
 
     providers_value = rollout.get("action_providers")
     if providers_value is not None:
@@ -177,13 +187,16 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
         if not text_ref(rollback["runbook_reference"]):
             failures.append("rollback_runbook")
         for key, expected in EXPECTED_KILL_SWITCHES.items():
-            if key == "action_selection_kill_switch":
+            if key in {"action_selection_kill_switch", "action_proposals_kill_switch"}:
                 continue
             if rollback.get(key) != expected:
                 failures.append(key)
         if isinstance(capabilities, dict) and capabilities.get("action_selection") is True:
             if rollback.get("action_selection_kill_switch") != EXPECTED_KILL_SWITCHES["action_selection_kill_switch"]:
                 failures.append("action_selection_kill_switch")
+        if isinstance(capabilities, dict) and capabilities.get("action_proposals") is True:
+            if rollback.get("action_proposals_kill_switch") != EXPECTED_KILL_SWITCHES["action_proposals_kill_switch"]:
+                failures.append("action_proposals_kill_switch")
 
     monitoring = rollout["monitoring"]
     required_monitoring = set(BASE_MONITORING)
@@ -226,12 +239,17 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         isinstance(capabilities, dict)
         and capabilities.get("action_selection") is True
     )
+    require_action_proposals = (
+        isinstance(capabilities, dict)
+        and capabilities.get("action_proposals") is True
+    )
     staging = evaluate_staging(
         evidence,
         require_research=require_research,
         require_actions=require_actions,
         require_microsoft_actions=require_microsoft_actions,
         require_action_selection=require_action_selection,
+        require_action_proposals=require_action_proposals,
     )
     cohort_record = evidence.get("cohort_admission")
     cohort_ref = cohort_record.get("evidence") if isinstance(cohort_record, dict) else None
@@ -272,6 +290,7 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         "action_providers": sorted(action_providers),
         "required_feature_gates": {
             "action_selection": require_action_selection,
+            "action_proposals": require_action_proposals,
         },
     }
 
