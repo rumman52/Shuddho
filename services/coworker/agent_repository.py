@@ -12,7 +12,7 @@ from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
 from .models import Account, ActionProposal, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
-from .repository import iso, not_found
+from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
@@ -155,7 +155,7 @@ class AgentRepository:
     def _proposal_dto(row: ActionProposal) -> dict:
         display_state = (
             "expired"
-            if row.state == "suggested" and row.expires_at <= utcnow()
+            if row.state == "suggested" and aware(row.expires_at) <= utcnow()
             else row.state
         )
         return {
@@ -650,6 +650,48 @@ class AgentRepository:
                 run.updated_at = utcnow()
                 self._audit(db, run.owner_id, run.id, "agent_action_selection_pruned")
             return released
+
+    def dismiss_action_proposal(
+        self,
+        owner: str,
+        run_id: str,
+        proposal_id: str,
+        proposal_hash: str,
+    ) -> dict:
+        with self.sessions.begin() as db:
+            self._run(db, owner, run_id)
+            row = db.scalar(select(ActionProposal).where(
+                ActionProposal.id == proposal_id,
+                ActionProposal.owner_id == owner,
+                ActionProposal.agent_run_id == run_id,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if row.proposal_hash != proposal_hash:
+                raise CoworkerError(
+                    "proposal_changed",
+                    "This proposal changed. Review it again.",
+                    409,
+                )
+            if row.state == "suggested" and aware(row.expires_at) <= utcnow():
+                row.state = "expired"
+            if row.state == "dismissed":
+                return self._proposal_dto(row)
+            if row.state != "suggested":
+                raise CoworkerError(
+                    "proposal_unavailable",
+                    "This proposal can no longer be dismissed.",
+                    409,
+                )
+            row.state = "dismissed"
+            row.dismissed_at = utcnow()
+            self._audit(
+                db,
+                owner,
+                row.id,
+                "agent_action_proposal_dismissed",
+            )
+            return self._proposal_dto(row)
 
     def list(self, owner: str) -> list[dict]:
         with self.sessions() as db:
