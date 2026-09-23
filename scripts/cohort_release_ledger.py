@@ -353,6 +353,75 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
     }
 
 
+
+
+def verified_release_entries(
+    ledger: Path,
+    release_id: str,
+) -> tuple[list[dict], dict]:
+    entries = read_entries(ledger)
+    state = verify_entries(entries, ledger_key())
+    if state.get("release_id") != release_id:
+        raise ReleaseLedgerError(
+            "Release ledger release_id does not match the expected release."
+        )
+    return entries, state
+
+
+def require_exact_attested_event(
+    entries: list[dict],
+    *,
+    schema_version: int,
+    event_type: str,
+    current_stage: str,
+    next_stage: str | None,
+    artifact_key: str,
+    artifact_sha256: str,
+    after_sequence: int | None = None,
+    expected_sequence: int | None = None,
+    expected_entry_hash: str | None = None,
+    label: str = "release attestation",
+) -> dict:
+    if not valid_hash(artifact_sha256):
+        raise ReleaseLedgerError(
+            f"{label} requires a valid artifact SHA-256."
+        )
+    matches = [
+        item
+        for item in entries
+        if item.get("schema_version") == schema_version
+        and item.get("event_type") == event_type
+        and item.get("current_stage") == current_stage
+        and item.get("next_stage") == next_stage
+        and item.get("artifact_sha256", {}).get(artifact_key)
+        == artifact_sha256
+        and (
+            after_sequence is None
+            or item.get("sequence", 0) > after_sequence
+        )
+    ]
+    if len(matches) != 1:
+        raise ReleaseLedgerError(
+            f"{label} requires exactly one matching ledger event."
+        )
+    entry = matches[0]
+    if (
+        expected_sequence is not None
+        and entry.get("sequence") != expected_sequence
+    ):
+        raise ReleaseLedgerError(
+            f"{label} ledger sequence does not match."
+        )
+    if (
+        expected_entry_hash is not None
+        and entry.get("entry_hash") != expected_entry_hash
+    ):
+        raise ReleaseLedgerError(
+            f"{label} ledger entry hash does not match."
+        )
+    return entry
+
+
 def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix="." + path.name + ".", dir=str(path.parent))
@@ -632,6 +701,72 @@ def append_recovery_event(
             "Recovery does not bind the rollback-completion artifact recorded in the ledger."
         )
 
+    if recovery_value.get("schema_version") == 2:
+        requirements = recovery_value.get("runtime_requirements")
+        if (
+            not isinstance(requirements, dict)
+            or set(requirements) != {
+                "microsoft_actions_enabled",
+                "action_selection_enabled",
+            }
+            or any(not isinstance(value, bool) for value in requirements.values())
+        ):
+            raise ReleaseLedgerError(
+                "Schema-v2 recovery evidence has invalid runtime_requirements."
+            )
+
+        microsoft_required = requirements["microsoft_actions_enabled"]
+        microsoft_hash = recovery_hashes.get("microsoft_rollout_activation")
+        microsoft_summary = recovery_value.get("microsoft_rollout")
+        if microsoft_required:
+            if not valid_hash(microsoft_hash) or not isinstance(microsoft_summary, dict):
+                raise ReleaseLedgerError(
+                    "Microsoft-enabled recovery evidence is missing its required attestation."
+                )
+            require_exact_attested_event(
+                entries,
+                schema_version=MICROSOFT_ROLLOUT_SCHEMA_VERSION,
+                event_type="microsoft_rollout_verified",
+                current_stage=current_stage,
+                next_stage=None,
+                artifact_key="rollout_activation",
+                artifact_sha256=microsoft_hash,
+                after_sequence=rollback_entry["sequence"],
+                expected_sequence=microsoft_summary.get("ledger_sequence"),
+                expected_entry_hash=microsoft_summary.get("ledger_entry_hash"),
+                label="Microsoft recovery attestation",
+            )
+        elif microsoft_hash is not None or microsoft_summary is not None:
+            raise ReleaseLedgerError(
+                "Recovery evidence contains Microsoft attestation data while Microsoft is not required."
+            )
+
+        action_required = requirements["action_selection_enabled"]
+        action_hash = recovery_hashes.get("action_selection_activation")
+        action_summary = recovery_value.get("action_selection")
+        if action_required:
+            if not valid_hash(action_hash) or not isinstance(action_summary, dict):
+                raise ReleaseLedgerError(
+                    "Action-selection recovery evidence is missing its required attestation."
+                )
+            require_exact_attested_event(
+                entries,
+                schema_version=ACTION_SELECTION_SCHEMA_VERSION,
+                event_type="action_selection_verified",
+                current_stage=current_stage,
+                next_stage=None,
+                artifact_key="action_selection_activation",
+                artifact_sha256=action_hash,
+                after_sequence=rollback_entry["sequence"],
+                expected_sequence=action_summary.get("ledger_sequence"),
+                expected_entry_hash=action_summary.get("ledger_entry_hash"),
+                label="Action-selection recovery attestation",
+            )
+        elif action_hash is not None or action_summary is not None:
+            raise ReleaseLedgerError(
+                "Recovery evidence contains action-selection attestation data while action selection is not required."
+            )
+
     core = {
         "schema_version": RECOVERY_SCHEMA_VERSION,
         "sequence": len(entries) + 1,
@@ -756,6 +891,68 @@ def append_scale_event(
         raise ReleaseLedgerError(
             "bounded_expansion_verified requires the matching provider_policy_verified ledger event."
         )
+
+    if activation.get("schema_version") == 2:
+        requirements = activation.get("runtime_requirements")
+        if (
+            not isinstance(requirements, dict)
+            or set(requirements) != {
+                "microsoft_actions_enabled",
+                "action_selection_enabled",
+            }
+            or any(not isinstance(value, bool) for value in requirements.values())
+        ):
+            raise ReleaseLedgerError(
+                "Schema-v2 scale activation has invalid runtime_requirements."
+            )
+
+        microsoft_required = requirements["microsoft_actions_enabled"]
+        microsoft_hash = hashes.get("microsoft_rollout_activation")
+        if microsoft_required:
+            if not valid_hash(microsoft_hash):
+                raise ReleaseLedgerError(
+                    "Microsoft-enabled scale activation is missing its required attestation."
+                )
+            require_exact_attested_event(
+                entries,
+                schema_version=MICROSOFT_ROLLOUT_SCHEMA_VERSION,
+                event_type="microsoft_rollout_verified",
+                current_stage=current_stage,
+                next_stage=None,
+                artifact_key="rollout_activation",
+                artifact_sha256=microsoft_hash,
+                label="Microsoft scale attestation",
+            )
+        elif microsoft_hash is not None:
+            raise ReleaseLedgerError(
+                "Scale activation contains Microsoft attestation data while Microsoft is not required."
+            )
+
+        action_required = requirements["action_selection_enabled"]
+        action_hash = hashes.get("action_selection_activation")
+        action_summary = activation.get("action_selection")
+        if action_required:
+            if not valid_hash(action_hash) or not isinstance(action_summary, dict):
+                raise ReleaseLedgerError(
+                    "Action-selection scale activation is missing its required attestation."
+                )
+            require_exact_attested_event(
+                entries,
+                schema_version=ACTION_SELECTION_SCHEMA_VERSION,
+                event_type="action_selection_verified",
+                current_stage=current_stage,
+                next_stage=None,
+                artifact_key="action_selection_activation",
+                artifact_sha256=action_hash,
+                expected_sequence=action_summary.get("ledger_sequence"),
+                expected_entry_hash=action_summary.get("ledger_entry_hash"),
+                label="Action-selection scale attestation",
+            )
+        elif action_hash is not None or action_summary is not None:
+            raise ReleaseLedgerError(
+                "Scale activation contains action-selection attestation data while action selection is not required."
+            )
+
     prior_scale = [
         item for item in entries
         if item.get("event_type") == "bounded_expansion_verified"

@@ -75,6 +75,7 @@ uv run --extra coworker python scripts/cohort_recovery_verification.py \
   --deployed-at 2026-09-22T08:00:00+00:00 \
   --status-output /secure/release/post-recovery-status.json \
   --microsoft-rollout-activation /secure/release/post-rollback-microsoft-rollout-activation.json \
+  --action-selection-activation /secure/release/post-rollback-action-selection-activation.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --output /secure/release/recovery-verification.json
 ```
@@ -162,3 +163,22 @@ The recovery verifier requires:
 - the schema-v6 event sequence to be later than the exact rollback-completion ledger event.
 
 The resulting recovery artifact records the exact Microsoft activation SHA-256 and the matching ledger sequence/head reference. The existing schema-v3 `recovery_verified` ledger event then hashes the complete recovery artifact, so Microsoft proof becomes part of the established recovery chain without introducing a new ledger schema.
+
+
+## Action-selection-enabled recovery
+
+Legacy rollout manifests that do not contain `action_selection` are normalized to `false`.
+
+When the approved rollout and recovered backend enable action selection, recovery requires a **fresh post-rollback** `action_selection_verified` activation. The verifier requires:
+
+- the same release ID and current stage;
+- all required action-selection runtime controls enabled;
+- the action-selection deployment to occur no earlier than the recovery deployment;
+- action-selection verification to occur after its deployment and after rollback completion;
+- the exact rollback-completion artifact to have one matching schema-v2 ledger event;
+- the exact action-selection activation to have one matching schema-v7 event;
+- the schema-v7 event sequence to be later than that exact rollback-completion event.
+
+Recovery evidence is now schema v2 and records explicit `runtime_requirements`, the action-selection activation SHA-256, and the exact schema-v7 sequence/hash.
+
+When schema-v3 `recovery_verified` is appended, the ledger writer independently re-checks those requirements. A v2 recovery artifact cannot silently remove a required Microsoft or action-selection attestation after runtime verification.

@@ -221,6 +221,8 @@ The next activation-control increment binds that exact timestamped `action_selec
 
 The following release-evidence increment adds schema v7 `action_selection_verified` to the same tamper-evident controlled-cohort ledger. It SHA-binds the exact staging proof, reviewed deployment, post-deploy operator status, and activation artifact, rejects duplicate activation recording, and requires the chain to have already reached the declared current stage.
 
+The next enforcement increment makes scale and recovery consume exact feature attestations through one reusable release-ledger verification primitive. New scale/recovery evidence is schema v2 with explicit runtime requirements and action-selection ledger sequence/hash references; the later ledger append independently re-verifies those requirements so a required schema-v7 proof cannot be stripped between verification and recording. Post-rollback recovery additionally requires the schema-v7 event to occur after the exact rollback-completion event.
+
 Broader model-created external actions and connector expansion remain later increments.
 
 ### Consequential actions

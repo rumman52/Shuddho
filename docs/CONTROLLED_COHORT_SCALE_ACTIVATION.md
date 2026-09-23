@@ -36,6 +36,7 @@ uv run --extra coworker python scripts/cohort_scale_activation.py \
   --operator-status /secure/release/post-scale-operator-status.json \
   --provider-policy-activation /secure/release/provider-policy-activation.json \
   --microsoft-rollout-activation /secure/release/microsoft-rollout-activation.json \
+  --action-selection-activation /secure/release/action-selection-activation.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --freshness-minutes 30 \
   --output /secure/release/bounded-scale-activation.json
@@ -72,3 +73,21 @@ If the deployed backend has `SHUDDHO_MICROSOFT_ACTIONS_ENABLED=true`, bounded sc
 - exactly one schema-v6 `microsoft_rollout_verified` event for the current stage binds the exact activation artifact SHA-256.
 
 The bounded scale activation evidence also records the Microsoft rollout activation SHA-256 when Microsoft is enabled. This makes later scale evidence cryptographically dependent on the exact rollout proof rather than only on the current runtime flag.
+
+
+## Action-selection-aware expansion
+
+If `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false`, bounded scale activation remains backward-compatible and no action-selection artifact is required.
+
+If it is enabled, scale activation fails closed unless:
+
+- `--action-selection-activation` is supplied;
+- its status is `action_selection_verified`;
+- its release ID and current stage match the scale decision;
+- it proves Coworker, Agent Runtime, Intelligent Planner, Actions, Action Selection and cohort enforcement are enabled;
+- the complete release ledger verifies;
+- exactly one schema-v7 `action_selection_verified` event for the current stage binds the exact activation SHA-256.
+
+Scale activation evidence is now schema v2. It records explicit `runtime_requirements`, the action-selection activation SHA-256, and the exact satisfying ledger sequence/hash.
+
+The later schema-v4 ledger append independently re-verifies the same schema-v7 proof. If schema-v2 evidence says action selection was required but its hash/ledger reference was stripped or changed, the ledger writer rejects the expansion record.

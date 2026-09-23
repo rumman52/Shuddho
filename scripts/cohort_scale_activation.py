@@ -12,6 +12,8 @@ from scripts.cohort_release_ledger import (
     file_sha256 as ledger_file_sha256,
     ledger_key,
     read_entries,
+    require_exact_attested_event,
+    verified_release_entries,
     verify_entries,
 )
 from scripts.staging_api_exercise import env_secret, require_https_base
@@ -248,6 +250,76 @@ def validate_microsoft_rollout_activation(
     return value
 
 
+
+
+def validate_action_selection_activation(
+    path: Path | None,
+    ledger_path: Path,
+    decision: dict,
+    settings: Settings,
+) -> dict | None:
+    if not getattr(settings, "agent_action_selection_enabled", False):
+        return None
+    if path is None:
+        raise ScaleActivationError(
+            "Agent action selection is enabled but "
+            "--action-selection-activation is required."
+        )
+
+    value = load_json(path, "action selection activation")
+    if value.get("status") != "action_selection_verified":
+        raise ScaleActivationError(
+            "Action selection activation has not been verified."
+        )
+    if value.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError(
+            "Action selection activation release_id does not match."
+        )
+    if value.get("current_stage") != decision["current_stage"]:
+        raise ScaleActivationError(
+            "Action selection activation current_stage does not match."
+        )
+    runtime = value.get("runtime")
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("coworker_enabled") is not True
+        or runtime.get("agent_runtime_enabled") is not True
+        or runtime.get("intelligent_planner_enabled") is not True
+        or runtime.get("actions_enabled") is not True
+        or runtime.get("action_selection_enabled") is not True
+        or runtime.get("cohort_enforced") is not True
+    ):
+        raise ScaleActivationError(
+            "Action selection activation does not prove required runtime controls."
+        )
+
+    try:
+        entries, _ = verified_release_entries(
+            ledger_path,
+            decision["release_id"],
+        )
+        entry = require_exact_attested_event(
+            entries,
+            schema_version=7,
+            event_type="action_selection_verified",
+            current_stage=decision["current_stage"],
+            next_stage=None,
+            artifact_key="action_selection_activation",
+            artifact_sha256=ledger_file_sha256(path),
+            label="Action-selection scale attestation",
+        )
+    except Exception as error:
+        raise ScaleActivationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+
+    return {
+        "activation": value,
+        "ledger_sequence": entry["sequence"],
+        "ledger_entry_hash": entry["entry_hash"],
+        "activation_sha256": ledger_file_sha256(path),
+    }
+
 def require_deployed_configuration(settings: Settings, decision: dict, allowed_id: str, denied_id: str) -> None:
     if not settings.cohort_enforced:
         raise ScaleActivationError("SHUDDHO_COWORKER_COHORT_ENFORCED must remain true.")
@@ -277,6 +349,8 @@ def build_evidence(
     provider_policy_activation_path: Path,
     now: datetime,
     microsoft_rollout_activation_path: Path | None = None,
+    action_selection_activation_path: Path | None = None,
+    action_selection_attestation: dict | None = None,
 ) -> dict:
     artifact_sha256 = {
         "scale_decision": sha256_file(scale_decision_path),
@@ -295,8 +369,26 @@ def build_evidence(
             microsoft_rollout_activation_path
         )
 
+    action_selection_summary = None
+    if getattr(settings, "agent_action_selection_enabled", False):
+        if (
+            action_selection_activation_path is None
+            or action_selection_attestation is None
+        ):
+            raise ScaleActivationError(
+                "Action selection activation evidence and ledger attestation "
+                "are required when action selection is enabled."
+            )
+        artifact_sha256["action_selection_activation"] = sha256_file(
+            action_selection_activation_path
+        )
+        action_selection_summary = {
+            "ledger_sequence": action_selection_attestation["ledger_sequence"],
+            "ledger_entry_hash": action_selection_attestation["ledger_entry_hash"],
+        }
+
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "bounded_expansion_verified",
         "release_id": decision["release_id"],
         "verified_at": now.isoformat(),
@@ -309,6 +401,19 @@ def build_evidence(
         "change_reference": deployment["change_reference"],
         "deployment_deployed_at": deployment["deployed_at"],
         "operator_status_generated_at": operator_status["generated_at"],
+        "runtime_requirements": {
+            "microsoft_actions_enabled": bool(
+                settings.microsoft_actions_enabled
+            ),
+            "action_selection_enabled": bool(
+                getattr(
+                    settings,
+                    "agent_action_selection_enabled",
+                    False,
+                )
+            ),
+        },
+        "action_selection": action_selection_summary,
         "artifact_sha256": artifact_sha256,
     }
 
@@ -322,6 +427,7 @@ def main() -> None:
     parser.add_argument("--operator-status", type=Path, required=True)
     parser.add_argument("--provider-policy-activation", type=Path, required=True)
     parser.add_argument("--microsoft-rollout-activation", type=Path)
+    parser.add_argument("--action-selection-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--freshness-minutes", type=int, default=30)
     parser.add_argument("--output", type=Path, required=True)
@@ -356,6 +462,12 @@ def main() -> None:
         settings = Settings.from_env()
         validate_microsoft_rollout_activation(
             args.microsoft_rollout_activation,
+            args.release_ledger,
+            decision,
+            settings,
+        )
+        action_selection_attestation = validate_action_selection_activation(
+            args.action_selection_activation,
             args.release_ledger,
             decision,
             settings,
@@ -406,6 +518,8 @@ def main() -> None:
             operator_status_path=args.operator_status,
             provider_policy_activation_path=args.provider_policy_activation,
             microsoft_rollout_activation_path=args.microsoft_rollout_activation,
+            action_selection_activation_path=args.action_selection_activation,
+            action_selection_attestation=action_selection_attestation,
             now=now,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
