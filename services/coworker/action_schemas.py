@@ -1,4 +1,4 @@
-"""Only these two typed tools may cross the external-action boundary."""
+"""Only registered, explicitly typed actions may cross the external-action boundary."""
 from __future__ import annotations
 
 import re
