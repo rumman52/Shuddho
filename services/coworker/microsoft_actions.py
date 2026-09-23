@@ -112,26 +112,28 @@ def email_body(action: dict, attachments=None) -> dict:
             for value in values
         ]
 
-    return {
-        "message": {
-            "subject": payload["subject"],
-            "body": {
-                "contentType": "Text",
-                "content": payload["body"],
-            },
-            "toRecipients": recipients(payload["to"]),
-            "ccRecipients": recipients(payload["cc"]),
-            "bccRecipients": recipients(payload["bcc"]),
-            "attachments": [
-                {
-                    "@odata.type": "#microsoft.graph.fileAttachment",
-                    "name": item["filename"],
-                    "contentType": item["content_type"],
-                    "contentBytes": base64.b64encode(item["body"]).decode("ascii"),
-                }
-                for item in attachments
-            ],
+    message = {
+        "subject": payload["subject"],
+        "body": {
+            "contentType": "Text",
+            "content": payload["body"],
         },
+        "toRecipients": recipients(payload["to"]),
+        "ccRecipients": recipients(payload["cc"]),
+        "bccRecipients": recipients(payload["bcc"]),
+    }
+    if attachments:
+        message["attachments"] = [
+            {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": item["filename"],
+                "contentType": item["content_type"],
+                "contentBytes": base64.b64encode(item["body"]).decode("ascii"),
+            }
+            for item in attachments
+        ]
+    return {
+        "message": message,
         "saveToSentItems": True,
     }
 
