@@ -401,6 +401,18 @@ def build_evidence(
         "change_reference": deployment["change_reference"],
         "deployment_deployed_at": deployment["deployed_at"],
         "operator_status_generated_at": operator_status["generated_at"],
+        "runtime_requirements": {
+            "microsoft_actions_enabled": bool(
+                settings.microsoft_actions_enabled
+            ),
+            "action_selection_enabled": bool(
+                getattr(
+                    settings,
+                    "agent_action_selection_enabled",
+                    False,
+                )
+            ),
+        },
         "action_selection": action_selection_summary,
         "artifact_sha256": artifact_sha256,
     }
