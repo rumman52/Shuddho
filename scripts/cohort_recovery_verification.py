@@ -183,7 +183,14 @@ def validate_recovery_configuration(
         "members": members,
         "stage_min": stage["min_members"],
         "stage_max": stage["max_users"],
-        "capabilities": {key: bool(capabilities[key]) for key in ["coworker", *CAPABILITY_ATTRS]},
+        "capabilities": {
+            key: bool(
+                capabilities.get(key, False)
+                if key == "action_selection"
+                else capabilities[key]
+            )
+            for key in ["coworker", *CAPABILITY_ATTRS]
+        },
     }
 
 
