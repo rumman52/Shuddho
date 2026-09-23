@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any, Literal
@@ -91,6 +92,22 @@ class AgentPlanStep(AgentModel):
         if len(encoded.encode("utf-8")) > 32768:
             raise ValueError("Tool arguments exceed the 32 KiB limit")
         return self
+
+
+def action_proposal_hash(run_id: str, payload: dict, rationale: str) -> str:
+    value = {
+        "version": 1,
+        "run_id": run_id,
+        "payload": payload,
+        "rationale": rationale,
+    }
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class AgentActionProposal(AgentModel):
