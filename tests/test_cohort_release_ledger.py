@@ -2104,3 +2104,310 @@ def test_schema_v9_action_attachments_rejects_wrong_kill_switch(tmp_path):
             operator_status=status,
             action_attachments_activation=activation,
         )
+
+
+def test_schema_v4_scale_requires_exact_action_attachments_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v4-scale-attachments.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
+
+    attachment_files = action_attachments_files(tmp_path)
+    attachment_entry = append_action_attachments_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-attachments-change-1",
+        current_stage="cohort-25",
+        staging_evidence=attachment_files[0],
+        rollout_manifest=attachment_files[1],
+        deployment_change=attachment_files[2],
+        operator_status=attachment_files[3],
+        action_attachments_activation=attachment_files[4],
+    )
+
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["schema_version"] = 4
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": False,
+        "action_attachments_enabled": True,
+    }
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    value["action_attachments"] = {
+        "ledger_sequence": attachment_entry["sequence"],
+        "ledger_entry_hash": attachment_entry["entry_hash"],
+    }
+    value["artifact_sha256"]["action_attachments_activation"] = (
+        file_sha256(attachment_files[4])
+    )
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    entry = append_scale_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="change-42",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        scale_decision=decision,
+        deployment_change=deployment,
+        operator_status=status,
+        scale_activation=activation,
+    )
+    assert entry["event_type"] == "bounded_expansion_verified"
+
+
+def test_schema_v4_scale_rejects_stripped_action_attachments_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v4-scale-attachments-stripped.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
+
+    attachment_files = action_attachments_files(tmp_path)
+    append_action_attachments_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-attachments-change-1",
+        current_stage="cohort-25",
+        staging_evidence=attachment_files[0],
+        rollout_manifest=attachment_files[1],
+        deployment_change=attachment_files[2],
+        operator_status=attachment_files[3],
+        action_attachments_activation=attachment_files[4],
+    )
+
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["schema_version"] = 4
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": False,
+        "action_attachments_enabled": True,
+    }
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    value["action_attachments"] = None
+    value["artifact_sha256"]["action_attachments_activation"] = (
+        file_sha256(attachment_files[4])
+    )
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="Action-attachments scale activation is missing",
+    ):
+        append_scale_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="change-42",
+            current_stage="cohort-25",
+            next_stage="cohort-40",
+            scale_decision=decision,
+            deployment_change=deployment,
+            operator_status=status,
+            scale_activation=activation,
+        )
+
+
+def test_schema_v3_recovery_v4_requires_fresh_action_attachments_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v4-recovery-attachments.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-v4",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+        created_at="2026-09-23T04:00:00+00:00",
+    )
+    rollback_entry = append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v4",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+        created_at="2026-09-23T04:06:00+00:00",
+    )
+
+    attachment_files = action_attachments_files(
+        tmp_path,
+        current_stage="canary-5",
+    )
+    attachment_entry = append_action_attachments_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-attachments-change-1",
+        current_stage="canary-5",
+        staging_evidence=attachment_files[0],
+        rollout_manifest=attachment_files[1],
+        deployment_change=attachment_files[2],
+        operator_status=attachment_files[3],
+        action_attachments_activation=attachment_files[4],
+    )
+    assert attachment_entry["sequence"] > rollback_entry["sequence"]
+
+    value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    value["schema_version"] = 4
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": False,
+        "action_attachments_enabled": True,
+    }
+    value["microsoft_rollout"] = None
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    value["action_attachments"] = {
+        "ledger_sequence": attachment_entry["sequence"],
+        "ledger_entry_hash": attachment_entry["entry_hash"],
+    }
+    value["artifact_sha256"]["action_attachments_activation"] = (
+        file_sha256(attachment_files[4])
+    )
+    recovery_verification.write_text(json.dumps(value), encoding="utf-8")
+
+    recovered = append_recovery_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v4",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=recovery_status,
+        rollback_completion=rollback_completion,
+        recovery_verification=recovery_verification,
+    )
+    assert recovered["event_type"] == "recovery_verified"
+
+
+def test_schema_v3_recovery_v4_rejects_stripped_action_attachments_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v4-recovery-attachments-stripped.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-v4",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+    )
+    append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v4",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+    )
+
+    attachment_files = action_attachments_files(
+        tmp_path,
+        current_stage="canary-5",
+    )
+    append_action_attachments_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-attachments-change-1",
+        current_stage="canary-5",
+        staging_evidence=attachment_files[0],
+        rollout_manifest=attachment_files[1],
+        deployment_change=attachment_files[2],
+        operator_status=attachment_files[3],
+        action_attachments_activation=attachment_files[4],
+    )
+
+    value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    value["schema_version"] = 4
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": False,
+        "action_attachments_enabled": True,
+    }
+    value["microsoft_rollout"] = None
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    value["action_attachments"] = None
+    value["artifact_sha256"]["action_attachments_activation"] = (
+        file_sha256(attachment_files[4])
+    )
+    recovery_verification.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="Action-attachments recovery evidence is missing",
+    ):
+        append_recovery_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="incident-v4",
+            current_stage="canary-5",
+            rollout=rollout,
+            canary_plan=plan,
+            progression_decision=progression,
+            operator_status=recovery_status,
+            rollback_completion=rollback_completion,
+            recovery_verification=recovery_verification,
+        )
