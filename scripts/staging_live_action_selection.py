@@ -357,120 +357,120 @@ def main() -> None:
     run_id: str | None = None
     calendar_action_id: str | None = None
 
+    client = httpx.Client(
+        base_url=base_url,
+        timeout=20,
+        follow_redirects=False,
+    )
     try:
-        with httpx.Client(
-            base_url=base_url,
-            timeout=20,
-            follow_redirects=False,
-        ) as client:
-            connections_value = request_json(
-                client.get("/api/v1/connections", headers=auth(token)),
-                "list staging connections",
+        connections_value = request_json(
+            client.get("/api/v1/connections", headers=auth(token)),
+            "list staging connections",
+        )
+        if connections_value.get("enabled") is not True:
+            raise ActionSelectionValidationFailure(
+                "Deployed action capability is not enabled."
             )
-            if connections_value.get("enabled") is not True:
-                raise ActionSelectionValidationFailure(
-                    "Deployed action capability is not enabled."
-                )
-            connections = connections_value.get("connections")
-            if not isinstance(connections, list):
-                raise ActionSelectionValidationFailure(
-                    "Connection list has an unexpected shape."
-                )
-            email_connection = connection_for(
-                connections,
-                args.provider,
-                "email",
+        connections = connections_value.get("connections")
+        if not isinstance(connections, list):
+            raise ActionSelectionValidationFailure(
+                "Connection list has an unexpected shape."
             )
-            calendar_connection = connection_for(
-                connections,
-                args.provider,
-                "calendar",
-            )
-            sender = address(str(email_connection["email"]))
-            start = datetime.now(timezone.utc) + timedelta(minutes=30)
-            end = start + timedelta(minutes=30)
+        email_connection = connection_for(
+            connections,
+            args.provider,
+            "email",
+        )
+        calendar_connection = connection_for(
+            connections,
+            args.provider,
+            "calendar",
+        )
+        sender = address(str(email_connection["email"]))
+        start = datetime.now(timezone.utc) + timedelta(minutes=30)
+        end = start + timedelta(minutes=30)
 
-            email_action = prepare_action(
-                client,
-                token,
-                str(email_connection["id"]),
-                {
-                    "kind": "email_send",
-                    "to": [sender],
-                    "cc": [],
-                    "bcc": [],
-                    "subject": f"Shuddho action-selection staging {marker}",
-                    "body": (
-                        "Synthetic action-selection staging draft. "
-                        "This must remain unapproved and unsent."
-                    ),
-                },
-                "live-action-selection-email",
-            )
-            calendar_action = prepare_action(
-                client,
-                token,
-                str(calendar_connection["id"]),
-                {
-                    "kind": "calendar_create",
-                    "title": f"Shuddho unselected staging draft {marker}",
-                    "description": (
-                        "Synthetic unselected action-selection draft. "
-                        "This event must never be created."
-                    ),
-                    "location": "Controlled staging",
-                    "start_at": start.isoformat(),
-                    "end_at": end.isoformat(),
-                    "time_zone": "UTC",
-                    "attendees": [],
-                },
-                "live-action-selection-calendar",
-            )
-            calendar_action_id = str(calendar_action["id"])
-            run = create_agent_run(
-                client,
-                token,
-                email_action,
-                calendar_action,
-            )
-            run_id = str(run["id"])
-            paused = wait_for_approval_pause(
-                client,
-                token,
-                run_id,
-                args.timeout,
-            )
-            validate_run(paused, email_action, calendar_action)
-            validate_actions(
-                client,
-                token,
-                email_action,
-                calendar_action,
-            )
-
-            evidence = merge_evidence(
-                args.base_evidence,
-                {
-                    "action_selection": passed(
-                        "live intelligent Agent selected only the attached email draft, "
-                        "released the unselected calendar draft, and paused at explicit approval "
-                        "with no provider execution or receipt"
-                    )
-                },
-            )
-            args.output.write_text(
-                json.dumps(evidence, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            print(json.dumps({
-                "written": str(args.output),
-                "checks": {"action_selection": "passed"},
-                "provider": args.provider,
-                "cleanup": (
-                    "Synthetic Agent run and drafts were cancelled after verification; "
-                    "no action was approved or sent."
+        email_action = prepare_action(
+            client,
+            token,
+            str(email_connection["id"]),
+            {
+                "kind": "email_send",
+                "to": [sender],
+                "cc": [],
+                "bcc": [],
+                "subject": f"Shuddho action-selection staging {marker}",
+                "body": (
+                    "Synthetic action-selection staging draft. "
+                    "This must remain unapproved and unsent."
                 ),
-            }, indent=2))
+            },
+            "live-action-selection-email",
+        )
+        calendar_action = prepare_action(
+            client,
+            token,
+            str(calendar_connection["id"]),
+            {
+                "kind": "calendar_create",
+                "title": f"Shuddho unselected staging draft {marker}",
+                "description": (
+                    "Synthetic unselected action-selection draft. "
+                    "This event must never be created."
+                ),
+                "location": "Controlled staging",
+                "start_at": start.isoformat(),
+                "end_at": end.isoformat(),
+                "time_zone": "UTC",
+                "attendees": [],
+            },
+            "live-action-selection-calendar",
+        )
+        calendar_action_id = str(calendar_action["id"])
+        run = create_agent_run(
+            client,
+            token,
+            email_action,
+            calendar_action,
+        )
+        run_id = str(run["id"])
+        paused = wait_for_approval_pause(
+            client,
+            token,
+            run_id,
+            args.timeout,
+        )
+        validate_run(paused, email_action, calendar_action)
+        validate_actions(
+            client,
+            token,
+            email_action,
+            calendar_action,
+        )
+
+        evidence = merge_evidence(
+            args.base_evidence,
+            {
+                "action_selection": passed(
+                    "live intelligent Agent selected only the attached email draft, "
+                    "released the unselected calendar draft, and paused at explicit approval "
+                    "with no provider execution or receipt"
+                )
+            },
+        )
+        args.output.write_text(
+            json.dumps(evidence, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(json.dumps({
+            "written": str(args.output),
+            "checks": {"action_selection": "passed"},
+            "provider": args.provider,
+            "cleanup": (
+                "Synthetic Agent run and drafts were cancelled after verification; "
+                "no action was approved or sent."
+            ),
+        }, indent=2))
     except (
         ActionSelectionValidationFailure,
         httpx.HTTPError,
@@ -483,13 +483,13 @@ def main() -> None:
         }, indent=2))
         raise SystemExit(1) from None
     finally:
-        if "client" in locals():
-            cleanup(
-                client,
-                token,
-                run_id,
-                calendar_action_id,
-            )
+        cleanup(
+            client,
+            token,
+            run_id,
+            calendar_action_id,
+        )
+        client.close()
 
 
 if __name__ == "__main__":
