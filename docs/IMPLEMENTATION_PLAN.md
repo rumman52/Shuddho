@@ -241,7 +241,9 @@ The following release-safety increment adds [Controlled Staging Live Approved Em
 
 The next enforcement increment records that exact activation as schema-v9 `action_attachments_verified` in the tamper-evident release ledger and makes bounded scale/post-rollback recovery consume it whenever attachments are enabled. Attachment-enabled scale/recovery evidence upgrades to schema v4 with exact activation SHA-256 plus ledger sequence/hash; recovery additionally requires the schema-v9 event after the exact rollback-completion event. Downstream ledger append independently re-verifies those references, while attachment-disabled schema-v3 paths remain backward-compatible.
 
-Broader model-created executable actions, threading, reminders, sharing, social publishing and richer recipient resolution remain later increments.
+The next bounded Wave D action increment adds [Approved Calendar Reminders](APPROVED_CALENDAR_REMINDERS.md): an explicit user-selected single reminder is bound into the existing immutable calendar preview and approval scope, executed through the existing Google/Microsoft calendar write permissions, and receipt-checked for exact minutes. The capability is default-off behind `SHUDDHO_ACTION_REMINDERS_ENABLED=false`; Agent proposals remain reminder-blind. The production release gate deliberately rejects reminder-enabled rollouts until independent live provider evidence and activation/ledger enforcement are added in the following release-safety increment.
+
+Broader model-created executable actions, threading, sharing, social publishing and richer recipient resolution remain later increments.
 
 ### Consequential actions
 

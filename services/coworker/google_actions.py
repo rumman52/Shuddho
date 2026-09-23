@@ -41,14 +41,19 @@ def event_id(action_id):
 
 def event_body(action):
     p = action["preview"]["payload"]
+    reminders = {"useDefault": False, "overrides": []}
+    if p["kind"] == "calendar_create_with_reminder":
+        reminders["overrides"] = [{
+            "method": "popup",
+            "minutes": p["reminder_minutes_before_start"],
+        }]
     return {"id": event_id(action["id"]), "summary": p["title"], "description": html.escape(p["description"]).replace("\n", "<br>"), "location": p["location"],
             "start": {"dateTime": p["start_at"], "timeZone": p["time_zone"]},
             "end": {"dateTime": p["end_at"], "timeZone": p["time_zone"]},
             "attendees": [{"email": email} for email in p["attendees"]],
-            "reminders": {"useDefault": False, "overrides": []},
+            "reminders": reminders,
             "guestsCanModify": False, "guestsCanInviteOthers": False, "guestsCanSeeOtherGuests": True,
             "extendedProperties": {"private": {"shuddhoAction": action["id"], "shuddhoApproval": action["preview_hash"]}}}
-
 
 def email_raw(action, attachments=None):
     preview, p = action["preview"], action["preview"]["payload"]
@@ -158,7 +163,7 @@ class GoogleActions:
             # Gmail acceptance is not a delivery/read receipt.
             return {"provider": "google", "provider_id": provider_id, "status": "accepted_by_gmail",
                     "message_id": f'<{action["id"]}@shuddho.invalid>', "confirmed_at": datetime.now(timezone.utc).isoformat()}
-        if action["kind"] != "calendar_create":
+        if action["kind"] not in {"calendar_create", "calendar_create_with_reminder"}:
             raise ValueError("Unknown action kind")
         result = await self.request("POST", EVENTS_URL, token=access_token, body=event_body(action))
         return self.calendar_receipt(action, result)
@@ -168,10 +173,20 @@ class GoogleActions:
         expected = event_body(action)
         try:
             properties = result["extendedProperties"]["private"]
+            actual_reminders = result.get("reminders")
+            if action["kind"] == "calendar_create_with_reminder":
+                reminders_valid = actual_reminders == expected["reminders"]
+            else:
+                reminders_valid = (
+                    isinstance(actual_reminders, dict)
+                    and actual_reminders.get("useDefault") is False
+                    and not actual_reminders.get("overrides")
+                )
             if (result["id"] != expected["id"] or result.get("status") != "confirmed" or
                     properties.get("shuddhoAction") != action["id"] or properties.get("shuddhoApproval") != action["preview_hash"] or
                     result.get("summary") != expected["summary"] or result.get("description", "") != expected["description"] or
                     result.get("location", "") != expected["location"] or
+                    not reminders_valid or
                     {a["email"].casefold() for a in result.get("attendees", [])} != {a["email"].casefold() for a in expected["attendees"]}):
                 raise ValueError()
             for key in ("start", "end"):
@@ -184,7 +199,7 @@ class GoogleActions:
             raise GoogleFailure("provider_receipt_invalid") from None
 
     async def reconcile(self, action, access_token):
-        if action["kind"] != "calendar_create":
+        if action["kind"] not in {"calendar_create", "calendar_create_with_reminder"}:
             return None  # Send-only scope intentionally cannot read the mailbox.
         try:
             result = await self.request("GET", EVENTS_URL + "/" + event_id(action["id"]), token=access_token)

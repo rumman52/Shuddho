@@ -88,6 +88,8 @@ def action_request(connection, kind="email_send"):
         payload = {"kind": kind, "title": "প্রকল্পের আলোচনা", "description": "Review twelve items.", "location": "Dhaka",
                    "start_at": start.isoformat(), "end_at": (start + timedelta(hours=1)).isoformat(),
                    "time_zone": "UTC", "attendees": ["guest@example.org"]}
+        if kind == "calendar_create_with_reminder":
+            payload["reminder_minutes_before_start"] = 15
     return ActionPrepare(connection_id=connection["id"], payload=payload)
 
 

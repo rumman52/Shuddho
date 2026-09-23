@@ -694,6 +694,43 @@ def test_agent_run_binds_only_owned_pending_actions(container):
     assert duplicate_state.value.code == "action_not_awaiting_approval"
 
 
+def test_agent_run_rejects_reminder_action_binding(container):
+    from action_samples import enable_actions, connected, action_request
+    from services.coworker.agent_schemas import AgentRunCreate
+
+    enable_actions(container)
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        work_services_enabled=True,
+        action_reminders_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner, "calendar")
+    action = container.actions.repo.prepare(
+        owner,
+        action_request(connection, "calendar_create_with_reminder"),
+        "agent-reminder-preview",
+    )
+
+    with pytest.raises(CoworkerError) as rejected:
+        container.agent.create(
+            owner,
+            AgentRunCreate(
+                goal="Use the attached reminder action.",
+                action_ids=[action["id"]],
+                output_language="en",
+            ),
+            "agent-reminder-run",
+        )
+    assert rejected.value.code == "action_not_agent_selectable"
+
+
 def test_agent_plan_rejects_unattached_action(container):
     from action_samples import enable_actions, connected, action_request
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
@@ -1836,6 +1873,7 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     assert value["capabilities"]["coworker"] is True
     assert value["capabilities"]["action_proposals"] is True
     assert value["capabilities"]["action_selection"] is False
+    assert value["capabilities"]["action_reminders"] is False
     assert value["action_providers"] == ["google"]
     assert value["cohort"] == {
         "enforced": True,

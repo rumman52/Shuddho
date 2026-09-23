@@ -1,4 +1,4 @@
-"""Only these two typed tools may cross the external-action boundary."""
+"""Only registered, explicitly typed actions may cross the external-action boundary."""
 from __future__ import annotations
 
 import re
@@ -95,7 +95,9 @@ class CalendarCreate(Strict):
     time_zone: Annotated[str, StringConstraints(min_length=1, max_length=80)]
     attendees: list[str] = Field(default_factory=list, max_length=20)
     # Primary calendar, notifications to all listed guests, no recurrence,
-    # conference, attachment, or reminders. These policies appear in preview.
+    # conference or attachment. Base calendar_create has no reminder; the
+    # explicit reminder variant below adds one bounded reminder. These
+    # policies appear in the immutable preview.
 
     @field_validator("title", "description", "location")
     @classmethod
@@ -124,8 +126,13 @@ class CalendarCreate(Strict):
         return self
 
 
+class CalendarCreateWithReminder(CalendarCreate):
+    kind: Literal["calendar_create_with_reminder"]
+    reminder_minutes_before_start: Literal[5, 10, 15, 30, 60, 120, 1440]
+
+
 ActionPayload = Annotated[
-    EmailSend | EmailSendWithAttachments | CalendarCreate,
+    EmailSend | EmailSendWithAttachments | CalendarCreate | CalendarCreateWithReminder,
     Field(discriminator="kind"),
 ]
 

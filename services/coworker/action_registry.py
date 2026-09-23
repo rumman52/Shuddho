@@ -96,6 +96,20 @@ ACTION_SPECS = {
         calendar="primary",
         guest_notifications="all",
     ),
+    "calendar_create_with_reminder": ActionSpec(
+        kind="calendar_create_with_reminder",
+        version="1",
+        capability="calendar",
+        providers=frozenset({"google", "microsoft"}),
+        approval_ttl_seconds=15 * 60,
+        execution_ttl_seconds=5 * 60,
+        reconcile_mode="provider_receipt",
+        destination_fields=("attendees",),
+        requires_future_start=True,
+        calendar="primary",
+        guest_notifications="all",
+        reminders="single_explicit",
+    ),
 }
 
 

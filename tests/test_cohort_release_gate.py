@@ -27,7 +27,7 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
     return {key: {"status": "passed", "evidence": "staging-proof"} for key in keys}
 
 
-def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_selection=False, action_proposals=False):
+def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_reminders=False, action_selection=False, action_proposals=False):
     monitoring = {
         "queue_age": "queue-dashboard",
         "task_success": "task-dashboard",
@@ -60,6 +60,7 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
             "research": research,
             "actions": actions,
             **({"action_attachments": True} if action_attachments else {}),
+            **({"action_reminders": True} if action_reminders else {}),
             **({"action_selection": True} if action_selection else {}),
             **({"action_proposals": True} if action_proposals else {}),
         },
@@ -73,6 +74,9 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
             **({
                 "action_attachments_kill_switch": "SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false",
             } if action_attachments else {}),
+            **({
+                "action_reminders_kill_switch": "SHUDDHO_ACTION_REMINDERS_ENABLED=false",
+            } if action_reminders else {}),
             **({
                 "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
             } if action_selection else {}),
@@ -225,6 +229,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
     assert "action_selection" in missing["staging"]["missing"]
     assert missing["required_feature_gates"] == {
         "action_attachments": False,
+        "action_reminders": False,
         "action_selection": True,
         "action_proposals": False,
     }
@@ -300,3 +305,14 @@ def test_action_attachments_require_independent_gate_dependency_and_kill_switch(
         no_artifacts,
         max_cohort_users=25,
     )
+
+
+def test_calendar_reminders_cannot_enter_production_before_live_release_gate():
+    value = rollout(actions=True, action_reminders=True)
+    failures = validate_rollout(value, max_cohort_users=25)
+    assert "action_reminders_release_gate_pending" in failures
+
+    value["rollback"].pop("action_reminders_kill_switch")
+    failures = validate_rollout(value, max_cohort_users=25)
+    assert "action_reminders_kill_switch" in failures
+    assert "action_reminders_release_gate_pending" in failures

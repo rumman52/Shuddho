@@ -168,6 +168,7 @@ def validate_reviewed_rollout(
         )
     normalized = dict(capabilities)
     normalized.setdefault("action_attachments", False)
+    normalized.setdefault("action_reminders", False)
     normalized.setdefault("action_selection", False)
     normalized.setdefault("action_proposals", False)
     return {

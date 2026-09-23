@@ -115,6 +115,12 @@ class AgentRepository:
                     raise not_found()
                 if action.state != "awaiting_approval":
                     raise CoworkerError("action_not_awaiting_approval", "Attach only actions that are still awaiting your approval.", 409)
+                if action.kind not in {"email_send", "calendar_create"}:
+                    raise CoworkerError(
+                        "action_not_agent_selectable",
+                        "This action type must remain under direct user review and cannot be attached to an Agent run.",
+                        409,
+                    )
                 if action.agent_run_id is not None:
                     raise CoworkerError("action_already_bound", "This action is already attached to another agent run.", 409)
                 action.agent_run_id = run_id
