@@ -68,10 +68,11 @@ def bind(preview):
 
 
 def test_registry_declares_existing_consequential_actions():
-    assert set(ACTION_SPECS) == {"email_send", "calendar_create"}
+    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "calendar_create"}
     assert action_spec("email_send", "google").capability == "email"
     assert action_spec("calendar_create", "google").reconcile_supported
     assert not action_spec("email_send", "google").reconcile_supported
+    assert action_spec("email_send_with_attachments", "google").attachments_allowed
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
 
 
@@ -141,3 +142,44 @@ def test_v2_preview_cannot_omit_approval_scope():
     preview["version"] = 2
     with pytest.raises(CoworkerError, match="approval scope is missing"):
         validate_approval_scope(preview)
+
+def attachment_preview():
+    value = email_preview()
+    value["version"] = 3
+    value["payload"]["kind"] = "email_send_with_attachments"
+    value["attachments"] = [{
+        "id": "11111111-1111-1111-1111-111111111111",
+        "filename": "report.pdf",
+        "content_type": "application/pdf",
+        "byte_size": 1024,
+        "sha256": "a" * 64,
+    }]
+    return value
+
+
+def test_attachment_scope_binds_exact_owned_artifact_manifest():
+    preview = bind(attachment_preview())
+    scope = preview["approval_scope"]
+    assert scope["policy"]["attachments"] == "owned_artifacts"
+    assert scope["attachments"] == preview["attachments"]
+    assert len(scope["attachments_sha256"]) == 64
+    assert validate_approval_scope(preview).kind == "email_send_with_attachments"
+
+    changed = deepcopy(preview)
+    changed["attachments"][0]["sha256"] = "b" * 64
+    with pytest.raises(CoworkerError, match="approval scope"):
+        validate_approval_scope(changed)
+
+
+def test_plain_email_rejects_unexpected_attachment_manifest():
+    preview = email_preview()
+    preview["attachments"] = [{
+        "id": "11111111-1111-1111-1111-111111111111",
+        "filename": "report.pdf",
+        "content_type": "application/pdf",
+        "byte_size": 1024,
+        "sha256": "a" * 64,
+    }]
+    with pytest.raises(CoworkerError, match="does not allow attachments"):
+        build_approval_scope(preview)
+
