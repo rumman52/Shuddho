@@ -33,6 +33,7 @@ class Settings:
     agent_runtime_enabled: bool = False
     agent_memory_enabled: bool = False
     intelligent_planner_enabled: bool = False
+    agent_action_planning_enabled: bool = False
     agent_handoffs_enabled: bool = False
     agent_multi_handoffs_enabled: bool = False
     agent_dependency_graph_enabled: bool = False
@@ -109,6 +110,7 @@ class Settings:
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
+            agent_action_planning_enabled=os.getenv("SHUDDHO_AGENT_ACTION_PLANNING_ENABLED", "false").lower() == "true",
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_multi_handoffs_enabled=os.getenv("SHUDDHO_AGENT_MULTI_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_dependency_graph_enabled=os.getenv("SHUDDHO_AGENT_DEPENDENCY_GRAPH_ENABLED", "false").lower() == "true",
@@ -194,6 +196,14 @@ class Settings:
                 raise ValueError(
                     "Microsoft actions require OAuth credentials, a safe tenant, and an HTTPS frontend /oauth/microsoft/callback redirect URI"
                 )
+        if self.agent_action_planning_enabled and not (
+            self.agent_runtime_enabled
+            and self.intelligent_planner_enabled
+            and self.actions_enabled
+        ):
+            raise ValueError(
+                "Agent action planning requires Agent Runtime, intelligent planning, and consequential actions to be enabled"
+            )
         if self.research_services_enabled and (self.search_provider != "tavily" or not self.search_api_key):
             raise ValueError("Research requires SHUDDHO_SEARCH_PROVIDER=tavily and backend-only TAVILY_API_KEY")
         if not self.database_url:
