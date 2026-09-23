@@ -1188,11 +1188,13 @@ def build_recovery_evidence(
                 )
             ),
             **({
-                "action_attachments_enabled": True,
-            } if getattr(settings, "action_attachments_enabled", False) else {}),
-            **({
+                "action_attachments_enabled": bool(
+                    getattr(settings, "action_attachments_enabled", False)
+                ),
                 "action_reminders_enabled": True,
-            } if getattr(settings, "action_reminders_enabled", False) else {}),
+            } if getattr(settings, "action_reminders_enabled", False) else ({
+                "action_attachments_enabled": True,
+            } if getattr(settings, "action_attachments_enabled", False) else {})),
         },
         "microsoft_rollout": microsoft_summary,
         "action_selection": action_selection_summary,
