@@ -1708,13 +1708,40 @@ def append_action_proposals_event(
             "action_proposals_verified requires passed timestamped action-proposal staging evidence."
         )
 
+    if rollout.get("environment") != "production":
+        raise ReleaseLedgerError(
+            "action_proposals_verified requires a production rollout manifest."
+        )
+    incident = rollout.get("incident")
+    if (
+        not isinstance(incident, dict)
+        or incident.get("change_reference") != change_reference
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout change reference does not match."
+        )
+    rollout_cohort = rollout.get("cohort")
+    if (
+        not isinstance(rollout_cohort, dict)
+        or not isinstance(rollout_cohort.get("max_users"), int)
+        or isinstance(rollout_cohort.get("max_users"), bool)
+        or rollout_cohort["max_users"] < 1
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout has an invalid cohort ceiling."
+        )
     capabilities = rollout.get("capabilities")
     if (
         not isinstance(capabilities, dict)
+        or any(not isinstance(value, bool) for value in capabilities.values())
+        or capabilities.get("coworker") is not True
+        or capabilities.get("agent_runtime") is not True
+        or capabilities.get("intelligent_planner") is not True
+        or capabilities.get("actions") is not True
         or capabilities.get("action_proposals") is not True
     ):
         raise ReleaseLedgerError(
-            "action_proposals_verified requires a reviewed rollout with action_proposals enabled."
+            "action_proposals_verified requires the reviewed proposal runtime prerequisites."
         )
     rollback = rollout.get("rollback")
     if (
@@ -1797,9 +1824,20 @@ def append_action_proposals_event(
         )
 
     runtime = activation.get("runtime")
-    if not isinstance(runtime, dict):
+    if (
+        not isinstance(runtime, dict)
+        or set(runtime) != {
+            "schema_version",
+            "source_revision",
+            "environment",
+            "capabilities",
+            "action_providers",
+            "cohort",
+        }
+        or runtime.get("schema_version") != 1
+    ):
         raise ReleaseLedgerError(
-            "Action-proposal activation has no runtime proof."
+            "Action-proposal activation has no valid runtime proof."
         )
     runtime_capabilities = runtime.get("capabilities")
     expected_capabilities = dict(capabilities)
@@ -1821,10 +1859,16 @@ def append_action_proposals_event(
             "Action-proposal activation does not prove the exact reviewed runtime."
         )
     cohort = runtime.get("cohort")
+    members = cohort.get("configured_members") if isinstance(cohort, dict) else None
     if (
         not isinstance(cohort, dict)
+        or set(cohort) != {"enforced", "configured_members", "max_users"}
         or cohort.get("enforced") is not True
-        or cohort.get("max_users") != rollout.get("cohort", {}).get("max_users")
+        or cohort.get("max_users") != rollout_cohort["max_users"]
+        or not isinstance(members, int)
+        or isinstance(members, bool)
+        or members < 1
+        or members > cohort["max_users"]
     ):
         raise ReleaseLedgerError(
             "Action-proposal activation does not prove reviewed cohort enforcement."
@@ -1837,16 +1881,19 @@ def append_action_proposals_event(
         )
 
     hashes = activation.get("artifact_sha256")
-    if not isinstance(hashes, dict):
-        raise ReleaseLedgerError(
-            "Action-proposal activation evidence has no artifact hashes."
-        )
     expected_bound = {
         "staging_evidence": file_sha256(staging_evidence),
         "rollout_manifest": file_sha256(rollout_manifest),
         "deployment_change": file_sha256(deployment_change),
         "operator_status": file_sha256(operator_status),
     }
+    if (
+        not isinstance(hashes, dict)
+        or set(hashes) != set(expected_bound)
+    ):
+        raise ReleaseLedgerError(
+            "Action-proposal activation evidence has invalid artifact hashes."
+        )
     for name, value in expected_bound.items():
         if hashes.get(name) != value:
             raise ReleaseLedgerError(
