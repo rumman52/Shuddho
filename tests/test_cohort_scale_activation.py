@@ -626,7 +626,7 @@ def test_action_selection_enabled_scale_requires_exact_schema_v7(monkeypatch, tm
         )
 
 
-def test_scale_v2_evidence_binds_action_selection_attestation(tmp_path):
+def test_scale_v3_evidence_preserves_action_selection_attestation(tmp_path):
     scale_path = tmp_path / "scale-v2.json"
     deploy_path = tmp_path / "deploy-v2.json"
     status_path = tmp_path / "status-v2.json"
@@ -652,8 +652,9 @@ def test_scale_v2_evidence_binds_action_selection_attestation(tmp_path):
         action_selection_attestation=attestation,
         now=NOW,
     )
-    assert value["schema_version"] == 2
+    assert value["schema_version"] == 3
     assert value["runtime_requirements"]["action_selection_enabled"] is True
+    assert value["runtime_requirements"]["action_proposals_enabled"] is False
     assert value["action_selection"] == attestation
     assert (
         value["artifact_sha256"]["action_selection_activation"]
