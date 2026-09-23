@@ -76,9 +76,36 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
   const [connection, setConnection] = useState("");
   const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
+  const accountEmail = useRef(email);
   const notesInput = useRef<HTMLTextAreaElement>(null);
   const outputColumn = useRef<HTMLDivElement>(null);
   const activeSkill = skills.find(skill => skill.id === skillId);
+
+  useEffect(() => {
+    if (accountEmail.current === email) return;
+    accountEmail.current = email;
+    setView("drafts");
+    setActionDraft(null);
+    setFocusActionId(null);
+    setWorkspace(null);
+    setSkills([originalService]);
+    setUploadFormats(["txt", "docx", "pdf"]);
+    setSkillId("report_email");
+    setResearch({ query: "", time_range: "any" });
+    setHistory([]);
+    setDocuments([]);
+    setSelectedDocs([]);
+    setSelected("");
+    setTask(null);
+    setInstruction(originalService.instruction);
+    setNotes("");
+    setLanguage("en");
+    setCustomLanguage("");
+    setError("");
+    setNotice("");
+    setConnection("");
+    submission.current = undefined;
+  }, [email]);
 
   function viewTask() {
     const scroll = () => {
