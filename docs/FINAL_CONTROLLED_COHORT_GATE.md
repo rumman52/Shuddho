@@ -199,3 +199,14 @@ See [Non-Executable Agent Action Proposals](AGENT_ACTION_PROPOSALS.md).
 A proposal is not an external action. It has no provider binding, approval state, outbox or executor path. The authenticated user must select an owned connection and promote the exact proposal hash. Promotion creates a separate immutable action preview in `awaiting_approval`; normal explicit approval is still required before any provider mutation.
 
 Production enablement requires its independent `action_proposals` staging evidence from [Controlled Live Agent Action-Proposal Staging](CONTROLLED_STAGING_ACTION_PROPOSALS.md) and the exact rollback switch `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false`.
+
+
+## Action-proposal production activation
+
+A final cohort decision with `action_proposals=true` and passed live staging evidence does not prove that production is running the reviewed revision/configuration.
+
+Before treating `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=true` as activated, run [Agent Action-Proposal Production Activation](ACTION_PROPOSALS_ACTIVATION.md).
+
+The verifier binds the exact staging evidence and reviewed rollout to the reviewed deployment, fetches an authenticated read-only runtime manifest from production, requires exact source-revision/capability/provider equality plus controlled-cohort enforcement, requires fresh clean post-deploy health, and emits `action_proposals_verified`.
+
+This activation artifact is evidence only. It cannot enable a flag, promote a proposal, approve an action, mutate a provider, expand the cohort or authorize recovery.
