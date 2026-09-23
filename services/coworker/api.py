@@ -20,7 +20,7 @@ from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
-from .agent_schemas import AgentRunCreate
+from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
@@ -126,6 +126,42 @@ async def agent_run_events(run_id: UUID, request: Request, identity: Identity, s
 @router.post("/agent-runs/{run_id}/cancel")
 def cancel_agent_run(run_id: UUID, identity: Identity, services: Services):
     return services.agent.cancel(identity.account_id, str(run_id))
+
+
+@router.post(
+    "/agent-runs/{run_id}/action-proposals/{proposal_id}/promote",
+    status_code=201,
+)
+def promote_action_proposal(
+    run_id: UUID,
+    proposal_id: UUID,
+    payload: ActionProposalPromotion,
+    identity: Identity,
+    services: Services,
+):
+    return services.actions.repo.promote_proposal(
+        identity.account_id,
+        str(run_id),
+        str(proposal_id),
+        payload.proposal_hash,
+        str(payload.connection_id),
+    )
+
+
+@router.post("/agent-runs/{run_id}/action-proposals/{proposal_id}/dismiss")
+def dismiss_action_proposal(
+    run_id: UUID,
+    proposal_id: UUID,
+    payload: ActionProposalReview,
+    identity: Identity,
+    services: Services,
+):
+    return services.agent.dismiss_action_proposal(
+        identity.account_id,
+        str(run_id),
+        str(proposal_id),
+        payload.proposal_hash,
+    )
 
 
 @router.get("/connections")
