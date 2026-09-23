@@ -236,6 +236,18 @@ def test_reminder_kill_switch_cancels_before_provider_mutation(container):
     assert provider.events == {}
 
 
+def test_google_legacy_calendar_accepts_normalized_empty_reminders(container):
+    enable_actions(container)
+    owner = account(container)
+    action = approved(container.actions.repo, owner, "calendar")
+    expected = event_body(action)
+    normalized = dict(expected)
+    normalized["status"] = "confirmed"
+    normalized["reminders"] = {"useDefault": False}
+    receipt = GoogleActions.calendar_receipt(action, normalized)
+    assert receipt["status"] == "event_created"
+
+
 def test_google_calendar_reminder_executes_exact_approved_minutes(container):
     provider = enable_actions(container)
     settings = replace(container.settings, action_reminders_enabled=True)
