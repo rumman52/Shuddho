@@ -81,7 +81,12 @@ def event_transaction_id(action_id: str) -> str:
 
 def event_body(action: dict) -> dict:
     payload = action["preview"]["payload"]
-    return {
+    reminder_minutes = (
+        payload["reminder_minutes_before_start"]
+        if payload["kind"] == "calendar_create_with_reminder"
+        else None
+    )
+    body = {
         "subject": payload["title"],
         "body": {
             "contentType": "text",
@@ -97,10 +102,12 @@ def event_body(action: dict) -> dict:
             }
             for email in payload["attendees"]
         ],
-        "isReminderOn": False,
+        "isReminderOn": reminder_minutes is not None,
         "transactionId": event_transaction_id(action["id"]),
     }
-
+    if reminder_minutes is not None:
+        body["reminderMinutesBeforeStart"] = reminder_minutes
+    return body
 
 def email_body(action: dict, attachments=None) -> dict:
     payload = action["preview"]["payload"]
@@ -314,7 +321,7 @@ class MicrosoftActions:
                 "status": "accepted_by_microsoft_graph",
                 "confirmed_at": datetime.now(timezone.utc).isoformat(),
             }
-        if action["kind"] != "calendar_create":
+        if action["kind"] not in {"calendar_create", "calendar_create_with_reminder"}:
             raise ValueError("Unknown action kind")
         result = await self.request(
             "POST",
@@ -355,6 +362,10 @@ class MicrosoftActions:
             }:
                 raise ValueError()
             if result.get("isCancelled") is True:
+                raise ValueError()
+            if result.get("isReminderOn") != expected["isReminderOn"]:
+                raise ValueError()
+            if expected["isReminderOn"] and result.get("reminderMinutesBeforeStart") != expected["reminderMinutesBeforeStart"]:
                 raise ValueError()
             return {
                 "provider": "microsoft",
