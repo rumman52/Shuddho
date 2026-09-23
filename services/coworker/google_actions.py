@@ -173,11 +173,20 @@ class GoogleActions:
         expected = event_body(action)
         try:
             properties = result["extendedProperties"]["private"]
+            actual_reminders = result.get("reminders")
+            if action["kind"] == "calendar_create_with_reminder":
+                reminders_valid = actual_reminders == expected["reminders"]
+            else:
+                reminders_valid = (
+                    isinstance(actual_reminders, dict)
+                    and actual_reminders.get("useDefault") is False
+                    and not actual_reminders.get("overrides")
+                )
             if (result["id"] != expected["id"] or result.get("status") != "confirmed" or
                     properties.get("shuddhoAction") != action["id"] or properties.get("shuddhoApproval") != action["preview_hash"] or
                     result.get("summary") != expected["summary"] or result.get("description", "") != expected["description"] or
                     result.get("location", "") != expected["location"] or
-                    result.get("reminders") != expected["reminders"] or
+                    not reminders_valid or
                     {a["email"].casefold() for a in result.get("attendees", [])} != {a["email"].casefold() for a in expected["attendees"]}):
                 raise ValueError()
             for key in ("start", "end"):
