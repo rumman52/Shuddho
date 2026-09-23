@@ -240,6 +240,12 @@ class ActionRepository:
         proposal_hash: str,
         connection_id: str,
     ):
+        if not self.settings.agent_action_proposals_enabled:
+            raise CoworkerError(
+                "action_proposals_disabled",
+                "Agent action proposals are not enabled in this deployment.",
+                503,
+            )
         self.enabled()
         with self.sessions.begin() as db:
             self._account(db, owner)
