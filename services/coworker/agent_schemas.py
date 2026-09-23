@@ -140,3 +140,7 @@ class ActionProposalPromotion(AgentModel):
     proposal_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class ActionProposalReview(AgentModel):
+    proposal_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
