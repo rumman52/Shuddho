@@ -272,7 +272,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
             <small>Up to 3 existing Shuddho artifacts, 2 MB total. The exact artifact hashes are bound to approval.</small>
           </fieldset>}
           <p className="cw-fineprint">Plain-text email, sent immediately after approval.{attachmentsEnabled ? " Attachments must already exist in this Shuddho workspace." : " Attachments are disabled in this deployment."}</p>
-        </> : <>
+        </> : mode === "calendar" ? <>
           <label>Event title<input dir="auto" required maxLength={300} value={eventTitle} onChange={event => setEventTitle(event.target.value)} /></label>
           <div className="cw-action-row"><label>Starts<input type="datetime-local" required value={start} onChange={event => setStart(event.target.value)} /></label><label>Ends<input type="datetime-local" required value={end} onChange={event => setEnd(event.target.value)} /></label></div>
           <label>Time zone<input required maxLength={80} value={timeZone} onChange={event => setTimeZone(event.target.value)} placeholder="Asia/Dhaka" /></label>
