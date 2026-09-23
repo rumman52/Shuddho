@@ -1004,7 +1004,8 @@ def validate_action_document_sharing_recovery_activation(
         or not isinstance(capabilities, dict)
         or capabilities.get("coworker") is not True
         or capabilities.get("actions") is not True
-        or capabilities.get("action_recipients") is not True
+        or capabilities.get("artifact_services") is not True
+        or capabilities.get("action_document_sharing") is not True
         or not isinstance(cohort, dict)
         or cohort.get("enforced") is not True
     ):
