@@ -11,8 +11,8 @@ pytest.importorskip("sqlalchemy", reason="Install the coworker extra for recover
 from scripts import cohort_recovery_verification as recovery
 
 
-def rollout():
-    return {
+def rollout(*, action_selection=False):
+    value = {
         "release_id": "coworker-cohort-001",
         "cohort": {"max_users": 25},
         "capabilities": {
@@ -28,9 +28,12 @@ def rollout():
             "parallel_execution": True,
             "outcome_replan": True,
             "research": False,
-            "actions": False,
+            "actions": action_selection,
         },
     }
+    if action_selection:
+        value["capabilities"]["action_selection"] = True
+    return value
 
 
 def plan():
@@ -60,7 +63,7 @@ def rollback_completion(tmp_path, rollout_path):
     return value, path
 
 
-def settings(members, *, microsoft=False):
+def settings(members, *, microsoft=False, action_selection=False):
     return SimpleNamespace(
         cohort_enforced=True,
         cohort_account_ids=frozenset(members),
@@ -75,8 +78,9 @@ def settings(members, *, microsoft=False):
         agent_parallel_execution_enabled=True,
         agent_outcome_replan_enabled=True,
         research_services_enabled=False,
-        actions_enabled=False,
+        actions_enabled=action_selection,
         microsoft_actions_enabled=microsoft,
+        agent_action_selection_enabled=action_selection,
     )
 
 
@@ -439,3 +443,231 @@ def test_microsoft_recovery_rejects_activation_before_recovery_deployment(monkey
                 2026, 9, 22, 7, 8, tzinfo=timezone.utc
             ),
         )
+
+
+def seed_recovery_action_selection_chain(monkeypatch, tmp_path):
+    from scripts.cohort_release_ledger import (
+        append_action_selection_event,
+        append_event,
+        append_rollback_event,
+        file_sha256,
+    )
+
+    monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", "k" * 32)
+    ledger = tmp_path / "action-selection-recovery-ledger.jsonl"
+
+    rollout_path = tmp_path / "as-rollout.json"
+    plan_path = tmp_path / "as-plan.json"
+    progression_path = tmp_path / "as-progression.json"
+    stop_status_path = tmp_path / "as-stop-status.json"
+    post_status_path = tmp_path / "as-post-status.json"
+    rollback_path = tmp_path / "as-rollback.json"
+
+    rollout_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "cohort": {"max_users": 5},
+    }), encoding="utf-8")
+    plan_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "stages": [{"name": "canary-5"}],
+    }), encoding="utf-8")
+    progression_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "STOP_ROLLOUT",
+        "current_stage": "canary-5",
+        "next_stage": None,
+    }), encoding="utf-8")
+    stop_status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "STOP_ROLLOUT",
+    }), encoding="utf-8")
+    post_status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "breaches": [],
+    }), encoding="utf-8")
+
+    append_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall",
+        change_reference="incident-action-selection",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout_path,
+        canary_plan=plan_path,
+        progression_decision=progression_path,
+        operator_status=stop_status_path,
+        created_at="2026-09-23T04:00:00+00:00",
+    )
+
+    rollback_path.write_text(json.dumps({
+        "schema_version": 1,
+        "release_id": "coworker-cohort-001",
+        "status": "rollback_completed",
+        "mode": "global",
+        "verified_at": "2026-09-23T04:05:00+00:00",
+        "artifact_sha256": {
+            "rollout_manifest": file_sha256(rollout_path),
+            "operator_status": file_sha256(post_status_path),
+        },
+    }), encoding="utf-8")
+
+    append_rollback_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall",
+        change_reference="incident-action-selection",
+        current_stage="canary-5",
+        rollout=rollout_path,
+        canary_plan=plan_path,
+        progression_decision=progression_path,
+        operator_status=post_status_path,
+        rollback_completion=rollback_path,
+        created_at="2026-09-23T04:06:00+00:00",
+    )
+
+    staging_path = tmp_path / "as-staging.json"
+    deployment_path = tmp_path / "as-deployment.json"
+    status_path = tmp_path / "as-status.json"
+    activation_path = tmp_path / "as-activation.json"
+
+    staging_path.write_text(json.dumps({
+        "action_selection": {
+            "status": "passed",
+            "evidence": "fresh recovery action selection proof",
+            "verified_at": "2026-09-23T04:08:00+00:00",
+        },
+    }), encoding="utf-8")
+    deployment_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "change_reference": "action-selection-recovery-1",
+        "current_stage": "canary-5",
+        "deployed_at": "2026-09-23T04:10:00+00:00",
+        "staging_evidence_sha256": file_sha256(staging_path),
+    }), encoding="utf-8")
+    status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-23T04:11:00+00:00",
+        "breaches": [],
+    }), encoding="utf-8")
+    activation_path.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "action_selection_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "canary-5",
+        "verified_at": "2026-09-23T04:12:00+00:00",
+        "change_reference": "action-selection-recovery-1",
+        "deployed_at": "2026-09-23T04:10:00+00:00",
+        "operator_status_generated_at": "2026-09-23T04:11:00+00:00",
+        "runtime": {
+            "coworker_enabled": True,
+            "agent_runtime_enabled": True,
+            "intelligent_planner_enabled": True,
+            "actions_enabled": True,
+            "action_selection_enabled": True,
+            "cohort_enforced": True,
+            "cohort_members_configured": 5,
+            "cohort_max_users": 5,
+        },
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging_path),
+            "deployment_change": file_sha256(deployment_path),
+            "operator_status": file_sha256(status_path),
+        },
+    }), encoding="utf-8")
+
+    entry = append_action_selection_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall",
+        change_reference="action-selection-recovery-1",
+        current_stage="canary-5",
+        staging_evidence=staging_path,
+        deployment_change=deployment_path,
+        operator_status=status_path,
+        action_selection_activation=activation_path,
+        created_at="2026-09-23T04:13:00+00:00",
+    )
+    return ledger, rollback_path, activation_path, entry
+
+
+def test_action_selection_recovery_requires_fresh_schema_v7_after_rollback(monkeypatch, tmp_path):
+    ledger, rollback_path, activation_path, entry = (
+        seed_recovery_action_selection_chain(monkeypatch, tmp_path)
+    )
+    result = recovery.validate_action_selection_recovery_activation(
+        settings=settings({"a" * 64}, action_selection=True),
+        activation_path=activation_path,
+        ledger_path=ledger,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+        rollback_completion=json.loads(
+            rollback_path.read_text(encoding="utf-8")
+        ),
+        rollback_path=rollback_path,
+        recovery_deployed_at=datetime(
+            2026, 9, 23, 4, 9, tzinfo=timezone.utc
+        ),
+    )
+    assert result["ledger_sequence"] == entry["sequence"]
+    assert result["ledger_entry_hash"] == entry["entry_hash"]
+
+
+def test_action_selection_recovery_rejects_tampered_activation(monkeypatch, tmp_path):
+    ledger, rollback_path, activation_path, _ = (
+        seed_recovery_action_selection_chain(monkeypatch, tmp_path)
+    )
+    value = json.loads(activation_path.read_text(encoding="utf-8"))
+    value["verified_at"] = "2026-09-23T04:14:00+00:00"
+    activation_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        recovery.RecoveryVerificationError,
+        match="Release ledger verification failed",
+    ):
+        recovery.validate_action_selection_recovery_activation(
+            settings=settings({"a" * 64}, action_selection=True),
+            activation_path=activation_path,
+            ledger_path=ledger,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollback_completion=json.loads(
+                rollback_path.read_text(encoding="utf-8")
+            ),
+            rollback_path=rollback_path,
+            recovery_deployed_at=datetime(
+                2026, 9, 23, 4, 9, tzinfo=timezone.utc
+            ),
+        )
+
+
+def test_legacy_recovery_manifest_defaults_action_selection_off(monkeypatch, tmp_path):
+    rollout_path = tmp_path / "legacy-rollout.json"
+    rollout_path.write_text(json.dumps(rollout()), encoding="utf-8")
+    rollback_value, _ = rollback_completion(tmp_path, rollout_path)
+    monkeypatch.setenv("SHUDDHO_COWORKER_ENABLED", "true")
+    members = {
+        "a" * 64,
+        "b" * 64,
+        "c" * 64,
+        "d" * 64,
+        "e" * 64,
+    }
+    result = recovery.validate_recovery_configuration(
+        settings(members),
+        rollout(),
+        plan(),
+        rollback_value,
+        rollout_path=rollout_path,
+        current_stage="canary-5",
+        deployed_at=datetime(
+            2026, 9, 22, 7, 5, tzinfo=timezone.utc
+        ),
+    )
+    assert result["capabilities"]["action_selection"] is False
