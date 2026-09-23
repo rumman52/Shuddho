@@ -37,6 +37,8 @@ uv run --extra coworker python scripts/cohort_scale_activation.py \
   --provider-policy-activation /secure/release/provider-policy-activation.json \
   --microsoft-rollout-activation /secure/release/microsoft-rollout-activation.json \
   --action-selection-activation /secure/release/action-selection-activation.json \
+  --action-proposals-activation /secure/release/action-proposals-activation.json \
+  --action-attachments-activation /secure/release/action-attachments-activation.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --freshness-minutes 30 \
   --output /secure/release/bounded-scale-activation.json
@@ -115,3 +117,20 @@ New scale activation evidence is schema v3. It records `action_proposals_enabled
 The later `append-scale` operation independently re-verifies the same schema-v8 event, sequence, entry hash, current stage, and activation SHA-256. Removing or replacing the proposal attestation after activation verification therefore fails closed.
 
 If `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false`, no proposal activation artifact is required. Historical schema-v1 and schema-v2 scale activation evidence remains verifiable; this change does not rewrite older release evidence.
+
+
+## Approved-attachment-aware expansion
+
+When `SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false`, existing schema-v3 scale evidence remains unchanged and no attachment activation artifact is required.
+
+When approved email attachments are enabled, bounded expansion fails closed unless:
+
+- `--action-attachments-activation` is supplied;
+- the artifact status is `action_attachments_verified`;
+- release ID and current stage match the scale decision;
+- the runtime proof shows Coworker, artifact services, Actions, Action Attachments and controlled-cohort enforcement enabled;
+- the exact activation SHA-256 is recorded in one schema-v9 `action_attachments_verified` event for the current stage.
+
+Attachment-enabled scale evidence is schema v4. It adds `action_attachments_enabled=true`, the exact attachment activation SHA-256, and the satisfying schema-v9 ledger sequence/hash.
+
+The later `append-scale` operation independently re-verifies the same schema-v9 event and the exact sequence/hash references. Stripping or replacing the attachment attestation after runtime verification is therefore rejected.
