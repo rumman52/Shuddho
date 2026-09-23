@@ -175,12 +175,12 @@ class Settings:
     def validate(self) -> None:
         if self.source_revision is not None:
             if (
-                len(self.source_revision) not in {40, 64}
+                len(self.source_revision) != 40
                 or self.source_revision != self.source_revision.lower()
                 or any(char not in "0123456789abcdef" for char in self.source_revision)
             ):
                 raise ValueError(
-                    "SHUDDHO_SOURCE_REVISION/RENDER_GIT_COMMIT must be a full lowercase Git commit hash"
+                    "SHUDDHO_SOURCE_REVISION/RENDER_GIT_COMMIT must be a full lowercase 40-character Git commit hash"
                 )
         if self.actions_enabled:
             from .action_security import TokenVault
