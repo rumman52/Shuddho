@@ -1773,9 +1773,9 @@ def test_intelligent_planner_action_proposal_is_persisted_but_not_executable(con
 
     with container.repository.sessions() as db:
         assert db.get(ActionProposal, proposal["id"]) is not None
-        assert db.query(ExternalAction).filter(
+        assert db.scalars(select(ExternalAction).where(
             ExternalAction.owner_id == owner
-        ).count() == 0
+        )).all() == []
     assert provider.requests == []
 
 
