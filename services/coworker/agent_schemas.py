@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .action_schemas import ActionPayload
 from .memory_schemas import Namespace
 
 
@@ -92,6 +93,16 @@ class AgentPlanStep(AgentModel):
         return self
 
 
+class AgentActionProposal(AgentModel):
+    payload: ActionPayload
+    rationale: str = Field(min_length=3, max_length=300)
+
+    @field_validator("rationale")
+    @classmethod
+    def safe_rationale(cls, value: str) -> str:
+        return _safe_text(value)
+
+
 class AgentPlannerChoice(AgentModel):
     tool: str = Field(min_length=3, max_length=80, pattern=r"^[a-z][a-z0-9_.-]+$")
     objective: str = Field(min_length=3, max_length=500)
@@ -104,3 +115,11 @@ class AgentPlannerChoice(AgentModel):
 
 class AgentPlannerProposal(AgentModel):
     steps: list[AgentPlannerChoice] = Field(min_length=1, max_length=3)
+    action_proposals: list[AgentActionProposal] = Field(default_factory=list, max_length=2)
+
+
+class ActionProposalPromotion(AgentModel):
+    connection_id: UUID
+    proposal_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
