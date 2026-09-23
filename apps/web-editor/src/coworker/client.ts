@@ -10,6 +10,7 @@ export type DraftMetadata = { output_language: string; missing_information: stri
 export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
 export type EmailDraft = { subject: string; body: string };
 export type ConnectedAccount = { id: string; provider: "google" | "microsoft"; capability: "email" | "calendar"; email: string; active: boolean };
+export type ActionRecipient = { id: string; name: string; email: string; created_at: string; updated_at: string };
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type AttachmentEmailAction = { kind: "email_send_with_attachments"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type CalendarAction = { kind: "calendar_create"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[] };
@@ -184,6 +185,14 @@ export class CoworkerClient {
     return this.response("/api/v1/connections/microsoft/finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) }, 45000).then(response => response.json() as Promise<ConnectedAccount>);
   }
   disconnect(id: string) { return this.json<{ message: string }>(`/api/v1/connections/${identifier(id)}`, { method: "DELETE" }); }
+  actionRecipients(signal?: AbortSignal) { return this.json<{ enabled: boolean; recipients: ActionRecipient[] }>("/api/v1/action-recipients", { signal }); }
+  createActionRecipient(name: string, email: string) {
+    return this.json<ActionRecipient>("/api/v1/action-recipients", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email }) });
+  }
+  updateActionRecipient(id: string, name: string, email: string) {
+    return this.json<ActionRecipient>(`/api/v1/action-recipients/${identifier(id)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email }) });
+  }
+  deleteActionRecipient(id: string) { return this.json<{ deleted: boolean; id: string }>(`/api/v1/action-recipients/${identifier(id)}`, { method: "DELETE" }); }
   actionArtifacts(signal?: AbortSignal) { return this.json<{ attachments_enabled: boolean; artifacts: Artifact[] }>("/api/v1/artifacts", { signal }); }
   actions(signal?: AbortSignal) { return this.json<{ actions: ExternalAction[] }>("/api/v1/actions", { signal }); }
   action(id: string, signal?: AbortSignal) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}`, { signal }); }

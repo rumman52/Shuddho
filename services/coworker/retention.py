@@ -6,7 +6,7 @@ from sqlalchemy import delete, select
 
 from .errors import CoworkerError
 from .models import (
-    Account, ActionProposal, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent,
+    Account, ActionProposal, ActionRecipient, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent,
     Connection, DailyUsage, Document, DocumentVersion, ExternalAction, MemoryFact,
     ModelAttempt, OAuthAttempt, Outbox, Step, Task, TaskEvent, ToolInvocation,
     ToolReceipt, Workspace, utcnow,
@@ -105,6 +105,7 @@ class RetentionService:
             step_ids = list(db.scalars(select(AgentStep.id).where(AgentStep.owner_id == owner)).all())
 
             db.execute(delete(ActionProposal).where(ActionProposal.owner_id == owner))
+            db.execute(delete(ActionRecipient).where(ActionRecipient.owner_id == owner))
             db.execute(delete(ToolReceipt).where(ToolReceipt.owner_id == owner))
             db.execute(delete(ToolInvocation).where(ToolInvocation.owner_id == owner))
             db.execute(delete(AgentEvent).where(AgentEvent.owner_id == owner))

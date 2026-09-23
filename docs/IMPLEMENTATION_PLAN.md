@@ -283,3 +283,8 @@ For writing review, JSON-object mode and explicit non-thinking mode are supporte
 Provider concurrency is a separate constraint from application replicas. Verify account limits before capacity planning. [DeepSeek rate limits and isolation](https://api-docs.deepseek.com/quick_start/rate_limit/)
 
 The service boundaries, rollout sequence, and release gates above are Shuddho design choices. They do not imply that the planned infrastructure is already installed or provisioned.
+
+
+## Wave D — owned recipient shortcuts
+
+The next bounded usability increment is [Owned Action Recipient Directory](APPROVED_ACTION_RECIPIENTS.md). It deliberately does **not** import provider contacts or widen OAuth scopes. Users create an owner-scoped name/email shortcut, then explicitly select it in the action UI; selection copies the exact validated address into the existing email/calendar payload before preview creation. The action registry, executor, approval hash and provider adapters remain unchanged, so a saved label can never become executable authority. The feature is default-off behind `SHUDDHO_ACTION_RECIPIENTS_ENABLED=false`, capped by `SHUDDHO_ACTION_RECIPIENTS_MAX`, included in account erasure and excluded from Agent tools/memory.

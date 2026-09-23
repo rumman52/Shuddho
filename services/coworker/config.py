@@ -33,6 +33,7 @@ class Settings:
     actions_enabled: bool = False
     action_attachments_enabled: bool = False
     action_reminders_enabled: bool = False
+    action_recipients_enabled: bool = False
     agent_runtime_enabled: bool = False
     agent_memory_enabled: bool = False
     intelligent_planner_enabled: bool = False
@@ -56,6 +57,7 @@ class Settings:
     microsoft_tenant: str = "organizations"
     connector_encryption_key: str = field(default="", repr=False)
     max_daily_actions: int = 20
+    max_action_recipients: int = 100
     max_active_agent_runs: int = 2
     agent_run_timeout_seconds: int = 1800
     max_memory_facts: int = 200
@@ -119,6 +121,7 @@ class Settings:
             actions_enabled=os.getenv("SHUDDHO_ACTIONS_ENABLED", "false").lower() == "true",
             action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
             action_reminders_enabled=os.getenv("SHUDDHO_ACTION_REMINDERS_ENABLED", "false").lower() == "true",
+            action_recipients_enabled=os.getenv("SHUDDHO_ACTION_RECIPIENTS_ENABLED", "false").lower() == "true",
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
@@ -146,6 +149,7 @@ class Settings:
             microsoft_tenant=os.getenv("SHUDDHO_MICROSOFT_TENANT", "organizations"),
             connector_encryption_key=os.getenv("SHUDDHO_CONNECTOR_ENCRYPTION_KEY", ""),
             max_daily_actions=int(os.getenv("SHUDDHO_COWORKER_DAILY_ACTIONS", "20")),
+            max_action_recipients=int(os.getenv("SHUDDHO_ACTION_RECIPIENTS_MAX", "100")),
             max_active_agent_runs=int(os.getenv("SHUDDHO_COWORKER_ACTIVE_AGENT_RUNS", "2")),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
             max_memory_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_FACTS", "200")),
@@ -200,6 +204,8 @@ class Settings:
             raise ValueError("Action attachments require SHUDDHO_ACTIONS_ENABLED=true")
         if self.action_reminders_enabled and not self.actions_enabled:
             raise ValueError("Action reminders require SHUDDHO_ACTIONS_ENABLED=true")
+        if self.action_recipients_enabled and not self.actions_enabled:
+            raise ValueError("Action recipients require SHUDDHO_ACTIONS_ENABLED=true")
         if self.microsoft_actions_enabled:
             if not self.actions_enabled:
                 raise ValueError("Microsoft actions require SHUDDHO_ACTIONS_ENABLED=true")
@@ -244,7 +250,7 @@ class Settings:
         if issuer.scheme != "https" or not issuer.netloc or issuer.username or issuer.password or issuer.query or issuer.fragment:
             raise ValueError("SHUDDHO_AUTH_ISSUER must be the HTTPS issuer of the managed identity provider")
         if min(self.max_daily_tasks, self.max_active_tasks, self.daily_token_budget,
-               self.task_token_budget, self.max_account_bytes, self.max_daily_actions,
+               self.task_token_budget, self.max_account_bytes, self.max_daily_actions, self.max_action_recipients,
                self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_memory_facts,
                self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens,
@@ -264,6 +270,8 @@ class Settings:
             raise ValueError("SHUDDHO_PROVIDER_LEASE_SECONDS must exceed the model timeout")
         if self.max_agent_parallel_steps > 4:
             raise ValueError("SHUDDHO_AGENT_MAX_PARALLEL_STEPS must be between 1 and 4")
+        if self.max_action_recipients > 500:
+            raise ValueError("SHUDDHO_ACTION_RECIPIENTS_MAX must be between 1 and 500")
         if self.cohort_enforced:
             if not self.cohort_account_ids:
                 raise ValueError("Cohort enforcement requires SHUDDHO_COWORKER_COHORT_ACCOUNT_IDS")

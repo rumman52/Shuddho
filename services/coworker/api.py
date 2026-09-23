@@ -23,6 +23,7 @@ from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
+from .recipient_schemas import RecipientUpsert
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -100,6 +101,7 @@ def runtime_manifest(
         "actions": settings.actions_enabled,
         "action_attachments": settings.action_attachments_enabled,
         "action_reminders": settings.action_reminders_enabled,
+        "action_recipients": settings.action_recipients_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
     }
@@ -227,6 +229,29 @@ def connections(identity: Identity, services: Services):
         "reminders_enabled": services.settings.action_reminders_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }
+
+
+@router.get("/action-recipients")
+def action_recipients(identity: Identity, services: Services):
+    return {
+        "enabled": services.settings.action_recipients_enabled,
+        "recipients": services.recipients.list(identity.account_id),
+    }
+
+
+@router.post("/action-recipients", status_code=201)
+def create_action_recipient(payload: RecipientUpsert, identity: Identity, services: Services):
+    return services.recipients.create(identity.account_id, payload)
+
+
+@router.put("/action-recipients/{recipient_id}")
+def update_action_recipient(recipient_id: UUID, payload: RecipientUpsert, identity: Identity, services: Services):
+    return services.recipients.update(identity.account_id, str(recipient_id), payload)
+
+
+@router.delete("/action-recipients/{recipient_id}")
+def delete_action_recipient(recipient_id: UUID, identity: Identity, services: Services):
+    return services.recipients.delete(identity.account_id, str(recipient_id))
 
 
 @router.post("/connections/google/start")
