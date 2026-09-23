@@ -13,7 +13,8 @@ export type ConnectedAccount = { id: string; provider: "google" | "microsoft"; c
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type AttachmentEmailAction = { kind: "email_send_with_attachments"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type CalendarAction = { kind: "calendar_create"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[] };
-export type ActionPayload = EmailAction | AttachmentEmailAction | CalendarAction;
+export type CalendarReminderAction = { kind: "calendar_create_with_reminder"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[]; reminder_minutes_before_start: 5 | 10 | 15 | 30 | 60 | 120 | 1440 };
+export type ActionPayload = EmailAction | AttachmentEmailAction | CalendarAction | CalendarReminderAction;
 export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[] };
 export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
 export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "completed" | "failed" | "cancelled";
@@ -169,7 +170,7 @@ export class CoworkerClient {
   deleteDocument(id: string) { return this.json<{ message: string }>(`/api/v1/documents/${identifier(id)}`, { method: "DELETE" }); }
   task(id: string, signal?: AbortSignal) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}`, { signal }); }
   cancel(id: string) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}/cancel`, { method: "POST" }); }
-  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
+  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reminders_enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
   connectGoogle(capability: "email" | "calendar") {
     return this.json<{ authorization_url: string; state: string }>("/api/v1/connections/google/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capability }) });
   }
