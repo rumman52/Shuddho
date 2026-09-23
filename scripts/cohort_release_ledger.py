@@ -16,6 +16,7 @@ SCALE_SCHEMA_VERSION = 4
 PROVIDER_POLICY_SCHEMA_VERSION = 5
 MICROSOFT_ROLLOUT_SCHEMA_VERSION = 6
 ACTION_SELECTION_SCHEMA_VERSION = 7
+ACTION_PROPOSALS_SCHEMA_VERSION = 8
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -54,6 +55,13 @@ ACTION_SELECTION_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "action_selection_activation",
+}
+ACTION_PROPOSALS_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "action_proposals_activation",
 }
 
 
@@ -267,6 +275,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             PROVIDER_POLICY_SCHEMA_VERSION,
             MICROSOFT_ROLLOUT_SCHEMA_VERSION,
             ACTION_SELECTION_SCHEMA_VERSION,
+            ACTION_PROPOSALS_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -305,6 +314,13 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(
                 f"Ledger entry {index} has an unsupported schema-v7 event type."
             )
+        if (
+            version == ACTION_PROPOSALS_SCHEMA_VERSION
+            and event_type != "action_proposals_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v8 event type."
+            )
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -324,6 +340,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             else MICROSOFT_ROLLOUT_ARTIFACT_KEYS
             if version == MICROSOFT_ROLLOUT_SCHEMA_VERSION
             else ACTION_SELECTION_ARTIFACT_KEYS
+            if version == ACTION_SELECTION_SCHEMA_VERSION
+            else ACTION_PROPOSALS_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
             raise ReleaseLedgerError(f"Ledger entry {index} has invalid artifact hashes.")
@@ -1586,6 +1604,255 @@ def append_action_selection_event(
     return entry
 
 
+def append_action_proposals_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    staging_evidence: Path,
+    rollout_manifest: Path,
+    deployment_change: Path,
+    operator_status: Path,
+    action_proposals_activation: Path,
+    created_at: str | None = None,
+) -> dict:
+    if not actor_reference.strip() or len(actor_reference) > 500:
+        raise ReleaseLedgerError(
+            "actor_reference must be non-empty and at most 500 characters."
+        )
+    if not change_reference.strip() or len(change_reference) > 500:
+        raise ReleaseLedgerError(
+            "change_reference must be non-empty and at most 500 characters."
+        )
+    if not current_stage.strip() or len(current_stage) > 100:
+        raise ReleaseLedgerError(
+            "Action-proposals ledger event requires a valid current_stage."
+        )
+
+    staging = load_json_object(
+        staging_evidence,
+        "action-proposals live staging evidence",
+    )
+    rollout = load_json_object(
+        rollout_manifest,
+        "reviewed rollout manifest",
+    )
+    deployment = load_json_object(
+        deployment_change,
+        "action-proposals deployment change",
+    )
+    status = load_json_object(
+        operator_status,
+        "post-action-proposals operator status",
+    )
+    activation = load_json_object(
+        action_proposals_activation,
+        "action-proposals activation evidence",
+    )
+
+    for label, value in (
+        ("reviewed rollout manifest", rollout),
+        ("deployment change", deployment),
+        ("operator status", status),
+        ("action-proposals activation evidence", activation),
+    ):
+        if value.get("release_id") != release_id:
+            raise ReleaseLedgerError(
+                f"{label} release_id does not match {release_id!r}."
+            )
+
+    staged = staging.get("action_proposals")
+    if (
+        not isinstance(staged, dict)
+        or staged.get("status") != "passed"
+        or not isinstance(staged.get("evidence"), str)
+        or not staged["evidence"].strip()
+        or not isinstance(staged.get("verified_at"), str)
+    ):
+        raise ReleaseLedgerError(
+            "action_proposals_verified requires passed timestamped action-proposals staging evidence."
+        )
+
+    capabilities = rollout.get("capabilities")
+    rollback = rollout.get("rollback")
+    incident = rollout.get("incident")
+    if (
+        not isinstance(capabilities, dict)
+        or capabilities.get("action_proposals") is not True
+        or not isinstance(rollback, dict)
+        or rollback.get("action_proposals_kill_switch")
+        != "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"
+        or not isinstance(incident, dict)
+        or incident.get("change_reference") != change_reference
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout does not carry the required action-proposals controls/change reference."
+        )
+
+    if deployment.get("change_reference") != change_reference:
+        raise ReleaseLedgerError(
+            "Action-proposals deployment change reference does not match."
+        )
+    if deployment.get("current_stage") != current_stage:
+        raise ReleaseLedgerError(
+            "Action-proposals deployment current_stage does not match."
+        )
+    if deployment.get("staging_evidence_sha256") != file_sha256(
+        staging_evidence
+    ):
+        raise ReleaseLedgerError(
+            "Action-proposals deployment does not bind this staging evidence."
+        )
+    if deployment.get("rollout_manifest_sha256") != file_sha256(
+        rollout_manifest
+    ):
+        raise ReleaseLedgerError(
+            "Action-proposals deployment does not bind this reviewed rollout manifest."
+        )
+    revision = deployment.get("source_revision")
+    if (
+        not isinstance(revision, str)
+        or len(revision) != 40
+        or revision != revision.lower()
+        or any(char not in "0123456789abcdef" for char in revision)
+    ):
+        raise ReleaseLedgerError(
+            "Action-proposals deployment source_revision is not a full lowercase Git SHA-1."
+        )
+    if (
+        status.get("decision") != "CONTINUE_COHORT"
+        or status.get("breaches") != []
+    ):
+        raise ReleaseLedgerError(
+            "action_proposals_verified requires a clean post-deploy operator status."
+        )
+    if activation.get("schema_version") != 1 or activation.get("status") != "action_proposals_verified":
+        raise ReleaseLedgerError(
+            "Action-proposals activation evidence has not passed."
+        )
+    if activation.get("change_reference") != change_reference:
+        raise ReleaseLedgerError(
+            "Action-proposals activation change reference does not match."
+        )
+    if activation.get("current_stage") != current_stage:
+        raise ReleaseLedgerError(
+            "Action-proposals activation current_stage does not match."
+        )
+    if activation.get("deployed_at") != deployment.get("deployed_at"):
+        raise ReleaseLedgerError(
+            "Action-proposals activation does not bind deployment time."
+        )
+    if activation.get("source_revision") != revision:
+        raise ReleaseLedgerError(
+            "Action-proposals activation does not bind deployment source revision."
+        )
+
+    runtime = activation.get("runtime")
+    runtime_capabilities = runtime.get("capabilities") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("schema_version") != 1
+        or runtime.get("source_revision") != revision
+        or not isinstance(runtime_capabilities, dict)
+        or runtime_capabilities.get("action_proposals") is not True
+        or not isinstance(runtime.get("cohort"), dict)
+        or runtime["cohort"].get("enforced") is not True
+    ):
+        raise ReleaseLedgerError(
+            "Action-proposals activation does not prove the reviewed production runtime."
+        )
+
+    hashes = activation.get("artifact_sha256")
+    if not isinstance(hashes, dict):
+        raise ReleaseLedgerError(
+            "Action-proposals activation evidence has no artifact hashes."
+        )
+    expected_bound = {
+        "staging_evidence": file_sha256(staging_evidence),
+        "rollout_manifest": file_sha256(rollout_manifest),
+        "deployment_change": file_sha256(deployment_change),
+        "operator_status": file_sha256(operator_status),
+    }
+    for name, value in expected_bound.items():
+        if hashes.get(name) != value:
+            raise ReleaseLedgerError(
+                f"Action-proposals activation does not bind this {name}."
+            )
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if (
+        state["release_id"] is not None
+        and state["release_id"] != release_id
+    ):
+        raise ReleaseLedgerError(
+            "Ledger release_id does not match the action-proposals event."
+        )
+    if not entries or not any(
+        item.get("current_stage") == current_stage
+        or item.get("next_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "action_proposals_verified requires an existing ledger chain that reached current_stage."
+        )
+
+    activation_hash = file_sha256(action_proposals_activation)
+    duplicates = [
+        item
+        for item in entries
+        if item.get("schema_version") == ACTION_PROPOSALS_SCHEMA_VERSION
+        and item.get("event_type") == "action_proposals_verified"
+        and item.get("artifact_sha256", {}).get(
+            "action_proposals_activation"
+        ) == activation_hash
+    ]
+    if duplicates:
+        raise ReleaseLedgerError(
+            "This action-proposals activation is already recorded in the release ledger."
+        )
+
+    core = {
+        "schema_version": ACTION_PROPOSALS_SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": "action_proposals_verified",
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": None,
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging_evidence),
+            "rollout_manifest": file_sha256(rollout_manifest),
+            "deployment_change": file_sha256(deployment_change),
+            "operator_status": file_sha256(operator_status),
+            "action_proposals_activation": activation_hash,
+        },
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {
+        **core,
+        "entry_hash": entry_hash,
+        "hmac_sha256": tag,
+    }
+    serialized = "".join(
+        json.dumps(
+            item,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Maintain a tamper-evident Shuddho controlled-cohort release ledger."
@@ -1680,6 +1947,22 @@ def main() -> None:
         required=True,
     )
 
+    action_proposals_parser = sub.add_parser("append-action-proposals")
+    action_proposals_parser.add_argument("--ledger", type=Path, required=True)
+    action_proposals_parser.add_argument("--release-id", required=True)
+    action_proposals_parser.add_argument("--actor-reference", required=True)
+    action_proposals_parser.add_argument("--change-reference", required=True)
+    action_proposals_parser.add_argument("--current-stage", required=True)
+    action_proposals_parser.add_argument("--staging-evidence", type=Path, required=True)
+    action_proposals_parser.add_argument("--rollout", type=Path, required=True)
+    action_proposals_parser.add_argument("--deployment-change", type=Path, required=True)
+    action_proposals_parser.add_argument("--operator-status", type=Path, required=True)
+    action_proposals_parser.add_argument(
+        "--action-proposals-activation",
+        type=Path,
+        required=True,
+    )
+
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--ledger", type=Path, required=True)
 
@@ -1762,6 +2045,27 @@ def main() -> None:
                 deployment_change=args.deployment_change,
                 operator_status=args.operator_status,
                 action_selection_activation=args.action_selection_activation,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        elif args.command == "append-action-proposals":
+            entry = append_action_proposals_event(
+                ledger=args.ledger,
+                key=key,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                staging_evidence=args.staging_evidence,
+                rollout_manifest=args.rollout,
+                deployment_change=args.deployment_change,
+                operator_status=args.operator_status,
+                action_proposals_activation=args.action_proposals_activation,
             )
             result = {
                 "appended": True,
