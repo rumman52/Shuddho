@@ -208,7 +208,7 @@ def test_reminder_approval_scope_binds_exact_minutes_and_policy():
     assert scope["policy"]["reminders"] == "single_explicit"
     before = scope["payload_sha256"]
 
-    changed = json.loads(json.dumps(preview))
+    changed = deepcopy(preview)
     changed["payload"]["reminder_minutes_before_start"] = 30
     with pytest.raises(CoworkerError, match="changed"):
         validate_approval_scope(changed)
