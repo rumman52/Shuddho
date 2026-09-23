@@ -20,7 +20,8 @@
     "outcome_replan": true,
     "research": false,
     "actions": false,
-    "action_selection": false
+    "action_selection": false,
+    "action_proposals": false
   },
   "rollback": {
     "runbook_reference": "deployment-runbook-or-ticket",
@@ -29,7 +30,8 @@
     "parallel_kill_switch": "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false",
     "research_kill_switch": "SHUDDHO_RESEARCH_SERVICES_ENABLED=false",
     "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false",
-    "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false"
+    "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
+    "action_proposals_kill_switch": "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"
   },
   "monitoring": {
     "queue_age": "dashboard-or-alert-reference",
