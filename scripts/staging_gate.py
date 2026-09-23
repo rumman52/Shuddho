@@ -21,6 +21,7 @@ REQUIRED_GATES = {
 CONDITIONAL_GATES = {
     "research": "Live search provider retrieval/citation validation passed.",
     "actions": "Live Google approval/execution/receipt validation passed without auto-approval.",
+    "action_attachments": "Live approved email attachment validation passed with an immutable artifact manifest and provider receipt.",
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
     "action_selection": "Live Agent planner selected only opaque attached-action handles and still paused for explicit user approval.",
     "action_proposals": "Live Agent generated only inert typed action proposals; promotion created a separate preview and never auto-approved or executed it.",
@@ -40,6 +41,7 @@ def evaluate(
     require_research: bool,
     require_actions: bool,
     require_microsoft_actions: bool = False,
+    require_action_attachments: bool = False,
     require_action_selection: bool = False,
     require_action_proposals: bool = False,
 ) -> dict:
@@ -50,6 +52,8 @@ def evaluate(
         required["actions"] = CONDITIONAL_GATES["actions"]
     if require_microsoft_actions:
         required["microsoft_actions"] = CONDITIONAL_GATES["microsoft_actions"]
+    if require_action_attachments:
+        required["action_attachments"] = CONDITIONAL_GATES["action_attachments"]
     if require_action_selection:
         required["action_selection"] = CONDITIONAL_GATES["action_selection"]
     if require_action_proposals:
@@ -86,6 +90,7 @@ def main() -> None:
     parser.add_argument("--require-research", action="store_true")
     parser.add_argument("--require-actions", action="store_true")
     parser.add_argument("--require-microsoft-actions", action="store_true")
+    parser.add_argument("--require-action-attachments", action="store_true")
     parser.add_argument("--require-action-selection", action="store_true")
     parser.add_argument("--require-action-proposals", action="store_true")
     parser.add_argument("--output", type=Path)
@@ -95,6 +100,7 @@ def main() -> None:
         require_research=args.require_research,
         require_actions=args.require_actions,
         require_microsoft_actions=args.require_microsoft_actions,
+        require_action_attachments=args.require_action_attachments,
         require_action_selection=args.require_action_selection,
         require_action_proposals=args.require_action_proposals,
     )

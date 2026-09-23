@@ -8,7 +8,7 @@ from scripts.staging_gate import evaluate as evaluate_staging, load_evidence
 
 ACTION_PROVIDERS = {"google", "microsoft"}
 
-OPTIONAL_CAPABILITY_KEYS = {"action_selection", "action_proposals"}
+OPTIONAL_CAPABILITY_KEYS = {"action_attachments", "action_selection", "action_proposals"}
 
 CAPABILITY_KEYS = {
     "coworker",
@@ -43,6 +43,7 @@ ROLLBACK_KEYS = {
     "actions_kill_switch",
 }
 OPTIONAL_ROLLBACK_KEYS = {
+    "action_attachments_kill_switch",
     "action_selection_kill_switch",
     "action_proposals_kill_switch",
 }
@@ -52,6 +53,7 @@ EXPECTED_KILL_SWITCHES = {
     "parallel_kill_switch": "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false",
     "research_kill_switch": "SHUDDHO_RESEARCH_SERVICES_ENABLED=false",
     "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false",
+    "action_attachments_kill_switch": "SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false",
     "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
     "action_proposals_kill_switch": "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
 }
@@ -141,6 +143,11 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
                 failures.append("parallel_dependency")
             if capabilities["outcome_replan"] and not capabilities["intelligent_planner"]:
                 failures.append("replan_dependency")
+            if capabilities.get("action_attachments") is True and (
+                not capabilities["actions"]
+                or not capabilities["artifact_services"]
+            ):
+                failures.append("action_attachments_dependency")
             if capabilities.get("action_selection") is True and (
                 not capabilities["actions"]
                 or not capabilities["agent_runtime"]
@@ -187,10 +194,13 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
         if not text_ref(rollback["runbook_reference"]):
             failures.append("rollback_runbook")
         for key, expected in EXPECTED_KILL_SWITCHES.items():
-            if key in {"action_selection_kill_switch", "action_proposals_kill_switch"}:
+            if key in {"action_attachments_kill_switch", "action_selection_kill_switch", "action_proposals_kill_switch"}:
                 continue
             if rollback.get(key) != expected:
                 failures.append(key)
+        if isinstance(capabilities, dict) and capabilities.get("action_attachments") is True:
+            if rollback.get("action_attachments_kill_switch") != EXPECTED_KILL_SWITCHES["action_attachments_kill_switch"]:
+                failures.append("action_attachments_kill_switch")
         if isinstance(capabilities, dict) and capabilities.get("action_selection") is True:
             if rollback.get("action_selection_kill_switch") != EXPECTED_KILL_SWITCHES["action_selection_kill_switch"]:
                 failures.append("action_selection_kill_switch")
@@ -235,6 +245,10 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
     require_microsoft_actions = (
         require_actions and "microsoft" in action_providers
     )
+    require_action_attachments = (
+        isinstance(capabilities, dict)
+        and capabilities.get("action_attachments") is True
+    )
     require_action_selection = (
         isinstance(capabilities, dict)
         and capabilities.get("action_selection") is True
@@ -248,6 +262,7 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         require_research=require_research,
         require_actions=require_actions,
         require_microsoft_actions=require_microsoft_actions,
+        require_action_attachments=require_action_attachments,
         require_action_selection=require_action_selection,
         require_action_proposals=require_action_proposals,
     )
@@ -289,6 +304,7 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         },
         "action_providers": sorted(action_providers),
         "required_feature_gates": {
+            "action_attachments": require_action_attachments,
             "action_selection": require_action_selection,
             "action_proposals": require_action_proposals,
         },

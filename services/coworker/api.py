@@ -98,6 +98,7 @@ def runtime_manifest(
         "outcome_replan": settings.agent_outcome_replan_enabled,
         "research": settings.research_services_enabled,
         "actions": settings.actions_enabled,
+        "action_attachments": settings.action_attachments_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
     }

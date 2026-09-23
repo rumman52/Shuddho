@@ -16,6 +16,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [attachmentsEnabled, setAttachmentsEnabled] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<string[]>([]);
+  const selectedAttachmentsRef = useRef<string[]>([]);
   const [action, setAction] = useState<ExternalAction | null>(null);
   const [mode, setMode] = useState<"email" | "calendar">("email");
   const microsoftEnabled = import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED === "true";
@@ -100,18 +101,23 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     updateAction(value);
   }
 
+  function setAttachmentSelection(ids: string[]) {
+    selectedAttachmentsRef.current = ids;
+    setSelectedAttachments(ids);
+  }
+
   function startNewAction(clearAttachments = true) {
     setComposing(true); setAction(null); setChecked(false); setError(""); submission.current = undefined;
-    if (clearAttachments) setSelectedAttachments([]);
+    if (clearAttachments) setAttachmentSelection([]);
   }
 
   async function prepare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentConnection) return;
-    // Read checked attachment IDs from the submitted form itself. This closes
-    // the gap where a checkbox DOM change can precede React state commit and
-    // an immediate submit would otherwise prepare a plain email.
-    const attachmentIds = mode === "email" ? new FormData(event.currentTarget).getAll("attachment_id").map(String) : [];
+    // React may defer the state commit after a checkbox event. Keep a synchronous
+    // selection mirror so an immediate submit cannot silently downgrade an
+    // attachment email into a legacy plain email.
+    const attachmentIds = mode === "email" ? [...selectedAttachmentsRef.current] : [];
     const input: ActionInput = { connection_id: currentConnection.id, attachment_ids: attachmentIds, payload: mode === "email" ?
       { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body } :
       { kind: "calendar_create", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees) } };
@@ -126,8 +132,8 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       if (action.state === "awaiting_approval") await client.cancelAction(action.id);
       const p = action.preview.payload;
       setProvider(action.preview.provider);
-      if (p.kind !== "calendar_create") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setSelectedAttachments((action.preview.attachments ?? []).map(item => item.id)); }
-      else { setMode("calendar"); setSelectedAttachments([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
+      if (p.kind !== "calendar_create") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); }
+      else { setMode("calendar"); setAttachmentSelection([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
       startNewAction(false); setReload(x => x + 1);
     });
   }
@@ -171,7 +177,12 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
               const selectedBytes = artifacts.filter(value => selectedAttachments.includes(value.id)).reduce((sum, value) => sum + value.byte_size, 0);
               const unavailable = !selected && (selectedAttachments.length >= 3 || selectedBytes + item.byte_size > 2 * 1024 * 1024);
               return <label key={item.id}><input type="checkbox" name="attachment_id" value={item.id} checked={selected} disabled={Boolean(busy) || unavailable}
-                onChange={event => setSelectedAttachments(previous => event.target.checked ? [...previous, item.id] : previous.filter(id => id !== item.id))} />
+                onChange={event => {
+                  const next = event.target.checked
+                    ? [...selectedAttachmentsRef.current, item.id]
+                    : selectedAttachmentsRef.current.filter(id => id !== item.id);
+                  setAttachmentSelection([...new Set(next)]);
+                }} />
                 <span>{item.filename} · {(item.byte_size / 1024).toFixed(0)} KB · SHA {item.sha256.slice(0, 8)}{item.created_at ? ` · ${new Date(item.created_at).toLocaleDateString()}` : ""}</span></label>;
             })}
             <small>Up to 3 existing Shuddho artifacts, 2 MB total. The exact artifact hashes are bound to approval.</small>

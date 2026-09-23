@@ -21,7 +21,8 @@
     "research": false,
     "actions": false,
     "action_selection": false,
-    "action_proposals": false
+    "action_proposals": false,
+    "action_attachments": false
   },
   "rollback": {
     "runbook_reference": "deployment-runbook-or-ticket",
@@ -31,7 +32,8 @@
     "research_kill_switch": "SHUDDHO_RESEARCH_SERVICES_ENABLED=false",
     "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false",
     "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
-    "action_proposals_kill_switch": "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"
+    "action_proposals_kill_switch": "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
+    "action_attachments_kill_switch": "SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false"
   },
   "monitoring": {
     "queue_age": "dashboard-or-alert-reference",

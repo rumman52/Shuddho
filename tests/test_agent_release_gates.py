@@ -91,3 +91,30 @@ def test_action_selection_staging_gate_is_independent():
         require_action_selection=True,
     )
     assert result["decision"] == "GO"
+
+
+def test_action_attachment_staging_gate_is_independent():
+    evidence = {
+        key: {"status": "passed", "evidence": "staging-verification"}
+        for key in REQUIRED_GATES
+    }
+    result = evaluate(
+        evidence,
+        require_research=False,
+        require_actions=False,
+        require_action_attachments=True,
+    )
+    assert result["decision"] == "NO-GO"
+    assert result["missing"] == ["action_attachments"]
+
+    evidence["action_attachments"] = {
+        "status": "passed",
+        "evidence": "exact synthetic artifact approved and provider accepted",
+    }
+    result = evaluate(
+        evidence,
+        require_research=False,
+        require_actions=False,
+        require_action_attachments=True,
+    )
+    assert result["decision"] == "GO"
