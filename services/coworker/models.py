@@ -204,6 +204,23 @@ class Connection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ActionRecipient(Base):
+    __tablename__ = "cw_action_recipients"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    name_key: Mapped[str] = mapped_column(String(160))
+    email: Mapped[str] = mapped_column(String(254))
+    email_key: Mapped[str] = mapped_column(String(254))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "name_key", name="uq_cw_action_recipients_owner_name"),
+        UniqueConstraint("owner_id", "email_key", name="uq_cw_action_recipients_owner_email"),
+        Index("cw_action_recipients_owner_name", "owner_id", "name_key"),
+    )
+
+
 class ExternalAction(Base):
     __tablename__ = "cw_external_actions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

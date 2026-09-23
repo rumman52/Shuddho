@@ -11,6 +11,7 @@ from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
 from .agent_repository import AgentRepository
 from .memory_repository import MemoryRepository
+from .recipient_repository import RecipientRepository
 from .retention import RetentionService
 
 
@@ -23,6 +24,7 @@ class Container:
     actions: ActionService | None = None
     agent: AgentRepository | None = None
     memory: MemoryRepository | None = None
+    recipients: RecipientRepository | None = None
     retention: RetentionService | None = None
 
     def __post_init__(self):
@@ -39,6 +41,8 @@ class Container:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
         if self.memory is None:
             self.memory = MemoryRepository(self.repository.sessions, self.settings)
+        if self.recipients is None:
+            self.recipients = RecipientRepository(self.repository.sessions, self.settings)
         if self.retention is None:
             self.retention = RetentionService(self.repository.sessions, self.storage)
 

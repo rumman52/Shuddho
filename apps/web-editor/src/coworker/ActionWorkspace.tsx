@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type ActionInput, type Artifact, type ConnectedAccount, type EmailDraft, type ExternalAction } from "./client";
+import { CoworkerClient, WorkspaceError, type ActionInput, type ActionRecipient, type Artifact, type ConnectedAccount, type EmailDraft, type ExternalAction } from "./client";
 import { beginGoogleConnection, finishGoogleCallback } from "./googleCallback";
 import { beginMicrosoftConnection, finishMicrosoftCallback } from "./microsoftCallback";
 
@@ -18,6 +18,10 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [attachmentsEnabled, setAttachmentsEnabled] = useState(false);
   const [remindersEnabled, setRemindersEnabled] = useState(false);
+  const [recipientDirectoryEnabled, setRecipientDirectoryEnabled] = useState(false);
+  const [savedRecipients, setSavedRecipients] = useState<ActionRecipient[]>([]);
+  const [recipientName, setRecipientName] = useState("");
+  const [recipientEmail, setRecipientEmail] = useState("");
   const [selectedAttachments, setSelectedAttachments] = useState<string[]>([]);
   const selectedAttachmentsRef = useRef<string[]>([]);
   const [action, setAction] = useState<ExternalAction | null>(null);
@@ -52,10 +56,15 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       if (alive && (result || microsoftResult)) setNotice(microsoftResult ?? result ?? "");
     })().catch(failure => { if (alive) setError(message(failure)); }).finally(() => {
       if (!alive) return;
-      Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal)]).then(([value, recent, available]) => {
+      const directory = client.actionRecipients(controller.signal).catch(failure => {
+        if (failure instanceof WorkspaceError && failure.status === 404) return { enabled: false, recipients: [] as ActionRecipient[] };
+        throw failure;
+      });
+      Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal), directory]).then(([value, recent, available, recipientDirectory]) => {
         if (!alive) return;
         setEnabled(value.enabled); setRemindersEnabled(value.reminders_enabled); setConnections(value.connections); setHistory(recent.actions);
-        setAttachmentsEnabled(available.attachments_enabled); setArtifacts(available.artifacts); setLoaded(true);
+        setAttachmentsEnabled(available.attachments_enabled); setArtifacts(available.artifacts);
+        setRecipientDirectoryEnabled(recipientDirectory.enabled); setSavedRecipients(recipientDirectory.recipients); setLoaded(true);
       }).catch(failure => { if (alive) { setError(message(failure)); setLoaded(true); } });
     });
     return () => { alive = false; controller.abort(); };
@@ -118,6 +127,33 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     }
   }
 
+  function addSavedRecipient(value: ActionRecipient) {
+    const current = recipients(mode === "email" ? to : attendees);
+    if (current.some(item => item.toLowerCase() === value.email.toLowerCase())) return;
+    if (current.length >= 20) { setError("Remove a recipient before adding another one."); return; }
+    const next = [...current, value.email].join(", ");
+    if (mode === "email") setTo(next); else setAttendees(next);
+  }
+
+  async function saveRecipient() {
+    if (!recipientName.trim() || !recipientEmail.trim()) { setError("Enter a recipient name and complete email address."); return; }
+    await run("save-recipient", async () => {
+      const value = await client.createActionRecipient(recipientName, recipientEmail);
+      setSavedRecipients(previous => [...previous, value].sort((a, b) => a.name.localeCompare(b.name)));
+      setRecipientName(""); setRecipientEmail("");
+      setNotice(`Saved ${value.name}. The exact address is still shown in every action preview.`);
+    });
+  }
+
+  async function removeSavedRecipient(value: ActionRecipient) {
+    if (!window.confirm(`Remove saved recipient "${value.name}"? Existing action previews will not change.`)) return;
+    await run("delete-recipient", async () => {
+      await client.deleteActionRecipient(value.id);
+      setSavedRecipients(previous => previous.filter(item => item.id !== value.id));
+      setNotice(`Removed ${value.name} from saved recipients.`);
+    });
+  }
+
   async function prepare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentConnection) return;
@@ -171,6 +207,20 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       {composing ? <form onSubmit={prepare}>
         <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "calendar")} disabled={Boolean(busy)}><option value="email">Send an email</option><option value="calendar">Create a calendar event</option></select></label>
         <p className="cw-action-account">{currentConnection ? <>From <strong>{currentConnection.email}</strong>{mode === "calendar" && " · Primary calendar"}</> : `Connect ${provider === "google" ? (mode === "email" ? "Gmail" : "Google Calendar") : (mode === "email" ? "Microsoft Mail" : "Microsoft Calendar")} above to continue.`}</p>
+        {(recipientDirectoryEnabled || savedRecipients.length > 0) && <fieldset className="cw-agent-files">
+          <legend>Saved recipients</legend>
+          {recipientDirectoryEnabled && <><div className="cw-action-row">
+            <label>Name<input dir="auto" value={recipientName} onChange={event => setRecipientName(event.target.value)} maxLength={80} placeholder="e.g. Finance team" /></label>
+            <label>Email<input dir="ltr" type="email" value={recipientEmail} onChange={event => setRecipientEmail(event.target.value)} maxLength={254} placeholder="name@example.com" /></label>
+          </div>
+          <button type="button" className="cw-secondary" disabled={Boolean(busy) || !recipientName.trim() || !recipientEmail.trim()} onClick={() => void saveRecipient()}>{busy === "save-recipient" ? "Saving…" : "Save recipient"}</button></>}
+          {savedRecipients.length > 0 ? <div className="cw-connection-grid">{savedRecipients.map(item => <div className="cw-connection" key={item.id}>
+            <div><strong dir="auto">{item.name}</strong><small dir="ltr">{item.email}</small></div>
+            <div><button type="button" className="cw-text-button" disabled={Boolean(busy) || !recipientDirectoryEnabled} onClick={() => addSavedRecipient(item)}>{mode === "email" ? "Add to To" : "Add guest"}</button>
+              <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void removeSavedRecipient(item)}>Remove</button></div>
+          </div>)}</div> : recipientDirectoryEnabled && <small>No saved recipients yet.</small>}
+          <small>Saved recipients are private Shuddho shortcuts. Selecting one only copies its exact email address into this draft; the final immutable preview is still what you approve. Agents cannot resolve or select saved recipients.</small>
+        </fieldset>}
         {mode === "email" ? <>
           <label>To<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required maxLength={5100} placeholder="name@example.com" /></label>
           <div className="cw-action-row"><label>Cc<input dir="ltr" value={cc} onChange={event => setCc(event.target.value)} maxLength={5100} /></label><label>Bcc<input dir="ltr" value={bcc} onChange={event => setBcc(event.target.value)} maxLength={5100} /></label></div>
