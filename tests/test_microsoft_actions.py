@@ -128,6 +128,7 @@ def enable_microsoft(container):
             "google": GoogleActions(settings),
             "microsoft": microsoft,
         },
+        container.storage,
     )
     return simulated
 
