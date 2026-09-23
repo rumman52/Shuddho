@@ -109,19 +109,19 @@ def validate_staging(
         )
     if item.get("status") != "passed":
         raise ActionAttachmentsActivationError(
-            "Action-proposal staging evidence is not passed."
+            "Action-attachment staging evidence is not passed."
         )
     if (
         not isinstance(item.get("evidence"), str)
         or not item["evidence"].strip()
     ):
         raise ActionAttachmentsActivationError(
-            "Action-proposal staging evidence text is missing."
+            "Action-attachment staging evidence text is missing."
         )
     verified_at = item.get("verified_at")
     if not isinstance(verified_at, str):
         raise ActionAttachmentsActivationError(
-            "Action-proposal staging evidence has no verified_at timestamp."
+            "Action-attachment staging evidence has no verified_at timestamp."
         )
     verified = parse_time(
         verified_at,
@@ -130,11 +130,11 @@ def validate_staging(
     age = (now - verified).total_seconds() / 60
     if age < -1:
         raise ActionAttachmentsActivationError(
-            "Action-proposal staging evidence is from the future."
+            "Action-attachment staging evidence is from the future."
         )
     if age > max_age_minutes:
         raise ActionAttachmentsActivationError(
-            f"Action-proposal staging evidence is stale ({age:.1f} minutes old)."
+            f"Action-attachment staging evidence is stale ({age:.1f} minutes old)."
         )
     return verified
 
@@ -161,7 +161,7 @@ def validate_reviewed_rollout(
     rollback = rollout["rollback"]
     if (
         rollback.get("action_attachments_kill_switch")
-        != "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"
+        != "SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false"
     ):
         raise ActionAttachmentsActivationError(
             "Reviewed rollout manifest has no exact action-attachments kill switch."
@@ -192,7 +192,7 @@ def validate_deployment(
 ) -> datetime:
     if set(value) != DEPLOYMENT_KEYS:
         raise ActionAttachmentsActivationError(
-            "Action-proposal deployment record has an unexpected schema."
+            "Action-attachment deployment record has an unexpected schema."
         )
     for key in (
         "release_id",
@@ -239,7 +239,7 @@ def validate_deployment(
     )
     if deployed_at < not_before:
         raise ActionAttachmentsActivationError(
-            "Action-proposal deployment predates live staging evidence."
+            "Action-attachment deployment predates live staging evidence."
         )
     return deployed_at
 
@@ -449,7 +449,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Verify production activation of non-executable Agent action "
-            "proposals against exact staging evidence, reviewed rollout, "
+            "attachments against exact staging evidence, reviewed rollout, "
             "deployed revision/configuration, and fresh cohort health."
         )
     )
