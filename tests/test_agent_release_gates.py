@@ -118,3 +118,30 @@ def test_action_attachment_staging_gate_is_independent():
         require_action_attachments=True,
     )
     assert result["decision"] == "GO"
+
+
+def test_action_recipients_staging_gate_is_independent():
+    evidence = {
+        key: {"status": "passed", "evidence": "staging-verification"}
+        for key in REQUIRED_GATES
+    }
+    result = evaluate(
+        evidence,
+        require_research=False,
+        require_actions=False,
+        require_action_recipients=True,
+    )
+    assert result["decision"] == "NO-GO"
+    assert result["missing"] == ["action_recipients"]
+
+    evidence["action_recipients"] = {
+        "status": "passed",
+        "evidence": "owner isolation and cleanup passed",
+    }
+    result = evaluate(
+        evidence,
+        require_research=False,
+        require_actions=False,
+        require_action_recipients=True,
+    )
+    assert result["decision"] == "GO"

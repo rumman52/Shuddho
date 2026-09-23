@@ -19,6 +19,7 @@ from scripts.cohort_scale_activation import (
     validate_action_selection_activation,
     validate_action_proposals_activation,
     validate_action_attachments_activation,
+    validate_action_recipients_activation,
     validate_scale_decision,
     sha256_file,
 )
@@ -60,7 +61,7 @@ def operator():
     }
 
 
-def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False):
+def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False):
     ids = {allowed}
     ids.update(f"member-{index}" for index in range(max(0, members - 1)))
     if denied in ids:
@@ -73,6 +74,8 @@ def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"
         agent_action_selection_enabled=action_selection,
         agent_action_proposals_enabled=action_proposals,
         action_attachments_enabled=action_attachments,
+        action_reminders_enabled=action_reminders,
+        action_recipients_enabled=action_recipients,
     )
 
 
@@ -1177,3 +1180,68 @@ def test_scale_v4_evidence_binds_action_attachments_attestation(tmp_path):
         value["artifact_sha256"]["action_attachments_activation"]
         == sha256_file(attachments_path)
     )
+
+
+def test_action_recipients_scale_activation_is_optional_when_disabled(tmp_path):
+    assert validate_action_recipients_activation(
+        None,
+        tmp_path / "missing-ledger.jsonl",
+        decision(),
+        settings(action_recipients=False),
+    ) is None
+
+
+def test_action_recipients_scale_activation_requires_attested_activation(tmp_path):
+    with pytest.raises(ScaleActivationError, match="action-recipients-activation"):
+        validate_action_recipients_activation(
+            None,
+            tmp_path / "ledger.jsonl",
+            decision(),
+            settings(action_recipients=True),
+        )
+
+
+def test_schema_v6_scale_evidence_requires_recipient_attestation(tmp_path):
+    scale_path = tmp_path / "scale-v6.json"
+    deploy_path = tmp_path / "deploy-v6.json"
+    status_path = tmp_path / "status-v6.json"
+    policy_path = tmp_path / "policy-v6.json"
+    recipient_path = tmp_path / "recipient-v6.json"
+    for path in (scale_path, deploy_path, status_path, policy_path, recipient_path):
+        path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ScaleActivationError, match="ledger attestation"):
+        build_evidence(
+            decision=decision(),
+            deployment=deployment(),
+            operator_status=operator(),
+            settings=settings(action_recipients=True),
+            scale_decision_path=scale_path,
+            deployment_change_path=deploy_path,
+            operator_status_path=status_path,
+            provider_policy_activation_path=policy_path,
+            action_recipients_activation_path=recipient_path,
+            action_recipients_attestation=None,
+            now=NOW,
+        )
+
+    evidence = build_evidence(
+        decision=decision(),
+        deployment=deployment(),
+        operator_status=operator(),
+        settings=settings(action_recipients=True),
+        scale_decision_path=scale_path,
+        deployment_change_path=deploy_path,
+        operator_status_path=status_path,
+        provider_policy_activation_path=policy_path,
+        action_recipients_activation_path=recipient_path,
+        action_recipients_attestation={
+            "ledger_sequence": 11,
+            "ledger_entry_hash": "a" * 64,
+        },
+        now=NOW,
+    )
+    assert evidence["schema_version"] == 6
+    assert evidence["runtime_requirements"]["action_recipients_enabled"] is True
+    assert evidence["action_recipients"]["ledger_sequence"] == 11
+    assert evidence["artifact_sha256"]["action_recipients_activation"] == sha256_file(recipient_path)

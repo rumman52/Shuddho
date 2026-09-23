@@ -17,6 +17,7 @@ from scripts.cohort_release_ledger import (
     append_action_proposals_event,
     append_action_attachments_event,
     append_action_reminders_event,
+    append_action_recipients_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -2758,3 +2759,155 @@ def test_schema_v5_recovery_requires_fresh_action_reminders_attestation(tmp_path
         recovery_verification=recovery_verification,
     )
     assert recovered["event_type"] == "recovery_verified"
+
+
+def action_recipients_files(tmp_path, *, current_stage="cohort-25"):
+    capabilities = {
+        "coworker": True,
+        "work_services": True,
+        "artifact_services": True,
+        "agent_runtime": True,
+        "intelligent_planner": True,
+        "memory": False,
+        "handoffs": True,
+        "multi_handoffs": True,
+        "dependency_graph": True,
+        "parallel_execution": True,
+        "outcome_replan": True,
+        "research": False,
+        "actions": True,
+        "action_attachments": False,
+        "action_reminders": False,
+        "action_recipients": True,
+        "action_selection": False,
+        "action_proposals": False,
+    }
+    rollout = write_json(tmp_path / ("action-recipients-" + current_stage + "-rollout.json"), {
+        "release_id": "coworker-cohort-001",
+        "environment": "production",
+        "cohort": {"reference": "approved-cohort", "max_users": 25},
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "rollback": {
+            "action_recipients_kill_switch":
+                "SHUDDHO_ACTION_RECIPIENTS_ENABLED=false",
+        },
+        "incident": {"change_reference": "action-recipients-change-1"},
+    })
+    staging = write_json(tmp_path / ("action-recipients-" + current_stage + "-staging.json"), {
+        "action_recipients": {
+            "status": "passed",
+            "evidence": "saved-recipient CRUD and owner isolation passed",
+            "verified_at": "2026-09-24T07:00:00+00:00",
+        },
+    })
+    deployment = write_json(tmp_path / ("action-recipients-" + current_stage + "-deployment.json"), {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "action-recipients-change-1",
+        "current_stage": current_stage,
+        "deployed_at": "2026-09-24T07:10:00+00:00",
+        "source_revision": "d" * 40,
+        "staging_evidence_sha256": file_sha256(staging),
+        "rollout_manifest_sha256": file_sha256(rollout),
+    })
+    status = write_json(tmp_path / ("action-recipients-" + current_stage + "-status.json"), {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-24T07:15:00+00:00",
+        "breaches": [],
+    })
+    runtime = {
+        "schema_version": 1,
+        "source_revision": "d" * 40,
+        "environment": "production",
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "cohort": {
+            "enforced": True,
+            "configured_members": 5,
+            "max_users": 25,
+        },
+    }
+    runtime_hash = hashlib.sha256(json.dumps(
+        runtime,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    activation = write_json(tmp_path / ("action-recipients-" + current_stage + "-activation.json"), {
+        "schema_version": 1,
+        "status": "action_recipients_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": current_stage,
+        "verified_at": "2026-09-24T07:20:00+00:00",
+        "change_reference": "action-recipients-change-1",
+        "deployed_at": "2026-09-24T07:10:00+00:00",
+        "source_revision": "d" * 40,
+        "operator_status_generated_at": "2026-09-24T07:15:00+00:00",
+        "runtime": runtime,
+        "runtime_manifest_sha256": runtime_hash,
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging),
+            "rollout_manifest": file_sha256(rollout),
+            "deployment_change": file_sha256(deployment),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return staging, rollout, deployment, status, activation
+
+
+def test_schema_v11_action_recipients_is_hash_chained(tmp_path):
+    ledger = tmp_path / "release-ledger-action-recipients.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, rollout, deployment, status, activation = action_recipients_files(tmp_path)
+
+    entry = append_action_recipients_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-recipients-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        rollout_manifest=rollout,
+        deployment_change=deployment,
+        operator_status=status,
+        action_recipients_activation=activation,
+        created_at="2026-09-24T07:25:00+00:00",
+    )
+
+    assert entry["schema_version"] == 11
+    assert entry["event_type"] == "action_recipients_verified"
+    assert entry["artifact_sha256"]["action_recipients_activation"] == file_sha256(activation)
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == entry["entry_hash"]
+
+
+def test_schema_v11_action_recipients_requires_exact_kill_switch(tmp_path):
+    ledger = tmp_path / "release-ledger-action-recipients-broken.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, rollout, deployment, status, activation = action_recipients_files(tmp_path)
+    value = json.loads(rollout.read_text(encoding="utf-8"))
+    value["rollback"]["action_recipients_kill_switch"] = "wrong"
+    rollout.write_text(json.dumps(value), encoding="utf-8")
+    deployment_value = json.loads(deployment.read_text(encoding="utf-8"))
+    deployment_value["rollout_manifest_sha256"] = file_sha256(rollout)
+    deployment.write_text(json.dumps(deployment_value), encoding="utf-8")
+    activation_value = json.loads(activation.read_text(encoding="utf-8"))
+    activation_value["artifact_sha256"]["rollout_manifest"] = file_sha256(rollout)
+    activation_value["artifact_sha256"]["deployment_change"] = file_sha256(deployment)
+    activation.write_text(json.dumps(activation_value), encoding="utf-8")
+
+    with pytest.raises(ReleaseLedgerError, match="rollback switch"):
+        append_action_recipients_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="action-recipients-change-1",
+            current_stage="cohort-25",
+            staging_evidence=staging,
+            rollout_manifest=rollout,
+            deployment_change=deployment,
+            operator_status=status,
+            action_recipients_activation=activation,
+        )
