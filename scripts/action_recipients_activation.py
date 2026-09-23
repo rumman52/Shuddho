@@ -28,7 +28,7 @@ DEPLOYMENT_KEYS = {
 }
 
 
-class ActionProposalsActivationError(RuntimeError):
+class ActionRecipientsActivationError(RuntimeError):
     pass
 
 
@@ -36,11 +36,11 @@ def load_json(path: Path, label: str) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             f"Could not read {label}: {type(error).__name__}"
         ) from None
     if not isinstance(value, dict):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             f"{label} must contain a JSON object."
         )
     return value
@@ -68,11 +68,11 @@ def parse_time(value: str, label: str) -> datetime:
     try:
         result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             f"{label} must be an ISO-8601 timestamp."
         ) from None
     if result.tzinfo is None:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             f"{label} must include a timezone."
         )
     return result.astimezone(timezone.utc)
@@ -90,7 +90,7 @@ def require_https_origin(value: str, label: str) -> str:
         or parsed.fragment
         or parsed.path not in {"", "/"}
     ):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             f"{label} must be a clean HTTPS origin."
         )
     return clean
@@ -102,39 +102,33 @@ def validate_staging(
     now: datetime,
     max_age_minutes: int,
 ) -> datetime:
-    item = evidence.get("action_proposals")
+    item = evidence.get("action_recipients")
     if not isinstance(item, dict):
-        raise ActionProposalsActivationError(
-            "Staging evidence has no action_proposals result."
+        raise ActionRecipientsActivationError(
+            "Staging evidence has no action_recipients result."
         )
     if item.get("status") != "passed":
-        raise ActionProposalsActivationError(
-            "Action-proposal staging evidence is not passed."
+        raise ActionRecipientsActivationError(
+            "Saved-recipient staging evidence is not passed."
         )
-    if (
-        not isinstance(item.get("evidence"), str)
-        or not item["evidence"].strip()
-    ):
-        raise ActionProposalsActivationError(
-            "Action-proposal staging evidence text is missing."
+    if not isinstance(item.get("evidence"), str) or not item["evidence"].strip():
+        raise ActionRecipientsActivationError(
+            "Saved-recipient staging evidence text is missing."
         )
     verified_at = item.get("verified_at")
     if not isinstance(verified_at, str):
-        raise ActionProposalsActivationError(
-            "Action-proposal staging evidence has no verified_at timestamp."
+        raise ActionRecipientsActivationError(
+            "Saved-recipient staging evidence has no verified_at timestamp."
         )
-    verified = parse_time(
-        verified_at,
-        "action_proposals verified_at",
-    )
+    verified = parse_time(verified_at, "action_recipients verified_at")
     age = (now - verified).total_seconds() / 60
     if age < -1:
-        raise ActionProposalsActivationError(
-            "Action-proposal staging evidence is from the future."
+        raise ActionRecipientsActivationError(
+            "Saved-recipient staging evidence is from the future."
         )
     if age > max_age_minutes:
-        raise ActionProposalsActivationError(
-            f"Action-proposal staging evidence is stale ({age:.1f} minutes old)."
+        raise ActionRecipientsActivationError(
+            f"Saved-recipient staging evidence is stale ({age:.1f} minutes old)."
         )
     return verified
 
@@ -149,22 +143,22 @@ def validate_reviewed_rollout(
         max_cohort_users=max_cohort_users,
     )
     if failures:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Reviewed rollout manifest is invalid: "
             + ", ".join(failures)
         )
     capabilities = rollout["capabilities"]
-    if capabilities.get("action_proposals") is not True:
-        raise ActionProposalsActivationError(
-            "Reviewed rollout manifest does not enable action_proposals."
+    if capabilities.get("action_recipients") is not True or capabilities.get("actions") is not True:
+        raise ActionRecipientsActivationError(
+            "Reviewed rollout manifest does not enable the required actions/action_recipients capabilities."
         )
     rollback = rollout["rollback"]
     if (
-        rollback.get("action_proposals_kill_switch")
-        != "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"
+        rollback.get("action_recipients_kill_switch")
+        != "SHUDDHO_ACTION_RECIPIENTS_ENABLED=false"
     ):
-        raise ActionProposalsActivationError(
-            "Reviewed rollout manifest has no exact action-proposals kill switch."
+        raise ActionRecipientsActivationError(
+            "Reviewed rollout manifest has no exact action-recipients kill switch."
         )
     normalized = dict(capabilities)
     normalized.setdefault("action_attachments", False)
@@ -193,8 +187,8 @@ def validate_deployment(
     not_before: datetime,
 ) -> datetime:
     if set(value) != DEPLOYMENT_KEYS:
-        raise ActionProposalsActivationError(
-            "Action-proposal deployment record has an unexpected schema."
+        raise ActionRecipientsActivationError(
+            "Action-recipient deployment record has an unexpected schema."
         )
     for key in (
         "release_id",
@@ -203,11 +197,11 @@ def validate_deployment(
         "source_revision",
     ):
         if not isinstance(value[key], str) or not value[key].strip():
-            raise ActionProposalsActivationError(
+            raise ActionRecipientsActivationError(
                 f"Deployment {key} is required."
             )
         if len(value[key]) > 500:
-            raise ActionProposalsActivationError(
+            raise ActionRecipientsActivationError(
                 f"Deployment {key} is too long."
             )
     revision = value["source_revision"]
@@ -216,32 +210,32 @@ def validate_deployment(
         or revision != revision.lower()
         or any(char not in "0123456789abcdef" for char in revision)
     ):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployment source_revision must be a full lowercase Git SHA-1."
         )
     if value["release_id"] != rollout["release_id"]:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployment release_id does not match reviewed rollout."
         )
     if value["change_reference"] != rollout["change_reference"]:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployment change_reference does not match reviewed rollout."
         )
     if value["staging_evidence_sha256"] != sha256_file(staging_path):
-        raise ActionProposalsActivationError(
-            "Deployment record does not bind the exact action-proposal staging evidence."
+        raise ActionRecipientsActivationError(
+            "Deployment record does not bind the exact action-recipient staging evidence."
         )
     if value["rollout_manifest_sha256"] != sha256_file(rollout_path):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployment record does not bind the exact reviewed rollout manifest."
         )
     deployed_at = parse_time(
         str(value["deployed_at"]),
-        "action-proposal deployed_at",
+        "action-recipient deployed_at",
     )
     if deployed_at < not_before:
-        raise ActionProposalsActivationError(
-            "Action-proposal deployment predates live staging evidence."
+        raise ActionRecipientsActivationError(
+            "Action-recipient deployment predates live staging evidence."
         )
     return deployed_at
 
@@ -255,19 +249,19 @@ def validate_operator_status(
     freshness_minutes: int,
 ) -> datetime:
     if value.get("release_id") != release_id:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Operator status release_id does not match deployment."
         )
     if (
         value.get("decision") != "CONTINUE_COHORT"
         or value.get("breaches") != []
     ):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Operator status must be CONTINUE_COHORT with zero breaches."
         )
     generated_at = value.get("generated_at")
     if not isinstance(generated_at, str):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Operator status has no generated_at timestamp."
         )
     generated = parse_time(
@@ -275,16 +269,16 @@ def validate_operator_status(
         "operator status generated_at",
     )
     if generated < not_before:
-        raise ActionProposalsActivationError(
-            "Operator status must be generated after action-proposal deployment."
+        raise ActionRecipientsActivationError(
+            "Operator status must be generated after action-recipient deployment."
         )
     age = (now - generated).total_seconds() / 60
     if age < -1:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Operator status is from the future."
         )
     if age > freshness_minutes:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             f"Operator status is stale ({age:.1f} minutes old)."
         )
     return generated
@@ -313,23 +307,23 @@ def fetch_runtime_manifest(
                 headers={"Authorization": "Bearer " + token},
             )
     except httpx.HTTPError as error:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Could not read deployed runtime manifest: "
             + type(error).__name__
         ) from None
     if response.status_code != 200:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed runtime manifest returned HTTP "
             f"{response.status_code}; expected 200."
         )
     try:
         value = response.json()
     except ValueError:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed runtime manifest did not return JSON."
         ) from None
     if not isinstance(value, dict):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed runtime manifest has an unexpected shape."
         )
     return value
@@ -349,29 +343,29 @@ def validate_runtime_manifest(
         "action_providers",
         "cohort",
     }:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed runtime manifest has an unexpected schema."
         )
     if value.get("schema_version") != 1:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed runtime manifest schema version is unsupported."
         )
     if value.get("source_revision") != deployment["source_revision"]:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed backend revision does not match reviewed deployment."
         )
     if value.get("environment") != rollout["environment"]:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed environment does not match reviewed rollout."
         )
     capabilities = value.get("capabilities")
     if capabilities != rollout["capabilities"]:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed capability flags do not exactly match reviewed rollout."
         )
     providers = value.get("action_providers")
     if providers != rollout["action_providers"]:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed action providers do not exactly match reviewed rollout."
         )
     cohort = value.get("cohort")
@@ -380,15 +374,15 @@ def validate_runtime_manifest(
         or set(cohort)
         != {"enforced", "configured_members", "max_users"}
     ):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed cohort manifest has an unexpected shape."
         )
     if cohort.get("enforced") is not True:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed backend does not enforce controlled-cohort admission."
         )
     if cohort.get("max_users") != rollout["cohort_max_users"]:
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed cohort ceiling does not match reviewed rollout."
         )
     members = cohort.get("configured_members")
@@ -398,12 +392,12 @@ def validate_runtime_manifest(
         or members < 1
         or members > cohort["max_users"]
     ):
-        raise ActionProposalsActivationError(
+        raise ActionRecipientsActivationError(
             "Deployed cohort membership count is outside the reviewed ceiling."
         )
-    if capabilities.get("action_proposals") is not True:
-        raise ActionProposalsActivationError(
-            "Deployed backend has action proposals disabled."
+    if capabilities.get("action_recipients") is not True:
+        raise ActionRecipientsActivationError(
+            "Deployed backend has action recipients disabled."
         )
     return {
         "schema_version": value["schema_version"],
@@ -428,7 +422,7 @@ def build_evidence(
 ) -> dict:
     return {
         "schema_version": 1,
-        "status": "action_proposals_verified",
+        "status": "action_recipients_verified",
         "release_id": deployment["release_id"],
         "current_stage": deployment["current_stage"],
         "verified_at": now.isoformat(),
@@ -450,8 +444,8 @@ def build_evidence(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify production activation of non-executable Agent action "
-            "proposals against exact staging evidence, reviewed rollout, "
+            "Verify production activation of owner-scoped saved action recipients "
+            "against exact staging evidence, reviewed rollout, "
             "deployed revision/configuration, and fresh cohort health."
         )
     )
@@ -515,9 +509,14 @@ def main() -> None:
 
     try:
         now = datetime.now(timezone.utc)
+        raw_rollout = load_rollout(args.rollout)
+        rollout = validate_reviewed_rollout(
+            raw_rollout,
+            max_cohort_users=args.max_cohort_users,
+        )
         staging = load_json(
             args.staging_evidence,
-            "action-proposal staging evidence",
+            "action-recipient staging evidence",
         )
         staging_time = validate_staging(
             staging,
@@ -525,15 +524,9 @@ def main() -> None:
             max_age_minutes=args.max_staging_age_minutes,
         )
 
-        raw_rollout = load_rollout(args.rollout)
-        rollout = validate_reviewed_rollout(
-            raw_rollout,
-            max_cohort_users=args.max_cohort_users,
-        )
-
         deployment = load_json(
             args.deployment_change,
-            "action-proposal deployment",
+            "action-recipient deployment",
         )
         deployment_time = validate_deployment(
             deployment,
@@ -557,7 +550,7 @@ def main() -> None:
 
         token = os.environ.get("SHUDDHO_PRODUCTION_VERIFICATION_TOKEN", "")
         if not token:
-            raise ActionProposalsActivationError(
+            raise ActionRecipientsActivationError(
                 "SHUDDHO_PRODUCTION_VERIFICATION_TOKEN is required."
             )
         remote = fetch_runtime_manifest(
@@ -593,7 +586,7 @@ def main() -> None:
             "source_revision": evidence["source_revision"],
         }, indent=2))
     except (
-        ActionProposalsActivationError,
+        ActionRecipientsActivationError,
         OSError,
         ValueError,
     ) as error:

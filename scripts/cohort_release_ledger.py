@@ -19,6 +19,7 @@ ACTION_SELECTION_SCHEMA_VERSION = 7
 ACTION_PROPOSALS_SCHEMA_VERSION = 8
 ACTION_ATTACHMENTS_SCHEMA_VERSION = 9
 ACTION_REMINDERS_SCHEMA_VERSION = 10
+ACTION_RECIPIENTS_SCHEMA_VERSION = 11
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -78,6 +79,13 @@ ACTION_REMINDERS_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "action_reminders_activation",
+}
+ACTION_RECIPIENTS_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "action_recipients_activation",
 }
 
 
@@ -326,6 +334,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             ACTION_PROPOSALS_SCHEMA_VERSION,
             ACTION_ATTACHMENTS_SCHEMA_VERSION,
             ACTION_REMINDERS_SCHEMA_VERSION,
+            ACTION_RECIPIENTS_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -385,6 +394,13 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(
                 f"Ledger entry {index} has an unsupported schema-v10 event type."
             )
+        if (
+            version == ACTION_RECIPIENTS_SCHEMA_VERSION
+            and event_type != "action_recipients_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v11 event type."
+            )
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -410,6 +426,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             else ACTION_ATTACHMENTS_ARTIFACT_KEYS
             if version == ACTION_ATTACHMENTS_SCHEMA_VERSION
             else ACTION_REMINDERS_ARTIFACT_KEYS
+            if version == ACTION_REMINDERS_SCHEMA_VERSION
+            else ACTION_RECIPIENTS_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
             raise ReleaseLedgerError(f"Ledger entry {index} has invalid artifact hashes.")
@@ -788,18 +806,20 @@ def append_recovery_event(
         )
 
     recovery_schema = recovery_value.get("schema_version")
-    if recovery_schema in {2, 3, 4, 5}:
+    if recovery_schema in {2, 3, 4, 5, 6}:
         requirements = recovery_value.get("runtime_requirements")
         expected_requirement_keys = {
             "microsoft_actions_enabled",
             "action_selection_enabled",
         }
-        if recovery_schema in {3, 4, 5}:
+        if recovery_schema in {3, 4, 5, 6}:
             expected_requirement_keys.add("action_proposals_enabled")
-        if recovery_schema in {4, 5}:
+        if recovery_schema in {4, 5, 6}:
             expected_requirement_keys.add("action_attachments_enabled")
-        if recovery_schema == 5:
+        if recovery_schema in {5, 6}:
             expected_requirement_keys.add("action_reminders_enabled")
+        if recovery_schema == 6:
+            expected_requirement_keys.add("action_recipients_enabled")
         if (
             not isinstance(requirements, dict)
             or set(requirements) != expected_requirement_keys
@@ -861,7 +881,7 @@ def append_recovery_event(
                 "Recovery evidence contains action-selection attestation data while action selection is not required."
             )
 
-        if recovery_schema in {3, 4}:
+        if recovery_schema in {3, 4, 5, 6}:
             proposals_required = requirements["action_proposals_enabled"]
             proposals_hash = recovery_hashes.get("action_proposals_activation")
             proposals_summary = recovery_value.get("action_proposals")
@@ -888,7 +908,7 @@ def append_recovery_event(
                     "Recovery evidence contains action-proposals attestation data while action proposals are not required."
                 )
 
-        if recovery_schema in {4, 5}:
+        if recovery_schema in {4, 5, 6}:
             attachments_required = requirements["action_attachments_enabled"]
             attachments_hash = recovery_hashes.get("action_attachments_activation")
             attachments_summary = recovery_value.get("action_attachments")
@@ -915,7 +935,7 @@ def append_recovery_event(
                     "Recovery evidence contains action-attachments attestation data while action attachments are not required."
                 )
 
-        if recovery_schema == 5:
+        if recovery_schema in {5, 6}:
             reminders_required = requirements["action_reminders_enabled"]
             reminders_hash = recovery_hashes.get("action_reminders_activation")
             reminders_summary = recovery_value.get("action_reminders")
@@ -940,6 +960,33 @@ def append_recovery_event(
             elif reminders_hash is not None or reminders_summary is not None:
                 raise ReleaseLedgerError(
                     "Recovery evidence contains action-reminders attestation data while action reminders are not required."
+                )
+
+        if recovery_schema == 6:
+            recipients_required = requirements["action_recipients_enabled"]
+            recipients_hash = recovery_hashes.get("action_recipients_activation")
+            recipients_summary = recovery_value.get("action_recipients")
+            if recipients_required:
+                if not valid_hash(recipients_hash) or not isinstance(recipients_summary, dict):
+                    raise ReleaseLedgerError(
+                        "Action-recipients recovery evidence is missing its required attestation."
+                    )
+                require_exact_attested_event(
+                    entries,
+                    schema_version=ACTION_RECIPIENTS_SCHEMA_VERSION,
+                    event_type="action_recipients_verified",
+                    current_stage=current_stage,
+                    next_stage=None,
+                    artifact_key="action_recipients_activation",
+                    artifact_sha256=recipients_hash,
+                    after_sequence=rollback_entry["sequence"],
+                    expected_sequence=recipients_summary.get("ledger_sequence"),
+                    expected_entry_hash=recipients_summary.get("ledger_entry_hash"),
+                    label="Action-recipients recovery attestation",
+                )
+            elif recipients_hash is not None or recipients_summary is not None:
+                raise ReleaseLedgerError(
+                    "Recovery evidence contains action-recipients attestation data while action recipients are not required."
                 )
 
     core = {
@@ -1068,18 +1115,20 @@ def append_scale_event(
         )
 
     activation_schema = activation.get("schema_version")
-    if activation_schema in {2, 3, 4, 5}:
+    if activation_schema in {2, 3, 4, 5, 6}:
         requirements = activation.get("runtime_requirements")
         expected_requirement_keys = {
             "microsoft_actions_enabled",
             "action_selection_enabled",
         }
-        if activation_schema in {3, 4, 5}:
+        if activation_schema in {3, 4, 5, 6}:
             expected_requirement_keys.add("action_proposals_enabled")
-        if activation_schema in {4, 5}:
+        if activation_schema in {4, 5, 6}:
             expected_requirement_keys.add("action_attachments_enabled")
-        if activation_schema == 5:
+        if activation_schema in {5, 6}:
             expected_requirement_keys.add("action_reminders_enabled")
+        if activation_schema == 6:
+            expected_requirement_keys.add("action_recipients_enabled")
         if (
             not isinstance(requirements, dict)
             or set(requirements) != expected_requirement_keys
@@ -1136,7 +1185,7 @@ def append_scale_event(
                 "Scale activation contains action-selection attestation data while action selection is not required."
             )
 
-        if activation_schema in {3, 4}:
+        if activation_schema in {3, 4, 5, 6}:
             proposals_required = requirements["action_proposals_enabled"]
             proposals_hash = hashes.get("action_proposals_activation")
             proposals_summary = activation.get("action_proposals")
@@ -1162,7 +1211,7 @@ def append_scale_event(
                     "Scale activation contains action-proposals attestation data while action proposals are not required."
                 )
 
-        if activation_schema in {4, 5}:
+        if activation_schema in {4, 5, 6}:
             attachments_required = requirements["action_attachments_enabled"]
             attachments_hash = hashes.get("action_attachments_activation")
             attachments_summary = activation.get("action_attachments")
@@ -1188,7 +1237,7 @@ def append_scale_event(
                     "Scale activation contains action-attachments attestation data while action attachments are not required."
                 )
 
-        if activation_schema == 5:
+        if activation_schema in {5, 6}:
             reminders_required = requirements["action_reminders_enabled"]
             reminders_hash = hashes.get("action_reminders_activation")
             reminders_summary = activation.get("action_reminders")
@@ -1212,6 +1261,32 @@ def append_scale_event(
             elif reminders_hash is not None or reminders_summary is not None:
                 raise ReleaseLedgerError(
                     "Scale activation contains action-reminders attestation data while action reminders are not required."
+                )
+
+        if activation_schema == 6:
+            recipients_required = requirements["action_recipients_enabled"]
+            recipients_hash = hashes.get("action_recipients_activation")
+            recipients_summary = activation.get("action_recipients")
+            if recipients_required:
+                if not valid_hash(recipients_hash) or not isinstance(recipients_summary, dict):
+                    raise ReleaseLedgerError(
+                        "Action-recipients scale activation is missing its required attestation."
+                    )
+                require_exact_attested_event(
+                    entries,
+                    schema_version=ACTION_RECIPIENTS_SCHEMA_VERSION,
+                    event_type="action_recipients_verified",
+                    current_stage=current_stage,
+                    next_stage=None,
+                    artifact_key="action_recipients_activation",
+                    artifact_sha256=recipients_hash,
+                    expected_sequence=recipients_summary.get("ledger_sequence"),
+                    expected_entry_hash=recipients_summary.get("ledger_entry_hash"),
+                    label="Action-recipients scale attestation",
+                )
+            elif recipients_hash is not None or recipients_summary is not None:
+                raise ReleaseLedgerError(
+                    "Scale activation contains action-recipients attestation data while action recipients are not required."
                 )
 
     prior_scale = [
@@ -2057,7 +2132,7 @@ def append_action_proposals_event(
         )
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_selection", "action_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     expected_providers = normalized_action_providers(rollout)
@@ -2398,7 +2473,7 @@ def append_action_attachments_event(
         )
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_selection", "action_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     expected_providers = normalized_action_providers(rollout)
@@ -2739,7 +2814,7 @@ def append_action_reminders_event(
         )
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_selection", "action_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     if (
@@ -2845,6 +2920,345 @@ def append_action_reminders_event(
             "deployment_change": file_sha256(deployment_change),
             "operator_status": file_sha256(operator_status),
             "action_reminders_activation": activation_hash,
+        },
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {
+        **core,
+        "entry_hash": entry_hash,
+        "hmac_sha256": tag,
+    }
+    serialized = "".join(
+        json.dumps(
+            item,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
+
+
+def append_action_recipients_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    staging_evidence: Path,
+    rollout_manifest: Path,
+    deployment_change: Path,
+    operator_status: Path,
+    action_recipients_activation: Path,
+    created_at: str | None = None,
+) -> dict:
+    if not actor_reference.strip() or len(actor_reference) > 500:
+        raise ReleaseLedgerError(
+            "actor_reference must be non-empty and at most 500 characters."
+        )
+    if not change_reference.strip() or len(change_reference) > 500:
+        raise ReleaseLedgerError(
+            "change_reference must be non-empty and at most 500 characters."
+        )
+    if not current_stage.strip() or len(current_stage) > 100:
+        raise ReleaseLedgerError(
+            "Action-recipients ledger event requires a valid current_stage."
+        )
+
+    staging = load_json_object(
+        staging_evidence,
+        "action-recipient live staging evidence",
+    )
+    rollout = load_json_object(
+        rollout_manifest,
+        "reviewed action-recipient rollout manifest",
+    )
+    deployment = load_json_object(
+        deployment_change,
+        "action-recipient deployment change",
+    )
+    status = load_json_object(
+        operator_status,
+        "post-action-recipient operator status",
+    )
+    activation = load_json_object(
+        action_recipients_activation,
+        "action-recipient activation evidence",
+    )
+
+    for label, value in (
+        ("rollout manifest", rollout),
+        ("deployment change", deployment),
+        ("operator status", status),
+        ("action-recipient activation evidence", activation),
+    ):
+        if value.get("release_id") != release_id:
+            raise ReleaseLedgerError(
+                f"{label} release_id does not match {release_id!r}."
+            )
+
+    staged = staging.get("action_recipients")
+    if (
+        not isinstance(staged, dict)
+        or staged.get("status") != "passed"
+        or not isinstance(staged.get("evidence"), str)
+        or not staged["evidence"].strip()
+        or not isinstance(staged.get("verified_at"), str)
+    ):
+        raise ReleaseLedgerError(
+            "action_recipients_verified requires passed timestamped saved-recipient staging evidence."
+        )
+
+
+    if rollout.get("environment") != "production":
+        raise ReleaseLedgerError(
+            "action_recipients_verified requires a production rollout manifest."
+        )
+    incident = rollout.get("incident")
+    if (
+        not isinstance(incident, dict)
+        or incident.get("change_reference") != change_reference
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout change reference does not match."
+        )
+    rollout_cohort = rollout.get("cohort")
+    if (
+        not isinstance(rollout_cohort, dict)
+        or not isinstance(rollout_cohort.get("max_users"), int)
+        or isinstance(rollout_cohort.get("max_users"), bool)
+        or rollout_cohort["max_users"] < 1
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout has an invalid cohort ceiling."
+        )
+    capabilities = rollout.get("capabilities")
+    if (
+        not isinstance(capabilities, dict)
+        or any(not isinstance(value, bool) for value in capabilities.values())
+        or capabilities.get("coworker") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("action_recipients") is not True
+    ):
+        raise ReleaseLedgerError(
+            "action_recipients_verified requires reviewed action prerequisites."
+        )
+    rollback = rollout.get("rollback")
+    if (
+        not isinstance(rollback, dict)
+        or rollback.get("action_recipients_kill_switch")
+        != "SHUDDHO_ACTION_RECIPIENTS_ENABLED=false"
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout has no exact action-recipients rollback switch."
+        )
+
+    if deployment.get("change_reference") != change_reference:
+        raise ReleaseLedgerError(
+            "Action-recipient deployment change reference does not match."
+        )
+    if deployment.get("current_stage") != current_stage:
+        raise ReleaseLedgerError(
+            "Action-recipient deployment current_stage does not match."
+        )
+    if deployment.get("staging_evidence_sha256") != file_sha256(
+        staging_evidence
+    ):
+        raise ReleaseLedgerError(
+            "Action-recipient deployment does not bind this staging evidence."
+        )
+    if deployment.get("rollout_manifest_sha256") != file_sha256(
+        rollout_manifest
+    ):
+        raise ReleaseLedgerError(
+            "Action-recipient deployment does not bind this rollout manifest."
+        )
+    revision = deployment.get("source_revision")
+    if (
+        not isinstance(revision, str)
+        or len(revision) != 40
+        or revision != revision.lower()
+        or any(char not in "0123456789abcdef" for char in revision)
+    ):
+        raise ReleaseLedgerError(
+            "Action-recipient deployment source_revision must be a full lowercase Git SHA-1."
+        )
+
+    if (
+        status.get("decision") != "CONTINUE_COHORT"
+        or status.get("breaches") != []
+    ):
+        raise ReleaseLedgerError(
+            "action_recipients_verified requires a clean post-deploy operator status."
+        )
+    if activation.get("schema_version") != 1:
+        raise ReleaseLedgerError(
+            "Action-recipient activation evidence has an unsupported schema."
+        )
+    if activation.get("status") != "action_recipients_verified":
+        raise ReleaseLedgerError(
+            "Action-recipient activation evidence has not passed."
+        )
+    if activation.get("change_reference") != change_reference:
+        raise ReleaseLedgerError(
+            "Action-recipient activation change reference does not match."
+        )
+    if activation.get("current_stage") != current_stage:
+        raise ReleaseLedgerError(
+            "Action-recipient activation current_stage does not match."
+        )
+    if activation.get("deployed_at") != deployment.get("deployed_at"):
+        raise ReleaseLedgerError(
+            "Action-recipient activation does not bind deployment time."
+        )
+    if activation.get("source_revision") != revision:
+        raise ReleaseLedgerError(
+            "Action-recipient activation does not bind the deployed source revision."
+        )
+    if (
+        activation.get("operator_status_generated_at")
+        != status.get("generated_at")
+    ):
+        raise ReleaseLedgerError(
+            "Action-recipient activation does not bind operator-status generation time."
+        )
+
+    runtime = activation.get("runtime")
+    if (
+        not isinstance(runtime, dict)
+        or set(runtime) != {
+            "schema_version",
+            "source_revision",
+            "environment",
+            "capabilities",
+            "action_providers",
+            "cohort",
+        }
+        or runtime.get("schema_version") != 1
+    ):
+        raise ReleaseLedgerError(
+            "Action-recipient activation has no valid runtime proof."
+        )
+    runtime_capabilities = runtime.get("capabilities")
+    if not isinstance(runtime_capabilities, dict):
+        raise ReleaseLedgerError(
+            "Action-recipient activation has no valid runtime capability proof."
+        )
+    runtime_capabilities = dict(runtime_capabilities)
+    expected_capabilities = dict(capabilities)
+    expected_providers = normalized_action_providers(rollout)
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_selection", "action_proposals"):
+        runtime_capabilities.setdefault(optional, False)
+        expected_capabilities.setdefault(optional, False)
+    if (
+        runtime.get("source_revision") != revision
+        or runtime.get("environment") != rollout.get("environment")
+        or runtime.get("action_providers") != expected_providers
+        or runtime_capabilities != expected_capabilities
+        or runtime_capabilities.get("coworker") is not True
+        or runtime_capabilities.get("actions") is not True
+        or runtime_capabilities.get("action_recipients") is not True
+    ):
+        raise ReleaseLedgerError(
+            "Action-recipient activation does not prove the exact reviewed runtime."
+        )
+    cohort = runtime.get("cohort")
+    members = cohort.get("configured_members") if isinstance(cohort, dict) else None
+    if (
+        not isinstance(cohort, dict)
+        or set(cohort) != {"enforced", "configured_members", "max_users"}
+        or cohort.get("enforced") is not True
+        or cohort.get("max_users") != rollout_cohort["max_users"]
+        or not isinstance(members, int)
+        or isinstance(members, bool)
+        or members < 1
+        or members > cohort["max_users"]
+    ):
+        raise ReleaseLedgerError(
+            "Action-recipient activation does not prove reviewed cohort enforcement."
+        )
+    runtime_hash = activation.get("runtime_manifest_sha256")
+    expected_runtime_hash = hashlib.sha256(canonical(runtime)).hexdigest()
+    if runtime_hash != expected_runtime_hash:
+        raise ReleaseLedgerError(
+            "Action-recipient activation runtime manifest hash does not match its runtime snapshot."
+        )
+
+    hashes = activation.get("artifact_sha256")
+    expected_bound = {
+        "staging_evidence": file_sha256(staging_evidence),
+        "rollout_manifest": file_sha256(rollout_manifest),
+        "deployment_change": file_sha256(deployment_change),
+        "operator_status": file_sha256(operator_status),
+    }
+    if (
+        not isinstance(hashes, dict)
+        or set(hashes) != set(expected_bound)
+    ):
+        raise ReleaseLedgerError(
+            "Action-recipient activation evidence has invalid artifact hashes."
+        )
+    for name, value in expected_bound.items():
+        if hashes.get(name) != value:
+            raise ReleaseLedgerError(
+                f"Action-recipient activation does not bind this {name}."
+            )
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if (
+        state["release_id"] is not None
+        and state["release_id"] != release_id
+    ):
+        raise ReleaseLedgerError(
+            "Ledger release_id does not match the action-recipients event."
+        )
+    if not entries or not any(
+        item.get("current_stage") == current_stage
+        or item.get("next_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "action_recipients_verified requires an existing ledger chain that reached current_stage."
+        )
+
+    activation_hash = file_sha256(action_recipients_activation)
+    duplicates = [
+        item
+        for item in entries
+        if item.get("schema_version") == ACTION_RECIPIENTS_SCHEMA_VERSION
+        and item.get("event_type") == "action_recipients_verified"
+        and item.get("artifact_sha256", {}).get(
+            "action_recipients_activation"
+        ) == activation_hash
+    ]
+    if duplicates:
+        raise ReleaseLedgerError(
+            "This action-recipient activation is already recorded in the release ledger."
+        )
+
+    core = {
+        "schema_version": ACTION_RECIPIENTS_SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": "action_recipients_verified",
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": None,
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging_evidence),
+            "rollout_manifest": file_sha256(rollout_manifest),
+            "deployment_change": file_sha256(deployment_change),
+            "operator_status": file_sha256(operator_status),
+            "action_recipients_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
     }
@@ -3009,6 +3423,22 @@ def main() -> None:
         required=True,
     )
 
+    action_recipients_parser = sub.add_parser("append-action-recipients")
+    action_recipients_parser.add_argument("--ledger", type=Path, required=True)
+    action_recipients_parser.add_argument("--release-id", required=True)
+    action_recipients_parser.add_argument("--actor-reference", required=True)
+    action_recipients_parser.add_argument("--change-reference", required=True)
+    action_recipients_parser.add_argument("--current-stage", required=True)
+    action_recipients_parser.add_argument("--staging-evidence", type=Path, required=True)
+    action_recipients_parser.add_argument("--rollout", type=Path, required=True)
+    action_recipients_parser.add_argument("--deployment-change", type=Path, required=True)
+    action_recipients_parser.add_argument("--operator-status", type=Path, required=True)
+    action_recipients_parser.add_argument(
+        "--action-recipients-activation",
+        type=Path,
+        required=True,
+    )
+
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--ledger", type=Path, required=True)
 
@@ -3154,6 +3584,27 @@ def main() -> None:
                 deployment_change=args.deployment_change,
                 operator_status=args.operator_status,
                 action_reminders_activation=args.action_reminders_activation,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        elif args.command == "append-action-recipients":
+            entry = append_action_recipients_event(
+                ledger=args.ledger,
+                key=key,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                staging_evidence=args.staging_evidence,
+                rollout_manifest=args.rollout,
+                deployment_change=args.deployment_change,
+                operator_status=args.operator_status,
+                action_recipients_activation=args.action_recipients_activation,
             )
             result = {
                 "appended": True,

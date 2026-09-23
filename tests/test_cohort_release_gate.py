@@ -10,7 +10,7 @@ BASE_GATES = {
 }
 
 
-def evidence(*, research=False, actions=False, microsoft=False, action_attachments=False, action_reminders=False, microsoft_action_reminders=False, action_selection=False, action_proposals=False):
+def evidence(*, research=False, actions=False, microsoft=False, action_attachments=False, action_reminders=False, microsoft_action_reminders=False, action_recipients=False, action_selection=False, action_proposals=False):
     keys = set(BASE_GATES)
     if research:
         keys.add("research")
@@ -24,6 +24,8 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
         keys.add("action_reminders_google")
     if microsoft_action_reminders:
         keys.add("action_reminders_microsoft")
+    if action_recipients:
+        keys.add("action_recipients")
     if action_selection:
         keys.add("action_selection")
     if action_proposals:
@@ -31,7 +33,7 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
     return {key: {"status": "passed", "evidence": "staging-proof"} for key in keys}
 
 
-def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_reminders=False, action_selection=False, action_proposals=False):
+def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_reminders=False, action_recipients=False, action_selection=False, action_proposals=False):
     monitoring = {
         "queue_age": "queue-dashboard",
         "task_success": "task-dashboard",
@@ -65,6 +67,7 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
             "actions": actions,
             **({"action_attachments": True} if action_attachments else {}),
             **({"action_reminders": True} if action_reminders else {}),
+            **({"action_recipients": True} if action_recipients else {}),
             **({"action_selection": True} if action_selection else {}),
             **({"action_proposals": True} if action_proposals else {}),
         },
@@ -81,6 +84,9 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
             **({
                 "action_reminders_kill_switch": "SHUDDHO_ACTION_REMINDERS_ENABLED=false",
             } if action_reminders else {}),
+            **({
+                "action_recipients_kill_switch": "SHUDDHO_ACTION_RECIPIENTS_ENABLED=false",
+            } if action_recipients else {}),
             **({
                 "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
             } if action_selection else {}),
@@ -234,6 +240,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
     assert missing["required_feature_gates"] == {
         "action_attachments": False,
         "action_reminders": False,
+        "action_recipients": False,
         "action_selection": True,
         "action_proposals": False,
     }
@@ -355,3 +362,30 @@ def test_calendar_reminders_require_live_provider_evidence_and_kill_switch():
     value["rollback"].pop("action_reminders_kill_switch")
     failures = validate_rollout(value, max_cohort_users=25)
     assert "action_reminders_kill_switch" in failures
+
+
+def test_action_recipients_require_independent_gate_dependency_and_kill_switch():
+    value = rollout(actions=True, action_recipients=True)
+    missing = evaluate_release(evidence(actions=True), value)
+    assert missing["decision"] == "NO-GO"
+    assert "action_recipients" in missing["staging"]["missing"]
+    assert missing["required_feature_gates"]["action_recipients"] is True
+
+    passed = evaluate_release(
+        evidence(actions=True, action_recipients=True),
+        value,
+    )
+    assert passed["decision"] == "GO_CONTROLLED_COHORT"
+
+    broken = rollout(actions=True, action_recipients=True)
+    broken["rollback"].pop("action_recipients_kill_switch")
+    assert "action_recipients_kill_switch" in validate_rollout(
+        broken,
+        max_cohort_users=25,
+    )
+
+    no_actions = rollout(actions=False, action_recipients=True)
+    assert "action_recipients_dependency" in validate_rollout(
+        no_actions,
+        max_cohort_users=25,
+    )

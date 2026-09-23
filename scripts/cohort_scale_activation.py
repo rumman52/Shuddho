@@ -525,6 +525,64 @@ def validate_action_reminders_activation(
     }
 
 
+def validate_action_recipients_activation(
+    path: Path | None,
+    ledger_path: Path,
+    decision: dict,
+    settings: Settings,
+) -> dict | None:
+    if not getattr(settings, "action_recipients_enabled", False):
+        return None
+    if path is None:
+        raise ScaleActivationError(
+            "Saved action recipients are enabled but --action-recipients-activation is required."
+        )
+    value = load_json(path, "action recipients activation")
+    if value.get("status") != "action_recipients_verified":
+        raise ScaleActivationError("Action recipients activation has not been verified.")
+    if value.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError("Action recipients activation release_id does not match.")
+    if value.get("current_stage") != decision["current_stage"]:
+        raise ScaleActivationError("Action recipients activation current_stage does not match.")
+    runtime = value.get("runtime")
+    capabilities = runtime.get("capabilities") if isinstance(runtime, dict) else None
+    cohort = runtime.get("cohort") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(runtime, dict)
+        or not isinstance(capabilities, dict)
+        or capabilities.get("coworker") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("action_recipients") is not True
+        or not isinstance(cohort, dict)
+        or cohort.get("enforced") is not True
+    ):
+        raise ScaleActivationError(
+            "Action recipients activation does not prove required runtime controls."
+        )
+    try:
+        entries, _ = verified_release_entries(ledger_path, decision["release_id"])
+        entry = require_exact_attested_event(
+            entries,
+            schema_version=11,
+            event_type="action_recipients_verified",
+            current_stage=decision["current_stage"],
+            next_stage=None,
+            artifact_key="action_recipients_activation",
+            artifact_sha256=ledger_file_sha256(path),
+            label="Action-recipients scale attestation",
+        )
+    except Exception as error:
+        raise ScaleActivationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    return {
+        "activation": value,
+        "ledger_sequence": entry["sequence"],
+        "ledger_entry_hash": entry["entry_hash"],
+        "activation_sha256": ledger_file_sha256(path),
+    }
+
+
 def require_deployed_configuration(settings: Settings, decision: dict, allowed_id: str, denied_id: str) -> None:
     if not settings.cohort_enforced:
         raise ScaleActivationError("SHUDDHO_COWORKER_COHORT_ENFORCED must remain true.")
@@ -562,6 +620,8 @@ def build_evidence(
     action_attachments_attestation: dict | None = None,
     action_reminders_activation_path: Path | None = None,
     action_reminders_attestation: dict | None = None,
+    action_recipients_activation_path: Path | None = None,
+    action_recipients_attestation: dict | None = None,
 ) -> dict:
     artifact_sha256 = {
         "scale_decision": sha256_file(scale_decision_path),
@@ -652,9 +712,28 @@ def build_evidence(
             "ledger_entry_hash": action_reminders_attestation["ledger_entry_hash"],
         }
 
+    action_recipients_summary = None
+    if getattr(settings, "action_recipients_enabled", False):
+        if (
+            action_recipients_activation_path is None
+            or action_recipients_attestation is None
+        ):
+            raise ScaleActivationError(
+                "Action recipients activation evidence and ledger attestation "
+                "are required when saved action recipients are enabled."
+            )
+        artifact_sha256["action_recipients_activation"] = sha256_file(
+            action_recipients_activation_path
+        )
+        action_recipients_summary = {
+            "ledger_sequence": action_recipients_attestation["ledger_sequence"],
+            "ledger_entry_hash": action_recipients_attestation["ledger_entry_hash"],
+        }
+
     return {
         "schema_version": (
-            5 if getattr(settings, "action_reminders_enabled", False)
+            6 if getattr(settings, "action_recipients_enabled", False)
+            else 5 if getattr(settings, "action_reminders_enabled", False)
             else 4 if getattr(settings, "action_attachments_enabled", False)
             else 3
         ),
@@ -689,13 +768,15 @@ def build_evidence(
                 )
             ),
             **({
-                "action_attachments_enabled": bool(
-                    getattr(settings, "action_attachments_enabled", False)
-                ),
+                "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
+                "action_reminders_enabled": bool(getattr(settings, "action_reminders_enabled", False)),
+                "action_recipients_enabled": True,
+            } if getattr(settings, "action_recipients_enabled", False) else ({
+                "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
                 "action_reminders_enabled": True,
             } if getattr(settings, "action_reminders_enabled", False) else ({
                 "action_attachments_enabled": True,
-            } if getattr(settings, "action_attachments_enabled", False) else {})),
+            } if getattr(settings, "action_attachments_enabled", False) else {}))),
         },
         "action_selection": action_selection_summary,
         "action_proposals": action_proposals_summary,
@@ -705,6 +786,9 @@ def build_evidence(
         **({
             "action_reminders": action_reminders_summary,
         } if getattr(settings, "action_reminders_enabled", False) else {}),
+        **({
+            "action_recipients": action_recipients_summary,
+        } if getattr(settings, "action_recipients_enabled", False) else {}),
         "artifact_sha256": artifact_sha256,
     }
 
@@ -722,6 +806,7 @@ def main() -> None:
     parser.add_argument("--action-proposals-activation", type=Path)
     parser.add_argument("--action-attachments-activation", type=Path)
     parser.add_argument("--action-reminders-activation", type=Path)
+    parser.add_argument("--action-recipients-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--freshness-minutes", type=int, default=30)
     parser.add_argument("--output", type=Path, required=True)
@@ -784,6 +869,12 @@ def main() -> None:
             decision,
             settings,
         )
+        action_recipients_attestation = validate_action_recipients_activation(
+            args.action_recipients_activation,
+            args.release_ledger,
+            decision,
+            settings,
+        )
         base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
         allowed_token = env_secret("SHUDDHO_SCALE_VERIFY_TOKEN_ALLOWED")
         denied_token = env_secret("SHUDDHO_SCALE_VERIFY_TOKEN_DENIED")
@@ -838,6 +929,8 @@ def main() -> None:
             action_attachments_attestation=action_attachments_attestation,
             action_reminders_activation_path=args.action_reminders_activation,
             action_reminders_attestation=action_reminders_attestation,
+            action_recipients_activation_path=args.action_recipients_activation,
+            action_recipients_attestation=action_recipients_attestation,
             now=now,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
