@@ -105,10 +105,13 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     if (clearAttachments) setSelectedAttachments([]);
   }
 
-  async function prepare(event: FormEvent) {
+  async function prepare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentConnection) return;
-    const attachmentIds = mode === "email" ? selectedAttachments : [];
+    // Read checked attachment IDs from the submitted form itself. This closes
+    // the gap where a checkbox DOM change can precede React state commit and
+    // an immediate submit would otherwise prepare a plain email.
+    const attachmentIds = mode === "email" ? new FormData(event.currentTarget).getAll("attachment_id").map(String) : [];
     const input: ActionInput = { connection_id: currentConnection.id, attachment_ids: attachmentIds, payload: mode === "email" ?
       { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body } :
       { kind: "calendar_create", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees) } };
@@ -167,7 +170,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
               const selected = selectedAttachments.includes(item.id);
               const selectedBytes = artifacts.filter(value => selectedAttachments.includes(value.id)).reduce((sum, value) => sum + value.byte_size, 0);
               const unavailable = !selected && (selectedAttachments.length >= 3 || selectedBytes + item.byte_size > 2 * 1024 * 1024);
-              return <label key={item.id}><input type="checkbox" checked={selected} disabled={Boolean(busy) || unavailable}
+              return <label key={item.id}><input type="checkbox" name="attachment_id" value={item.id} checked={selected} disabled={Boolean(busy) || unavailable}
                 onChange={event => setSelectedAttachments(previous => event.target.checked ? [...previous, item.id] : previous.filter(id => id !== item.id))} />
                 <span>{item.filename} · {(item.byte_size / 1024).toFixed(0)} KB · SHA {item.sha256.slice(0, 8)}{item.created_at ? ` · ${new Date(item.created_at).toLocaleDateString()}` : ""}</span></label>;
             })}
