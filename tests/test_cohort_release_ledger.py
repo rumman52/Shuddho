@@ -1191,7 +1191,13 @@ def test_schema_v7_action_selection_requires_runtime_proof(tmp_path):
 
 
 
-def action_proposals_files(tmp_path, *, include_providers=True):
+def action_proposals_files(
+    tmp_path,
+    *,
+    include_providers=True,
+    current_stage="cohort-25",
+    max_users=25,
+):
     capabilities = {
         "coworker": True,
         "work_services": True,
@@ -1212,7 +1218,7 @@ def action_proposals_files(tmp_path, *, include_providers=True):
     rollout_value = {
         "release_id": "coworker-cohort-001",
         "environment": "production",
-        "cohort": {"reference": "approved-cohort", "max_users": 25},
+        "cohort": {"reference": "approved-cohort", "max_users": max_users},
         "capabilities": capabilities,
         "incident": {
             "change_reference": "action-proposals-change-1",
@@ -1238,7 +1244,7 @@ def action_proposals_files(tmp_path, *, include_providers=True):
     deployment = write_json(tmp_path / "action-proposals-deployment.json", {
         "release_id": "coworker-cohort-001",
         "change_reference": "action-proposals-change-1",
-        "current_stage": "cohort-25",
+        "current_stage": current_stage,
         "deployed_at": "2026-09-23T05:30:00+00:00",
         "source_revision": "a" * 40,
         "staging_evidence_sha256": file_sha256(staging),
@@ -1259,7 +1265,7 @@ def action_proposals_files(tmp_path, *, include_providers=True):
         "cohort": {
             "enforced": True,
             "configured_members": 1,
-            "max_users": 25,
+            "max_users": max_users,
         },
     }
     runtime_hash = hashlib.sha256(json.dumps(
@@ -1272,7 +1278,7 @@ def action_proposals_files(tmp_path, *, include_providers=True):
         "schema_version": 1,
         "status": "action_proposals_verified",
         "release_id": "coworker-cohort-001",
-        "current_stage": "cohort-25",
+        "current_stage": current_stage,
         "verified_at": "2026-09-23T05:40:00+00:00",
         "change_reference": "action-proposals-change-1",
         "deployed_at": "2026-09-23T05:30:00+00:00",
@@ -1290,7 +1296,7 @@ def action_proposals_files(tmp_path, *, include_providers=True):
     return staging, rollout, deployment, status, activation
 
 
-def append_action_proposals(ledger, files):
+def append_action_proposals(ledger, files, *, current_stage="cohort-25"):
     staging, rollout, deployment, status, activation = files
     return append_action_proposals_event(
         ledger=ledger,
@@ -1298,7 +1304,7 @@ def append_action_proposals(ledger, files):
         release_id="coworker-cohort-001",
         actor_reference="oncall-primary",
         change_reference="action-proposals-change-1",
-        current_stage="cohort-25",
+        current_stage=current_stage,
         staging_evidence=staging,
         rollout_manifest=rollout,
         deployment_change=deployment,
@@ -1700,3 +1706,250 @@ def test_schema_v3_recovery_v2_rejects_stripped_action_selection_attestation(tmp
             rollback_completion=rollback_completion,
             recovery_verification=recovery_verification,
         )
+
+def test_schema_v4_scale_v3_requires_exact_action_proposals_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v3-scale-proposals.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
+    proposal_files = action_proposals_files(tmp_path)
+    proposal_entry = append_action_proposals(ledger, proposal_files)
+
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["schema_version"] = 3
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": True,
+    }
+    value["action_selection"] = None
+    value["action_proposals"] = {
+        "ledger_sequence": proposal_entry["sequence"],
+        "ledger_entry_hash": proposal_entry["entry_hash"],
+    }
+    value["artifact_sha256"]["action_proposals_activation"] = (
+        file_sha256(proposal_files[4])
+    )
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    entry = append_scale_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="change-42",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        scale_decision=decision,
+        deployment_change=deployment,
+        operator_status=status,
+        scale_activation=activation,
+    )
+    assert entry["event_type"] == "bounded_expansion_verified"
+
+
+def test_schema_v4_scale_v3_rejects_stripped_action_proposals_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v3-scale-proposals-stripped.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
+    proposal_files = action_proposals_files(tmp_path)
+    proposal_entry = append_action_proposals(ledger, proposal_files)
+
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["schema_version"] = 3
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": True,
+    }
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    value["artifact_sha256"]["action_proposals_activation"] = (
+        file_sha256(proposal_files[4])
+    )
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="Action-proposals scale activation is missing",
+    ):
+        append_scale_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="change-42",
+            current_stage="cohort-25",
+            next_stage="cohort-40",
+            scale_decision=decision,
+            deployment_change=deployment,
+            operator_status=status,
+            scale_activation=activation,
+        )
+
+
+def test_schema_v3_recovery_v3_requires_fresh_action_proposals_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v3-recovery-proposals.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-v3",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+        created_at="2026-09-23T04:00:00+00:00",
+    )
+    rollback_entry = append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v3",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+        created_at="2026-09-23T04:06:00+00:00",
+    )
+
+    proposal_files = action_proposals_files(
+        tmp_path,
+        current_stage="canary-5",
+        max_users=5,
+    )
+    proposal_entry = append_action_proposals(
+        ledger,
+        proposal_files,
+        current_stage="canary-5",
+    )
+    assert proposal_entry["sequence"] > rollback_entry["sequence"]
+
+    value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    value["schema_version"] = 3
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": True,
+    }
+    value["microsoft_rollout"] = None
+    value["action_selection"] = None
+    value["action_proposals"] = {
+        "ledger_sequence": proposal_entry["sequence"],
+        "ledger_entry_hash": proposal_entry["entry_hash"],
+    }
+    value["artifact_sha256"]["action_proposals_activation"] = (
+        file_sha256(proposal_files[4])
+    )
+    recovery_verification.write_text(json.dumps(value), encoding="utf-8")
+
+    recovered = append_recovery_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v3",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=recovery_status,
+        rollback_completion=rollback_completion,
+        recovery_verification=recovery_verification,
+    )
+    assert recovered["event_type"] == "recovery_verified"
+
+
+def test_schema_v3_recovery_v3_rejects_stripped_action_proposals_attestation(
+    tmp_path,
+):
+    ledger = tmp_path / "release-ledger-v3-recovery-proposals-stripped.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-v3",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+    )
+    append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v3",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+    )
+
+    value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    value["schema_version"] = 3
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": False,
+        "action_proposals_enabled": True,
+    }
+    value["microsoft_rollout"] = None
+    value["action_selection"] = None
+    value["action_proposals"] = None
+    recovery_verification.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="Action-proposals recovery evidence is missing",
+    ):
+        append_recovery_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="incident-v3",
+            current_stage="canary-5",
+            rollout=rollout,
+            canary_plan=plan,
+            progression_decision=progression,
+            operator_status=recovery_status,
+            rollback_completion=rollback_completion,
+            recovery_verification=recovery_verification,
+        )
+
