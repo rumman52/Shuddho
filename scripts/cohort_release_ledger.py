@@ -9,8 +9,6 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.cohort_release_gate import declared_action_providers
-
 SCHEMA_VERSION = 1
 ROLLBACK_SCHEMA_VERSION = 2
 RECOVERY_SCHEMA_VERSION = 3
@@ -90,6 +88,38 @@ def valid_hash(value) -> bool:
         and len(value) == 64
         and all(char in "0123456789abcdef" for char in value)
     )
+
+
+def normalized_action_providers(rollout: dict) -> list[str]:
+    capabilities = rollout.get("capabilities")
+    actions_enabled = (
+        isinstance(capabilities, dict)
+        and capabilities.get("actions") is True
+    )
+    providers = rollout.get("action_providers")
+    if providers is None:
+        return ["google"] if actions_enabled else []
+    if (
+        not isinstance(providers, list)
+        or len(providers) != len(set(providers))
+        or any(
+            not isinstance(item, str)
+            or item not in {"google", "microsoft"}
+            for item in providers
+        )
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout has an invalid action provider set."
+        )
+    if providers and not actions_enabled:
+        raise ReleaseLedgerError(
+            "Reviewed rollout declares action providers while actions are disabled."
+        )
+    if actions_enabled and "google" not in providers:
+        raise ReleaseLedgerError(
+            "Reviewed action rollout must retain the Google provider baseline."
+        )
+    return sorted(providers)
 
 
 def file_sha256(path: Path) -> str:
@@ -1775,7 +1805,7 @@ def append_action_proposals_event(
     expected_capabilities = dict(capabilities)
     expected_capabilities.setdefault("action_selection", False)
     expected_capabilities.setdefault("action_proposals", False)
-    expected_providers = sorted(declared_action_providers(rollout))
+    expected_providers = normalized_action_providers(rollout)
     if (
         runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
