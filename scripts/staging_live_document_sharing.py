@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -11,7 +12,6 @@ from pathlib import Path
 import httpx
 
 from scripts.staging_api_exercise import env_secret, require_https_base
-from services.coworker.action_repository import digest
 from services.coworker.action_schemas import address
 from services.coworker.config import Settings
 
@@ -28,6 +28,16 @@ ALLOWED_TYPES = {
 
 class DocumentSharingValidationFailure(RuntimeError):
     pass
+
+
+def digest(value: dict) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def passed(evidence: str) -> dict:
