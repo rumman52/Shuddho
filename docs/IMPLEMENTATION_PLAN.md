@@ -215,6 +215,8 @@ The next release-admission increment makes the final controlled-cohort manifest 
 
 The next bounded Agent/action bridge allows the intelligent planner to select only opaque handles for user-attached, still-unapproved email/calendar drafts. Shuddho resolves handles server-side, releases unselected pending drafts, preserves already-approved actions, and keeps explicit approval/execution unchanged behind a disabled-by-default `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED` gate.
 
+The following staging increment adds an executable, non-destructive live proof for that boundary: two synthetic attached drafts are planned through the deployed intelligent Agent, exactly one selected draft must remain bound and paused at `awaiting_approval`, the unselected draft must be released unchanged, and no approval/provider receipt may exist. Passing evidence is written as `action_selection` for the final release gate.
+
 Broader model-created external actions and connector expansion remain later increments.
 
 ### Consequential actions
