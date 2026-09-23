@@ -102,4 +102,6 @@ The backend now includes a disabled-by-default [Microsoft Graph email/calendar a
 
 A later bounded Agent increment adds [non-executable action proposals](AGENT_ACTION_PROPOSALS.md). Model-generated proposals remain outside `cw_external_actions` and cannot be approved or executed. Only explicit user promotion through a selected owned connection creates a normal immutable action preview, which still requires the approval path described above.
 
-Pending Wave D work: attachments and threading, reminders, document sharing, social publishing, and richer recipient resolution. These must register through the same consequential-action policy and pass the same approval/receipt boundary rather than acquiring permission from model-generated text.
+The first bounded Wave D increment is now [Approved Shuddho Artifact Email Attachments](APPROVED_ARTIFACT_EMAIL_ATTACHMENTS.md), disabled by default behind `SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false`. Only the signed-in user can select existing owned Shuddho artifacts; exact metadata/SHA-256 is approval-bound and private bytes are re-hashed before execution. Agent proposals remain attachment-blind. Live staging and production activation remain separate gates.
+
+Pending Wave D work: threading, reminders, document sharing, social publishing, and richer recipient resolution. These must register through the same consequential-action policy and pass the same approval/receipt boundary rather than acquiring permission from model-generated text.
