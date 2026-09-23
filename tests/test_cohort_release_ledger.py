@@ -1186,3 +1186,91 @@ def test_schema_v7_action_selection_requires_runtime_proof(tmp_path):
             operator_status=status,
             action_selection_activation=activation,
         )
+
+
+def test_schema_v4_scale_v2_requires_exact_action_selection_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v2-scale.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
+
+    staging, action_deployment, action_status, action_activation = (
+        action_selection_files(tmp_path)
+    )
+    action_entry = append_action_selection_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-selection-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        deployment_change=action_deployment,
+        operator_status=action_status,
+        action_selection_activation=action_activation,
+        created_at="2026-09-23T03:30:00+00:00",
+    )
+
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["schema_version"] = 2
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": True,
+    }
+    value["action_selection"] = {
+        "ledger_sequence": action_entry["sequence"],
+        "ledger_entry_hash": action_entry["entry_hash"],
+    }
+    value["artifact_sha256"]["action_selection_activation"] = (
+        file_sha256(action_activation)
+    )
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    entry = append_scale_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="change-42",
+        current_stage="cohort-25",
+        next_stage="cohort-40",
+        scale_decision=decision,
+        deployment_change=deployment,
+        operator_status=status,
+        scale_activation=activation,
+    )
+    assert entry["event_type"] == "bounded_expansion_verified"
+
+
+def test_schema_v4_scale_v2_rejects_stripped_action_selection_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v2-scale-stripped.jsonl"
+    decision, deployment, status, activation = scale_files(tmp_path)
+    seed_cohort_25_ledger(ledger, tmp_path)
+    seed_provider_policy_ledger(ledger, tmp_path)
+
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["schema_version"] = 2
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": True,
+    }
+    value["action_selection"] = None
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="Action-selection scale activation is missing",
+    ):
+        append_scale_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="change-42",
+            current_stage="cohort-25",
+            next_stage="cohort-40",
+            scale_decision=decision,
+            deployment_change=deployment,
+            operator_status=status,
+            scale_activation=activation,
+        )
