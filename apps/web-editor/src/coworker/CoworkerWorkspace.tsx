@@ -101,6 +101,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     setNotes("");
     setLanguage("en");
     setCustomLanguage("");
+    setBusy("");
     setError("");
     setNotice("");
     setConnection("");
