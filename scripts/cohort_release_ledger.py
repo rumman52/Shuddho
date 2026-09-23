@@ -353,6 +353,75 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
     }
 
 
+
+
+def verified_release_entries(
+    ledger: Path,
+    release_id: str,
+) -> tuple[list[dict], dict]:
+    entries = read_entries(ledger)
+    state = verify_entries(entries, ledger_key())
+    if state.get("release_id") != release_id:
+        raise ReleaseLedgerError(
+            "Release ledger release_id does not match the expected release."
+        )
+    return entries, state
+
+
+def require_exact_attested_event(
+    entries: list[dict],
+    *,
+    schema_version: int,
+    event_type: str,
+    current_stage: str,
+    next_stage: str | None,
+    artifact_key: str,
+    artifact_sha256: str,
+    after_sequence: int | None = None,
+    expected_sequence: int | None = None,
+    expected_entry_hash: str | None = None,
+    label: str = "release attestation",
+) -> dict:
+    if not valid_hash(artifact_sha256):
+        raise ReleaseLedgerError(
+            f"{label} requires a valid artifact SHA-256."
+        )
+    matches = [
+        item
+        for item in entries
+        if item.get("schema_version") == schema_version
+        and item.get("event_type") == event_type
+        and item.get("current_stage") == current_stage
+        and item.get("next_stage") == next_stage
+        and item.get("artifact_sha256", {}).get(artifact_key)
+        == artifact_sha256
+        and (
+            after_sequence is None
+            or item.get("sequence", 0) > after_sequence
+        )
+    ]
+    if len(matches) != 1:
+        raise ReleaseLedgerError(
+            f"{label} requires exactly one matching ledger event."
+        )
+    entry = matches[0]
+    if (
+        expected_sequence is not None
+        and entry.get("sequence") != expected_sequence
+    ):
+        raise ReleaseLedgerError(
+            f"{label} ledger sequence does not match."
+        )
+    if (
+        expected_entry_hash is not None
+        and entry.get("entry_hash") != expected_entry_hash
+    ):
+        raise ReleaseLedgerError(
+            f"{label} ledger entry hash does not match."
+        )
+    return entry
+
+
 def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix="." + path.name + ".", dir=str(path.parent))
