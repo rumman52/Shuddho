@@ -12,7 +12,7 @@ pytest.importorskip("sqlalchemy", reason="Install the coworker extra for recover
 from scripts import cohort_recovery_verification as recovery
 
 
-def rollout(*, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False):
+def rollout(*, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False):
     value = {
         "release_id": "coworker-cohort-001",
         "cohort": {"max_users": 25},
@@ -29,7 +29,7 @@ def rollout(*, action_selection=False, action_proposals=False, action_attachment
             "parallel_execution": True,
             "outcome_replan": True,
             "research": False,
-            "actions": action_selection or action_proposals or action_attachments or action_reminders or action_recipients,
+            "actions": action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing,
         },
     }
     if action_selection:
@@ -42,6 +42,8 @@ def rollout(*, action_selection=False, action_proposals=False, action_attachment
         value["capabilities"]["action_reminders"] = True
     if action_recipients:
         value["capabilities"]["action_recipients"] = True
+    if action_document_sharing:
+        value["capabilities"]["action_document_sharing"] = True
     return value
 
 
@@ -72,7 +74,7 @@ def rollback_completion(tmp_path, rollout_path):
     return value, path
 
 
-def settings(members, *, microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False):
+def settings(members, *, microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False):
     return SimpleNamespace(
         cohort_enforced=True,
         cohort_account_ids=frozenset(members),
@@ -87,13 +89,14 @@ def settings(members, *, microsoft=False, action_selection=False, action_proposa
         agent_parallel_execution_enabled=True,
         agent_outcome_replan_enabled=True,
         research_services_enabled=False,
-        actions_enabled=action_selection or action_proposals or action_attachments or action_reminders or action_recipients,
+        actions_enabled=action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing,
         microsoft_actions_enabled=microsoft,
         agent_action_selection_enabled=action_selection,
         agent_action_proposals_enabled=action_proposals,
         action_attachments_enabled=action_attachments,
         action_reminders_enabled=action_reminders,
         action_recipients_enabled=action_recipients,
+        action_document_sharing_enabled=action_document_sharing,
     )
 
 
@@ -1125,6 +1128,33 @@ def test_action_recipients_recovery_requires_fresh_activation_and_ledger(tmp_pat
     with pytest.raises(recovery.RecoveryVerificationError, match="fresh recipient activation"):
         recovery.validate_action_recipients_recovery_activation(
             settings=settings({"a" * 64}, action_recipients=True),
+            activation_path=None,
+            ledger_path=None,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollback_completion={"verified_at": "2026-09-22T07:00:00+00:00"},
+            rollback_path=tmp_path / "rollback.json",
+            recovery_deployed_at=datetime(2026, 9, 22, 7, 5, tzinfo=timezone.utc),
+        )
+
+
+def test_document_sharing_recovery_activation_is_optional_when_disabled(tmp_path):
+    assert recovery.validate_action_document_sharing_recovery_activation(
+        settings=settings({"a" * 64}, action_document_sharing=False),
+        activation_path=None,
+        ledger_path=None,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+        rollback_completion={"verified_at": "2026-09-22T07:00:00+00:00"},
+        rollback_path=tmp_path / "unused.json",
+        recovery_deployed_at=datetime(2026, 9, 22, 7, 5, tzinfo=timezone.utc),
+    ) is None
+
+
+def test_document_sharing_recovery_requires_fresh_activation_and_ledger(tmp_path):
+    with pytest.raises(recovery.RecoveryVerificationError, match="fresh"):
+        recovery.validate_action_document_sharing_recovery_activation(
+            settings=settings({"a" * 64}, action_document_sharing=True),
             activation_path=None,
             ledger_path=None,
             release_id="coworker-cohort-001",

@@ -8,7 +8,7 @@ from scripts.staging_gate import evaluate as evaluate_staging, load_evidence
 
 ACTION_PROVIDERS = {"google", "microsoft"}
 
-OPTIONAL_CAPABILITY_KEYS = {"action_attachments", "action_reminders", "action_recipients", "action_selection", "action_proposals"}
+OPTIONAL_CAPABILITY_KEYS = {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals"}
 
 CAPABILITY_KEYS = {
     "coworker",
@@ -46,6 +46,7 @@ OPTIONAL_ROLLBACK_KEYS = {
     "action_attachments_kill_switch",
     "action_reminders_kill_switch",
     "action_recipients_kill_switch",
+    "action_document_sharing_kill_switch",
     "action_selection_kill_switch",
     "action_proposals_kill_switch",
 }
@@ -58,6 +59,7 @@ EXPECTED_KILL_SWITCHES = {
     "action_attachments_kill_switch": "SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false",
     "action_reminders_kill_switch": "SHUDDHO_ACTION_REMINDERS_ENABLED=false",
     "action_recipients_kill_switch": "SHUDDHO_ACTION_RECIPIENTS_ENABLED=false",
+    "action_document_sharing_kill_switch": "SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false",
     "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
     "action_proposals_kill_switch": "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
 }
@@ -156,6 +158,10 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
                 failures.append("action_reminders_dependency")
             if capabilities.get("action_recipients") is True and not capabilities["actions"]:
                 failures.append("action_recipients_dependency")
+            if capabilities.get("action_document_sharing") is True and (
+                not capabilities["actions"] or not capabilities["artifact_services"]
+            ):
+                failures.append("action_document_sharing_dependency")
             if capabilities.get("action_selection") is True and (
                 not capabilities["actions"]
                 or not capabilities["agent_runtime"]
@@ -202,7 +208,7 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
         if not text_ref(rollback["runbook_reference"]):
             failures.append("rollback_runbook")
         for key, expected in EXPECTED_KILL_SWITCHES.items():
-            if key in {"action_attachments_kill_switch", "action_reminders_kill_switch", "action_recipients_kill_switch", "action_selection_kill_switch", "action_proposals_kill_switch"}:
+            if key in {"action_attachments_kill_switch", "action_reminders_kill_switch", "action_recipients_kill_switch", "action_document_sharing_kill_switch", "action_selection_kill_switch", "action_proposals_kill_switch"}:
                 continue
             if rollback.get(key) != expected:
                 failures.append(key)
@@ -215,6 +221,9 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
         if isinstance(capabilities, dict) and capabilities.get("action_recipients") is True:
             if rollback.get("action_recipients_kill_switch") != EXPECTED_KILL_SWITCHES["action_recipients_kill_switch"]:
                 failures.append("action_recipients_kill_switch")
+        if isinstance(capabilities, dict) and capabilities.get("action_document_sharing") is True:
+            if rollback.get("action_document_sharing_kill_switch") != EXPECTED_KILL_SWITCHES["action_document_sharing_kill_switch"]:
+                failures.append("action_document_sharing_kill_switch")
         if isinstance(capabilities, dict) and capabilities.get("action_selection") is True:
             if rollback.get("action_selection_kill_switch") != EXPECTED_KILL_SWITCHES["action_selection_kill_switch"]:
                 failures.append("action_selection_kill_switch")
@@ -271,6 +280,10 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         isinstance(capabilities, dict)
         and capabilities.get("action_recipients") is True
     )
+    require_action_document_sharing = (
+        isinstance(capabilities, dict)
+        and capabilities.get("action_document_sharing") is True
+    )
     require_action_selection = (
         isinstance(capabilities, dict)
         and capabilities.get("action_selection") is True
@@ -290,6 +303,7 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
             require_action_reminders and require_microsoft_actions
         ),
         require_action_recipients=require_action_recipients,
+        require_action_document_sharing=require_action_document_sharing,
         require_action_selection=require_action_selection,
         require_action_proposals=require_action_proposals,
     )
@@ -334,6 +348,7 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
             "action_attachments": require_action_attachments,
             "action_reminders": require_action_reminders,
             "action_recipients": require_action_recipients,
+            "action_document_sharing": require_action_document_sharing,
             "action_selection": require_action_selection,
             "action_proposals": require_action_proposals,
         },

@@ -960,6 +960,117 @@ def validate_action_recipients_recovery_activation(
     }
 
 
+
+def validate_action_document_sharing_recovery_activation(
+    *,
+    settings: Settings,
+    activation_path: Path | None,
+    ledger_path: Path | None,
+    release_id: str,
+    current_stage: str,
+    rollback_completion: dict,
+    rollback_path: Path,
+    recovery_deployed_at: datetime,
+) -> dict | None:
+    if not getattr(settings, "action_document_sharing_enabled", False):
+        return None
+    if activation_path is None or ledger_path is None:
+        raise RecoveryVerificationError(
+            "Saved document sharing are enabled but a fresh recipient activation "
+            "and the release ledger are required for recovery."
+        )
+    activation = load_json(
+        activation_path,
+        "post-rollback document-sharing activation",
+    )
+    if activation.get("status") != "action_document_sharing_verified":
+        raise RecoveryVerificationError(
+            "Post-rollback document-sharing activation has not been verified."
+        )
+    if activation.get("release_id") != release_id:
+        raise RecoveryVerificationError(
+            "Post-rollback document-sharing activation release_id does not match."
+        )
+    if activation.get("current_stage") != current_stage:
+        raise RecoveryVerificationError(
+            "Post-rollback document-sharing activation current_stage does not match."
+        )
+    runtime = activation.get("runtime")
+    capabilities = runtime.get("capabilities") if isinstance(runtime, dict) else None
+    cohort = runtime.get("cohort") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(runtime, dict)
+        or not isinstance(capabilities, dict)
+        or capabilities.get("coworker") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("action_recipients") is not True
+        or not isinstance(cohort, dict)
+        or cohort.get("enforced") is not True
+    ):
+        raise RecoveryVerificationError(
+            "Post-rollback document-sharing activation does not prove required runtime controls."
+        )
+    deployed_at = activation.get("deployed_at")
+    verified_at = activation.get("verified_at")
+    if not isinstance(deployed_at, str) or not isinstance(verified_at, str):
+        raise RecoveryVerificationError(
+            "Post-rollback document-sharing activation is missing deployment/verification timestamps."
+        )
+    document_sharing_deployed = parse_time(deployed_at, "document-sharing deployed_at")
+    document_sharing_verified = parse_time(verified_at, "document-sharing verified_at")
+    rollback_verified_at = rollback_completion.get("verified_at")
+    if not isinstance(rollback_verified_at, str):
+        raise RecoveryVerificationError("Rollback completion has no verified_at timestamp.")
+    rollback_verified = parse_time(rollback_verified_at, "rollback verified_at")
+    if document_sharing_deployed < recovery_deployed_at:
+        raise RecoveryVerificationError(
+            "Document-sharing activation predates the recovery deployment."
+        )
+    if document_sharing_verified < document_sharing_deployed:
+        raise RecoveryVerificationError(
+            "Document-sharing activation was verified before its deployment."
+        )
+    if document_sharing_verified <= rollback_verified:
+        raise RecoveryVerificationError(
+            "Document-sharing activation must be freshly verified after rollback completion."
+        )
+    try:
+        entries, _ = verified_release_entries(ledger_path, release_id)
+        rollback_hash = ledger_file_sha256(rollback_path)
+        rollback_entry = require_exact_attested_event(
+            entries,
+            schema_version=2,
+            event_type="rollback_completed",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="rollback_completion",
+            artifact_sha256=rollback_hash,
+            label="Recovery rollback attestation",
+        )
+        activation_hash = ledger_file_sha256(activation_path)
+        document_entry = require_exact_attested_event(
+            entries,
+            schema_version=12,
+            event_type="action_document_sharing_verified",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="action_document_sharing_activation",
+            artifact_sha256=activation_hash,
+            after_sequence=rollback_entry["sequence"],
+            label="Document-sharing recovery attestation",
+        )
+    except Exception as error:
+        raise RecoveryVerificationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    return {
+        "activation": activation,
+        "ledger_sequence": document_entry["sequence"],
+        "ledger_entry_hash": document_entry["entry_hash"],
+        "activation_sha256": activation_hash,
+    }
+
+
 def expect_json(response: httpx.Response, status: int, label: str) -> dict:
     if response.status_code != status:
         raise RecoveryVerificationError(
@@ -1105,6 +1216,7 @@ def build_recovery_evidence(
     action_attachments_activation_path: Path | None = None,
     action_reminders_activation_path: Path | None = None,
     action_recipients_activation_path: Path | None = None,
+    action_document_sharing_activation_path: Path | None = None,
     release_ledger_path: Path | None = None,
 ) -> dict:
     if not deployment_reference.strip() or len(deployment_reference) > 500:
@@ -1174,6 +1286,16 @@ def build_recovery_evidence(
     action_recipients_recovery = validate_action_recipients_recovery_activation(
         settings=settings,
         activation_path=action_recipients_activation_path,
+        ledger_path=release_ledger_path,
+        release_id=config["release_id"],
+        current_stage=current_stage,
+        rollback_completion=rollback_completion,
+        rollback_path=rollback_path,
+        recovery_deployed_at=deployment_time,
+    )
+    action_document_sharing_recovery = validate_action_document_sharing_recovery_activation(
+        settings=settings,
+        activation_path=action_document_sharing_activation_path,
         ledger_path=release_ledger_path,
         release_id=config["release_id"],
         current_stage=current_stage,
@@ -1282,9 +1404,20 @@ def build_recovery_evidence(
             "ledger_entry_hash": action_recipients_recovery["ledger_entry_hash"],
         }
 
+    action_document_sharing_summary = None
+    if action_document_sharing_recovery is not None:
+        artifact_sha256["action_document_sharing_activation"] = (
+            action_document_sharing_recovery["activation_sha256"]
+        )
+        action_document_sharing_summary = {
+            "ledger_sequence": action_document_sharing_recovery["ledger_sequence"],
+            "ledger_entry_hash": action_document_sharing_recovery["ledger_entry_hash"],
+        }
+
     return {
         "schema_version": (
-            6 if getattr(settings, "action_recipients_enabled", False)
+            7 if getattr(settings, "action_document_sharing_enabled", False)
+            else 6 if getattr(settings, "action_recipients_enabled", False)
             else 5 if getattr(settings, "action_reminders_enabled", False)
             else 4 if getattr(settings, "action_attachments_enabled", False)
             else 3
@@ -1324,13 +1457,18 @@ def build_recovery_evidence(
             **({
                 "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
                 "action_reminders_enabled": bool(getattr(settings, "action_reminders_enabled", False)),
+                "action_recipients_enabled": bool(getattr(settings, "action_recipients_enabled", False)),
+                "action_document_sharing_enabled": True,
+            } if getattr(settings, "action_document_sharing_enabled", False) else ({
+                "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
+                "action_reminders_enabled": bool(getattr(settings, "action_reminders_enabled", False)),
                 "action_recipients_enabled": True,
             } if getattr(settings, "action_recipients_enabled", False) else ({
                 "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
                 "action_reminders_enabled": True,
             } if getattr(settings, "action_reminders_enabled", False) else ({
                 "action_attachments_enabled": True,
-            } if getattr(settings, "action_attachments_enabled", False) else {}))),
+            } if getattr(settings, "action_attachments_enabled", False) else {})))),
         },
         "microsoft_rollout": microsoft_summary,
         "action_selection": action_selection_summary,
@@ -1344,6 +1482,9 @@ def build_recovery_evidence(
         **({
             "action_recipients": action_recipients_summary,
         } if getattr(settings, "action_recipients_enabled", False) else {}),
+        **({
+            "action_document_sharing": action_document_sharing_summary,
+        } if getattr(settings, "action_document_sharing_enabled", False) else {}),
         "artifact_sha256": artifact_sha256,
     }
 
@@ -1367,6 +1508,7 @@ def main() -> None:
     parser.add_argument("--action-attachments-activation", type=Path)
     parser.add_argument("--action-reminders-activation", type=Path)
     parser.add_argument("--action-recipients-activation", type=Path)
+    parser.add_argument("--action-document-sharing-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -1400,6 +1542,7 @@ def main() -> None:
             action_attachments_activation_path=args.action_attachments_activation,
             action_reminders_activation_path=args.action_reminders_activation,
             action_recipients_activation_path=args.action_recipients_activation,
+            action_document_sharing_activation_path=args.action_document_sharing_activation,
             release_ledger_path=args.release_ledger,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")

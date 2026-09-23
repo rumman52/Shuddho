@@ -25,6 +25,7 @@ CONDITIONAL_GATES = {
     "action_reminders_google": "Live Google Calendar explicit-reminder validation passed through immutable approval and exact provider receipt checks.",
     "action_reminders_microsoft": "Live Microsoft Calendar explicit-reminder validation passed through immutable approval and exact provider receipt checks.",
     "action_recipients": "Live saved-recipient CRUD, exact value preservation, owner isolation, cross-owner denial, deletion and cleanup passed.",
+    "action_document_sharing": "Live Google Drive sharing passed exact owned-artifact hash binding, explicit approval, reader-only permission and provider receipt validation.",
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
     "action_selection": "Live Agent planner selected only opaque attached-action handles and still paused for explicit user approval.",
     "action_proposals": "Live Agent generated only inert typed action proposals; promotion created a separate preview and never auto-approved or executed it.",
@@ -48,6 +49,7 @@ def evaluate(
     require_action_reminders: bool = False,
     require_microsoft_action_reminders: bool = False,
     require_action_recipients: bool = False,
+    require_action_document_sharing: bool = False,
     require_action_selection: bool = False,
     require_action_proposals: bool = False,
 ) -> dict:
@@ -66,6 +68,8 @@ def evaluate(
         required["action_reminders_microsoft"] = CONDITIONAL_GATES["action_reminders_microsoft"]
     if require_action_recipients:
         required["action_recipients"] = CONDITIONAL_GATES["action_recipients"]
+    if require_action_document_sharing:
+        required["action_document_sharing"] = CONDITIONAL_GATES["action_document_sharing"]
     if require_action_selection:
         required["action_selection"] = CONDITIONAL_GATES["action_selection"]
     if require_action_proposals:
@@ -106,6 +110,7 @@ def main() -> None:
     parser.add_argument("--require-action-reminders", action="store_true")
     parser.add_argument("--require-microsoft-action-reminders", action="store_true")
     parser.add_argument("--require-action-recipients", action="store_true")
+    parser.add_argument("--require-action-document-sharing", action="store_true")
     parser.add_argument("--require-action-selection", action="store_true")
     parser.add_argument("--require-action-proposals", action="store_true")
     parser.add_argument("--output", type=Path)
@@ -119,6 +124,7 @@ def main() -> None:
         require_action_reminders=args.require_action_reminders,
         require_microsoft_action_reminders=args.require_microsoft_action_reminders,
         require_action_recipients=args.require_action_recipients,
+        require_action_document_sharing=args.require_action_document_sharing,
         require_action_selection=args.require_action_selection,
         require_action_proposals=args.require_action_proposals,
     )
