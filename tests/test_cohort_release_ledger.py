@@ -12,6 +12,7 @@ from scripts.cohort_release_ledger import (
     append_scale_event,
     append_provider_policy_event,
     append_microsoft_rollout_event,
+    append_action_selection_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -1016,3 +1017,172 @@ def test_schema_v6_microsoft_rollout_cannot_record_same_activation_twice(tmp_pat
     append_microsoft_rollout_event(**kwargs)
     with pytest.raises(ReleaseLedgerError, match="already recorded"):
         append_microsoft_rollout_event(**kwargs)
+
+
+def action_selection_files(tmp_path):
+    staging = write_json(tmp_path / "action-selection-staging.json", {
+        "action_selection": {
+            "status": "passed",
+            "evidence": "live action selection paused at approval",
+            "verified_at": "2026-09-23T03:20:00+00:00",
+        },
+    })
+    deployment = write_json(tmp_path / "action-selection-deployment.json", {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "action-selection-change-1",
+        "current_stage": "cohort-25",
+        "deployed_at": "2026-09-23T03:25:00+00:00",
+        "staging_evidence_sha256": file_sha256(staging),
+    })
+    status = write_json(tmp_path / "action-selection-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-23T03:28:00+00:00",
+        "breaches": [],
+    })
+    activation = write_json(tmp_path / "action-selection-activation.json", {
+        "schema_version": 1,
+        "status": "action_selection_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "verified_at": "2026-09-23T03:29:00+00:00",
+        "change_reference": "action-selection-change-1",
+        "deployed_at": "2026-09-23T03:25:00+00:00",
+        "operator_status_generated_at": "2026-09-23T03:28:00+00:00",
+        "runtime": {
+            "coworker_enabled": True,
+            "agent_runtime_enabled": True,
+            "intelligent_planner_enabled": True,
+            "actions_enabled": True,
+            "action_selection_enabled": True,
+            "cohort_enforced": True,
+            "cohort_members_configured": 1,
+            "cohort_max_users": 25,
+        },
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging),
+            "deployment_change": file_sha256(deployment),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return staging, deployment, status, activation
+
+
+def test_schema_v7_action_selection_is_hash_chained(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, deployment, status, activation = action_selection_files(tmp_path)
+
+    entry = append_action_selection_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-selection-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        deployment_change=deployment,
+        operator_status=status,
+        action_selection_activation=activation,
+        created_at="2026-09-23T03:30:00+00:00",
+    )
+
+    assert entry["schema_version"] == 7
+    assert entry["event_type"] == "action_selection_verified"
+    assert entry["next_stage"] is None
+    assert entry["artifact_sha256"]["staging_evidence"] == file_sha256(staging)
+    assert entry["artifact_sha256"]["deployment_change"] == file_sha256(deployment)
+    assert (
+        entry["artifact_sha256"]["action_selection_activation"]
+        == file_sha256(activation)
+    )
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == entry["entry_hash"]
+
+
+def test_schema_v7_action_selection_rejects_unbound_activation(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, deployment, status, activation = action_selection_files(tmp_path)
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["artifact_sha256"]["deployment_change"] = "0" * 64
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="does not bind this deployment_change",
+    ):
+        append_action_selection_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="action-selection-change-1",
+            current_stage="cohort-25",
+            staging_evidence=staging,
+            deployment_change=deployment,
+            operator_status=status,
+            action_selection_activation=activation,
+        )
+
+
+def test_schema_v7_action_selection_requires_existing_stage_chain(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    staging, deployment, status, activation = action_selection_files(tmp_path)
+
+    with pytest.raises(ReleaseLedgerError, match="existing ledger chain"):
+        append_action_selection_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="action-selection-change-1",
+            current_stage="cohort-25",
+            staging_evidence=staging,
+            deployment_change=deployment,
+            operator_status=status,
+            action_selection_activation=activation,
+        )
+
+
+def test_schema_v7_action_selection_cannot_record_same_activation_twice(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, deployment, status, activation = action_selection_files(tmp_path)
+    kwargs = dict(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-selection-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        deployment_change=deployment,
+        operator_status=status,
+        action_selection_activation=activation,
+    )
+    append_action_selection_event(**kwargs)
+    with pytest.raises(ReleaseLedgerError, match="already recorded"):
+        append_action_selection_event(**kwargs)
+
+
+def test_schema_v7_action_selection_requires_runtime_proof(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    staging, deployment, status, activation = action_selection_files(tmp_path)
+    value = json.loads(activation.read_text(encoding="utf-8"))
+    value["runtime"]["action_selection_enabled"] = False
+    activation.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(ReleaseLedgerError, match="runtime controls"):
+        append_action_selection_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="action-selection-change-1",
+            current_stage="cohort-25",
+            staging_evidence=staging,
+            deployment_change=deployment,
+            operator_status=status,
+            action_selection_activation=activation,
+        )

@@ -219,6 +219,8 @@ The following staging increment adds an executable, non-destructive live proof f
 
 The next activation-control increment binds that exact timestamped `action_selection` staging evidence to a reviewed production deployment, verifies Coworker/Agent/planner/actions/action-selection/cohort runtime controls from the deployed backend, requires fresh clean post-deploy cohort health, and emits `action_selection_verified` before the feature is treated as production-activated.
 
+The following release-evidence increment adds schema v7 `action_selection_verified` to the same tamper-evident controlled-cohort ledger. It SHA-binds the exact staging proof, reviewed deployment, post-deploy operator status, and activation artifact, rejects duplicate activation recording, and requires the chain to have already reached the declared current stage.
+
 Broader model-created external actions and connector expansion remain later increments.
 
 ### Consequential actions

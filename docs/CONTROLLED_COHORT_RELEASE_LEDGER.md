@@ -187,3 +187,40 @@ uv run python scripts/cohort_release_ledger.py append-microsoft-rollout \
 ```
 
 A schema-v6 event is evidence that the reviewed Microsoft provider rollout was deployed and verified inside the existing release chain. It does not authorize cohort expansion or any consequential user action.
+
+
+## Agent action-selection activation evidence
+
+Schema v7 adds one event type: `action_selection_verified`.
+
+It is appended only after the live action-selection staging gate and the deployed-runtime activation verifier both pass. The event requires the same release ID as the existing controlled-cohort ledger and a chain that has already reached the supplied current stage.
+
+It binds by SHA-256:
+
+- the exact timestamped `action_selection` live-staging evidence;
+- the exact reviewed action-selection deployment record;
+- the fresh post-deploy operator status;
+- the exact `action_selection_verified` activation artifact.
+
+The deployment record must bind the exact staging evidence and the same current stage/change reference. The activation artifact must bind the exact staging, deployment, and operator-status files and prove Coworker, Agent Runtime, Intelligent Planner, Actions, Action Selection, and cohort enforcement were enabled in the reviewed deployment.
+
+Duplicate recording of the same exact activation is rejected.
+
+Example:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-action-selection \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-action-selection-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.action-selection.json \
+  --deployment-change /secure/release/action-selection-deployment.json \
+  --operator-status /secure/release/post-action-selection-status.json \
+  --action-selection-activation /secure/release/action-selection-activation.json
+```
+
+After appending, verify the complete ledger and copy the new `head_entry_hash` to the independent release/change record.
+
+A schema-v7 event records release evidence only. It does not enable action selection, approve or execute an external action, change cohort membership, or authorize expansion/recovery by itself.

@@ -129,4 +129,21 @@ exact staging proof
 → action_selection_verified
 ```
 
-A later release-evidence increment can chain this activation artifact into the tamper-evident controlled-cohort ledger. This verifier intentionally does not add a new ledger schema by itself.
+After activation verification passes, record the exact artifact in the tamper-evident controlled-cohort release ledger:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-action-selection \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-action-selection-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.action-selection.json \
+  --deployment-change /secure/release/action-selection-deployment.json \
+  --operator-status /secure/release/post-action-selection-status.json \
+  --action-selection-activation /secure/release/action-selection-activation.json
+```
+
+This creates schema-v7 `action_selection_verified` evidence inside the existing release chain. Verify the ledger afterward and externally anchor the returned head hash.
+
+The ledger event is evidence-only. It does not enable action selection or authorize an external action.
