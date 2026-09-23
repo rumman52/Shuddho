@@ -233,6 +233,8 @@ The following release-evidence increment adds schema v8 `action_proposals_verifi
 
 The next enforcement increment makes bounded scale and post-rollback recovery consume the exact schema-v8 proposal attestation whenever action proposals are enabled. New scale/recovery evidence is schema v3 with explicit `action_proposals_enabled` runtime requirements, exact proposal-activation SHA-256, and satisfying ledger sequence/hash. The downstream ledger writer re-verifies those references; recovery additionally requires the schema-v8 event to occur after the exact rollback-completion event. Proposal-disabled and historical schema-v1/v2 evidence paths remain backward-compatible.
 
+The following human-control increment adds [Agent Workspace Proposal Review](AGENT_WORKSPACE_PROPOSAL_REVIEW.md): the authenticated Coworker UI can create and observe bounded Agent runs, display inert typed action proposals, require the user to choose a matching owned connection, promote only the exact proposal hash, and then hand the immutable preview to the existing Email & Calendar approval surface. The Agent UI itself has no approval or execution control. Browser CI proves proposal display and promotion cause zero provider mutations.
+
 Broader model-created executable actions and connector expansion remain later increments.
 
 ### Consequential actions
