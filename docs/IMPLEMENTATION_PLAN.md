@@ -229,6 +229,8 @@ The following staging increment adds [controlled live Agent action-proposal vali
 
 The next activation-control increment adds [Agent Action-Proposal Production Activation](ACTION_PROPOSALS_ACTIVATION.md): the exact live `action_proposals` proof and exact reviewed rollout are SHA-bound to a reviewed deployment carrying the full Git revision; an authenticated production runtime manifest must match that revision, every reviewed capability, provider set and cohort ceiling exactly; fresh clean post-deploy health is required; and only then is `action_proposals_verified` emitted.
 
+The following release-evidence increment adds schema v8 `action_proposals_verified` to the same tamper-evident controlled-cohort ledger. It SHA-binds the exact live proposal proof, reviewed rollout manifest, reviewed deployment, post-deploy operator status, and activation artifact; independently re-verifies the exact normalized runtime capability/provider snapshot; rejects duplicate activation recording; and requires the chain to have already reached the declared current stage. Scale/recovery consumption of this proof remains a separate later enforcement increment.
+
 Broader model-created executable actions and connector expansion remain later increments.
 
 ### Consequential actions

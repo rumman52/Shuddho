@@ -224,3 +224,60 @@ uv run python scripts/cohort_release_ledger.py append-action-selection \
 After appending, verify the complete ledger and copy the new `head_entry_hash` to the independent release/change record.
 
 A schema-v7 event records release evidence only. It does not enable action selection, approve or execute an external action, change cohort membership, or authorize expansion/recovery by itself.
+
+## Agent action-proposal activation evidence
+
+Schema v8 adds one event type: `action_proposals_verified`.
+
+It is appended only after the controlled live action-proposal staging gate and the production activation verifier both pass. The event requires the same release ID as the existing controlled-cohort ledger and a chain that has already reached the supplied current stage.
+
+It binds by SHA-256:
+
+- the exact timestamped `action_proposals` live-staging evidence;
+- the exact reviewed controlled-cohort rollout manifest;
+- the exact reviewed action-proposal deployment record;
+- the fresh post-deploy operator status;
+- the exact `action_proposals_verified` activation artifact.
+
+Before append, the ledger writer independently verifies:
+
+- the rollout has `action_proposals=true` and the exact proposal kill switch;
+- the deployment binds the exact staging proof and rollout manifest;
+- the deployment source revision is a full lowercase Git SHA;
+- the activation binds the same release, stage, change reference, deployment time, source revision and operator-status generation time;
+- the activation runtime snapshot hash is internally consistent;
+- the runtime source revision and environment match the reviewed deployment/rollout;
+- the complete normalized capability map exactly matches the reviewed rollout;
+- the normalized provider set exactly matches the reviewed rollout, including legacy Google-only manifests that omit `action_providers`;
+- controlled-cohort enforcement and the reviewed cohort ceiling match;
+- every activation artifact hash matches the exact supplied file.
+
+Duplicate recording of the same exact activation is rejected.
+
+Example:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-action-proposals \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-action-proposals-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.action-proposals.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --deployment-change /secure/release/action-proposals-deployment.json \
+  --operator-status /secure/release/post-action-proposals-status.json \
+  --action-proposals-activation /secure/release/action-proposals-activation.json
+```
+
+After appending, verify the complete ledger:
+
+```bash
+uv run python scripts/cohort_release_ledger.py verify \
+  --ledger /secure/release/coworker-cohort-001.jsonl
+```
+
+Copy the new `head_entry_hash` to the independent release/change record.
+
+A schema-v8 event records release evidence only. It does not enable action proposals, promote a proposal, approve or execute an external action, change cohort membership, authorize expansion/recovery, or create any provider mutation.
+

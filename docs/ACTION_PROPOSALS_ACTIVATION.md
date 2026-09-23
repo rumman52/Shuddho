@@ -211,8 +211,12 @@ If all consequential actions must stop:
 SHUDDHO_ACTIONS_ENABLED=false
 ```
 
-## Next release-evidence step
+## Release-ledger handoff
 
-After this activation verifier is green, the exact activation artifact should be chained into the existing tamper-evident controlled-cohort release ledger as a new evidence-only schema version.
+After this activation verifier is green, record the exact proof through release-ledger schema v8 `action_proposals_verified`.
 
-Scale/recovery should consume that ledgered proof only after the ledger increment lands. Do not make standalone `action_proposals_verified` JSON sufficient for scale or recovery.
+Schema v8 binds the exact live staging evidence, reviewed rollout manifest, reviewed deployment record, post-deploy operator status, and this activation artifact into the existing HMAC-protected hash chain. The ledger writer independently re-verifies the exact normalized runtime capability/provider snapshot, source revision, cohort enforcement, artifact hashes, release/stage/change references, and duplicate status before appending.
+
+Use the `append-action-proposals` operation documented in [Controlled Cohort Release Ledger](CONTROLLED_COHORT_RELEASE_LEDGER.md), then independently retain the new ledger head.
+
+Scale/recovery must consume that ledgered proof only after a separate enforcement increment lands. A standalone `action_proposals_verified` JSON file is not sufficient for scale or recovery.
