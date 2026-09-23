@@ -127,7 +127,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     const attachmentIds = mode === "email" ? [...selectedAttachmentsRef.current] : [];
     const input: ActionInput = { connection_id: currentConnection.id, attachment_ids: attachmentIds, payload: mode === "email" ?
       { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body } :
-      reminderMinutes > 0
+      reminderMinutes !== 0
         ? { kind: "calendar_create_with_reminder", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees), reminder_minutes_before_start: reminderMinutes }
         : { kind: "calendar_create", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees) } };
     const fingerprint = JSON.stringify(input);
@@ -142,7 +142,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       const p = action.preview.payload;
       setProvider(action.preview.provider);
       if (!("title" in p)) { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setReminderMinutes(0); }
-      else { setMode("calendar"); setAttachmentSelection([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); setReminderMinutes(p.kind === "calendar_create_with_reminder" ? p.reminder_minutes_before_start : 0); }
+      else { setMode("calendar"); setAttachmentSelection([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); setReminderMinutes(p.kind === "calendar_create_with_reminder" && remindersEnabled ? p.reminder_minutes_before_start : 0); }
       startNewAction(false); setReload(x => x + 1);
     });
   }
