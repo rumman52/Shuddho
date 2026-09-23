@@ -60,20 +60,48 @@ def deterministic_plan(goal: str, document_ids: list[str], output_language: str,
 
 
 
-def intelligent_tool_names(settings: Settings) -> list[str]:
-    return [
+def action_selection_candidates(actions: list[dict] | None) -> dict[str, dict]:
+    candidates: dict[str, dict] = {}
+    for index, action in enumerate(list(actions or [])[:3], 1):
+        if action.get("state") != "awaiting_approval":
+            continue
+        kind = action.get("kind")
+        capability = "email" if kind == "email_send" else "calendar" if kind == "calendar_create" else None
+        if capability is None:
+            continue
+        candidates[f"attached.{capability}.{index}"] = action
+    return candidates
+
+
+def intelligent_tool_names(settings: Settings, actions: list[dict] | None = None) -> list[str]:
+    names = [
         spec.name for spec in TOOLS.values()
         if spec.kind == "task" and not spec.consequential and not spec.approval_required and spec.enabled(settings)
     ]
+    if settings.agent_action_selection_enabled:
+        names.extend(action_selection_candidates(actions))
+    return names
 
 
 def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: list[str],
                      output_language: str, settings: Settings, actions: list[dict] | None = None) -> list[AgentPlanStep]:
     steps: list[AgentPlanStep] = []
-    allowed = set(intelligent_tool_names(settings))
+    actions = list(actions or [])[:3]
+    candidates = action_selection_candidates(actions) if settings.agent_action_selection_enabled else {}
+    allowed = set(intelligent_tool_names(settings, actions))
+    selected_action_ids: set[str] = set()
     for choice in proposal.steps:
         if choice.tool not in allowed:
             raise CoworkerError("planner_tool_scope", "The planner selected a tool outside the allowed registry.", 409)
+        selected = candidates.get(choice.tool)
+        if selected is not None:
+            name = "email.send" if selected["kind"] == "email_send" else "calendar.create"
+            spec = tool(name)
+            if not spec.enabled(settings):
+                raise CoworkerError("tool_unavailable", "The attached action capability is not enabled.", 409)
+            selected_action_ids.add(selected["id"])
+            steps.append(AgentPlanStep(tool=name, arguments={"action_id": selected["id"]}))
+            continue
         arguments = {
             "instruction": goal,
             "notes": goal if choice.tool == "report.create" else "",
@@ -84,7 +112,16 @@ def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: li
             arguments["query"] = goal[:400]
             arguments["time_range"] = "any"
         steps.append(AgentPlanStep(tool=choice.tool, arguments=arguments))
-    for action in list(actions or [])[:3]:
+
+    for action in actions:
+        if settings.agent_action_selection_enabled:
+            # A user may approve a bound draft before planning finishes. Once it
+            # leaves awaiting_approval it is no longer model-selectable and is
+            # retained by the server automatically.
+            if action.get("state") == "awaiting_approval":
+                continue
+        if action["id"] in selected_action_ids:
+            continue
         name = "email.send" if action["kind"] == "email_send" else "calendar.create"
         spec = tool(name)
         if not spec.enabled(settings):
