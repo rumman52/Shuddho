@@ -186,7 +186,6 @@ export default function AgentWorkspace({
             <div><span className="cw-eyebrow">Suggested actions</span><h3>Nothing here is executable yet.</h3><p>Review the exact model suggestion, choose one of your connected accounts, then promote it into the normal immutable action preview.</p></div>
             {run.action_proposals.map(proposal => {
               const accounts = matchingConnections(proposal);
-              const selected = accounts[0]?.id ?? "";
               const payload = proposal.payload;
               return <article className="cw-proposal-card" key={proposal.id}>
                 <div className="cw-proposal-heading"><div><strong dir="auto">{proposalTitle(proposal)}</strong><small>{proposal.kind === "email_send" ? "Email suggestion" : "Calendar suggestion"} · {proposal.state}</small></div><code>{proposal.proposal_hash.slice(0, 12)}…</code></div>
