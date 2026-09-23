@@ -279,6 +279,14 @@ async def reconcile_action(action_id: UUID, identity: Identity, services: Servic
     return await services.actions.reconcile_owned(identity.account_id, str(action_id))
 
 
+@router.get("/artifacts")
+def list_artifacts(identity: Identity, services: Services):
+    return {
+        "attachments_enabled": services.settings.action_attachments_enabled,
+        "artifacts": services.repository.list_artifacts(identity.account_id),
+    }
+
+
 @router.get("/me")
 def me(identity: Identity, services: Services):
     return services.repository.ensure_account(identity)
