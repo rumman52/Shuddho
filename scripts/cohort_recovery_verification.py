@@ -716,6 +716,18 @@ def build_recovery_evidence(
             "decision": status["decision"],
             "breaches": len(status["breaches"]),
         },
+        "runtime_requirements": {
+            "microsoft_actions_enabled": bool(
+                getattr(settings, "microsoft_actions_enabled", False)
+            ),
+            "action_selection_enabled": bool(
+                getattr(
+                    settings,
+                    "agent_action_selection_enabled",
+                    False,
+                )
+            ),
+        },
         "microsoft_rollout": microsoft_summary,
         "action_selection": action_selection_summary,
         "artifact_sha256": artifact_sha256,
