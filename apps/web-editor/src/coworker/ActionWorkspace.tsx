@@ -205,7 +205,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
   }
 
   const payload = action?.preview.payload;
-  return <section className="cw-actions" aria-label="Email, calendar, and document sharing actions">
+  return <section className="cw-actions" aria-label={documentSharingEnabled ? "Email, calendar, and document sharing actions" : "Email and calendar actions"}>
     <div className="cw-action-intro"><div><span className="cw-eyebrow">Your final say</span><h2>From a good draft to done.</h2><p>Prepare an email or event, review the details, then approve the action.</p></div></div>
     {error && <p className="cw-error" role="alert">{error}</p>}{notice && <p className="cw-notice" role="status">{notice}</p>}
     {!loaded ? <p role="status">Loading connections…</p> : !enabled && <p className="cw-notice">New actions are not enabled in this workspace. Saved previews and receipts remain available.</p>}
