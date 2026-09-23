@@ -308,3 +308,37 @@ def test_microsoft_setting_validation_is_fail_closed(container):
             microsoft_redirect_uri="https://site.test/oauth/microsoft/callback",
             microsoft_tenant="../common",
         ).validate()
+
+
+def test_microsoft_calendar_reminder_executes_exact_approved_minutes(container):
+    simulated = enable_microsoft(container)
+    settings = replace(container.settings, action_reminders_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+
+    owner = account(container)
+    connection = asyncio.run(
+        connect_microsoft(container, owner, "calendar")
+    )
+    request = action_request(connection, "calendar_create_with_reminder")
+    action = container.actions.repo.prepare(
+        owner,
+        request,
+        "ms-reminder",
+    )
+    assert action["preview"]["reminders"] == "single_explicit"
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    asyncio.run(container.actions.execute(approved["id"]))
+
+    result = container.actions.repo.get(owner, approved["id"])
+    assert result["state"] == "succeeded"
+    sent = next(iter(simulated.events.values()))
+    assert sent["isReminderOn"] is True
+    assert sent["reminderMinutesBeforeStart"] == 15
+    assert result["receipt"]["provider"] == "microsoft"
