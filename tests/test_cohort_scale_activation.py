@@ -20,6 +20,7 @@ from scripts.cohort_scale_activation import (
     validate_action_proposals_activation,
     validate_action_attachments_activation,
     validate_action_recipients_activation,
+    validate_action_document_sharing_activation,
     validate_scale_decision,
     sha256_file,
 )
@@ -61,7 +62,7 @@ def operator():
     }
 
 
-def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False):
+def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False):
     ids = {allowed}
     ids.update(f"member-{index}" for index in range(max(0, members - 1)))
     if denied in ids:
@@ -76,6 +77,7 @@ def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"
         action_attachments_enabled=action_attachments,
         action_reminders_enabled=action_reminders,
         action_recipients_enabled=action_recipients,
+        action_document_sharing_enabled=action_document_sharing,
     )
 
 
@@ -1245,3 +1247,69 @@ def test_schema_v6_scale_evidence_requires_recipient_attestation(tmp_path):
     assert evidence["runtime_requirements"]["action_recipients_enabled"] is True
     assert evidence["action_recipients"]["ledger_sequence"] == 11
     assert evidence["artifact_sha256"]["action_recipients_activation"] == sha256_file(recipient_path)
+
+
+def test_document_sharing_scale_activation_is_optional_when_disabled(tmp_path):
+    assert validate_action_document_sharing_activation(
+        None,
+        tmp_path / "missing-ledger.jsonl",
+        decision(),
+        settings(action_document_sharing=False),
+    ) is None
+
+
+def test_document_sharing_scale_activation_requires_attested_activation(tmp_path):
+    with pytest.raises(ScaleActivationError, match="action-document-sharing-activation"):
+        validate_action_document_sharing_activation(
+            None,
+            tmp_path / "ledger.jsonl",
+            decision(),
+            settings(action_document_sharing=True),
+        )
+
+
+def test_schema_v7_scale_evidence_requires_document_sharing_attestation(tmp_path):
+    scale_path = tmp_path / "scale-v7.json"
+    deploy_path = tmp_path / "deploy-v7.json"
+    status_path = tmp_path / "status-v7.json"
+    policy_path = tmp_path / "policy-v7.json"
+    document_path = tmp_path / "document-v7.json"
+    for path in (scale_path, deploy_path, status_path, policy_path, document_path):
+        path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ScaleActivationError, match="ledger attestation"):
+        build_evidence(
+            decision=decision(),
+            deployment=deployment(),
+            operator_status=operator(),
+            settings=settings(action_document_sharing=True),
+            scale_decision_path=scale_path,
+            deployment_change_path=deploy_path,
+            operator_status_path=status_path,
+            provider_policy_activation_path=policy_path,
+            action_document_sharing_activation_path=document_path,
+            action_document_sharing_attestation=None,
+            now=NOW,
+        )
+
+    evidence = build_evidence(
+        decision=decision(),
+        deployment=deployment(),
+        operator_status=operator(),
+        settings=settings(action_document_sharing=True),
+        scale_decision_path=scale_path,
+        deployment_change_path=deploy_path,
+        operator_status_path=status_path,
+        provider_policy_activation_path=policy_path,
+        action_document_sharing_activation_path=document_path,
+        action_document_sharing_attestation={
+            "ledger_sequence": 12,
+            "ledger_entry_hash": "b" * 64,
+        },
+        now=NOW,
+    )
+    assert evidence["schema_version"] == 7
+    assert evidence["runtime_requirements"]["action_document_sharing_enabled"] is True
+    assert evidence["runtime_requirements"]["action_recipients_enabled"] is False
+    assert evidence["action_document_sharing"]["ledger_sequence"] == 12
+    assert evidence["artifact_sha256"]["action_document_sharing_activation"] == sha256_file(document_path)

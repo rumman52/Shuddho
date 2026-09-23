@@ -1,6 +1,6 @@
 # Approved Google Drive Document Sharing
 
-Status: **implemented behind a disabled-by-default feature flag; not production-release-qualified yet**.
+Status: **implemented and production-release-qualified for a reviewed controlled cohort; disabled by default**.
 
 This Wave D increment adds one deliberately narrow consequential action: an authenticated user may share **one existing immutable Shuddho artifact** with **one exact email address** as a Google Drive **reader**.
 
@@ -54,17 +54,64 @@ The flag requires both `SHUDDHO_ACTIONS_ENABLED=true` and `SHUDDHO_ARTIFACT_SERV
 
 When the flag is false, Drive OAuth cannot be started and queued document-share actions cancel before provider mutation. Existing action history remains readable.
 
-## Production release status
+## Production qualification
 
-This implementation does **not** authorize production enablement.
+Implementation alone still does not authorize global enablement. A production rollout may declare `action_document_sharing=true` only when all of the following are true:
 
-The controlled-cohort rollout validator intentionally rejects an `action_document_sharing` capability today. A follow-up release-qualification increment must add:
+1. the rollout also enables `actions` and `artifact_services`;
+2. the exact rollback switch is `SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false`;
+3. guarded live Google Drive evidence has passed through `scripts/staging_live_document_sharing.py`;
+4. `scripts/action_document_sharing_activation.py` binds that evidence to the reviewed rollout, deployed source revision, fresh operator health, exact runtime manifest, and cohort ceiling;
+5. the activation is appended to the HMAC-protected release ledger as schema-v12 `action_document_sharing_verified`;
+6. any later cohort expansion emits schema-v7 scale evidence referencing that exact ledger-attested activation;
+7. any recovery after a global rollback runs a **fresh post-rollback** document-sharing activation and records a new schema-v12 attestation before schema-v7 recovery evidence may pass.
 
-- guarded live Google Drive staging evidence;
-- exact production activation/runtime proof;
-- document-sharing kill-switch declaration;
-- release-ledger attestation;
-- bounded scale/recovery consumption;
-- operational rollback/runbook evidence.
+The feature remains disabled by default. Qualification makes it eligible for controlled activation; it does not bypass change review, cohort admission, or operator health gates.
 
-Until that increment passes, keep `SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false` in production.
+### Controlled staging
+
+Use a dedicated staging Google account, a synthetic Shuddho artifact, and a synthetic test recipient. Never use customer data.
+
+```bash
+SHUDDHO_STAGING_ALLOW_LIVE_DOCUMENT_SHARING=true \
+SHUDDHO_STAGING_API_BASE_URL=https://staging-api.example.com \
+SHUDDHO_STAGING_TOKEN_A=<short-lived-staging-token> \
+SHUDDHO_STAGING_DOCUMENT_SHARE_ARTIFACT_ID=<synthetic-owned-artifact-id> \
+SHUDDHO_STAGING_GOOGLE_TEST_RECIPIENT=<synthetic-recipient@example.test> \
+uv run --extra coworker python scripts/staging_live_document_sharing.py \
+  --base-evidence staging-evidence.json \
+  --output staging-evidence-with-document-sharing.json
+```
+
+The live probe verifies immutable artifact hash binding, no auto-approval, rejection of the wrong preview hash, explicit approval, exactly one execution audit, the exact Google recipient, reader-only access, and the provider receipt.
+
+### Production activation
+
+```bash
+SHUDDHO_PRODUCTION_VERIFICATION_TOKEN=<short-lived-cohort-token> \
+uv run --extra coworker python scripts/action_document_sharing_activation.py \
+  --staging-evidence staging-evidence-with-document-sharing.json \
+  --rollout docs/cohort-rollout.production.json \
+  --deployment-change document-sharing-deployment.json \
+  --operator-status operator-status.json \
+  --api-base-url https://api.example.com \
+  --output action-document-sharing-activation.json
+```
+
+### Release-ledger attestation
+
+```bash
+uv run --extra coworker python scripts/cohort_release_ledger.py append-action-document-sharing \
+  --ledger release-ledger.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference <oncall-or-change-actor> \
+  --change-reference <approved-change-reference> \
+  --current-stage <current-cohort-stage> \
+  --staging-evidence staging-evidence-with-document-sharing.json \
+  --rollout docs/cohort-rollout.production.json \
+  --deployment-change document-sharing-deployment.json \
+  --operator-status operator-status.json \
+  --action-document-sharing-activation action-document-sharing-activation.json
+```
+
+Keep the generated activation and ledger entry with the release evidence. Scale and recovery tooling will fail closed if document sharing is enabled but the attestation is missing or altered.

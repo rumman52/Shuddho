@@ -24,7 +24,8 @@
     "action_proposals": false,
     "action_attachments": false,
     "action_reminders": false,
-    "action_recipients": false
+    "action_recipients": false,
+    "action_document_sharing": false
   },
   "rollback": {
     "runbook_reference": "deployment-runbook-or-ticket",
@@ -37,7 +38,8 @@
     "action_proposals_kill_switch": "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
     "action_attachments_kill_switch": "SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false",
     "action_reminders_kill_switch": "SHUDDHO_ACTION_REMINDERS_ENABLED=false",
-    "action_recipients_kill_switch": "SHUDDHO_ACTION_RECIPIENTS_ENABLED=false"
+    "action_recipients_kill_switch": "SHUDDHO_ACTION_RECIPIENTS_ENABLED=false",
+    "action_document_sharing_kill_switch": "SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false"
   },
   "monitoring": {
     "queue_age": "dashboard-or-alert-reference",
