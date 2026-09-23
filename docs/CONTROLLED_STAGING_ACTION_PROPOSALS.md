@@ -127,3 +127,10 @@ SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false
 ```
 
 This disables new proposal generation/promotion without changing the ordinary user-prepared action path or deleting prior history.
+
+
+## Production activation handoff
+
+A passing live staging file is not itself proof that production runs the reviewed revision/configuration.
+
+After the reviewed production deployment, run [Agent Action-Proposal Production Activation](ACTION_PROPOSALS_ACTIVATION.md). That verifier binds this exact evidence file and the exact reviewed rollout manifest to the deployment record, checks the deployed backend revision/capabilities/providers through an authenticated runtime manifest, and requires fresh clean post-deploy cohort health before emitting `action_proposals_verified`.

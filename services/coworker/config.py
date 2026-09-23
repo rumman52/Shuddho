@@ -21,6 +21,7 @@ class Settings:
     storage_region: str = "us-east-1"
     local_storage_path: Path = Path("data/coworker-files")
     environment: str = "production"
+    source_revision: str | None = None
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
     temporal_api_key: str = field(default="", repr=False)
@@ -99,6 +100,12 @@ class Settings:
             storage_region=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
             local_storage_path=Path(os.getenv("SHUDDHO_COWORKER_LOCAL_STORAGE", "data/coworker-files")),
             environment=os.getenv("SHUDDHO_COWORKER_ENV", "production"),
+            source_revision=(
+                os.getenv("SHUDDHO_SOURCE_REVISION")
+                or os.getenv("RENDER_GIT_COMMIT")
+                or os.getenv("GITHUB_SHA")
+                or ""
+            ).strip().lower() or None,
             temporal_address=os.getenv("SHUDDHO_TEMPORAL_ADDRESS", "localhost:7233"),
             temporal_namespace=os.getenv("SHUDDHO_TEMPORAL_NAMESPACE", "default"),
             temporal_api_key=os.getenv("SHUDDHO_TEMPORAL_API_KEY", ""),
@@ -166,6 +173,15 @@ class Settings:
         return value
 
     def validate(self) -> None:
+        if self.source_revision is not None:
+            if (
+                len(self.source_revision) != 40
+                or self.source_revision != self.source_revision.lower()
+                or any(char not in "0123456789abcdef" for char in self.source_revision)
+            ):
+                raise ValueError(
+                    "SHUDDHO_SOURCE_REVISION/RENDER_GIT_COMMIT must be a full lowercase 40-character Git commit hash"
+                )
         if self.actions_enabled:
             from .action_security import TokenVault
             TokenVault(self.connector_encryption_key)

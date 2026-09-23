@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .auth import Principal, require_principal
+from .config import enabled as coworker_enabled
 from .container import Container
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
@@ -64,6 +65,59 @@ def update_memory(fact_id: UUID, payload: MemoryFactUpdate, identity: Identity, 
 @router.delete("/memory/{fact_id}")
 def delete_memory(fact_id: UUID, identity: Identity, services: Services):
     return services.memory.delete(identity.account_id, str(fact_id))
+
+
+@router.get("/runtime-manifest")
+def runtime_manifest(
+    response: Response,
+    principal: Annotated[Principal, Depends(require_principal)],
+    services: Services,
+):
+    settings = services.settings
+    if (
+        settings.cohort_enforced
+        and principal.account_id not in settings.cohort_account_ids
+    ):
+        raise CoworkerError(
+            "cohort_not_enabled",
+            "Coworker access is not enabled for this account yet.",
+            403,
+        )
+    response.headers["Cache-Control"] = "no-store"
+    capabilities = {
+        "coworker": coworker_enabled(),
+        "work_services": settings.work_services_enabled,
+        "artifact_services": settings.artifact_services_enabled,
+        "agent_runtime": settings.agent_runtime_enabled,
+        "intelligent_planner": settings.intelligent_planner_enabled,
+        "memory": settings.agent_memory_enabled,
+        "handoffs": settings.agent_handoffs_enabled,
+        "multi_handoffs": settings.agent_multi_handoffs_enabled,
+        "dependency_graph": settings.agent_dependency_graph_enabled,
+        "parallel_execution": settings.agent_parallel_execution_enabled,
+        "outcome_replan": settings.agent_outcome_replan_enabled,
+        "research": settings.research_services_enabled,
+        "actions": settings.actions_enabled,
+        "action_selection": settings.agent_action_selection_enabled,
+        "action_proposals": settings.agent_action_proposals_enabled,
+    }
+    providers = []
+    if settings.actions_enabled:
+        providers.append("google")
+        if settings.microsoft_actions_enabled:
+            providers.append("microsoft")
+    return {
+        "schema_version": 1,
+        "source_revision": settings.source_revision,
+        "environment": settings.environment,
+        "capabilities": capabilities,
+        "action_providers": providers,
+        "cohort": {
+            "enforced": settings.cohort_enforced,
+            "configured_members": len(settings.cohort_account_ids),
+            "max_users": settings.cohort_max_users,
+        },
+    }
 
 
 @router.get("/agent-tools")
