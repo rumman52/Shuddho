@@ -222,9 +222,9 @@ function ProposalControls({
   promote: (proposal: AgentActionProposal, connectionId: string) => Promise<void>;
   dismiss: (proposal: AgentActionProposal) => Promise<void>;
 }) {
-  const [connectionId, setConnectionId] = useState(accounts[0]?.id ?? "");
+  const [connectionId, setConnectionId] = useState("");
   return <div className="cw-proposal-controls">
-    <label>Connected account<select aria-label={`Account for ${proposalTitle(proposal)}`} value={connectionId} onChange={event => setConnectionId(event.target.value)} disabled={Boolean(busy)}>{accounts.map(account => <option value={account.id} key={account.id}>{account.email} · {account.provider}</option>)}</select></label>
+    <label>Connected account<select aria-label={`Account for ${proposalTitle(proposal)}`} value={connectionId} onChange={event => setConnectionId(event.target.value)} disabled={Boolean(busy)}><option value="" disabled>Choose an account</option>{accounts.map(account => <option value={account.id} key={account.id}>{account.email} · {account.provider}</option>)}</select></label>
     <p className="cw-fineprint">The model did not choose this account. Promotion creates a separate immutable preview and still does not approve it.</p>
     <div><button className="cw-primary" type="button" disabled={!connectionId || Boolean(busy)} onClick={() => void promote(proposal, connectionId)}>{busy === "promote:" + proposal.id ? "Promoting…" : "Promote exact proposal"}</button><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => void dismiss(proposal)}>Dismiss suggestion</button></div>
   </div>;
