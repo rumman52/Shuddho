@@ -55,9 +55,9 @@ If the HTTP outcome is uncertain after the execution claim is committed, Shuddho
 
 Events are created in the signed-in user's default calendar using `POST /me/events`.
 
-The event payload includes a stable Shuddho-derived `transactionId`, no reminder, exact approved subject/content/location/times and approved attendees.
+The event payload includes a stable Shuddho-derived `transactionId`, exact approved subject/content/location/times and approved attendees. Normal `calendar_create` keeps reminders off. The separately gated `calendar_create_with_reminder` sets `isReminderOn=true` with the exact user-approved `reminderMinutesBeforeStart`.
 
-A successful response is checked against the approved subject, location, UTC-normalized start/end instants and attendee addresses before the receipt is accepted.
+A successful response is checked against the approved subject, location, UTC-normalized start/end instants and attendee addresses before the receipt is accepted. Reminder-enabled events also require the returned reminder state and exact minute value to match before the receipt is accepted.
 
 After a lost create response, this increment does not claim deterministic Microsoft reconciliation. The action remains `outcome_unknown`; Shuddho does not blindly repeat the mutation.
 
