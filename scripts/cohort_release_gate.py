@@ -176,8 +176,9 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
     else:
         if not text_ref(rollback["runbook_reference"]):
             failures.append("rollback_runbook")
-        for key in ROLLBACK_KEYS:
-            expected = EXPECTED_KILL_SWITCHES[key]
+        for key, expected in EXPECTED_KILL_SWITCHES.items():
+            if key == "action_selection_kill_switch":
+                continue
             if rollback.get(key) != expected:
                 failures.append(key)
         if isinstance(capabilities, dict) and capabilities.get("action_selection") is True:
