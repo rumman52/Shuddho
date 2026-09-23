@@ -1901,10 +1901,15 @@ def append_action_proposals_event(
             "Action-proposal activation has no valid runtime proof."
         )
     runtime_capabilities = runtime.get("capabilities")
+    if not isinstance(runtime_capabilities, dict):
+        raise ReleaseLedgerError(
+            "Action-proposal activation has no valid runtime capability proof."
+        )
+    runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    expected_capabilities.setdefault("action_attachments", False)
-    expected_capabilities.setdefault("action_selection", False)
-    expected_capabilities.setdefault("action_proposals", False)
+    for optional in ("action_attachments", "action_selection", "action_proposals"):
+        runtime_capabilities.setdefault(optional, False)
+        expected_capabilities.setdefault(optional, False)
     expected_providers = normalized_action_providers(rollout)
     if (
         runtime.get("source_revision") != revision
