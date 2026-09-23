@@ -738,6 +738,116 @@ def validate_action_attachments_recovery_activation(
     }
 
 
+def validate_action_reminders_recovery_activation(
+    *,
+    settings: Settings,
+    activation_path: Path | None,
+    ledger_path: Path | None,
+    release_id: str,
+    current_stage: str,
+    rollback_completion: dict,
+    rollback_path: Path,
+    recovery_deployed_at: datetime,
+) -> dict | None:
+    if not getattr(settings, "action_reminders_enabled", False):
+        return None
+    if activation_path is None or ledger_path is None:
+        raise RecoveryVerificationError(
+            "Approved calendar reminders are enabled but a fresh reminder "
+            "activation and the release ledger are required for recovery."
+        )
+    activation = load_json(
+        activation_path,
+        "post-rollback action-reminders activation",
+    )
+    if activation.get("status") != "action_reminders_verified":
+        raise RecoveryVerificationError(
+            "Post-rollback action-reminders activation has not been verified."
+        )
+    if activation.get("release_id") != release_id:
+        raise RecoveryVerificationError(
+            "Post-rollback action-reminders activation release_id does not match."
+        )
+    if activation.get("current_stage") != current_stage:
+        raise RecoveryVerificationError(
+            "Post-rollback action-reminders activation current_stage does not match."
+        )
+    runtime = activation.get("runtime")
+    capabilities = runtime.get("capabilities") if isinstance(runtime, dict) else None
+    cohort = runtime.get("cohort") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(runtime, dict)
+        or not isinstance(capabilities, dict)
+        or capabilities.get("coworker") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("action_reminders") is not True
+        or not isinstance(cohort, dict)
+        or cohort.get("enforced") is not True
+    ):
+        raise RecoveryVerificationError(
+            "Post-rollback action-reminders activation does not prove required runtime controls."
+        )
+    deployed_at = activation.get("deployed_at")
+    verified_at = activation.get("verified_at")
+    if not isinstance(deployed_at, str) or not isinstance(verified_at, str):
+        raise RecoveryVerificationError(
+            "Post-rollback action-reminders activation is missing deployment/verification timestamps."
+        )
+    reminders_deployed = parse_time(deployed_at, "action-reminders deployed_at")
+    reminders_verified = parse_time(verified_at, "action-reminders verified_at")
+    rollback_verified_at = rollback_completion.get("verified_at")
+    if not isinstance(rollback_verified_at, str):
+        raise RecoveryVerificationError("Rollback completion has no verified_at timestamp.")
+    rollback_verified = parse_time(rollback_verified_at, "rollback verified_at")
+    if reminders_deployed < recovery_deployed_at:
+        raise RecoveryVerificationError(
+            "Action-reminders activation predates the recovery deployment."
+        )
+    if reminders_verified < reminders_deployed:
+        raise RecoveryVerificationError(
+            "Action-reminders activation was verified before its deployment."
+        )
+    if reminders_verified <= rollback_verified:
+        raise RecoveryVerificationError(
+            "Action-reminders activation must be freshly verified after rollback completion."
+        )
+    try:
+        entries, _ = verified_release_entries(ledger_path, release_id)
+        rollback_hash = ledger_file_sha256(rollback_path)
+        rollback_entry = require_exact_attested_event(
+            entries,
+            schema_version=2,
+            event_type="rollback_completed",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="rollback_completion",
+            artifact_sha256=rollback_hash,
+            label="Recovery rollback attestation",
+        )
+        activation_hash = ledger_file_sha256(activation_path)
+        reminder_entry = require_exact_attested_event(
+            entries,
+            schema_version=10,
+            event_type="action_reminders_verified",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="action_reminders_activation",
+            artifact_sha256=activation_hash,
+            after_sequence=rollback_entry["sequence"],
+            label="Action-reminders recovery attestation",
+        )
+    except Exception as error:
+        raise RecoveryVerificationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    return {
+        "activation": activation,
+        "ledger_sequence": reminder_entry["sequence"],
+        "ledger_entry_hash": reminder_entry["entry_hash"],
+        "activation_sha256": activation_hash,
+    }
+
+
 def expect_json(response: httpx.Response, status: int, label: str) -> dict:
     if response.status_code != status:
         raise RecoveryVerificationError(
@@ -881,6 +991,7 @@ def build_recovery_evidence(
     action_selection_activation_path: Path | None = None,
     action_proposals_activation_path: Path | None = None,
     action_attachments_activation_path: Path | None = None,
+    action_reminders_activation_path: Path | None = None,
     release_ledger_path: Path | None = None,
 ) -> dict:
     if not deployment_reference.strip() or len(deployment_reference) > 500:
@@ -930,6 +1041,16 @@ def build_recovery_evidence(
     action_attachments_recovery = validate_action_attachments_recovery_activation(
         settings=settings,
         activation_path=action_attachments_activation_path,
+        ledger_path=release_ledger_path,
+        release_id=config["release_id"],
+        current_stage=current_stage,
+        rollback_completion=rollback_completion,
+        rollback_path=rollback_path,
+        recovery_deployed_at=deployment_time,
+    )
+    action_reminders_recovery = validate_action_reminders_recovery_activation(
+        settings=settings,
+        activation_path=action_reminders_activation_path,
         ledger_path=release_ledger_path,
         release_id=config["release_id"],
         current_stage=current_stage,
@@ -1018,9 +1139,21 @@ def build_recovery_evidence(
             "ledger_entry_hash": action_attachments_recovery["ledger_entry_hash"],
         }
 
+    action_reminders_summary = None
+    if action_reminders_recovery is not None:
+        artifact_sha256["action_reminders_activation"] = (
+            action_reminders_recovery["activation_sha256"]
+        )
+        action_reminders_summary = {
+            "ledger_sequence": action_reminders_recovery["ledger_sequence"],
+            "ledger_entry_hash": action_reminders_recovery["ledger_entry_hash"],
+        }
+
     return {
         "schema_version": (
-            4 if getattr(settings, "action_attachments_enabled", False) else 3
+            5 if getattr(settings, "action_reminders_enabled", False)
+            else 4 if getattr(settings, "action_attachments_enabled", False)
+            else 3
         ),
         "release_id": config["release_id"],
         "status": "recovery_verified",
@@ -1057,6 +1190,9 @@ def build_recovery_evidence(
             **({
                 "action_attachments_enabled": True,
             } if getattr(settings, "action_attachments_enabled", False) else {}),
+            **({
+                "action_reminders_enabled": True,
+            } if getattr(settings, "action_reminders_enabled", False) else {}),
         },
         "microsoft_rollout": microsoft_summary,
         "action_selection": action_selection_summary,
@@ -1064,6 +1200,9 @@ def build_recovery_evidence(
         **({
             "action_attachments": action_attachments_summary,
         } if getattr(settings, "action_attachments_enabled", False) else {}),
+        **({
+            "action_reminders": action_reminders_summary,
+        } if getattr(settings, "action_reminders_enabled", False) else {}),
         "artifact_sha256": artifact_sha256,
     }
 
@@ -1085,6 +1224,7 @@ def main() -> None:
     parser.add_argument("--action-selection-activation", type=Path)
     parser.add_argument("--action-proposals-activation", type=Path)
     parser.add_argument("--action-attachments-activation", type=Path)
+    parser.add_argument("--action-reminders-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -1116,6 +1256,7 @@ def main() -> None:
             action_selection_activation_path=args.action_selection_activation,
             action_proposals_activation_path=args.action_proposals_activation,
             action_attachments_activation_path=args.action_attachments_activation,
+            action_reminders_activation_path=args.action_reminders_activation,
             release_ledger_path=args.release_ledger,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
