@@ -1,14 +1,14 @@
 import { lazy, Suspense, useState } from "react";
 import App from "./App";
 import "./coworker/workspace.css";
-import { isGoogleCallback } from "./coworker/googleCallback";
+import { hasPendingGoogleCallback } from "./coworker/googleCallback";
 
 const Coworker = lazy(() => import("./coworker/CoworkerGate"));
 
 export default function WorkspaceShell() {
   const [active, setActive] = useState<"writing" | "coworker">(() => {
     if (typeof window === "undefined") return "writing";
-    if (isGoogleCallback || window.location.hash.includes("type=recovery") || new URLSearchParams(window.location.search).has("code")) return "coworker";
+    if (hasPendingGoogleCallback() || window.location.hash.includes("type=recovery") || new URLSearchParams(window.location.search).has("code")) return "coworker";
     try { return sessionStorage.getItem("shuddho:workspace:tab") === "coworker" ? "coworker" : "writing"; } catch { return "writing"; }
   });
   const [opened, setOpened] = useState(active === "coworker");
