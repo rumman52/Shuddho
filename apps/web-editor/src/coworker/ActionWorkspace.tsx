@@ -6,8 +6,10 @@ import { beginMicrosoftConnection, finishMicrosoftCallback } from "./microsoftCa
 const labels: Record<ExternalAction["state"], string> = { awaiting_approval: "Needs your approval", queued: "Approved · queued", executing: "Executing", succeeded: "Confirmed", failed: "Not completed", cancelled: "Cancelled", expired: "Expired", outcome_unknown: "Result uncertain" };
 const message = (error: unknown) => error instanceof Error ? error.message : "This action could not finish. Please try again.";
 const recipients = (text: string) => text.split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
-const isEmail = (kind: ExternalAction["kind"]) => kind !== "calendar_create";
-const title = (item: ExternalAction) => item.preview.payload.kind === "calendar_create" ? item.preview.payload.title : item.preview.payload.subject;
+const isCalendar = (kind: ExternalAction["kind"]) => kind === "calendar_create" || kind === "calendar_create_with_reminder";
+const isEmail = (kind: ExternalAction["kind"]) => !isCalendar(kind);
+const title = (item: ExternalAction) => isCalendar(item.preview.payload.kind) ? item.preview.payload.title : item.preview.payload.subject;
+const reminderLabel = (minutes: number) => minutes === 1440 ? "1 day before start" : minutes >= 60 ? `${minutes / 60} ${minutes === 60 ? "hour" : "hours"} before start` : `${minutes} minutes before start`;
 
 export default function ActionWorkspace({ client, account, emailDraft, focusActionId, onFocused }: { client: CoworkerClient; account: string; emailDraft: EmailDraft | null; focusActionId?: string | null; onFocused?: () => void }) {
   const [enabled, setEnabled] = useState(false);
@@ -15,6 +17,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
   const [history, setHistory] = useState<ExternalAction[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [attachmentsEnabled, setAttachmentsEnabled] = useState(false);
+  const [remindersEnabled, setRemindersEnabled] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<string[]>([]);
   const selectedAttachmentsRef = useRef<string[]>([]);
   const [action, setAction] = useState<ExternalAction | null>(null);
@@ -27,6 +30,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
   const [location, setLocation] = useState(""); const [attendees, setAttendees] = useState("");
   const [start, setStart] = useState(""); const [end, setEnd] = useState("");
   const [timeZone, setTimeZone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  const [reminderMinutes, setReminderMinutes] = useState<0 | 5 | 10 | 15 | 30 | 60 | 120 | 1440>(0);
   const [checked, setChecked] = useState(false); const [busy, setBusy] = useState("");
   const [composing, setComposing] = useState(true);
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
@@ -50,7 +54,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       if (!alive) return;
       Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal)]).then(([value, recent, available]) => {
         if (!alive) return;
-        setEnabled(value.enabled); setConnections(value.connections); setHistory(recent.actions);
+        setEnabled(value.enabled); setRemindersEnabled(value.reminders_enabled); setConnections(value.connections); setHistory(recent.actions);
         setAttachmentsEnabled(available.attachments_enabled); setArtifacts(available.artifacts); setLoaded(true);
       }).catch(failure => { if (alive) { setError(message(failure)); setLoaded(true); } });
     });
@@ -120,7 +124,9 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     const attachmentIds = mode === "email" ? [...selectedAttachmentsRef.current] : [];
     const input: ActionInput = { connection_id: currentConnection.id, attachment_ids: attachmentIds, payload: mode === "email" ?
       { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body } :
-      { kind: "calendar_create", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees) } };
+      reminderMinutes > 0
+        ? { kind: "calendar_create_with_reminder", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees), reminder_minutes_before_start: reminderMinutes }
+        : { kind: "calendar_create", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees) } };
     const fingerprint = JSON.stringify(input);
     if (submission.current?.fingerprint !== fingerprint) submission.current = { fingerprint, key: crypto.randomUUID() };
     await run("prepare", async () => openAction(await client.prepareAction(input, submission.current!.key)));
@@ -132,8 +138,8 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       if (action.state === "awaiting_approval") await client.cancelAction(action.id);
       const p = action.preview.payload;
       setProvider(action.preview.provider);
-      if (p.kind !== "calendar_create") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); }
-      else { setMode("calendar"); setAttachmentSelection([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
+      if (!isCalendar(p.kind)) { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setReminderMinutes(0); }
+      else { setMode("calendar"); setAttachmentSelection([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); setReminderMinutes(p.kind === "calendar_create_with_reminder" ? p.reminder_minutes_before_start : 0); }
       startNewAction(false); setReload(x => x + 1);
     });
   }
@@ -196,13 +202,16 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
           <label>Guests<input dir="ltr" value={attendees} onChange={event => setAttendees(event.target.value)} maxLength={5100} placeholder="Optional email addresses, separated by commas" /></label>
           <label>Location<input dir="auto" value={location} onChange={event => setLocation(event.target.value)} maxLength={500} /></label>
           <label>Event description<textarea dir="auto" rows={4} value={description} onChange={event => setDescription(event.target.value)} maxLength={20000} /></label>
-          <p className="cw-fineprint">A single event in your primary calendar. Invitations are sent to all listed guests, who can see each other. No reminder is added; no video link is requested.</p>
+          {remindersEnabled && <label>Reminder<select aria-label="Reminder" value={reminderMinutes} onChange={event => setReminderMinutes(Number(event.target.value) as 0 | 5 | 10 | 15 | 30 | 60 | 120 | 1440)} disabled={Boolean(busy)}>
+            <option value={0}>None</option><option value={5}>5 minutes before</option><option value={10}>10 minutes before</option><option value={15}>15 minutes before</option><option value={30}>30 minutes before</option><option value={60}>1 hour before</option><option value={120}>2 hours before</option><option value={1440}>1 day before</option>
+          </select></label>}
+          <p className="cw-fineprint">A single event in your primary calendar. Invitations are sent to all listed guests, who can see each other.{remindersEnabled ? " You may add one explicit reminder." : " Reminders are disabled in this deployment."} No video link is requested.</p>
         </>}
         <button className="cw-primary" disabled={!enabled || !currentConnection || Boolean(busy)}>{busy === "prepare" ? "Preparing…" : "Review action"}<span aria-hidden="true">→</span></button>
       </form> : action ? <>
         <dl className="cw-action-details"><dt>Account</dt><dd><bdi>{action.preview.account}</bdi></dd>
-          {payload && payload.kind !== "calendar_create" ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{(action.preview.attachments ?? []).length ? (action.preview.attachments ?? []).map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload?.kind === "calendar_create" && <>
-            <dt>Calendar</dt><dd>Primary calendar</dd><dt>Starts</dt><dd>{payload.start_at.replace("T", " ")}</dd><dt>Ends</dt><dd>{payload.end_at.replace("T", " ")}</dd><dt>Time zone</dt><dd>{payload.time_zone}</dd><dt>Guests</dt><dd>{payload.attendees.join(", ") || "None"}</dd><dt>Invitations</dt><dd>Notify all listed guests; guests can see each other</dd><dt>Location</dt><dd dir="auto">{payload.location || "None"}</dd><dt>Reminders / video</dt><dd>None added</dd>
+          {payload && !isCalendar(payload.kind) ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{(action.preview.attachments ?? []).length ? (action.preview.attachments ?? []).map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload && isCalendar(payload.kind) && <>
+            <dt>Calendar</dt><dd>Primary calendar</dd><dt>Starts</dt><dd>{payload.start_at.replace("T", " ")}</dd><dt>Ends</dt><dd>{payload.end_at.replace("T", " ")}</dd><dt>Time zone</dt><dd>{payload.time_zone}</dd><dt>Guests</dt><dd>{payload.attendees.join(", ") || "None"}</dd><dt>Invitations</dt><dd>Notify all listed guests; guests can see each other</dd><dt>Location</dt><dd dir="auto">{payload.location || "None"}</dd><dt>Reminder</dt><dd>{payload.kind === "calendar_create_with_reminder" ? reminderLabel(payload.reminder_minutes_before_start) : "None"}</dd><dt>Video</dt><dd>None added</dd>
           </>}
         </dl>
         <div className="cw-action-content" dir="auto"><h3>{title(action)}</h3><p>{payload?.kind === "calendar_create" ? payload.description : payload?.body}</p></div>
