@@ -308,6 +308,12 @@ class ActionRepository:
                     "Email attachments are not enabled in this deployment.",
                     503,
                 )
+            if spec.reminders != "none" and not self.settings.action_reminders_enabled:
+                raise CoworkerError(
+                    "action_reminders_disabled",
+                    "Calendar reminders are not enabled in this deployment.",
+                    503,
+                )
             attachments = self._attachment_manifest(
                 db,
                 owner,
