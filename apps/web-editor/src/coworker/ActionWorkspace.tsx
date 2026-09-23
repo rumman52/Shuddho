@@ -100,8 +100,9 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     updateAction(value);
   }
 
-  function startNewAction() {
+  function startNewAction(clearAttachments = true) {
     setComposing(true); setAction(null); setChecked(false); setError(""); submission.current = undefined;
+    if (clearAttachments) setSelectedAttachments([]);
   }
 
   async function prepare(event: FormEvent) {
@@ -124,7 +125,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       setProvider(action.preview.provider);
       if (p.kind !== "calendar_create") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setSelectedAttachments(action.preview.attachments.map(item => item.id)); }
       else { setMode("calendar"); setSelectedAttachments([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
-      startNewAction(); setReload(x => x + 1);
+      startNewAction(false); setReload(x => x + 1);
     });
   }
 
@@ -211,7 +212,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     </section>
     <section className="cw-history"><div className="cw-history-title"><h2>Recent actions</h2><button className="cw-text-button" onClick={() => { setReload(x => x + 1); if (action) void run("refresh", async () => updateAction(await client.action(action.id))); }}>Refresh actions</button></div>
       {history.length ? <ul>{history.map(item => <li key={item.id}><button aria-pressed={action?.id === item.id} disabled={Boolean(busy)} onClick={() => void run("open", async () => openAction(await client.action(item.id)))}><div><strong dir="auto">{title(item)}</strong><small>{isEmail(item.kind) ? "Email" : "Calendar"} · {item.preview.account}</small></div><span className="cw-status">{labels[item.state]}</span></button></li>)}</ul> : <p className="cw-fineprint">Your approved actions and receipts will appear here.</p>}
-      {!composing && action && <button type="button" className="cw-secondary cw-new-action" disabled={Boolean(busy)} onClick={startNewAction}>Prepare another action</button>}
+      {!composing && action && <button type="button" className="cw-secondary cw-new-action" disabled={Boolean(busy)} onClick={() => startNewAction()}>Prepare another action</button>}
     </section></div></div>
   </section>;
 }
