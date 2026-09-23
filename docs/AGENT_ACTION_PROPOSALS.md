@@ -147,4 +147,4 @@ The feature can be disabled without disabling existing action history or the ord
 
 The design follows least-agency principles: model output may recommend a future operation, but cannot acquire the identity, provider binding, approval, or execution authority needed to perform it.
 
-The next increment should add a controlled live staging exercise proving that a real planner proposal remains inert, promotion creates only an unapproved preview, and no provider mutation occurs before the normal approval endpoint.
+The controlled live proof is implemented in [Controlled Live Agent Action-Proposal Staging](CONTROLLED_STAGING_ACTION_PROPOSALS.md). It verifies through deployed public APIs that a real intelligent-planner proposal remains outside `ExternalAction`, wrong-hash promotion fails, exact promotion creates one standalone immutable preview, the saved Agent plan is not retrofitted with a consequential step, and no approval/provider mutation occurs.
