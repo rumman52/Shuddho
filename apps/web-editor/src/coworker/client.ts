@@ -9,14 +9,15 @@ export type WorkSkill = { id: SkillId; name: string; description: string; instru
 export type DraftMetadata = { output_language: string; missing_information: string[] };
 export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
 export type EmailDraft = { subject: string; body: string };
-export type ConnectedAccount = { id: string; provider: "google" | "microsoft"; capability: "email" | "calendar"; email: string; active: boolean };
+export type ConnectedAccount = { id: string; provider: "google" | "microsoft"; capability: "email" | "calendar" | "drive"; email: string; active: boolean };
 export type ActionRecipient = { id: string; name: string; email: string; created_at: string; updated_at: string };
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type AttachmentEmailAction = { kind: "email_send_with_attachments"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type CalendarAction = { kind: "calendar_create"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[] };
 export type CalendarReminderAction = { kind: "calendar_create_with_reminder"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[]; reminder_minutes_before_start: 5 | 10 | 15 | 30 | 60 | 120 | 1440 };
-export type ActionPayload = EmailAction | AttachmentEmailAction | CalendarAction | CalendarReminderAction;
-export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[] };
+export type DocumentShareAction = { kind: "document_share"; recipients: string[] };
+export type ActionPayload = EmailAction | AttachmentEmailAction | CalendarAction | CalendarReminderAction | DocumentShareAction;
+export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[]; artifact_ids?: string[] };
 export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
 export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "completed" | "failed" | "cancelled";
 export type AgentTool = { name: string; version: string; kind: "task" | "approved_action"; consequential: boolean; approval_required: boolean; timeout_seconds: number };
@@ -37,10 +38,10 @@ export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: 
 export type ExternalAction = {
   id: string; connection_id: string; kind: ActionPayload["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
-  preview: { account: string; provider: "google" | "microsoft"; payload: ActionPayload; attachments?: ActionAttachment[]; expires_at: string; calendar: string | null; guest_notifications: string | null };
+  preview: { account: string; provider: "google" | "microsoft"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; expires_at: string; calendar: string | null; guest_notifications: string | null };
   preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
   approved_at: string | null; finished_at: string | null;
-  receipt: { provider: string; provider_id?: string; status: string; confirmed_at: string; message_id?: string } | null;
+  receipt: { provider: string; provider_id?: string; status: string; confirmed_at: string; message_id?: string; recipient?: string; access?: string; artifact_sha256?: string } | null;
   audit?: { action: string; created_at: string }[];
 };
 export type CellFormat = "text" | "number" | "integer" | "percent";
@@ -171,8 +172,8 @@ export class CoworkerClient {
   deleteDocument(id: string) { return this.json<{ message: string }>(`/api/v1/documents/${identifier(id)}`, { method: "DELETE" }); }
   task(id: string, signal?: AbortSignal) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}`, { signal }); }
   cancel(id: string) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}/cancel`, { method: "POST" }); }
-  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reminders_enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
-  connectGoogle(capability: "email" | "calendar") {
+  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reminders_enabled: boolean; document_sharing_enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
+  connectGoogle(capability: "email" | "calendar" | "drive") {
     return this.json<{ authorization_url: string; state: string }>("/api/v1/connections/google/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capability }) });
   }
   finishGoogle(code: string, state: string) {
@@ -193,7 +194,7 @@ export class CoworkerClient {
     return this.json<ActionRecipient>(`/api/v1/action-recipients/${identifier(id)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email }) });
   }
   deleteActionRecipient(id: string) { return this.json<{ deleted: boolean; id: string }>(`/api/v1/action-recipients/${identifier(id)}`, { method: "DELETE" }); }
-  actionArtifacts(signal?: AbortSignal) { return this.json<{ attachments_enabled: boolean; artifacts: Artifact[] }>("/api/v1/artifacts", { signal }); }
+  actionArtifacts(signal?: AbortSignal) { return this.json<{ attachments_enabled: boolean; document_sharing_enabled: boolean; artifacts: Artifact[] }>("/api/v1/artifacts", { signal }); }
   actions(signal?: AbortSignal) { return this.json<{ actions: ExternalAction[] }>("/api/v1/actions", { signal }); }
   action(id: string, signal?: AbortSignal) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}`, { signal }); }
   prepareAction(input: ActionInput, key: string) {

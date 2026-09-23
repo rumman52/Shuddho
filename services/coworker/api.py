@@ -102,6 +102,7 @@ def runtime_manifest(
         "action_attachments": settings.action_attachments_enabled,
         "action_reminders": settings.action_reminders_enabled,
         "action_recipients": settings.action_recipients_enabled,
+        "action_document_sharing": settings.action_document_sharing_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
     }
@@ -227,6 +228,7 @@ def connections(identity: Identity, services: Services):
     return {
         "enabled": services.settings.actions_enabled,
         "reminders_enabled": services.settings.action_reminders_enabled,
+        "document_sharing_enabled": services.settings.action_document_sharing_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }
 
@@ -314,6 +316,7 @@ async def reconcile_action(action_id: UUID, identity: Identity, services: Servic
 def list_artifacts(identity: Identity, services: Services):
     return {
         "attachments_enabled": services.settings.action_attachments_enabled,
+        "document_sharing_enabled": services.settings.action_document_sharing_enabled,
         "artifacts": services.repository.list_artifacts(identity.account_id),
     }
 

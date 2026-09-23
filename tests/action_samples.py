@@ -11,7 +11,7 @@ import httpx
 from services.coworker.action_repository import ActionRepository
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.actions import ActionService
-from services.coworker.google_actions import GoogleActions, SCOPES, TOKEN_URL, USERINFO_URL, SEND_URL, EVENTS_URL
+from services.coworker.google_actions import GoogleActions, SCOPES, TOKEN_URL, USERINFO_URL, SEND_URL, EVENTS_URL, DRIVE_FILES_URL, DRIVE_UPLOAD_URL
 from services.coworker.models import utcnow
 
 
@@ -20,7 +20,11 @@ class SimulatedGoogle:
         self.requests = []
         self.sent = []
         self.events = {}
+        self.drive_files = {}
+        self.drive_permissions = {}
         self.lose_reply = False
+        self.lose_drive_upload_reply = False
+        self.lose_drive_permission_reply = False
         self.reject = False
         self.profile_email = "alice@example.test"
         self.granted_scopes = list(SCOPES.values())
@@ -53,6 +57,52 @@ class SimulatedGoogle:
         if request.method == "GET" and url.startswith(EVENTS_URL + "/"):
             result = self.events.get(url.rsplit("/", 1)[1])
             return httpx.Response(200, json=result) if result else httpx.Response(404, json={"error": {}})
+        if request.method == "POST" and url == DRIVE_UPLOAD_URL:
+            content_type = request.headers.get("content-type", "")
+            assert content_type.startswith("multipart/related; boundary=")
+            boundary = content_type.split("boundary=", 1)[1].encode()
+            parts = request.content.split(b"--" + boundary)
+            metadata_part = parts[1].split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n", 1)[0]
+            metadata = json.loads(metadata_part)
+            file_id = "drive-" + str(len(self.drive_files) + 1)
+            result = metadata | {"id": file_id, "trashed": False}
+            self.drive_files[file_id] = result
+            self.drive_permissions[file_id] = []
+            if self.lose_drive_upload_reply:
+                raise httpx.ReadTimeout("simulated interruption after Drive upload")
+            return httpx.Response(200, json=result)
+        if request.method == "GET" and url == DRIVE_FILES_URL:
+            query = request.url.params.get("q", "")
+            marker = None
+            if "shuddhoAction" in query:
+                match = __import__("re").search(r"value='([^']+)'", query)
+                marker = match.group(1) if match else None
+            values = [
+                value for value in self.drive_files.values()
+                if marker is None
+                or value.get("appProperties", {}).get("shuddhoAction") == marker
+            ]
+            return httpx.Response(200, json={"files": values[:2]})
+        permission_prefix = DRIVE_FILES_URL + "/"
+        if url.startswith(permission_prefix) and url.endswith("/permissions"):
+            file_id = url[len(permission_prefix):-len("/permissions")]
+            if file_id not in self.drive_files:
+                return httpx.Response(404, json={"error": {}})
+            if request.method == "POST":
+                value = json.loads(request.content)
+                permission = value | {
+                    "id": "permission-" + str(len(self.drive_permissions[file_id]) + 1),
+                    "deleted": False,
+                }
+                self.drive_permissions[file_id].append(permission)
+                if self.lose_drive_permission_reply:
+                    raise httpx.ReadTimeout("simulated interruption after Drive permission")
+                return httpx.Response(200, json=permission)
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={"permissions": list(self.drive_permissions[file_id])},
+                )
         raise AssertionError("Unexpected simulated endpoint")
 
 

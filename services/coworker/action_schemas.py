@@ -16,7 +16,7 @@ class Strict(BaseModel):
 
 Text = Annotated[str, StringConstraints(max_length=20000)]
 Short = Annotated[str, StringConstraints(min_length=1, max_length=300)]
-Capability = Literal["email", "calendar"]
+Capability = Literal["email", "calendar", "drive"]
 
 
 def address(value: str) -> str:
@@ -131,8 +131,21 @@ class CalendarCreateWithReminder(CalendarCreate):
     reminder_minutes_before_start: Literal[5, 10, 15, 30, 60, 120, 1440]
 
 
+class DocumentShare(Strict):
+    kind: Literal["document_share"]
+    recipients: list[str] = Field(min_length=1, max_length=1)
+
+    @field_validator("recipients")
+    @classmethod
+    def recipient(cls, values):
+        normalized = [address(value) for value in values]
+        if len({value.casefold() for value in normalized}) != 1:
+            raise ValueError("Choose exactly one recipient")
+        return normalized
+
+
 ActionPayload = Annotated[
-    EmailSend | EmailSendWithAttachments | CalendarCreate | CalendarCreateWithReminder,
+    EmailSend | EmailSendWithAttachments | CalendarCreate | CalendarCreateWithReminder | DocumentShare,
     Field(discriminator="kind"),
 ]
 
@@ -141,17 +154,28 @@ class ActionPrepare(Strict):
     connection_id: UUID
     payload: ActionPayload
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=3)
+    artifact_ids: list[UUID] = Field(default_factory=list, max_length=1)
 
     @model_validator(mode="after")
-    def attachments(self):
-        ids = [str(value) for value in self.attachment_ids]
-        if len(ids) != len(set(ids)):
+    def owned_artifacts(self):
+        attachment_ids = [str(value) for value in self.attachment_ids]
+        artifact_ids = [str(value) for value in self.artifact_ids]
+        if len(attachment_ids) != len(set(attachment_ids)):
             raise ValueError("Use each attachment only once")
+        if len(artifact_ids) != len(set(artifact_ids)):
+            raise ValueError("Use each shared artifact only once")
         if self.payload.kind == "email_send_with_attachments":
-            if not ids:
+            if not attachment_ids:
                 raise ValueError("Select at least one approved attachment")
-        elif ids:
-            raise ValueError("Attachments are only supported by the attachment email action")
+            if artifact_ids:
+                raise ValueError("Document sharing artifacts cannot be mixed with email attachments")
+        elif self.payload.kind == "document_share":
+            if len(artifact_ids) != 1:
+                raise ValueError("Select exactly one owned Shuddho artifact to share")
+            if attachment_ids:
+                raise ValueError("Email attachments cannot be mixed with document sharing")
+        elif attachment_ids or artifact_ids:
+            raise ValueError("Owned artifacts are not supported by this action")
         return self
 
 
