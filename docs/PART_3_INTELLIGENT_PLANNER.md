@@ -10,13 +10,14 @@ The planner receives only:
 
 - the agent goal;
 - the names of currently enabled, non-consequential registered tools;
-- a planning reason such as `initial` or `capability_changed`.
+- a planning reason such as `initial` or `capability_changed`;
+- only when the separate action-routing flag is enabled, opaque attached-action candidates containing `{slot, tool}` and no action ID or preview.
 
 It does not receive:
 
 - tool credentials;
-- Gmail or Calendar preview payloads;
-- action approval hashes;
+- Gmail, Outlook, or Calendar preview payloads;
+- action IDs, connection IDs, recipients, event details, or action approval hashes;
 - memory values;
 - document text;
 - search evidence;
@@ -41,9 +42,17 @@ The model cannot supply executable arguments. Shuddho reconstructs arguments fro
 
 ## Consequential actions
 
-The model is never offered `email.send` or `calendar.create`.
+By default, the model is never offered consequential action routing and existing bound actions from PR #112 are appended deterministically by the server.
 
-Existing bound actions from PR #112 are appended deterministically by the server and remain behind the exact immutable approval path.
+A later bounded routing increment may be enabled with:
+
+```text
+SHUDDHO_AGENT_ACTION_PLANNING_ENABLED=true
+```
+
+When enabled, the planner receives only opaque attached-action slots such as `{"slot": 1, "tool": "email.send"}`. It may return an `action_order` preference. Shuddho maps those slots back to server-owned action IDs, keeps all unmentioned attached actions, and places the complete action suffix behind the existing approval-aware execution path.
+
+The model cannot create an action, drop an attached action, change recipients/content/provider/time, approve an action, or cause provider execution. Exact immutable preview validation and explicit user approval remain mandatory.
 
 ## Fallback
 
@@ -157,3 +166,8 @@ until:
 5. Temporal capability-change replan tests pass;
 6. planner prompt/output privacy is reviewed;
 7. tool-selection evaluations show acceptable accuracy before user exposure.
+
+
+## Attached-action routing rollout
+
+Keep `SHUDDHO_AGENT_ACTION_PLANNING_ENABLED=false` until the bounded routing tests and controlled staging approval/restart checks pass. Enabling it also requires Agent Runtime, the intelligent planner, and consequential actions to be enabled. The flag changes planning metadata only; it does not authorize a provider mutation.
