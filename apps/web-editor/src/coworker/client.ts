@@ -13,6 +13,22 @@ export type ConnectedAccount = { id: string; provider: "google" | "microsoft"; c
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type CalendarAction = { kind: "calendar_create"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[] };
 export type ActionInput = { connection_id: string; payload: EmailAction | CalendarAction };
+export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "completed" | "failed" | "cancelled";
+export type AgentTool = { name: string; version: string; kind: "task" | "approved_action"; consequential: boolean; approval_required: boolean; timeout_seconds: number };
+export type AgentActionProposal = {
+  id: string; kind: EmailAction["kind"] | CalendarAction["kind"]; payload: EmailAction | CalendarAction; rationale: string;
+  proposal_hash: string; state: "suggested" | "promoting" | "promoted" | "dismissed" | "expired";
+  promoted_action_id: string | null; created_at: string; expires_at: string; promoted_at: string | null; dismissed_at: string | null;
+};
+export type AgentStep = { id: string; ordinal: number; tool: string | null; state: string; error_code: string | null; depends_on: number[] };
+export type AgentRun = {
+  id: string; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
+  memory_namespaces: string[]; state: AgentRunState; phase: string; message: string; error_code: string | null; cancel_requested: boolean;
+  event_sequence: number; planner_calls: number; planner_tokens: number; planner_mode: string | null; created_at: string; updated_at: string; deadline_at: string;
+  steps: AgentStep[]; tool_invocations: { id: string; step_id: string; tool: string; version: string; state: string; consequential: boolean; approval_required: boolean;
+    receipt: { status: string; resource_type: string; resource_id: string | null; summary: Record<string, unknown>; created_at: string } | null }[];
+};
+export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: string[]; memory_namespaces: string[]; output_language: string };
 export type ExternalAction = {
   id: string; connection_id: string; kind: EmailAction["kind"] | CalendarAction["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
@@ -174,6 +190,24 @@ export class CoworkerClient {
   }
   cancelAction(id: string) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}/cancel`, { method: "POST" }); }
   reconcileAction(id: string) { return this.response(`/api/v1/actions/${identifier(id)}/reconcile`, { method: "POST" }, 65000).then(response => response.json() as Promise<ExternalAction>); }
+  agentTools(signal?: AbortSignal) { return this.json<{ enabled: boolean; tools: AgentTool[] }>("/api/v1/agent-tools", { signal }); }
+  agentRuns(signal?: AbortSignal) { return this.json<{ runs: AgentRun[] }>("/api/v1/agent-runs", { signal }); }
+  agentRun(id: string, signal?: AbortSignal) { return this.json<AgentRun>(`/api/v1/agent-runs/${identifier(id)}`, { signal }); }
+  createAgentRun(input: AgentRunInput, key: string) {
+    return this.json<AgentRun>("/api/v1/agent-runs", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+  cancelAgentRun(id: string) { return this.json<AgentRun>(`/api/v1/agent-runs/${identifier(id)}/cancel`, { method: "POST" }); }
+  promoteActionProposal(runId: string, proposalId: string, proposalHash: string, connectionId: string) {
+    return this.json<ExternalAction>(`/api/v1/agent-runs/${identifier(runId)}/action-proposals/${identifier(proposalId)}/promote`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connection_id: identifier(connectionId), proposal_hash: proposalHash }),
+    });
+  }
+  dismissActionProposal(runId: string, proposalId: string, proposalHash: string) {
+    return this.json<AgentActionProposal>(`/api/v1/agent-runs/${identifier(runId)}/action-proposals/${identifier(proposalId)}/dismiss`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proposal_hash: proposalHash }),
+    });
+  }
   create(input: TaskInput, key: string) {
     return this.json<CoworkerTask>("/api/v1/tasks", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
   }
