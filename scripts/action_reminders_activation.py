@@ -163,13 +163,13 @@ def validate_reviewed_rollout(
     rollback = rollout["rollback"]
     if (
         rollback.get("action_reminders_kill_switch")
-        != "SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false"
+        != "SHUDDHO_ACTION_REMINDERS_ENABLED=false"
     ):
         raise ActionRemindersActivationError(
             "Reviewed rollout manifest has no exact action-reminders kill switch."
         )
     normalized = dict(capabilities)
-    normalized.setdefault("action_reminders", False)
+    normalized.setdefault("action_attachments", False)
     normalized.setdefault("action_reminders", False)
     normalized.setdefault("action_selection", False)
     normalized.setdefault("action_proposals", False)
@@ -451,8 +451,8 @@ def build_evidence(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify production activation of non-executable Agent action "
-            "attachments against exact staging evidence, reviewed rollout, "
+            "Verify production activation of approved calendar reminders "
+            "against exact staging evidence, reviewed rollout, "
             "deployed revision/configuration, and fresh cohort health."
         )
     )
