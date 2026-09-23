@@ -182,3 +182,29 @@ When the approved rollout and recovered backend enable action selection, recover
 Recovery evidence is now schema v2 and records explicit `runtime_requirements`, the action-selection activation SHA-256, and the exact schema-v7 sequence/hash.
 
 When schema-v3 `recovery_verified` is appended, the ledger writer independently re-checks those requirements. A v2 recovery artifact cannot silently remove a required Microsoft or action-selection attestation after runtime verification.
+
+## Fresh action-proposals proof after rollback
+
+If the approved recovered runtime enables `action_proposals`, recovery requires a **fresh post-rollback** schema-v8 `action_proposals_verified` attestation.
+
+Supply:
+
+```bash
+--action-proposals-activation /secure/release/post-rollback-action-proposals-activation.json
+--release-ledger /secure/release/coworker-cohort-001.jsonl
+```
+
+The recovery verifier requires:
+
+- the same release ID and current stage;
+- action-proposals runtime prerequisites enabled under controlled-cohort enforcement;
+- proposal activation deployment not older than the recovery deployment;
+- proposal activation verification after its deployment and after rollback completion;
+- the exact schema-v8 ledger event to occur after the exact schema-v2 `rollback_completed` event;
+- exact activation SHA-256 matching.
+
+New recovery evidence is schema v3. It records `action_proposals_enabled`, the exact proposal activation SHA-256, and the satisfying schema-v8 ledger sequence/hash.
+
+When `append-recovery` records the recovery result, it independently verifies that same schema-v8 attestation and its post-rollback ordering. A required proposal proof cannot be stripped or swapped between recovery verification and ledger recording.
+
+Action-proposals-disabled recovery remains compatible and requires no schema-v8 proof. Historical schema-v1/v2 recovery evidence remains valid.
