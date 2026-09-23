@@ -13,5 +13,7 @@
   "flag_rollback": {"status": "pending", "evidence": ""},
   "cohort_admission": {"status": "pending", "evidence": ""},
   "research": {"status": "pending", "evidence": ""},
-  "actions": {"status": "pending", "evidence": ""}
+  "actions": {"status": "pending", "evidence": ""},
+  "microsoft_actions": {"status": "pending", "evidence": ""},
+  "action_selection": {"status": "pending", "evidence": ""}
 }
