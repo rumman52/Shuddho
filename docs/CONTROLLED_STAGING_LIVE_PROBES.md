@@ -47,6 +47,10 @@ After the live probe succeeds, complete and record:
 6. v2 parallel fan-in/no-duplicate validation and flag rollback to v1;
 7. live Tavily evidence checks if research will be enabled;
 8. live Google approval/execution/receipt checks if Google actions will be enabled;
-9. live Microsoft Graph approval/execution/receipt checks if Microsoft actions will be enabled.
+9. live Microsoft Graph approval/execution/receipt checks if Microsoft actions will be enabled;
+10. live [Agent action-selection verification](CONTROLLED_STAGING_ACTION_SELECTION.md) if bounded planner selection of attached action drafts will be enabled.
 
 Only after the requested evidence records are updated to `passed` should `scripts/staging_gate.py` return `GO`. Microsoft uses its own `--require-microsoft-actions` gate so Google evidence cannot implicitly authorize Microsoft rollout.
+
+
+The action-selection exercise is intentionally separate from provider execution tests. It never approves or sends an action; it verifies the live Agent/planner boundary, unselected-draft release behavior, and explicit approval pause. Use `--require-action-selection` with `scripts/staging_gate.py` only after that evidence is recorded as passed.
