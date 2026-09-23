@@ -19,6 +19,66 @@ _RULES = (
     ("report.create", ("report", "brief", "summary", "summarize")),
 )
 
+_ACTION_TOOL_BY_KIND = {
+    "email_send": "email.send",
+    "calendar_create": "calendar.create",
+}
+
+
+def _action_tool_name(action: dict) -> str:
+    name = _ACTION_TOOL_BY_KIND.get(action.get("kind"))
+    if name is None:
+        raise CoworkerError(
+            "action_scope",
+            "The attached action kind is not registered for the Agent Runtime.",
+            409,
+        )
+    return name
+
+
+def planner_action_candidates(settings: Settings, actions: list[dict] | None) -> list[dict]:
+    """Return a privacy-minimal model view of already attached actions."""
+    if not settings.agent_action_planning_enabled:
+        return []
+    candidates = []
+    for slot, action in enumerate(list(actions or [])[:3], 1):
+        name = _action_tool_name(action)
+        spec = tool(name)
+        if not spec.enabled(settings):
+            raise CoworkerError(
+                "tool_unavailable",
+                "An attached action capability is not enabled.",
+                409,
+            )
+        candidates.append({"slot": slot, "tool": name})
+    return candidates
+
+
+def _ordered_actions(
+    proposal: AgentPlannerProposal,
+    actions: list[dict] | None,
+    settings: Settings,
+) -> list[dict]:
+    """Apply model routing only to order; never let the model add or drop actions."""
+    bounded = list(actions or [])[:3]
+    if not settings.agent_action_planning_enabled or not proposal.action_order:
+        return bounded
+    by_slot = {slot: action for slot, action in enumerate(bounded, 1)}
+    ordered = []
+    seen = set()
+    for slot in proposal.action_order:
+        action = by_slot.get(slot)
+        if action is None:
+            raise CoworkerError(
+                "planner_action_scope",
+                "The planner selected an action outside the attached action slots.",
+                409,
+            )
+        ordered.append(action)
+        seen.add(slot)
+    ordered.extend(action for slot, action in by_slot.items() if slot not in seen)
+    return ordered
+
 
 def deterministic_plan(goal: str, document_ids: list[str], output_language: str, settings: Settings, actions: list[dict] | None = None) -> list[AgentPlanStep]:
     normalized = " ".join(goal.lower().split())
@@ -49,7 +109,7 @@ def deterministic_plan(goal: str, document_ids: list[str], output_language: str,
             arguments["time_range"] = "any"
         steps.append(AgentPlanStep(tool=name, arguments=arguments))
     for action in actions[:3]:
-        name = "email.send" if action["kind"] == "email_send" else "calendar.create"
+        name = _action_tool_name(action)
         spec = tool(name)
         if not spec.enabled(settings):
             raise CoworkerError("tool_unavailable", "The attached action capability is not enabled.", 409)
@@ -84,8 +144,8 @@ def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: li
             arguments["query"] = goal[:400]
             arguments["time_range"] = "any"
         steps.append(AgentPlanStep(tool=choice.tool, arguments=arguments))
-    for action in list(actions or [])[:3]:
-        name = "email.send" if action["kind"] == "email_send" else "calendar.create"
+    for action in _ordered_actions(proposal, actions, settings):
+        name = _action_tool_name(action)
         spec = tool(name)
         if not spec.enabled(settings):
             raise CoworkerError("tool_unavailable", "The attached action capability is not enabled.", 409)
