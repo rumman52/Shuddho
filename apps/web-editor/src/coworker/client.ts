@@ -11,8 +11,11 @@ export type WorkSection = { heading: string; paragraphs: string[]; bullets: stri
 export type EmailDraft = { subject: string; body: string };
 export type ConnectedAccount = { id: string; provider: "google" | "microsoft"; capability: "email" | "calendar"; email: string; active: boolean };
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
+export type AttachmentEmailAction = { kind: "email_send_with_attachments"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type CalendarAction = { kind: "calendar_create"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[] };
-export type ActionInput = { connection_id: string; payload: EmailAction | CalendarAction };
+export type ActionPayload = EmailAction | AttachmentEmailAction | CalendarAction;
+export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[] };
+export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
 export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "completed" | "failed" | "cancelled";
 export type AgentTool = { name: string; version: string; kind: "task" | "approved_action"; consequential: boolean; approval_required: boolean; timeout_seconds: number };
 export type AgentActionProposal = {
@@ -30,9 +33,9 @@ export type AgentRun = {
 };
 export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: string[]; memory_namespaces: string[]; output_language: string };
 export type ExternalAction = {
-  id: string; connection_id: string; kind: EmailAction["kind"] | CalendarAction["kind"];
+  id: string; connection_id: string; kind: ActionPayload["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
-  preview: { account: string; provider: "google" | "microsoft"; payload: EmailAction | CalendarAction; expires_at: string; calendar: string | null; guest_notifications: string | null };
+  preview: { account: string; provider: "google" | "microsoft"; payload: ActionPayload; attachments: ActionAttachment[]; expires_at: string; calendar: string | null; guest_notifications: string | null };
   preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
   approved_at: string | null; finished_at: string | null;
   receipt: { provider: string; provider_id?: string; status: string; confirmed_at: string; message_id?: string } | null;
@@ -180,6 +183,7 @@ export class CoworkerClient {
     return this.response("/api/v1/connections/microsoft/finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) }, 45000).then(response => response.json() as Promise<ConnectedAccount>);
   }
   disconnect(id: string) { return this.json<{ message: string }>(`/api/v1/connections/${identifier(id)}`, { method: "DELETE" }); }
+  actionArtifacts(signal?: AbortSignal) { return this.json<{ attachments_enabled: boolean; artifacts: Artifact[] }>("/api/v1/artifacts", { signal }); }
   actions(signal?: AbortSignal) { return this.json<{ actions: ExternalAction[] }>("/api/v1/actions", { signal }); }
   action(id: string, signal?: AbortSignal) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}`, { signal }); }
   prepareAction(input: ActionInput, key: string) {
