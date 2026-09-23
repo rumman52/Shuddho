@@ -207,3 +207,34 @@
 .cw-web-sources a { color: #57477d; text-underline-offset: 3px; }
 .cw-web-sources p, .cw-web-sources small, .cw-source-domain { font-size: 12px; color: #687180; }
 .cw-source-domain { display: block; margin-top: 4px; }
+
+.cw-agent > .cw-action-intro { margin-bottom: 24px; }
+.cw-agent-run { background: #fff; border: 1px solid #e8e1ef; border-radius: 14px; padding: 24px; }
+.cw-agent-run h2 { font-size: 20px; line-height: 1.45; margin: 6px 0 10px; }
+.cw-agent-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.cw-agent-meta span { background: #f6f2fa; border-radius: 999px; padding: 6px 10px; font-size: 11px; color: #74617f; }
+.cw-agent-files { border: 1px solid #e8e1ef; border-radius: 10px; padding: 12px; display: grid; gap: 8px; }
+.cw-agent-files legend { padding: 0 6px; font-size: 12px; color: #74617f; }
+.cw-agent-files label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
+.cw-agent-steps { list-style: none; padding: 0; margin: 20px 0; display: grid; gap: 10px; }
+.cw-agent-steps li { display: flex; gap: 12px; align-items: center; border: 1px solid #eee8f4; border-radius: 10px; padding: 11px 13px; }
+.cw-agent-steps li > span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #f3edf8; font-size: 11px; }
+.cw-agent-steps strong, .cw-agent-steps small { display: block; }
+.cw-agent-steps small { margin-top: 4px; color: #81728e; font-size: 11px; }
+.cw-proposals { margin-top: 24px; border-top: 1px solid #eee8f4; padding-top: 22px; }
+.cw-proposals h3 { margin: 8px 0; font-size: 17px; }
+.cw-proposals > div > p { color: #81728e; font-size: 12px; line-height: 1.7; }
+.cw-proposal-card { margin-top: 16px; border: 1px solid #dfd3e9; border-radius: 12px; padding: 18px; background: #fcfbfd; }
+.cw-proposal-heading { display: flex; gap: 12px; justify-content: space-between; align-items: start; }
+.cw-proposal-heading strong, .cw-proposal-heading small { display: block; }
+.cw-proposal-heading small { margin-top: 5px; color: #81728e; font-size: 11px; }
+.cw-proposal-heading code { font-size: 10px; overflow-wrap: anywhere; }
+.cw-proposal-rationale { margin: 14px 0; padding: 10px 12px; background: #f5f1fb; border-radius: 8px; font-size: 12px; line-height: 1.7; }
+.cw-proposal-controls { display: grid; gap: 10px; margin-top: 16px; }
+.cw-proposal-controls > div { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+@media (max-width: 680px) {
+  .cw-agent-run, .cw-proposal-card { padding: 15px; }
+  .cw-proposal-heading { flex-direction: column; }
+}
+

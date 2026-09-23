@@ -8,7 +8,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Th
 const recipients = (text: string) => text.split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
 const title = (item: ExternalAction) => item.preview.payload.kind === "email_send" ? item.preview.payload.subject : item.preview.payload.title;
 
-export default function ActionWorkspace({ client, account, emailDraft }: { client: CoworkerClient; account: string; emailDraft: EmailDraft | null }) {
+export default function ActionWorkspace({ client, account, emailDraft, focusActionId, onFocused }: { client: CoworkerClient; account: string; emailDraft: EmailDraft | null; focusActionId?: string | null; onFocused?: () => void }) {
   const [enabled, setEnabled] = useState(false);
   const [connections, setConnections] = useState<ConnectedAccount[]>([]);
   const [history, setHistory] = useState<ExternalAction[]>([]);
@@ -50,6 +50,17 @@ export default function ActionWorkspace({ client, account, emailDraft }: { clien
     });
     return () => { alive = false; controller.abort(); };
   }, [client, account, reload]);
+
+  useEffect(() => {
+    if (!focusActionId) return;
+    let alive = true;
+    client.action(focusActionId).then(value => {
+      if (!alive) return;
+      openAction(value);
+      onFocused?.();
+    }).catch(failure => { if (alive) setError(message(failure)); });
+    return () => { alive = false; };
+  }, [client, focusActionId]);
 
   useEffect(() => {
     if (!action || !pending) return;

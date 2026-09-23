@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CoworkerClient, WorkspaceError, terminal, type CoworkerTask, type EmailDraft, type ResearchOptions, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
 import DraftPreview, { draftTitle } from "./DraftPreview";
 import ActionWorkspace from "./ActionWorkspace";
-import { isGoogleCallback } from "./googleCallback";
+import AgentWorkspace from "./AgentWorkspace";
+import { hasPendingGoogleCallback } from "./googleCallback";
+import { hasPendingMicrosoftCallback } from "./microsoftCallback";
 
 const originalService: WorkSkill = {
   id: "report_email", name: "Report & email", description: "Turn your sources into a report and an email draft.",
@@ -52,8 +54,9 @@ export function TaskResult({ task, client, revise, prepareEmail }: { task: Cowor
 }
 
 export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
-  const [view, setView] = useState<"drafts" | "actions">(isGoogleCallback ? "actions" : "drafts");
+  const [view, setView] = useState<"drafts" | "actions" | "agent">(() => hasPendingGoogleCallback() || hasPendingMicrosoftCallback() ? "actions" : "drafts");
   const [actionDraft, setActionDraft] = useState<EmailDraft | null>(null);
+  const [focusActionId, setFocusActionId] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [skills, setSkills] = useState<WorkSkill[]>([originalService]);
   const [uploadFormats, setUploadFormats] = useState(["txt", "docx", "pdf"]);
@@ -74,9 +77,37 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
   const [connection, setConnection] = useState("");
   const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
+  const accountEmail = useRef(email);
   const notesInput = useRef<HTMLTextAreaElement>(null);
   const outputColumn = useRef<HTMLDivElement>(null);
   const activeSkill = skills.find(skill => skill.id === skillId);
+
+  useEffect(() => {
+    if (accountEmail.current === email) return;
+    accountEmail.current = email;
+    setView("drafts");
+    setActionDraft(null);
+    setFocusActionId(null);
+    setWorkspace(null);
+    setSkills([originalService]);
+    setUploadFormats(["txt", "docx", "pdf"]);
+    setSkillId("report_email");
+    setResearch({ query: "", time_range: "any" });
+    setHistory([]);
+    setDocuments([]);
+    setSelectedDocs([]);
+    setSelected("");
+    setTask(null);
+    setInstruction(originalService.instruction);
+    setNotes("");
+    setLanguage("en");
+    setCustomLanguage("");
+    setBusy("");
+    setError("");
+    setNotice("");
+    setConnection("");
+    submission.current = undefined;
+  }, [email]);
 
   function viewTask() {
     const scroll = () => {
@@ -161,8 +192,9 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     </header>
     {error && <div className="cw-error cw-banner" role="alert">{error} {!workspace && <button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Try again</button>}</div>}
     {notice && <p className="cw-notice cw-banner" role="status">{notice}</p>}
-    <nav className="cw-work-tabs" aria-label="Coworker services"><button aria-pressed={view === "drafts"} onClick={() => setView("drafts")}>Drafts & files</button><button aria-pressed={view === "actions"} onClick={() => setView("actions")}>Email & calendar</button></nav>
-    {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} />}
+    <nav className="cw-work-tabs" aria-label="Coworker services"><button aria-pressed={view === "drafts"} onClick={() => setView("drafts")}>Drafts & files</button><button aria-pressed={view === "agent"} onClick={() => setView("agent")}>Agent</button><button aria-pressed={view === "actions"} onClick={() => setView("actions")}>Email & calendar</button></nav>
+    {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}
+    {view === "agent" && workspace && <AgentWorkspace client={client} documents={documents} openActions={() => setView("actions")} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     <div className="cw-layout" hidden={view !== "drafts"}><section className="cw-compose" aria-label="Create a coworker task">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>Give your coworker a brief</h2><p>Bring the facts. Describe the outcome.</p></div></div>
       <form onSubmit={submit}>

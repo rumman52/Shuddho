@@ -1,15 +1,15 @@
 import { CoworkerClient, WorkspaceError } from "./client";
 
 const storageKey = "shuddho:microsoft-connect";
-export const isMicrosoftCallback =
+const isMicrosoftCallbackRoute =
   typeof window !== "undefined"
   && window.location.pathname === "/oauth/microsoft/callback";
 
-const callback = isMicrosoftCallback
+const callback = isMicrosoftCallbackRoute
   ? new URLSearchParams(window.location.search)
   : null;
 
-if (isMicrosoftCallback) {
+if (isMicrosoftCallbackRoute) {
   window.history.replaceState(null, "", "/");
 }
 
@@ -17,6 +17,10 @@ let completion: {
   account: string;
   promise: Promise<string | null>;
 } | null = null;
+
+export function hasPendingMicrosoftCallback(): boolean {
+  return callback !== null && completion === null;
+}
 
 export function microsoftAuthorizationURL(
   value: string,
