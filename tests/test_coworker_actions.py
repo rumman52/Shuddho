@@ -645,3 +645,23 @@ def test_action_proposal_dismiss_and_kill_switch_block_promotion(container):
             connection["id"],
         )
     assert disabled.value.code == "action_proposals_disabled"
+
+
+def test_agent_proposals_cannot_invent_calendar_reminders():
+    from services.coworker.agent_schemas import AgentActionProposal
+
+    with pytest.raises(ValidationError):
+        AgentActionProposal.model_validate({
+            "payload": {
+                "kind": "calendar_create_with_reminder",
+                "title": "Model reminder",
+                "description": "Must remain user-selected.",
+                "location": "",
+                "start_at": "2026-10-01T10:00+06:00",
+                "end_at": "2026-10-01T11:00+06:00",
+                "time_zone": "Asia/Dhaka",
+                "attendees": [],
+                "reminder_minutes_before_start": 15,
+            },
+            "rationale": "Attempted reminder proposal",
+        })
