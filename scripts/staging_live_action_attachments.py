@@ -154,6 +154,15 @@ def prove_no_auto_approval(client: httpx.Client, token: str, action: dict) -> No
         raise AttachmentValidationFailure(
             f"Wrong-hash attachment approval returned HTTP {rejected.status_code}; expected 409."
         )
+    after = request_json(
+        client.get(f"/api/v1/actions/{action_id}", headers=auth(token)),
+        "read attachment action after rejected approval",
+    )
+    if after.get("state") != "awaiting_approval" or after.get("approved_at") is not None:
+        raise AttachmentValidationFailure("Rejected attachment approval changed action state.")
+    audit = [item.get("action") for item in after.get("audit", []) if isinstance(item, dict)]
+    if "action.approved" in audit or "action.execution_started" in audit:
+        raise AttachmentValidationFailure("Rejected attachment approval produced approval/execution audit.")
 
 
 def wait_terminal(client: httpx.Client, token: str, action_id: str, timeout_seconds: int) -> dict:
