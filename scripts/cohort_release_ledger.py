@@ -1902,6 +1902,7 @@ def append_action_proposals_event(
         )
     runtime_capabilities = runtime.get("capabilities")
     expected_capabilities = dict(capabilities)
+    expected_capabilities.setdefault("action_attachments", False)
     expected_capabilities.setdefault("action_selection", False)
     expected_capabilities.setdefault("action_proposals", False)
     expected_providers = normalized_action_providers(rollout)
