@@ -68,9 +68,10 @@ def bind(preview):
 
 
 def test_registry_declares_existing_consequential_actions():
-    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "calendar_create"}
+    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "calendar_create", "calendar_create_with_reminder"}
     assert action_spec("email_send", "google").capability == "email"
     assert action_spec("calendar_create", "google").reconcile_supported
+    assert action_spec("calendar_create_with_reminder", "google").reminders == "single_explicit"
     assert not action_spec("email_send", "google").reconcile_supported
     assert action_spec("email_send_with_attachments", "google").attachments_allowed
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
@@ -193,3 +194,22 @@ def test_plain_v2_scope_keeps_exact_contract_v1_shape():
     preview["approval_scope"] = scope
     assert validate_approval_scope(preview).kind == "email_send"
 
+
+
+def test_reminder_approval_scope_binds_exact_minutes_and_policy():
+    preview = calendar_preview()
+    preview["payload"]["kind"] = "calendar_create_with_reminder"
+    preview["payload"]["reminder_minutes_before_start"] = 15
+    preview["reminders"] = "single_explicit"
+    preview["version"] = 2
+    bind(preview)
+    scope = preview["approval_scope"]
+    assert scope["action_kind"] == "calendar_create_with_reminder"
+    assert scope["policy"]["reminders"] == "single_explicit"
+    before = scope["payload_sha256"]
+
+    changed = json.loads(json.dumps(preview))
+    changed["payload"]["reminder_minutes_before_start"] = 30
+    with pytest.raises(CoworkerError, match="changed"):
+        validate_approval_scope(changed)
+    assert build_approval_scope(changed)["payload_sha256"] != before
