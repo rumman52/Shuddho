@@ -8,6 +8,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -28,6 +29,8 @@ from services.coworker.auth import JwtVerifier
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.drafting import DraftResult
+from services.coworker.agent_runtime import AgentRuntime
+from services.coworker.agent_schemas import AgentPlannerProposal
 from services.coworker.migrate import upgrade
 from services.coworker.runner import DocumentRunner
 from services.coworker.worker import Dispatcher
@@ -43,6 +46,17 @@ settings = Settings(database_url=f"sqlite:///{folder / 'browser.sqlite3'}", auth
 upgrade(settings.database_url)
 container = Container.create(settings)
 google_fixture = enable_actions(container)
+settings = replace(
+    container.settings,
+    agent_runtime_enabled=True,
+    intelligent_planner_enabled=True,
+    agent_action_proposals_enabled=True,
+)
+settings.validate()
+container.settings = settings
+container.repository.settings = settings
+container.actions.repo.settings = settings
+container.agent.settings = settings
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 jwk = jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key(), as_dict=True) | {"kid": "browser-test", "alg": "RS256"}
 container.verifier = JwtVerifier(issuer, "authenticated", httpx.MockTransport(lambda _: httpx.Response(200, json={"keys": [jwk]})))
@@ -73,11 +87,33 @@ class BrowserModel(FakeModel):
         return DraftResult(value, 180, 2000)
 
 
+class BrowserAgentPlanner:
+    async def propose(self, goal, tools, **kwargs):
+        assert kwargs.get("allow_action_proposals") is True
+        tool = "email.draft" if "email.draft" in tools else tools[0]
+        return AgentPlannerProposal.model_validate({
+            "steps": [{"tool": tool, "objective": "Draft the requested project update."}],
+            "action_proposals": [{
+                "payload": {
+                    "kind": "email_send",
+                    "to": ["recipient@example.org"],
+                    "cc": [],
+                    "bcc": [],
+                    "subject": "Agent project update",
+                    "body": "The project is ready for review.",
+                },
+                "rationale": "The goal explicitly requested this email.",
+            }],
+        }), 42, 1
+
+
 @asynccontextmanager
 async def lifespan(_app):
     async with await WorkflowEnvironment.start_time_skipping() as env:
         stop = asyncio.Event()
-        async with make_worker(env, DocumentRunner(container, BrowserModel(), research=SimulatedResearch(settings))):
+        runner = DocumentRunner(container, BrowserModel(), research=SimulatedResearch(settings))
+        runtime = AgentRuntime(container, runner, planner=BrowserAgentPlanner())
+        async with make_worker(env, runner, agent_runtime=runtime):
             dispatcher = asyncio.create_task(Dispatcher(container, env.client).run(stop))
             try:
                 yield
