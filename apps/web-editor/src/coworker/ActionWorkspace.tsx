@@ -123,7 +123,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       if (action.state === "awaiting_approval") await client.cancelAction(action.id);
       const p = action.preview.payload;
       setProvider(action.preview.provider);
-      if (p.kind !== "calendar_create") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setSelectedAttachments(action.preview.attachments.map(item => item.id)); }
+      if (p.kind !== "calendar_create") { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setSelectedAttachments((action.preview.attachments ?? []).map(item => item.id)); }
       else { setMode("calendar"); setSelectedAttachments([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); }
       startNewAction(false); setReload(x => x + 1);
     });
@@ -187,7 +187,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
         <button className="cw-primary" disabled={!enabled || !currentConnection || Boolean(busy)}>{busy === "prepare" ? "Preparing…" : "Review action"}<span aria-hidden="true">→</span></button>
       </form> : action ? <>
         <dl className="cw-action-details"><dt>Account</dt><dd><bdi>{action.preview.account}</bdi></dd>
-          {payload && payload.kind !== "calendar_create" ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{action.preview.attachments.length ? action.preview.attachments.map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload?.kind === "calendar_create" && <>
+          {payload && payload.kind !== "calendar_create" ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{(action.preview.attachments ?? []).length ? (action.preview.attachments ?? []).map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload?.kind === "calendar_create" && <>
             <dt>Calendar</dt><dd>Primary calendar</dd><dt>Starts</dt><dd>{payload.start_at.replace("T", " ")}</dd><dt>Ends</dt><dd>{payload.end_at.replace("T", " ")}</dd><dt>Time zone</dt><dd>{payload.time_zone}</dd><dt>Guests</dt><dd>{payload.attendees.join(", ") || "None"}</dd><dt>Invitations</dt><dd>Notify all listed guests; guests can see each other</dd><dt>Location</dt><dd dir="auto">{payload.location || "None"}</dd><dt>Reminders / video</dt><dd>None added</dd>
           </>}
         </dl>
