@@ -81,6 +81,12 @@ class AgentRuntime:
         current = self.repo.get(run["owner_id"], run_id)
         if current["planner_calls"] >= self.container.settings.max_agent_planner_calls:
             raise CoworkerError("planner_call_limit", "This agent run reached its planner call limit.", 429)
+        completed_actions = {
+            receipt["resource_id"] for receipt in (
+                item.get("receipt") for item in current["tool_invocations"] if item.get("receipt")
+            ) if receipt and receipt.get("resource_type") == "action"
+        }
+        remaining_actions = [action for action in run["actions"] if action["id"] not in completed_actions]
         tools = intelligent_tool_names(self.container.settings, remaining_actions)
         if not tools:
             raise CoworkerError("no_agent_tool", "No suitable agent tool is currently enabled.", 409)
@@ -95,12 +101,6 @@ class AgentRuntime:
             self.repo.settle_planner_capacity(
                 run_id, reservation["call"], actual_tokens,
             )
-        completed_actions = {
-            receipt["resource_id"] for receipt in (
-                item.get("receipt") for item in current["tool_invocations"] if item.get("receipt")
-            ) if receipt and receipt.get("resource_type") == "action"
-        }
-        remaining_actions = [action for action in run["actions"] if action["id"] not in completed_actions]
         steps = proposal_to_plan(
             proposal, run["goal"], run["document_ids"], run["output_language"],
             self.container.settings, remaining_actions,
