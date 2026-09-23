@@ -3,7 +3,8 @@ import { CoworkerClient, WorkspaceError, terminal, type CoworkerTask, type Email
 import DraftPreview, { draftTitle } from "./DraftPreview";
 import ActionWorkspace from "./ActionWorkspace";
 import AgentWorkspace from "./AgentWorkspace";
-import { isGoogleCallback } from "./googleCallback";
+import { hasPendingGoogleCallback } from "./googleCallback";
+import { hasPendingMicrosoftCallback } from "./microsoftCallback";
 
 const originalService: WorkSkill = {
   id: "report_email", name: "Report & email", description: "Turn your sources into a report and an email draft.",
@@ -53,7 +54,7 @@ export function TaskResult({ task, client, revise, prepareEmail }: { task: Cowor
 }
 
 export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
-  const [view, setView] = useState<"drafts" | "actions" | "agent">(isGoogleCallback ? "actions" : "drafts");
+  const [view, setView] = useState<"drafts" | "actions" | "agent">(() => hasPendingGoogleCallback() || hasPendingMicrosoftCallback() ? "actions" : "drafts");
   const [actionDraft, setActionDraft] = useState<EmailDraft | null>(null);
   const [focusActionId, setFocusActionId] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
