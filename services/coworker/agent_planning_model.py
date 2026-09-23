@@ -24,7 +24,14 @@ class DeepSeekAgentPlanner:
         self.settings = settings
         self.transport = transport
 
-    async def propose(self, goal: str, tools: list[str], *, reason: str = "initial") -> tuple[AgentPlannerProposal, int | None, int]:
+    async def propose(
+        self,
+        goal: str,
+        tools: list[str],
+        *,
+        reason: str = "initial",
+        allow_action_proposals: bool = False,
+    ) -> tuple[AgentPlannerProposal, int | None, int]:
         if not self.settings.deepseek_api_key:
             raise PlannerFailure("planner_not_configured", "The intelligent planner is not configured.")
         schema = AgentPlannerProposal.model_json_schema()
@@ -32,7 +39,10 @@ class DeepSeekAgentPlanner:
             {"role": "system", "content": (
                 "You are Shuddho's bounded planning component. Select only from the exact server-provided tool names. "
                 "Return 1 to 3 steps. Each step contains only a tool name and a short objective. "
-                "Do not create arguments, recipients, URLs, credentials, permissions, actions, or tool names. "
+                "Do not create tool arguments, URLs, credentials, permissions, provider choices, connection IDs, action IDs, or approval data. "
+                "If action_proposals_allowed is true, you may add at most two inert typed email/calendar action proposals using only details explicitly supported by the user goal. "
+                "Action proposals are suggestions only: they have no provider or connection, cannot be approved or executed, and require a later user promotion into a separate server-owned preview. "
+                "If any required recipient, title, time, time zone, or content is missing or uncertain, do not create that proposal. "
                 "Names beginning with attached.email. or attached.calendar. are opaque handles for action drafts "
                 "the user already attached. You may select such a handle only when it appears in available_tools. "
                 "Selecting a handle cannot edit, approve, or execute the action; the server resolves it and explicit user approval remains required. "
@@ -44,6 +54,7 @@ class DeepSeekAgentPlanner:
                 "goal": goal,
                 "available_tools": tools,
                 "planning_reason": reason,
+                "action_proposals_allowed": allow_action_proposals,
             }, ensure_ascii=False)},
         ]
         started = time.monotonic()
@@ -81,6 +92,8 @@ class DeepSeekAgentPlanner:
             if message.get("tool_calls") or message.get("refusal"):
                 raise ValueError()
             proposal = AgentPlannerProposal.model_validate_json(message["content"])
+            if proposal.action_proposals and not allow_action_proposals:
+                raise ValueError()
             allowed = set(tools)
             if any(step.tool not in allowed for step in proposal.steps):
                 raise ValueError()
