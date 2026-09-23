@@ -6,7 +6,7 @@ This increment lets a signed-in user connect Google, prepare an exact email or c
 
 | Action | Included | Boundaries |
 | --- | --- | --- |
-| Email | Gmail/Google Workspace account, To/Cc/Bcc, multilingual subject and plain-text body, immediate sending after approval | Up to 20 distinct recipients; no attachments, sender aliases, mailbox reading, thread replies, or scheduled sends |
+| Email | Gmail/Google Workspace account, To/Cc/Bcc, multilingual subject and plain-text body, immediate sending after approval; optional already-owned Shuddho artifact attachments behind the separate attachment flag | Up to 20 distinct recipients; attachments are capped at 3 / 2 MiB and must be immutable owned outputs; no sender aliases, mailbox reading, thread replies, or scheduled sends |
 | Calendar | One future event in the connected account's primary calendar, title/description/location, IANA time zone, start/end and optional guests | Up to 20 guests; invitations to all listed guests; guests see each other; no recurrence, reminders, all-day events, video-link creation, updates or deletions |
 
 The existing email draft includes **Prepare this email for sending**. Only subject and body are copied; the user supplies full addresses. In **Email & calendar**, the user connects each capability separately, fills the form, and selects **Review action**. The server returns the immutable preview. Editing cancels that preview and requires a fresh one. The final button explicitly says **Approve & send email** or **Approve & create event** and requires checking the review acknowledgement.
@@ -88,6 +88,7 @@ All routes require a current Shuddho bearer token and owner checks. OAuth redire
 | `POST /api/v1/connections/google/finish` | Consume state/code and store the verified connection |
 | `DELETE /api/v1/connections/{id}` | Disconnect locally and cancel pending actions |
 | `POST /api/v1/actions` | Prepare immutable preview; requires `Idempotency-Key` |
+| `GET /api/v1/artifacts` | Owner-scoped generated artifact catalog for explicit attachment selection |
 | `GET /api/v1/actions` | Latest 50 owned previews/results |
 | `GET /api/v1/actions/{id}` | Full preview, status, receipt and audit history |
 | `POST /api/v1/actions/{id}/approve` | Approve with `preview_hash` only |
