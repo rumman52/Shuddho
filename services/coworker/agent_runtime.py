@@ -49,12 +49,22 @@ class AgentRuntime:
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
         actual_tokens = None
         try:
-            proposal, actual_tokens, _latency = await self.planner.propose(run["goal"], tools, reason="initial")
+            proposal, actual_tokens, _latency = await self.planner.propose(
+                run["goal"],
+                tools,
+                reason="initial",
+                allow_action_proposals=self.container.settings.agent_action_proposals_enabled,
+            )
             steps = proposal_to_plan(
                 proposal, run["goal"], run["document_ids"], run["output_language"],
                 self.container.settings, run["actions"],
             )
-            saved = self.repo.save_plan(run["owner_id"], run_id, steps)
+            saved = self.repo.save_plan(
+                run["owner_id"],
+                run_id,
+                steps,
+                action_proposals=proposal.action_proposals,
+            )
             if self.container.settings.agent_action_selection_enabled:
                 self.repo.release_unselected_actions(run_id)
             self.repo.set_planner_mode(run_id, "intelligent")
@@ -93,7 +103,12 @@ class AgentRuntime:
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
         actual_tokens = None
         try:
-            proposal, actual_tokens, _latency = await self.planner.propose(run["goal"], tools, reason=reason)
+            proposal, actual_tokens, _latency = await self.planner.propose(
+                run["goal"],
+                tools,
+                reason=reason,
+                allow_action_proposals=False,
+            )
         except PlannerFailure as error:
             actual_tokens = error.total_tokens
             raise
