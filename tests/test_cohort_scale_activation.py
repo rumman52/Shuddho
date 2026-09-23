@@ -15,6 +15,7 @@ from scripts.cohort_scale_activation import (
     validate_operator_status,
     validate_provider_policy_activation,
     validate_microsoft_rollout_activation,
+    validate_action_selection_activation,
     validate_scale_decision,
 )
 
@@ -55,7 +56,7 @@ def operator():
     }
 
 
-def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False):
+def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False):
     ids = {allowed}
     ids.update(f"member-{index}" for index in range(max(0, members - 1)))
     if denied in ids:
@@ -65,6 +66,7 @@ def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"
         cohort_account_ids=frozenset(ids),
         cohort_max_users=max_users,
         microsoft_actions_enabled=microsoft,
+        agent_action_selection_enabled=action_selection,
     )
 
 
@@ -459,3 +461,197 @@ def test_activation_evidence_binds_microsoft_proof_only_when_enabled(tmp_path):
         now=NOW,
     )
     assert "microsoft_rollout_activation" in microsoft["artifact_sha256"]
+
+
+def action_selection_activation_file(tmp_path):
+    path = tmp_path / "action-selection-activation.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "action_selection_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "verified_at": "2026-09-22T12:00:00+00:00",
+        "change_reference": "action-selection-change-1",
+        "deployed_at": "2026-09-22T11:50:00+00:00",
+        "operator_status_generated_at": "2026-09-22T11:55:00+00:00",
+        "runtime": {
+            "coworker_enabled": True,
+            "agent_runtime_enabled": True,
+            "intelligent_planner_enabled": True,
+            "actions_enabled": True,
+            "action_selection_enabled": True,
+            "cohort_enforced": True,
+            "cohort_members_configured": 25,
+            "cohort_max_users": 25,
+        },
+        "artifact_sha256": {
+            "staging_evidence": "a" * 64,
+            "deployment_change": "b" * 64,
+            "operator_status": "c" * 64,
+        },
+    }), encoding="utf-8")
+    return path
+
+
+def seed_action_selection_ledger(monkeypatch, tmp_path, activation_path):
+    from scripts.cohort_release_ledger import (
+        append_action_selection_event,
+        append_event,
+        file_sha256,
+    )
+    monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", "k" * 32)
+    ledger = tmp_path / "action-selection-ledger.jsonl"
+
+    rollout_path = tmp_path / "action-selection-rollout.json"
+    plan_path = tmp_path / "action-selection-plan.json"
+    progression_path = tmp_path / "action-selection-progression.json"
+    base_status_path = tmp_path / "action-selection-base-status.json"
+    rollout_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "cohort": {"max_users": 25},
+    }), encoding="utf-8")
+    plan_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "stages": [{"name": "cohort-25"}],
+    }), encoding="utf-8")
+    progression_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "HOLD",
+        "current_stage": "cohort-25",
+        "next_stage": None,
+    }), encoding="utf-8")
+    base_status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+    }), encoding="utf-8")
+    append_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        event_type="hold",
+        actor_reference="oncall",
+        change_reference="cohort-25-hold",
+        current_stage="cohort-25",
+        next_stage=None,
+        rollout=rollout_path,
+        canary_plan=plan_path,
+        progression_decision=progression_path,
+        operator_status=base_status_path,
+    )
+
+    staging_path = tmp_path / "action-selection-staging.json"
+    deployment_path = tmp_path / "action-selection-deployment.json"
+    status_path = tmp_path / "action-selection-status.json"
+    staging_path.write_text(json.dumps({
+        "action_selection": {
+            "status": "passed",
+            "evidence": "live selection paused at approval",
+            "verified_at": "2026-09-22T11:40:00+00:00",
+        },
+    }), encoding="utf-8")
+    deployment_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "change_reference": "action-selection-change-1",
+        "current_stage": "cohort-25",
+        "deployed_at": "2026-09-22T11:50:00+00:00",
+        "staging_evidence_sha256": file_sha256(staging_path),
+    }), encoding="utf-8")
+    status_path.write_text(json.dumps({
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-22T11:55:00+00:00",
+        "breaches": [],
+    }), encoding="utf-8")
+    value = json.loads(activation_path.read_text(encoding="utf-8"))
+    value["artifact_sha256"] = {
+        "staging_evidence": file_sha256(staging_path),
+        "deployment_change": file_sha256(deployment_path),
+        "operator_status": file_sha256(status_path),
+    }
+    activation_path.write_text(json.dumps(value), encoding="utf-8")
+
+    entry = append_action_selection_event(
+        ledger=ledger,
+        key=b"k" * 32,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall",
+        change_reference="action-selection-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging_path,
+        deployment_change=deployment_path,
+        operator_status=status_path,
+        action_selection_activation=activation_path,
+    )
+    return ledger, entry
+
+
+def test_action_selection_disabled_scale_does_not_require_proof(tmp_path):
+    assert validate_action_selection_activation(
+        tmp_path / "missing.json",
+        tmp_path / "missing-ledger.jsonl",
+        decision(),
+        settings(action_selection=False),
+    ) is None
+
+
+def test_action_selection_enabled_scale_requires_exact_schema_v7(monkeypatch, tmp_path):
+    activation = action_selection_activation_file(tmp_path)
+    ledger, entry = seed_action_selection_ledger(
+        monkeypatch,
+        tmp_path,
+        activation,
+    )
+    result = validate_action_selection_activation(
+        activation,
+        ledger,
+        decision(),
+        settings(action_selection=True),
+    )
+    assert result["ledger_sequence"] == entry["sequence"]
+    assert result["ledger_entry_hash"] == entry["entry_hash"]
+
+    changed = json.loads(activation.read_text(encoding="utf-8"))
+    changed["verified_at"] = "2026-09-22T12:01:00+00:00"
+    activation.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ScaleActivationError, match="Release ledger verification failed"):
+        validate_action_selection_activation(
+            activation,
+            ledger,
+            decision(),
+            settings(action_selection=True),
+        )
+
+
+def test_scale_v2_evidence_binds_action_selection_attestation(tmp_path):
+    scale_path = tmp_path / "scale-v2.json"
+    deploy_path = tmp_path / "deploy-v2.json"
+    status_path = tmp_path / "status-v2.json"
+    policy_path = tmp_path / "policy-v2.json"
+    action_path = tmp_path / "action-selection-v2.json"
+    for item in (scale_path, deploy_path, status_path, policy_path, action_path):
+        item.write_text("{}", encoding="utf-8")
+
+    attestation = {
+        "ledger_sequence": 9,
+        "ledger_entry_hash": "d" * 64,
+    }
+    value = build_evidence(
+        decision=decision(),
+        deployment=deployment(),
+        operator_status=operator(),
+        settings=settings(action_selection=True),
+        scale_decision_path=scale_path,
+        deployment_change_path=deploy_path,
+        operator_status_path=status_path,
+        provider_policy_activation_path=policy_path,
+        action_selection_activation_path=action_path,
+        action_selection_attestation=attestation,
+        now=NOW,
+    )
+    assert value["schema_version"] == 2
+    assert value["runtime_requirements"]["action_selection_enabled"] is True
+    assert value["action_selection"] == attestation
+    assert (
+        value["artifact_sha256"]["action_selection_activation"]
+        == value["artifact_sha256"]["action_selection_activation"]
+    )
