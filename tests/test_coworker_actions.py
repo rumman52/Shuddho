@@ -168,6 +168,74 @@ def test_reminder_schema_and_feature_flag_are_bounded(container):
     assert action["preview"]["approval_scope"]["policy"]["reminders"] == "single_explicit"
 
 
+def test_calendar_reminder_must_still_be_in_the_future(container):
+    enable_actions(container)
+    settings = replace(container.settings, action_reminders_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner, "calendar")
+    start = (utcnow() + timedelta(minutes=10)).replace(microsecond=0)
+    request = ActionPrepare.model_validate({
+        "connection_id": connection["id"],
+        "payload": {
+            "kind": "calendar_create_with_reminder",
+            "title": "Too-late reminder",
+            "description": "",
+            "location": "",
+            "start_at": start.isoformat(),
+            "end_at": (start + timedelta(hours=1)).isoformat(),
+            "time_zone": "UTC",
+            "attendees": [],
+            "reminder_minutes_before_start": 15,
+        },
+    })
+    with pytest.raises(CoworkerError) as rejected:
+        container.actions.repo.prepare(
+            owner,
+            request,
+            "reminder-already-due",
+        )
+    assert rejected.value.code == "reminder_time"
+
+
+def test_reminder_kill_switch_cancels_before_provider_mutation(container):
+    provider = enable_actions(container)
+    settings = replace(container.settings, action_reminders_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner, "calendar")
+    action = container.actions.repo.prepare(
+        owner,
+        action_request(connection, "calendar_create_with_reminder"),
+        "reminder-kill-switch",
+    )
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    assert approved["state"] == "queued"
+
+    disabled = replace(settings, action_reminders_enabled=False)
+    container.settings = disabled
+    container.repository.settings = disabled
+    container.actions.repo.settings = disabled
+
+    assert container.actions.repo.claim_execution(action["id"]) is None
+    result = container.actions.repo.get(owner, action["id"])
+    assert result["state"] == "cancelled"
+    assert result["error_code"] == "action_reminders_disabled"
+    assert provider.events == {}
+
+
 def test_google_calendar_reminder_executes_exact_approved_minutes(container):
     provider = enable_actions(container)
     settings = replace(container.settings, action_reminders_enabled=True)
