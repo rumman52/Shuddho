@@ -540,10 +540,10 @@ class ActionRepository:
             if not hmac.compare_digest(row.preview_hash, preview_hash) or digest(row.preview) != row.preview_hash:
                 raise CoworkerError("approval_changed", "The preview changed. Review it again before approving.", 409)
             spec = validate_approval_scope(row.preview)
-            self._require_optional_feature(spec)
             if row.approved_at:  # Replayed approval never dispatches a new action.
                 return action_dto(row)
             self.enabled()
+            self._require_optional_feature(spec)
             if row.state != "awaiting_approval" or aware(row.expires_at) <= utcnow() or not connection.active:
                 raise CoworkerError("approval_expired", "This preview is no longer available for approval. Prepare a new one.", 409)
             if spec.requires_future_start:
