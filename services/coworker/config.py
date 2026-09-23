@@ -31,6 +31,7 @@ class Settings:
     artifact_services_enabled: bool = False
     research_services_enabled: bool = False
     actions_enabled: bool = False
+    action_attachments_enabled: bool = False
     agent_runtime_enabled: bool = False
     agent_memory_enabled: bool = False
     intelligent_planner_enabled: bool = False
@@ -115,6 +116,7 @@ class Settings:
             artifact_services_enabled=os.getenv("SHUDDHO_ARTIFACT_SERVICES_ENABLED", "false").lower() == "true",
             research_services_enabled=os.getenv("SHUDDHO_RESEARCH_SERVICES_ENABLED", "false").lower() == "true",
             actions_enabled=os.getenv("SHUDDHO_ACTIONS_ENABLED", "false").lower() == "true",
+            action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
@@ -192,6 +194,8 @@ class Settings:
                     callback.username or callback.password or callback.query or callback.fragment or
                     callback.path != "/oauth/google/callback"):
                 raise ValueError("Actions require Google OAuth credentials and an HTTPS frontend /oauth/google/callback redirect URI")
+        if self.action_attachments_enabled and not self.actions_enabled:
+            raise ValueError("Action attachments require SHUDDHO_ACTIONS_ENABLED=true")
         if self.microsoft_actions_enabled:
             if not self.actions_enabled:
                 raise ValueError("Microsoft actions require SHUDDHO_ACTIONS_ENABLED=true")
