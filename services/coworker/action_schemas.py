@@ -124,8 +124,13 @@ class CalendarCreate(Strict):
         return self
 
 
+class CalendarCreateWithReminder(CalendarCreate):
+    kind: Literal["calendar_create_with_reminder"]
+    reminder_minutes_before_start: Literal[5, 10, 15, 30, 60, 120, 1440]
+
+
 ActionPayload = Annotated[
-    EmailSend | EmailSendWithAttachments | CalendarCreate,
+    EmailSend | EmailSendWithAttachments | CalendarCreate | CalendarCreateWithReminder,
     Field(discriminator="kind"),
 ]
 
