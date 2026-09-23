@@ -207,7 +207,7 @@ The next control-plane increment adds [Microsoft rollout activation verification
 
 The following release-evidence increment extends the existing tamper-evident controlled-cohort ledger with schema v6 `microsoft_rollout_verified`. The exact Microsoft staging evidence, reviewed deployment, post-deploy operator status, and activation artifact are chained into the same release ID/stage already used for production cohort control; duplicate activation recording and unattached stage claims fail closed.
 
-Model-selected external actions and broader connector expansion remain later increments.
+The next bounded Agent/action increment is [model-selected attached-action routing](PART_3_MODEL_SELECTED_ACTION_ROUTING.md): behind a separate default-off flag, the planner may see only opaque `{slot, tool}` records for actions the user already prepared and attached. It may recommend their order after normal task steps, but it cannot create, remove, alter, approve, or execute an action; Shuddho preserves every attached action and maps slots back to server-owned action IDs before the existing immutable approval boundary. Model-authored action preparation and broader connector expansion remain later increments.
 
 ### Consequential actions
 
