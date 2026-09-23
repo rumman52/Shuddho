@@ -162,7 +162,7 @@ def validate_reviewed_rollout(
         != "SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false"
     ):
         raise ActionDocumentSharingActivationError(
-            "Reviewed rollout manifest has no exact document-sharings kill switch."
+            "Reviewed rollout manifest has no exact document-sharing kill switch."
         )
     normalized = dict(capabilities)
     normalized.setdefault("action_attachments", False)

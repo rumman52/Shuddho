@@ -552,7 +552,8 @@ def validate_action_recipients_activation(
         or not isinstance(capabilities, dict)
         or capabilities.get("coworker") is not True
         or capabilities.get("actions") is not True
-        or capabilities.get("action_recipients") is not True
+        or capabilities.get("artifact_services") is not True
+        or capabilities.get("action_document_sharing") is not True
         or not isinstance(cohort, dict)
         or cohort.get("enforced") is not True
     ):
@@ -594,7 +595,7 @@ def validate_action_document_sharing_activation(
         return None
     if path is None:
         raise ScaleActivationError(
-            "Saved document sharing are enabled but --document-sharing-activation is required."
+            "Document sharing is enabled but --action-document-sharing-activation is required."
         )
     value = load_json(path, "document sharing activation")
     if value.get("status") != "action_document_sharing_verified":

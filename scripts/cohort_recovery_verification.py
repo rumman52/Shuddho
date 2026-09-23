@@ -892,7 +892,8 @@ def validate_action_recipients_recovery_activation(
         or not isinstance(capabilities, dict)
         or capabilities.get("coworker") is not True
         or capabilities.get("actions") is not True
-        or capabilities.get("action_recipients") is not True
+        or capabilities.get("artifact_services") is not True
+        or capabilities.get("action_document_sharing") is not True
         or not isinstance(cohort, dict)
         or cohort.get("enforced") is not True
     ):
@@ -976,7 +977,7 @@ def validate_action_document_sharing_recovery_activation(
         return None
     if activation_path is None or ledger_path is None:
         raise RecoveryVerificationError(
-            "Saved document sharing are enabled but a fresh recipient activation "
+            "Document sharing is enabled but a fresh document-sharing activation "
             "and the release ledger are required for recovery."
         )
     activation = load_json(
