@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -13,6 +14,7 @@ from scripts.cohort_release_ledger import (
     append_provider_policy_event,
     append_microsoft_rollout_event,
     append_action_selection_event,
+    append_action_proposals_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -1186,6 +1188,213 @@ def test_schema_v7_action_selection_requires_runtime_proof(tmp_path):
             operator_status=status,
             action_selection_activation=activation,
         )
+
+
+
+def action_proposals_files(tmp_path, *, include_providers=True):
+    capabilities = {
+        "coworker": True,
+        "work_services": True,
+        "artifact_services": True,
+        "agent_runtime": True,
+        "intelligent_planner": True,
+        "memory": False,
+        "handoffs": True,
+        "multi_handoffs": True,
+        "dependency_graph": True,
+        "parallel_execution": True,
+        "outcome_replan": True,
+        "research": False,
+        "actions": True,
+        "action_selection": False,
+        "action_proposals": True,
+    }
+    rollout_value = {
+        "release_id": "coworker-cohort-001",
+        "environment": "production",
+        "cohort": {"reference": "approved-cohort", "max_users": 25},
+        "capabilities": capabilities,
+        "rollback": {
+            "action_proposals_kill_switch":
+                "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
+        },
+    }
+    if include_providers:
+        rollout_value["action_providers"] = ["google"]
+    rollout = write_json(
+        tmp_path / "action-proposals-rollout.json",
+        rollout_value,
+    )
+    staging = write_json(tmp_path / "action-proposals-staging.json", {
+        "action_proposals": {
+            "status": "passed",
+            "evidence": "live proposal remained inert until explicit promotion",
+            "verified_at": "2026-09-23T05:20:00+00:00",
+        },
+    })
+    deployment = write_json(tmp_path / "action-proposals-deployment.json", {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "action-proposals-change-1",
+        "current_stage": "cohort-25",
+        "deployed_at": "2026-09-23T05:30:00+00:00",
+        "source_revision": "a" * 40,
+        "staging_evidence_sha256": file_sha256(staging),
+        "rollout_manifest_sha256": file_sha256(rollout),
+    })
+    status = write_json(tmp_path / "action-proposals-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-23T05:35:00+00:00",
+        "breaches": [],
+    })
+    runtime = {
+        "schema_version": 1,
+        "source_revision": "a" * 40,
+        "environment": "production",
+        "capabilities": capabilities,
+        "action_providers": ["google"],
+        "cohort": {
+            "enforced": True,
+            "configured_members": 1,
+            "max_users": 25,
+        },
+    }
+    runtime_hash = hashlib.sha256(json.dumps(
+        runtime,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    activation = write_json(tmp_path / "action-proposals-activation.json", {
+        "schema_version": 1,
+        "status": "action_proposals_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "verified_at": "2026-09-23T05:40:00+00:00",
+        "change_reference": "action-proposals-change-1",
+        "deployed_at": "2026-09-23T05:30:00+00:00",
+        "source_revision": "a" * 40,
+        "operator_status_generated_at": "2026-09-23T05:35:00+00:00",
+        "runtime": runtime,
+        "runtime_manifest_sha256": runtime_hash,
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging),
+            "rollout_manifest": file_sha256(rollout),
+            "deployment_change": file_sha256(deployment),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return staging, rollout, deployment, status, activation
+
+
+def append_action_proposals(ledger, files):
+    staging, rollout, deployment, status, activation = files
+    return append_action_proposals_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="action-proposals-change-1",
+        current_stage="cohort-25",
+        staging_evidence=staging,
+        rollout_manifest=rollout,
+        deployment_change=deployment,
+        operator_status=status,
+        action_proposals_activation=activation,
+        created_at="2026-09-23T05:45:00+00:00",
+    )
+
+
+def test_schema_v8_action_proposals_is_hash_chained(tmp_path):
+    ledger = tmp_path / "release-ledger-action-proposals.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    files = action_proposals_files(tmp_path)
+
+    entry = append_action_proposals(ledger, files)
+
+    assert entry["schema_version"] == 8
+    assert entry["event_type"] == "action_proposals_verified"
+    assert entry["next_stage"] is None
+    assert entry["artifact_sha256"]["staging_evidence"] == file_sha256(files[0])
+    assert entry["artifact_sha256"]["rollout_manifest"] == file_sha256(files[1])
+    assert (
+        entry["artifact_sha256"]["action_proposals_activation"]
+        == file_sha256(files[4])
+    )
+    assert verify_entries(
+        read_entries(ledger),
+        KEY,
+    )["head_entry_hash"] == entry["entry_hash"]
+
+
+def test_schema_v8_action_proposals_rejects_unbound_rollout(tmp_path):
+    ledger = tmp_path / "release-ledger-action-proposals-unbound.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    files = action_proposals_files(tmp_path)
+    value = json.loads(files[4].read_text(encoding="utf-8"))
+    value["artifact_sha256"]["rollout_manifest"] = "0" * 64
+    files[4].write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="does not bind this rollout_manifest",
+    ):
+        append_action_proposals(ledger, files)
+
+
+def test_schema_v8_action_proposals_rejects_runtime_drift(tmp_path):
+    ledger = tmp_path / "release-ledger-action-proposals-drift.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    files = action_proposals_files(tmp_path)
+    value = json.loads(files[4].read_text(encoding="utf-8"))
+    value["runtime"]["capabilities"]["memory"] = True
+    value["runtime_manifest_sha256"] = hashlib.sha256(json.dumps(
+        value["runtime"],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    files[4].write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="exact reviewed runtime",
+    ):
+        append_action_proposals(ledger, files)
+
+
+def test_schema_v8_action_proposals_accepts_legacy_google_provider_default(
+    tmp_path,
+):
+    ledger = tmp_path / "release-ledger-action-proposals-legacy.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    files = action_proposals_files(tmp_path, include_providers=False)
+
+    entry = append_action_proposals(ledger, files)
+
+    assert entry["schema_version"] == 8
+    assert entry["event_type"] == "action_proposals_verified"
+
+
+def test_schema_v8_action_proposals_requires_existing_stage_chain(tmp_path):
+    ledger = tmp_path / "release-ledger-action-proposals-stage.jsonl"
+    files = action_proposals_files(tmp_path)
+
+    with pytest.raises(ReleaseLedgerError, match="existing ledger chain"):
+        append_action_proposals(ledger, files)
+
+
+def test_schema_v8_action_proposals_cannot_record_same_activation_twice(
+    tmp_path,
+):
+    ledger = tmp_path / "release-ledger-action-proposals-duplicate.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    files = action_proposals_files(tmp_path)
+    append_action_proposals(ledger, files)
+
+    with pytest.raises(ReleaseLedgerError, match="already recorded"):
+        append_action_proposals(ledger, files)
+
 
 
 def test_schema_v4_scale_v2_requires_exact_action_selection_attestation(tmp_path):
