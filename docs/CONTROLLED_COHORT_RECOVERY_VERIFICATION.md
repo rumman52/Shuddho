@@ -76,6 +76,8 @@ uv run --extra coworker python scripts/cohort_recovery_verification.py \
   --status-output /secure/release/post-recovery-status.json \
   --microsoft-rollout-activation /secure/release/post-rollback-microsoft-rollout-activation.json \
   --action-selection-activation /secure/release/post-rollback-action-selection-activation.json \
+  --action-proposals-activation /secure/release/post-rollback-action-proposals-activation.json \
+  --action-attachments-activation /secure/release/post-rollback-action-attachments-activation.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --output /secure/release/recovery-verification.json
 ```
@@ -208,3 +210,25 @@ New recovery evidence is schema v3. It records `action_proposals_enabled`, the e
 When `append-recovery` records the recovery result, it independently verifies that same schema-v8 attestation and its post-rollback ordering. A required proposal proof cannot be stripped or swapped between recovery verification and ledger recording.
 
 Action-proposals-disabled recovery remains compatible and requires no schema-v8 proof. Historical schema-v1/v2 recovery evidence remains valid.
+
+
+## Fresh approved-attachment proof after rollback
+
+Legacy recovery remains unchanged when `SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false`.
+
+When the approved recovered runtime enables action attachments, recovery requires a **fresh post-rollback** schema-v9 `action_attachments_verified` attestation.
+
+The recovery verifier requires:
+
+- the same release ID and current stage;
+- Coworker, artifact services, Actions and Action Attachments enabled under controlled-cohort enforcement;
+- attachment activation deployment no earlier than the recovery deployment;
+- attachment activation verification after its deployment and after rollback completion;
+- the exact attachment activation SHA-256 to match a schema-v9 ledger event;
+- that schema-v9 event to occur after the exact schema-v2 `rollback_completed` event.
+
+Attachment-enabled recovery evidence is schema v4. It records `action_attachments_enabled=true`, the exact attachment activation SHA-256, and the satisfying schema-v9 ledger sequence/hash.
+
+When `append-recovery` records the result, the ledger writer independently re-verifies the same schema-v9 event, exact sequence/hash references, activation SHA and post-rollback ordering. A required attachment attestation therefore cannot be stripped or swapped between recovery verification and ledger recording.
+
+When attachments are disabled, verifier output remains schema v3 and historical schema-v1/v2/v3 recovery evidence stays valid.
