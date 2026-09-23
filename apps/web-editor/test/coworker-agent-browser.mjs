@@ -25,6 +25,10 @@ export async function verifyAgentProposals(page, folder) {
   );
 
   await page.screenshot({ path: join(folder, "screenshots/agent-inert-proposal.png"), fullPage: true });
+  const account = agent.getByLabel("Account for Agent project update", { exact: true });
+  assert.equal(await account.inputValue(), "");
+  assert.equal(await agent.getByRole("button", { name: "Promote exact proposal", exact: true }).isDisabled(), true);
+  await account.selectOption({ index: 1 });
   await agent.getByRole("button", { name: "Promote exact proposal", exact: true }).click();
 
   const review = page.getByRole("region", { name: "Action review", exact: true });
