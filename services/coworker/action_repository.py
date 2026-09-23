@@ -149,6 +149,7 @@ class ActionRepository:
         return result
 
     def execution_attachments(self, action):
+        validate_approval_scope(action["preview"])
         manifest = action["preview"].get("attachments", [])
         if action["kind"] != "email_send_with_attachments":
             if manifest != []:
@@ -161,7 +162,7 @@ class ActionRepository:
         with self.sessions() as db:
             current = self._attachment_manifest(
                 db,
-                action["preview"]["subject_id"] and action["owner_id"],
+                action["owner_id"],
                 [item["id"] for item in manifest],
             )
             if not hmac.compare_digest(
