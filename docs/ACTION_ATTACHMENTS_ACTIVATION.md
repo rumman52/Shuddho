@@ -73,7 +73,11 @@ The verifier fails closed on redirects, non-HTTPS origins, stale staging evidenc
 
 This increment creates production activation evidence but does **not** automatically flip the feature flag and does not silently authorize broader cohort expansion. Operators must keep the flag off until the reviewed deployment sequence is complete.
 
-A later ledger/enforcement increment should make scale and post-rollback recovery consume this exact activation artifact before attachment-enabled expansion. Until then, do not use this artifact as authorization for cohort growth.
+After this activation verifier is green, record the exact proof through release-ledger schema v9 `action_attachments_verified`.
+
+Schema v9 independently re-verifies the exact staging proof, reviewed rollout, deployment record, runtime capability/provider snapshot, cohort enforcement, operator status and activation artifact before appending to the HMAC-protected release chain. Use `append-action-attachments` as documented in [Controlled Cohort Release Ledger](CONTROLLED_COHORT_RELEASE_LEDGER.md).
+
+Attachment-enabled bounded scale and post-rollback recovery now consume that ledgered proof. Scale/recovery evidence upgrades to schema v4 only when `SHUDDHO_ACTION_ATTACHMENTS_ENABLED=true`; when the flag is off, existing schema-v3 evidence remains unchanged. Recovery additionally requires the schema-v9 event to occur after the exact rollback-completion event.
 
 ## Rollback
 
