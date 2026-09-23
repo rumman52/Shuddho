@@ -15,5 +15,6 @@
   "research": {"status": "pending", "evidence": ""},
   "actions": {"status": "pending", "evidence": ""},
   "microsoft_actions": {"status": "pending", "evidence": ""},
-  "action_selection": {"status": "pending", "evidence": ""}
+  "action_selection": {"status": "pending", "evidence": ""},
+  "action_proposals": {"status": "pending", "evidence": ""}
 }
