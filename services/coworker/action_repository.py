@@ -25,6 +25,7 @@ TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
 
 ATTACHMENT_MAX_COUNT = 3
 ATTACHMENT_MAX_TOTAL_BYTES = 2 * 1024 * 1024
+DOCUMENT_SHARE_MAX_BYTES = 8 * 1024 * 1024
 ATTACHMENT_CONTENT_TYPES = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
@@ -41,7 +42,7 @@ MESSAGES = {
     "failed": "The action was not completed. Review the connection and prepare a new action.",
     "cancelled": "Cancelled before execution.",
     "expired": "The approval window expired before execution. Prepare a new preview.",
-    "outcome_unknown": "The provider result is uncertain. Check your Sent folder or calendar before creating another action. Shuddho will not automatically repeat it.",
+    "outcome_unknown": "The provider result is uncertain. Check the connected service before creating another action. Shuddho will not automatically repeat it.",
 }
 
 
@@ -80,6 +81,11 @@ class ActionRepository:
             return (
                 "action_reminders_disabled",
                 "Calendar reminders are not enabled in this deployment.",
+            )
+        if spec.owned_artifact_required and not self.settings.action_document_sharing_enabled:
+            return (
+                "action_document_sharing_disabled",
+                "Document sharing is not enabled in this deployment.",
             )
         return None
 
@@ -185,6 +191,81 @@ class ActionRepository:
                 "sha256": row.sha256,
             })
         return result
+
+    @staticmethod
+    def _shared_artifact_manifest(db, owner, artifact_ids):
+        ids = [str(value) for value in artifact_ids]
+        if len(ids) != 1:
+            raise CoworkerError(
+                "document_share_artifact",
+                "Select exactly one owned Shuddho artifact.",
+                422,
+            )
+        row = db.scalar(select(Artifact).where(
+            Artifact.owner_id == owner,
+            Artifact.id == ids[0],
+        ))
+        if row is None:
+            raise not_found()
+        base_type = row.content_type.split(";", 1)[0].strip().lower()
+        extension = ATTACHMENT_CONTENT_TYPES.get(base_type)
+        if (
+            extension is None
+            or not row.filename.lower().endswith(extension)
+            or row.byte_size < 1
+        ):
+            raise CoworkerError(
+                "document_share_type",
+                "This Shuddho artifact cannot be shared to Google Drive.",
+                415,
+            )
+        if row.byte_size > DOCUMENT_SHARE_MAX_BYTES:
+            raise CoworkerError(
+                "document_share_size",
+                "The selected artifact exceeds the 8 MB document-sharing limit.",
+                413,
+            )
+        return {
+            "id": row.id,
+            "filename": row.filename,
+            "content_type": base_type,
+            "byte_size": row.byte_size,
+            "sha256": row.sha256,
+        }
+
+    def execution_shared_artifact(self, action):
+        validate_approval_scope(action["preview"])
+        manifest = action["preview"].get("shared_artifact")
+        if action["kind"] != "document_share":
+            if manifest is not None:
+                raise CoworkerError(
+                    "approval_changed",
+                    "Unexpected shared-document metadata was found on this action.",
+                    409,
+                )
+            return None
+        with self.sessions() as db:
+            current = self._shared_artifact_manifest(
+                db,
+                action["owner_id"],
+                [manifest["id"]] if isinstance(manifest, dict) else [],
+            )
+            if not hmac.compare_digest(
+                digest({"shared_artifact": current}),
+                digest({"shared_artifact": manifest}),
+            ):
+                raise CoworkerError(
+                    "document_share_changed",
+                    "The approved document changed or is no longer available.",
+                    409,
+                )
+            row = db.scalar(select(Artifact).where(
+                Artifact.owner_id == action["owner_id"],
+                Artifact.id == current["id"],
+            ))
+            if row is None:
+                raise not_found()
+            return dict(current) | {"object_key": row.object_key}
 
     def execution_attachments(self, action):
         validate_approval_scope(action["preview"])
@@ -352,6 +433,17 @@ class ActionRepository:
                     "Attachment selection does not match this action.",
                     422,
                 )
+            shared_artifact = (
+                self._shared_artifact_manifest(db, owner, request.artifact_ids)
+                if spec.owned_artifact_required
+                else None
+            )
+            if not spec.owned_artifact_required and request.artifact_ids:
+                raise CoworkerError(
+                    "document_share_artifact",
+                    "Shared artifact selection does not match this action.",
+                    422,
+                )
             capability = spec.capability
             if not connection.active or connection.capability != capability:
                 raise CoworkerError("connection_removed", "Connect the matching service before preparing this action.", 409)
@@ -365,7 +457,7 @@ class ActionRepository:
             action_id = str(uuid4())
             expires = utcnow() + timedelta(seconds=spec.approval_ttl_seconds)
             preview = {
-                "version": 3 if spec.attachments_allowed else 2,
+                "version": 4 if spec.owned_artifact_required else 3 if spec.attachments_allowed else 2,
                 "provider": connection.provider,
                 "connection_id": connection.id,
                 "account": connection.email,
@@ -373,6 +465,7 @@ class ActionRepository:
                 "payload": body["payload"],
                 **spec.policy_manifest(),
                 "attachments": attachments,
+                **({"shared_artifact": shared_artifact} if spec.owned_artifact_required else {}),
                 "expires_at": iso(expires),
             }
             preview["approval_scope"] = build_approval_scope(preview)
@@ -552,7 +645,7 @@ class ActionRepository:
             today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             count = db.scalar(select(func.count()).select_from(ExternalAction).where(ExternalAction.owner_id == owner, ExternalAction.approved_at >= today))
             if count >= self.settings.max_daily_actions:
-                raise CoworkerError("action_limit", "Your daily email and calendar action limit has been reached.", 429)
+                raise CoworkerError("action_limit", "Your daily external-action limit has been reached.", 429)
             row.state, row.approved_at = "queued", utcnow()
             row.expires_at = min(
                 aware(row.expires_at),
@@ -599,7 +692,7 @@ class ActionRepository:
             checks = db.scalars(select(AuditEvent).where(AuditEvent.owner_id == owner, AuditEvent.resource_id == action_id,
                                 AuditEvent.action == "action.reconciliation_requested").order_by(AuditEvent.created_at.desc()).limit(10)).all()
             if len(checks) >= 10 or checks and aware(checks[0].created_at) > utcnow() - timedelta(minutes=1):
-                raise CoworkerError("reconciliation_limit", "Wait a minute between calendar checks. After ten checks, inspect Google Calendar directly.", 429)
+                raise CoworkerError("reconciliation_limit", "Wait a minute between result checks. After ten checks, inspect the connected service directly.", 429)
             self._audit(db, owner, action_id, "action.reconciliation_requested")
             return action_dto(row)
 

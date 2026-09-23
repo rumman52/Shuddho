@@ -68,12 +68,15 @@ def bind(preview):
 
 
 def test_registry_declares_existing_consequential_actions():
-    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "calendar_create", "calendar_create_with_reminder"}
+    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "calendar_create", "calendar_create_with_reminder", "document_share"}
     assert action_spec("email_send", "google").capability == "email"
     assert action_spec("calendar_create", "google").reconcile_supported
     assert action_spec("calendar_create_with_reminder", "google").reminders == "single_explicit"
     assert not action_spec("email_send", "google").reconcile_supported
     assert action_spec("email_send_with_attachments", "google").attachments_allowed
+    assert action_spec("document_share", "google").capability == "drive"
+    assert action_spec("document_share", "google").owned_artifact_required
+    assert action_spec("document_share", "google").reconcile_supported
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
 
 
@@ -213,3 +216,61 @@ def test_reminder_approval_scope_binds_exact_minutes_and_policy():
     with pytest.raises(CoworkerError, match="changed"):
         validate_approval_scope(changed)
     assert build_approval_scope(changed)["payload_sha256"] != before
+
+
+def document_share_preview():
+    return {
+        "version": 4,
+        "provider": "google",
+        "connection_id": "connection-drive",
+        "account": "alice@example.test",
+        "subject_id": "google-subject-1",
+        "payload": {
+            "kind": "document_share",
+            "recipients": ["reader@example.org"],
+        },
+        "execution": "immediately_after_approval",
+        "attachments": [],
+        "calendar": None,
+        "guest_notifications": None,
+        "reminders": "none",
+        "document_sharing": {
+            "source": "owned_shuddho_artifact",
+            "access": "reader",
+            "notifications": "recipient",
+        },
+        "shared_artifact": {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "filename": "report.pdf",
+            "content_type": "application/pdf",
+            "byte_size": 2048,
+            "sha256": "c" * 64,
+        },
+        "expires_at": "2026-09-24T14:00:00+00:00",
+    }
+
+
+def test_document_share_scope_binds_recipient_reader_policy_and_artifact():
+    preview = bind(document_share_preview())
+    scope = preview["approval_scope"]
+    assert scope["contract_version"] == 3
+    assert scope["destinations"] == {"recipients": ["reader@example.org"]}
+    assert scope["policy"]["document_sharing"] == preview["document_sharing"]
+    assert scope["shared_artifact"] == preview["shared_artifact"]
+    assert len(scope["shared_artifact_sha256"]) == 64
+    assert validate_approval_scope(preview).kind == "document_share"
+
+    changed = deepcopy(preview)
+    changed["payload"]["recipients"] = ["other@example.org"]
+    with pytest.raises(CoworkerError, match="changed"):
+        validate_approval_scope(changed)
+
+    changed = deepcopy(preview)
+    changed["shared_artifact"]["sha256"] = "d" * 64
+    with pytest.raises(CoworkerError, match="changed"):
+        validate_approval_scope(changed)
+
+
+def test_document_share_is_google_only():
+    with pytest.raises(CoworkerError, match="cannot perform"):
+        action_spec("document_share", "microsoft")

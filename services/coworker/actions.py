@@ -29,6 +29,21 @@ class ActionService:
 
     async def connect(self, owner, request, provider="google"):
         adapter = self.provider_for(provider)
+        if request.capability not in adapter.scopes:
+            raise CoworkerError(
+                "connection_provider_disabled",
+                "This connected service does not support that capability.",
+                409,
+            )
+        if (
+            request.capability == "drive"
+            and not self.repo.settings.action_document_sharing_enabled
+        ):
+            raise CoworkerError(
+                "action_document_sharing_disabled",
+                "Document sharing is not enabled in this deployment.",
+                503,
+            )
         state, verifier = await asyncio.to_thread(
             self.repo.start_oauth,
             owner,
@@ -177,6 +192,46 @@ class ActionService:
             } | {"body": body})
         return result
 
+    async def load_shared_artifact(self, action):
+        if action["kind"] != "document_share":
+            return None
+        if self.storage is None:
+            raise CoworkerError(
+                "document_share_unavailable",
+                "The approved document is unavailable for this worker.",
+                503,
+            )
+        metadata = await asyncio.to_thread(
+            self.repo.execution_shared_artifact,
+            action,
+        )
+        try:
+            body = await asyncio.to_thread(
+                self.storage.get,
+                metadata["object_key"],
+                metadata["byte_size"],
+            )
+        except (FileNotFoundError, CoworkerError):
+            raise CoworkerError(
+                "document_share_unavailable",
+                "The approved document is no longer available.",
+                409,
+            ) from None
+        if (
+            len(body) != metadata["byte_size"]
+            or hashlib.sha256(body).hexdigest() != metadata["sha256"]
+        ):
+            raise CoworkerError(
+                "document_share_changed",
+                "The approved document changed after review.",
+                409,
+            )
+        return {
+            key: value
+            for key, value in metadata.items()
+            if key != "object_key"
+        } | {"body": body}
+
     async def execute(self, action_id):
         action = await asyncio.to_thread(
             self.repo.worker_get,
@@ -196,11 +251,23 @@ class ActionService:
         try:
             attachments = await self.load_attachments(action)
         except CoworkerError:
+            # Preserve the existing external attachment error contract.
             await asyncio.to_thread(
                 self.repo.finish,
                 action_id,
                 "failed",
                 error_code="attachment_unavailable",
+                unstarted=True,
+            )
+            return
+        try:
+            shared_artifact = await self.load_shared_artifact(action)
+        except CoworkerError as error:
+            await asyncio.to_thread(
+                self.repo.finish,
+                action_id,
+                "failed",
+                error_code=error.code,
                 unstarted=True,
             )
             return
@@ -224,6 +291,8 @@ class ActionService:
         try:
             if claimed["kind"] == "email_send_with_attachments":
                 receipt = await adapter.execute(claimed, token, attachments)
+            elif claimed["kind"] == "document_share":
+                receipt = await adapter.execute(claimed, token, shared_artifact)
             else:
                 # Preserve the v1 connector call shape for existing actions and
                 # persisted Temporal workflows; attachments are a new contract.

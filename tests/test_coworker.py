@@ -1874,6 +1874,7 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     assert value["capabilities"]["action_proposals"] is True
     assert value["capabilities"]["action_selection"] is False
     assert value["capabilities"]["action_reminders"] is False
+    assert value["capabilities"]["action_document_sharing"] is False
     assert value["action_providers"] == ["google"]
     assert value["cohort"] == {
         "enforced": True,

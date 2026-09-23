@@ -21,12 +21,15 @@ from .connector_actions import ConnectorFailure
 SCOPES = {
     "email": "https://www.googleapis.com/auth/gmail.send",
     "calendar": "https://www.googleapis.com/auth/calendar.events.owned",
+    "drive": "https://www.googleapis.com/auth/drive.file",
 }
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
+DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
 
 
 class GoogleFailure(ConnectorFailure):
@@ -54,6 +57,39 @@ def event_body(action):
             "reminders": reminders,
             "guestsCanModify": False, "guestsCanInviteOthers": False, "guestsCanSeeOtherGuests": True,
             "extendedProperties": {"private": {"shuddhoAction": action["id"], "shuddhoApproval": action["preview_hash"]}}}
+
+def drive_metadata(action, artifact):
+    return {
+        "name": artifact["filename"],
+        "mimeType": artifact["content_type"],
+        "appProperties": {
+            "shuddhoAction": action["id"],
+            "shuddhoApproval": action["preview_hash"],
+            "shuddhoArtifact": artifact["id"],
+            "shuddhoSha256": artifact["sha256"],
+        },
+    }
+
+
+def drive_multipart(action, artifact):
+    boundary = "shuddho_" + action["id"].replace("-", "")
+    metadata = json.dumps(
+        drive_metadata(action, artifact),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    body = (
+        b"--" + boundary.encode() + b"\r\n"
+        b"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        + metadata
+        + b"\r\n--" + boundary.encode() + b"\r\n"
+        + b"Content-Type: " + artifact["content_type"].encode("ascii") + b"\r\n\r\n"
+        + artifact["body"]
+        + b"\r\n--" + boundary.encode() + b"--\r\n"
+    )
+    return body, "multipart/related; boundary=" + boundary
+
 
 def email_raw(action, attachments=None):
     preview, p = action["preview"], action["preview"]["payload"]
@@ -91,15 +127,44 @@ class GoogleActions:
             "code_challenge": challenge, "code_challenge_method": "S256", "access_type": "offline",
             "prompt": "consent select_account", "include_granted_scopes": "false"})
 
-    async def request(self, method, url, *, token=None, data=None, body=None):
-        # Callers provide only constants or a code-owned UUID event path.
-        if url not in {TOKEN_URL, USERINFO_URL, SEND_URL, EVENTS_URL} and not re.fullmatch(re.escape(EVENTS_URL) + r"/shuddho[a-f0-9]{32}", url):
+    async def request(self, method, url, *, token=None, data=None, body=None, params=None, content=None, headers=None):
+        # Callers provide only constants or code-owned provider-resource paths.
+        event_path = re.fullmatch(re.escape(EVENTS_URL) + r"/shuddho[a-f0-9]{32}", url)
+        permission_path = re.fullmatch(
+            re.escape(DRIVE_FILES_URL) + r"/[A-Za-z0-9_-]{1,256}/permissions",
+            url,
+        )
+        if (
+            url not in {
+                TOKEN_URL,
+                USERINFO_URL,
+                SEND_URL,
+                EVENTS_URL,
+                DRIVE_FILES_URL,
+                DRIVE_UPLOAD_URL,
+            }
+            and not event_path
+            and not permission_path
+        ):
             raise ValueError("Unknown connector endpoint")
         try:
             async with asyncio.timeout(20):
                 async with httpx.AsyncClient(transport=self.transport, timeout=15, follow_redirects=False, trust_env=False) as client:
-                    async with client.stream(method, url, headers={"Authorization": "Bearer " + token} if token else {}, data=data, json=body,
-                                             params={"sendUpdates": "all"} if method == "POST" and url == EVENTS_URL else None) as response:
+                    request_headers = dict(headers or {})
+                    if token:
+                        request_headers["Authorization"] = "Bearer " + token
+                    request_params = params
+                    if request_params is None and method == "POST" and url == EVENTS_URL:
+                        request_params = {"sendUpdates": "all"}
+                    async with client.stream(
+                        method,
+                        url,
+                        headers=request_headers,
+                        data=data,
+                        json=body,
+                        content=content,
+                        params=request_params,
+                    ) as response:
                         if response.status_code < 200 or response.status_code >= 300:
                             # 5xx, redirects, conflicts and timeouts may hide a
                             # successful mutation. Do not blindly repeat it.
@@ -149,7 +214,90 @@ class GoogleActions:
         except (ValueError, KeyError, TypeError):
             raise GoogleFailure("oauth_identity_invalid", definitive=True) from None
 
+    @staticmethod
+    def drive_file_valid(action, artifact, value):
+        try:
+            metadata = drive_metadata(action, artifact)
+            props = value["appProperties"]
+            return (
+                isinstance(value["id"], str)
+                and bool(re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value["id"]))
+                and value.get("trashed") is not True
+                and value.get("name") == metadata["name"]
+                and value.get("mimeType") == metadata["mimeType"]
+                and props == metadata["appProperties"]
+            )
+        except (KeyError, TypeError):
+            return False
+
+    @staticmethod
+    def drive_permission_valid(recipient, value):
+        return (
+            isinstance(value, dict)
+            and value.get("type") == "user"
+            and value.get("role") == "reader"
+            and value.get("deleted") is not True
+            and isinstance(value.get("emailAddress"), str)
+            and value["emailAddress"].casefold() == recipient.casefold()
+        )
+
+    async def execute_document_share(self, action, access_token, artifact):
+        if not isinstance(artifact, dict):
+            raise GoogleFailure("document_share_unavailable", definitive=True)
+        multipart, content_type = drive_multipart(action, artifact)
+        result = await self.request(
+            "POST",
+            DRIVE_UPLOAD_URL,
+            token=access_token,
+            content=multipart,
+            headers={"Content-Type": content_type},
+            params={
+                "uploadType": "multipart",
+                "fields": "id,name,mimeType,appProperties,trashed",
+            },
+        )
+        if not self.drive_file_valid(action, artifact, result):
+            raise GoogleFailure("provider_receipt_invalid")
+        file_id = result["id"]
+        recipient = action["preview"]["payload"]["recipients"][0]
+        try:
+            permission = await self.request(
+                "POST",
+                DRIVE_FILES_URL + "/" + file_id + "/permissions",
+                token=access_token,
+                body={
+                    "type": "user",
+                    "role": "reader",
+                    "emailAddress": recipient,
+                },
+                params={
+                    "sendNotificationEmail": "true",
+                    "fields": "id,type,role,emailAddress,deleted",
+                },
+            )
+        except GoogleFailure:
+            # The file already exists. Any failure after this point is a
+            # partial external mutation and must never be retried blindly.
+            raise GoogleFailure("provider_outcome_unknown") from None
+        if not self.drive_permission_valid(recipient, permission):
+            raise GoogleFailure("provider_receipt_invalid")
+        return {
+            "provider": "google",
+            "provider_id": file_id,
+            "status": "document_shared",
+            "recipient": recipient,
+            "access": "reader",
+            "artifact_sha256": artifact["sha256"],
+            "confirmed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     async def execute(self, action, access_token, attachments=None):
+        if action["kind"] == "document_share":
+            return await self.execute_document_share(
+                action,
+                access_token,
+                attachments,
+            )
         if action["kind"] in {"email_send", "email_send_with_attachments"}:
             result = await self.request(
                 "POST",
@@ -198,7 +346,70 @@ class GoogleActions:
         except (KeyError, ValueError, TypeError, AttributeError):
             raise GoogleFailure("provider_receipt_invalid") from None
 
+    async def reconcile_document_share(self, action, access_token):
+        artifact = action["preview"].get("shared_artifact")
+        if not isinstance(artifact, dict):
+            return None
+        action_id = action["id"]
+        try:
+            result = await self.request(
+                "GET",
+                DRIVE_FILES_URL,
+                token=access_token,
+                params={
+                    "spaces": "drive",
+                    "pageSize": "2",
+                    "q": (
+                        "trashed = false and "
+                        "appProperties has { key='shuddhoAction' and value='"
+                        + action_id
+                        + "' }"
+                    ),
+                    "fields": "files(id,name,mimeType,appProperties,trashed)",
+                },
+            )
+            files = result.get("files")
+            if (
+                not isinstance(files, list)
+                or len(files) != 1
+                or not self.drive_file_valid(action, artifact, files[0])
+            ):
+                return None
+            file_id = files[0]["id"]
+            permissions = await self.request(
+                "GET",
+                DRIVE_FILES_URL + "/" + file_id + "/permissions",
+                token=access_token,
+                params={
+                    "pageSize": "100",
+                    "fields": "permissions(id,type,role,emailAddress,deleted)",
+                },
+            )
+            values = permissions.get("permissions")
+            recipient = action["preview"]["payload"]["recipients"][0]
+            if (
+                not isinstance(values, list)
+                or sum(
+                    self.drive_permission_valid(recipient, item)
+                    for item in values
+                ) != 1
+            ):
+                return None
+            return {
+                "provider": "google",
+                "provider_id": file_id,
+                "status": "document_shared",
+                "recipient": recipient,
+                "access": "reader",
+                "artifact_sha256": artifact["sha256"],
+                "confirmed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except GoogleFailure:
+            return None
+
     async def reconcile(self, action, access_token):
+        if action["kind"] == "document_share":
+            return await self.reconcile_document_share(action, access_token)
         if action["kind"] not in {"calendar_create", "calendar_create_with_reminder"}:
             return None  # Send-only scope intentionally cannot read the mailbox.
         try:

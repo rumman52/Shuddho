@@ -32,6 +32,9 @@ class ActionSpec:
     calendar: str | None = None
     guest_notifications: str | None = None
     reminders: str = "none"
+    owned_artifact_required: bool = False
+    document_access: str | None = None
+    notification_policy: str | None = None
 
     def public(self) -> dict:
         return {
@@ -50,15 +53,23 @@ class ActionSpec:
         return self.reconcile_mode == "provider_receipt"
 
     def policy_manifest(self) -> dict:
-        # Preserve the existing public preview shape. Connector-neutral
-        # normalization happens inside approval_scope.
-        return {
+        # Preserve the existing preview shape for existing actions. New policy
+        # fields are emitted only for the action kind that owns them so old
+        # immutable previews remain verifiable.
+        result = {
             "execution": "immediately_after_approval",
             "attachments": [] if not self.attachments_allowed else None,
             "calendar": self.calendar,
             "guest_notifications": self.guest_notifications,
             "reminders": self.reminders,
         }
+        if self.owned_artifact_required:
+            result["document_sharing"] = {
+                "source": "owned_shuddho_artifact",
+                "access": self.document_access,
+                "notifications": self.notification_policy,
+            }
+        return result
 
 
 ACTION_SPECS = {
@@ -109,6 +120,19 @@ ACTION_SPECS = {
         calendar="primary",
         guest_notifications="all",
         reminders="single_explicit",
+    ),
+    "document_share": ActionSpec(
+        kind="document_share",
+        version="1",
+        capability="drive",
+        providers=frozenset({"google"}),
+        approval_ttl_seconds=15 * 60,
+        execution_ttl_seconds=5 * 60,
+        reconcile_mode="provider_receipt",
+        destination_fields=("recipients",),
+        owned_artifact_required=True,
+        document_access="reader",
+        notification_policy="recipient",
     ),
 }
 
@@ -203,6 +227,42 @@ def attachment_manifest(preview: dict, spec: ActionSpec) -> list[dict]:
     return result
 
 
+def shared_artifact_manifest(preview: dict, spec: ActionSpec) -> dict | None:
+    value = preview.get("shared_artifact")
+    if not spec.owned_artifact_required:
+        if value is not None:
+            raise CoworkerError(
+                "approval_changed",
+                "This action does not allow a shared document.",
+                409,
+            )
+        return None
+    required = {"id", "filename", "content_type", "byte_size", "sha256"}
+    if not isinstance(value, dict) or set(value) != required:
+        raise CoworkerError(
+            "approval_changed",
+            "The approved shared-document metadata could not be verified.",
+            409,
+        )
+    if (
+        not isinstance(value["id"], str)
+        or not isinstance(value["filename"], str)
+        or not isinstance(value["content_type"], str)
+        or not isinstance(value["byte_size"], int)
+        or isinstance(value["byte_size"], bool)
+        or value["byte_size"] < 1
+        or not isinstance(value["sha256"], str)
+        or len(value["sha256"]) != 64
+        or any(char not in "0123456789abcdef" for char in value["sha256"])
+    ):
+        raise CoworkerError(
+            "approval_changed",
+            "The approved shared-document metadata is invalid.",
+            409,
+        )
+    return dict(value)
+
+
 def build_approval_scope(preview: dict) -> dict:
     payload = preview.get("payload")
     if not isinstance(payload, dict):
@@ -221,9 +281,10 @@ def build_approval_scope(preview: dict) -> dict:
         )
     spec = action_spec(kind, provider)
     attachments = attachment_manifest(preview, spec)
+    shared_artifact = shared_artifact_manifest(preview, spec)
     result = {
         "contract": "shuddho.consequential-action",
-        "contract_version": 2 if spec.attachments_allowed else 1,
+        "contract_version": 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
         "action_kind": spec.kind,
         "action_version": spec.version,
         "provider": provider,
@@ -242,12 +303,18 @@ def build_approval_scope(preview: dict) -> dict:
             "guest_notifications": preview.get("guest_notifications"),
             "reminders": preview.get("reminders"),
             "reconcile_mode": spec.reconcile_mode,
+            **({
+                "document_sharing": preview.get("document_sharing"),
+            } if spec.owned_artifact_required else {}),
         },
         "expires_at": preview.get("expires_at"),
     }
     if spec.attachments_allowed:
         result["attachments"] = attachments
         result["attachments_sha256"] = stable_digest(attachments)
+    if spec.owned_artifact_required:
+        result["shared_artifact"] = shared_artifact
+        result["shared_artifact_sha256"] = stable_digest(shared_artifact)
     return result
 
 

@@ -745,3 +745,53 @@ def test_agent_proposals_cannot_invent_calendar_reminders():
             },
             "rationale": "Attempted reminder proposal",
         })
+
+
+def test_google_drive_scope_is_narrow_and_feature_gated(container):
+    enable_actions(container)
+    owner = account(container)
+    with pytest.raises(CoworkerError) as disabled:
+        asyncio.run(container.actions.connect(owner, OAuthStart(capability="drive")))
+    assert disabled.value.code == "action_document_sharing_disabled"
+
+    settings = replace(
+        container.settings,
+        artifact_services_enabled=True,
+        action_document_sharing_enabled=True,
+    )
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+    start = asyncio.run(container.actions.connect(owner, OAuthStart(capability="drive")))
+    params = parse_qs(urlparse(start["authorization_url"]).query)
+    assert params["scope"] == [
+        "openid email https://www.googleapis.com/auth/drive.file"
+    ]
+    assert "https://www.googleapis.com/auth/drive" not in params["scope"][0].split()
+
+
+def test_microsoft_drive_capability_fails_before_oauth_attempt(container):
+    enable_actions(container)
+    settings = replace(
+        container.settings,
+        artifact_services_enabled=True,
+        action_document_sharing_enabled=True,
+        microsoft_actions_enabled=True,
+        microsoft_client_id="microsoft-client",
+        microsoft_client_secret="microsoft-secret",
+        microsoft_redirect_uri="http://127.0.0.1:5173/oauth/microsoft/callback",
+    )
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+    with pytest.raises(CoworkerError) as rejected:
+        asyncio.run(
+            container.actions.connect(
+                account(container),
+                OAuthStart(capability="drive"),
+                "microsoft",
+            )
+        )
+    assert rejected.value.code == "connection_provider_disabled"

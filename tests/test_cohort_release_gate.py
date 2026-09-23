@@ -389,3 +389,10 @@ def test_action_recipients_require_independent_gate_dependency_and_kill_switch()
         no_actions,
         max_cohort_users=25,
     )
+
+
+def test_document_sharing_cannot_enter_production_rollout_before_qualification():
+    value = rollout(actions=True)
+    value["capabilities"]["action_document_sharing"] = True
+    failures = validate_rollout(value, max_cohort_users=25)
+    assert "capabilities" in failures
