@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import re
@@ -101,8 +102,9 @@ def event_body(action: dict) -> dict:
     }
 
 
-def email_body(action: dict) -> dict:
+def email_body(action: dict, attachments=None) -> dict:
     payload = action["preview"]["payload"]
+    attachments = attachments or []
 
     def recipients(values):
         return [
@@ -120,6 +122,15 @@ def email_body(action: dict) -> dict:
             "toRecipients": recipients(payload["to"]),
             "ccRecipients": recipients(payload["cc"]),
             "bccRecipients": recipients(payload["bcc"]),
+            "attachments": [
+                {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": item["filename"],
+                    "contentType": item["content_type"],
+                    "contentBytes": base64.b64encode(item["body"]).decode("ascii"),
+                }
+                for item in attachments
+            ],
         },
         "saveToSentItems": True,
     }
@@ -287,13 +298,13 @@ class MicrosoftActions:
         except (KeyError, TypeError, ValueError):
             raise ConnectorFailure("oauth_identity_invalid", definitive=True) from None
 
-    async def execute(self, action, access_token):
-        if action["kind"] == "email_send":
+    async def execute(self, action, access_token, attachments=None):
+        if action["kind"] in {"email_send", "email_send_with_attachments"}:
             await self.request(
                 "POST",
                 SEND_URL,
                 token=access_token,
-                body=email_body(action),
+                body=email_body(action, attachments),
                 allow_empty=True,
             )
             return {
