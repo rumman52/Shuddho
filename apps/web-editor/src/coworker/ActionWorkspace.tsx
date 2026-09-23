@@ -169,7 +169,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
               const unavailable = !selected && (selectedAttachments.length >= 3 || selectedBytes + item.byte_size > 2 * 1024 * 1024);
               return <label key={item.id}><input type="checkbox" checked={selected} disabled={Boolean(busy) || unavailable}
                 onChange={event => setSelectedAttachments(previous => event.target.checked ? [...previous, item.id] : previous.filter(id => id !== item.id))} />
-                <span>{item.filename} · {(item.byte_size / 1024).toFixed(0)} KB</span></label>;
+                <span>{item.filename} · {(item.byte_size / 1024).toFixed(0)} KB · SHA {item.sha256.slice(0, 8)}{item.created_at ? ` · ${new Date(item.created_at).toLocaleDateString()}` : ""}</span></label>;
             })}
             <small>Up to 3 existing Shuddho artifacts, 2 MB total. The exact artifact hashes are bound to approval.</small>
           </fieldset>}
