@@ -227,6 +227,8 @@ The next bounded autonomy increment adds [non-executable Agent action proposals]
 
 The following staging increment adds [controlled live Agent action-proposal validation](CONTROLLED_STAGING_ACTION_PROPOSALS.md): a deployed intelligent planner must produce exactly one bounded inert email proposal while no matching `ExternalAction` exists; wrong-hash promotion must fail; exact user-selected-connection promotion must create exactly one standalone schema-v2 preview that remains `awaiting_approval`; the saved Agent plan must remain non-consequential; and no approval, execution audit or provider receipt may appear. Passing evidence is written as `action_proposals` for the final release gate.
 
+The next activation-control increment adds [Agent Action-Proposal Production Activation](ACTION_PROPOSALS_ACTIVATION.md): the exact live `action_proposals` proof and exact reviewed rollout are SHA-bound to a reviewed deployment carrying the full Git revision; an authenticated production runtime manifest must match that revision, every reviewed capability, provider set and cohort ceiling exactly; fresh clean post-deploy health is required; and only then is `action_proposals_verified` emitted.
+
 Broader model-created executable actions and connector expansion remain later increments.
 
 ### Consequential actions
