@@ -81,6 +81,10 @@ def zoned_time(value: datetime, zone: ZoneInfo) -> datetime:
     return next(iter(candidates.values()))
 
 
+class EmailSendWithAttachments(EmailSend):
+    kind: Literal["email_send_with_attachments"]
+
+
 class CalendarCreate(Strict):
     kind: Literal["calendar_create"]
     title: Short
@@ -120,12 +124,28 @@ class CalendarCreate(Strict):
         return self
 
 
-ActionPayload = Annotated[EmailSend | CalendarCreate, Field(discriminator="kind")]
+ActionPayload = Annotated[
+    EmailSend | EmailSendWithAttachments | CalendarCreate,
+    Field(discriminator="kind"),
+]
 
 
 class ActionPrepare(Strict):
     connection_id: UUID
     payload: ActionPayload
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=3)
+
+    @model_validator(mode="after")
+    def attachments(self):
+        ids = [str(value) for value in self.attachment_ids]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Use each attachment only once")
+        if self.payload.kind == "email_send_with_attachments":
+            if not ids:
+                raise ValueError("Select at least one approved attachment")
+        elif ids:
+            raise ValueError("Attachments are only supported by the attachment email action")
+        return self
 
 
 class ActionApproval(Strict):
