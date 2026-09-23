@@ -73,9 +73,11 @@ export async function verifyActions(page, folder) {
   await area.getByLabel("Time zone", { exact: true }).fill("Asia/Dhaka");
   await area.getByLabel("Guests", { exact: true }).fill("guest@example.org");
   await area.getByLabel("Event description", { exact: true }).fill("مراجعة ١٢ بنداً مع الفريق.");
+  await area.getByLabel("Reminder", { exact: true }).selectOption("15");
   await area.getByRole("button", { name: "Review action", exact: true }).click();
   await review.getByRole("heading", { name: "Needs your approval" }).waitFor();
   await area.getByText(day + " 10:00:00+06:00", { exact: true }).waitFor();
+  await area.getByText("15 minutes before start", { exact: true }).waitFor();
   await page.locator(".workspace-coworker").evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: join(folder, "screenshots/actions-calendar-preview.png"), fullPage: true });
   await review.getByRole("checkbox").check();
