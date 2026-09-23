@@ -2323,7 +2323,7 @@ def append_action_attachments_event(
         )
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_selection", "action_attachments"):
+    for optional in ("action_attachments", "action_selection", "action_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     expected_providers = normalized_action_providers(rollout)
