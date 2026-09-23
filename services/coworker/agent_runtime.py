@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .agent_planner import deterministic_plan, intelligent_tool_names, proposal_to_plan
+from .agent_planner import deterministic_plan, intelligent_tool_names, planner_action_candidates, proposal_to_plan
 from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
 from .errors import CoworkerError
@@ -49,7 +49,13 @@ class AgentRuntime:
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
         actual_tokens = None
         try:
-            proposal, actual_tokens, _latency = await self.planner.propose(run["goal"], tools, reason="initial")
+            planner_kwargs = {"reason": "initial"}
+            action_candidates = planner_action_candidates(self.container.settings, run["actions"])
+            if action_candidates:
+                planner_kwargs["action_candidates"] = action_candidates
+            proposal, actual_tokens, _latency = await self.planner.propose(
+                run["goal"], tools, **planner_kwargs
+            )
             steps = proposal_to_plan(
                 proposal, run["goal"], run["document_ids"], run["output_language"],
                 self.container.settings, run["actions"],
@@ -82,10 +88,22 @@ class AgentRuntime:
         tools = intelligent_tool_names(self.container.settings)
         if not tools:
             raise CoworkerError("no_agent_tool", "No suitable agent tool is currently enabled.", 409)
+        completed_actions = {
+            receipt["resource_id"] for receipt in (
+                item.get("receipt") for item in current["tool_invocations"] if item.get("receipt")
+            ) if receipt and receipt.get("resource_type") == "action"
+        }
+        remaining_actions = [action for action in run["actions"] if action["id"] not in completed_actions]
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
         actual_tokens = None
         try:
-            proposal, actual_tokens, _latency = await self.planner.propose(run["goal"], tools, reason=reason)
+            planner_kwargs = {"reason": reason}
+            action_candidates = planner_action_candidates(self.container.settings, remaining_actions)
+            if action_candidates:
+                planner_kwargs["action_candidates"] = action_candidates
+            proposal, actual_tokens, _latency = await self.planner.propose(
+                run["goal"], tools, **planner_kwargs
+            )
         except PlannerFailure as error:
             actual_tokens = error.total_tokens
             raise
@@ -93,12 +111,6 @@ class AgentRuntime:
             self.repo.settle_planner_capacity(
                 run_id, reservation["call"], actual_tokens,
             )
-        completed_actions = {
-            receipt["resource_id"] for receipt in (
-                item.get("receipt") for item in current["tool_invocations"] if item.get("receipt")
-            ) if receipt and receipt.get("resource_type") == "action"
-        }
-        remaining_actions = [action for action in run["actions"] if action["id"] not in completed_actions]
         steps = proposal_to_plan(
             proposal, run["goal"], run["document_ids"], run["output_language"],
             self.container.settings, remaining_actions,
