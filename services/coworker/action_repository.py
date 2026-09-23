@@ -18,10 +18,21 @@ from .action_registry import action_spec, build_approval_scope, validate_approva
 from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AuditEvent, Connection, ExternalAction, OAuthAttempt, utcnow
+from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ExternalAction, OAuthAttempt, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
+
+ATTACHMENT_MAX_COUNT = 3
+ATTACHMENT_MAX_TOTAL_BYTES = 2 * 1024 * 1024
+ATTACHMENT_CONTENT_TYPES = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "text/plain": ".txt",
+}
+
 MESSAGES = {
     "awaiting_approval": "Review every detail before approving.",
     "queued": "Approved. Waiting to execute.",
@@ -85,6 +96,94 @@ class ActionRepository:
         if not row:
             raise not_found()
         return row
+
+
+    @staticmethod
+    def _attachment_manifest(db, owner, attachment_ids):
+        ids = [str(value) for value in attachment_ids]
+        if not ids:
+            return []
+        if len(ids) > ATTACHMENT_MAX_COUNT or len(ids) != len(set(ids)):
+            raise CoworkerError(
+                "attachment_invalid",
+                "Choose up to three unique Shuddho artifacts.",
+                422,
+            )
+        rows = db.scalars(select(Artifact).where(
+            Artifact.owner_id == owner,
+            Artifact.id.in_(ids),
+        )).all()
+        by_id = {row.id: row for row in rows}
+        if set(by_id) != set(ids):
+            raise not_found()
+        result = []
+        total = 0
+        for artifact_id in ids:
+            row = by_id[artifact_id]
+            base_type = row.content_type.split(";", 1)[0].strip().lower()
+            extension = ATTACHMENT_CONTENT_TYPES.get(base_type)
+            if (
+                extension is None
+                or not row.filename.lower().endswith(extension)
+                or row.byte_size < 1
+            ):
+                raise CoworkerError(
+                    "attachment_type",
+                    "This Shuddho artifact cannot be attached to email.",
+                    415,
+                )
+            total += row.byte_size
+            if total > ATTACHMENT_MAX_TOTAL_BYTES:
+                raise CoworkerError(
+                    "attachment_size",
+                    "Selected attachments exceed the 2 MB action limit.",
+                    413,
+                )
+            result.append({
+                "id": row.id,
+                "filename": row.filename,
+                "content_type": base_type,
+                "byte_size": row.byte_size,
+                "sha256": row.sha256,
+            })
+        return result
+
+    def execution_attachments(self, action):
+        manifest = action["preview"].get("attachments", [])
+        if action["kind"] != "email_send_with_attachments":
+            if manifest != []:
+                raise CoworkerError(
+                    "approval_changed",
+                    "Unexpected attachments were found on this action.",
+                    409,
+                )
+            return []
+        with self.sessions() as db:
+            current = self._attachment_manifest(
+                db,
+                action["preview"]["subject_id"] and action["owner_id"],
+                [item["id"] for item in manifest],
+            )
+            if not hmac.compare_digest(
+                digest({"attachments": current}),
+                digest({"attachments": manifest}),
+            ):
+                raise CoworkerError(
+                    "attachment_changed",
+                    "An approved attachment changed or is no longer available.",
+                    409,
+                )
+            rows = {
+                row.id: row
+                for row in db.scalars(select(Artifact).where(
+                    Artifact.owner_id == action["owner_id"],
+                    Artifact.id.in_([item["id"] for item in manifest]),
+                ))
+            }
+            return [
+                dict(item) | {"object_key": rows[item["id"]].object_key}
+                for item in manifest
+            ]
 
     def start_oauth(self, owner, capability, provider="google"):
         self.enabled()
@@ -202,6 +301,23 @@ class ActionRepository:
                     503,
                 )
             spec = action_spec(request.payload.kind, connection.provider)
+            if spec.attachments_allowed and not self.settings.action_attachments_enabled:
+                raise CoworkerError(
+                    "action_attachments_disabled",
+                    "Email attachments are not enabled in this deployment.",
+                    503,
+                )
+            attachments = self._attachment_manifest(
+                db,
+                owner,
+                request.attachment_ids,
+            )
+            if bool(attachments) != spec.attachments_allowed:
+                raise CoworkerError(
+                    "attachment_invalid",
+                    "Attachment selection does not match this action.",
+                    422,
+                )
             capability = spec.capability
             if not connection.active or connection.capability != capability:
                 raise CoworkerError("connection_removed", "Connect the matching service before preparing this action.", 409)
@@ -214,13 +330,14 @@ class ActionRepository:
             action_id = str(uuid4())
             expires = utcnow() + timedelta(seconds=spec.approval_ttl_seconds)
             preview = {
-                "version": 2,
+                "version": 3 if spec.attachments_allowed else 2,
                 "provider": connection.provider,
                 "connection_id": connection.id,
                 "account": connection.email,
                 "subject_id": connection.subject,
                 "payload": body["payload"],
                 **spec.policy_manifest(),
+                "attachments": attachments,
                 "expires_at": iso(expires),
             }
             preview["approval_scope"] = build_approval_scope(preview)
@@ -435,7 +552,7 @@ class ActionRepository:
             row = db.get(ExternalAction, action_id)
             if not row:
                 raise not_found()
-            return action_dto(row)
+            return action_dto(row) | {"owner_id": row.owner_id}
 
     def reserve_reconciliation(self, owner, action_id):
         with self.sessions.begin() as db:
