@@ -22,6 +22,8 @@ CONDITIONAL_GATES = {
     "research": "Live search provider retrieval/citation validation passed.",
     "actions": "Live Google approval/execution/receipt validation passed without auto-approval.",
     "action_attachments": "Live approved email attachment validation passed with an immutable artifact manifest and provider receipt.",
+    "action_reminders_google": "Live Google Calendar explicit-reminder validation passed through immutable approval and exact provider receipt checks.",
+    "action_reminders_microsoft": "Live Microsoft Calendar explicit-reminder validation passed through immutable approval and exact provider receipt checks.",
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
     "action_selection": "Live Agent planner selected only opaque attached-action handles and still paused for explicit user approval.",
     "action_proposals": "Live Agent generated only inert typed action proposals; promotion created a separate preview and never auto-approved or executed it.",
@@ -42,6 +44,8 @@ def evaluate(
     require_actions: bool,
     require_microsoft_actions: bool = False,
     require_action_attachments: bool = False,
+    require_action_reminders: bool = False,
+    require_microsoft_action_reminders: bool = False,
     require_action_selection: bool = False,
     require_action_proposals: bool = False,
 ) -> dict:
@@ -54,6 +58,10 @@ def evaluate(
         required["microsoft_actions"] = CONDITIONAL_GATES["microsoft_actions"]
     if require_action_attachments:
         required["action_attachments"] = CONDITIONAL_GATES["action_attachments"]
+    if require_action_reminders:
+        required["action_reminders_google"] = CONDITIONAL_GATES["action_reminders_google"]
+    if require_microsoft_action_reminders:
+        required["action_reminders_microsoft"] = CONDITIONAL_GATES["action_reminders_microsoft"]
     if require_action_selection:
         required["action_selection"] = CONDITIONAL_GATES["action_selection"]
     if require_action_proposals:
@@ -91,6 +99,8 @@ def main() -> None:
     parser.add_argument("--require-actions", action="store_true")
     parser.add_argument("--require-microsoft-actions", action="store_true")
     parser.add_argument("--require-action-attachments", action="store_true")
+    parser.add_argument("--require-action-reminders", action="store_true")
+    parser.add_argument("--require-microsoft-action-reminders", action="store_true")
     parser.add_argument("--require-action-selection", action="store_true")
     parser.add_argument("--require-action-proposals", action="store_true")
     parser.add_argument("--output", type=Path)
@@ -101,6 +111,8 @@ def main() -> None:
         require_actions=args.require_actions,
         require_microsoft_actions=args.require_microsoft_actions,
         require_action_attachments=args.require_action_attachments,
+        require_action_reminders=args.require_action_reminders,
+        require_microsoft_action_reminders=args.require_microsoft_action_reminders,
         require_action_selection=args.require_action_selection,
         require_action_proposals=args.require_action_proposals,
     )
