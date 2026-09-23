@@ -86,4 +86,4 @@ SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false
 
 The flag requires `SHUDDHO_ACTIONS_ENABLED=true`.
 
-This code increment does not authorize production activation. Live staging and release-ledger activation for the new capability should be a separate bounded increment before enabling it for a production cohort.
+Production activation is now guarded by [Controlled Staging Live Approved Email Attachments](CONTROLLED_STAGING_ACTION_ATTACHMENTS.md) and [Approved Attachment Production Activation](ACTION_ATTACHMENTS_ACTIVATION.md). The feature remains disabled by default. Cohort scale/recovery must not treat the standalone activation artifact as expansion authorization until the follow-on release-ledger enforcement increment lands.
