@@ -64,3 +64,30 @@ def test_microsoft_staging_gate_is_independent_from_google_actions():
         require_microsoft_actions=True,
     )
     assert result["decision"] == "GO"
+
+
+def test_action_selection_staging_gate_is_independent():
+    evidence = {
+        key: {"status": "passed", "evidence": "staging-verification"}
+        for key in REQUIRED_GATES
+    }
+    result = evaluate(
+        evidence,
+        require_research=False,
+        require_actions=False,
+        require_action_selection=True,
+    )
+    assert result["decision"] == "NO-GO"
+    assert result["missing"] == ["action_selection"]
+
+    evidence["action_selection"] = {
+        "status": "passed",
+        "evidence": "opaque handle selection paused for approval",
+    }
+    result = evaluate(
+        evidence,
+        require_research=False,
+        require_actions=False,
+        require_action_selection=True,
+    )
+    assert result["decision"] == "GO"
