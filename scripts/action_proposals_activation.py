@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -476,10 +477,6 @@ def main() -> None:
         required=True,
     )
     parser.add_argument(
-        "--token",
-        required=True,
-    )
-    parser.add_argument(
         "--max-cohort-users",
         type=int,
         default=25,
@@ -555,9 +552,14 @@ def main() -> None:
             freshness_minutes=args.freshness_minutes,
         )
 
+        token = os.environ.get("SHUDDHO_PRODUCTION_VERIFICATION_TOKEN", "")
+        if not token:
+            raise ActionProposalsActivationError(
+                "SHUDDHO_PRODUCTION_VERIFICATION_TOKEN is required."
+            )
         remote = fetch_runtime_manifest(
             base_url=args.api_base_url,
-            token=args.token,
+            token=token,
             timeout_seconds=args.timeout_seconds,
         )
         runtime = validate_runtime_manifest(
