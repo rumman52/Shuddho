@@ -42,6 +42,7 @@ CAPABILITY_ATTRS = {
     "research": "research_services_enabled",
     "actions": "actions_enabled",
     "action_attachments": "action_attachments_enabled",
+    "action_reminders": "action_reminders_enabled",
     "action_selection": "agent_action_selection_enabled",
     "action_proposals": "agent_action_proposals_enabled",
 }
@@ -158,14 +159,14 @@ def validate_recovery_configuration(
     for key, attr in CAPABILITY_ATTRS.items():
         expected = (
             capabilities.get(key, False)
-            if key in {"action_attachments", "action_selection", "action_proposals"}
+            if key in {"action_attachments", "action_reminders", "action_selection", "action_proposals"}
             else capabilities.get(key)
         )
         if not isinstance(expected, bool):
             raise RecoveryVerificationError(f"Rollout capability {key!r} must be boolean.")
         actual = bool(
             getattr(settings, attr, False)
-            if key in {"action_attachments", "action_selection", "action_proposals"}
+            if key in {"action_attachments", "action_reminders", "action_selection", "action_proposals"}
             else getattr(settings, attr)
         )
         if actual != expected:
@@ -196,7 +197,7 @@ def validate_recovery_configuration(
         "capabilities": {
             key: bool(
                 capabilities.get(key, False)
-                if key in {"action_attachments", "action_selection", "action_proposals"}
+                if key in {"action_attachments", "action_reminders", "action_selection", "action_proposals"}
                 else capabilities[key]
             )
             for key in ["coworker", *CAPABILITY_ATTRS]
