@@ -88,9 +88,9 @@ If it is enabled, scale activation fails closed unless:
 - the complete release ledger verifies;
 - exactly one schema-v7 `action_selection_verified` event for the current stage binds the exact activation SHA-256.
 
-Scale activation evidence is now schema v2. It records explicit `runtime_requirements`, the action-selection activation SHA-256, and the exact satisfying ledger sequence/hash.
+Historical action-selection-aware scale activation evidence uses schema v2. New verifier output uses schema v3, preserving the same action-selection fields while also carrying action-proposals requirements when applicable.
 
-The later schema-v4 ledger append independently re-verifies the same schema-v7 proof. If schema-v2 evidence says action selection was required but its hash/ledger reference was stripped or changed, the ledger writer rejects the expansion record.
+The later schema-v4 ledger append independently re-verifies the schema-v7 action-selection proof for both historical v2 and new v3 evidence. If a required hash/ledger reference is stripped or changed, the ledger writer rejects the expansion record.
 
 ## Action-proposals release attestation
 
