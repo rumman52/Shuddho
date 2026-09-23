@@ -175,3 +175,14 @@ Production enablement requires all of:
 - `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=true` in the reviewed deployment;
 - passed independent `action_selection` staging evidence;
 - the exact rollback switch `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false`.
+
+
+## Action-selection activation evidence
+
+A final cohort manifest with `action_selection=true` and a passed live staging gate does not by itself prove the deployed backend matches the reviewed configuration.
+
+Before treating `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=true` as activated in production, run [Agent Action Selection Rollout Activation](ACTION_SELECTION_ACTIVATION.md).
+
+The activation verifier binds the exact timestamped `action_selection` staging evidence to the reviewed deployment record, verifies the deployed runtime prerequisites plus cohort enforcement, requires a fresh clean post-deploy operator status, and emits `action_selection_verified`.
+
+This activation artifact is release evidence only. It cannot approve an action, execute a provider mutation, change the cohort, or enable a runtime flag.

@@ -217,6 +217,8 @@ The next bounded Agent/action bridge allows the intelligent planner to select on
 
 The following staging increment adds an executable, non-destructive live proof for that boundary: two synthetic attached drafts are planned through the deployed intelligent Agent, exactly one selected draft must remain bound and paused at `awaiting_approval`, the unselected draft must be released unchanged, and no approval/provider receipt may exist. Passing evidence is written as `action_selection` for the final release gate.
 
+The next activation-control increment binds that exact timestamped `action_selection` staging evidence to a reviewed production deployment, verifies Coworker/Agent/planner/actions/action-selection/cohort runtime controls from the deployed backend, requires fresh clean post-deploy cohort health, and emits `action_selection_verified` before the feature is treated as production-activated.
+
 Broader model-created external actions and connector expansion remain later increments.
 
 ### Consequential actions
