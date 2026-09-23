@@ -225,6 +225,8 @@ The next enforcement increment makes scale and recovery consume exact feature at
 
 The next bounded autonomy increment adds [non-executable Agent action proposals](AGENT_ACTION_PROPOSALS.md). The initial intelligent planner may suggest at most two typed email/calendar payloads, but the proposal is a separate inert database object with no provider, connection, outbox, approval, execution claim or receipt. The user must explicitly promote the exact proposal hash while selecting an owned connection; Shuddho then creates a separate standalone immutable action preview through the existing consequential-action boundary. Promotion never mutates the saved Agent plan and still requires the normal explicit approval before execution.
 
+The following staging increment adds [controlled live Agent action-proposal validation](CONTROLLED_STAGING_ACTION_PROPOSALS.md): a deployed intelligent planner must produce exactly one bounded inert email proposal while no matching `ExternalAction` exists; wrong-hash promotion must fail; exact user-selected-connection promotion must create exactly one standalone schema-v2 preview that remains `awaiting_approval`; the saved Agent plan must remain non-consequential; and no approval, execution audit or provider receipt may appear. Passing evidence is written as `action_proposals` for the final release gate.
+
 Broader model-created executable actions and connector expansion remain later increments.
 
 ### Consequential actions
