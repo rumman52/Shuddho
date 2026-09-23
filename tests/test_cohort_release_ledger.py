@@ -1214,6 +1214,9 @@ def action_proposals_files(tmp_path, *, include_providers=True):
         "environment": "production",
         "cohort": {"reference": "approved-cohort", "max_users": 25},
         "capabilities": capabilities,
+        "incident": {
+            "change_reference": "action-proposals-change-1",
+        },
         "rollback": {
             "action_proposals_kill_switch":
                 "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
