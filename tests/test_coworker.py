@@ -1220,6 +1220,60 @@ def test_intelligent_planner_http_contract_is_bounded_and_private(container):
 
 
 
+
+def test_intelligent_planner_http_action_candidates_are_opaque_and_bounded(container):
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+
+    settings = replace(container.settings, deepseek_api_key="test-only-placeholder")
+    secret_action_id = "11111111-1111-4111-8111-111111111111"
+    secret_preview = "recipient@example.org"
+
+    def respond(request):
+        raw = request.content.decode()
+        assert secret_action_id not in raw
+        assert secret_preview not in raw
+        body = json.loads(raw)
+        user = json.loads(body["messages"][1]["content"])
+        assert user["attached_action_candidates"] == [
+            {"slot": 1, "tool": "email.send"},
+            {"slot": 2, "tool": "calendar.create"},
+        ]
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
+                "steps": [{"tool": "email.draft", "objective": "Draft the update."}],
+                "action_order": [2, 1],
+            })}}],
+            "usage": {"total_tokens": 20},
+        })
+
+    planner = DeepSeekAgentPlanner(settings, httpx.MockTransport(respond))
+    proposal, tokens, _latency = asyncio.run(planner.propose(
+        "Prepare and complete my attached work.",
+        ["email.draft"],
+        action_candidates=[
+            {"slot": 1, "tool": "email.send", "id": secret_action_id, "preview": secret_preview},
+            {"slot": 2, "tool": "calendar.create"},
+        ],
+    ))
+    assert proposal.action_order == [2, 1]
+    assert tokens == 20
+
+    out_of_scope = DeepSeekAgentPlanner(settings, httpx.MockTransport(lambda _: httpx.Response(200, json={
+        "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
+            "steps": [{"tool": "email.draft", "objective": "Draft the update."}],
+            "action_order": [3],
+        })}}],
+        "usage": {"total_tokens": 5},
+    })))
+    with pytest.raises(PlannerFailure) as invalid:
+        asyncio.run(out_of_scope.propose(
+            "Prepare work.",
+            ["email.draft"],
+            action_candidates=[{"slot": 1, "tool": "email.send"}],
+        ))
+    assert invalid.value.code == "invalid_planner_output"
+
+
 def test_agent_runtime_replan_replaces_unstarted_step_directly(container):
     from services.coworker.agent_runtime import AgentRuntime
     from services.coworker.agent_schemas import AgentPlannerProposal, AgentRunCreate
