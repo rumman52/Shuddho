@@ -44,7 +44,7 @@ The immutable preview binds:
 
 The reminder minutes are part of the payload SHA-256 inside the v2 approval scope. Changing the reminder therefore invalidates the approved preview and requires a fresh preview/approval.
 
-Agent action proposals intentionally remain reminder-blind in this increment. Their schema continues to accept only normal `calendar_create`, so model output cannot silently add a reminder.
+Agent action proposals intentionally remain reminder-blind in this increment. Their schema continues to accept only normal `calendar_create`, so model output cannot silently add a reminder. Agent-run action attachment is also fail-closed: only legacy `email_send` and `calendar_create` may be attached to an Agent run, so a reminder action stays under direct user review end to end.
 
 ## Provider execution
 
