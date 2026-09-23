@@ -8,7 +8,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Th
 const recipients = (text: string) => text.split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
 const isCalendar = (kind: ExternalAction["kind"]) => kind === "calendar_create" || kind === "calendar_create_with_reminder";
 const isEmail = (kind: ExternalAction["kind"]) => !isCalendar(kind);
-const title = (item: ExternalAction) => isCalendar(item.preview.payload.kind) ? item.preview.payload.title : item.preview.payload.subject;
+const title = (item: ExternalAction) => "title" in item.preview.payload ? item.preview.payload.title : item.preview.payload.subject;
 const reminderLabel = (minutes: number) => minutes === 1440 ? "1 day before start" : minutes >= 60 ? `${minutes / 60} ${minutes === 60 ? "hour" : "hours"} before start` : `${minutes} minutes before start`;
 
 export default function ActionWorkspace({ client, account, emailDraft, focusActionId, onFocused }: { client: CoworkerClient; account: string; emailDraft: EmailDraft | null; focusActionId?: string | null; onFocused?: () => void }) {
@@ -138,7 +138,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       if (action.state === "awaiting_approval") await client.cancelAction(action.id);
       const p = action.preview.payload;
       setProvider(action.preview.provider);
-      if (!isCalendar(p.kind)) { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setReminderMinutes(0); }
+      if (!("title" in p)) { setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setReminderMinutes(0); }
       else { setMode("calendar"); setAttachmentSelection([]); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); setReminderMinutes(p.kind === "calendar_create_with_reminder" ? p.reminder_minutes_before_start : 0); }
       startNewAction(false); setReload(x => x + 1);
     });
@@ -210,11 +210,11 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
         <button className="cw-primary" disabled={!enabled || !currentConnection || Boolean(busy)}>{busy === "prepare" ? "Preparing…" : "Review action"}<span aria-hidden="true">→</span></button>
       </form> : action ? <>
         <dl className="cw-action-details"><dt>Account</dt><dd><bdi>{action.preview.account}</bdi></dd>
-          {payload && !isCalendar(payload.kind) ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{(action.preview.attachments ?? []).length ? (action.preview.attachments ?? []).map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload && isCalendar(payload.kind) && <>
+          {payload && !("title" in payload) ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{(action.preview.attachments ?? []).length ? (action.preview.attachments ?? []).map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload && "title" in payload && <>
             <dt>Calendar</dt><dd>Primary calendar</dd><dt>Starts</dt><dd>{payload.start_at.replace("T", " ")}</dd><dt>Ends</dt><dd>{payload.end_at.replace("T", " ")}</dd><dt>Time zone</dt><dd>{payload.time_zone}</dd><dt>Guests</dt><dd>{payload.attendees.join(", ") || "None"}</dd><dt>Invitations</dt><dd>Notify all listed guests; guests can see each other</dd><dt>Location</dt><dd dir="auto">{payload.location || "None"}</dd><dt>Reminder</dt><dd>{payload.kind === "calendar_create_with_reminder" ? reminderLabel(payload.reminder_minutes_before_start) : "None"}</dd><dt>Video</dt><dd>None added</dd>
           </>}
         </dl>
-        <div className="cw-action-content" dir="auto"><h3>{title(action)}</h3><p>{payload?.kind === "calendar_create" ? payload.description : payload?.body}</p></div>
+        <div className="cw-action-content" dir="auto"><h3>{title(action)}</h3><p>{payload && "title" in payload ? payload.description : payload?.body}</p></div>
         {action.state === "awaiting_approval" && <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => void edit()}>Edit details</button>}
       </> : null}
     </div>
@@ -228,7 +228,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
           <button className="cw-primary" disabled={!checked || !enabled || Boolean(busy)} onClick={() => void run("approve", async () => updateAction(await client.approveAction(action)))}>{busy === "approve" ? "Approving…" : isEmail(action.kind) ? "Approve & send email" : "Approve & create event"}</button>
         </>}
         {["awaiting_approval", "queued"].includes(action.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void run("cancel", async () => updateAction(await client.cancelAction(action.id)))}>Cancel action</button>}
-        {action.state === "outcome_unknown" && action.kind === "calendar_create" && action.preview.provider === "google" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => updateAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? "Checking calendar…" : "Check calendar result"}</button>}
+        {action.state === "outcome_unknown" && isCalendar(action.kind) && action.preview.provider === "google" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => updateAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? "Checking calendar…" : "Check calendar result"}</button>}
         {action.receipt && <div className="cw-receipt"><strong>{action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "Accepted by Microsoft Graph" : "Created in Microsoft Calendar") : (isEmail(action.kind) ? "Accepted by Gmail" : "Created in Google Calendar")}</strong><p>{action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "This confirms Microsoft Graph accepted the send request. It does not confirm delivery or reading." : "Microsoft Graph confirmed the event. Guest attendance is not yet confirmed.") : (isEmail(action.kind) ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed.")}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small>{action.receipt.provider_id && <code>Receipt: {action.receipt.provider_id}</code>}</div>}
         {action.audit && <details className="cw-action-audit"><summary>Action history</summary><ol>{action.audit.map((item, index) => <li key={index}>{item.action.replace("action.", "").replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</li>)}</ol></details>}
       </>}
