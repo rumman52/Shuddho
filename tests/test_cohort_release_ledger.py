@@ -1274,3 +1274,217 @@ def test_schema_v4_scale_v2_rejects_stripped_action_selection_attestation(tmp_pa
             operator_status=status,
             scale_activation=activation,
         )
+
+
+def recovery_action_selection_files(tmp_path):
+    staging = write_json(tmp_path / "recovery-v7-staging.json", {
+        "action_selection": {
+            "status": "passed",
+            "evidence": "fresh post-rollback action selection proof",
+            "verified_at": "2026-09-23T04:08:00+00:00",
+        },
+    })
+    deployment = write_json(tmp_path / "recovery-v7-deployment.json", {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "recovery-action-selection-change",
+        "current_stage": "canary-5",
+        "deployed_at": "2026-09-23T04:10:00+00:00",
+        "staging_evidence_sha256": file_sha256(staging),
+    })
+    status = write_json(tmp_path / "recovery-v7-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-23T04:11:00+00:00",
+        "breaches": [],
+    })
+    activation = write_json(tmp_path / "recovery-v7-activation.json", {
+        "schema_version": 1,
+        "status": "action_selection_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "canary-5",
+        "verified_at": "2026-09-23T04:12:00+00:00",
+        "change_reference": "recovery-action-selection-change",
+        "deployed_at": "2026-09-23T04:10:00+00:00",
+        "operator_status_generated_at": "2026-09-23T04:11:00+00:00",
+        "runtime": {
+            "coworker_enabled": True,
+            "agent_runtime_enabled": True,
+            "intelligent_planner_enabled": True,
+            "actions_enabled": True,
+            "action_selection_enabled": True,
+            "cohort_enforced": True,
+            "cohort_members_configured": 5,
+            "cohort_max_users": 5,
+        },
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging),
+            "deployment_change": file_sha256(deployment),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return staging, deployment, status, activation
+
+
+def test_schema_v3_recovery_v2_requires_fresh_action_selection_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v2-recovery.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-v2",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+        created_at="2026-09-23T04:00:00+00:00",
+    )
+    rollback_entry = append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v2",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+        created_at="2026-09-23T04:06:00+00:00",
+    )
+
+    staging, deployment, action_status, action_activation = (
+        recovery_action_selection_files(tmp_path)
+    )
+    action_entry = append_action_selection_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="recovery-action-selection-change",
+        current_stage="canary-5",
+        staging_evidence=staging,
+        deployment_change=deployment,
+        operator_status=action_status,
+        action_selection_activation=action_activation,
+        created_at="2026-09-23T04:13:00+00:00",
+    )
+    assert action_entry["sequence"] > rollback_entry["sequence"]
+
+    value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    value["schema_version"] = 2
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": True,
+    }
+    value["microsoft_rollout"] = None
+    value["action_selection"] = {
+        "ledger_sequence": action_entry["sequence"],
+        "ledger_entry_hash": action_entry["entry_hash"],
+    }
+    value["artifact_sha256"]["action_selection_activation"] = (
+        file_sha256(action_activation)
+    )
+    recovery_verification.write_text(json.dumps(value), encoding="utf-8")
+
+    recovered = append_recovery_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v2",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=recovery_status,
+        rollback_completion=rollback_completion,
+        recovery_verification=recovery_verification,
+    )
+    assert recovered["event_type"] == "recovery_verified"
+
+
+def test_schema_v3_recovery_v2_rejects_stripped_action_selection_attestation(tmp_path):
+    ledger = tmp_path / "release-ledger-v2-recovery-stripped.jsonl"
+    (
+        rollout,
+        plan,
+        progression,
+        stop_status,
+        rollback_status,
+        rollback_completion,
+        recovery_status,
+        recovery_verification,
+    ) = recovery_files(tmp_path)
+
+    append_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        event_type="stop_rollout",
+        actor_reference="oncall-primary",
+        change_reference="incident-v2",
+        current_stage="canary-5",
+        next_stage=None,
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=stop_status,
+    )
+    append_rollback_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="incident-v2",
+        current_stage="canary-5",
+        rollout=rollout,
+        canary_plan=plan,
+        progression_decision=progression,
+        operator_status=rollback_status,
+        rollback_completion=rollback_completion,
+    )
+
+    value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    value["schema_version"] = 2
+    value["runtime_requirements"] = {
+        "microsoft_actions_enabled": False,
+        "action_selection_enabled": True,
+    }
+    value["microsoft_rollout"] = None
+    value["action_selection"] = None
+    recovery_verification.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="Action-selection recovery evidence is missing",
+    ):
+        append_recovery_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="incident-v2",
+            current_stage="canary-5",
+            rollout=rollout,
+            canary_plan=plan,
+            progression_decision=progression,
+            operator_status=recovery_status,
+            rollback_completion=rollback_completion,
+            recovery_verification=recovery_verification,
+        )
