@@ -3,10 +3,14 @@ import { CoworkerClient, WorkspaceError } from "./client";
 const storageKey = "shuddho:google-connect";
 // Capture/strip Google's code before Supabase's detectSessionInUrl can treat
 // it as a Shuddho sign-in code. No code or token is persisted by this module.
-export const isGoogleCallback = typeof window !== "undefined" && window.location.pathname === "/oauth/google/callback";
-const callback = isGoogleCallback ? new URLSearchParams(window.location.search) : null;
-if (isGoogleCallback) window.history.replaceState(null, "", "/");
+const isGoogleCallbackRoute = typeof window !== "undefined" && window.location.pathname === "/oauth/google/callback";
+const callback = isGoogleCallbackRoute ? new URLSearchParams(window.location.search) : null;
+if (isGoogleCallbackRoute) window.history.replaceState(null, "", "/");
 let completion: { account: string; promise: Promise<string | null> } | null = null;
+
+export function hasPendingGoogleCallback(): boolean {
+  return callback !== null && completion === null;
+}
 
 export function googleAuthorizationURL(value: string, state: string, origin: string): string {
   const url = new URL(value);
