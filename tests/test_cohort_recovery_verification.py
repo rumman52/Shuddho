@@ -12,7 +12,7 @@ pytest.importorskip("sqlalchemy", reason="Install the coworker extra for recover
 from scripts import cohort_recovery_verification as recovery
 
 
-def rollout(*, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False):
+def rollout(*, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False):
     value = {
         "release_id": "coworker-cohort-001",
         "cohort": {"max_users": 25},
@@ -29,7 +29,7 @@ def rollout(*, action_selection=False, action_proposals=False, action_attachment
             "parallel_execution": True,
             "outcome_replan": True,
             "research": False,
-            "actions": action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading,
+            "actions": action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing,
         },
     }
     if action_selection:
@@ -46,6 +46,8 @@ def rollout(*, action_selection=False, action_proposals=False, action_attachment
         value["capabilities"]["action_document_sharing"] = True
     if action_email_threading:
         value["capabilities"]["action_email_threading"] = True
+    if action_social_publishing:
+        value["capabilities"]["action_social_publishing"] = True
     return value
 
 
@@ -76,7 +78,7 @@ def rollback_completion(tmp_path, rollout_path):
     return value, path
 
 
-def settings(members, *, microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False):
+def settings(members, *, microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False):
     return SimpleNamespace(
         cohort_enforced=True,
         cohort_account_ids=frozenset(members),
@@ -100,6 +102,7 @@ def settings(members, *, microsoft=False, action_selection=False, action_proposa
         action_recipients_enabled=action_recipients,
         action_document_sharing_enabled=action_document_sharing,
         action_email_threading_enabled=action_email_threading,
+        action_social_publishing_enabled=action_social_publishing,
     )
 
 
@@ -1193,3 +1196,34 @@ def test_email_threading_recovery_requires_fresh_activation_and_ledger(tmp_path)
             rollback_path=tmp_path / "rollback.json",
             recovery_deployed_at=datetime(2026, 9, 22, 7, 5, tzinfo=timezone.utc),
         )
+
+
+
+def test_social_publishing_recovery_requires_fresh_activation_and_ledger(tmp_path):
+    value = settings({"a" * 64}, action_social_publishing=True)
+    with pytest.raises(recovery.RecoveryVerificationError, match="required for recovery"):
+        recovery.validate_action_social_publishing_recovery_activation(
+            settings=value,
+            activation_path=None,
+            ledger_path=None,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollback_completion={"verified_at": "2026-09-22T07:00:00+00:00"},
+            rollback_path=tmp_path / "rollback.json",
+            recovery_deployed_at=datetime(
+                2026, 9, 22, 7, 5, tzinfo=timezone.utc
+            ),
+        )
+
+    assert recovery.validate_action_social_publishing_recovery_activation(
+        settings=settings({"a" * 64}, action_social_publishing=False),
+        activation_path=None,
+        ledger_path=None,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+        rollback_completion={"verified_at": "2026-09-22T07:00:00+00:00"},
+        rollback_path=tmp_path / "rollback.json",
+        recovery_deployed_at=datetime(
+            2026, 9, 22, 7, 5, tzinfo=timezone.utc
+        ),
+    ) is None
