@@ -1208,6 +1208,34 @@ def append_recovery_event(
                     "Recovery evidence contains LinkedIn Agent-proposal attestation data while the capability is not required."
                 )
 
+        if recovery_schema == 11:
+            bundle_hash = recovery_hashes.get("release_activation_bundle")
+            bundle_summary = recovery_value.get("release_activation_bundle")
+            if not valid_hash(bundle_hash) or not isinstance(bundle_summary, dict):
+                raise ReleaseLedgerError(
+                    "Schema-v11 recovery evidence is missing the release activation bundle attestation."
+                )
+            require_exact_attested_event(
+                entries,
+                schema_version=RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION,
+                event_type="release_activation_bundle_verified",
+                current_stage=current_stage,
+                next_stage=None,
+                artifact_key="release_activation_bundle",
+                artifact_sha256=bundle_hash,
+                after_sequence=rollback_entry["sequence"],
+                expected_sequence=bundle_summary.get("ledger_sequence"),
+                expected_entry_hash=bundle_summary.get("ledger_entry_hash"),
+                label="Release activation bundle recovery attestation",
+            )
+        elif (
+            recovery_hashes.get("release_activation_bundle") is not None
+            or recovery_value.get("release_activation_bundle") is not None
+        ):
+            raise ReleaseLedgerError(
+                "Historical recovery evidence cannot contain a release activation bundle attestation."
+            )
+
     core = {
         "schema_version": RECOVERY_SCHEMA_VERSION,
         "sequence": len(entries) + 1,
