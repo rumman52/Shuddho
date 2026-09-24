@@ -56,6 +56,7 @@ uv run python -m scripts.release_activation_bundle \
   --rollout /secure/release/cohort-rollout.json \
   --staging-evidence /secure/release/staging-evidence.final.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
+  --model-eval /secure/release/agent-eval.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --activations /secure/release/activation-manifest.json \
   --current-stage canary-5 \
@@ -68,7 +69,7 @@ Passing output has:
 status = release_activation_bundle_verified
 ```
 
-and records the exact rollout/staging hashes, exact verified live-quality artifact hash, required activation keys, every activation artifact hash, satisfying ledger sequence/hash, and the ledger head that was verified.
+and records the exact rollout/staging hashes, exact verified live-planner and live-quality artifact hashes, required activation keys, every activation artifact hash, satisfying ledger sequence/hash, and the ledger head that was verified.
 
 ## Record schema-v16 attestation
 
@@ -84,6 +85,7 @@ uv run python scripts/cohort_release_ledger.py append-release-activation-bundle 
   --rollout /secure/release/cohort-rollout.json \
   --staging-evidence /secure/release/staging-evidence.final.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
+  --model-eval /secure/release/agent-eval.json \
   --release-activation-bundle /secure/release/release-activation-bundle.json
 ```
 
