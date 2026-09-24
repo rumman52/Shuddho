@@ -44,7 +44,7 @@ CI runs the same scorer against fixed known-good drafts without paid provider ca
 First verify the checked-in release templates still match the canonical capability contract:
 
 ```bash
-uv run python scripts/release_contract_check.py
+uv run python -m scripts.release_contract_check
 ```
 
 Then copy `docs/staging-evidence.template.json` outside the repository and replace only the evidence required by the reviewed rollout with:
