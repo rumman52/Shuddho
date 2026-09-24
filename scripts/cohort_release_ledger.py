@@ -4344,7 +4344,7 @@ def append_action_social_publishing_event(
         raise ReleaseLedgerError(
             "Social-publishing rollout does not include the LinkedIn provider."
         )
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_social_publishing", "action_social_publishing", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     if (
