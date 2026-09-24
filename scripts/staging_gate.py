@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+from scripts.release_contract import CONDITIONAL_GATES
+
 REQUIRED_GATES = {
     "ci": "Dedicated repository CI, including Coworker/Temporal recovery, is green.",
     "identity": "Managed identity is configured and owner isolation is verified.",
@@ -18,22 +20,6 @@ REQUIRED_GATES = {
     "fan_in": "Fan-in starts only after every persisted dependency completes.",
     "flag_rollback": "Disabling Agent parallel execution routes new runs back to v1.",
 }
-CONDITIONAL_GATES = {
-    "research": "Live search provider retrieval/citation validation passed.",
-    "actions": "Live Google approval/execution/receipt validation passed without auto-approval.",
-    "action_attachments": "Live approved email attachment validation passed with an immutable artifact manifest and provider receipt.",
-    "action_reminders_google": "Live Google Calendar explicit-reminder validation passed through immutable approval and exact provider receipt checks.",
-    "action_reminders_microsoft": "Live Microsoft Calendar explicit-reminder validation passed through immutable approval and exact provider receipt checks.",
-    "action_recipients": "Live saved-recipient CRUD, exact value preservation, owner isolation, cross-owner denial, deletion and cleanup passed.",
-    "action_document_sharing": "Live Google Drive sharing passed exact owned-artifact hash binding, explicit approval, reader-only permission and provider receipt validation.",
-    "action_email_threading": "Live Gmail owned-thread follow-up passed send-only parent binding, explicit approval, exact recipient/subject preservation and stable provider thread identity.",
-    "action_social_publishing": "Live LinkedIn personal text publishing passed exact member/text binding, no auto-publish, wrong-hash denial, explicit approval and confirmed provider post receipt.",
-    "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
-    "action_selection": "Live Agent planner selected only opaque attached-action handles and still paused for explicit user approval.",
-    "action_proposals": "Live Agent generated only inert typed action proposals; promotion created a separate preview and never auto-approved or executed it.",
-    "agent_linkedin_proposals": "Live intelligent planner generated only an inert personal LinkedIn text proposal; wrong-hash promotion failed; exact user-selected LinkedIn promotion created one unapproved immutable preview with no provider mutation.",
-}
-
 
 def load_evidence(path: Path) -> dict:
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -42,50 +28,21 @@ def load_evidence(path: Path) -> dict:
     return value
 
 
-def evaluate(
+def evaluate_required(
     evidence: dict,
-    *,
-    require_research: bool,
-    require_actions: bool,
-    require_microsoft_actions: bool = False,
-    require_action_attachments: bool = False,
-    require_action_reminders: bool = False,
-    require_microsoft_action_reminders: bool = False,
-    require_action_recipients: bool = False,
-    require_action_document_sharing: bool = False,
-    require_action_email_threading: bool = False,
-    require_action_social_publishing: bool = False,
-    require_action_selection: bool = False,
-    require_action_proposals: bool = False,
-    require_agent_linkedin_proposals: bool = False,
+    conditional_gate_ids: tuple[str, ...] | list[str] = (),
 ) -> dict:
     required = dict(REQUIRED_GATES)
-    if require_research:
-        required["research"] = CONDITIONAL_GATES["research"]
-    if require_actions:
-        required["actions"] = CONDITIONAL_GATES["actions"]
-    if require_microsoft_actions:
-        required["microsoft_actions"] = CONDITIONAL_GATES["microsoft_actions"]
-    if require_action_attachments:
-        required["action_attachments"] = CONDITIONAL_GATES["action_attachments"]
-    if require_action_reminders:
-        required["action_reminders_google"] = CONDITIONAL_GATES["action_reminders_google"]
-    if require_microsoft_action_reminders:
-        required["action_reminders_microsoft"] = CONDITIONAL_GATES["action_reminders_microsoft"]
-    if require_action_recipients:
-        required["action_recipients"] = CONDITIONAL_GATES["action_recipients"]
-    if require_action_document_sharing:
-        required["action_document_sharing"] = CONDITIONAL_GATES["action_document_sharing"]
-    if require_action_email_threading:
-        required["action_email_threading"] = CONDITIONAL_GATES["action_email_threading"]
-    if require_action_social_publishing:
-        required["action_social_publishing"] = CONDITIONAL_GATES["action_social_publishing"]
-    if require_action_selection:
-        required["action_selection"] = CONDITIONAL_GATES["action_selection"]
-    if require_action_proposals:
-        required["action_proposals"] = CONDITIONAL_GATES["action_proposals"]
-    if require_agent_linkedin_proposals:
-        required["agent_linkedin_proposals"] = CONDITIONAL_GATES["agent_linkedin_proposals"]
+    seen: set[str] = set()
+    for key in conditional_gate_ids:
+        if key in seen:
+            continue
+        seen.add(key)
+        description = CONDITIONAL_GATES.get(key)
+        if description is None:
+            raise ValueError(f"Unknown staging gate: {key}")
+        required[key] = description
+
     checks = []
     for key, description in required.items():
         record = evidence.get(key)
@@ -110,6 +67,44 @@ def evaluate(
         "missing": missing,
         "checks": checks,
     }
+
+
+def evaluate(
+    evidence: dict,
+    *,
+    require_research: bool,
+    require_actions: bool,
+    require_microsoft_actions: bool = False,
+    require_action_attachments: bool = False,
+    require_action_reminders: bool = False,
+    require_microsoft_action_reminders: bool = False,
+    require_action_recipients: bool = False,
+    require_action_document_sharing: bool = False,
+    require_action_email_threading: bool = False,
+    require_action_social_publishing: bool = False,
+    require_action_selection: bool = False,
+    require_action_proposals: bool = False,
+    require_agent_linkedin_proposals: bool = False,
+) -> dict:
+    conditional_gate_ids = []
+    for required, key in (
+        (require_research, "research"),
+        (require_actions, "actions"),
+        (require_microsoft_actions, "microsoft_actions"),
+        (require_action_attachments, "action_attachments"),
+        (require_action_reminders, "action_reminders_google"),
+        (require_microsoft_action_reminders, "action_reminders_microsoft"),
+        (require_action_recipients, "action_recipients"),
+        (require_action_document_sharing, "action_document_sharing"),
+        (require_action_email_threading, "action_email_threading"),
+        (require_action_social_publishing, "action_social_publishing"),
+        (require_agent_linkedin_proposals, "agent_linkedin_proposals"),
+        (require_action_selection, "action_selection"),
+        (require_action_proposals, "action_proposals"),
+    ):
+        if required:
+            conditional_gate_ids.append(key)
+    return evaluate_required(evidence, conditional_gate_ids)
 
 
 def main() -> None:
