@@ -17,6 +17,10 @@ from scripts.release_contract import (
     required_feature_flags,
     validate_optional_rollback,
 )
+from scripts.coworker_model_evidence import (
+    ModelEvidenceError,
+    validate_live_model_evidence,
+)
 from scripts.coworker_quality_evidence import (
     QualityEvidenceError,
     validate_live_quality_evidence,
@@ -232,6 +236,7 @@ def evaluate_release(
     *,
     max_cohort_users: int = 25,
     quality_evidence: dict | None = None,
+    model_evidence: dict | None = None,
     rollout_sha256: str | None = None,
 ) -> dict:
     capabilities = rollout.get("capabilities") if isinstance(rollout, dict) else {}
@@ -243,6 +248,38 @@ def evaluate_release(
         action_providers,
     )
     staging = evaluate_staging(evidence, conditional_gate_ids)
+    model_identity = None
+    if model_evidence is not None:
+        model_passed = False
+        try:
+            if rollout_sha256 is None:
+                raise ModelEvidenceError(
+                    "Rollout SHA-256 is required for planner evidence verification."
+                )
+            provider_model = model_evidence.get("provider_model")
+            validate_live_model_evidence(
+                model_evidence,
+                release_id=rollout.get("release_id"),
+                rollout_sha256=rollout_sha256,
+                expected_provider_model=provider_model,
+                min_pass_rate=1.0,
+            )
+            model_identity = (
+                model_evidence["provider_model"],
+                model_evidence["source_revision"],
+            )
+            model_passed = True
+        except ModelEvidenceError:
+            model_passed = False
+        for check in staging["checks"]:
+            if check["id"] == "model":
+                check["passed"] = model_passed
+                break
+        staging["missing"] = [
+            item["id"] for item in staging["checks"] if not item["passed"]
+        ]
+        staging["passed"] = len(staging["checks"]) - len(staging["missing"])
+        staging["decision"] = "GO" if not staging["missing"] else "NO-GO"
     if quality_evidence is not None:
         quality_passed = False
         try:
@@ -256,6 +293,12 @@ def evaluate_release(
                 rollout_sha256=rollout_sha256,
                 min_pass_rate=1.0,
                 min_fact_recall=1.0,
+                expected_provider_model=(
+                    model_identity[0] if model_identity is not None else None
+                ),
+                expected_source_revision=(
+                    model_identity[1] if model_identity is not None else None
+                ),
             )
             quality_passed = True
         except QualityEvidenceError:
@@ -319,6 +362,7 @@ def main() -> None:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--quality-eval", type=Path, required=True)
+    parser.add_argument("--model-eval", type=Path, required=True)
     parser.add_argument("--max-cohort-users", type=int, default=25)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -330,6 +374,7 @@ def main() -> None:
         load_rollout(args.rollout),
         max_cohort_users=args.max_cohort_users,
         quality_evidence=load_evidence(args.quality_eval),
+        model_evidence=load_evidence(args.model_eval),
         rollout_sha256=file_sha256(args.rollout),
     )
     encoded = json.dumps(result, indent=2)

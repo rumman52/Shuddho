@@ -362,6 +362,7 @@ def quality_file(tmp_path: Path, rollout_path: Path) -> Path:
             "release_id": RELEASE_ID,
             "generated_at": "2026-09-24T12:01:00+00:00",
             "provider_model": "deepseek-flash",
+            "source_revision": "1" * 40,
             "fixture_sha256": "a" * 64,
             "rollout_manifest_sha256": file_hash(rollout_path),
             "gate_decision": "PASS",
@@ -429,4 +430,69 @@ def test_schema_v16_rejects_different_quality_evidence(tmp_path, monkeypatch):
             staging_evidence=staging,
             release_activation_bundle=bundle_path,
             quality_evidence=wrong_quality,
+        )
+
+
+def model_file(tmp_path: Path, rollout_path: Path) -> Path:
+    return write_json(
+        tmp_path / "model.json",
+        {
+            "mode": "live",
+            "release_id": RELEASE_ID,
+            "generated_at": "2026-09-24T12:00:00+00:00",
+            "provider_model": "deepseek-flash",
+            "source_revision": "1" * 40,
+            "fixture_sha256": "c" * 64,
+            "rollout_manifest_sha256": file_hash(rollout_path),
+            "gate_decision": "PASS",
+            "failures": [],
+            "gate_failures": [],
+            "pass_rate": 1.0,
+        },
+    )
+
+
+def test_activation_bundle_binds_exact_model_evidence(tmp_path, monkeypatch):
+    rollout, staging, activation, ledger = bundle_files(tmp_path)
+    quality = quality_file(tmp_path, rollout)
+    model = model_file(tmp_path, rollout)
+    monkeypatch.setenv(
+        "SHUDDHO_RELEASE_LEDGER_HMAC_KEY",
+        KEY.decode("ascii"),
+    )
+    bundle = verify_activation_bundle(
+        rollout_path=rollout,
+        staging_evidence_path=staging,
+        quality_evidence_path=quality,
+        model_evidence_path=model,
+        ledger_path=ledger,
+        activation_paths={"action_proposals": activation},
+        current_stage=STAGE,
+    )
+    assert bundle["model_evidence_sha256"] == file_hash(model)
+
+
+def test_activation_bundle_rejects_model_quality_identity_drift(tmp_path, monkeypatch):
+    rollout, staging, activation, ledger = bundle_files(tmp_path)
+    quality = quality_file(tmp_path, rollout)
+    quality_value = json.loads(quality.read_text(encoding="utf-8"))
+    quality_value["source_revision"] = "2" * 40
+    write_json(quality, quality_value)
+    model = model_file(tmp_path, rollout)
+    monkeypatch.setenv(
+        "SHUDDHO_RELEASE_LEDGER_HMAC_KEY",
+        KEY.decode("ascii"),
+    )
+    with pytest.raises(
+        ReleaseActivationBundleError,
+        match="Final controlled-cohort gate is not GO",
+    ):
+        verify_activation_bundle(
+            rollout_path=rollout,
+            staging_evidence_path=staging,
+            quality_evidence_path=quality,
+            model_evidence_path=model,
+            ledger_path=ledger,
+            activation_paths={"action_proposals": activation},
+            current_stage=STAGE,
         )

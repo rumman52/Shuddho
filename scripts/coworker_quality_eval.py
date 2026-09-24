@@ -85,13 +85,15 @@ async def evaluate_live(cases):
     return aggregate("live",cases,out)
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--cases",type=Path,default=DEFAULT_CASES); p.add_argument("--live",action="store_true"); p.add_argument("--release-id",default="ci-quality-contract"); p.add_argument("--rollout",type=Path); p.add_argument("--min-pass-rate",type=float,default=1.0); p.add_argument("--min-fact-recall",type=float,default=1.0); p.add_argument("--max-average-tokens",type=float); p.add_argument("--max-p95-latency-ms",type=int); p.add_argument("--output",type=Path); a=p.parse_args()
-    rollout_sha=None
+    rollout_sha=None; revision=None
     if a.live:
         if a.rollout is None: raise SystemExit("--rollout is required with --live.")
         rollout=json.loads(a.rollout.read_text(encoding="utf-8"))
         if not isinstance(rollout,dict): raise SystemExit("Rollout manifest must contain a JSON object.")
         if rollout.get("release_id")!=a.release_id: raise SystemExit("Quality release_id does not match the rollout manifest.")
         rollout_sha=sha256_file(a.rollout)
+        revision=(os.environ.get("SHUDDHO_SOURCE_REVISION") or os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GITHUB_SHA") or "").strip().lower()
+        if len(revision)!=40 or any(ch not in "0123456789abcdef" for ch in revision): raise SystemExit("Live quality evaluation requires a full lowercase source revision.")
     cases=load_cases(a.cases); r=asyncio.run(evaluate_live(cases)) if a.live else evaluate_offline(cases); failures=[]
     if r["pass_rate"]<a.min_pass_rate: failures.append("pass_rate")
     if r["required_fact_recall"]<a.min_fact_recall: failures.append("required_fact_recall")
@@ -102,7 +104,9 @@ def main():
     r["generated_at"]=datetime.now(timezone.utc).isoformat()
     r["fixture_sha256"]=sha256_file(a.cases)
     r["provider_model"]=os.environ.get("DEEPSEEK_MODEL","deepseek-flash") if a.live else None
-    if rollout_sha is not None: r["rollout_manifest_sha256"]=rollout_sha
+    if rollout_sha is not None:
+        r["rollout_manifest_sha256"]=rollout_sha
+        r["source_revision"]=revision
     enc=json.dumps(r,ensure_ascii=False,indent=2)
     if a.output:a.output.write_text(enc+"\n",encoding="utf-8")
     print(enc)

@@ -31,6 +31,7 @@ uv run python scripts/cohort_release_gate.py \
   --evidence /secure/path/staging-evidence.final.json \
   --rollout /secure/path/cohort-rollout.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
+  --model-eval /secure/release/agent-eval.json \
   --max-cohort-users 25 \
   --output /secure/path/cohort-decision.json
 ```
@@ -41,7 +42,7 @@ A successful decision is exactly:
 GO_CONTROLLED_COHORT
 ```
 
-Any missing technical evidence or rollout control returns `NO-GO` and exits non-zero. The final gate parses the live quality artifact itself and requires it to bind the exact supplied rollout SHA-256; the staging evidence string alone is not trusted as proof of quality.
+Any missing technical evidence or rollout control returns `NO-GO` and exits non-zero. The final gate parses both live planner and live quality artifacts. Both must bind the exact supplied rollout SHA-256, and quality must match the planner artifact's exact provider model and source revision; staging evidence strings alone are not trusted as AI-runtime proof.
 
 ## Required base staging evidence
 

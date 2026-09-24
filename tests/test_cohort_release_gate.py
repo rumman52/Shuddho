@@ -576,6 +576,7 @@ def live_quality(*, rollout_sha256):
         "release_id": "coworker-cohort-001",
         "generated_at": "2026-09-24T12:00:00+00:00",
         "provider_model": "deepseek-flash",
+        "source_revision": "1" * 40,
         "fixture_sha256": "a" * 64,
         "rollout_manifest_sha256": rollout_sha256,
         "gate_decision": "PASS",
@@ -607,3 +608,58 @@ def test_final_gate_accepts_rollout_bound_live_quality():
     )
     assert result["decision"] == "GO_CONTROLLED_COHORT"
     assert "quality" not in result["staging"]["missing"]
+
+
+def live_model(*, rollout_sha256, model="deepseek-flash", revision="1" * 40):
+    return {
+        "mode": "live",
+        "release_id": "coworker-cohort-001",
+        "generated_at": "2026-09-24T12:00:00+00:00",
+        "provider_model": model,
+        "source_revision": revision,
+        "fixture_sha256": "c" * 64,
+        "rollout_manifest_sha256": rollout_sha256,
+        "gate_decision": "PASS",
+        "failures": [],
+        "gate_failures": [],
+        "pass_rate": 1.0,
+    }
+
+
+def test_final_gate_rejects_quality_from_different_model_or_revision():
+    rollout_hash = "b" * 64
+    quality = live_quality(rollout_sha256=rollout_hash)
+    quality["provider_model"] = "deepseek-other"
+    result = evaluate_release(
+        evidence(),
+        rollout(),
+        quality_evidence=quality,
+        model_evidence=live_model(rollout_sha256=rollout_hash),
+        rollout_sha256=rollout_hash,
+    )
+    assert result["decision"] == "NO-GO"
+    assert "quality" in result["staging"]["missing"]
+
+    quality = live_quality(rollout_sha256=rollout_hash)
+    quality["source_revision"] = "2" * 40
+    result = evaluate_release(
+        evidence(),
+        rollout(),
+        quality_evidence=quality,
+        model_evidence=live_model(rollout_sha256=rollout_hash),
+        rollout_sha256=rollout_hash,
+    )
+    assert result["decision"] == "NO-GO"
+    assert "quality" in result["staging"]["missing"]
+
+
+def test_final_gate_accepts_matching_model_and_quality_runtime_identity():
+    rollout_hash = "b" * 64
+    result = evaluate_release(
+        evidence(),
+        rollout(),
+        quality_evidence=live_quality(rollout_sha256=rollout_hash),
+        model_evidence=live_model(rollout_sha256=rollout_hash),
+        rollout_sha256=rollout_hash,
+    )
+    assert result["decision"] == "GO_CONTROLLED_COHORT"
