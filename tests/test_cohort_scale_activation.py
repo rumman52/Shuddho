@@ -1549,3 +1549,30 @@ def test_scale_rejects_release_bundle_for_different_rollout(tmp_path):
             decision(),
             rollout_path,
         )
+
+
+def test_scale_rejects_decision_from_different_rollout(tmp_path):
+    rollout_path = tmp_path / "current-rollout-decision.json"
+    rollout_path.write_text(json.dumps(_valid_scale_rollout()), encoding="utf-8")
+    rollout_hash = sha256_file(rollout_path)
+    bundle_path = tmp_path / "release-activation-bundle-decision.json"
+    bundle_path.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "release_activation_bundle_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "rollout_manifest_sha256": rollout_hash,
+    }), encoding="utf-8")
+    decision_value = decision()
+    decision_value["rollout_manifest_sha256"] = "0" * 64
+
+    with pytest.raises(
+        ScaleActivationError,
+        match="Scale decision does not bind the current rollout manifest",
+    ):
+        validate_release_activation_bundle(
+            bundle_path,
+            tmp_path / "unused-ledger.jsonl",
+            decision_value,
+            rollout_path,
+        )

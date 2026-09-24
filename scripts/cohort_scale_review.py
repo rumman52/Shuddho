@@ -7,6 +7,8 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.cohort_release_gate import load_rollout
+
 PLAN_KEYS = {
     "release_id",
     "current_stage",
@@ -159,7 +161,13 @@ def require_fresh(value: dict, *, label: str, freshness_minutes: int, now: datet
     return generated
 
 
-def validate_capacity(value: dict, plan: dict, now: datetime) -> datetime:
+def validate_capacity(
+    value: dict,
+    plan: dict,
+    now: datetime,
+    *,
+    rollout_sha256: str | None = None,
+) -> datetime:
     if value.get("release_id") != plan["release_id"]:
         raise ScaleReviewError("Capacity qualification release_id does not match.")
     if value.get("decision") != "ELIGIBLE_FOR_CAPACITY_REVIEW":
@@ -168,6 +176,16 @@ def validate_capacity(value: dict, plan: dict, now: datetime) -> datetime:
         raise ScaleReviewError("Capacity qualification final_stage does not match the current scale stage.")
     if value.get("failures") != []:
         raise ScaleReviewError("Capacity qualification contains failures.")
+    capacity_rollout = value.get("rollout_manifest_sha256")
+    if rollout_sha256 is not None:
+        if capacity_rollout != rollout_sha256:
+            raise ScaleReviewError(
+                "Capacity qualification does not bind the current rollout manifest."
+            )
+    elif capacity_rollout is not None:
+        raise ScaleReviewError(
+            "Capacity qualification carries rollout identity but no rollout was supplied."
+        )
     return require_fresh(
         value,
         label="capacity qualification",
@@ -217,7 +235,12 @@ def validate_operator_status(value: dict, plan: dict, *, not_before: datetime, n
     return generated
 
 
-def evaluate_review(plan: dict, review: dict) -> dict:
+def evaluate_review(
+    plan: dict,
+    review: dict,
+    *,
+    rollout_manifest_sha256: str | None = None,
+) -> dict:
     failures = []
 
     def fail(metric: str, actual, threshold, reason: str) -> None:
@@ -283,6 +306,9 @@ def evaluate_review(plan: dict, review: dict) -> dict:
         "proposed_stage": review["proposed_stage"],
         "proposed_max_users": proposed_users,
         "max_allowed_next_users": max_next_users,
+        **({
+            "rollout_manifest_sha256": rollout_manifest_sha256,
+        } if rollout_manifest_sha256 is not None else {}),
         "required_provider_concurrency_quota": required_provider_quota,
         "required_monthly_budget_usd": required_budget,
         "failures": failures,
@@ -305,6 +331,7 @@ def main() -> None:
     )
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
+    parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--capacity-qualification", type=Path, required=True)
     parser.add_argument("--quality-eval", type=Path, required=True)
     parser.add_argument("--operator-status", type=Path, required=True)
@@ -314,11 +341,22 @@ def main() -> None:
     try:
         plan = load_plan(args.plan)
         review = load_review(args.review, plan["release_id"])
+        rollout = load_rollout(args.rollout)
+        if rollout.get("release_id") != plan["release_id"]:
+            raise ScaleReviewError(
+                "Rollout manifest release_id does not match the scale-review plan."
+            )
+        rollout_sha256 = sha256_file(args.rollout)
         capacity = load_json(args.capacity_qualification, "capacity qualification")
         quality = load_json(args.quality_eval, "quality evaluation")
         operator = load_json(args.operator_status, "operator status")
         now = datetime.now(timezone.utc)
-        capacity_time = validate_capacity(capacity, plan, now)
+        capacity_time = validate_capacity(
+            capacity,
+            plan,
+            now,
+            rollout_sha256=rollout_sha256,
+        )
         quality_time = validate_quality(quality, plan, now)
         operator_time = validate_operator_status(
             operator,
@@ -326,12 +364,17 @@ def main() -> None:
             not_before=max(capacity_time, quality_time),
             now=now,
         )
-        result = evaluate_review(plan, review)
+        result = evaluate_review(
+            plan,
+            review,
+            rollout_manifest_sha256=rollout_sha256,
+        )
         result["generated_at"] = now.isoformat()
         result["operator_status_generated_at"] = operator_time.isoformat()
         result["artifact_sha256"] = {
             "plan": sha256_file(args.plan),
             "review": sha256_file(args.review),
+            "rollout_manifest": rollout_sha256,
             "capacity_qualification": sha256_file(args.capacity_qualification),
             "quality_eval": sha256_file(args.quality_eval),
             "operator_status": sha256_file(args.operator_status),

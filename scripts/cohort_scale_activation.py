@@ -862,6 +862,11 @@ def validate_release_activation_bundle(
             "Current rollout manifest release_id does not match."
         )
     rollout_sha = sha256_file(rollout_path)
+    decision_rollout_sha = decision.get("rollout_manifest_sha256")
+    if decision_rollout_sha is not None and decision_rollout_sha != rollout_sha:
+        raise ScaleActivationError(
+            "Scale decision does not bind the current rollout manifest."
+        )
     if value.get("rollout_manifest_sha256") != rollout_sha:
         raise ScaleActivationError(
             "Release activation bundle does not bind the current rollout manifest."

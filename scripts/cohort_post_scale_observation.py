@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.cohort_canary_progression import load_history, parse_time
+from scripts.cohort_release_gate import load_rollout
 from scripts.cohort_release_ledger import file_sha256, ledger_key, read_entries, verify_entries
 
 
@@ -125,6 +126,29 @@ def load_activation(path: Path, release_id: str) -> dict:
     return value
 
 
+def validate_rollout_continuity(
+    activation: dict,
+    rollout_path: Path,
+) -> str | None:
+    rollout = load_rollout(rollout_path)
+    if rollout.get("release_id") != activation["release_id"]:
+        raise PostScaleObservationError(
+            "Rollout manifest release_id does not match the scale activation."
+        )
+    if activation.get("schema_version") != 12:
+        return None
+    hashes = activation.get("artifact_sha256")
+    rollout_hash = file_sha256(rollout_path)
+    if (
+        not isinstance(hashes, dict)
+        or hashes.get("rollout_manifest") != rollout_hash
+    ):
+        raise PostScaleObservationError(
+            "Schema-v12 scale activation does not bind the current rollout manifest."
+        )
+    return rollout_hash
+
+
 def activation_epoch(
     activation_path: Path,
     ledger_path: Path,
@@ -197,6 +221,7 @@ def evaluate_observation(
     *,
     epoch_start: datetime,
     now: datetime | None = None,
+    rollout_manifest_sha256: str | None = None,
 ) -> dict:
     if activation["release_id"] != plan["release_id"]:
         raise PostScaleObservationError(
@@ -218,6 +243,9 @@ def evaluate_observation(
         "next_stage": None,
         "stage_max_users": stage_max,
         "epoch_start": epoch_start.isoformat(),
+        **({
+            "rollout_manifest_sha256": rollout_manifest_sha256,
+        } if rollout_manifest_sha256 is not None else {}),
     }
     if not post:
         return {
@@ -357,6 +385,7 @@ def main() -> None:
     )
     parser.add_argument("--history-dir", type=Path, required=True)
     parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--scale-activation", type=Path, required=True)
     parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--output", type=Path)
@@ -365,6 +394,10 @@ def main() -> None:
     try:
         plan = load_plan(args.plan)
         activation = load_activation(args.scale_activation, plan["release_id"])
+        rollout_manifest_sha256 = validate_rollout_continuity(
+            activation,
+            args.rollout,
+        )
         epoch = activation_epoch(
             args.scale_activation,
             args.release_ledger,
@@ -375,6 +408,7 @@ def main() -> None:
             activation,
             plan,
             epoch_start=epoch,
+            rollout_manifest_sha256=rollout_manifest_sha256,
         )
     except (PostScaleObservationError, OSError, ValueError) as error:
         raise SystemExit(str(error)) from None

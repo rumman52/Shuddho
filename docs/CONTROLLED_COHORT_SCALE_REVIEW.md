@@ -46,11 +46,14 @@ These are release-policy defaults and should be revised from real measurements a
 uv run python scripts/cohort_scale_review.py \
   --plan docs/cohort-scale-review-plan.template.json \
   --review /secure/release/cohort-scale-review.json \
+  --rollout /secure/release/cohort-rollout.json \
   --capacity-qualification /secure/release/capacity-qualification.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
   --operator-status /secure/release/post-review-operator-status.json \
   --output /secure/release/bounded-scale-decision.json
 ```
+
+The scale review requires the capacity qualification to bind the exact supplied rollout manifest and carries that same SHA-256 into the bounded-scale decision.
 
 The only successful decision is `ELIGIBLE_FOR_BOUNDED_EXPANSION`. Any policy or evidence failure returns `HOLD_AT_CURRENT_COHORT` or fails closed on invalid evidence.
 

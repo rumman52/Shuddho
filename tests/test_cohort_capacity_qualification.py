@@ -227,3 +227,27 @@ def test_capacity_gate_rejects_unearned_dynamic_stage():
             operator_status=status(),
             now=datetime(2026, 9, 22, 8, 45, tzinfo=timezone.utc),
         )
+
+
+def test_capacity_propagates_dynamic_rollout_identity():
+    dynamic_plan = plan()
+    dynamic_plan["final_stage"] = "cohort-40"
+    progression_value = {
+        "decision": "ELIGIBLE_FOR_REQUALIFICATION",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-40",
+        "next_stage": None,
+        "stage_max_users": 40,
+        "epoch_start": "2026-09-22T08:00:00+00:00",
+        "rollout_manifest_sha256": "b" * 64,
+        "reasons": [],
+    }
+    value = qualify(
+        capacity_plan=dynamic_plan,
+        progression=progression_value,
+        simulated=report("simulated"),
+        live=report("live_provider"),
+        operator_status=status(),
+        now=datetime(2026, 9, 22, 8, 45, tzinfo=timezone.utc),
+    )
+    assert value["rollout_manifest_sha256"] == "b" * 64
