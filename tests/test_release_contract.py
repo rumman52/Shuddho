@@ -9,6 +9,7 @@ from scripts.release_contract import (
     OPTIONAL_CAPABILITY_KEYS,
     expected_rollout_capability_keys,
     expected_staging_evidence_keys,
+    normalize_capabilities,
     required_conditional_gate_ids,
 )
 from scripts.release_contract_check import validate_templates
@@ -66,6 +67,26 @@ def test_required_gate_resolution_is_provider_aware_and_ordered():
         "action_reminders_microsoft",
         "action_social_publishing",
     )
+
+
+def test_capability_normalization_defaults_every_optional_capability_off():
+    value = {
+        "coworker": True,
+        "actions": True,
+        "action_proposals": True,
+    }
+    normalized = normalize_capabilities(value)
+
+    assert normalized["coworker"] is True
+    assert normalized["actions"] is True
+    assert normalized["action_proposals"] is True
+    for capability in OPTIONAL_CAPABILITY_KEYS - {"action_proposals"}:
+        assert normalized[capability] is False
+    assert value == {
+        "coworker": True,
+        "actions": True,
+        "action_proposals": True,
+    }
 
 
 def test_template_checker_fails_when_new_gate_is_missing():
