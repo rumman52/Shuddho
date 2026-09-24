@@ -139,6 +139,7 @@ This prevents a load test from "passing" while leaving the actual cohort unhealt
 ```bash
 uv run python scripts/cohort_capacity_qualification.py \
   --plan docs/cohort-capacity-plan.template.json \
+  --rollout /secure/release/cohort-rollout.json \
   --progression /secure/release/cohort-25-progression.json \
   --simulated-report /secure/capacity/simulated.json \
   --live-report /secure/capacity/live-provider.json \
@@ -146,7 +147,7 @@ uv run python scripts/cohort_capacity_qualification.py \
   --output /secure/release/capacity-qualification.json
 ```
 
-A successful output means only that the measured evidence is eligible for human capacity review.
+A successful output means only that the measured evidence is eligible for human capacity review. New operational runs bind the exact rollout-manifest SHA-256 into the qualification so later scale review cannot reuse capacity evidence across a changed rollout.
 
 It is **not** authorization to:
 - exceed 25 users;
