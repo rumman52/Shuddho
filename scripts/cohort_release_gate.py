@@ -350,6 +350,7 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         require_action_social_publishing=require_action_social_publishing,
         require_action_selection=require_action_selection,
         require_action_proposals=require_action_proposals,
+        require_agent_linkedin_proposals=require_agent_linkedin_proposals,
     )
     cohort_record = evidence.get("cohort_admission")
     cohort_ref = cohort_record.get("evidence") if isinstance(cohort_record, dict) else None
@@ -372,8 +373,6 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         staging["decision"] = "NO-GO"
         staging["missing"].append("cohort_admission")
     rollout_failures = validate_rollout(rollout, max_cohort_users=max_cohort_users)
-    if require_agent_linkedin_proposals:
-        rollout_failures = sorted(set([*rollout_failures, "agent_linkedin_proposals_release_gate_pending"]))
     decision = "GO_CONTROLLED_COHORT" if staging["decision"] == "GO" and not rollout_failures else "NO-GO"
     return {
         "decision": decision,
