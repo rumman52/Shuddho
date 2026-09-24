@@ -1,6 +1,6 @@
 # Non-Executable Agent Action Proposals
 
-This increment allows Shuddho's bounded intelligent planner to suggest a typed email or calendar action without granting the model an executable action capability.
+This increment allows Shuddho's bounded intelligent planner to suggest a typed email or calendar action without granting the model an executable action capability. A later bounded extension adds separately gated [inert LinkedIn proposals](AGENT_LINKEDIN_PROPOSALS.md); the existing production qualification in this document does not by itself authorize that extension.
 
 The feature is disabled by default:
 
@@ -41,7 +41,7 @@ The database lifecycle is bounded to `suggested → promoting → promoted`, `di
 
 Only the initial intelligent planning pass may produce proposals. Deterministic fallback and replanning cannot generate new proposals.
 
-The planner may return at most two proposals, and each payload must validate against the same strict `EmailSend` or `CalendarCreate` Pydantic schema used by real actions.
+The planner may return at most two proposals. The release-qualified base path accepts the same strict `EmailSend` or `CalendarCreate` Pydantic schema used by real actions. `LinkedInSocialPublish` is accepted only by the separately gated extension and remains production NO-GO until its own release qualification is completed.
 
 The planner is instructed not to invent missing recipients, times, time zones or content. A proposal remains untrusted model output even after schema validation; it becomes actionable only after explicit user promotion.
 
@@ -82,9 +82,10 @@ It does not:
 
 - approve the action;
 - queue execution;
-- call Google or Microsoft;
+- call Google, Microsoft, or LinkedIn;
 - create an event;
-- send an email.
+- send an email;
+- publish a social post.
 
 The existing `POST /api/v1/actions/{id}/approve` endpoint remains the only user approval path, and it requires the immutable preview hash.
 
