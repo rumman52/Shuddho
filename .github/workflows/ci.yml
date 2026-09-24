@@ -45,6 +45,8 @@ jobs:
           services/api/shuddho_api/llm_gemma.py
       - name: Run Python tests
         run: uv run pytest -q
+      - name: Verify controlled-release contract
+        run: uv run python -m scripts.release_contract_check
 
       - name: Install JavaScript dependencies
         run: npm ci

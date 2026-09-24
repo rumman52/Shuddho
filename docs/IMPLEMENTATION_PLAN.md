@@ -293,3 +293,12 @@ The next bounded usability increment is [Owned Action Recipient Directory](APPRO
 ## Wave D — inert LinkedIn Agent proposals
 
 After approval-bound LinkedIn personal text publishing is independently release-qualified, the next bounded Agent usability increment is [Inert LinkedIn Agent Action Proposals](AGENT_LINKEDIN_PROPOSALS.md). It adds no executable Agent tool: the planner may suggest exact personal post text only behind a separate nested flag, while the signed-in user chooses the owned LinkedIn connection, promotes the exact proposal hash into the existing immutable action preview, and approves separately. The capability is release-qualified for a reviewed controlled cohort while remaining default-off: production enablement requires the dedicated live inert-proposal staging proof, exact runtime activation, schema-v15 `agent_linkedin_proposals_verified` release-ledger attestation, and schema-v10 scale/recovery consumption documented in [LinkedIn Agent Proposal Production Activation](LINKEDIN_AGENT_PROPOSALS_ACTIVATION.md).
+
+## Release control — canonical capability contract
+
+PR #197 unifies the controlled-release contract after the Wave D action and Agent-proposal increments accumulated independent staging gates, provider requirements, dependencies and rollback switches and the release-control surface had begun to drift across code and checked-in templates. This increment introduces `scripts/release_contract.py` as the canonical machine-readable contract for base staging gates and every optional controlled-cohort capability.
+
+The final cohort gate now derives optional dependency checks, provider requirements, exact kill switches, required live evidence and reported feature-gate requirements from that contract. LinkedIn-bound capabilities fail closed if the rollout omits LinkedIn and falls back to the legacy Google-only provider default. `scripts/release_contract_check.py` verifies the staging-evidence and rollout templates against the same contract, and CI regression tests make future capability/template drift a build failure.
+
+This is a release-safety/control-plane increment only. It does not enable a feature flag, widen Agent authority, approve an action, execute a provider mutation, expand a cohort or replace the existing feature-specific production activation and release-ledger attestations.
+
