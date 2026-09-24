@@ -23,6 +23,7 @@ from scripts.cohort_scale_activation import (
     validate_action_document_sharing_activation,
     validate_action_email_threading_activation,
     validate_action_social_publishing_activation,
+    validate_agent_linkedin_proposals_activation,
     validate_scale_decision,
     sha256_file,
 )
@@ -64,7 +65,7 @@ def operator():
     }
 
 
-def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False):
+def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, agent_linkedin_proposals=False):
     ids = {allowed}
     ids.update(f"member-{index}" for index in range(max(0, members - 1)))
     if denied in ids:
@@ -82,6 +83,7 @@ def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"
         action_document_sharing_enabled=action_document_sharing,
         action_email_threading_enabled=action_email_threading,
         action_social_publishing_enabled=action_social_publishing,
+        agent_linkedin_proposals_enabled=agent_linkedin_proposals,
     )
 
 
@@ -1400,3 +1402,80 @@ def test_social_publishing_scale_requires_activation_and_v14_ledger(tmp_path):
         decision(),
         settings(action_social_publishing=False),
     ) is None
+
+
+def test_linkedin_agent_proposal_scale_requires_schema_v15_activation(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    assert validate_agent_linkedin_proposals_activation(
+        None,
+        ledger,
+        decision(),
+        settings(agent_linkedin_proposals=False),
+    ) is None
+
+    with pytest.raises(ScaleActivationError, match="agent-linkedin-proposals-activation"):
+        validate_agent_linkedin_proposals_activation(
+            None,
+            ledger,
+            decision(),
+            settings(
+                action_proposals=True,
+                action_social_publishing=True,
+                agent_linkedin_proposals=True,
+            ),
+        )
+
+
+def test_scale_v10_evidence_binds_linkedin_agent_proposal_attestation(tmp_path):
+    scale_path = tmp_path / "scale-v10.json"
+    deploy_path = tmp_path / "deploy-v10.json"
+    status_path = tmp_path / "status-v10.json"
+    policy_path = tmp_path / "policy-v10.json"
+    proposals_path = tmp_path / "proposals-v10.json"
+    social_path = tmp_path / "social-v10.json"
+    linkedin_path = tmp_path / "linkedin-agent-v10.json"
+    for item in (
+        scale_path,
+        deploy_path,
+        status_path,
+        policy_path,
+        proposals_path,
+        social_path,
+        linkedin_path,
+    ):
+        item.write_text("{}", encoding="utf-8")
+
+    evidence = build_evidence(
+        decision=decision(),
+        deployment=deployment(),
+        operator_status=operator(),
+        settings=settings(
+            action_proposals=True,
+            action_social_publishing=True,
+            agent_linkedin_proposals=True,
+        ),
+        scale_decision_path=scale_path,
+        deployment_change_path=deploy_path,
+        operator_status_path=status_path,
+        provider_policy_activation_path=policy_path,
+        action_proposals_activation_path=proposals_path,
+        action_proposals_attestation={
+            "ledger_sequence": 8,
+            "ledger_entry_hash": "8" * 64,
+        },
+        action_social_publishing_activation_path=social_path,
+        action_social_publishing_attestation={
+            "ledger_sequence": 14,
+            "ledger_entry_hash": "e" * 64,
+        },
+        agent_linkedin_proposals_activation_path=linkedin_path,
+        agent_linkedin_proposals_attestation={
+            "ledger_sequence": 15,
+            "ledger_entry_hash": "f" * 64,
+        },
+        now=NOW,
+    )
+    assert evidence["schema_version"] == 10
+    assert evidence["runtime_requirements"]["agent_linkedin_proposals_enabled"] is True
+    assert evidence["agent_linkedin_proposals"]["ledger_sequence"] == 15
+    assert evidence["artifact_sha256"]["agent_linkedin_proposals_activation"] == sha256_file(linkedin_path)

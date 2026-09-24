@@ -12,7 +12,7 @@ pytest.importorskip("sqlalchemy", reason="Install the coworker extra for recover
 from scripts import cohort_recovery_verification as recovery
 
 
-def rollout(*, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False):
+def rollout(*, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, agent_linkedin_proposals=False):
     value = {
         "release_id": "coworker-cohort-001",
         "cohort": {"max_users": 25},
@@ -29,7 +29,7 @@ def rollout(*, action_selection=False, action_proposals=False, action_attachment
             "parallel_execution": True,
             "outcome_replan": True,
             "research": False,
-            "actions": action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing,
+            "actions": action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing or agent_linkedin_proposals,
         },
     }
     if action_selection:
@@ -48,6 +48,10 @@ def rollout(*, action_selection=False, action_proposals=False, action_attachment
         value["capabilities"]["action_email_threading"] = True
     if action_social_publishing:
         value["capabilities"]["action_social_publishing"] = True
+    if agent_linkedin_proposals:
+        value["capabilities"]["action_proposals"] = True
+        value["capabilities"]["action_social_publishing"] = True
+        value["capabilities"]["agent_linkedin_proposals"] = True
     return value
 
 
@@ -78,7 +82,7 @@ def rollback_completion(tmp_path, rollout_path):
     return value, path
 
 
-def settings(members, *, microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False):
+def settings(members, *, microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, agent_linkedin_proposals=False):
     return SimpleNamespace(
         cohort_enforced=True,
         cohort_account_ids=frozenset(members),
@@ -93,7 +97,7 @@ def settings(members, *, microsoft=False, action_selection=False, action_proposa
         agent_parallel_execution_enabled=True,
         agent_outcome_replan_enabled=True,
         research_services_enabled=False,
-        actions_enabled=action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing,
+        actions_enabled=action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing or agent_linkedin_proposals,
         microsoft_actions_enabled=microsoft,
         agent_action_selection_enabled=action_selection,
         agent_action_proposals_enabled=action_proposals,
@@ -102,7 +106,8 @@ def settings(members, *, microsoft=False, action_selection=False, action_proposa
         action_recipients_enabled=action_recipients,
         action_document_sharing_enabled=action_document_sharing,
         action_email_threading_enabled=action_email_threading,
-        action_social_publishing_enabled=action_social_publishing,
+        action_social_publishing_enabled=(action_social_publishing or agent_linkedin_proposals),
+        agent_linkedin_proposals_enabled=agent_linkedin_proposals,
     )
 
 
@@ -1227,3 +1232,64 @@ def test_social_publishing_recovery_requires_fresh_activation_and_ledger(tmp_pat
             2026, 9, 22, 7, 5, tzinfo=timezone.utc
         ),
     ) is None
+
+
+def test_linkedin_agent_proposal_recovery_requires_fresh_schema_v15(tmp_path):
+    with pytest.raises(recovery.RecoveryVerificationError, match="required for recovery"):
+        recovery.validate_agent_linkedin_proposals_recovery_activation(
+            settings=settings(
+                {"a" * 64},
+                action_proposals=True,
+                action_social_publishing=True,
+                agent_linkedin_proposals=True,
+            ),
+            activation_path=None,
+            ledger_path=None,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollback_completion={"verified_at": "2026-09-24T07:00:00+00:00"},
+            rollback_path=tmp_path / "rollback.json",
+            recovery_deployed_at=datetime(
+                2026, 9, 24, 7, 5, tzinfo=timezone.utc
+            ),
+        )
+
+    assert recovery.validate_agent_linkedin_proposals_recovery_activation(
+        settings=settings({"a" * 64}, agent_linkedin_proposals=False),
+        activation_path=None,
+        ledger_path=None,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+        rollback_completion={"verified_at": "2026-09-24T07:00:00+00:00"},
+        rollback_path=tmp_path / "rollback.json",
+        recovery_deployed_at=datetime(
+            2026, 9, 24, 7, 5, tzinfo=timezone.utc
+        ),
+    ) is None
+
+
+def test_recovery_configuration_accepts_qualified_linkedin_agent_proposal_flags(
+    monkeypatch,
+    tmp_path,
+):
+    value = rollout(agent_linkedin_proposals=True)
+    rollout_path = tmp_path / "linkedin-agent-recovery-rollout.json"
+    rollout_path.write_text(json.dumps(value), encoding="utf-8")
+    rollback_value, _ = rollback_completion(tmp_path, rollout_path)
+    monkeypatch.setenv("SHUDDHO_COWORKER_ENABLED", "true")
+    members = {"a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64}
+    result = recovery.validate_recovery_configuration(
+        settings(
+            members,
+            action_proposals=True,
+            action_social_publishing=True,
+            agent_linkedin_proposals=True,
+        ),
+        value,
+        plan(),
+        rollback_value,
+        rollout_path=rollout_path,
+        current_stage="canary-5",
+        deployed_at=datetime(2026, 9, 24, 7, 5, tzinfo=timezone.utc),
+    )
+    assert result["capabilities"]["agent_linkedin_proposals"] is True

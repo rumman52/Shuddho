@@ -515,7 +515,7 @@ def test_social_publishing_requires_linkedin_gate_provider_and_exact_kill_switch
     )
 
 
-def test_linkedin_agent_proposals_require_nested_authority_and_remain_no_go():
+def test_linkedin_agent_proposals_require_dedicated_live_evidence():
     value = rollout(
         actions=True,
         providers=["google", "linkedin"],
@@ -526,17 +526,23 @@ def test_linkedin_agent_proposals_require_nested_authority_and_remain_no_go():
     value["rollback"]["agent_linkedin_proposals_kill_switch"] = (
         "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false"
     )
-    result = evaluate_release(
-        evidence(
-            actions=True,
-            action_social_publishing=True,
-            action_proposals=True,
-        ),
-        value,
+    base = evidence(
+        actions=True,
+        action_social_publishing=True,
+        action_proposals=True,
     )
-    assert result["decision"] == "NO-GO"
-    assert result["required_feature_gates"]["agent_linkedin_proposals"] is True
-    assert "agent_linkedin_proposals_release_gate_pending" in result["rollout_failures"]
+    missing = evaluate_release(base, value)
+    assert missing["decision"] == "NO-GO"
+    assert "agent_linkedin_proposals" in missing["staging"]["missing"]
+    assert missing["required_feature_gates"]["agent_linkedin_proposals"] is True
+
+    base["agent_linkedin_proposals"] = {
+        "status": "passed",
+        "evidence": "live inert LinkedIn proposal proof",
+    }
+    passed = evaluate_release(base, value)
+    assert passed["decision"] == "GO_CONTROLLED_COHORT"
+    assert passed["rollout_failures"] == []
 
 
 def test_linkedin_agent_proposal_manifest_fails_closed_on_dependency_or_kill_switch():

@@ -21,6 +21,7 @@ from scripts.cohort_release_ledger import (
     append_action_document_sharing_event,
     append_action_email_threading_event,
     append_action_social_publishing_event,
+    append_agent_linkedin_proposals_event,
     file_sha256,
     read_entries,
     verify_entries,
@@ -3391,4 +3392,173 @@ def test_schema_v14_social_publishing_requires_exact_kill_switch(tmp_path):
             deployment_change=deployment,
             operator_status=status,
             action_social_publishing_activation=activation,
+        )
+
+
+def agent_linkedin_proposals_files(tmp_path, current_stage="cohort-25"):
+    capabilities = {
+        "coworker": True,
+        "work_services": True,
+        "artifact_services": True,
+        "agent_runtime": True,
+        "intelligent_planner": True,
+        "memory": False,
+        "handoffs": True,
+        "multi_handoffs": True,
+        "dependency_graph": True,
+        "parallel_execution": True,
+        "outcome_replan": True,
+        "research": False,
+        "actions": True,
+        "action_attachments": False,
+        "action_reminders": False,
+        "action_recipients": False,
+        "action_document_sharing": False,
+        "action_email_threading": False,
+        "action_social_publishing": True,
+        "action_selection": False,
+        "action_proposals": True,
+        "agent_linkedin_proposals": True,
+    }
+    rollout = write_json(tmp_path / "linkedin-agent-proposals-rollout.json", {
+        "release_id": "coworker-cohort-001",
+        "environment": "production",
+        "cohort": {"reference": "approved-cohort", "max_users": 25},
+        "capabilities": capabilities,
+        "action_providers": ["google", "linkedin"],
+        "rollback": {
+            "agent_linkedin_proposals_kill_switch":
+                "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false",
+        },
+        "incident": {"change_reference": "linkedin-agent-proposals-change-1"},
+    })
+    staging = write_json(tmp_path / "linkedin-agent-proposals-staging.json", {
+        "agent_linkedin_proposals": {
+            "status": "passed",
+            "evidence": "live inert LinkedIn proposal stayed outside provider execution",
+            "verified_at": "2026-09-24T10:00:00+00:00",
+        },
+    })
+    deployment = write_json(tmp_path / "linkedin-agent-proposals-deployment.json", {
+        "release_id": "coworker-cohort-001",
+        "change_reference": "linkedin-agent-proposals-change-1",
+        "current_stage": current_stage,
+        "deployed_at": "2026-09-24T10:10:00+00:00",
+        "source_revision": "1" * 40,
+        "staging_evidence_sha256": file_sha256(staging),
+        "rollout_manifest_sha256": file_sha256(rollout),
+    })
+    status = write_json(tmp_path / "linkedin-agent-proposals-status.json", {
+        "release_id": "coworker-cohort-001",
+        "decision": "CONTINUE_COHORT",
+        "generated_at": "2026-09-24T10:15:00+00:00",
+        "breaches": [],
+    })
+    runtime = {
+        "schema_version": 1,
+        "source_revision": "1" * 40,
+        "environment": "production",
+        "capabilities": capabilities,
+        "action_providers": ["google", "linkedin"],
+        "cohort": {
+            "enforced": True,
+            "configured_members": 5,
+            "max_users": 25,
+        },
+    }
+    runtime_hash = hashlib.sha256(json.dumps(
+        runtime,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    activation = write_json(tmp_path / "linkedin-agent-proposals-activation.json", {
+        "schema_version": 1,
+        "status": "agent_linkedin_proposals_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": current_stage,
+        "verified_at": "2026-09-24T10:20:00+00:00",
+        "change_reference": "linkedin-agent-proposals-change-1",
+        "deployed_at": "2026-09-24T10:10:00+00:00",
+        "source_revision": "1" * 40,
+        "operator_status_generated_at": "2026-09-24T10:15:00+00:00",
+        "runtime": runtime,
+        "runtime_manifest_sha256": runtime_hash,
+        "artifact_sha256": {
+            "staging_evidence": file_sha256(staging),
+            "rollout_manifest": file_sha256(rollout),
+            "deployment_change": file_sha256(deployment),
+            "operator_status": file_sha256(status),
+        },
+    })
+    return staging, rollout, deployment, status, activation
+
+
+def seed_linkedin_proposal_prerequisites(ledger, tmp_path):
+    seed_cohort_25_ledger(ledger, tmp_path)
+    proposal_files = action_proposals_files(tmp_path)
+    append_action_proposals(ledger, proposal_files)
+
+    social = action_social_publishing_files(tmp_path)
+    append_action_social_publishing_event(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="social-publishing-change-1",
+        current_stage="cohort-25",
+        staging_evidence=social[0],
+        rollout_manifest=social[1],
+        deployment_change=social[2],
+        operator_status=social[3],
+        action_social_publishing_activation=social[4],
+        created_at="2026-09-24T09:25:00+00:00",
+    )
+
+
+def test_schema_v15_linkedin_agent_proposals_requires_prerequisites_and_is_unique(tmp_path):
+    ledger = tmp_path / "release-ledger-linkedin-agent-proposals.jsonl"
+    seed_linkedin_proposal_prerequisites(ledger, tmp_path)
+    files = agent_linkedin_proposals_files(tmp_path)
+
+    kwargs = dict(
+        ledger=ledger,
+        key=KEY,
+        release_id="coworker-cohort-001",
+        actor_reference="oncall-primary",
+        change_reference="linkedin-agent-proposals-change-1",
+        current_stage="cohort-25",
+        staging_evidence=files[0],
+        rollout_manifest=files[1],
+        deployment_change=files[2],
+        operator_status=files[3],
+        agent_linkedin_proposals_activation=files[4],
+        created_at="2026-09-24T10:25:00+00:00",
+    )
+    entry = append_agent_linkedin_proposals_event(**kwargs)
+    assert entry["schema_version"] == 15
+    assert entry["event_type"] == "agent_linkedin_proposals_verified"
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == entry["entry_hash"]
+
+    with pytest.raises(ReleaseLedgerError, match="already recorded"):
+        append_agent_linkedin_proposals_event(**kwargs)
+
+
+def test_schema_v15_linkedin_agent_proposals_rejects_missing_base_attestations(tmp_path):
+    ledger = tmp_path / "release-ledger-linkedin-agent-proposals-missing.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    files = agent_linkedin_proposals_files(tmp_path)
+    with pytest.raises(ReleaseLedgerError, match="action_proposals_verified"):
+        append_agent_linkedin_proposals_event(
+            ledger=ledger,
+            key=KEY,
+            release_id="coworker-cohort-001",
+            actor_reference="oncall-primary",
+            change_reference="linkedin-agent-proposals-change-1",
+            current_stage="cohort-25",
+            staging_evidence=files[0],
+            rollout_manifest=files[1],
+            deployment_change=files[2],
+            operator_status=files[3],
+            agent_linkedin_proposals_activation=files[4],
         )
