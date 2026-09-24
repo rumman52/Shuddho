@@ -13,9 +13,9 @@ uv run --extra coworker python scripts/coworker_quality_eval.py --min-pass-rate 
 Controlled staging must also run the same cases through the configured DeepSeek draft model:
 
 ```bash
-uv run --extra coworker python scripts/coworker_quality_eval.py --live --release-id coworker-cohort-001 --min-pass-rate 1.0 --min-fact-recall 1.0 --max-average-tokens 20000 --max-p95-latency-ms 90000 --output /secure/release/coworker-quality-eval.json
+uv run --extra coworker python scripts/coworker_quality_eval.py --live --release-id coworker-cohort-001 --rollout /secure/release/cohort-rollout.json --min-pass-rate 1.0 --min-fact-recall 1.0 --max-average-tokens 20000 --max-p95-latency-ms 90000 --output /secure/release/coworker-quality-eval.json
 ```
 
-The live artifact records objective contract results, token use, latency, generation time, configured provider model, and the SHA-256 of the exact fixture file. Reference it from the `quality` staging evidence item.
+The live artifact records objective contract results, token use, latency, generation time, configured provider model, the SHA-256 of the exact fixture file, and the SHA-256 of the exact reviewed rollout manifest. Live mode fails closed without `--rollout`. Reference it from the `quality` staging evidence item.
 
 A passing result is a bounded regression signal. It is not proof of universal language quality and does not authorize cohort expansion or autonomous actions.
