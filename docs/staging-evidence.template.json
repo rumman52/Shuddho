@@ -1,20 +1,106 @@
 {
-  "ci": {"status": "pending", "evidence": ""},
-  "identity": {"status": "pending", "evidence": ""},
-  "database": {"status": "pending", "evidence": ""},
-  "storage": {"status": "pending", "evidence": ""},
-  "temporal": {"status": "pending", "evidence": ""},
-  "model": {"status": "pending", "evidence": ""},
-  "quality": {"status": "pending", "evidence": ""},
-  "backup_restore": {"status": "pending", "evidence": ""},
-  "deletion": {"status": "pending", "evidence": ""},
-  "parallel_restart": {"status": "pending", "evidence": ""},
-  "fan_in": {"status": "pending", "evidence": ""},
-  "flag_rollback": {"status": "pending", "evidence": ""},
-  "cohort_admission": {"status": "pending", "evidence": ""},
-  "research": {"status": "pending", "evidence": ""},
-  "actions": {"status": "pending", "evidence": ""},
-  "microsoft_actions": {"status": "pending", "evidence": ""},
-  "action_selection": {"status": "pending", "evidence": ""},
-  "action_proposals": {"status": "pending", "evidence": ""}
+  "ci": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "identity": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "database": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "storage": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "temporal": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "model": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "quality": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "backup_restore": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "deletion": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "parallel_restart": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "fan_in": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "flag_rollback": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "cohort_admission": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "research": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "actions": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "microsoft_actions": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_attachments": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_reminders_google": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_reminders_microsoft": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_recipients": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_document_sharing": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_email_threading": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_social_publishing": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "agent_linkedin_proposals": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_selection": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "action_proposals": {
+    "status": "pending",
+    "evidence": ""
+  }
 }
