@@ -37,6 +37,7 @@ class ActionSpec:
     document_access: str | None = None
     notification_policy: str | None = None
     thread_reply: bool = False
+    social_publish: bool = False
 
     def public(self) -> dict:
         return {
@@ -49,6 +50,7 @@ class ActionSpec:
             "reconcile_mode": self.reconcile_mode,
             "attachments_allowed": self.attachments_allowed,
             "thread_reply": self.thread_reply,
+            "social_publish": self.social_publish,
         }
 
     @property
@@ -80,6 +82,16 @@ class ActionSpec:
                 "bcc": "forbidden",
                 "subject": "unchanged",
                 "mailbox_read": "none",
+            }
+        if self.social_publish:
+            result["social_publishing"] = {
+                "provider": "linkedin",
+                "author": "connected_personal_member",
+                "visibility": "public",
+                "media": "none",
+                "scheduling": "none",
+                "social_read": "none",
+                "agent_authority": "none",
             }
         return result
 
@@ -156,6 +168,17 @@ ACTION_SPECS = {
         owned_artifact_required=True,
         document_access="reader",
         notification_policy="recipient",
+    ),
+    "social_publish_linkedin": ActionSpec(
+        kind="social_publish_linkedin",
+        version="1",
+        capability="social",
+        providers=frozenset({"linkedin"}),
+        approval_ttl_seconds=15 * 60,
+        execution_ttl_seconds=5 * 60,
+        reconcile_mode="none",
+        destination_fields=(),
+        social_publish=True,
     ),
 }
 
@@ -372,7 +395,7 @@ def build_approval_scope(preview: dict) -> dict:
     reply_context = thread_context_manifest(preview, spec)
     result = {
         "contract": "shuddho.consequential-action",
-        "contract_version": 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
+        "contract_version": 5 if spec.social_publish else 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
         "action_kind": spec.kind,
         "action_version": spec.version,
         "provider": provider,
@@ -397,6 +420,9 @@ def build_approval_scope(preview: dict) -> dict:
             **({
                 "threading": preview.get("threading"),
             } if spec.thread_reply else {}),
+            **({
+                "social_publishing": preview.get("social_publishing"),
+            } if spec.social_publish else {}),
         },
         "expires_at": preview.get("expires_at"),
     }
