@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from scripts.release_contract import normalize_capabilities
 from scripts.cohort_release_gate import (
     declared_action_providers,
     load_rollout,
@@ -166,16 +167,7 @@ def validate_reviewed_rollout(
         raise ActionProposalsActivationError(
             "Reviewed rollout manifest has no exact action-proposals kill switch."
         )
-    normalized = dict(capabilities)
-    normalized.setdefault("action_attachments", False)
-    normalized.setdefault("action_reminders", False)
-    normalized.setdefault("action_recipients", False)
-    normalized.setdefault("action_document_sharing", False)
-    normalized.setdefault("action_email_threading", False)
-    normalized.setdefault("action_social_publishing", False)
-    normalized.setdefault("action_selection", False)
-    normalized.setdefault("action_proposals", False)
-    normalized.setdefault("agent_linkedin_proposals", False)
+    normalized = normalize_capabilities(capabilities)
     return {
         "release_id": rollout["release_id"],
         "environment": rollout["environment"],
