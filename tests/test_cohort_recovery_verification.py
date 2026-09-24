@@ -1232,3 +1232,64 @@ def test_social_publishing_recovery_requires_fresh_activation_and_ledger(tmp_pat
             2026, 9, 22, 7, 5, tzinfo=timezone.utc
         ),
     ) is None
+
+
+def test_linkedin_agent_proposal_recovery_requires_fresh_schema_v15(tmp_path):
+    with pytest.raises(recovery.RecoveryVerificationError, match="required for recovery"):
+        recovery.validate_agent_linkedin_proposals_recovery_activation(
+            settings=settings(
+                {"a" * 64},
+                action_proposals=True,
+                action_social_publishing=True,
+                agent_linkedin_proposals=True,
+            ),
+            activation_path=None,
+            ledger_path=None,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollback_completion={"verified_at": "2026-09-24T07:00:00+00:00"},
+            rollback_path=tmp_path / "rollback.json",
+            recovery_deployed_at=datetime(
+                2026, 9, 24, 7, 5, tzinfo=timezone.utc
+            ),
+        )
+
+    assert recovery.validate_agent_linkedin_proposals_recovery_activation(
+        settings=settings({"a" * 64}, agent_linkedin_proposals=False),
+        activation_path=None,
+        ledger_path=None,
+        release_id="coworker-cohort-001",
+        current_stage="canary-5",
+        rollback_completion={"verified_at": "2026-09-24T07:00:00+00:00"},
+        rollback_path=tmp_path / "rollback.json",
+        recovery_deployed_at=datetime(
+            2026, 9, 24, 7, 5, tzinfo=timezone.utc
+        ),
+    ) is None
+
+
+def test_recovery_configuration_accepts_qualified_linkedin_agent_proposal_flags(
+    monkeypatch,
+    tmp_path,
+):
+    value = rollout(agent_linkedin_proposals=True)
+    rollout_path = tmp_path / "linkedin-agent-recovery-rollout.json"
+    rollout_path.write_text(json.dumps(value), encoding="utf-8")
+    rollback_value, _ = rollback_completion(tmp_path, rollout_path)
+    monkeypatch.setenv("SHUDDHO_COWORKER_ENABLED", "true")
+    members = {"a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64}
+    result = recovery.validate_recovery_configuration(
+        settings(
+            members,
+            action_proposals=True,
+            action_social_publishing=True,
+            agent_linkedin_proposals=True,
+        ),
+        value,
+        plan(),
+        rollback_value,
+        rollout_path=rollout_path,
+        current_stage="canary-5",
+        deployed_at=datetime(2026, 9, 24, 7, 5, tzinfo=timezone.utc),
+    )
+    assert result["capabilities"]["agent_linkedin_proposals"] is True
