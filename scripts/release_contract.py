@@ -6,6 +6,27 @@ from dataclasses import dataclass
 RELEASE_CONTRACT_VERSION = 1
 ACTION_PROVIDERS = frozenset({"google", "microsoft", "linkedin"})
 
+REQUIRED_GATES = {
+    "ci": "Dedicated repository CI, including Coworker/Temporal recovery, is green.",
+    "identity": "Managed identity is configured and owner isolation is verified.",
+    "database": "Production PostgreSQL is configured with TLS and migrations applied.",
+    "storage": "Private object storage is configured and owner-scoped download checks pass.",
+    "temporal": "Production Temporal is reachable and worker restart/replay has been verified.",
+    "model": "A live DeepSeek call and planner evaluation have passed in staging.",
+    "quality": "Curated multilingual live Coworker quality/fidelity evaluation passed with recorded latency and token evidence.",
+    "backup_restore": "Database/object backup and restore has been exercised successfully.",
+    "deletion": "Retention/deletion operations have been verified against owned data.",
+    "parallel_restart": "Two-branch AgentWorkflow v2 restart completes without duplicate child tasks or artifacts.",
+    "fan_in": "Fan-in starts only after every persisted dependency completes.",
+    "flag_rollback": "Disabling Agent parallel execution routes new runs back to v1.",
+}
+COHORT_ADMISSION_GATE = {
+    "cohort_admission": (
+        "Backend cohort admission allows invited accounts and rejects non-members "
+        "before workspace provisioning."
+    )
+}
+
 BASE_CAPABILITY_KEYS = frozenset({
     "coworker",
     "work_services",
@@ -249,3 +270,19 @@ def validate_optional_rollback(
         if rollback.get(item.rollback_key) != item.kill_switch:
             failures.append(item.rollback_key)
     return failures
+
+
+def expected_staging_evidence_keys() -> frozenset[str]:
+    return frozenset({
+        *REQUIRED_GATES,
+        *CONDITIONAL_GATES,
+        *COHORT_ADMISSION_GATE,
+    })
+
+
+def expected_rollout_capability_keys() -> frozenset[str]:
+    return frozenset({*BASE_CAPABILITY_KEYS, *OPTIONAL_CAPABILITY_KEYS})
+
+
+def expected_rollout_rollback_keys() -> frozenset[str]:
+    return frozenset({*ROLLBACK_KEYS, *OPTIONAL_ROLLBACK_KEYS})
