@@ -421,3 +421,33 @@ def test_recovery_epoch_starts_after_ledger_entry_not_only_artifact(monkeypatch,
         current_stage="canary-5",
     )
     assert epoch == datetime(2026, 9, 22, 5, 2, tzinfo=timezone.utc)
+
+
+def test_schema_v12_recovery_epoch_rejects_different_rollout(monkeypatch, tmp_path):
+    monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", KEY.decode())
+    (
+        rollout_path,
+        _plan_path,
+        _progression,
+        _stop_status,
+        _rollback_status,
+        _rollback_completion,
+        _recovery_status,
+        recovery_verification,
+    ) = recovery_epoch_files(tmp_path)
+    value = json.loads(recovery_verification.read_text(encoding="utf-8"))
+    value["schema_version"] = 12
+    value["artifact_sha256"]["rollout_manifest"] = "0" * 64
+    recovery_verification.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(
+        Exception,
+        match="does not bind the current rollout manifest",
+    ):
+        load_recovery_epoch(
+            recovery_verification,
+            tmp_path / "unused-ledger.jsonl",
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollout_path=rollout_path,
+        )
