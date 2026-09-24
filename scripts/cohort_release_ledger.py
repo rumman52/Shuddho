@@ -9,7 +9,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.release_contract import normalize_capabilities
+from scripts.release_contract import normalize_capabilities, required_activation_requirements
 
 SCHEMA_VERSION = 1
 ROLLBACK_SCHEMA_VERSION = 2
@@ -5025,6 +5025,54 @@ def append_release_activation_bundle_event(
     ):
         raise ReleaseLedgerError(
             "Activation bundle requires a ledger chain that reached current_stage."
+        )
+
+    capabilities = rollout.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raise ReleaseLedgerError(
+            "Release activation bundle rollout has no capability map."
+        )
+    requirements = required_activation_requirements(
+        capabilities,
+        set(normalized_action_providers(rollout)),
+    )
+    required_keys = [item.key for item in requirements]
+    if bundle.get("required_activation_keys") != required_keys:
+        raise ReleaseLedgerError(
+            "Release activation bundle required activation set does not match the reviewed rollout."
+        )
+    activation_refs = bundle.get("activations")
+    if not isinstance(activation_refs, dict) or set(activation_refs) != set(required_keys):
+        raise ReleaseLedgerError(
+            "Release activation bundle activation references do not exactly match the reviewed rollout."
+        )
+    for requirement in requirements:
+        reference = activation_refs.get(requirement.key)
+        if (
+            not isinstance(reference, dict)
+            or set(reference) != {
+                "status",
+                "artifact_sha256",
+                "ledger_sequence",
+                "ledger_entry_hash",
+            }
+            or reference.get("status") != requirement.status
+            or not valid_hash(reference.get("artifact_sha256"))
+        ):
+            raise ReleaseLedgerError(
+                f"Release activation bundle has an invalid {requirement.key} activation reference."
+            )
+        require_exact_attested_event(
+            entries,
+            schema_version=requirement.ledger_schema_version,
+            event_type=requirement.ledger_event_type,
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key=requirement.ledger_artifact_key,
+            artifact_sha256=reference["artifact_sha256"],
+            expected_sequence=reference.get("ledger_sequence"),
+            expected_entry_hash=reference.get("ledger_entry_hash"),
+            label=f"{requirement.key} activation bundle attestation",
         )
 
     bundle_hash = file_sha256(release_activation_bundle)
