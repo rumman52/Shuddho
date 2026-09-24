@@ -1249,15 +1249,15 @@ def validate_action_social_publishing_recovery_activation(
     rollback_verified = parse_time(rollback_verified_at, "rollback verified_at")
     if social_publishing_deployed < recovery_deployed_at:
         raise RecoveryVerificationError(
-            "Email-threading activation predates the recovery deployment."
+            "Social-publishing activation predates the recovery deployment."
         )
     if social_publishing_verified < social_publishing_deployed:
         raise RecoveryVerificationError(
-            "Email-threading activation was verified before its deployment."
+            "Social-publishing activation was verified before its deployment."
         )
     if social_publishing_verified <= rollback_verified:
         raise RecoveryVerificationError(
-            "Email-threading activation must be freshly verified after rollback completion."
+            "Social-publishing activation must be freshly verified after rollback completion."
         )
     try:
         entries, _ = verified_release_entries(ledger_path, release_id)
