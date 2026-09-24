@@ -155,18 +155,6 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
-        capability="agent_linkedin_proposals",
-        rollback_key="agent_linkedin_proposals_kill_switch",
-        kill_switch="SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false",
-        dependencies=("action_proposals", "action_social_publishing"),
-        staging_gates=(
-            StagingGate(
-                "agent_linkedin_proposals",
-                "Live intelligent planner generated only an inert personal LinkedIn text proposal; wrong-hash promotion failed; exact user-selected LinkedIn promotion created one unapproved immutable preview with no provider mutation.",
-            ),
-        ),
-    ),
-    OptionalCapability(
         capability="action_selection",
         rollback_key="action_selection_kill_switch",
         kill_switch="SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
@@ -187,6 +175,18 @@ OPTIONAL_CAPABILITIES = (
             StagingGate(
                 "action_proposals",
                 "Live Agent generated only inert typed action proposals; promotion created a separate preview and never auto-approved or executed it.",
+            ),
+        ),
+    ),
+    OptionalCapability(
+        capability="agent_linkedin_proposals",
+        rollback_key="agent_linkedin_proposals_kill_switch",
+        kill_switch="SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false",
+        dependencies=("action_proposals", "action_social_publishing"),
+        staging_gates=(
+            StagingGate(
+                "agent_linkedin_proposals",
+                "Live intelligent planner generated only an inert personal LinkedIn text proposal; wrong-hash promotion failed; exact user-selected LinkedIn promotion created one unapproved immutable preview with no provider mutation.",
             ),
         ),
     ),
