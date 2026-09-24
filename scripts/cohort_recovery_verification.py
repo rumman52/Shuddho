@@ -1405,6 +1405,85 @@ def validate_agent_linkedin_proposals_recovery_activation(
     }
 
 
+def validate_release_activation_bundle_recovery(
+    *,
+    activation_path: Path,
+    ledger_path: Path,
+    release_id: str,
+    current_stage: str,
+    rollback_path: Path,
+) -> dict:
+    activation = load_json(
+        activation_path,
+        "post-rollback release activation bundle",
+    )
+    if (
+        activation.get("schema_version") != 1
+        or activation.get("status") != "release_activation_bundle_verified"
+    ):
+        raise RecoveryVerificationError(
+            "Post-rollback release activation bundle has not been verified."
+        )
+    if activation.get("release_id") != release_id:
+        raise RecoveryVerificationError(
+            "Post-rollback release activation bundle release_id does not match."
+        )
+    if activation.get("current_stage") != current_stage:
+        raise RecoveryVerificationError(
+            "Post-rollback release activation bundle current_stage does not match."
+        )
+    try:
+        entries, _ = verified_release_entries(ledger_path, release_id)
+        rollback_entry = require_exact_attested_event(
+            entries,
+            schema_version=2,
+            event_type="rollback_completed",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="rollback_completion",
+            artifact_sha256=ledger_file_sha256(rollback_path),
+            label="Recovery rollback attestation",
+        )
+        bundle_entry = require_exact_attested_event(
+            entries,
+            schema_version=16,
+            event_type="release_activation_bundle_verified",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="release_activation_bundle",
+            artifact_sha256=ledger_file_sha256(activation_path),
+            after_sequence=rollback_entry["sequence"],
+            label="Release activation bundle recovery attestation",
+        )
+    except Exception as error:
+        raise RecoveryVerificationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+
+    activation_refs = activation.get("activations")
+    if not isinstance(activation_refs, dict):
+        raise RecoveryVerificationError(
+            "Post-rollback release activation bundle has no activation references."
+        )
+    for key, reference in activation_refs.items():
+        sequence = reference.get("ledger_sequence") if isinstance(reference, dict) else None
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            raise RecoveryVerificationError(
+                f"Post-rollback release activation bundle has an invalid {key} ledger sequence."
+            )
+        if sequence <= rollback_entry["sequence"]:
+            raise RecoveryVerificationError(
+                f"Post-rollback release activation bundle references stale {key} activation evidence."
+            )
+
+    return {
+        "activation": activation,
+        "ledger_sequence": bundle_entry["sequence"],
+        "ledger_entry_hash": bundle_entry["entry_hash"],
+        "activation_sha256": ledger_file_sha256(activation_path),
+    }
+
+
 def expect_json(response: httpx.Response, status: int, label: str) -> dict:
     if response.status_code != status:
         raise RecoveryVerificationError(
@@ -1554,6 +1633,7 @@ def build_recovery_evidence(
     action_email_threading_activation_path: Path | None = None,
     action_social_publishing_activation_path: Path | None = None,
     agent_linkedin_proposals_activation_path: Path | None = None,
+    release_activation_bundle_path: Path | None = None,
     release_ledger_path: Path | None = None,
 ) -> dict:
     if not deployment_reference.strip() or len(deployment_reference) > 500:
@@ -1670,6 +1750,19 @@ def build_recovery_evidence(
         rollback_path=rollback_path,
         recovery_deployed_at=deployment_time,
     )
+    release_activation_bundle_recovery = None
+    if release_activation_bundle_path is not None:
+        if release_ledger_path is None:
+            raise RecoveryVerificationError(
+                "Release activation bundle recovery verification requires the release ledger."
+            )
+        release_activation_bundle_recovery = validate_release_activation_bundle_recovery(
+            activation_path=release_activation_bundle_path,
+            ledger_path=release_ledger_path,
+            release_id=config["release_id"],
+            current_stage=current_stage,
+            rollback_path=rollback_path,
+        )
 
     probe = run_live_recovery_probe(
         base_url=base_url,
@@ -1811,6 +1904,16 @@ def build_recovery_evidence(
             "ledger_entry_hash": agent_linkedin_proposals_recovery["ledger_entry_hash"],
         }
 
+    release_activation_bundle_summary = None
+    if release_activation_bundle_recovery is not None:
+        artifact_sha256["release_activation_bundle"] = (
+            release_activation_bundle_recovery["activation_sha256"]
+        )
+        release_activation_bundle_summary = {
+            "ledger_sequence": release_activation_bundle_recovery["ledger_sequence"],
+            "ledger_entry_hash": release_activation_bundle_recovery["ledger_entry_hash"],
+        }
+
     runtime_requirements = {
         "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
         "action_selection_enabled": bool(getattr(settings, "agent_action_selection_enabled", False)),
@@ -1846,9 +1949,24 @@ def build_recovery_evidence(
         runtime_requirements["action_email_threading_enabled"] = bool(getattr(settings, "action_email_threading_enabled", False))
         runtime_requirements["action_social_publishing_enabled"] = True
 
+    if release_activation_bundle_summary is not None:
+        runtime_requirements = {
+            "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
+            "action_selection_enabled": bool(getattr(settings, "agent_action_selection_enabled", False)),
+            "action_proposals_enabled": bool(getattr(settings, "agent_action_proposals_enabled", False)),
+            "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
+            "action_reminders_enabled": bool(getattr(settings, "action_reminders_enabled", False)),
+            "action_recipients_enabled": bool(getattr(settings, "action_recipients_enabled", False)),
+            "action_document_sharing_enabled": bool(getattr(settings, "action_document_sharing_enabled", False)),
+            "action_email_threading_enabled": bool(getattr(settings, "action_email_threading_enabled", False)),
+            "action_social_publishing_enabled": bool(getattr(settings, "action_social_publishing_enabled", False)),
+            "agent_linkedin_proposals_enabled": bool(getattr(settings, "agent_linkedin_proposals_enabled", False)),
+        }
+
     return {
         "schema_version": (
-            10 if getattr(settings, "agent_linkedin_proposals_enabled", False)
+            11 if release_activation_bundle_summary is not None
+            else 10 if getattr(settings, "agent_linkedin_proposals_enabled", False)
             else 9 if getattr(settings, "action_social_publishing_enabled", False)
             else 8 if getattr(settings, "action_email_threading_enabled", False)
             else 7 if getattr(settings, "action_document_sharing_enabled", False)
@@ -1896,6 +2014,9 @@ def build_recovery_evidence(
         **({
             "agent_linkedin_proposals": agent_linkedin_proposals_summary,
         } if getattr(settings, "agent_linkedin_proposals_enabled", False) else {}),
+        **({
+            "release_activation_bundle": release_activation_bundle_summary,
+        } if release_activation_bundle_summary is not None else {}),
         "artifact_sha256": artifact_sha256,
     }
 
@@ -1923,7 +2044,8 @@ def main() -> None:
     parser.add_argument("--action-email-threading-activation", type=Path)
     parser.add_argument("--action-social-publishing-activation", type=Path)
     parser.add_argument("--agent-linkedin-proposals-activation", type=Path)
-    parser.add_argument("--release-ledger", type=Path)
+    parser.add_argument("--release-activation-bundle", type=Path, required=True)
+    parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -1960,6 +2082,7 @@ def main() -> None:
             action_email_threading_activation_path=args.action_email_threading_activation,
             action_social_publishing_activation_path=args.action_social_publishing_activation,
             agent_linkedin_proposals_activation_path=args.agent_linkedin_proposals_activation,
+            release_activation_bundle_path=args.release_activation_bundle,
             release_ledger_path=args.release_ledger,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
