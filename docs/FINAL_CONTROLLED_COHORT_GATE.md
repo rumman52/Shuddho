@@ -30,6 +30,7 @@ The contract is defined in `scripts/release_contract.py`. CI also exercises this
 uv run python scripts/cohort_release_gate.py \
   --evidence /secure/path/staging-evidence.final.json \
   --rollout /secure/path/cohort-rollout.json \
+  --quality-eval /secure/release/coworker-quality-eval.json \
   --max-cohort-users 25 \
   --output /secure/path/cohort-decision.json
 ```
@@ -40,7 +41,7 @@ A successful decision is exactly:
 GO_CONTROLLED_COHORT
 ```
 
-Any missing technical evidence or rollout control returns `NO-GO` and exits non-zero.
+Any missing technical evidence or rollout control returns `NO-GO` and exits non-zero. The final gate parses the live quality artifact itself and requires it to bind the exact supplied rollout SHA-256; the staging evidence string alone is not trusted as proof of quality.
 
 ## Required base staging evidence
 
