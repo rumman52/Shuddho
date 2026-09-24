@@ -105,7 +105,7 @@ def test_runtime_manifest_requires_full_nested_authority_chain():
     value["capabilities"]["action_proposals"] = False
     with pytest.raises(
         LinkedInAgentProposalsActivationError,
-        match="full LinkedIn Agent-proposal dependency chain",
+        match="exactly match reviewed rollout",
     ):
         validate_runtime_manifest(
             value,
