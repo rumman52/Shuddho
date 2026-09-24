@@ -688,7 +688,7 @@ def validate_action_email_threading_activation(
             next_stage=None,
             artifact_key="action_email_threading_activation",
             artifact_sha256=ledger_file_sha256(path),
-            label="Email-threading scale attestation",
+            label="Social-publishing scale attestation",
         )
     except Exception as error:
         raise ScaleActivationError(
