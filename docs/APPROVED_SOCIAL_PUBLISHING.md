@@ -98,7 +98,7 @@ The user must still:
 
 ## Agent boundary
 
-The Agent Runtime receives no LinkedIn publish tool, no connection discovery authority, and no proposal-promotion support for this action. A future Agent expansion would require a separate architecture and safety review.
+The Agent Runtime receives no LinkedIn publish tool and no connection-discovery or publishing authority. A separate disabled-by-default [inert LinkedIn proposal extension](AGENT_LINKEDIN_PROPOSALS.md) may let the planner suggest exact post text, but the user must still choose the owned LinkedIn connection, promote the exact proposal into this ordinary immutable preview, and approve it separately. That proposal extension is not production-release-qualified by this document and does not widen this action's execution authority.
 
 ## Production release qualification
 
