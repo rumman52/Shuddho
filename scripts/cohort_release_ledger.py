@@ -1411,16 +1411,10 @@ def append_scale_event(
                     "Scale activation contains document-sharing attestation data while document sharing is not required."
                 )
 
-    prior_scale = [
-        item for item in entries
-        if item.get("event_type") == "bounded_expansion_verified"
-        and item.get("next_stage") == next_stage
-    ]
-    if prior_scale:
-        raise ReleaseLedgerError("This bounded expansion stage is already recorded in the release ledg        if activation_schema == 8:
+        if activation_schema == 8:
             threading_required = requirements["action_email_threading_enabled"]
             threading_hash = hashes.get("action_email_threading_activation")
-            threading_summary = activation.get("action_document_sharing")
+            threading_summary = activation.get("action_email_threading")
             if threading_required:
                 if not valid_hash(threading_hash) or not isinstance(threading_summary, dict):
                     raise ReleaseLedgerError(
@@ -1449,7 +1443,7 @@ def append_scale_event(
         and item.get("next_stage") == next_stage
     ]
     if prior_scale:
-        raise ReleaseLedgerError("This bounded expansion stage is already recorded in the release ledger.")er.")
+        raise ReleaseLedgerError("This bounded expansion stage is already recorded in the release ledger.")
 
     core = {
         "schema_version": SCALE_SCHEMA_VERSION,
