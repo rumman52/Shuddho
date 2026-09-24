@@ -68,7 +68,7 @@ def bind(preview):
 
 
 def test_registry_declares_existing_consequential_actions():
-    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "email_thread_reply", "calendar_create", "calendar_create_with_reminder", "document_share"}
+    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "email_thread_reply", "calendar_create", "calendar_create_with_reminder", "document_share", "social_publish_linkedin"}
     assert action_spec("email_send", "google").capability == "email"
     assert action_spec("calendar_create", "google").reconcile_supported
     assert action_spec("calendar_create_with_reminder", "google").reminders == "single_explicit"
@@ -78,6 +78,8 @@ def test_registry_declares_existing_consequential_actions():
     assert action_spec("document_share", "google").owned_artifact_required
     assert action_spec("document_share", "google").reconcile_supported
     assert action_spec("email_thread_reply", "google").thread_reply
+    assert action_spec("social_publish_linkedin", "linkedin").social_publish
+    assert action_spec("social_publish_linkedin", "linkedin").capability == "social"
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
 
 
@@ -131,7 +133,7 @@ def test_calendar_scope_binds_primary_calendar_and_guest_policy():
 
 def test_unregistered_action_or_provider_fails_closed():
     with pytest.raises(CoworkerError, match="not registered"):
-        action_spec("social_publish", "google")
+        action_spec("social_publish_unregistered", "google")
     with pytest.raises(CoworkerError, match="cannot perform"):
         action_spec("email_send", "outlook")
 
@@ -321,3 +323,58 @@ def test_thread_reply_scope_binds_owned_parent_and_provider_thread():
 
     with pytest.raises(CoworkerError, match="cannot perform"):
         action_spec("email_thread_reply", "microsoft")
+
+
+
+def social_publish_preview():
+    return {
+        "version": 5,
+        "provider": "linkedin",
+        "connection_id": "connection-linkedin",
+        "account": "urn:li:person:member_123",
+        "subject_id": "member_123",
+        "payload": {
+            "kind": "social_publish_linkedin",
+            "text": "Reviewed launch update #Shuddho",
+        },
+        "execution": "immediately_after_approval",
+        "attachments": [],
+        "calendar": None,
+        "guest_notifications": None,
+        "reminders": "none",
+        "social_publishing": {
+            "provider": "linkedin",
+            "author": "connected_personal_member",
+            "visibility": "public",
+            "media": "none",
+            "scheduling": "none",
+            "social_read": "none",
+            "agent_authority": "none",
+        },
+        "expires_at": "2026-09-24T14:00:00+00:00",
+    }
+
+
+def test_social_publish_scope_binds_exact_author_text_and_narrow_policy():
+    preview = bind(social_publish_preview())
+    scope = preview["approval_scope"]
+    assert scope["contract_version"] == 5
+    assert scope["destinations"] == {}
+    assert scope["account"] == "urn:li:person:member_123"
+    assert scope["policy"]["social_publishing"] == preview["social_publishing"]
+    assert scope["policy"]["social_publishing"]["social_read"] == "none"
+    assert scope["policy"]["social_publishing"]["agent_authority"] == "none"
+    assert validate_approval_scope(preview).kind == "social_publish_linkedin"
+
+    changed = deepcopy(preview)
+    changed["payload"]["text"] = "Changed after approval"
+    with pytest.raises(CoworkerError, match="changed"):
+        validate_approval_scope(changed)
+
+    changed = deepcopy(preview)
+    changed["account"] = "urn:li:person:other"
+    with pytest.raises(CoworkerError, match="changed"):
+        validate_approval_scope(changed)
+
+    with pytest.raises(CoworkerError, match="cannot perform"):
+        action_spec("social_publish_linkedin", "google")
