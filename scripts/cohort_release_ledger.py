@@ -5089,6 +5089,7 @@ def append_release_activation_bundle_event(
     staging_evidence: Path,
     release_activation_bundle: Path,
     quality_evidence: Path | None = None,
+    model_evidence: Path | None = None,
     created_at: str | None = None,
 ) -> dict:
     rollout = load_json_object(rollout_manifest, "rollout manifest")
@@ -5126,6 +5127,16 @@ def append_release_activation_bundle_event(
         if bundle_quality_hash != file_sha256(quality_evidence):
             raise ReleaseLedgerError(
                 "Release activation bundle does not bind this quality evidence."
+            )
+    bundle_model_hash = bundle.get("model_evidence_sha256")
+    if bundle_model_hash is not None:
+        if model_evidence is None:
+            raise ReleaseLedgerError(
+                "Model-bound release activation bundle requires planner evidence."
+            )
+        if bundle_model_hash != file_sha256(model_evidence):
+            raise ReleaseLedgerError(
+                "Release activation bundle does not bind this planner evidence."
             )
 
     entries = read_entries(ledger)
@@ -5479,6 +5490,7 @@ def main() -> None:
     activation_bundle_parser.add_argument("--rollout", type=Path, required=True)
     activation_bundle_parser.add_argument("--staging-evidence", type=Path, required=True)
     activation_bundle_parser.add_argument("--quality-eval", type=Path, required=True)
+    activation_bundle_parser.add_argument("--model-eval", type=Path, required=True)
     activation_bundle_parser.add_argument(
         "--release-activation-bundle",
         type=Path,
@@ -5567,6 +5579,7 @@ def main() -> None:
                 staging_evidence=args.staging_evidence,
                 release_activation_bundle=args.release_activation_bundle,
                 quality_evidence=args.quality_eval,
+                model_evidence=args.model_eval,
             )
             result = {
                 "appended": True,
