@@ -1297,6 +1297,121 @@ def validate_action_social_publishing_recovery_activation(
     }
 
 
+def validate_agent_linkedin_proposals_recovery_activation(
+    *,
+    settings: Settings,
+    activation_path: Path | None,
+    ledger_path: Path | None,
+    release_id: str,
+    current_stage: str,
+    rollback_completion: dict,
+    rollback_path: Path,
+    recovery_deployed_at: datetime,
+) -> dict | None:
+    if not getattr(settings, "agent_linkedin_proposals_enabled", False):
+        return None
+    if activation_path is None or ledger_path is None:
+        raise RecoveryVerificationError(
+            "LinkedIn Agent proposals is enabled but a fresh LinkedIn Agent-proposals activation "
+            "and the release ledger are required for recovery."
+        )
+    activation = load_json(
+        activation_path,
+        "post-rollback LinkedIn Agent-proposals activation",
+    )
+    if activation.get("status") != "agent_linkedin_proposals_verified":
+        raise RecoveryVerificationError(
+            "Post-rollback LinkedIn Agent-proposals activation has not been verified."
+        )
+    if activation.get("release_id") != release_id:
+        raise RecoveryVerificationError(
+            "Post-rollback LinkedIn Agent-proposals activation release_id does not match."
+        )
+    if activation.get("current_stage") != current_stage:
+        raise RecoveryVerificationError(
+            "Post-rollback LinkedIn Agent-proposals activation current_stage does not match."
+        )
+    runtime = activation.get("runtime")
+    capabilities = runtime.get("capabilities") if isinstance(runtime, dict) else None
+    cohort = runtime.get("cohort") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(runtime, dict)
+        or not isinstance(capabilities, dict)
+        or capabilities.get("coworker") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("agent_linkedin_proposals") is not True
+        or capabilities.get("action_proposals") is not True
+        or capabilities.get("action_social_publishing") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("agent_runtime") is not True
+        or capabilities.get("intelligent_planner") is not True
+        or not isinstance(cohort, dict)
+        or cohort.get("enforced") is not True
+    ):
+        raise RecoveryVerificationError(
+            "Post-rollback LinkedIn Agent-proposals activation does not prove required runtime controls."
+        )
+    deployed_at = activation.get("deployed_at")
+    verified_at = activation.get("verified_at")
+    if not isinstance(deployed_at, str) or not isinstance(verified_at, str):
+        raise RecoveryVerificationError(
+            "Post-rollback LinkedIn Agent-proposals activation is missing deployment/verification timestamps."
+        )
+    social_publishing_deployed = parse_time(deployed_at, "LinkedIn Agent-proposals deployed_at")
+    social_publishing_verified = parse_time(verified_at, "LinkedIn Agent-proposals verified_at")
+    rollback_verified_at = rollback_completion.get("verified_at")
+    if not isinstance(rollback_verified_at, str):
+        raise RecoveryVerificationError("Rollback completion has no verified_at timestamp.")
+    rollback_verified = parse_time(rollback_verified_at, "rollback verified_at")
+    if social_publishing_deployed < recovery_deployed_at:
+        raise RecoveryVerificationError(
+            "LinkedIn Agent-proposals activation predates the recovery deployment."
+        )
+    if social_publishing_verified < social_publishing_deployed:
+        raise RecoveryVerificationError(
+            "LinkedIn Agent-proposals activation was verified before its deployment."
+        )
+    if social_publishing_verified <= rollback_verified:
+        raise RecoveryVerificationError(
+            "LinkedIn Agent-proposals activation must be freshly verified after rollback completion."
+        )
+    try:
+        entries, _ = verified_release_entries(ledger_path, release_id)
+        rollback_hash = ledger_file_sha256(rollback_path)
+        rollback_entry = require_exact_attested_event(
+            entries,
+            schema_version=2,
+            event_type="rollback_completed",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="rollback_completion",
+            artifact_sha256=rollback_hash,
+            label="Recovery rollback attestation",
+        )
+        activation_hash = ledger_file_sha256(activation_path)
+        social_entry = require_exact_attested_event(
+            entries,
+            schema_version=15,
+            event_type="agent_linkedin_proposals_verified",
+            current_stage=current_stage,
+            next_stage=None,
+            artifact_key="agent_linkedin_proposals_activation",
+            artifact_sha256=activation_hash,
+            after_sequence=rollback_entry["sequence"],
+            label="LinkedIn Agent-proposals recovery attestation",
+        )
+    except Exception as error:
+        raise RecoveryVerificationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    return {
+        "activation": activation,
+        "ledger_sequence": social_entry["sequence"],
+        "ledger_entry_hash": social_entry["entry_hash"],
+        "activation_sha256": activation_hash,
+    }
+
+
 def expect_json(response: httpx.Response, status: int, label: str) -> dict:
     if response.status_code != status:
         raise RecoveryVerificationError(
@@ -1445,6 +1560,7 @@ def build_recovery_evidence(
     action_document_sharing_activation_path: Path | None = None,
     action_email_threading_activation_path: Path | None = None,
     action_social_publishing_activation_path: Path | None = None,
+    agent_linkedin_proposals_activation_path: Path | None = None,
     release_ledger_path: Path | None = None,
 ) -> dict:
     if not deployment_reference.strip() or len(deployment_reference) > 500:
@@ -1544,6 +1660,16 @@ def build_recovery_evidence(
     action_social_publishing_recovery = validate_action_social_publishing_recovery_activation(
         settings=settings,
         activation_path=action_social_publishing_activation_path,
+        ledger_path=release_ledger_path,
+        release_id=config["release_id"],
+        current_stage=current_stage,
+        rollback_completion=rollback_completion,
+        rollback_path=rollback_path,
+        recovery_deployed_at=deployment_time,
+    )
+    agent_linkedin_proposals_recovery = validate_agent_linkedin_proposals_recovery_activation(
+        settings=settings,
+        activation_path=agent_linkedin_proposals_activation_path,
         ledger_path=release_ledger_path,
         release_id=config["release_id"],
         current_stage=current_stage,
@@ -1682,11 +1808,23 @@ def build_recovery_evidence(
             "ledger_entry_hash": action_social_publishing_recovery["ledger_entry_hash"],
         }
 
+    agent_linkedin_proposals_summary = None
+    if agent_linkedin_proposals_recovery is not None:
+        artifact_sha256["agent_linkedin_proposals_activation"] = (
+            agent_linkedin_proposals_recovery["activation_sha256"]
+        )
+        agent_linkedin_proposals_summary = {
+            "ledger_sequence": agent_linkedin_proposals_recovery["ledger_sequence"],
+            "ledger_entry_hash": agent_linkedin_proposals_recovery["ledger_entry_hash"],
+        }
+
     runtime_requirements = {
         "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
         "action_selection_enabled": bool(getattr(settings, "agent_action_selection_enabled", False)),
         "action_proposals_enabled": bool(getattr(settings, "agent_action_proposals_enabled", False)),
     }
+    if getattr(settings, "agent_linkedin_proposals_enabled", False):
+        runtime_requirements["agent_linkedin_proposals_enabled"] = True
     if getattr(settings, "action_attachments_enabled", False):
         runtime_requirements["action_attachments_enabled"] = True
     if getattr(settings, "action_reminders_enabled", False):
@@ -1717,7 +1855,8 @@ def build_recovery_evidence(
 
     return {
         "schema_version": (
-            9 if getattr(settings, "action_social_publishing_enabled", False)
+            10 if getattr(settings, "agent_linkedin_proposals_enabled", False)
+            else 9 if getattr(settings, "action_social_publishing_enabled", False)
             else 8 if getattr(settings, "action_email_threading_enabled", False)
             else 7 if getattr(settings, "action_document_sharing_enabled", False)
             else 6 if getattr(settings, "action_recipients_enabled", False)
@@ -1761,6 +1900,9 @@ def build_recovery_evidence(
         **({
             "action_social_publishing": action_social_publishing_summary,
         } if getattr(settings, "action_social_publishing_enabled", False) else {}),
+        **({
+            "agent_linkedin_proposals": agent_linkedin_proposals_summary,
+        } if getattr(settings, "agent_linkedin_proposals_enabled", False) else {}),
         "artifact_sha256": artifact_sha256,
     }
 
@@ -1787,6 +1929,7 @@ def main() -> None:
     parser.add_argument("--action-document-sharing-activation", type=Path)
     parser.add_argument("--action-email-threading-activation", type=Path)
     parser.add_argument("--action-social-publishing-activation", type=Path)
+    parser.add_argument("--agent-linkedin-proposals-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -1823,6 +1966,7 @@ def main() -> None:
             action_document_sharing_activation_path=args.action_document_sharing_activation,
             action_email_threading_activation_path=args.action_email_threading_activation,
             action_social_publishing_activation_path=args.action_social_publishing_activation,
+            agent_linkedin_proposals_activation_path=args.agent_linkedin_proposals_activation,
             release_ledger_path=args.release_ledger,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
