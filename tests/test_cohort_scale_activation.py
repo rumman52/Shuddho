@@ -23,6 +23,7 @@ from scripts.cohort_scale_activation import (
     validate_action_document_sharing_activation,
     validate_action_email_threading_activation,
     validate_action_social_publishing_activation,
+    validate_agent_linkedin_proposals_activation,
     validate_scale_decision,
     sha256_file,
 )
@@ -64,7 +65,7 @@ def operator():
     }
 
 
-def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False):
+def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, agent_linkedin_proposals=False):
     ids = {allowed}
     ids.update(f"member-{index}" for index in range(max(0, members - 1)))
     if denied in ids:
@@ -82,6 +83,7 @@ def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"
         action_document_sharing_enabled=action_document_sharing,
         action_email_threading_enabled=action_email_threading,
         action_social_publishing_enabled=action_social_publishing,
+        agent_linkedin_proposals_enabled=agent_linkedin_proposals,
     )
 
 
