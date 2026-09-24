@@ -44,6 +44,15 @@ class ActionService:
                 "Document sharing is not enabled in this deployment.",
                 503,
             )
+        if (
+            request.capability == "social"
+            and not self.repo.settings.action_social_publishing_enabled
+        ):
+            raise CoworkerError(
+                "action_social_publishing_disabled",
+                "Social publishing is not enabled in this deployment.",
+                503,
+            )
         state, verifier = await asyncio.to_thread(
             self.repo.start_oauth,
             owner,
