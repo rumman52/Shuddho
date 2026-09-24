@@ -1548,6 +1548,32 @@ def build_recovery_evidence(
             "ledger_entry_hash": action_email_threading_recovery["ledger_entry_hash"],
         }
 
+    runtime_requirements = {
+        "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
+        "action_selection_enabled": bool(getattr(settings, "agent_action_selection_enabled", False)),
+        "action_proposals_enabled": bool(getattr(settings, "agent_action_proposals_enabled", False)),
+    }
+    if getattr(settings, "action_attachments_enabled", False):
+        runtime_requirements["action_attachments_enabled"] = True
+    if getattr(settings, "action_reminders_enabled", False):
+        runtime_requirements["action_attachments_enabled"] = bool(getattr(settings, "action_attachments_enabled", False))
+        runtime_requirements["action_reminders_enabled"] = True
+    if getattr(settings, "action_recipients_enabled", False):
+        runtime_requirements["action_attachments_enabled"] = bool(getattr(settings, "action_attachments_enabled", False))
+        runtime_requirements["action_reminders_enabled"] = bool(getattr(settings, "action_reminders_enabled", False))
+        runtime_requirements["action_recipients_enabled"] = True
+    if getattr(settings, "action_document_sharing_enabled", False):
+        runtime_requirements["action_attachments_enabled"] = bool(getattr(settings, "action_attachments_enabled", False))
+        runtime_requirements["action_reminders_enabled"] = bool(getattr(settings, "action_reminders_enabled", False))
+        runtime_requirements["action_recipients_enabled"] = bool(getattr(settings, "action_recipients_enabled", False))
+        runtime_requirements["action_document_sharing_enabled"] = True
+    if getattr(settings, "action_email_threading_enabled", False):
+        runtime_requirements["action_attachments_enabled"] = bool(getattr(settings, "action_attachments_enabled", False))
+        runtime_requirements["action_reminders_enabled"] = bool(getattr(settings, "action_reminders_enabled", False))
+        runtime_requirements["action_recipients_enabled"] = bool(getattr(settings, "action_recipients_enabled", False))
+        runtime_requirements["action_document_sharing_enabled"] = bool(getattr(settings, "action_document_sharing_enabled", False))
+        runtime_requirements["action_email_threading_enabled"] = True
+
     return {
         "schema_version": (
             8 if getattr(settings, "action_email_threading_enabled", False)
@@ -1571,46 +1597,7 @@ def build_recovery_evidence(
             "decision": status["decision"],
             "breaches": len(status["breaches"]),
         },
-        "runtime_requirements": {
-            "microsoft_actions_enabled": bool(
-                getattr(settings, "microsoft_actions_enabled", False)
-            ),
-            "action_selection_enabled": bool(
-                getattr(
-                    settings,
-                    "agent_action_selection_enabled",
-                    False,
-                )
-            ),
-            "action_proposals_enabled": bool(
-                getattr(
-                    settings,
-                    "agent_action_proposals_enabled",
-                    False,
-                )
-            ),
-            **({
-                "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
-                "action_reminders_enabled": bool(getattr(settings, "action_reminders_enabled", False)),
-                "action_recipients_enabled": bool(getattr(settings, "action_recipients_enabled", False)),
-                "action_document_sharing_enabled": bool(getattr(settings, "action_document_sharing_enabled", False)),
-                "action_email_threading_enabled": True,
-            } if getattr(settings, "action_email_threading_enabled", False) else ({
-                "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
-                "action_reminders_enabled": bool(getattr(settings, "action_reminders_enabled", False)),
-                "action_recipients_enabled": bool(getattr(settings, "action_recipients_enabled", False)),
-                "action_document_sharing_enabled": True,
-            } if getattr(settings, "action_document_sharing_enabled", False) else ({
-                "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
-                "action_reminders_enabled": bool(getattr(settings, "action_reminders_enabled", False)),
-                "action_recipients_enabled": True,
-            } if getattr(settings, "action_recipients_enabled", False) else ({
-                "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
-                "action_reminders_enabled": True,
-            } if getattr(settings, "action_reminders_enabled", False) else ({
-                "action_attachments_enabled": True,
-            } if getattr(settings, "action_attachments_enabled", False) else {})))),
-        },
+        "runtime_requirements": runtime_requirements,
         "microsoft_rollout": microsoft_summary,
         "action_selection": action_selection_summary,
         "action_proposals": action_proposals_summary,
