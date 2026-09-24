@@ -121,3 +121,14 @@ def test_completed_post_requires_single_execution_and_provider_receipt():
     )
     with pytest.raises(live.SocialPublishingValidationFailure):
         live.validate_completion(completed, prepared)
+
+
+def test_wrong_hash_changes_exactly_one_nibble():
+    value = "a" * 64
+    changed = live.wrong_hash(value)
+    assert changed != value
+    assert len(changed) == 64
+    assert changed[1:] == value[1:]
+
+    with pytest.raises(live.SocialPublishingValidationFailure):
+        live.wrong_hash("too-short")
