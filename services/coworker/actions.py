@@ -85,12 +85,17 @@ class ActionService:
                     definitive=True,
                 )
             profile = await adapter.profile(token["access_token"])
+            credentials = (
+                adapter.persisted_credentials(token)
+                if hasattr(adapter, "persisted_credentials")
+                else {"refresh_token": token["refresh_token"]}
+            )
             return await asyncio.to_thread(
                 self.repo.finish_connection,
                 owner,
                 attempt,
                 profile,
-                token["refresh_token"],
+                credentials,
                 scopes,
             )
         except ConnectorFailure:
@@ -117,10 +122,13 @@ class ActionService:
                 "connection_scope_missing",
                 definitive=True,
             )
-        token = await adapter.refresh(
-            credentials["refresh_token"],
-            capability,
-        )
+        if hasattr(adapter, "access_from_credentials"):
+            token = await adapter.access_from_credentials(credentials, capability)
+        else:
+            token = await adapter.refresh(
+                credentials["refresh_token"],
+                capability,
+            )
         if "scope" in token and (
             not isinstance(token["scope"], str)
             or required not in token["scope"].split()
