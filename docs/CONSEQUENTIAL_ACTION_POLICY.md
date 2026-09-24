@@ -66,6 +66,7 @@ No generic URL, arbitrary HTTP, shell, or unrestricted browser action is part of
 
 - `email_send` via the approved email-send boundary;
 - `email_send_with_attachments`, separately gated and limited to already-owned Shuddho artifacts;
+- `email_thread_reply`, separately gated, Google-only, and limited to a confirmed Shuddho-sent parent on the same email connection; the exact Gmail thread id, RFC reply chain, recipients and subject are approval-bound and no mailbox-read scope is added;
 - `calendar_create` for a future event with no reminder;
 - `calendar_create_with_reminder`, separately gated and limited to one explicit bounded reminder.
 
