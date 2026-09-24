@@ -296,7 +296,7 @@ After approval-bound LinkedIn personal text publishing is independently release-
 
 ## Release control — canonical capability contract
 
-After the Wave D action and Agent-proposal increments accumulated independent staging gates, provider requirements, dependencies and rollback switches, the release-control surface had begun to drift across code and checked-in templates. This increment introduces `scripts/release_contract.py` as the canonical machine-readable contract for base staging gates and every optional controlled-cohort capability.
+PR #197 unifies the controlled-release contract after the Wave D action and Agent-proposal increments accumulated independent staging gates, provider requirements, dependencies and rollback switches and the release-control surface had begun to drift across code and checked-in templates. This increment introduces `scripts/release_contract.py` as the canonical machine-readable contract for base staging gates and every optional controlled-cohort capability.
 
 The final cohort gate now derives optional dependency checks, provider requirements, exact kill switches, required live evidence and reported feature-gate requirements from that contract. LinkedIn-bound capabilities fail closed if the rollout omits LinkedIn and falls back to the legacy Google-only provider default. `scripts/release_contract_check.py` verifies the staging-evidence and rollout templates against the same contract, and CI regression tests make future capability/template drift a build failure.
 
