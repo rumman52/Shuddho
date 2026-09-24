@@ -79,7 +79,7 @@ def connection_for(connections: list[dict]) -> dict:
     ]
     if len(matches) != 1:
         raise LinkedInAgentProposalValidationFailure(
-            f"Expected exactly one active {provider} email staging "
+            "Expected exactly one active LinkedIn social staging "
             f"connection; found {len(matches)}."
         )
     value = matches[0]
@@ -332,7 +332,7 @@ def promote_exact(
     run_id: str,
     proposal: dict,
     connection: dict,
-    ) -> dict:
+) -> dict:
     path = (
         f"/api/v1/agent-runs/{run_id}/action-proposals/"
         f"{proposal['id']}/promote"
@@ -377,13 +377,34 @@ def promote_exact(
     scope = preview.get("approval_scope")
     if (
         not isinstance(scope, dict)
+        or scope.get("contract") != "shuddho.consequential-action"
+        or scope.get("contract_version") != 5
         or scope.get("provider") != "linkedin"
-        or scope.get("connection_id") != connection["id"]
         or scope.get("capability") != "social"
         or scope.get("account") != preview.get("account")
+        or scope.get("destinations") != {}
+        or scope.get("policy", {}).get("social_publishing")
+        != preview.get("social_publishing")
     ):
         raise LinkedInAgentProposalValidationFailure(
             "Promoted preview is missing its server-owned approval scope."
+        )
+
+    if (
+        not isinstance(preview.get("account"), str)
+        or not preview["account"].startswith("urn:li:person:")
+        or preview.get("social_publishing") != {
+            "provider": "linkedin",
+            "author": "connected_personal_member",
+            "visibility": "public",
+            "media": "none",
+            "scheduling": "none",
+            "social_read": "none",
+            "agent_authority": "none",
+        }
+    ):
+        raise LinkedInAgentProposalValidationFailure(
+            "Promoted LinkedIn preview exceeds the bounded personal-text authority."
         )
 
     replay = request_json(
@@ -587,7 +608,7 @@ def main() -> None:
         env_secret("SHUDDHO_STAGING_API_BASE_URL")
     )
     token = env_secret("SHUDDHO_STAGING_TOKEN_A")
-    marker = "shuddho-proposal-" + uuid.uuid4().hex[:12]
+    marker = "shuddho-linkedin-proposal-" + uuid.uuid4().hex[:12]
 
     run_id: str | None = None
     proposal: dict | None = None
