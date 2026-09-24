@@ -20,7 +20,8 @@ CI is application-contract evidence only. It does not prove real DeepSeek output
 Run only in controlled staging with a backend-only `DEEPSEEK_API_KEY`:
 
 ```bash
-uv run --extra coworker python scripts/agent_eval.py --live --min-pass-rate 1.0 --output /tmp/agent-eval.json
+export SHUDDHO_SOURCE_REVISION=<40-character-deployed-git-sha>
+uv run --extra coworker python scripts/agent_eval.py --live --release-id coworker-cohort-001 --rollout /secure/release/cohort-rollout.json --min-pass-rate 1.0 --output /secure/release/agent-eval.json
 ```
 
 Do not run paid live evaluation in CI. Do not add user prompts, user files, secrets, hidden reasoning, or production data to the fixture set or generated artifacts.
@@ -32,7 +33,7 @@ The initial release threshold is 100% on this deliberately small contract set. E
 Routing correctness is necessary but not sufficient. Before broader production enablement, run the checked-in Coworker quality suite through the configured DeepSeek draft model:
 
 ```bash
-uv run --extra coworker python scripts/coworker_quality_eval.py --live --release-id coworker-cohort-001 --min-pass-rate 1.0 --min-fact-recall 1.0 --max-average-tokens 20000 --max-p95-latency-ms 90000 --output /secure/release/coworker-quality-eval.json
+uv run --extra coworker python scripts/coworker_quality_eval.py --live --release-id coworker-cohort-001 --rollout /secure/release/cohort-rollout.json --min-pass-rate 1.0 --min-fact-recall 1.0 --max-average-tokens 20000 --max-p95-latency-ms 90000 --output /secure/release/coworker-quality-eval.json
 ```
 
 The initial synthetic suite covers English, Bangla, Spanish, and Arabic. It objectively checks schema validity, requested language, required fact preservation, known unsupported-claim absence, provenance references, missing-information behavior, latency, and token use. It does not use an LLM judge or claim universal language quality.
