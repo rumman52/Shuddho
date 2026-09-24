@@ -126,12 +126,11 @@ test("LinkedIn redirect must match provider, callback path and returned state", 
     linkedInAuthorizationURL(base.href, state, "https://shuddho.example.org"),
     base.href,
   );
-  for (const changed of [
-    base.href.replace("www.linkedin.com", "attacker.example"),
-    base.href.replace("/oauth/v2/authorization", "/other"),
-    base.href.replace("/oauth/linkedin/callback", "/oauth/linkedin/other"),
-    base.href.replace(state, "d".repeat(43)),
-  ]) {
+  const badHost = new URL(base.href); badHost.hostname = "attacker.example";
+  const badPath = new URL(base.href); badPath.pathname = "/other";
+  const badRedirect = new URL(base.href); badRedirect.searchParams.set("redirect_uri", "https://shuddho.example.org/oauth/linkedin/other");
+  const badState = new URL(base.href); badState.searchParams.set("state", "d".repeat(43));
+  for (const changed of [badHost.href, badPath.href, badRedirect.href, badState.href]) {
     assert.throws(
       () => linkedInAuthorizationURL(changed, state, "https://shuddho.example.org"),
       /LinkedIn connection redirect/,
