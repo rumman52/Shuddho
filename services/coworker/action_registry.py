@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -35,6 +36,7 @@ class ActionSpec:
     owned_artifact_required: bool = False
     document_access: str | None = None
     notification_policy: str | None = None
+    thread_reply: bool = False
 
     def public(self) -> dict:
         return {
@@ -46,6 +48,7 @@ class ActionSpec:
             "execution_ttl_seconds": self.execution_ttl_seconds,
             "reconcile_mode": self.reconcile_mode,
             "attachments_allowed": self.attachments_allowed,
+            "thread_reply": self.thread_reply,
         }
 
     @property
@@ -68,6 +71,15 @@ class ActionSpec:
                 "source": "owned_shuddho_artifact",
                 "access": self.document_access,
                 "notifications": self.notification_policy,
+            }
+        if self.thread_reply:
+            result["threading"] = {
+                "source": "owned_confirmed_shuddho_email",
+                "provider": "google",
+                "recipients": "same_to_cc",
+                "bcc": "forbidden",
+                "subject": "unchanged",
+                "mailbox_read": "none",
             }
         return result
 
@@ -93,6 +105,17 @@ ACTION_SPECS = {
         reconcile_mode="none",
         destination_fields=("to", "cc", "bcc"),
         attachments_allowed=True,
+    ),
+    "email_thread_reply": ActionSpec(
+        kind="email_thread_reply",
+        version="1",
+        capability="email",
+        providers=frozenset({"google"}),
+        approval_ttl_seconds=15 * 60,
+        execution_ttl_seconds=5 * 60,
+        reconcile_mode="none",
+        destination_fields=("to", "cc", "bcc"),
+        thread_reply=True,
     ),
     "calendar_create": ActionSpec(
         kind="calendar_create",
@@ -263,6 +286,70 @@ def shared_artifact_manifest(preview: dict, spec: ActionSpec) -> dict | None:
     return dict(value)
 
 
+def thread_context_manifest(preview: dict, spec: ActionSpec) -> dict | None:
+    value = preview.get("reply_context")
+    if not spec.thread_reply:
+        if value is not None:
+            raise CoworkerError(
+                "approval_changed",
+                "This action does not allow threaded email authority.",
+                409,
+            )
+        return None
+    required = {
+        "parent_action_id",
+        "root_action_id",
+        "thread_id",
+        "parent_message_id",
+        "parent_provider_id",
+        "references",
+    }
+    action_id = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    if not isinstance(value, dict) or set(value) != required:
+        raise CoworkerError(
+            "approval_changed",
+            "The approved thread context could not be verified.",
+            409,
+        )
+    if (
+        not isinstance(value["parent_action_id"], str)
+        or not re.fullmatch(action_id, value["parent_action_id"])
+        or not isinstance(value["root_action_id"], str)
+        or not re.fullmatch(action_id, value["root_action_id"])
+        or not isinstance(value["thread_id"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value["thread_id"])
+        or not isinstance(value["parent_provider_id"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value["parent_provider_id"])
+    ):
+        raise CoworkerError(
+            "approval_changed",
+            "The approved thread identity is invalid.",
+            409,
+        )
+    expected_parent = f'<{value["parent_action_id"]}@shuddho.invalid>'
+    expected_root = f'<{value["root_action_id"]}@shuddho.invalid>'
+    references = value["references"]
+    if (
+        value["parent_message_id"] != expected_parent
+        or not isinstance(references, list)
+        or not 1 <= len(references) <= 20
+        or any(
+            not isinstance(item, str)
+            or not re.fullmatch(r"<" + action_id + r"@shuddho\.invalid>", item)
+            for item in references
+        )
+        or len(references) != len(set(references))
+        or references[0] != expected_root
+        or references[-1] != expected_parent
+    ):
+        raise CoworkerError(
+            "approval_changed",
+            "The approved reply chain is invalid.",
+            409,
+        )
+    return dict(value)
+
+
 def build_approval_scope(preview: dict) -> dict:
     payload = preview.get("payload")
     if not isinstance(payload, dict):
@@ -282,9 +369,10 @@ def build_approval_scope(preview: dict) -> dict:
     spec = action_spec(kind, provider)
     attachments = attachment_manifest(preview, spec)
     shared_artifact = shared_artifact_manifest(preview, spec)
+    reply_context = thread_context_manifest(preview, spec)
     result = {
         "contract": "shuddho.consequential-action",
-        "contract_version": 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
+        "contract_version": 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
         "action_kind": spec.kind,
         "action_version": spec.version,
         "provider": provider,
@@ -306,6 +394,9 @@ def build_approval_scope(preview: dict) -> dict:
             **({
                 "document_sharing": preview.get("document_sharing"),
             } if spec.owned_artifact_required else {}),
+            **({
+                "threading": preview.get("threading"),
+            } if spec.thread_reply else {}),
         },
         "expires_at": preview.get("expires_at"),
     }
@@ -315,6 +406,9 @@ def build_approval_scope(preview: dict) -> dict:
     if spec.owned_artifact_required:
         result["shared_artifact"] = shared_artifact
         result["shared_artifact_sha256"] = stable_digest(shared_artifact)
+    if spec.thread_reply:
+        result["reply_context"] = reply_context
+        result["reply_context_sha256"] = stable_digest(reply_context)
     return result
 
 
