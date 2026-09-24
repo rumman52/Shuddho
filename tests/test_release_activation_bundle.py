@@ -279,3 +279,76 @@ def test_schema_v16_binds_bundle_to_exact_verified_ledger_head(
             staging_evidence=staging,
             release_activation_bundle=bundle_path,
         )
+
+
+def test_schema_v16_rejects_tampered_required_activation_set(
+    tmp_path,
+    monkeypatch,
+):
+    rollout, staging, activation, ledger = bundle_files(tmp_path)
+    monkeypatch.setenv(
+        "SHUDDHO_RELEASE_LEDGER_HMAC_KEY",
+        KEY.decode("ascii"),
+    )
+    bundle = verify_activation_bundle(
+        rollout_path=rollout,
+        staging_evidence_path=staging,
+        ledger_path=ledger,
+        activation_paths={"action_proposals": activation},
+        current_stage=STAGE,
+    )
+    bundle["required_activation_keys"] = []
+    bundle["activations"] = {}
+    bundle_path = write_json(tmp_path / "tampered-bundle.json", bundle)
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="required activation set does not match",
+    ):
+        append_release_activation_bundle_event(
+            ledger=ledger,
+            key=KEY,
+            release_id=RELEASE_ID,
+            actor_reference="oncall-primary",
+            change_reference="change-1",
+            current_stage=STAGE,
+            rollout_manifest=rollout,
+            staging_evidence=staging,
+            release_activation_bundle=bundle_path,
+        )
+
+
+def test_schema_v16_rejects_tampered_activation_attestation_reference(
+    tmp_path,
+    monkeypatch,
+):
+    rollout, staging, activation, ledger = bundle_files(tmp_path)
+    monkeypatch.setenv(
+        "SHUDDHO_RELEASE_LEDGER_HMAC_KEY",
+        KEY.decode("ascii"),
+    )
+    bundle = verify_activation_bundle(
+        rollout_path=rollout,
+        staging_evidence_path=staging,
+        ledger_path=ledger,
+        activation_paths={"action_proposals": activation},
+        current_stage=STAGE,
+    )
+    bundle["activations"]["action_proposals"]["ledger_entry_hash"] = "f" * 64
+    bundle_path = write_json(tmp_path / "tampered-reference-bundle.json", bundle)
+
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="entry hash",
+    ):
+        append_release_activation_bundle_event(
+            ledger=ledger,
+            key=KEY,
+            release_id=RELEASE_ID,
+            actor_reference="oncall-primary",
+            change_reference="change-1",
+            current_stage=STAGE,
+            rollout_manifest=rollout,
+            staging_evidence=staging,
+            release_activation_bundle=bundle_path,
+        )
