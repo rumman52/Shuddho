@@ -24,6 +24,7 @@ from scripts.cohort_scale_activation import (
     validate_action_email_threading_activation,
     validate_action_social_publishing_activation,
     validate_agent_linkedin_proposals_activation,
+    validate_release_activation_bundle,
     validate_scale_decision,
     sha256_file,
 )
@@ -1479,3 +1480,72 @@ def test_scale_v10_evidence_binds_linkedin_agent_proposal_attestation(tmp_path):
     assert evidence["runtime_requirements"]["agent_linkedin_proposals_enabled"] is True
     assert evidence["agent_linkedin_proposals"]["ledger_sequence"] == 15
     assert evidence["artifact_sha256"]["agent_linkedin_proposals_activation"] == sha256_file(linkedin_path)
+
+
+def _valid_scale_rollout():
+    return {
+        "release_id": "coworker-cohort-001",
+        "environment": "production",
+        "cohort": {"reference": "approved-cohort", "max_users": 25},
+        "action_providers": ["google"],
+        "capabilities": {
+            "coworker": True,
+            "work_services": True,
+            "artifact_services": True,
+            "agent_runtime": True,
+            "intelligent_planner": True,
+            "memory": False,
+            "handoffs": True,
+            "multi_handoffs": True,
+            "dependency_graph": True,
+            "parallel_execution": True,
+            "outcome_replan": True,
+            "research": False,
+            "actions": False,
+        },
+        "rollback": {
+            "runbook_reference": "runbook-1",
+            "global_kill_switch": "SHUDDHO_COWORKER_ENABLED=false",
+            "agent_kill_switch": "SHUDDHO_AGENT_RUNTIME_ENABLED=false",
+            "parallel_kill_switch": "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false",
+            "research_kill_switch": "SHUDDHO_RESEARCH_SERVICES_ENABLED=false",
+            "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false",
+        },
+        "monitoring": {
+            "queue_age": "dashboard",
+            "task_success": "dashboard",
+            "provider_errors": "dashboard",
+            "latency": "dashboard",
+            "token_cost": "dashboard",
+            "storage_growth": "dashboard",
+            "agent_failures": "dashboard",
+        },
+        "incident": {
+            "oncall_reference": "oncall-primary",
+            "change_reference": "change-42",
+        },
+    }
+
+
+def test_scale_rejects_release_bundle_for_different_rollout(tmp_path):
+    rollout_path = tmp_path / "current-rollout.json"
+    rollout_path.write_text(json.dumps(_valid_scale_rollout()), encoding="utf-8")
+    bundle_path = tmp_path / "release-activation-bundle.json"
+    bundle_path.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "release_activation_bundle_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "cohort-25",
+        "rollout_manifest_sha256": "0" * 64,
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        ScaleActivationError,
+        match="does not bind the current rollout manifest",
+    ):
+        validate_release_activation_bundle(
+            bundle_path,
+            tmp_path / "unused-ledger.jsonl",
+            decision(),
+            rollout_path,
+        )
