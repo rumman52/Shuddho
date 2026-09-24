@@ -365,7 +365,7 @@ def promote_exact(
             "Promoted action preview/hash is invalid."
         )
     if (
-        preview.get("version") != 2
+        preview.get("version") != 5
         or preview.get("provider") != "linkedin"
         or preview.get("connection_id") != connection["id"]
         or preview.get("payload") != proposal["payload"]
