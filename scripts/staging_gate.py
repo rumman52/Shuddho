@@ -4,22 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from scripts.release_contract import CONDITIONAL_GATES
-
-REQUIRED_GATES = {
-    "ci": "Dedicated repository CI, including Coworker/Temporal recovery, is green.",
-    "identity": "Managed identity is configured and owner isolation is verified.",
-    "database": "Production PostgreSQL is configured with TLS and migrations applied.",
-    "storage": "Private object storage is configured and owner-scoped download checks pass.",
-    "temporal": "Production Temporal is reachable and worker restart/replay has been verified.",
-    "model": "A live DeepSeek call and planner evaluation have passed in staging.",
-    "quality": "Curated multilingual live Coworker quality/fidelity evaluation passed with recorded latency and token evidence.",
-    "backup_restore": "Database/object backup and restore has been exercised successfully.",
-    "deletion": "Retention/deletion operations have been verified against owned data.",
-    "parallel_restart": "Two-branch AgentWorkflow v2 restart completes without duplicate child tasks or artifacts.",
-    "fan_in": "Fan-in starts only after every persisted dependency completes.",
-    "flag_rollback": "Disabling Agent parallel execution routes new runs back to v1.",
-}
+from scripts.release_contract import CONDITIONAL_GATES, REQUIRED_GATES
 
 def load_evidence(path: Path) -> dict:
     value = json.loads(path.read_text(encoding="utf-8"))
