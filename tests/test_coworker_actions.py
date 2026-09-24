@@ -940,7 +940,7 @@ def test_linkedin_agent_proposal_is_inert_and_separately_gated(container):
         container.agent.save_plan(
             owner,
             blocked["id"],
-            [AgentPlanStep(tool="social.write", arguments={
+            [AgentPlanStep(tool="social.draft", arguments={
                 "instruction": "Draft the exact LinkedIn post.",
                 "notes": "",
                 "document_ids": [],
@@ -964,7 +964,7 @@ def test_linkedin_agent_proposal_is_inert_and_separately_gated(container):
     saved = container.agent.save_plan(
         owner,
         allowed["id"],
-        [AgentPlanStep(tool="social.write", arguments={
+        [AgentPlanStep(tool="social.draft", arguments={
             "instruction": "Draft the exact LinkedIn post.",
             "notes": "",
             "document_ids": [],
