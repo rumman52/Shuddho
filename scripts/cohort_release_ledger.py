@@ -842,22 +842,24 @@ def append_recovery_event(
         )
 
     recovery_schema = recovery_value.get("schema_version")
-    if recovery_schema in {2, 3, 4, 5, 6, 7}:
+    if recovery_schema in {2, 3, 4, 5, 6, 7, 8}:
         requirements = recovery_value.get("runtime_requirements")
         expected_requirement_keys = {
             "microsoft_actions_enabled",
             "action_selection_enabled",
         }
-        if recovery_schema in {3, 4, 5, 6, 7}:
+        if recovery_schema in {3, 4, 5, 6, 7, 8}:
             expected_requirement_keys.add("action_proposals_enabled")
-        if recovery_schema in {4, 5, 6, 7}:
+        if recovery_schema in {4, 5, 6, 7, 8}:
             expected_requirement_keys.add("action_attachments_enabled")
-        if recovery_schema in {5, 6, 7}:
+        if recovery_schema in {5, 6, 7, 8}:
             expected_requirement_keys.add("action_reminders_enabled")
-        if recovery_schema in {6, 7}:
+        if recovery_schema in {6, 7, 8}:
             expected_requirement_keys.add("action_recipients_enabled")
-        if recovery_schema == 7:
+        if recovery_schema in {7, 8}:
             expected_requirement_keys.add("action_document_sharing_enabled")
+        if recovery_schema == 8:
+            expected_requirement_keys.add("action_email_threading_enabled")
         if (
             not isinstance(requirements, dict)
             or set(requirements) != expected_requirement_keys
@@ -919,7 +921,7 @@ def append_recovery_event(
                 "Recovery evidence contains action-selection attestation data while action selection is not required."
             )
 
-        if recovery_schema in {3, 4, 5, 6, 7}:
+        if recovery_schema in {3, 4, 5, 6, 7, 8}:
             proposals_required = requirements["action_proposals_enabled"]
             proposals_hash = recovery_hashes.get("action_proposals_activation")
             proposals_summary = recovery_value.get("action_proposals")
@@ -946,7 +948,7 @@ def append_recovery_event(
                     "Recovery evidence contains action-proposals attestation data while action proposals are not required."
                 )
 
-        if recovery_schema in {4, 5, 6, 7}:
+        if recovery_schema in {4, 5, 6, 7, 8}:
             attachments_required = requirements["action_attachments_enabled"]
             attachments_hash = recovery_hashes.get("action_attachments_activation")
             attachments_summary = recovery_value.get("action_attachments")
@@ -973,7 +975,7 @@ def append_recovery_event(
                     "Recovery evidence contains action-attachments attestation data while action attachments are not required."
                 )
 
-        if recovery_schema in {5, 6, 7}:
+        if recovery_schema in {5, 6, 7, 8}:
             reminders_required = requirements["action_reminders_enabled"]
             reminders_hash = recovery_hashes.get("action_reminders_activation")
             reminders_summary = recovery_value.get("action_reminders")
@@ -1000,7 +1002,7 @@ def append_recovery_event(
                     "Recovery evidence contains action-reminders attestation data while action reminders are not required."
                 )
 
-        if recovery_schema in {6, 7}:
+        if recovery_schema in {6, 7, 8}:
             recipients_required = requirements["action_recipients_enabled"]
             recipients_hash = recovery_hashes.get("action_recipients_activation")
             recipients_summary = recovery_value.get("action_recipients")
@@ -1027,7 +1029,7 @@ def append_recovery_event(
                     "Recovery evidence contains action-recipients attestation data while action recipients are not required."
                 )
 
-        if recovery_schema == 7:
+        if recovery_schema in {7, 8}:
             document_required = requirements["action_document_sharing_enabled"]
             document_hash = recovery_hashes.get("action_document_sharing_activation")
             document_summary = recovery_value.get("action_document_sharing")
@@ -1052,6 +1054,31 @@ def append_recovery_event(
             elif document_hash is not None or document_summary is not None:
                 raise ReleaseLedgerError(
                     "Recovery evidence contains document-sharing attestation data while document sharing is not required."
+                )        if recovery_schema == 8:
+            threading_required = requirements["action_email_threading_enabled"]
+            threading_hash = recovery_hashes.get("action_email_threading_activation")
+            threading_summary = recovery_value.get("action_document_sharing")
+            if threading_required:
+                if not valid_hash(threading_hash) or not isinstance(threading_summary, dict):
+                    raise ReleaseLedgerError(
+                        "Email-threading recovery evidence is missing its required attestation."
+                    )
+                require_exact_attested_event(
+                    entries,
+                    schema_version=ACTION_EMAIL_THREADING_SCHEMA_VERSION,
+                    event_type="action_email_threading_verified",
+                    current_stage=current_stage,
+                    next_stage=None,
+                    artifact_key="action_email_threading_activation",
+                    artifact_sha256=threading_hash,
+                    after_sequence=rollback_entry["sequence"],
+                    expected_sequence=threading_summary.get("ledger_sequence"),
+                    expected_entry_hash=threading_summary.get("ledger_entry_hash"),
+                    label="Email-threading recovery attestation",
+                )
+            elif threading_hash is not None or threading_summary is not None:
+                raise ReleaseLedgerError(
+                    "Recovery evidence contains email-threading attestation data while email threading is not required."
                 )
 
     core = {
@@ -1180,22 +1207,24 @@ def append_scale_event(
         )
 
     activation_schema = activation.get("schema_version")
-    if activation_schema in {2, 3, 4, 5, 6, 7}:
+    if activation_schema in {2, 3, 4, 5, 6, 7, 8}:
         requirements = activation.get("runtime_requirements")
         expected_requirement_keys = {
             "microsoft_actions_enabled",
             "action_selection_enabled",
         }
-        if activation_schema in {3, 4, 5, 6, 7}:
+        if activation_schema in {3, 4, 5, 6, 7, 8}:
             expected_requirement_keys.add("action_proposals_enabled")
-        if activation_schema in {4, 5, 6, 7}:
+        if activation_schema in {4, 5, 6, 7, 8}:
             expected_requirement_keys.add("action_attachments_enabled")
-        if activation_schema in {5, 6, 7}:
+        if activation_schema in {5, 6, 7, 8}:
             expected_requirement_keys.add("action_reminders_enabled")
-        if activation_schema in {6, 7}:
+        if activation_schema in {6, 7, 8}:
             expected_requirement_keys.add("action_recipients_enabled")
-        if activation_schema == 7:
+        if activation_schema in {7, 8}:
             expected_requirement_keys.add("action_document_sharing_enabled")
+        if activation_schema == 8:
+            expected_requirement_keys.add("action_email_threading_enabled")
         if (
             not isinstance(requirements, dict)
             or set(requirements) != expected_requirement_keys
@@ -1252,7 +1281,7 @@ def append_scale_event(
                 "Scale activation contains action-selection attestation data while action selection is not required."
             )
 
-        if activation_schema in {3, 4, 5, 6, 7}:
+        if activation_schema in {3, 4, 5, 6, 7, 8}:
             proposals_required = requirements["action_proposals_enabled"]
             proposals_hash = hashes.get("action_proposals_activation")
             proposals_summary = activation.get("action_proposals")
@@ -1278,7 +1307,7 @@ def append_scale_event(
                     "Scale activation contains action-proposals attestation data while action proposals are not required."
                 )
 
-        if activation_schema in {4, 5, 6, 7}:
+        if activation_schema in {4, 5, 6, 7, 8}:
             attachments_required = requirements["action_attachments_enabled"]
             attachments_hash = hashes.get("action_attachments_activation")
             attachments_summary = activation.get("action_attachments")
@@ -1304,7 +1333,7 @@ def append_scale_event(
                     "Scale activation contains action-attachments attestation data while action attachments are not required."
                 )
 
-        if activation_schema in {5, 6, 7}:
+        if activation_schema in {5, 6, 7, 8}:
             reminders_required = requirements["action_reminders_enabled"]
             reminders_hash = hashes.get("action_reminders_activation")
             reminders_summary = activation.get("action_reminders")
@@ -1330,7 +1359,7 @@ def append_scale_event(
                     "Scale activation contains action-reminders attestation data while action reminders are not required."
                 )
 
-        if activation_schema in {6, 7}:
+        if activation_schema in {6, 7, 8}:
             recipients_required = requirements["action_recipients_enabled"]
             recipients_hash = hashes.get("action_recipients_activation")
             recipients_summary = activation.get("action_recipients")
@@ -1356,7 +1385,7 @@ def append_scale_event(
                     "Scale activation contains action-recipients attestation data while action recipients are not required."
                 )
 
-        if activation_schema == 7:
+        if activation_schema in {7, 8}:
             document_required = requirements["action_document_sharing_enabled"]
             document_hash = hashes.get("action_document_sharing_activation")
             document_summary = activation.get("action_document_sharing")
@@ -1388,7 +1417,39 @@ def append_scale_event(
         and item.get("next_stage") == next_stage
     ]
     if prior_scale:
-        raise ReleaseLedgerError("This bounded expansion stage is already recorded in the release ledger.")
+        raise ReleaseLedgerError("This bounded expansion stage is already recorded in the release ledg        if activation_schema == 8:
+            threading_required = requirements["action_email_threading_enabled"]
+            threading_hash = hashes.get("action_email_threading_activation")
+            threading_summary = activation.get("action_document_sharing")
+            if threading_required:
+                if not valid_hash(threading_hash) or not isinstance(threading_summary, dict):
+                    raise ReleaseLedgerError(
+                        "Email-threading scale activation is missing its required attestation."
+                    )
+                require_exact_attested_event(
+                    entries,
+                    schema_version=ACTION_EMAIL_THREADING_SCHEMA_VERSION,
+                    event_type="action_email_threading_verified",
+                    current_stage=current_stage,
+                    next_stage=None,
+                    artifact_key="action_email_threading_activation",
+                    artifact_sha256=threading_hash,
+                    expected_sequence=threading_summary.get("ledger_sequence"),
+                    expected_entry_hash=threading_summary.get("ledger_entry_hash"),
+                    label="Email-threading scale attestation",
+                )
+            elif threading_hash is not None or threading_summary is not None:
+                raise ReleaseLedgerError(
+                    "Scale activation contains email-threading attestation data while email threading is not required."
+                )
+
+    prior_scale = [
+        item for item in entries
+        if item.get("event_type") == "bounded_expansion_verified"
+        and item.get("next_stage") == next_stage
+    ]
+    if prior_scale:
+        raise ReleaseLedgerError("This bounded expansion stage is already recorded in the release ledger.")er.")
 
     core = {
         "schema_version": SCALE_SCHEMA_VERSION,
