@@ -31,6 +31,7 @@ CONDITIONAL_GATES = {
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
     "action_selection": "Live Agent planner selected only opaque attached-action handles and still paused for explicit user approval.",
     "action_proposals": "Live Agent generated only inert typed action proposals; promotion created a separate preview and never auto-approved or executed it.",
+    "agent_linkedin_proposals": "Live intelligent planner generated only an inert personal LinkedIn text proposal; wrong-hash promotion failed; exact user-selected LinkedIn promotion created one unapproved immutable preview with no provider mutation.",
 }
 
 
@@ -56,6 +57,7 @@ def evaluate(
     require_action_social_publishing: bool = False,
     require_action_selection: bool = False,
     require_action_proposals: bool = False,
+    require_agent_linkedin_proposals: bool = False,
 ) -> dict:
     required = dict(REQUIRED_GATES)
     if require_research:
@@ -82,6 +84,8 @@ def evaluate(
         required["action_selection"] = CONDITIONAL_GATES["action_selection"]
     if require_action_proposals:
         required["action_proposals"] = CONDITIONAL_GATES["action_proposals"]
+    if require_agent_linkedin_proposals:
+        required["agent_linkedin_proposals"] = CONDITIONAL_GATES["agent_linkedin_proposals"]
     checks = []
     for key, description in required.items():
         record = evidence.get(key)
@@ -123,6 +127,7 @@ def main() -> None:
     parser.add_argument("--require-action-social-publishing", action="store_true")
     parser.add_argument("--require-action-selection", action="store_true")
     parser.add_argument("--require-action-proposals", action="store_true")
+    parser.add_argument("--require-agent-linkedin-proposals", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = evaluate(
@@ -139,6 +144,7 @@ def main() -> None:
         require_action_social_publishing=args.require_action_social_publishing,
         require_action_selection=args.require_action_selection,
         require_action_proposals=args.require_action_proposals,
+        require_agent_linkedin_proposals=args.require_agent_linkedin_proposals,
     )
     encoded = json.dumps(result, indent=2)
     if args.output:
