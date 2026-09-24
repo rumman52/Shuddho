@@ -8,7 +8,7 @@ from scripts.staging_gate import evaluate as evaluate_staging, load_evidence
 
 ACTION_PROVIDERS = {"google", "microsoft", "linkedin"}
 
-OPTIONAL_CAPABILITY_KEYS = {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals"}
+OPTIONAL_CAPABILITY_KEYS = {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"}
 
 CAPABILITY_KEYS = {
     "coworker",
@@ -49,6 +49,7 @@ OPTIONAL_ROLLBACK_KEYS = {
     "action_document_sharing_kill_switch",
     "action_email_threading_kill_switch",
     "action_social_publishing_kill_switch",
+    "agent_linkedin_proposals_kill_switch",
     "action_selection_kill_switch",
     "action_proposals_kill_switch",
 }
@@ -64,6 +65,7 @@ EXPECTED_KILL_SWITCHES = {
     "action_document_sharing_kill_switch": "SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false",
     "action_email_threading_kill_switch": "SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false",
     "action_social_publishing_kill_switch": "SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false",
+    "agent_linkedin_proposals_kill_switch": "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false",
     "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
     "action_proposals_kill_switch": "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false",
 }
@@ -182,6 +184,11 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
                 or not capabilities["intelligent_planner"]
             ):
                 failures.append("action_proposals_dependency")
+            if capabilities.get("agent_linkedin_proposals") is True and (
+                capabilities.get("action_proposals") is not True
+                or capabilities.get("action_social_publishing") is not True
+            ):
+                failures.append("agent_linkedin_proposals_dependency")
 
     providers_value = rollout.get("action_providers")
     if providers_value is not None:
@@ -222,7 +229,7 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
         if not text_ref(rollback["runbook_reference"]):
             failures.append("rollback_runbook")
         for key, expected in EXPECTED_KILL_SWITCHES.items():
-            if key in {"action_attachments_kill_switch", "action_reminders_kill_switch", "action_recipients_kill_switch", "action_document_sharing_kill_switch", "action_email_threading_kill_switch", "action_social_publishing_kill_switch", "action_selection_kill_switch", "action_proposals_kill_switch"}:
+            if key in {"action_attachments_kill_switch", "action_reminders_kill_switch", "action_recipients_kill_switch", "action_document_sharing_kill_switch", "action_email_threading_kill_switch", "action_social_publishing_kill_switch", "agent_linkedin_proposals_kill_switch", "action_selection_kill_switch", "action_proposals_kill_switch"}:
                 continue
             if rollback.get(key) != expected:
                 failures.append(key)
@@ -244,6 +251,9 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
         if isinstance(capabilities, dict) and capabilities.get("action_social_publishing") is True:
             if rollback.get("action_social_publishing_kill_switch") != EXPECTED_KILL_SWITCHES["action_social_publishing_kill_switch"]:
                 failures.append("action_social_publishing_kill_switch")
+        if isinstance(capabilities, dict) and capabilities.get("agent_linkedin_proposals") is True:
+            if rollback.get("agent_linkedin_proposals_kill_switch") != EXPECTED_KILL_SWITCHES["agent_linkedin_proposals_kill_switch"]:
+                failures.append("agent_linkedin_proposals_kill_switch")
         if isinstance(capabilities, dict) and capabilities.get("action_selection") is True:
             if rollback.get("action_selection_kill_switch") != EXPECTED_KILL_SWITCHES["action_selection_kill_switch"]:
                 failures.append("action_selection_kill_switch")
@@ -312,6 +322,10 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         isinstance(capabilities, dict)
         and capabilities.get("action_social_publishing") is True
     )
+    require_agent_linkedin_proposals = (
+        isinstance(capabilities, dict)
+        and capabilities.get("agent_linkedin_proposals") is True
+    )
     require_action_selection = (
         isinstance(capabilities, dict)
         and capabilities.get("action_selection") is True
@@ -358,6 +372,8 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         staging["decision"] = "NO-GO"
         staging["missing"].append("cohort_admission")
     rollout_failures = validate_rollout(rollout, max_cohort_users=max_cohort_users)
+    if require_agent_linkedin_proposals:
+        rollout_failures = sorted(set([*rollout_failures, "agent_linkedin_proposals_release_gate_pending"]))
     decision = "GO_CONTROLLED_COHORT" if staging["decision"] == "GO" and not rollout_failures else "NO-GO"
     return {
         "decision": decision,
@@ -381,6 +397,7 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
             "action_document_sharing": require_action_document_sharing,
             "action_email_threading": require_action_email_threading,
             "action_social_publishing": require_action_social_publishing,
+            "agent_linkedin_proposals": require_agent_linkedin_proposals,
             "action_selection": require_action_selection,
             "action_proposals": require_action_proposals,
         },

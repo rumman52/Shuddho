@@ -583,6 +583,15 @@ class ActionRepository:
                     "This proposal changed. Review it again before promoting.",
                     409,
                 )
+            if (
+                proposal.kind == "social_publish_linkedin"
+                and not self.settings.agent_linkedin_proposals_enabled
+            ):
+                raise CoworkerError(
+                    "linkedin_action_proposals_disabled",
+                    "LinkedIn Agent proposals are not enabled in this deployment.",
+                    503,
+                )
             if proposal.state == "promoted":
                 if (
                     proposal.promotion_connection_id != connection_id

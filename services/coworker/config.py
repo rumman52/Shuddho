@@ -48,6 +48,7 @@ class Settings:
     agent_outcome_replan_enabled: bool = False
     agent_action_selection_enabled: bool = False
     agent_action_proposals_enabled: bool = False
+    agent_linkedin_proposals_enabled: bool = False
     cohort_enforced: bool = False
     cohort_account_ids: frozenset[str] = field(default_factory=frozenset)
     cohort_max_users: int = 25
@@ -143,6 +144,7 @@ class Settings:
             agent_outcome_replan_enabled=os.getenv("SHUDDHO_AGENT_OUTCOME_REPLAN_ENABLED", "false").lower() == "true",
             agent_action_selection_enabled=os.getenv("SHUDDHO_AGENT_ACTION_SELECTION_ENABLED", "false").lower() == "true",
             agent_action_proposals_enabled=os.getenv("SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED", "false").lower() == "true",
+            agent_linkedin_proposals_enabled=os.getenv("SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED", "false").lower() == "true",
             cohort_enforced=os.getenv("SHUDDHO_COWORKER_COHORT_ENFORCED", "false").lower() == "true",
             cohort_account_ids=frozenset(
                 value.strip().lower()
@@ -284,6 +286,11 @@ class Settings:
                 raise ValueError("Agent action proposals require SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
             if not self.actions_enabled:
                 raise ValueError("Agent action proposals require SHUDDHO_ACTIONS_ENABLED=true")
+        if self.agent_linkedin_proposals_enabled:
+            if not self.agent_action_proposals_enabled:
+                raise ValueError("LinkedIn Agent proposals require SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=true")
+            if not self.action_social_publishing_enabled:
+                raise ValueError("LinkedIn Agent proposals require SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=true")
         if self.research_services_enabled and (self.search_provider != "tavily" or not self.search_api_key):
             raise ValueError("Research requires SHUDDHO_SEARCH_PROVIDER=tavily and backend-only TAVILY_API_KEY")
         if not self.database_url:

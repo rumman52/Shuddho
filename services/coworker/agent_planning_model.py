@@ -31,6 +31,7 @@ class DeepSeekAgentPlanner:
         *,
         reason: str = "initial",
         allow_action_proposals: bool = False,
+        allow_linkedin_action_proposals: bool = False,
     ) -> tuple[AgentPlannerProposal, int | None, int]:
         if not self.settings.deepseek_api_key:
             raise PlannerFailure("planner_not_configured", "The intelligent planner is not configured.")
@@ -41,8 +42,9 @@ class DeepSeekAgentPlanner:
                 "Return 1 to 3 steps. Each step contains only a tool name and a short objective. "
                 "Do not create tool arguments, URLs, credentials, permissions, provider choices, connection IDs, action IDs, or approval data. "
                 "If action_proposals_allowed is true, you may add at most two inert typed email/calendar action proposals using only details explicitly supported by the user goal. "
+                "If linkedin_action_proposals_allowed is also true, one of those proposals may instead be a personal LinkedIn public text-post proposal; use only exact post text supported by the goal and never choose an author, account, organization, media, visibility variant, schedule, or engagement action. "
                 "Action proposals are suggestions only: they have no provider or connection, cannot be approved or executed, and require a later user promotion into a separate server-owned preview. "
-                "If any required recipient, title, time, time zone, or content is missing or uncertain, do not create that proposal. "
+                "If any required recipient, title, time, time zone, post text, or content is missing or uncertain, do not create that proposal. "
                 "Names beginning with attached.email. or attached.calendar. are opaque handles for action drafts "
                 "the user already attached. You may select such a handle only when it appears in available_tools. "
                 "Selecting a handle cannot edit, approve, or execute the action; the server resolves it and explicit user approval remains required. "
@@ -55,6 +57,7 @@ class DeepSeekAgentPlanner:
                 "available_tools": tools,
                 "planning_reason": reason,
                 "action_proposals_allowed": allow_action_proposals,
+                "linkedin_action_proposals_allowed": allow_linkedin_action_proposals,
             }, ensure_ascii=False)},
         ]
         started = time.monotonic()

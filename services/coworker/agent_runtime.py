@@ -54,6 +54,7 @@ class AgentRuntime:
                 tools,
                 reason="initial",
                 allow_action_proposals=self.container.settings.agent_action_proposals_enabled,
+                allow_linkedin_action_proposals=self.container.settings.agent_linkedin_proposals_enabled,
             )
             steps = proposal_to_plan(
                 proposal, run["goal"], run["document_ids"], run["output_language"],
@@ -108,6 +109,7 @@ class AgentRuntime:
                 tools,
                 reason=reason,
                 allow_action_proposals=False,
+                allow_linkedin_action_proposals=False,
             )
         except PlannerFailure as error:
             actual_tokens = error.total_tokens
