@@ -130,6 +130,7 @@ uv run python scripts/cohort_release_ledger.py append-scale \
   --current-stage cohort-25 \
   --next-stage cohort-40 \
   --scale-decision /secure/release/bounded-scale-decision.json \
+  --rollout /secure/release/cohort-rollout.json \
   --deployment-change /secure/release/cohort-scale-deployment.json \
   --operator-status /secure/release/post-scale-operator-status.json \
   --scale-activation /secure/release/bounded-scale-activation.json
