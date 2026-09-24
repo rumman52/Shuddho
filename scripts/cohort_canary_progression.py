@@ -282,6 +282,7 @@ def load_recovery_epoch(
     *,
     release_id: str,
     current_stage: str,
+    rollout_path: Path | None = None,
 ) -> datetime:
     try:
         recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
@@ -300,6 +301,22 @@ def load_recovery_epoch(
     verified_at = recovery.get("verified_at")
     if not isinstance(verified_at, str):
         raise CanaryProgressionError("Recovery verification has no verified_at timestamp.")
+    if recovery.get("schema_version") == 12:
+        if rollout_path is None:
+            raise CanaryProgressionError(
+                "Schema-v12 recovery progression requires the rollout manifest."
+            )
+        recovery_hashes = recovery.get("artifact_sha256")
+        rollout_hash = file_sha256(rollout_path)
+        if (
+            not isinstance(recovery_hashes, dict)
+            or recovery_hashes.get("rollout_manifest") != rollout_hash
+        ):
+            raise CanaryProgressionError(
+                "Schema-v12 recovery verification does not bind the current rollout manifest."
+            )
+    else:
+        rollout_hash = file_sha256(rollout_path) if rollout_path is not None else None
     epoch = parse_time(verified_at)
 
     entries = read_entries(ledger_path)
@@ -343,6 +360,10 @@ def load_recovery_epoch(
         raise CanaryProgressionError(
             "Release ledger does not bind this recovery-verification artifact."
         )
+    if recovery.get("schema_version") == 12 and artifacts.get("rollout_manifest") != rollout_hash:
+        raise CanaryProgressionError(
+            "Recovery ledger entry does not bind the current rollout manifest."
+        )
     created_at = entry.get("created_at")
     if not isinstance(created_at, str):
         raise CanaryProgressionError("Ledger recovery entry has no created_at timestamp.")
@@ -373,6 +394,7 @@ def main() -> None:
                 args.release_ledger,
                 release_id=rollout.get("release_id"),
                 current_stage=args.current_stage,
+                rollout_path=args.rollout,
             )
         except CanaryProgressionError as error:
             raise SystemExit(str(error)) from None
