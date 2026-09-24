@@ -7,6 +7,8 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.cohort_release_gate import load_rollout
+
 REPORT_KEYS = {
     "schema_version",
     "release_id",
@@ -453,6 +455,7 @@ def main() -> None:
         description="Qualify measured Shuddho Coworker capacity after the final controlled cohort stage."
     )
     parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--progression", type=Path, required=True)
     parser.add_argument("--simulated-report", type=Path, required=True)
     parser.add_argument("--live-report", type=Path, required=True)
@@ -462,7 +465,21 @@ def main() -> None:
 
     try:
         capacity_plan = load_plan(args.plan)
+        rollout = load_rollout(args.rollout)
+        if rollout.get("release_id") != capacity_plan["release_id"]:
+            raise CapacityQualificationError(
+                "Rollout manifest release_id does not match the capacity plan."
+            )
+        rollout_sha256 = sha256_file(args.rollout)
         progression = load_json(args.progression, "canary progression")
+        progression_rollout = progression.get("rollout_manifest_sha256")
+        if (
+            progression_rollout is not None
+            and progression_rollout != rollout_sha256
+        ):
+            raise CapacityQualificationError(
+                "Progression evidence does not bind the current rollout manifest."
+            )
         simulated = load_report(args.simulated_report, "simulated", capacity_plan["release_id"])
         live = load_report(args.live_report, "live_provider", capacity_plan["release_id"])
         status = load_json(args.operator_status, "operator status")
@@ -473,8 +490,10 @@ def main() -> None:
             live=live,
             operator_status=status,
         )
+        result["rollout_manifest_sha256"] = rollout_sha256
         result["artifact_sha256"] = {
             "capacity_plan": sha256_file(args.plan),
+            "rollout_manifest": rollout_sha256,
             "progression": sha256_file(args.progression),
             "simulated_report": sha256_file(args.simulated_report),
             "live_report": sha256_file(args.live_report),
