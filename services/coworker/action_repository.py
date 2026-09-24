@@ -468,7 +468,7 @@ class ActionRepository:
                 if references[-1] != parent.receipt["message_id"]:
                     references.append(parent.receipt["message_id"])
                 if len(references) > 20:
-                    references = references[-20:]
+                    references = [references[0], *references[-19:]]
                 root_action_id = (
                     parent_context.get("root_action_id")
                     if isinstance(parent_context, dict)
