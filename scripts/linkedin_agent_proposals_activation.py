@@ -417,7 +417,7 @@ def validate_runtime_manifest(
         )
     if (
         capabilities.get("agent_linkedin_proposals") is not True
-        or capabilities.get("agent_linkedin_proposals") is not True
+        or capabilities.get("action_proposals") is not True
         or capabilities.get("action_social_publishing") is not True
         or capabilities.get("actions") is not True
         or capabilities.get("agent_runtime") is not True
@@ -472,8 +472,8 @@ def build_evidence(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify production activation of non-executable Agent action "
-            "proposals against exact staging evidence, reviewed rollout, "
+            "Verify production activation of inert LinkedIn Agent proposals "
+            "against exact staging evidence, reviewed rollout, "
             "deployed revision/configuration, and fresh cohort health."
         )
     )
