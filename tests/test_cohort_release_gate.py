@@ -10,7 +10,7 @@ BASE_GATES = {
 }
 
 
-def evidence(*, research=False, actions=False, microsoft=False, action_attachments=False, action_reminders=False, microsoft_action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_selection=False, action_proposals=False):
+def evidence(*, research=False, actions=False, microsoft=False, action_attachments=False, action_reminders=False, microsoft_action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, action_selection=False, action_proposals=False):
     keys = set(BASE_GATES)
     if research:
         keys.add("research")
@@ -30,6 +30,8 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
         keys.add("action_document_sharing")
     if action_email_threading:
         keys.add("action_email_threading")
+    if action_social_publishing:
+        keys.add("action_social_publishing")
     if action_selection:
         keys.add("action_selection")
     if action_proposals:
@@ -37,7 +39,7 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
     return {key: {"status": "passed", "evidence": "staging-proof"} for key in keys}
 
 
-def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_selection=False, action_proposals=False):
+def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, action_selection=False, action_proposals=False):
     monitoring = {
         "queue_age": "queue-dashboard",
         "task_success": "task-dashboard",
@@ -74,6 +76,7 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
             **({"action_recipients": True} if action_recipients else {}),
             **({"action_document_sharing": True} if action_document_sharing else {}),
             **({"action_email_threading": True} if action_email_threading else {}),
+            **({"action_social_publishing": True} if action_social_publishing else {}),
             **({"action_selection": True} if action_selection else {}),
             **({"action_proposals": True} if action_proposals else {}),
         },
@@ -99,6 +102,9 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
             **({
                 "action_email_threading_kill_switch": "SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false",
             } if action_email_threading else {}),
+            **({
+                "action_social_publishing_kill_switch": "SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false",
+            } if action_social_publishing else {}),
             **({
                 "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
             } if action_selection else {}),
@@ -462,5 +468,46 @@ def test_email_threading_requires_independent_gate_dependency_and_kill_switch():
     no_actions = rollout(actions=False, action_email_threading=True)
     assert "action_email_threading_dependency" in validate_rollout(
         no_actions,
+        max_cohort_users=25,
+    )
+
+
+
+def test_social_publishing_requires_linkedin_gate_provider_and_exact_kill_switch():
+    value = rollout(
+        actions=True,
+        providers=["google", "linkedin"],
+        action_social_publishing=True,
+    )
+    missing = evaluate_release(evidence(actions=True), value)
+    assert missing["decision"] == "NO-GO"
+    assert "action_social_publishing" in missing["staging"]["missing"]
+
+    passed = evaluate_release(
+        evidence(actions=True, action_social_publishing=True),
+        value,
+    )
+    assert passed["decision"] == "GO_CONTROLLED_COHORT"
+    assert passed["required_feature_gates"]["action_social_publishing"] is True
+    assert passed["action_providers"] == ["google", "linkedin"]
+
+    no_linkedin = rollout(
+        actions=True,
+        providers=["google"],
+        action_social_publishing=True,
+    )
+    assert "action_social_publishing_provider" in validate_rollout(
+        no_linkedin,
+        max_cohort_users=25,
+    )
+
+    bad_switch = rollout(
+        actions=True,
+        providers=["google", "linkedin"],
+        action_social_publishing=True,
+    )
+    bad_switch["rollback"]["action_social_publishing_kill_switch"] = "wrong"
+    assert "action_social_publishing_kill_switch" in validate_rollout(
+        bad_switch,
         max_cohort_users=25,
     )

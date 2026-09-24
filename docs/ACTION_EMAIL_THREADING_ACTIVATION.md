@@ -28,7 +28,7 @@ Production activation must never widen those boundaries.
 
 ## Evidence chain
 
-`live staging -> reviewed rollout -> deployment change -> fresh operator status -> runtime manifest -> action_email_threading_verified activation -> schema-v12 ledger event`
+`live staging -> reviewed rollout -> deployment change -> fresh operator status -> runtime manifest -> action_email_threading_verified activation -> schema-v13 ledger event`
 
 Every artifact is SHA-256 bound. The runtime manifest must exactly equal the reviewed capability set and deployed revision.
 
@@ -42,11 +42,11 @@ SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false
 
 New Gmail OAuth starts and new document-share execution are blocked by the feature boundary. Existing history remains readable.
 
-After a **global** Coworker rollback, do not reuse the previous email-threading activation. Recovery must deploy the reviewed state, run a fresh activation after rollback completion, append a new schema-v12 ledger event, and only then emit schema-v7 recovery evidence.
+After a **global** Coworker rollback, do not reuse the previous email-threading activation. Recovery must deploy the reviewed state, run a fresh activation after rollback completion, append a new schema-v13 ledger event, and only then emit schema-v7 recovery evidence.
 
 ## Expansion
 
-A cohort expansion with email threading enabled must provide `--action-email-threading-activation` to `cohort_scale_activation.py`. The file hash must match exactly one schema-v12 ledger event for the current stage. Scale evidence is schema v7 while this capability is enabled.
+A cohort expansion with email threading enabled must provide `--action-email-threading-activation` to `cohort_scale_activation.py`. The file hash must match exactly one schema-v13 ledger event for the current stage. Scale evidence is schema v8 while this capability is enabled.
 
 ## Exit criteria
 
@@ -57,7 +57,7 @@ Email threading is eligible for controlled activation only when:
 - cohort enforcement is active and inside the reviewed ceiling;
 - operator status is fresh and clean;
 - the activation hashes all reviewed inputs;
-- schema-v12 ledger verification passes;
+- schema-v13 ledger verification passes;
 - scale and recovery checks fail closed when the attestation is absent or tampered.
 
 

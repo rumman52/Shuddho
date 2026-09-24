@@ -318,3 +318,40 @@ uv run python scripts/cohort_release_ledger.py append-action-attachments \
 Then verify the complete chain and retain the new head hash independently.
 
 Schema v9 is evidence only. It does not enable attachments or approve an action. When attachments are enabled, bounded scale/recovery consume the exact schema-v9 activation SHA plus its ledger sequence/hash; recovery requires the satisfying schema-v9 event to occur after the exact rollback-completion event.
+
+
+## LinkedIn social-publishing activation evidence
+
+Schema v14 adds one event type: `action_social_publishing_verified`.
+
+It is appended only after the guarded LinkedIn live-staging gate and exact production runtime activation verifier pass. The event requires the same release ID as the existing controlled-cohort ledger and a chain that has already reached the supplied current stage.
+
+It binds by SHA-256:
+
+- the timestamped `action_social_publishing` staging evidence;
+- the reviewed controlled-cohort rollout manifest;
+- the reviewed social-publishing deployment record;
+- the fresh post-deploy operator status;
+- the exact `action_social_publishing_verified` activation artifact.
+
+Before append, the ledger independently verifies the exact social-publishing kill switch, LinkedIn provider presence, deployed source revision, normalized runtime capability/provider snapshot, controlled-cohort enforcement and ceiling, runtime snapshot hash, and all bound artifact hashes. Duplicate recording of the same activation is rejected.
+
+Append:
+
+```bash
+uv run --extra coworker python scripts/cohort_release_ledger.py append-action-social-publishing \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-social-publishing-001 \
+  --current-stage cohort-25 \
+  --staging-evidence /secure/release/staging-evidence.social-publishing.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --deployment-change /secure/release/social-publishing-deployment.json \
+  --operator-status /secure/release/post-social-publishing-status.json \
+  --action-social-publishing-activation /secure/release/social-publishing-activation.json
+```
+
+Then verify the complete chain and externally anchor the returned head hash.
+
+Schema v14 records release evidence only. It does not enable social publishing, approve a post, mutate LinkedIn, change cohort membership, or authorize expansion/recovery by itself. When social publishing is enabled, scale and recovery require the exact schema-v14 activation SHA; post-rollback recovery requires a fresh satisfying schema-v14 event after the recorded rollback completion.

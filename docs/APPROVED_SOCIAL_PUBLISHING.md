@@ -22,7 +22,7 @@ SHUDDHO_LINKEDIN_REDIRECT_URI=https://<frontend>/oauth/linkedin/callback
 SHUDDHO_LINKEDIN_API_VERSION=202609
 ```
 
-This implementation is **not production-release-qualified yet**. The flag must remain outside reviewed production cohorts until a dedicated live LinkedIn staging/activation/release-ledger gate is implemented.
+This implementation is **release-qualified for a reviewed controlled cohort**, while remaining disabled by default. Production enablement requires the guarded live LinkedIn evidence, exact runtime activation proof, schema-v14 release-ledger attestation, and schema-v9 scale/recovery consumption described below.
 
 ## v1 authority
 
@@ -100,13 +100,21 @@ The user must still:
 
 The Agent Runtime receives no LinkedIn publish tool, no connection discovery authority, and no proposal-promotion support for this action. A future Agent expansion would require a separate architecture and safety review.
 
-## Next release task
+## Production release qualification
 
-Before production cohort enablement, add independent **LinkedIn social publishing release qualification**:
+The release chain is now:
 
-1. guarded live staging post against a dedicated test member;
-2. wrong-hash approval denial and no-auto-publish proof;
-3. deployed runtime-manifest verification;
-4. exact kill switch `SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false`;
-5. tamper-evident release-ledger attestation;
-6. scale and post-rollback recovery consumption of that exact attestation.
+1. `scripts/staging_live_social_publishing.py` runs only behind `SHUDDHO_STAGING_ALLOW_LIVE_SOCIAL_PUBLISHING=true` and uses a dedicated staging member plus synthetic text;
+2. the live gate proves no auto-publish, wrong-hash denial, immutable member/text/policy binding, one execution audit chain, and a confirmed LinkedIn post receipt;
+3. `scripts/action_social_publishing_activation.py` verifies the exact reviewed rollout, deployed source revision, clean operator status, cohort enforcement, LinkedIn provider, runtime manifest and exact feature kill switch;
+4. `scripts/cohort_release_ledger.py append-action-social-publishing` records schema-v14 `action_social_publishing_verified` evidence;
+5. bounded expansion requires the exact activation SHA and schema-v14 attestation and emits schema-v9 scale evidence while the capability is enabled;
+6. post-global-rollback recovery requires a **fresh** activation and schema-v14 event after the rollback-completion event, then emits schema-v9 recovery evidence.
+
+The emergency feature rollback is exactly:
+
+```text
+SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false
+```
+
+Disabling the feature blocks new social connections/previews/execution through the existing action boundary. It cannot recall a provider request that was already issued.

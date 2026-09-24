@@ -27,6 +27,7 @@ CONDITIONAL_GATES = {
     "action_recipients": "Live saved-recipient CRUD, exact value preservation, owner isolation, cross-owner denial, deletion and cleanup passed.",
     "action_document_sharing": "Live Google Drive sharing passed exact owned-artifact hash binding, explicit approval, reader-only permission and provider receipt validation.",
     "action_email_threading": "Live Gmail owned-thread follow-up passed send-only parent binding, explicit approval, exact recipient/subject preservation and stable provider thread identity.",
+    "action_social_publishing": "Live LinkedIn personal text publishing passed exact member/text binding, no auto-publish, wrong-hash denial, explicit approval and confirmed provider post receipt.",
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
     "action_selection": "Live Agent planner selected only opaque attached-action handles and still paused for explicit user approval.",
     "action_proposals": "Live Agent generated only inert typed action proposals; promotion created a separate preview and never auto-approved or executed it.",
@@ -52,6 +53,7 @@ def evaluate(
     require_action_recipients: bool = False,
     require_action_document_sharing: bool = False,
     require_action_email_threading: bool = False,
+    require_action_social_publishing: bool = False,
     require_action_selection: bool = False,
     require_action_proposals: bool = False,
 ) -> dict:
@@ -74,6 +76,8 @@ def evaluate(
         required["action_document_sharing"] = CONDITIONAL_GATES["action_document_sharing"]
     if require_action_email_threading:
         required["action_email_threading"] = CONDITIONAL_GATES["action_email_threading"]
+    if require_action_social_publishing:
+        required["action_social_publishing"] = CONDITIONAL_GATES["action_social_publishing"]
     if require_action_selection:
         required["action_selection"] = CONDITIONAL_GATES["action_selection"]
     if require_action_proposals:
@@ -115,6 +119,8 @@ def main() -> None:
     parser.add_argument("--require-microsoft-action-reminders", action="store_true")
     parser.add_argument("--require-action-recipients", action="store_true")
     parser.add_argument("--require-action-document-sharing", action="store_true")
+    parser.add_argument("--require-action-email-threading", action="store_true")
+    parser.add_argument("--require-action-social-publishing", action="store_true")
     parser.add_argument("--require-action-selection", action="store_true")
     parser.add_argument("--require-action-proposals", action="store_true")
     parser.add_argument("--output", type=Path)
@@ -129,6 +135,8 @@ def main() -> None:
         require_microsoft_action_reminders=args.require_microsoft_action_reminders,
         require_action_recipients=args.require_action_recipients,
         require_action_document_sharing=args.require_action_document_sharing,
+        require_action_email_threading=args.require_action_email_threading,
+        require_action_social_publishing=args.require_action_social_publishing,
         require_action_selection=args.require_action_selection,
         require_action_proposals=args.require_action_proposals,
     )
