@@ -1,6 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
-from scripts.coworker_quality_eval import evaluate_offline, load_cases, score
+from scripts.coworker_quality_eval import evaluate_offline, live_settings, load_cases, score
 
 CASES=Path("tests/fixtures/coworker_quality_eval_cases.jsonl")
 
@@ -27,3 +27,8 @@ def test_requires_missing_information():
 def test_preserves_no_decision_contract():
     c=deepcopy(next(x for x in loaded() if x["id"]=="meeting-ar-no-decision")); c["draft"]["decisions"]=[{"text":"تم اعتماد القرار","source_ids":["notes"]}]
     r=score(c,c["draft"]); assert "decisions" in r["empty_path_failures"]
+
+
+def test_live_quality_uses_reported_deepseek_model(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-quality-candidate")
+    assert live_settings().deepseek_model == "deepseek-quality-candidate"
