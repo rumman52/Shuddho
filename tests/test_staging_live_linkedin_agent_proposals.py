@@ -54,7 +54,7 @@ def run_value():
 
 def preview():
     value = {
-        "version": 2,
+        "version": 5,
         "provider": "linkedin",
         "connection_id": CONNECTION_ID,
         "account": "urn:li:person:member_123",
