@@ -244,6 +244,13 @@ def required_feature_flags(capabilities: dict) -> dict[str, bool]:
     }
 
 
+def normalize_capabilities(capabilities: dict) -> dict:
+    normalized = dict(capabilities)
+    for capability in OPTIONAL_CAPABILITY_KEYS:
+        normalized.setdefault(capability, False)
+    return normalized
+
+
 def validate_optional_capabilities(
     capabilities: dict,
     action_providers: set[str] | frozenset[str],

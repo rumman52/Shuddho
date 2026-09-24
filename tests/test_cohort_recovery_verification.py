@@ -718,6 +718,9 @@ def test_legacy_recovery_manifest_defaults_action_proposals_off(monkeypatch, tmp
         deployed_at=datetime(2026, 9, 22, 7, 5, tzinfo=timezone.utc),
     )
     assert result["capabilities"]["action_proposals"] is False
+    assert result["capabilities"]["action_email_threading"] is False
+    assert result["capabilities"]["action_social_publishing"] is False
+    assert result["capabilities"]["agent_linkedin_proposals"] is False
 
 def seed_recovery_action_proposals_chain(monkeypatch, tmp_path):
     from scripts.cohort_release_ledger import (
