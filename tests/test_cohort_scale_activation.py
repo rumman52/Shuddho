@@ -21,6 +21,7 @@ from scripts.cohort_scale_activation import (
     validate_action_attachments_activation,
     validate_action_recipients_activation,
     validate_action_document_sharing_activation,
+    validate_action_email_threading_activation,
     validate_scale_decision,
     sha256_file,
 )
@@ -62,7 +63,7 @@ def operator():
     }
 
 
-def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False):
+def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b", microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False):
     ids = {allowed}
     ids.update(f"member-{index}" for index in range(max(0, members - 1)))
     if denied in ids:
@@ -78,6 +79,7 @@ def settings(*, members=30, max_users=40, enforced=True, allowed="a", denied="b"
         action_reminders_enabled=action_reminders,
         action_recipients_enabled=action_recipients,
         action_document_sharing_enabled=action_document_sharing,
+        action_email_threading_enabled=action_email_threading,
     )
 
 
@@ -1313,3 +1315,69 @@ def test_schema_v7_scale_evidence_requires_document_sharing_attestation(tmp_path
     assert evidence["runtime_requirements"]["action_recipients_enabled"] is False
     assert evidence["action_document_sharing"]["ledger_sequence"] == 12
     assert evidence["artifact_sha256"]["action_document_sharing_activation"] == sha256_file(document_path)
+
+
+def test_email_threading_scale_activation_is_optional_when_disabled(tmp_path):
+    assert validate_action_email_threading_activation(
+        None,
+        tmp_path / "missing-ledger.jsonl",
+        decision(),
+        settings(action_email_threading=False),
+    ) is None
+
+
+def test_email_threading_scale_activation_requires_attested_activation(tmp_path):
+    with pytest.raises(ScaleActivationError, match="action-email-threading-activation"):
+        validate_action_email_threading_activation(
+            None,
+            tmp_path / "ledger.jsonl",
+            decision(),
+            settings(action_email_threading=True),
+        )
+
+
+def test_schema_v8_scale_evidence_requires_email_threading_attestation(tmp_path):
+    scale_path = tmp_path / "scale-v8.json"
+    deploy_path = tmp_path / "deploy-v8.json"
+    status_path = tmp_path / "status-v8.json"
+    policy_path = tmp_path / "policy-v8.json"
+    threading_path = tmp_path / "threading-v8.json"
+    for path in (scale_path, deploy_path, status_path, policy_path, threading_path):
+        path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ScaleActivationError, match="ledger attestation"):
+        build_evidence(
+            decision=decision(),
+            deployment=deployment(),
+            operator_status=operator(),
+            settings=settings(action_email_threading=True),
+            scale_decision_path=scale_path,
+            deployment_change_path=deploy_path,
+            operator_status_path=status_path,
+            provider_policy_activation_path=policy_path,
+            action_email_threading_activation_path=threading_path,
+            action_email_threading_attestation=None,
+            now=NOW,
+        )
+
+    evidence = build_evidence(
+        decision=decision(),
+        deployment=deployment(),
+        operator_status=operator(),
+        settings=settings(action_email_threading=True),
+        scale_decision_path=scale_path,
+        deployment_change_path=deploy_path,
+        operator_status_path=status_path,
+        provider_policy_activation_path=policy_path,
+        action_email_threading_activation_path=threading_path,
+        action_email_threading_attestation={
+            "ledger_sequence": 13,
+            "ledger_entry_hash": "c" * 64,
+        },
+        now=NOW,
+    )
+    assert evidence["schema_version"] == 8
+    assert evidence["runtime_requirements"]["action_email_threading_enabled"] is True
+    assert evidence["runtime_requirements"]["action_document_sharing_enabled"] is False
+    assert evidence["action_email_threading"]["ledger_sequence"] == 13
+    assert evidence["artifact_sha256"]["action_email_threading_activation"] == sha256_file(threading_path)

@@ -172,3 +172,30 @@ def test_document_sharing_staging_gate_is_independent():
         require_action_document_sharing=True,
     )
     assert result["decision"] == "GO"
+
+
+def test_email_threading_staging_gate_is_independent():
+    evidence = {
+        key: {"status": "passed", "evidence": "staging-verification"}
+        for key in REQUIRED_GATES
+    }
+    result = evaluate(
+        evidence,
+        require_research=False,
+        require_actions=False,
+        require_action_email_threading=True,
+    )
+    assert result["decision"] == "NO-GO"
+    assert result["missing"] == ["action_email_threading"]
+
+    evidence["action_email_threading"] = {
+        "status": "passed",
+        "evidence": "owned Gmail thread stayed approval-bound and send-only",
+    }
+    result = evaluate(
+        evidence,
+        require_research=False,
+        require_actions=False,
+        require_action_email_threading=True,
+    )
+    assert result["decision"] == "GO"

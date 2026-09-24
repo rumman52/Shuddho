@@ -28,7 +28,7 @@ DEPLOYMENT_KEYS = {
 }
 
 
-class ActionDocumentSharingActivationError(RuntimeError):
+class ActionEmailThreadingActivationError(RuntimeError):
     pass
 
 
@@ -36,11 +36,11 @@ def load_json(path: Path, label: str) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             f"Could not read {label}: {type(error).__name__}"
         ) from None
     if not isinstance(value, dict):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             f"{label} must contain a JSON object."
         )
     return value
@@ -68,11 +68,11 @@ def parse_time(value: str, label: str) -> datetime:
     try:
         result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             f"{label} must be an ISO-8601 timestamp."
         ) from None
     if result.tzinfo is None:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             f"{label} must include a timezone."
         )
     return result.astimezone(timezone.utc)
@@ -90,7 +90,7 @@ def require_https_origin(value: str, label: str) -> str:
         or parsed.fragment
         or parsed.path not in {"", "/"}
     ):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             f"{label} must be a clean HTTPS origin."
         )
     return clean
@@ -102,33 +102,33 @@ def validate_staging(
     now: datetime,
     max_age_minutes: int,
 ) -> datetime:
-    item = evidence.get("action_document_sharing")
+    item = evidence.get("action_email_threading")
     if not isinstance(item, dict):
-        raise ActionDocumentSharingActivationError(
-            "Staging evidence has no action_document_sharing result."
+        raise ActionEmailThreadingActivationError(
+            "Staging evidence has no action_email_threading result."
         )
     if item.get("status") != "passed":
-        raise ActionDocumentSharingActivationError(
-            "Document-sharing staging evidence is not passed."
+        raise ActionEmailThreadingActivationError(
+            "Email-threading staging evidence is not passed."
         )
     if not isinstance(item.get("evidence"), str) or not item["evidence"].strip():
-        raise ActionDocumentSharingActivationError(
-            "Document-sharing staging evidence text is missing."
+        raise ActionEmailThreadingActivationError(
+            "Email-threading staging evidence text is missing."
         )
     verified_at = item.get("verified_at")
     if not isinstance(verified_at, str):
-        raise ActionDocumentSharingActivationError(
-            "Document-sharing staging evidence has no verified_at timestamp."
+        raise ActionEmailThreadingActivationError(
+            "Email-threading staging evidence has no verified_at timestamp."
         )
-    verified = parse_time(verified_at, "action_document_sharing verified_at")
+    verified = parse_time(verified_at, "action_email_threading verified_at")
     age = (now - verified).total_seconds() / 60
     if age < -1:
-        raise ActionDocumentSharingActivationError(
-            "Document-sharing staging evidence is from the future."
+        raise ActionEmailThreadingActivationError(
+            "Email-threading staging evidence is from the future."
         )
     if age > max_age_minutes:
-        raise ActionDocumentSharingActivationError(
-            f"Document-sharing staging evidence is stale ({age:.1f} minutes old)."
+        raise ActionEmailThreadingActivationError(
+            f"Email-threading staging evidence is stale ({age:.1f} minutes old)."
         )
     return verified
 
@@ -143,26 +143,25 @@ def validate_reviewed_rollout(
         max_cohort_users=max_cohort_users,
     )
     if failures:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Reviewed rollout manifest is invalid: "
             + ", ".join(failures)
         )
     capabilities = rollout["capabilities"]
     if (
-        capabilities.get("action_document_sharing") is not True
+        capabilities.get("action_email_threading") is not True
         or capabilities.get("actions") is not True
-        or capabilities.get("artifact_services") is not True
     ):
-        raise ActionDocumentSharingActivationError(
-            "Reviewed rollout manifest does not enable the required actions/artifact_services/action_document_sharing capabilities."
+        raise ActionEmailThreadingActivationError(
+            "Reviewed rollout manifest does not enable the required actions/action_email_threading capabilities."
         )
     rollback = rollout["rollback"]
     if (
-        rollback.get("action_document_sharing_kill_switch")
-        != "SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false"
+        rollback.get("action_email_threading_kill_switch")
+        != "SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false"
     ):
-        raise ActionDocumentSharingActivationError(
-            "Reviewed rollout manifest has no exact document-sharing kill switch."
+        raise ActionEmailThreadingActivationError(
+            "Reviewed rollout manifest has no exact email-threading kill switch."
         )
     normalized = dict(capabilities)
     normalized.setdefault("action_attachments", False)
@@ -193,8 +192,8 @@ def validate_deployment(
     not_before: datetime,
 ) -> datetime:
     if set(value) != DEPLOYMENT_KEYS:
-        raise ActionDocumentSharingActivationError(
-            "Document-sharing deployment record has an unexpected schema."
+        raise ActionEmailThreadingActivationError(
+            "Email-threading deployment record has an unexpected schema."
         )
     for key in (
         "release_id",
@@ -203,11 +202,11 @@ def validate_deployment(
         "source_revision",
     ):
         if not isinstance(value[key], str) or not value[key].strip():
-            raise ActionDocumentSharingActivationError(
+            raise ActionEmailThreadingActivationError(
                 f"Deployment {key} is required."
             )
         if len(value[key]) > 500:
-            raise ActionDocumentSharingActivationError(
+            raise ActionEmailThreadingActivationError(
                 f"Deployment {key} is too long."
             )
     revision = value["source_revision"]
@@ -216,32 +215,32 @@ def validate_deployment(
         or revision != revision.lower()
         or any(char not in "0123456789abcdef" for char in revision)
     ):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployment source_revision must be a full lowercase Git SHA-1."
         )
     if value["release_id"] != rollout["release_id"]:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployment release_id does not match reviewed rollout."
         )
     if value["change_reference"] != rollout["change_reference"]:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployment change_reference does not match reviewed rollout."
         )
     if value["staging_evidence_sha256"] != sha256_file(staging_path):
-        raise ActionDocumentSharingActivationError(
-            "Deployment record does not bind the exact document-sharing staging evidence."
+        raise ActionEmailThreadingActivationError(
+            "Deployment record does not bind the exact email-threading staging evidence."
         )
     if value["rollout_manifest_sha256"] != sha256_file(rollout_path):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployment record does not bind the exact reviewed rollout manifest."
         )
     deployed_at = parse_time(
         str(value["deployed_at"]),
-        "document-sharing deployed_at",
+        "email-threading deployed_at",
     )
     if deployed_at < not_before:
-        raise ActionDocumentSharingActivationError(
-            "Document-sharing deployment predates live staging evidence."
+        raise ActionEmailThreadingActivationError(
+            "Email-threading deployment predates live staging evidence."
         )
     return deployed_at
 
@@ -255,19 +254,19 @@ def validate_operator_status(
     freshness_minutes: int,
 ) -> datetime:
     if value.get("release_id") != release_id:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Operator status release_id does not match deployment."
         )
     if (
         value.get("decision") != "CONTINUE_COHORT"
         or value.get("breaches") != []
     ):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Operator status must be CONTINUE_COHORT with zero breaches."
         )
     generated_at = value.get("generated_at")
     if not isinstance(generated_at, str):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Operator status has no generated_at timestamp."
         )
     generated = parse_time(
@@ -275,16 +274,16 @@ def validate_operator_status(
         "operator status generated_at",
     )
     if generated < not_before:
-        raise ActionDocumentSharingActivationError(
-            "Operator status must be generated after document-sharing deployment."
+        raise ActionEmailThreadingActivationError(
+            "Operator status must be generated after email-threading deployment."
         )
     age = (now - generated).total_seconds() / 60
     if age < -1:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Operator status is from the future."
         )
     if age > freshness_minutes:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             f"Operator status is stale ({age:.1f} minutes old)."
         )
     return generated
@@ -313,23 +312,23 @@ def fetch_runtime_manifest(
                 headers={"Authorization": "Bearer " + token},
             )
     except httpx.HTTPError as error:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Could not read deployed runtime manifest: "
             + type(error).__name__
         ) from None
     if response.status_code != 200:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed runtime manifest returned HTTP "
             f"{response.status_code}; expected 200."
         )
     try:
         value = response.json()
     except ValueError:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed runtime manifest did not return JSON."
         ) from None
     if not isinstance(value, dict):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed runtime manifest has an unexpected shape."
         )
     return value
@@ -349,29 +348,29 @@ def validate_runtime_manifest(
         "action_providers",
         "cohort",
     }:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed runtime manifest has an unexpected schema."
         )
     if value.get("schema_version") != 1:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed runtime manifest schema version is unsupported."
         )
     if value.get("source_revision") != deployment["source_revision"]:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed backend revision does not match reviewed deployment."
         )
     if value.get("environment") != rollout["environment"]:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed environment does not match reviewed rollout."
         )
     capabilities = value.get("capabilities")
     if capabilities != rollout["capabilities"]:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed capability flags do not exactly match reviewed rollout."
         )
     providers = value.get("action_providers")
     if providers != rollout["action_providers"]:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed action providers do not exactly match reviewed rollout."
         )
     cohort = value.get("cohort")
@@ -380,15 +379,15 @@ def validate_runtime_manifest(
         or set(cohort)
         != {"enforced", "configured_members", "max_users"}
     ):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed cohort manifest has an unexpected shape."
         )
     if cohort.get("enforced") is not True:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed backend does not enforce controlled-cohort admission."
         )
     if cohort.get("max_users") != rollout["cohort_max_users"]:
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed cohort ceiling does not match reviewed rollout."
         )
     members = cohort.get("configured_members")
@@ -398,12 +397,12 @@ def validate_runtime_manifest(
         or members < 1
         or members > cohort["max_users"]
     ):
-        raise ActionDocumentSharingActivationError(
+        raise ActionEmailThreadingActivationError(
             "Deployed cohort membership count is outside the reviewed ceiling."
         )
-    if capabilities.get("action_document_sharing") is not True:
-        raise ActionDocumentSharingActivationError(
-            "Deployed backend has document sharing disabled."
+    if capabilities.get("action_email_threading") is not True:
+        raise ActionEmailThreadingActivationError(
+            "Deployed backend has email threading disabled."
         )
     return {
         "schema_version": value["schema_version"],
@@ -428,7 +427,7 @@ def build_evidence(
 ) -> dict:
     return {
         "schema_version": 1,
-        "status": "action_document_sharing_verified",
+        "status": "action_email_threading_verified",
         "release_id": deployment["release_id"],
         "current_stage": deployment["current_stage"],
         "verified_at": now.isoformat(),
@@ -450,7 +449,7 @@ def build_evidence(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify production activation of approval-bound Google Drive document sharing "
+            "Verify production activation of approval-bound Gmail email threading "
             "against exact staging evidence, reviewed rollout, "
             "deployed revision/configuration, and fresh cohort health."
         )
@@ -522,7 +521,7 @@ def main() -> None:
         )
         staging = load_json(
             args.staging_evidence,
-            "document-sharing staging evidence",
+            "email-threading staging evidence",
         )
         staging_time = validate_staging(
             staging,
@@ -532,7 +531,7 @@ def main() -> None:
 
         deployment = load_json(
             args.deployment_change,
-            "document-sharing deployment",
+            "email-threading deployment",
         )
         deployment_time = validate_deployment(
             deployment,
@@ -556,7 +555,7 @@ def main() -> None:
 
         token = os.environ.get("SHUDDHO_PRODUCTION_VERIFICATION_TOKEN", "")
         if not token:
-            raise ActionDocumentSharingActivationError(
+            raise ActionEmailThreadingActivationError(
                 "SHUDDHO_PRODUCTION_VERIFICATION_TOKEN is required."
             )
         remote = fetch_runtime_manifest(
@@ -592,7 +591,7 @@ def main() -> None:
             "source_revision": evidence["source_revision"],
         }, indent=2))
     except (
-        ActionDocumentSharingActivationError,
+        ActionEmailThreadingActivationError,
         OSError,
         ValueError,
     ) as error:

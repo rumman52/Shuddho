@@ -10,7 +10,7 @@ BASE_GATES = {
 }
 
 
-def evidence(*, research=False, actions=False, microsoft=False, action_attachments=False, action_reminders=False, microsoft_action_reminders=False, action_recipients=False, action_document_sharing=False, action_selection=False, action_proposals=False):
+def evidence(*, research=False, actions=False, microsoft=False, action_attachments=False, action_reminders=False, microsoft_action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_selection=False, action_proposals=False):
     keys = set(BASE_GATES)
     if research:
         keys.add("research")
@@ -28,6 +28,8 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
         keys.add("action_recipients")
     if action_document_sharing:
         keys.add("action_document_sharing")
+    if action_email_threading:
+        keys.add("action_email_threading")
     if action_selection:
         keys.add("action_selection")
     if action_proposals:
@@ -35,7 +37,7 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
     return {key: {"status": "passed", "evidence": "staging-proof"} for key in keys}
 
 
-def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_selection=False, action_proposals=False):
+def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_selection=False, action_proposals=False):
     monitoring = {
         "queue_age": "queue-dashboard",
         "task_success": "task-dashboard",
@@ -71,6 +73,7 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
             **({"action_reminders": True} if action_reminders else {}),
             **({"action_recipients": True} if action_recipients else {}),
             **({"action_document_sharing": True} if action_document_sharing else {}),
+            **({"action_email_threading": True} if action_email_threading else {}),
             **({"action_selection": True} if action_selection else {}),
             **({"action_proposals": True} if action_proposals else {}),
         },
@@ -93,6 +96,9 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
             **({
                 "action_document_sharing_kill_switch": "SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false",
             } if action_document_sharing else {}),
+            **({
+                "action_email_threading_kill_switch": "SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false",
+            } if action_email_threading else {}),
             **({
                 "action_selection_kill_switch": "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false",
             } if action_selection else {}),
@@ -248,6 +254,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "action_reminders": False,
         "action_recipients": False,
         "action_document_sharing": False,
+        "action_email_threading": False,
         "action_selection": True,
         "action_proposals": False,
     }
@@ -428,5 +435,32 @@ def test_document_sharing_requires_independent_gate_dependencies_and_kill_switch
     no_artifacts["capabilities"]["artifact_services"] = False
     assert "action_document_sharing_dependency" in validate_rollout(
         no_artifacts,
+        max_cohort_users=25,
+    )
+
+
+def test_email_threading_requires_independent_gate_dependency_and_kill_switch():
+    value = rollout(actions=True, action_email_threading=True)
+    missing = evaluate_release(evidence(actions=True), value)
+    assert missing["decision"] == "NO-GO"
+    assert "action_email_threading" in missing["staging"]["missing"]
+    assert missing["required_feature_gates"]["action_email_threading"] is True
+
+    passed = evaluate_release(
+        evidence(actions=True, action_email_threading=True),
+        value,
+    )
+    assert passed["decision"] == "GO_CONTROLLED_COHORT"
+
+    broken = rollout(actions=True, action_email_threading=True)
+    broken["rollback"].pop("action_email_threading_kill_switch")
+    assert "action_email_threading_kill_switch" in validate_rollout(
+        broken,
+        max_cohort_users=25,
+    )
+
+    no_actions = rollout(actions=False, action_email_threading=True)
+    assert "action_email_threading_dependency" in validate_rollout(
+        no_actions,
         max_cohort_users=25,
     )
