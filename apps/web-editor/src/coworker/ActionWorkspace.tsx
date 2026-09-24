@@ -8,7 +8,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Th
 const recipients = (text: string) => text.split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
 const isCalendar = (kind: ExternalAction["kind"]) => kind === "calendar_create" || kind === "calendar_create_with_reminder";
 const isDocumentShare = (kind: ExternalAction["kind"]) => kind === "document_share";
-const isEmail = (kind: ExternalAction["kind"]) => kind === "email_send" || kind === "email_send_with_attachments";
+const isEmail = (kind: ExternalAction["kind"]) => kind === "email_send" || kind === "email_send_with_attachments" || kind === "email_thread_reply";
 const title = (item: ExternalAction) => item.preview.payload.kind === "document_share"
   ? item.preview.shared_artifact?.filename ?? "Shared document"
   : "title" in item.preview.payload ? item.preview.payload.title : item.preview.payload.subject;
@@ -23,6 +23,8 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
   const [remindersEnabled, setRemindersEnabled] = useState(false);
   const [recipientDirectoryEnabled, setRecipientDirectoryEnabled] = useState(false);
   const [documentSharingEnabled, setDocumentSharingEnabled] = useState(false);
+  const [threadingEnabled, setThreadingEnabled] = useState(false);
+  const [replyParentId, setReplyParentId] = useState<string | null>(null);
   const [savedRecipients, setSavedRecipients] = useState<ActionRecipient[]>([]);
   const [recipientName, setRecipientName] = useState("");
   const [recipientEmail, setRecipientEmail] = useState("");
@@ -68,7 +70,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       });
       Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal), directory]).then(([value, recent, available, recipientDirectory]) => {
         if (!alive) return;
-        setEnabled(value.enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setConnections(value.connections); setHistory(recent.actions);
+        setEnabled(value.enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setConnections(value.connections); setHistory(recent.actions);
         setAttachmentsEnabled(available.attachments_enabled); setDocumentSharingEnabled(current => current || available.document_sharing_enabled); setArtifacts(available.artifacts);
         setRecipientDirectoryEnabled(recipientDirectory.enabled); setSavedRecipients(recipientDirectory.recipients); setLoaded(true);
       }).catch(failure => { if (alive) { setError(message(failure)); setLoaded(true); } });
@@ -125,8 +127,9 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     setSelectedAttachments(ids);
   }
 
-  function startNewAction(clearAttachments = true) {
+  function startNewAction(clearAttachments = true, clearReplyParent = true) {
     setComposing(true); setAction(null); setChecked(false); setError(""); submission.current = undefined;
+    if (clearReplyParent) setReplyParentId(null);
     if (clearAttachments) {
       setAttachmentSelection([]);
       setReminderMinutes(0);
@@ -162,6 +165,23 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     });
   }
 
+  function startThreadReply(parent: ExternalAction) {
+    const payload = parent.preview.payload;
+    if (
+      !threadingEnabled
+      || parent.state !== "succeeded"
+      || parent.preview.provider !== "google"
+      || !isEmail(parent.kind)
+      || !parent.receipt?.thread_id
+      || !("to" in payload)
+    ) return;
+    setProvider("google"); setMode("email"); setReplyParentId(parent.id);
+    setTo(payload.to.join(", ")); setCc(payload.cc.join(", ")); setBcc("");
+    setSubject(payload.subject); setBody(""); setAttachmentSelection([]);
+    setSelectedSharedArtifact(""); setReminderMinutes(0); setNotice("Replying inside a Shuddho-owned Gmail thread. No mailbox-read permission is used.");
+    setComposing(true); setAction(null); setChecked(false); setError(""); submission.current = undefined;
+  }
+
   async function prepare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentConnection) return;
@@ -175,7 +195,9 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
       attachment_ids: attachmentIds,
       artifact_ids: artifactIds,
       payload: mode === "email"
-        ? { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body }
+        ? replyParentId
+          ? { kind: "email_thread_reply", parent_action_id: replyParentId, to: recipients(to), cc: recipients(cc), bcc: [], subject, body }
+          : { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body }
         : mode === "calendar"
           ? reminderMinutes !== 0
             ? { kind: "calendar_create_with_reminder", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees), reminder_minutes_before_start: reminderMinutes }
@@ -197,10 +219,11 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
         setMode("drive"); setAttachmentSelection([]); setSelectedSharedArtifact(action.preview.shared_artifact?.id ?? ""); setShareRecipient(p.recipients[0] ?? ""); setReminderMinutes(0);
       } else if (!("title" in p)) {
         setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setSelectedSharedArtifact(""); setReminderMinutes(0);
+        setReplyParentId(p.kind === "email_thread_reply" ? p.parent_action_id : null);
       } else {
         setMode("calendar"); setAttachmentSelection([]); setSelectedSharedArtifact(""); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); setReminderMinutes(p.kind === "calendar_create_with_reminder" && remindersEnabled ? p.reminder_minutes_before_start : 0);
       }
-      startNewAction(false); setReload(x => x + 1);
+      startNewAction(false, false); setReload(x => x + 1);
     });
   }
 
@@ -209,7 +232,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     <div className="cw-action-intro"><div><span className="cw-eyebrow">Your final say</span><h2>From a good draft to done.</h2><p>Prepare an email or event, review the details, then approve the action.</p></div></div>
     {error && <p className="cw-error" role="alert">{error}</p>}{notice && <p className="cw-notice" role="status">{notice}</p>}
     {!loaded ? <p role="status">Loading connections…</p> : !enabled && <p className="cw-notice">New actions are not enabled in this workspace. Saved previews and receipts remain available.</p>}
-    {microsoftEnabled && <label>Provider<select aria-label="Action provider" value={provider} onChange={event => { const next = event.target.value as "google" | "microsoft"; setProvider(next); if (next === "microsoft" && mode === "drive") setMode("email"); }} disabled={Boolean(busy)}><option value="google">Google</option><option value="microsoft">Microsoft</option></select></label>}
+    {microsoftEnabled && <label>Provider<select aria-label="Action provider" value={provider} onChange={event => { const next = event.target.value as "google" | "microsoft"; setProvider(next); if (next === "microsoft" && mode === "drive") setMode("email"); }} disabled={Boolean(busy) || Boolean(replyParentId)}><option value="google">Google</option><option value="microsoft">Microsoft</option></select></label>}
     <div className="cw-connection-grid">{(provider === "google" ? (["email", "calendar", "drive"] as const) : (["email", "calendar"] as const)).map(capability => {
       const connected = connections.find(value => value.provider === provider && value.capability === capability);
       const google = provider === "google";
@@ -230,9 +253,9 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
     <div className="cw-layout"><div className="cw-compose cw-action-compose">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>{composing ? "Prepare an action" : "Action details"}</h2><p>{composing ? "Nothing is sent when you prepare a preview." : "This preview is saved exactly as shown."}</p></div></div>
       {composing ? <form onSubmit={prepare}>
-        <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "calendar" | "drive")} disabled={Boolean(busy)}><option value="email">Send an email</option><option value="calendar">Create a calendar event</option>{provider === "google" && documentSharingEnabled && <option value="drive">Share a document</option>}</select></label>
+        <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "calendar" | "drive")} disabled={Boolean(busy) || Boolean(replyParentId)}><option value="email">Send an email</option><option value="calendar">Create a calendar event</option>{provider === "google" && documentSharingEnabled && <option value="drive">Share a document</option>}</select></label>
         <p className="cw-action-account">{currentConnection ? <>From <strong>{currentConnection.email}</strong>{mode === "calendar" && " · Primary calendar"}{mode === "drive" && " · Google Drive"}</> : `Connect ${provider === "google" ? (mode === "email" ? "Gmail" : mode === "calendar" ? "Google Calendar" : "Google Drive") : (mode === "email" ? "Microsoft Mail" : "Microsoft Calendar")} above to continue.`}</p>
-        {(recipientDirectoryEnabled || savedRecipients.length > 0) && <fieldset className="cw-agent-files">
+        {!replyParentId && (recipientDirectoryEnabled || savedRecipients.length > 0) && <fieldset className="cw-agent-files">
           <legend>Saved recipients</legend>
           {recipientDirectoryEnabled && <><div className="cw-action-row">
             <label>Name<input dir="auto" value={recipientName} onChange={event => setRecipientName(event.target.value)} maxLength={80} placeholder="e.g. Finance team" /></label>
@@ -247,12 +270,13 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
           <small>Saved recipients are private Shuddho shortcuts. Selecting one only copies its exact email address into this draft; the final immutable preview is still what you approve. Agents cannot resolve or select saved recipients.</small>
         </fieldset>}
         {mode === "email" ? <>
-          <label>To<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required maxLength={5100} placeholder="name@example.com" /></label>
-          <div className="cw-action-row"><label>Cc<input dir="ltr" value={cc} onChange={event => setCc(event.target.value)} maxLength={5100} /></label><label>Bcc<input dir="ltr" value={bcc} onChange={event => setBcc(event.target.value)} maxLength={5100} /></label></div>
-          <small>Use full email addresses, separated by commas. Up to 20 recipients in total.</small>
-          <label>Subject<input dir="auto" value={subject} onChange={event => setSubject(event.target.value)} required maxLength={300} /></label>
+          {replyParentId && <p className="cw-notice">This reply keeps the original To/Cc recipients and subject. Bcc and attachments are disabled so the approved Gmail thread cannot be widened.</p>}
+          <label>To<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required readOnly={Boolean(replyParentId)} maxLength={5100} placeholder="name@example.com" /></label>
+          <div className="cw-action-row"><label>Cc<input dir="ltr" value={cc} onChange={event => setCc(event.target.value)} readOnly={Boolean(replyParentId)} maxLength={5100} /></label><label>Bcc<input dir="ltr" value={bcc} onChange={event => setBcc(event.target.value)} readOnly={Boolean(replyParentId)} maxLength={5100} /></label></div>
+          <small>{replyParentId ? "Thread authority comes only from the confirmed Shuddho parent email; Shuddho does not read your mailbox." : "Use full email addresses, separated by commas. Up to 20 recipients in total."}</small>
+          <label>Subject<input dir="auto" value={subject} onChange={event => setSubject(event.target.value)} required readOnly={Boolean(replyParentId)} maxLength={300} /></label>
           <label>Message<textarea dir="auto" rows={9} value={body} onChange={event => setBody(event.target.value)} required maxLength={20000} /></label>
-          {attachmentsEnabled && artifacts.length > 0 && <fieldset className="cw-agent-files"><legend>Attach Shuddho artifacts (optional)</legend>
+          {!replyParentId && attachmentsEnabled && artifacts.length > 0 && <fieldset className="cw-agent-files"><legend>Attach Shuddho artifacts (optional)</legend>
             {artifacts.filter(item => {
               const type = item.content_type.split(";", 1)[0].toLowerCase();
               return ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/plain"].includes(type);
@@ -317,6 +341,7 @@ export default function ActionWorkspace({ client, account, emailDraft, focusActi
         </>}
         {["awaiting_approval", "queued"].includes(action.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void run("cancel", async () => updateAction(await client.cancelAction(action.id)))}>Cancel action</button>}
         {action.state === "outcome_unknown" && (isCalendar(action.kind) || isDocumentShare(action.kind)) && action.preview.provider === "google" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => updateAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? (isDocumentShare(action.kind) ? "Checking Drive…" : "Checking calendar…") : (isDocumentShare(action.kind) ? "Check Drive result" : "Check calendar result")}</button>}
+        {threadingEnabled && action.state === "succeeded" && action.preview.provider === "google" && isEmail(action.kind) && action.receipt?.thread_id && <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => startThreadReply(action)}>Reply in this Gmail thread</button>}
         {action.receipt && <div className="cw-receipt"><strong>{isDocumentShare(action.kind) ? "Shared in Google Drive" : action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "Accepted by Microsoft Graph" : "Created in Microsoft Calendar") : (isEmail(action.kind) ? "Accepted by Gmail" : "Created in Google Calendar")}</strong><p>{isDocumentShare(action.kind) ? `Google Drive confirmed reader access for ${action.receipt.recipient ?? "the approved recipient"}. This does not mean the recipient opened the document.` : action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "This confirms Microsoft Graph accepted the send request. It does not confirm delivery or reading." : "Microsoft Graph confirmed the event. Guest attendance is not yet confirmed.") : (isEmail(action.kind) ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed.")}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small>{action.receipt.provider_id && <code>Receipt: {action.receipt.provider_id}</code>}</div>}
         {action.audit && <details className="cw-action-audit"><summary>Action history</summary><ol>{action.audit.map((item, index) => <li key={index}>{item.action.replace("action.", "").replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</li>)}</ol></details>}
       </>}

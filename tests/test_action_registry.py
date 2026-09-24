@@ -68,7 +68,7 @@ def bind(preview):
 
 
 def test_registry_declares_existing_consequential_actions():
-    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "calendar_create", "calendar_create_with_reminder", "document_share"}
+    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "email_thread_reply", "calendar_create", "calendar_create_with_reminder", "document_share"}
     assert action_spec("email_send", "google").capability == "email"
     assert action_spec("calendar_create", "google").reconcile_supported
     assert action_spec("calendar_create_with_reminder", "google").reminders == "single_explicit"
@@ -77,6 +77,7 @@ def test_registry_declares_existing_consequential_actions():
     assert action_spec("document_share", "google").capability == "drive"
     assert action_spec("document_share", "google").owned_artifact_required
     assert action_spec("document_share", "google").reconcile_supported
+    assert action_spec("email_thread_reply", "google").thread_reply
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
 
 
@@ -274,3 +275,49 @@ def test_document_share_scope_binds_recipient_reader_policy_and_artifact():
 def test_document_share_is_google_only():
     with pytest.raises(CoworkerError, match="cannot perform"):
         action_spec("document_share", "microsoft")
+
+
+def thread_reply_preview():
+    parent_id = "11111111-1111-1111-1111-111111111111"
+    value = email_preview()
+    value["version"] = 2
+    value["payload"] = {
+        **value["payload"],
+        "kind": "email_thread_reply",
+        "parent_action_id": parent_id,
+        "bcc": [],
+    }
+    value["threading"] = {
+        "source": "owned_confirmed_shuddho_email",
+        "provider": "google",
+        "recipients": "same_to_cc",
+        "bcc": "forbidden",
+        "subject": "unchanged",
+        "mailbox_read": "none",
+    }
+    value["reply_context"] = {
+        "parent_action_id": parent_id,
+        "root_action_id": parent_id,
+        "thread_id": "gmail-thread-1",
+        "parent_message_id": f"<{parent_id}@shuddho.invalid>",
+        "parent_provider_id": "gmail-message-1",
+        "references": [f"<{parent_id}@shuddho.invalid>"],
+    }
+    return value
+
+
+def test_thread_reply_scope_binds_owned_parent_and_provider_thread():
+    preview = bind(thread_reply_preview())
+    scope = preview["approval_scope"]
+    assert scope["contract_version"] == 4
+    assert scope["policy"]["threading"]["mailbox_read"] == "none"
+    assert scope["reply_context"] == preview["reply_context"]
+    assert validate_approval_scope(preview).kind == "email_thread_reply"
+
+    changed = deepcopy(preview)
+    changed["reply_context"]["thread_id"] = "different-thread"
+    with pytest.raises(CoworkerError, match="changed"):
+        validate_approval_scope(changed)
+
+    with pytest.raises(CoworkerError, match="cannot perform"):
+        action_spec("email_thread_reply", "microsoft")

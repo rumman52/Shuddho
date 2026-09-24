@@ -46,7 +46,8 @@ class SimulatedGoogle:
             value = json.loads(request.content)
             if url == SEND_URL:
                 self.sent.append(base64.urlsafe_b64decode(value["raw"]))
-                result = {"id": "mail-" + str(len(self.sent))}
+                thread_id = value.get("threadId") or "thread-" + str(len(self.sent))
+                result = {"id": "mail-" + str(len(self.sent)), "threadId": thread_id}
             else:
                 assert request.url.params["sendUpdates"] == "all"
                 result = value | {"status": "confirmed"}
