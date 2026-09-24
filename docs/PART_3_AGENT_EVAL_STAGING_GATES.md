@@ -41,11 +41,19 @@ CI runs the same scorer against fixed known-good drafts without paid provider ca
 
 ## Production staging gate
 
-Copy `docs/staging-evidence.template.json` outside the repository, replace each pending item with:
+First verify the checked-in release templates still match the canonical capability contract:
+
+```bash
+uv run python scripts/release_contract_check.py
+```
+
+Then copy `docs/staging-evidence.template.json` outside the repository and replace only the evidence required by the reviewed rollout with:
 
 ```json
 {"status":"passed","evidence":"ticket/run/dashboard reference"}
 ```
+
+Unused optional capability records may remain `pending`; the final cohort gate derives the required set from the rollout manifest.
 
 Then run:
 
@@ -69,7 +77,7 @@ Required base evidence:
 - fan-in dependency enforcement;
 - feature-flag rollback from v2 to v1.
 
-Research and approved-action evidence is required only when those capabilities are intended to be enabled.
+Research and approved-action evidence is required only when those capabilities are intended to be enabled. The canonical optional-capability contract in `scripts/release_contract.py` defines the supported staging evidence IDs, dependency requirements, provider requirements, and exact feature kill switches.
 
 ## Minimum conditions to enable Coworker
 
