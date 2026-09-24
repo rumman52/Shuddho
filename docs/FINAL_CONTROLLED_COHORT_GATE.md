@@ -16,6 +16,14 @@ Start from:
 - `docs/staging-evidence.template.json`
 - `docs/cohort-rollout.template.json`
 
+Before creating release evidence, verify the checked-in templates still match the canonical release contract:
+
+```bash
+uv run python scripts/release_contract_check.py
+```
+
+The contract is defined in `scripts/release_contract.py`. CI also exercises this check through the Python test suite, so adding a new optional capability without updating the release templates fails closed.
+
 ## Run
 
 ```bash
@@ -59,6 +67,20 @@ The rollout manifest may additionally declare `action_providers`. Legacy manifes
 
 When `microsoft` is declared, the independent `microsoft_actions` live staging gate is also mandatory before `GO_CONTROLLED_COHORT`.
 
+Optional capability gates are derived from the same canonical release contract used for dependency and rollback validation. Depending on the reviewed manifest, the final gate may additionally require:
+
+- `action_attachments`;
+- `action_reminders_google`, plus `action_reminders_microsoft` when Microsoft is declared;
+- `action_recipients`;
+- `action_document_sharing`;
+- `action_email_threading`;
+- `action_social_publishing`;
+- `action_selection`;
+- `action_proposals`;
+- `agent_linkedin_proposals`.
+
+The checked-in staging template contains every currently supported gate as `pending`. Unused optional evidence may remain pending; the final gate only requires evidence for capabilities declared in the reviewed rollout.
+
 ## First-cohort bounds
 
 The gate defaults to a maximum of **25 users**.
@@ -76,8 +98,13 @@ The manifest is rejected if:
 - multi-source handoffs are enabled without handoffs;
 - bounded parallel execution is enabled without the dependency graph;
 - outcome replanning is enabled without intelligent planning;
+- approved attachments are enabled without Actions and Artifact Services;
+- calendar reminders, saved recipients, Gmail threading, or LinkedIn publishing are enabled without Actions;
+- Drive document sharing is enabled without Actions and Artifact Services;
 - agent action selection is enabled without Actions, Agent Runtime, and Intelligent Planner;
-- agent action proposals are enabled without Actions, Agent Runtime, and Intelligent Planner.
+- agent action proposals are enabled without Actions, Agent Runtime, and Intelligent Planner;
+- LinkedIn Agent proposals are enabled without both ordinary Agent proposals and approval-bound LinkedIn publishing;
+- a capability requiring a provider is declared without that provider. In particular, LinkedIn publishing cannot use the legacy Google-only provider fallback.
 
 Optional capabilities may remain disabled for the first cohort even if their staging gates have passed.
 
@@ -90,8 +117,15 @@ The manifest must contain the exact kill switches:
 - `SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false`
 - `SHUDDHO_RESEARCH_SERVICES_ENABLED=false`
 - `SHUDDHO_ACTIONS_ENABLED=false`
+- `SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false` when attachments are declared;
+- `SHUDDHO_ACTION_REMINDERS_ENABLED=false` when reminders are declared;
+- `SHUDDHO_ACTION_RECIPIENTS_ENABLED=false` when saved recipients are declared;
+- `SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false` when Drive sharing is declared;
+- `SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false` when Gmail threading is declared;
+- `SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false` when LinkedIn publishing is declared;
 - `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false` when action selection is declared;
-- `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false` when action proposals are declared.
+- `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false` when action proposals are declared;
+- `SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false` when LinkedIn Agent proposals are declared.
 
 It must also contain a real rollback/runbook reference.
 
