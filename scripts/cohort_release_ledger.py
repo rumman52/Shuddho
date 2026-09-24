@@ -4486,11 +4486,7 @@ def append_action_social_publishing_event(
         or runtime_capabilities != expected_capabilities
         or runtime_capabilities.get("coworker") is not True
         or runtime_capabilities.get("actions") is not True
-        or runtime_capabilities.get("agent_runtime") is not True
-        or runtime_capabilities.get("intelligent_planner") is not True
-        or runtime_capabilities.get("action_proposals") is not True
         or runtime_capabilities.get("action_social_publishing") is not True
-        or runtime_capabilities.get("agent_linkedin_proposals") is not True
     ):
         raise ReleaseLedgerError(
             "Social-publishing activation does not prove the exact reviewed runtime."
