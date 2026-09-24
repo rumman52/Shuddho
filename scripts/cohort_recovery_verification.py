@@ -1138,15 +1138,15 @@ def validate_action_email_threading_recovery_activation(
     rollback_verified = parse_time(rollback_verified_at, "rollback verified_at")
     if document_sharing_deployed < recovery_deployed_at:
         raise RecoveryVerificationError(
-            "Social-publishing activation predates the recovery deployment."
+            "Email-threading activation predates the recovery deployment."
         )
     if document_sharing_verified < document_sharing_deployed:
         raise RecoveryVerificationError(
-            "Social-publishing activation was verified before its deployment."
+            "Email-threading activation was verified before its deployment."
         )
     if document_sharing_verified <= rollback_verified:
         raise RecoveryVerificationError(
-            "Social-publishing activation must be freshly verified after rollback completion."
+            "Email-threading activation must be freshly verified after rollback completion."
         )
     try:
         entries, _ = verified_release_entries(ledger_path, release_id)
@@ -1171,7 +1171,7 @@ def validate_action_email_threading_recovery_activation(
             artifact_key="action_email_threading_activation",
             artifact_sha256=activation_hash,
             after_sequence=rollback_entry["sequence"],
-            label="Social-publishing recovery attestation",
+            label="Email-threading recovery attestation",
         )
     except Exception as error:
         raise RecoveryVerificationError(
