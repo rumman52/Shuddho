@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 
+from scripts.cohort_release_gate import load_rollout, validate_rollout
 from scripts.cohort_release_ledger import (
     file_sha256 as ledger_file_sha256,
     ledger_key,
@@ -827,6 +828,7 @@ def validate_release_activation_bundle(
     path: Path,
     ledger_path: Path,
     decision: dict,
+    rollout_path: Path,
 ) -> dict:
     value = load_json(path, "release activation bundle")
     if (
@@ -844,6 +846,34 @@ def validate_release_activation_bundle(
         raise ScaleActivationError(
             "Release activation bundle current_stage does not match."
         )
+
+    rollout = load_rollout(rollout_path)
+    rollout_failures = validate_rollout(
+        rollout,
+        max_cohort_users=decision["current_max_users"],
+    )
+    if rollout_failures:
+        raise ScaleActivationError(
+            "Current rollout manifest is invalid for scale activation: "
+            + ", ".join(rollout_failures)
+        )
+    if rollout.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError(
+            "Current rollout manifest release_id does not match."
+        )
+    cohort = rollout.get("cohort")
+    if (
+        not isinstance(cohort, dict)
+        or cohort.get("max_users") != decision["current_max_users"]
+    ):
+        raise ScaleActivationError(
+            "Current rollout manifest cohort ceiling does not match current_max_users."
+        )
+    rollout_sha = sha256_file(rollout_path)
+    if value.get("rollout_manifest_sha256") != rollout_sha:
+        raise ScaleActivationError(
+            "Release activation bundle does not bind the current rollout manifest."
+        )
     try:
         entries, _ = verified_release_entries(
             ledger_path,
@@ -859,6 +889,12 @@ def validate_release_activation_bundle(
             artifact_sha256=ledger_file_sha256(path),
             label="Release activation bundle scale attestation",
         )
+        if entry.get("artifact_sha256", {}).get("rollout_manifest") != rollout_sha:
+            raise ScaleActivationError(
+                "Release activation bundle ledger event does not bind the current rollout manifest."
+            )
+    except ScaleActivationError:
+        raise
     except Exception as error:
         raise ScaleActivationError(
             f"Release ledger verification failed: {error}"
@@ -920,6 +956,7 @@ def build_evidence(
     agent_linkedin_proposals_attestation: dict | None = None,
     release_activation_bundle_path: Path | None = None,
     release_activation_bundle_attestation: dict | None = None,
+    rollout_manifest_path: Path | None = None,
 ) -> dict:
     artifact_sha256 = {
         "scale_decision": sha256_file(scale_decision_path),
@@ -1119,6 +1156,8 @@ def build_evidence(
             "ledger_sequence": release_activation_bundle_attestation["ledger_sequence"],
             "ledger_entry_hash": release_activation_bundle_attestation["ledger_entry_hash"],
         }
+        if rollout_manifest_path is not None:
+            artifact_sha256["rollout_manifest"] = sha256_file(rollout_manifest_path)
 
     runtime_requirements = {
         "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
@@ -1171,7 +1210,12 @@ def build_evidence(
 
     return {
         "schema_version": (
-            11 if release_activation_bundle_summary is not None
+            12
+            if (
+                release_activation_bundle_summary is not None
+                and rollout_manifest_path is not None
+            )
+            else 11 if release_activation_bundle_summary is not None
             else 10 if getattr(settings, "agent_linkedin_proposals_enabled", False)
             else 9 if getattr(settings, "action_social_publishing_enabled", False)
             else 8 if getattr(settings, "action_email_threading_enabled", False)
@@ -1229,6 +1273,7 @@ def main() -> None:
         description="Verify a reviewed Shuddho Coworker cohort expansion after deployment."
     )
     parser.add_argument("--scale-decision", type=Path, required=True)
+    parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--deployment-change", type=Path, required=True)
     parser.add_argument("--operator-status", type=Path, required=True)
     parser.add_argument("--provider-policy-activation", type=Path, required=True)
@@ -1279,6 +1324,7 @@ def main() -> None:
             args.release_activation_bundle,
             args.release_ledger,
             decision,
+            args.rollout,
         )
         validate_microsoft_rollout_activation(
             args.microsoft_rollout_activation,
@@ -1406,6 +1452,7 @@ def main() -> None:
             agent_linkedin_proposals_attestation=agent_linkedin_proposals_attestation,
             release_activation_bundle_path=args.release_activation_bundle,
             release_activation_bundle_attestation=release_activation_bundle_attestation,
+            rollout_manifest_path=args.rollout,
             now=now,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
