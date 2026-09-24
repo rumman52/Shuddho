@@ -302,3 +302,9 @@ The final cohort gate now derives optional dependency checks, provider requireme
 
 This is a release-safety/control-plane increment only. It does not enable a feature flag, widen Agent authority, approve an action, execute a provider mutation, expand a cohort or replace the existing feature-specific production activation and release-ledger attestations.
 
+## Release control — contract propagation
+
+The next release-safety increment extends the canonical capability contract beyond final cohort admission into production activation, release-ledger attestation verification, and recovery configuration validation. Optional capability shape is normalized by one shared helper so historical rollout evidence that predates newer disabled capabilities remains verifiable while any explicit true/false drift still fails closed.
+
+This increment deliberately preserves the explicit historical schema-version ladders used by release-ledger, scale, and recovery evidence. Those versions describe the evidence format at the time it was emitted and must not be dynamically reinterpreted by the current capability registry. See [Release Contract Propagation](RELEASE_CONTRACT_PROPAGATION.md).
+
