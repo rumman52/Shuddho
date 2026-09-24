@@ -71,8 +71,10 @@ def aggregate(mode,cases,results):
     lat=[x["latency_ms"] for x in results if isinstance(x.get("latency_ms"),int)]; tok=[x["tokens"] for x in results if isinstance(x.get("tokens"),int)]
     return {"mode":mode,"cases":len(cases),"languages":sorted({x["language"] for x in cases}),"passed":passed,"failed":len(cases)-passed,"pass_rate":round(passed/len(cases),4),"required_fact_recall":round(matched/total,4) if total else 1.0,"p95_latency_ms":pct(lat,.95),"average_tokens":round(sum(tok)/len(tok),2) if tok else None,"failures":[x["id"] for x in results if not x.get("passed")],"results":results}
 def evaluate_offline(cases): return aggregate("offline",cases,[score(c,c["draft"]) for c in cases])
+def live_settings():
+    return Settings(database_url="sqlite://",auth_issuer="https://identity.example.test/auth/v1",environment="development",storage_backend="local",work_services_enabled=True,artifact_services_enabled=True,deepseek_model=os.environ.get("DEEPSEEK_MODEL","deepseek-flash"),deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY",""))
 async def evaluate_live(cases):
-    settings=Settings(database_url="sqlite://",auth_issuer="https://identity.example.test/auth/v1",environment="development",storage_backend="local",work_services_enabled=True,artifact_services_enabled=True,deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY",""))
+    settings=live_settings()
     out=[]
     for c in cases:
         m=DeepSeekDraftModel(settings,skill_id=c["skill_id"]); ids={s["id"] for s in c["sources"]}
