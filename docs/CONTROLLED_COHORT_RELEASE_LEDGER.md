@@ -377,6 +377,7 @@ Run:
 uv run python -m scripts.release_activation_bundle \
   --rollout /secure/release/cohort-rollout.json \
   --staging-evidence /secure/release/staging-evidence.final.json \
+  --quality-eval /secure/release/coworker-quality-eval.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --activations /secure/release/activation-manifest.json \
   --current-stage canary-5 \
@@ -390,6 +391,7 @@ uv run python scripts/cohort_release_ledger.py append-release-activation-bundle 
   --current-stage canary-5 \
   --rollout /secure/release/cohort-rollout.json \
   --staging-evidence /secure/release/staging-evidence.final.json \
+  --quality-eval /secure/release/coworker-quality-eval.json \
   --release-activation-bundle /secure/release/release-activation-bundle.json
 ```
 

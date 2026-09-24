@@ -352,3 +352,81 @@ def test_schema_v16_rejects_tampered_activation_attestation_reference(
             staging_evidence=staging,
             release_activation_bundle=bundle_path,
         )
+
+
+def quality_file(tmp_path: Path, rollout_path: Path) -> Path:
+    return write_json(
+        tmp_path / "quality.json",
+        {
+            "mode": "live",
+            "release_id": RELEASE_ID,
+            "generated_at": "2026-09-24T12:01:00+00:00",
+            "provider_model": "deepseek-flash",
+            "fixture_sha256": "a" * 64,
+            "rollout_manifest_sha256": file_hash(rollout_path),
+            "gate_decision": "PASS",
+            "failures": [],
+            "gate_failures": [],
+            "pass_rate": 1.0,
+            "required_fact_recall": 1.0,
+        },
+    )
+
+
+def test_activation_bundle_binds_exact_quality_evidence(tmp_path, monkeypatch):
+    rollout, staging, activation, ledger = bundle_files(tmp_path)
+    quality = quality_file(tmp_path, rollout)
+    monkeypatch.setenv(
+        "SHUDDHO_RELEASE_LEDGER_HMAC_KEY",
+        KEY.decode("ascii"),
+    )
+    bundle = verify_activation_bundle(
+        rollout_path=rollout,
+        staging_evidence_path=staging,
+        quality_evidence_path=quality,
+        ledger_path=ledger,
+        activation_paths={"action_proposals": activation},
+        current_stage=STAGE,
+    )
+    assert bundle["quality_evidence_sha256"] == file_hash(quality)
+
+
+def test_schema_v16_rejects_different_quality_evidence(tmp_path, monkeypatch):
+    rollout, staging, activation, ledger = bundle_files(tmp_path)
+    quality = quality_file(tmp_path, rollout)
+    monkeypatch.setenv(
+        "SHUDDHO_RELEASE_LEDGER_HMAC_KEY",
+        KEY.decode("ascii"),
+    )
+    bundle = verify_activation_bundle(
+        rollout_path=rollout,
+        staging_evidence_path=staging,
+        quality_evidence_path=quality,
+        ledger_path=ledger,
+        activation_paths={"action_proposals": activation},
+        current_stage=STAGE,
+    )
+    bundle_path = write_json(tmp_path / "quality-bound-bundle.json", bundle)
+    wrong_quality = write_json(
+        tmp_path / "wrong-quality.json",
+        {
+            **json.loads(quality.read_text(encoding="utf-8")),
+            "provider_model": "different-model",
+        },
+    )
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="does not bind this quality evidence",
+    ):
+        append_release_activation_bundle_event(
+            ledger=ledger,
+            key=KEY,
+            release_id=RELEASE_ID,
+            actor_reference="oncall-primary",
+            change_reference="change-1",
+            current_stage=STAGE,
+            rollout_manifest=rollout,
+            staging_evidence=staging,
+            release_activation_bundle=bundle_path,
+            quality_evidence=wrong_quality,
+        )

@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.cohort_release_gate import load_rollout
+from scripts.coworker_quality_evidence import (
+    QualityEvidenceError,
+    validate_live_quality_evidence,
+)
 
 PLAN_KEYS = {
     "release_id",
@@ -194,29 +198,55 @@ def validate_capacity(
     )
 
 
-def validate_quality(value: dict, plan: dict, now: datetime) -> datetime:
-    if value.get("release_id") != plan["release_id"]:
-        raise ScaleReviewError("Quality evaluation release_id does not match.")
-    if value.get("mode") != "live":
-        raise ScaleReviewError("Scale review requires a live quality evaluation.")
-    if value.get("gate_decision") != "PASS" or value.get("failures") != [] or value.get("gate_failures") != []:
-        raise ScaleReviewError("Live quality evaluation did not pass cleanly.")
-    pass_rate = ratio(value.get("pass_rate"), "quality.pass_rate")
-    fact_recall = ratio(value.get("required_fact_recall"), "quality.required_fact_recall")
-    if pass_rate < plan["min_quality_pass_rate"]:
-        raise ScaleReviewError("Live quality pass rate is below the scale-review threshold.")
-    if fact_recall < plan["min_fact_recall"]:
-        raise ScaleReviewError("Live quality fact recall is below the scale-review threshold.")
-    fixture_hash = value.get("fixture_sha256")
-    if not isinstance(fixture_hash, str) or len(fixture_hash) != 64 or any(c not in "0123456789abcdef" for c in fixture_hash):
-        raise ScaleReviewError("Live quality evaluation must bind the evaluated fixture by SHA-256.")
-    text_ref(value.get("provider_model"), "quality.provider_model")
-    return require_fresh(
-        value,
-        label="quality evaluation",
-        freshness_minutes=plan["freshness_minutes"],
-        now=now,
-    )
+def validate_quality(
+    value: dict,
+    plan: dict,
+    now: datetime,
+    *,
+    rollout_sha256: str | None = None,
+) -> datetime:
+    if rollout_sha256 is None:
+        # Historical helper callers predate rollout-bound quality evidence.
+        if value.get("release_id") != plan["release_id"]:
+            raise ScaleReviewError("Quality evaluation release_id does not match.")
+        if value.get("mode") != "live":
+            raise ScaleReviewError("Scale review requires a live quality evaluation.")
+        if value.get("gate_decision") != "PASS" or value.get("failures") != [] or value.get("gate_failures") != []:
+            raise ScaleReviewError("Live quality evaluation did not pass cleanly.")
+        pass_rate = ratio(value.get("pass_rate"), "quality.pass_rate")
+        fact_recall = ratio(value.get("required_fact_recall"), "quality.required_fact_recall")
+        if pass_rate < plan["min_quality_pass_rate"]:
+            raise ScaleReviewError("Live quality pass rate is below the scale-review threshold.")
+        if fact_recall < plan["min_fact_recall"]:
+            raise ScaleReviewError("Live quality fact recall is below the scale-review threshold.")
+        fixture_hash = value.get("fixture_sha256")
+        if not isinstance(fixture_hash, str) or len(fixture_hash) != 64 or any(c not in "0123456789abcdef" for c in fixture_hash):
+            raise ScaleReviewError("Live quality evaluation must bind the evaluated fixture by SHA-256.")
+        text_ref(value.get("provider_model"), "quality.provider_model")
+        return require_fresh(
+            value,
+            label="quality evaluation",
+            freshness_minutes=plan["freshness_minutes"],
+            now=now,
+        )
+    try:
+        generated = validate_live_quality_evidence(
+            value,
+            release_id=plan["release_id"],
+            rollout_sha256=rollout_sha256,
+            min_pass_rate=plan["min_quality_pass_rate"],
+            min_fact_recall=plan["min_fact_recall"],
+        )
+    except QualityEvidenceError as error:
+        raise ScaleReviewError(str(error)) from None
+    age_minutes = (now - generated).total_seconds() / 60
+    if age_minutes < -1:
+        raise ScaleReviewError("quality evaluation is from the future.")
+    if age_minutes > plan["freshness_minutes"]:
+        raise ScaleReviewError(
+            f"quality evaluation is stale ({age_minutes:.1f} minutes old)."
+        )
+    return generated
 
 
 def validate_operator_status(value: dict, plan: dict, *, not_before: datetime, now: datetime) -> datetime:
@@ -357,7 +387,12 @@ def main() -> None:
             now,
             rollout_sha256=rollout_sha256,
         )
-        quality_time = validate_quality(quality, plan, now)
+        quality_time = validate_quality(
+            quality,
+            plan,
+            now,
+            rollout_sha256=rollout_sha256,
+        )
         operator_time = validate_operator_status(
             operator,
             plan,

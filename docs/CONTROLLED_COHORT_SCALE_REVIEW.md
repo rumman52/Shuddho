@@ -9,7 +9,7 @@ This gate turns the human scale review into a machine-checkable, fail-closed art
 The review requires all of the following for the same release:
 
 - a fresh capacity qualification with `ELIGIBLE_FOR_CAPACITY_REVIEW`;
-- a fresh **live** Coworker multilingual quality evaluation with `PASS`;
+- a fresh **live** Coworker multilingual quality evaluation with `PASS` that binds the exact reviewed rollout SHA-256;
 - a clean operator status generated after both of those artifacts;
 - a human-proposed next cohort stage and size;
 - projected peak concurrency plus provider quota evidence;
@@ -53,7 +53,7 @@ uv run python scripts/cohort_scale_review.py \
   --output /secure/release/bounded-scale-decision.json
 ```
 
-The scale review requires the capacity qualification to bind the exact supplied rollout manifest and carries that same SHA-256 into the bounded-scale decision.
+The scale review requires both the capacity qualification and live quality evaluation to bind the exact supplied rollout manifest, and carries that same SHA-256 into the bounded-scale decision.
 
 The only successful decision is `ELIGIBLE_FOR_BOUNDED_EXPANSION`. Any policy or evidence failure returns `HOLD_AT_CURRENT_COHORT` or fails closed on invalid evidence.
 

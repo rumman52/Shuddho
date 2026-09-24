@@ -176,3 +176,30 @@ def test_scale_review_output_carries_rollout_identity():
         rollout_manifest_sha256="c" * 64,
     )
     assert result["rollout_manifest_sha256"] == "c" * 64
+
+
+def test_scale_review_rejects_quality_from_different_rollout():
+    value = quality()
+    value["rollout_manifest_sha256"] = "a" * 64
+    with pytest.raises(
+        ScaleReviewError,
+        match="does not bind the current rollout manifest",
+    ):
+        validate_quality(
+            value,
+            plan(),
+            NOW,
+            rollout_sha256="b" * 64,
+        )
+
+
+def test_scale_review_accepts_rollout_bound_quality():
+    value = quality()
+    value["rollout_manifest_sha256"] = "b" * 64
+    generated = validate_quality(
+        value,
+        plan(),
+        NOW,
+        rollout_sha256="b" * 64,
+    )
+    assert generated == datetime(2026, 9, 22, 11, 30, tzinfo=timezone.utc)
