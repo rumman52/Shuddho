@@ -1171,7 +1171,7 @@ def validate_action_email_threading_recovery_activation(
             artifact_key="action_email_threading_activation",
             artifact_sha256=activation_hash,
             after_sequence=rollback_entry["sequence"],
-            label="Email-threading recovery attestation",
+            label="Social-publishing recovery attestation",
         )
     except Exception as error:
         raise RecoveryVerificationError(
