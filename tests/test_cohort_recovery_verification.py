@@ -12,7 +12,7 @@ pytest.importorskip("sqlalchemy", reason="Install the coworker extra for recover
 from scripts import cohort_recovery_verification as recovery
 
 
-def rollout(*, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False):
+def rollout(*, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, agent_linkedin_proposals=False):
     value = {
         "release_id": "coworker-cohort-001",
         "cohort": {"max_users": 25},
@@ -29,7 +29,7 @@ def rollout(*, action_selection=False, action_proposals=False, action_attachment
             "parallel_execution": True,
             "outcome_replan": True,
             "research": False,
-            "actions": action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing,
+            "actions": action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing or agent_linkedin_proposals,
         },
     }
     if action_selection:
@@ -48,6 +48,10 @@ def rollout(*, action_selection=False, action_proposals=False, action_attachment
         value["capabilities"]["action_email_threading"] = True
     if action_social_publishing:
         value["capabilities"]["action_social_publishing"] = True
+    if agent_linkedin_proposals:
+        value["capabilities"]["action_proposals"] = True
+        value["capabilities"]["action_social_publishing"] = True
+        value["capabilities"]["agent_linkedin_proposals"] = True
     return value
 
 
@@ -78,7 +82,7 @@ def rollback_completion(tmp_path, rollout_path):
     return value, path
 
 
-def settings(members, *, microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False):
+def settings(members, *, microsoft=False, action_selection=False, action_proposals=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, agent_linkedin_proposals=False):
     return SimpleNamespace(
         cohort_enforced=True,
         cohort_account_ids=frozenset(members),
@@ -93,7 +97,7 @@ def settings(members, *, microsoft=False, action_selection=False, action_proposa
         agent_parallel_execution_enabled=True,
         agent_outcome_replan_enabled=True,
         research_services_enabled=False,
-        actions_enabled=action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing,
+        actions_enabled=action_selection or action_proposals or action_attachments or action_reminders or action_recipients or action_document_sharing or action_email_threading or action_social_publishing or agent_linkedin_proposals,
         microsoft_actions_enabled=microsoft,
         agent_action_selection_enabled=action_selection,
         agent_action_proposals_enabled=action_proposals,
@@ -102,7 +106,8 @@ def settings(members, *, microsoft=False, action_selection=False, action_proposa
         action_recipients_enabled=action_recipients,
         action_document_sharing_enabled=action_document_sharing,
         action_email_threading_enabled=action_email_threading,
-        action_social_publishing_enabled=action_social_publishing,
+        action_social_publishing_enabled=(action_social_publishing or agent_linkedin_proposals),
+        agent_linkedin_proposals_enabled=agent_linkedin_proposals,
     )
 
 
