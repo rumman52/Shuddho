@@ -9,6 +9,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.release_contract import normalize_capabilities
+
 SCHEMA_VERSION = 1
 ROLLBACK_SCHEMA_VERSION = 2
 RECOVERY_SCHEMA_VERSION = 3
@@ -2430,11 +2432,8 @@ def append_action_proposals_event(
         raise ReleaseLedgerError(
             "Action-proposal activation has no valid runtime capability proof."
         )
-    runtime_capabilities = dict(runtime_capabilities)
-    expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
-        runtime_capabilities.setdefault(optional, False)
-        expected_capabilities.setdefault(optional, False)
+    runtime_capabilities = normalize_capabilities(runtime_capabilities)
+    expected_capabilities = normalize_capabilities(capabilities)
     expected_providers = normalized_action_providers(rollout)
     if (
         runtime.get("source_revision") != revision
@@ -2771,11 +2770,8 @@ def append_action_attachments_event(
         raise ReleaseLedgerError(
             "Action-attachment activation has no valid runtime capability proof."
         )
-    runtime_capabilities = dict(runtime_capabilities)
-    expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
-        runtime_capabilities.setdefault(optional, False)
-        expected_capabilities.setdefault(optional, False)
+    runtime_capabilities = normalize_capabilities(runtime_capabilities)
+    expected_capabilities = normalize_capabilities(capabilities)
     expected_providers = normalized_action_providers(rollout)
     if (
         runtime.get("source_revision") != revision
@@ -3112,11 +3108,8 @@ def append_action_reminders_event(
         raise ReleaseLedgerError(
             "Action-reminder activation has no valid runtime capability proof."
         )
-    runtime_capabilities = dict(runtime_capabilities)
-    expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
-        runtime_capabilities.setdefault(optional, False)
-        expected_capabilities.setdefault(optional, False)
+    runtime_capabilities = normalize_capabilities(runtime_capabilities)
+    expected_capabilities = normalize_capabilities(capabilities)
     if (
         runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
@@ -3450,12 +3443,9 @@ def append_action_recipients_event(
         raise ReleaseLedgerError(
             "Action-recipient activation has no valid runtime capability proof."
         )
-    runtime_capabilities = dict(runtime_capabilities)
-    expected_capabilities = dict(capabilities)
+    runtime_capabilities = normalize_capabilities(runtime_capabilities)
+    expected_capabilities = normalize_capabilities(capabilities)
     expected_providers = normalized_action_providers(rollout)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
-        runtime_capabilities.setdefault(optional, False)
-        expected_capabilities.setdefault(optional, False)
     if (
         runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
@@ -3790,12 +3780,9 @@ def append_action_document_sharing_event(
         raise ReleaseLedgerError(
             "Document-sharing activation has no valid runtime capability proof."
         )
-    runtime_capabilities = dict(runtime_capabilities)
-    expected_capabilities = dict(capabilities)
+    runtime_capabilities = normalize_capabilities(runtime_capabilities)
+    expected_capabilities = normalize_capabilities(capabilities)
     expected_providers = normalized_action_providers(rollout)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
-        runtime_capabilities.setdefault(optional, False)
-        expected_capabilities.setdefault(optional, False)
     if (
         runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
@@ -4130,12 +4117,9 @@ def append_action_email_threading_event(
         raise ReleaseLedgerError(
             "Email-threading activation has no valid runtime capability proof."
         )
-    runtime_capabilities = dict(runtime_capabilities)
-    expected_capabilities = dict(capabilities)
+    runtime_capabilities = normalize_capabilities(runtime_capabilities)
+    expected_capabilities = normalize_capabilities(capabilities)
     expected_providers = normalized_action_providers(rollout)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
-        runtime_capabilities.setdefault(optional, False)
-        expected_capabilities.setdefault(optional, False)
     if (
         runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
@@ -4469,16 +4453,13 @@ def append_action_social_publishing_event(
         raise ReleaseLedgerError(
             "Social-publishing activation has no valid runtime capability proof."
         )
-    runtime_capabilities = dict(runtime_capabilities)
-    expected_capabilities = dict(capabilities)
+    runtime_capabilities = normalize_capabilities(runtime_capabilities)
+    expected_capabilities = normalize_capabilities(capabilities)
     expected_providers = normalized_action_providers(rollout)
     if "linkedin" not in expected_providers:
         raise ReleaseLedgerError(
             "Social-publishing rollout does not include the LinkedIn provider."
         )
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
-        runtime_capabilities.setdefault(optional, False)
-        expected_capabilities.setdefault(optional, False)
     if (
         runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
@@ -4815,16 +4796,13 @@ def append_agent_linkedin_proposals_event(
         raise ReleaseLedgerError(
             "LinkedIn Agent-proposals activation has no valid runtime capability proof."
         )
-    runtime_capabilities = dict(runtime_capabilities)
-    expected_capabilities = dict(capabilities)
+    runtime_capabilities = normalize_capabilities(runtime_capabilities)
+    expected_capabilities = normalize_capabilities(capabilities)
     expected_providers = normalized_action_providers(rollout)
     if "linkedin" not in expected_providers:
         raise ReleaseLedgerError(
             "LinkedIn Agent-proposals rollout does not include the LinkedIn provider."
         )
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
-        runtime_capabilities.setdefault(optional, False)
-        expected_capabilities.setdefault(optional, False)
     if (
         runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
