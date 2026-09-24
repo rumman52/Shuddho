@@ -407,6 +407,9 @@ def qualify(
         "generated_at": now.isoformat(),
         "release_id": release_id,
         "final_stage": capacity_plan["final_stage"],
+        **({
+            "rollout_manifest_sha256": progression["rollout_manifest_sha256"],
+        } if progression.get("rollout_manifest_sha256") is not None else {}),
         "expected_peak_concurrency": capacity_plan["expected_peak_concurrency"],
         "required_test_concurrency": math.ceil(
             capacity_plan["expected_peak_concurrency"] * capacity_plan["min_reserve_ratio"]
