@@ -83,21 +83,15 @@ Existing activation and release verifiers normalize this new optional capability
 
 ## Production status
 
-**This implementation is not production-release-qualified.**
+This capability is **release-qualified for a reviewed controlled cohort while remaining disabled by default**.
 
-The controlled-cohort release gate deliberately returns `NO-GO` with:
+A rollout declaring `agent_linkedin_proposals=true` now requires a dedicated passed `agent_linkedin_proposals` live staging record. Missing or failed evidence keeps the final cohort decision at `NO-GO`.
 
-```text
-agent_linkedin_proposals_release_gate_pending
-```
+Production enablement additionally requires the exact activation and ledger chain documented in [LinkedIn Agent Proposal Production Activation](LINKEDIN_AGENT_PROPOSALS_ACTIVATION.md).
 
-when a rollout declares `agent_linkedin_proposals=true`.
+## Release qualification guarantees
 
-That fail-closed behavior is intentional. The code may merge while the production flag remains false.
-
-## Required follow-up release qualification
-
-Before any controlled production cohort may enable the capability, a separate increment must prove all of the following:
+Before a controlled production cohort enables the capability, the qualification chain proves all of the following:
 
 1. a deployed intelligent planner can create an exact synthetic LinkedIn proposal while no matching `ExternalAction` exists;
 2. no provider/account/member is chosen by the model;
@@ -107,7 +101,7 @@ Before any controlled production cohort may enable the capability, a separate in
 6. the saved Agent plan gains no consequential LinkedIn tool step;
 7. no approval, execution audit, provider request, or LinkedIn receipt exists before explicit approval;
 8. production activation binds the exact staging proof, reviewed rollout, deployed source revision, runtime manifest, cohort controls, and fresh operator health;
-9. the release ledger records a dedicated attestation;
-10. bounded scale and post-rollback recovery consume that exact attestation and fail closed if it is absent, stale, reordered, or tampered.
+9. schema-v15 `agent_linkedin_proposals_verified` records the exact activation in the tamper-evident release ledger and requires current-stage schema-v8 `action_proposals_verified` plus schema-v14 `action_social_publishing_verified`;
+10. schema-v10 bounded scale and post-rollback recovery consume that exact schema-v15 attestation and fail closed if it is absent, stale, reordered, or tampered.
 
-That release-safety increment must preserve the existing personal-text-only LinkedIn boundary. It must not add organization publishing, media, social reads, scheduling, edit/delete, engagement operations, or direct Agent execution.
+The release-safety path preserves the existing personal-text-only LinkedIn boundary. It does not add organization publishing, media, social reads, scheduling, edit/delete, engagement operations, or direct Agent execution.
