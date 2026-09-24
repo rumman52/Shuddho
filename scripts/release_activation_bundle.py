@@ -57,6 +57,7 @@ def verify_activation_bundle(
     rollout_path: Path,
     staging_evidence_path: Path,
     quality_evidence_path: Path | None = None,
+    model_evidence_path: Path | None = None,
     ledger_path: Path,
     activation_paths: dict[str, Path],
     current_stage: str,
@@ -73,11 +74,17 @@ def verify_activation_bundle(
         if quality_evidence_path is not None
         else None
     )
+    model_evidence = (
+        load_evidence(model_evidence_path)
+        if model_evidence_path is not None
+        else None
+    )
     decision = evaluate_release(
         evidence,
         rollout,
         max_cohort_users=max_cohort_users,
         quality_evidence=quality_evidence,
+        model_evidence=model_evidence,
         rollout_sha256=file_sha256(rollout_path),
     )
     if decision["decision"] != "GO_CONTROLLED_COHORT":
@@ -217,6 +224,9 @@ def verify_activation_bundle(
         **({
             "quality_evidence_sha256": file_sha256(quality_evidence_path),
         } if quality_evidence_path is not None else {}),
+        **({
+            "model_evidence_sha256": file_sha256(model_evidence_path),
+        } if model_evidence_path is not None else {}),
         "required_activation_keys": [
             item.key for item in requirements
         ],
@@ -238,6 +248,7 @@ def main() -> None:
     parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--staging-evidence", type=Path, required=True)
     parser.add_argument("--quality-eval", type=Path, required=True)
+    parser.add_argument("--model-eval", type=Path, required=True)
     parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--activations", type=Path, required=True)
     parser.add_argument("--current-stage", required=True)
@@ -252,6 +263,7 @@ def main() -> None:
             rollout_path=args.rollout,
             staging_evidence_path=args.staging_evidence,
             quality_evidence_path=args.quality_eval,
+            model_evidence_path=args.model_eval,
             ledger_path=args.release_ledger,
             activation_paths=load_activation_manifest(args.activations),
             current_stage=args.current_stage,
