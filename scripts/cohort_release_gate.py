@@ -144,16 +144,27 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
                 failures.append("action_providers_without_actions")
             if actions_enabled and "google" not in providers_value:
                 failures.append("action_providers_google_required")
-            if isinstance(capabilities, dict):
-                declared = set(providers_value)
-                for item in OPTIONAL_CAPABILITIES:
-                    if capabilities.get(item.capability) is not True:
-                        continue
-                    if any(
-                        provider not in declared
-                        for provider in item.required_providers
-                    ):
-                        failures.append(f"{item.capability}_provider")
+    providers_shape_valid = (
+        providers_value is None
+        or (
+            isinstance(providers_value, list)
+            and len(providers_value) == len(set(providers_value))
+            and all(
+                isinstance(item, str) and item in ACTION_PROVIDERS
+                for item in providers_value
+            )
+        )
+    )
+    if providers_shape_valid and isinstance(capabilities, dict):
+        declared = declared_action_providers(rollout)
+        for item in OPTIONAL_CAPABILITIES:
+            if capabilities.get(item.capability) is not True:
+                continue
+            if any(
+                provider not in declared
+                for provider in item.required_providers
+            ):
+                failures.append(f"{item.capability}_provider")
 
     rollback = rollout["rollback"]
     if (
