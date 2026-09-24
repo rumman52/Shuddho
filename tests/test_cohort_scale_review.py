@@ -64,6 +64,7 @@ def quality():
         "release_id": "coworker-cohort-001",
         "generated_at": "2026-09-22T11:30:00+00:00",
         "provider_model": "deepseek-flash",
+        "source_revision": "1" * 40,
         "fixture_sha256": "a" * 64,
         "gate_decision": "PASS",
         "failures": [],
