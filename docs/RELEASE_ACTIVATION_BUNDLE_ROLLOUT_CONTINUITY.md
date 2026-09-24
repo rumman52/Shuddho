@@ -21,7 +21,7 @@ The operational scale verifier now requires `--rollout`.
 It:
 
 - validates the rollout using the canonical final-release manifest rules;
-- requires the rollout release ID and current cohort ceiling to match the scale decision;
+- requires the rollout release ID to match the scale decision while preserving dynamic later cohort ceilings;
 - requires the supplied schema-v16 bundle's `rollout_manifest_sha256` to equal the current rollout SHA-256;
 - requires the matching schema-v16 ledger event to carry the same rollout SHA-256.
 
