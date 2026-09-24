@@ -87,6 +87,11 @@ class ActionRepository:
                 "action_document_sharing_disabled",
                 "Document sharing is not enabled in this deployment.",
             )
+        if spec.thread_reply and not self.settings.action_email_threading_enabled:
+            return (
+                "action_email_threading_disabled",
+                "Email threading is not enabled in this deployment.",
+            )
         return None
 
     def _require_optional_feature(self, spec):
@@ -422,6 +427,61 @@ class ActionRepository:
                 )
             spec = action_spec(request.payload.kind, connection.provider)
             self._require_optional_feature(spec)
+            reply_context = None
+            if spec.thread_reply:
+                parent_id = str(request.payload.parent_action_id)
+                parent = self._action(db, owner, parent_id, lock=False)
+                if (
+                    parent.state != "succeeded"
+                    or parent.kind not in {"email_send", "email_thread_reply"}
+                    or parent.connection_id != connection.id
+                    or parent.preview.get("provider") != "google"
+                    or not isinstance(parent.receipt, dict)
+                    or parent.receipt.get("provider") != "google"
+                    or parent.receipt.get("status") != "accepted_by_gmail"
+                    or not isinstance(parent.receipt.get("provider_id"), str)
+                    or not isinstance(parent.receipt.get("message_id"), str)
+                    or not isinstance(parent.receipt.get("thread_id"), str)
+                ):
+                    raise CoworkerError(
+                        "thread_parent_unavailable",
+                        "Choose a confirmed Gmail email previously sent by Shuddho from this same connection.",
+                        409,
+                    )
+                parent_payload = parent.preview.get("payload")
+                if not isinstance(parent_payload, dict):
+                    raise CoworkerError("thread_parent_unavailable", "The parent email cannot be verified.", 409)
+                current_payload = body["payload"]
+                if (
+                    current_payload.get("subject") != parent_payload.get("subject")
+                    or current_payload.get("to") != parent_payload.get("to")
+                    or current_payload.get("cc") != parent_payload.get("cc")
+                    or current_payload.get("bcc") != []
+                ):
+                    raise CoworkerError(
+                        "thread_reply_changed",
+                        "Thread replies must keep the parent subject and exact To/Cc recipients, with no Bcc.",
+                        422,
+                    )
+                parent_context = parent.preview.get("reply_context")
+                references = list(parent_context["references"]) if isinstance(parent_context, dict) and isinstance(parent_context.get("references"), list) else [parent.receipt["message_id"]]
+                if references[-1] != parent.receipt["message_id"]:
+                    references.append(parent.receipt["message_id"])
+                if len(references) > 20:
+                    references = references[-20:]
+                root_action_id = (
+                    parent_context.get("root_action_id")
+                    if isinstance(parent_context, dict)
+                    else parent.id
+                )
+                reply_context = {
+                    "parent_action_id": parent.id,
+                    "root_action_id": root_action_id,
+                    "thread_id": parent.receipt["thread_id"],
+                    "parent_message_id": parent.receipt["message_id"],
+                    "parent_provider_id": parent.receipt["provider_id"],
+                    "references": references,
+                }
             attachments = self._attachment_manifest(
                 db,
                 owner,
@@ -466,6 +526,7 @@ class ActionRepository:
                 **spec.policy_manifest(),
                 "attachments": attachments,
                 **({"shared_artifact": shared_artifact} if spec.owned_artifact_required else {}),
+                **({"reply_context": reply_context} if spec.thread_reply else {}),
                 "expires_at": iso(expires),
             }
             preview["approval_scope"] = build_approval_scope(preview)
