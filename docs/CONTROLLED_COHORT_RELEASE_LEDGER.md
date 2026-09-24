@@ -355,3 +355,42 @@ uv run --extra coworker python scripts/cohort_release_ledger.py append-action-so
 Then verify the complete chain and externally anchor the returned head hash.
 
 Schema v14 records release evidence only. It does not enable social publishing, approve a post, mutate LinkedIn, change cohort membership, or authorize expansion/recovery by itself. When social publishing is enabled, scale and recovery require the exact schema-v14 activation SHA; post-rollback recovery requires a fresh satisfying schema-v14 event after the recorded rollback completion.
+
+## Release activation bundle handoff
+
+Schema v16 adds one event type: `release_activation_bundle_verified`.
+
+This event is the final operations handoff checkpoint after the reviewed rollout has passed the final controlled-cohort gate and every required optional capability activation has already been independently recorded in the ledger.
+
+The bundle verifier derives the exact required activation set from the reviewed rollout and verifies each required schema-v6 through schema-v15 activation artifact against its exact ledger event. The schema-v16 append then binds by SHA-256:
+
+- the exact reviewed rollout manifest;
+- the exact staging evidence file used to re-run the final GO/NO-GO decision;
+- the exact `release_activation_bundle_verified` artifact.
+
+The bundle also records the ledger entry count and head hash it verified. Schema-v16 append fails if the ledger changed after bundle verification, preventing a proof verified against one chain head from being committed onto another.
+
+Run:
+
+```bash
+uv run python -m scripts.release_activation_bundle \
+  --rollout /secure/release/cohort-rollout.json \
+  --staging-evidence /secure/release/staging-evidence.final.json \
+  --release-ledger /secure/release/coworker-cohort-001.jsonl \
+  --activations /secure/release/activation-manifest.json \
+  --current-stage canary-5 \
+  --output /secure/release/release-activation-bundle.json
+
+uv run python scripts/cohort_release_ledger.py append-release-activation-bundle \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference oncall-primary \
+  --change-reference change-123 \
+  --current-stage canary-5 \
+  --rollout /secure/release/cohort-rollout.json \
+  --staging-evidence /secure/release/staging-evidence.final.json \
+  --release-activation-bundle /secure/release/release-activation-bundle.json
+```
+
+A schema-v16 event is evidence that the combined activation handoff was complete at that exact ledger head. It does not enable flags, approve actions, expand the cohort, authorize recovery or replace any feature-specific activation attestation.
+
