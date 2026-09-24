@@ -16,6 +16,7 @@ from scripts.cohort_canary_progression import load_plan
 from scripts.cohort_health_gate import collect_snapshot, evaluate, load_thresholds
 from scripts.cohort_observability_export import atomic_write, operator_status
 from scripts.cohort_release_gate import load_rollout
+from scripts.release_contract import OPTIONAL_CAPABILITY_KEYS, normalize_capabilities
 from scripts.cohort_release_ledger import (
     file_sha256 as ledger_file_sha256,
     ledger_key,
@@ -157,21 +158,18 @@ def validate_recovery_configuration(
         raise RecoveryVerificationError("Rollout manifest has no capabilities object.")
     if capabilities.get("coworker") is not True:
         raise RecoveryVerificationError("Recovery requires coworker=true in the approved rollout manifest.")
+    normalized_capabilities = normalize_capabilities(capabilities)
     if not coworker_enabled():
         raise RecoveryVerificationError("SHUDDHO_COWORKER_ENABLED is not enabled after recovery deployment.")
 
     mismatches: list[str] = []
     for key, attr in CAPABILITY_ATTRS.items():
-        expected = (
-            capabilities.get(key, False)
-            if key in {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"}
-            else capabilities.get(key)
-        )
+        expected = normalized_capabilities.get(key)
         if not isinstance(expected, bool):
             raise RecoveryVerificationError(f"Rollout capability {key!r} must be boolean.")
         actual = bool(
             getattr(settings, attr, False)
-            if key in {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"}
+            if key in OPTIONAL_CAPABILITY_KEYS
             else getattr(settings, attr)
         )
         if actual != expected:
@@ -200,11 +198,7 @@ def validate_recovery_configuration(
         "stage_min": stage["min_members"],
         "stage_max": stage["max_users"],
         "capabilities": {
-            key: bool(
-                capabilities.get(key, False)
-                if key in {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"}
-                else capabilities[key]
-            )
+            key: bool(normalized_capabilities[key])
             for key in ["coworker", *CAPABILITY_ATTRS]
         },
     }
