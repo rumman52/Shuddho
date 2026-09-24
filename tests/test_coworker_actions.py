@@ -33,6 +33,8 @@ def test_flags_credentials_and_token_encryption(container):
     assert not container.settings.actions_enabled
     with pytest.raises(ValueError, match="Action reminders require"):
         replace(container.settings, action_reminders_enabled=True).validate()
+    with pytest.raises(ValueError, match="email threading requires"):
+        replace(container.settings, action_email_threading_enabled=True).validate()
     with pytest.raises(CoworkerError, match="not available"):
         container.actions.repo.start_oauth(account(container), "email")
     enable_actions(container)
@@ -795,3 +797,96 @@ def test_microsoft_drive_capability_fails_before_oauth_attempt(container):
             )
         )
     assert rejected.value.code == "connection_provider_disabled"
+
+
+def test_google_owned_thread_reply_is_bound_and_uses_no_mailbox_read(container):
+    provider = enable_actions(container)
+    settings = replace(container.settings, action_email_threading_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+    parent = container.actions.repo.prepare(
+        owner,
+        action_request(connection),
+        "thread-parent",
+    )
+    parent = container.actions.repo.approve(owner, parent["id"], parent["preview_hash"])
+    asyncio.run(container.actions.execute(parent["id"]))
+    parent = container.actions.repo.get(owner, parent["id"])
+    assert parent["receipt"]["thread_id"]
+
+    payload = dict(parent["preview"]["payload"])
+    payload["kind"] = "email_thread_reply"
+    payload["parent_action_id"] = parent["id"]
+    payload["bcc"] = []
+    payload["body"] = "Follow-up inside the approved Shuddho thread."
+    reply = container.actions.repo.prepare(
+        owner,
+        ActionPrepare.model_validate({
+            "connection_id": connection["id"],
+            "payload": payload,
+        }),
+        "thread-reply",
+    )
+    assert reply["preview"]["approval_scope"]["contract_version"] == 4
+    assert reply["preview"]["reply_context"]["thread_id"] == parent["receipt"]["thread_id"]
+    assert reply["preview"]["threading"]["mailbox_read"] == "none"
+
+    reply = container.actions.repo.approve(owner, reply["id"], reply["preview_hash"])
+    asyncio.run(container.actions.execute(reply["id"]))
+    result = container.actions.repo.get(owner, reply["id"])
+    assert result["state"] == "succeeded"
+    assert result["receipt"]["thread_id"] == parent["receipt"]["thread_id"]
+    mime = BytesParser(policy=policy.default).parsebytes(provider.sent[-1])
+    assert str(mime["In-Reply-To"]) == parent["receipt"]["message_id"]
+    assert parent["receipt"]["message_id"] in str(mime["References"])
+    send_requests = [
+        request for request in provider.requests
+        if str(request.url).split("?")[0] == SEND_URL
+    ]
+    assert json.loads(send_requests[-1].content)["threadId"] == parent["receipt"]["thread_id"]
+
+
+def test_thread_reply_rejects_recipient_or_subject_expansion(container):
+    enable_actions(container)
+    settings = replace(container.settings, action_email_threading_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+    owner = account(container)
+    connection = connected(container.actions.repo, owner)
+    parent = container.actions.repo.prepare(owner, action_request(connection), "thread-boundary-parent")
+    parent = container.actions.repo.approve(owner, parent["id"], parent["preview_hash"])
+    asyncio.run(container.actions.execute(parent["id"]))
+    parent = container.actions.repo.get(owner, parent["id"])
+
+    base = {
+        **parent["preview"]["payload"],
+        "kind": "email_thread_reply",
+        "parent_action_id": parent["id"],
+        "bcc": [],
+        "body": "Follow-up",
+    }
+    for changes in (
+        {"to": ["other@example.org"]},
+        {"cc": []},
+        {"subject": "Changed subject"},
+    ):
+        request = ActionPrepare.model_validate({
+            "connection_id": connection["id"],
+            "payload": base | changes,
+        })
+        with pytest.raises(CoworkerError) as rejected:
+            container.actions.repo.prepare(owner, request, "thread-boundary-" + next(iter(changes)))
+        assert rejected.value.code == "thread_reply_changed"
+
+    with pytest.raises(ValidationError):
+        ActionPrepare.model_validate({
+            "connection_id": connection["id"],
+            "payload": base | {"bcc": ["hidden@example.org"]},
+        })
