@@ -4372,7 +4372,11 @@ def append_action_social_publishing_event(
         or runtime_capabilities != expected_capabilities
         or runtime_capabilities.get("coworker") is not True
         or runtime_capabilities.get("actions") is not True
+        or runtime_capabilities.get("agent_runtime") is not True
+        or runtime_capabilities.get("intelligent_planner") is not True
+        or runtime_capabilities.get("action_proposals") is not True
         or runtime_capabilities.get("action_social_publishing") is not True
+        or runtime_capabilities.get("agent_linkedin_proposals") is not True
     ):
         raise ReleaseLedgerError(
             "Social-publishing activation does not prove the exact reviewed runtime."
@@ -4591,16 +4595,20 @@ def append_agent_linkedin_proposals_event(
         or any(not isinstance(value, bool) for value in capabilities.values())
         or capabilities.get("coworker") is not True
         or capabilities.get("actions") is not True
+        or capabilities.get("agent_runtime") is not True
+        or capabilities.get("intelligent_planner") is not True
+        or capabilities.get("action_proposals") is not True
         or capabilities.get("action_social_publishing") is not True
+        or capabilities.get("agent_linkedin_proposals") is not True
     ):
         raise ReleaseLedgerError(
-            "agent_linkedin_proposals_verified requires reviewed action prerequisites."
+            "agent_linkedin_proposals_verified requires reviewed action-proposal and LinkedIn publishing prerequisites."
         )
     rollback = rollout.get("rollback")
     if (
         not isinstance(rollback, dict)
-        or rollback.get("action_social_publishing_kill_switch")
-        != "SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false"
+        or rollback.get("agent_linkedin_proposals_kill_switch")
+        != "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false"
     ):
         raise ReleaseLedgerError(
             "Reviewed rollout has no exact LinkedIn Agent-proposals rollback switch."
@@ -4777,6 +4785,24 @@ def append_agent_linkedin_proposals_event(
     ):
         raise ReleaseLedgerError(
             "agent_linkedin_proposals_verified requires an existing ledger chain that reached current_stage."
+        )
+    if not any(
+        item.get("schema_version") == ACTION_PROPOSALS_SCHEMA_VERSION
+        and item.get("event_type") == "action_proposals_verified"
+        and item.get("current_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "agent_linkedin_proposals_verified requires current-stage action_proposals_verified attestation."
+        )
+    if not any(
+        item.get("schema_version") == ACTION_SOCIAL_PUBLISHING_SCHEMA_VERSION
+        and item.get("event_type") == "action_social_publishing_verified"
+        and item.get("current_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "agent_linkedin_proposals_verified requires current-stage action_social_publishing_verified attestation."
         )
 
     activation_hash = file_sha256(agent_linkedin_proposals_activation)
