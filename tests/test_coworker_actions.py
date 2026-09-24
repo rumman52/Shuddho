@@ -890,3 +890,107 @@ def test_thread_reply_rejects_recipient_or_subject_expansion(container):
             "connection_id": connection["id"],
             "payload": base | {"bcc": ["hidden@example.org"]},
         })
+
+
+def test_linkedin_agent_proposal_is_inert_and_separately_gated(container):
+    from dataclasses import replace
+
+    from action_samples import enable_actions
+    from services.coworker.agent_schemas import (
+        AgentActionProposal,
+        AgentPlanStep,
+        AgentRunCreate,
+    )
+    from services.coworker.errors import CoworkerError
+    from services.coworker.models import ActionProposal, ExternalAction
+
+    provider = enable_actions(container)
+    base = replace(
+        container.settings,
+        action_social_publishing_enabled=True,
+        linkedin_client_id="simulated-linkedin-client",
+        linkedin_client_secret="simulated-linkedin-secret",
+        linkedin_redirect_uri="http://127.0.0.1:5173/oauth/linkedin/callback",
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_action_proposals_enabled=True,
+        agent_linkedin_proposals_enabled=False,
+        work_services_enabled=True,
+    )
+    base.validate()
+    container.settings = base
+    container.repository.settings = base
+    container.agent.settings = base
+    container.actions.repo.settings = base
+    owner = account(container)
+    proposed = AgentActionProposal.model_validate({
+        "payload": {
+            "kind": "social_publish_linkedin",
+            "text": "Launch update #Shuddho",
+        },
+        "rationale": "The user asked for an exact LinkedIn post draft.",
+    })
+
+    blocked, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Suggest the exact LinkedIn post.", output_language="en"),
+        "linkedin-proposal-blocked",
+    )
+    with pytest.raises(CoworkerError) as disabled:
+        container.agent.save_plan(
+            owner,
+            blocked["id"],
+            [AgentPlanStep(tool="social.write", arguments={
+                "instruction": "Draft the exact LinkedIn post.",
+                "notes": "",
+                "document_ids": [],
+                "output_language": "en",
+            })],
+            action_proposals=[proposed],
+        )
+    assert disabled.value.code == "linkedin_action_proposals_disabled"
+
+    enabled = replace(base, agent_linkedin_proposals_enabled=True)
+    enabled.validate()
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+    allowed, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Suggest the exact LinkedIn post.", output_language="en"),
+        "linkedin-proposal-allowed",
+    )
+    saved = container.agent.save_plan(
+        owner,
+        allowed["id"],
+        [AgentPlanStep(tool="social.write", arguments={
+            "instruction": "Draft the exact LinkedIn post.",
+            "notes": "",
+            "document_ids": [],
+            "output_language": "en",
+        })],
+        action_proposals=[proposed],
+    )
+    assert saved["action_proposals"][0]["kind"] == "social_publish_linkedin"
+    assert saved["action_proposals"][0]["state"] == "suggested"
+    with container.repository.sessions() as db:
+        rows = db.query(ActionProposal).filter(
+            ActionProposal.agent_run_id == allowed["id"],
+        ).all()
+        assert len(rows) == 1
+        assert db.query(ExternalAction).filter(
+            ExternalAction.owner_id == owner,
+        ).all() == []
+    assert provider.requests == []
+
+
+def test_linkedin_agent_proposal_flag_dependencies_fail_closed(container):
+    from dataclasses import replace
+
+    base = replace(
+        container.settings,
+        agent_linkedin_proposals_enabled=True,
+    )
+    with pytest.raises(ValueError, match="SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED"):
+        base.validate()
