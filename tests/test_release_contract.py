@@ -6,10 +6,12 @@ from pathlib import Path
 from scripts.cohort_release_gate import validate_rollout
 from scripts.release_contract import (
     CONDITIONAL_GATES,
+    ACTIVATION_REQUIREMENTS,
     OPTIONAL_CAPABILITY_KEYS,
     expected_rollout_capability_keys,
     expected_staging_evidence_keys,
     normalize_capabilities,
+    required_activation_requirements,
     required_conditional_gate_ids,
 )
 from scripts.release_contract_check import validate_templates
@@ -104,3 +106,34 @@ def test_linkedin_capability_cannot_use_legacy_google_provider_fallback():
     rollout["monitoring"]["actions"] = "actions-dashboard"
     failures = validate_rollout(rollout, max_cohort_users=25)
     assert "action_social_publishing_provider" in failures
+
+
+def test_every_optional_capability_has_exactly_one_activation_requirement():
+    capability_requirements = [
+        item.capability
+        for item in ACTIVATION_REQUIREMENTS
+        if item.capability is not None
+    ]
+    assert set(capability_requirements) == OPTIONAL_CAPABILITY_KEYS
+    assert len(capability_requirements) == len(OPTIONAL_CAPABILITY_KEYS)
+
+
+def test_microsoft_activation_requirement_is_provider_aware():
+    capabilities = {
+        "actions": True,
+        "action_proposals": False,
+    }
+    assert [
+        item.key
+        for item in required_activation_requirements(
+            capabilities,
+            {"google"},
+        )
+    ] == []
+    assert [
+        item.key
+        for item in required_activation_requirements(
+            capabilities,
+            {"google", "microsoft"},
+        )
+    ] == ["microsoft_actions"]

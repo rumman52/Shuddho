@@ -75,6 +75,18 @@ class OptionalCapability:
     required_providers: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ActivationRequirement:
+    key: str
+    status: str
+    ledger_schema_version: int
+    ledger_event_type: str
+    ledger_artifact_key: str
+    capability: str | None = None
+    provider: str | None = None
+    binds_rollout_manifest: bool = True
+
+
 OPTIONAL_CAPABILITIES = (
     OptionalCapability(
         capability="action_attachments",
@@ -192,6 +204,95 @@ OPTIONAL_CAPABILITIES = (
     ),
 )
 
+ACTIVATION_REQUIREMENTS = (
+    ActivationRequirement(
+        key="microsoft_actions",
+        status="microsoft_rollout_verified",
+        ledger_schema_version=6,
+        ledger_event_type="microsoft_rollout_verified",
+        ledger_artifact_key="rollout_activation",
+        provider="microsoft",
+        binds_rollout_manifest=False,
+    ),
+    ActivationRequirement(
+        key="action_selection",
+        status="action_selection_verified",
+        ledger_schema_version=7,
+        ledger_event_type="action_selection_verified",
+        ledger_artifact_key="action_selection_activation",
+        capability="action_selection",
+        binds_rollout_manifest=False,
+    ),
+    ActivationRequirement(
+        key="action_proposals",
+        status="action_proposals_verified",
+        ledger_schema_version=8,
+        ledger_event_type="action_proposals_verified",
+        ledger_artifact_key="action_proposals_activation",
+        capability="action_proposals",
+    ),
+    ActivationRequirement(
+        key="action_attachments",
+        status="action_attachments_verified",
+        ledger_schema_version=9,
+        ledger_event_type="action_attachments_verified",
+        ledger_artifact_key="action_attachments_activation",
+        capability="action_attachments",
+    ),
+    ActivationRequirement(
+        key="action_reminders",
+        status="action_reminders_verified",
+        ledger_schema_version=10,
+        ledger_event_type="action_reminders_verified",
+        ledger_artifact_key="action_reminders_activation",
+        capability="action_reminders",
+    ),
+    ActivationRequirement(
+        key="action_recipients",
+        status="action_recipients_verified",
+        ledger_schema_version=11,
+        ledger_event_type="action_recipients_verified",
+        ledger_artifact_key="action_recipients_activation",
+        capability="action_recipients",
+    ),
+    ActivationRequirement(
+        key="action_document_sharing",
+        status="action_document_sharing_verified",
+        ledger_schema_version=12,
+        ledger_event_type="action_document_sharing_verified",
+        ledger_artifact_key="action_document_sharing_activation",
+        capability="action_document_sharing",
+    ),
+    ActivationRequirement(
+        key="action_email_threading",
+        status="action_email_threading_verified",
+        ledger_schema_version=13,
+        ledger_event_type="action_email_threading_verified",
+        ledger_artifact_key="action_email_threading_activation",
+        capability="action_email_threading",
+    ),
+    ActivationRequirement(
+        key="action_social_publishing",
+        status="action_social_publishing_verified",
+        ledger_schema_version=14,
+        ledger_event_type="action_social_publishing_verified",
+        ledger_artifact_key="action_social_publishing_activation",
+        capability="action_social_publishing",
+    ),
+    ActivationRequirement(
+        key="agent_linkedin_proposals",
+        status="agent_linkedin_proposals_verified",
+        ledger_schema_version=15,
+        ledger_event_type="agent_linkedin_proposals_verified",
+        ledger_artifact_key="agent_linkedin_proposals_activation",
+        capability="agent_linkedin_proposals",
+    ),
+)
+
+ACTIVATION_REQUIREMENTS_BY_KEY = {
+    item.key: item for item in ACTIVATION_REQUIREMENTS
+}
+
 OPTIONAL_CAPABILITY_KEYS = frozenset(
     item.capability for item in OPTIONAL_CAPABILITIES
 )
@@ -251,6 +352,28 @@ def normalize_capabilities(capabilities: dict) -> dict:
     return normalized
 
 
+def required_activation_requirements(
+    capabilities: dict,
+    action_providers: set[str] | frozenset[str],
+) -> tuple[ActivationRequirement, ...]:
+    normalized = normalize_capabilities(capabilities)
+    required: list[ActivationRequirement] = []
+    for item in ACTIVATION_REQUIREMENTS:
+        if item.provider is not None:
+            if (
+                normalized.get("actions") is True
+                and item.provider in action_providers
+            ):
+                required.append(item)
+            continue
+        if (
+            item.capability is not None
+            and normalized.get(item.capability) is True
+        ):
+            required.append(item)
+    return tuple(required)
+
+
 def validate_optional_capabilities(
     capabilities: dict,
     action_providers: set[str] | frozenset[str],
@@ -293,3 +416,13 @@ def expected_rollout_capability_keys() -> frozenset[str]:
 
 def expected_rollout_rollback_keys() -> frozenset[str]:
     return frozenset({*ROLLBACK_KEYS, *OPTIONAL_ROLLBACK_KEYS})
+
+
+if {
+    item.capability
+    for item in ACTIVATION_REQUIREMENTS
+    if item.capability is not None
+} != OPTIONAL_CAPABILITY_KEYS:
+    raise RuntimeError(
+        "Every optional controlled-release capability must have one activation requirement."
+    )

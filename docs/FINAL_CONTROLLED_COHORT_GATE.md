@@ -174,6 +174,8 @@ It does **not** mean:
 
 After cohort activation, watch actual p50/p95/p99 latency, queue age, error rates, retry rates, token/provider spend, storage growth, research citation issues and consequential-action outcomes. If predefined thresholds are breached, use the documented kill switches rather than widening the cohort.
 
+Before treating a reviewed rollout as fully activation-complete, run [Controlled Release Activation Bundle](CONTROLLED_RELEASE_ACTIVATION_BUNDLE.md) after every required feature-specific production activation has been recorded in the release ledger. The bundle re-runs this final GO decision, derives the exact activation set from the rollout, and requires matching ledger attestations before schema-v16 handoff evidence can be recorded.
+
 
 ## Provider-aware consequential-action admission
 

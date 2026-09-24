@@ -308,3 +308,7 @@ PR #198 extends the canonical capability contract beyond final cohort admission 
 
 This increment deliberately preserves the explicit historical schema-version ladders used by release-ledger, scale, and recovery evidence. Those versions describe the evidence format at the time it was emitted and must not be dynamically reinterpreted by the current capability registry. See [Release Contract Propagation](RELEASE_CONTRACT_PROPAGATION.md).
 
+## Release control — activation bundle
+
+PR #199 adds [Controlled Release Activation Bundle](CONTROLLED_RELEASE_ACTIVATION_BUNDLE.md): after final cohort GO and the existing feature-specific production activation/ledger steps, one read-only verifier derives the exact activation set from the reviewed rollout, requires every enabled optional capability and Microsoft rollout to have its exact activation artifact and matching ledger event at the current stage, and records the ledger head used for verification. A schema-v16 `release_activation_bundle_verified` event then binds the exact rollout, staging evidence and bundle artifact, and refuses to append if the ledger changed after verification. The bundle never enables a feature flag, executes a provider mutation, changes cohort membership, authorizes scale, or replaces feature-specific activation/recovery gates.
+
