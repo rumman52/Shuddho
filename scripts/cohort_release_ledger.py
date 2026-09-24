@@ -2300,7 +2300,7 @@ def append_action_proposals_event(
         )
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     expected_providers = normalized_action_providers(rollout)
@@ -2641,7 +2641,7 @@ def append_action_attachments_event(
         )
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     expected_providers = normalized_action_providers(rollout)
@@ -2982,7 +2982,7 @@ def append_action_reminders_event(
         )
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     if (
@@ -3321,7 +3321,7 @@ def append_action_recipients_event(
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
     expected_providers = normalized_action_providers(rollout)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     if (
@@ -3661,7 +3661,7 @@ def append_action_document_sharing_event(
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
     expected_providers = normalized_action_providers(rollout)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     if (
@@ -4001,7 +4001,7 @@ def append_action_email_threading_event(
     runtime_capabilities = dict(runtime_capabilities)
     expected_capabilities = dict(capabilities)
     expected_providers = normalized_action_providers(rollout)
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     if (
@@ -4344,7 +4344,7 @@ def append_action_social_publishing_event(
         raise ReleaseLedgerError(
             "Social-publishing rollout does not include the LinkedIn provider."
         )
-    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals"):
+    for optional in ("action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_social_publishing", "action_selection", "action_proposals", "agent_linkedin_proposals"):
         runtime_capabilities.setdefault(optional, False)
         expected_capabilities.setdefault(optional, False)
     if (

@@ -169,6 +169,7 @@ def validate_reviewed_rollout(
     normalized.setdefault("action_social_publishing", False)
     normalized.setdefault("action_selection", False)
     normalized.setdefault("action_proposals", False)
+    normalized.setdefault("agent_linkedin_proposals", False)
     return {
         "release_id": rollout["release_id"],
         "environment": rollout["environment"],

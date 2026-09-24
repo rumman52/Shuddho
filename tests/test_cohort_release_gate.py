@@ -262,6 +262,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "action_document_sharing": False,
         "action_email_threading": False,
         "action_social_publishing": False,
+        "agent_linkedin_proposals": False,
         "action_selection": True,
         "action_proposals": False,
     }
@@ -509,6 +510,55 @@ def test_social_publishing_requires_linkedin_gate_provider_and_exact_kill_switch
     )
     bad_switch["rollback"]["action_social_publishing_kill_switch"] = "wrong"
     assert "action_social_publishing_kill_switch" in validate_rollout(
+        bad_switch,
+        max_cohort_users=25,
+    )
+
+
+def test_linkedin_agent_proposals_require_nested_authority_and_remain_no_go():
+    value = rollout(
+        actions=True,
+        providers=["google", "linkedin"],
+        action_social_publishing=True,
+        action_proposals=True,
+    )
+    value["capabilities"]["agent_linkedin_proposals"] = True
+    value["rollback"]["agent_linkedin_proposals_kill_switch"] = (
+        "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false"
+    )
+    result = evaluate_release(
+        evidence(
+            actions=True,
+            action_social_publishing=True,
+            action_proposals=True,
+        ),
+        value,
+    )
+    assert result["decision"] == "NO-GO"
+    assert result["required_feature_gates"]["agent_linkedin_proposals"] is True
+    assert "agent_linkedin_proposals_release_gate_pending" in result["rollout_failures"]
+
+
+def test_linkedin_agent_proposal_manifest_fails_closed_on_dependency_or_kill_switch():
+    missing_dependencies = rollout(actions=True)
+    missing_dependencies["capabilities"]["agent_linkedin_proposals"] = True
+    missing_dependencies["rollback"]["agent_linkedin_proposals_kill_switch"] = (
+        "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false"
+    )
+    assert "agent_linkedin_proposals_dependency" in validate_rollout(
+        missing_dependencies,
+        max_cohort_users=25,
+    )
+
+    bad_switch = rollout(
+        actions=True,
+        providers=["google", "linkedin"],
+        action_social_publishing=True,
+        action_proposals=True,
+    )
+    bad_switch["capabilities"]["agent_linkedin_proposals"] = True
+    bad_switch["rollback"]["agent_linkedin_proposals_kill_switch"] = "wrong"
+    assert "agent_linkedin_proposals_kill_switch" in validate_rollout(
         bad_switch,
         max_cohort_users=25,
     )

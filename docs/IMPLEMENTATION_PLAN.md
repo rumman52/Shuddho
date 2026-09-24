@@ -288,3 +288,8 @@ The service boundaries, rollout sequence, and release gates above are Shuddho de
 ## Wave D — owned recipient shortcuts
 
 The next bounded usability increment is [Owned Action Recipient Directory](APPROVED_ACTION_RECIPIENTS.md). It deliberately does **not** import provider contacts or widen OAuth scopes. Users create an owner-scoped name/email shortcut, then explicitly select it in the action UI; selection copies the exact validated address into the existing email/calendar payload before preview creation. The action registry, executor, approval hash and provider adapters remain unchanged, so a saved label can never become executable authority. The feature is default-off behind `SHUDDHO_ACTION_RECIPIENTS_ENABLED=false`, capped by `SHUDDHO_ACTION_RECIPIENTS_MAX`, included in account erasure and excluded from Agent tools/memory.
+
+
+## Wave D — inert LinkedIn Agent proposals
+
+After approval-bound LinkedIn personal text publishing is independently release-qualified, the next bounded Agent usability increment is [Inert LinkedIn Agent Action Proposals](AGENT_LINKEDIN_PROPOSALS.md). It adds no executable Agent tool: the planner may suggest exact personal post text only behind a separate nested flag, while the signed-in user chooses the owned LinkedIn connection, promotes the exact proposal hash into the existing immutable action preview, and approves separately. The controlled-cohort gate intentionally remains NO-GO for this capability until a dedicated live staging/activation/ledger/scale/recovery qualification increment is implemented.

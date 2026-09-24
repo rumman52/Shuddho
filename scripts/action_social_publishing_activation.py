@@ -172,6 +172,7 @@ def validate_reviewed_rollout(
     normalized.setdefault("action_social_publishing", False)
     normalized.setdefault("action_selection", False)
     normalized.setdefault("action_proposals", False)
+    normalized.setdefault("agent_linkedin_proposals", False)
     providers = sorted(declared_action_providers(rollout))
     if "linkedin" not in providers:
         raise ActionSocialPublishingActivationError(

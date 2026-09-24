@@ -585,6 +585,15 @@ class AgentRepository:
                 )
             for proposed in proposals:
                 payload = proposed.payload.model_dump(mode="json")
+                if (
+                    payload.get("kind") == "social_publish_linkedin"
+                    and not self.settings.agent_linkedin_proposals_enabled
+                ):
+                    raise CoworkerError(
+                        "linkedin_action_proposals_disabled",
+                        "LinkedIn Agent proposals are not enabled in this deployment.",
+                        409,
+                    )
                 proposal_id = str(uuid4())
                 db.add(ActionProposal(
                     id=proposal_id,

@@ -24,7 +24,7 @@ export type ActionAttachment = { id: string; filename: string; content_type: str
 export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "completed" | "failed" | "cancelled";
 export type AgentTool = { name: string; version: string; kind: "task" | "approved_action"; consequential: boolean; approval_required: boolean; timeout_seconds: number };
 export type AgentActionProposal = {
-  id: string; kind: EmailAction["kind"] | CalendarAction["kind"]; payload: EmailAction | CalendarAction; rationale: string;
+  id: string; kind: EmailAction["kind"] | CalendarAction["kind"] | LinkedInSocialPublishAction["kind"]; payload: EmailAction | CalendarAction | LinkedInSocialPublishAction; rationale: string;
   proposal_hash: string; state: "suggested" | "promoting" | "promoted" | "dismissed" | "expired";
   promoted_action_id: string | null; created_at: string; expires_at: string; promoted_at: string | null; dismissed_at: string | null;
 };
