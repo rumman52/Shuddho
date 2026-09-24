@@ -433,7 +433,7 @@ class ActionRepository:
                 parent = self._action(db, owner, parent_id, lock=False)
                 if (
                     parent.state != "succeeded"
-                    or parent.kind not in {"email_send", "email_thread_reply"}
+                    or parent.kind not in {"email_send", "email_send_with_attachments", "email_thread_reply"}
                     or parent.connection_id != connection.id
                     or parent.preview.get("provider") != "google"
                     or not isinstance(parent.receipt, dict)
