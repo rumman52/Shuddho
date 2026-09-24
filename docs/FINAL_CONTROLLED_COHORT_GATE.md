@@ -19,7 +19,7 @@ Start from:
 Before creating release evidence, verify the checked-in templates still match the canonical release contract:
 
 ```bash
-uv run python scripts/release_contract_check.py
+uv run python -m scripts.release_contract_check
 ```
 
 The contract is defined in `scripts/release_contract.py`. CI also exercises this check through the Python test suite, so adding a new optional capability without updating the release templates fails closed.
