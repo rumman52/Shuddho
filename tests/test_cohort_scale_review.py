@@ -152,3 +152,27 @@ def test_scale_review_rejects_stale_capacity():
     value["generated_at"] = "2026-09-20T11:20:00+00:00"
     with pytest.raises(ScaleReviewError, match="stale"):
         validate_capacity(value, plan(), NOW)
+
+
+def test_scale_review_rejects_capacity_from_different_rollout():
+    value = capacity()
+    value["rollout_manifest_sha256"] = "a" * 64
+    with pytest.raises(
+        ScaleReviewError,
+        match="does not bind the current rollout manifest",
+    ):
+        validate_capacity(
+            value,
+            plan(),
+            NOW,
+            rollout_sha256="b" * 64,
+        )
+
+
+def test_scale_review_output_carries_rollout_identity():
+    result = evaluate_review(
+        plan(),
+        review(),
+        rollout_manifest_sha256="c" * 64,
+    )
+    assert result["rollout_manifest_sha256"] == "c" * 64
