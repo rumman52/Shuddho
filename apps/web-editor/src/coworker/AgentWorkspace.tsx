@@ -24,10 +24,16 @@ const errorMessage = (error: unknown) =>
 const proposalTitle = (proposal: AgentActionProposal) =>
   proposal.payload.kind === "email_send"
     ? proposal.payload.subject
-    : proposal.payload.title;
+    : proposal.payload.kind === "calendar_create"
+      ? proposal.payload.title
+      : "LinkedIn post";
 
-const proposalCapability = (proposal: AgentActionProposal): "email" | "calendar" =>
-  proposal.payload.kind === "email_send" ? "email" : "calendar";
+const proposalCapability = (proposal: AgentActionProposal): "email" | "calendar" | "social" =>
+  proposal.payload.kind === "email_send"
+    ? "email"
+    : proposal.payload.kind === "calendar_create"
+      ? "calendar"
+      : "social";
 
 export default function AgentWorkspace({
   client,
@@ -161,7 +167,7 @@ export default function AgentWorkspace({
     <div className="cw-action-intro">
       <span className="cw-eyebrow">Bounded Agent</span>
       <h2>Plan the work. Keep the authority.</h2>
-      <p>The Agent can plan tasks and suggest inert email or calendar actions. You choose the account, promote the exact proposal, and approve the final preview separately.</p>
+      <p>The Agent can plan tasks and suggest inert email, calendar, or explicitly gated LinkedIn post actions. You choose the account, promote the exact proposal, and approve the final preview separately.</p>
     </div>
     {error && <p className="cw-error" role="alert">{error}</p>}
     {!enabled && <p className="cw-notice">Agent runs are not enabled in this workspace yet.</p>}
@@ -188,16 +194,18 @@ export default function AgentWorkspace({
               const accounts = matchingConnections(proposal);
               const payload = proposal.payload;
               return <article className="cw-proposal-card" key={proposal.id}>
-                <div className="cw-proposal-heading"><div><strong dir="auto">{proposalTitle(proposal)}</strong><small>{proposal.kind === "email_send" ? "Email suggestion" : "Calendar suggestion"} · {proposal.state}</small></div><code>{proposal.proposal_hash.slice(0, 12)}…</code></div>
+                <div className="cw-proposal-heading"><div><strong dir="auto">{proposalTitle(proposal)}</strong><small>{proposal.kind === "email_send" ? "Email suggestion" : proposal.kind === "calendar_create" ? "Calendar suggestion" : "LinkedIn post suggestion"} · {proposal.state}</small></div><code>{proposal.proposal_hash.slice(0, 12)}…</code></div>
                 <p className="cw-proposal-rationale" dir="auto">{proposal.rationale}</p>
                 <dl className="cw-action-details">
                   {payload.kind === "email_send" ? <>
                     <dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Subject</dt><dd dir="auto">{payload.subject}</dd><dt>Message</dt><dd dir="auto">{payload.body}</dd>
-                  </> : <>
+                  </> : payload.kind === "calendar_create" ? <>
                     <dt>When</dt><dd>{payload.start_at} → {payload.end_at}</dd><dt>Zone</dt><dd>{payload.time_zone}</dd><dt>Guests</dt><dd>{payload.attendees.join(", ") || "None"}</dd><dt>Details</dt><dd dir="auto">{payload.description}</dd>
+                  </> : <>
+                    <dt>Visibility</dt><dd>Public personal post</dd><dt>Post text</dt><dd dir="auto">{payload.text}</dd>
                   </>}
                 </dl>
-                {proposal.state === "suggested" ? accounts.length ? <ProposalControls proposal={proposal} accounts={accounts} busy={busy} promote={promote} dismiss={dismiss} /> : <div className="cw-proposal-controls"><p className="cw-fineprint">Connect a matching {proposalCapability(proposal)} account before promotion.</p><button className="cw-secondary" type="button" onClick={openActions}>Open Email & calendar</button><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => void dismiss(proposal)}>Dismiss suggestion</button></div> : proposal.state === "promoted" && proposal.promoted_action_id ? <button className="cw-secondary" type="button" onClick={() => void perform("open:" + proposal.id, async () => reviewAction(await client.action(proposal.promoted_action_id!)))}>Review final action</button> : null}
+                {proposal.state === "suggested" ? accounts.length ? <ProposalControls proposal={proposal} accounts={accounts} busy={busy} promote={promote} dismiss={dismiss} /> : <div className="cw-proposal-controls"><p className="cw-fineprint">Connect a matching {proposalCapability(proposal)} account before promotion.</p><button className="cw-secondary" type="button" onClick={openActions}>Open Actions</button><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => void dismiss(proposal)}>Dismiss suggestion</button></div> : proposal.state === "promoted" && proposal.promoted_action_id ? <button className="cw-secondary" type="button" onClick={() => void perform("open:" + proposal.id, async () => reviewAction(await client.action(proposal.promoted_action_id!)))}>Review final action</button> : null}
               </article>;
             })}
           </section>}
