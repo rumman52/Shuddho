@@ -101,6 +101,12 @@ def email_raw(action, attachments=None):
     if p["bcc"]:
         message["Bcc"] = ", ".join(p["bcc"])
     message["Message-ID"] = f'<{action["id"]}@shuddho.invalid>'
+    if action["kind"] == "email_thread_reply":
+        context = preview.get("reply_context")
+        if not isinstance(context, dict):
+            raise ValueError("Missing reply context")
+        message["In-Reply-To"] = context["parent_message_id"]
+        message["References"] = " ".join(context["references"])
     message["Date"] = format_datetime(datetime.now(timezone.utc))
     message.set_content(p["body"], subtype="plain", charset="utf-8")
     for attachment in attachments:
@@ -298,18 +304,34 @@ class GoogleActions:
                 access_token,
                 attachments,
             )
-        if action["kind"] in {"email_send", "email_send_with_attachments"}:
+        if action["kind"] in {"email_send", "email_send_with_attachments", "email_thread_reply"}:
+            request_body = {"raw": email_raw(action, attachments)}
+            expected_thread_id = None
+            if action["kind"] == "email_thread_reply":
+                context = action["preview"].get("reply_context")
+                if not isinstance(context, dict) or not isinstance(context.get("thread_id"), str):
+                    raise GoogleFailure("provider_receipt_invalid", definitive=True)
+                expected_thread_id = context["thread_id"]
+                request_body["threadId"] = expected_thread_id
             result = await self.request(
                 "POST",
                 SEND_URL,
                 token=access_token,
-                body={"raw": email_raw(action, attachments)},
+                body=request_body,
             )
             provider_id = result.get("id")
-            if not isinstance(provider_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", provider_id):
+            thread_id = result.get("threadId")
+            if (
+                not isinstance(provider_id, str)
+                or not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", provider_id)
+                or not isinstance(thread_id, str)
+                or not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", thread_id)
+                or expected_thread_id is not None
+                and thread_id != expected_thread_id
+            ):
                 raise GoogleFailure("provider_receipt_invalid")
             # Gmail acceptance is not a delivery/read receipt.
-            return {"provider": "google", "provider_id": provider_id, "status": "accepted_by_gmail",
+            return {"provider": "google", "provider_id": provider_id, "thread_id": thread_id, "status": "accepted_by_gmail",
                     "message_id": f'<{action["id"]}@shuddho.invalid>', "confirmed_at": datetime.now(timezone.utc).isoformat()}
         if action["kind"] not in {"calendar_create", "calendar_create_with_reminder"}:
             raise ValueError("Unknown action kind")
