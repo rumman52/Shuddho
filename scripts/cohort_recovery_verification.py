@@ -1412,6 +1412,7 @@ def validate_release_activation_bundle_recovery(
     release_id: str,
     current_stage: str,
     rollback_path: Path,
+    rollout_path: Path,
 ) -> dict:
     activation = load_json(
         activation_path,
@@ -1431,6 +1432,11 @@ def validate_release_activation_bundle_recovery(
     if activation.get("current_stage") != current_stage:
         raise RecoveryVerificationError(
             "Post-rollback release activation bundle current_stage does not match."
+        )
+    rollout_sha = sha256_file(rollout_path)
+    if activation.get("rollout_manifest_sha256") != rollout_sha:
+        raise RecoveryVerificationError(
+            "Post-rollback release activation bundle does not bind the current rollout manifest."
         )
     try:
         entries, _ = verified_release_entries(ledger_path, release_id)
@@ -1455,6 +1461,12 @@ def validate_release_activation_bundle_recovery(
             after_sequence=rollback_entry["sequence"],
             label="Release activation bundle recovery attestation",
         )
+        if bundle_entry.get("artifact_sha256", {}).get("rollout_manifest") != rollout_sha:
+            raise RecoveryVerificationError(
+                "Release activation bundle ledger event does not bind the current rollout manifest."
+            )
+    except RecoveryVerificationError:
+        raise
     except Exception as error:
         raise RecoveryVerificationError(
             f"Release ledger verification failed: {error}"
@@ -1762,6 +1774,7 @@ def build_recovery_evidence(
             release_id=config["release_id"],
             current_stage=current_stage,
             rollback_path=rollback_path,
+            rollout_path=rollout_path,
         )
 
     probe = run_live_recovery_probe(
@@ -1913,6 +1926,7 @@ def build_recovery_evidence(
             "ledger_sequence": release_activation_bundle_recovery["ledger_sequence"],
             "ledger_entry_hash": release_activation_bundle_recovery["ledger_entry_hash"],
         }
+        artifact_sha256["rollout_manifest"] = sha256_file(rollout_path)
 
     runtime_requirements = {
         "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
@@ -1965,7 +1979,7 @@ def build_recovery_evidence(
 
     return {
         "schema_version": (
-            11 if release_activation_bundle_summary is not None
+            12 if release_activation_bundle_summary is not None
             else 10 if getattr(settings, "agent_linkedin_proposals_enabled", False)
             else 9 if getattr(settings, "action_social_publishing_enabled", False)
             else 8 if getattr(settings, "action_email_threading_enabled", False)
