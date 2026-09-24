@@ -698,7 +698,7 @@ def action_proposals_activation_file(tmp_path):
         "source_revision": "a" * 40,
         "environment": "production",
         "capabilities": capabilities,
-        "action_providers": ["google"],
+        "action_providers": [],
         "cohort": {
             "enforced": True,
             "configured_members": 25,
