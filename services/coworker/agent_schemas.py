@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .action_schemas import CalendarCreate, EmailSend
+from .action_schemas import CalendarCreate, EmailSend, LinkedInSocialPublish
 from .memory_schemas import Namespace
 
 
@@ -111,7 +111,7 @@ def action_proposal_hash(run_id: str, payload: dict, rationale: str) -> str:
 
 
 AgentProposalPayload = Annotated[
-    EmailSend | CalendarCreate,
+    EmailSend | CalendarCreate | LinkedInSocialPublish,
     Field(discriminator="kind"),
 ]
 
