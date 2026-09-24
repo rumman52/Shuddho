@@ -205,12 +205,16 @@ class LinkedInActions:
             or isinstance(expires_in, bool)
             or expires_in < 60
             or expires_in > 366 * 24 * 60 * 60
-            or not isinstance(scope, str)
+            or scope is not None and not isinstance(scope, str)
         ):
             raise ConnectorFailure("oauth_response_invalid", definitive=True)
-        scopes = scope.split()
-        if IDENTITY_SCOPE not in scopes or SCOPES["social"] not in scopes:
-            raise ConnectorFailure("oauth_scope_missing", definitive=True)
+        if isinstance(scope, str):
+            scopes = [item for item in re.split(r"[\s,]+", scope) if item]
+            if IDENTITY_SCOPE not in scopes or SCOPES["social"] not in scopes:
+                raise ConnectorFailure("oauth_scope_missing", definitive=True)
+        # OAuth permits omitting scope when it is identical to the requested
+        # scope. Persist the exact request set so the executor can enforce it.
+        result["scope"] = _scope_value()
         return result
 
     @staticmethod
