@@ -320,3 +320,5 @@ The next downstream-continuity increment adds [Downstream Rollout Identity Conti
 
 The following quality-evidence hardening increment adds [Rollout-Bound Live Quality Evidence](ROLLOUT_BOUND_LIVE_QUALITY_EVIDENCE.md). Live multilingual quality evaluation now binds the exact reviewed rollout SHA-256; final cohort admission parses that artifact instead of trusting only a staging reference, bounded scale review requires the same rollout identity, and activation-bundle/schema-v16 handoff binds and independently rechecks the exact quality artifact hash.
 
+The next AI-runtime continuity increment adds [Live Model Identity Continuity](LIVE_MODEL_IDENTITY_CONTINUITY.md). Live planner evidence now binds release, rollout, fixture, provider model and exact source revision. Final cohort admission machine-verifies it and requires multilingual quality evidence to match the same model/revision. The activation bundle carries both exact artifact hashes and schema-v16 append independently rechecks them before signing.
+
