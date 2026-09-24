@@ -55,6 +55,7 @@ export SHUDDHO_RELEASE_LEDGER_HMAC_KEY=...
 uv run python -m scripts.release_activation_bundle \
   --rollout /secure/release/cohort-rollout.json \
   --staging-evidence /secure/release/staging-evidence.final.json \
+  --quality-eval /secure/release/coworker-quality-eval.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --activations /secure/release/activation-manifest.json \
   --current-stage canary-5 \
@@ -67,7 +68,7 @@ Passing output has:
 status = release_activation_bundle_verified
 ```
 
-and records the exact rollout/staging hashes, required activation keys, every activation artifact hash, satisfying ledger sequence/hash, and the ledger head that was verified.
+and records the exact rollout/staging hashes, exact verified live-quality artifact hash, required activation keys, every activation artifact hash, satisfying ledger sequence/hash, and the ledger head that was verified.
 
 ## Record schema-v16 attestation
 
@@ -82,10 +83,11 @@ uv run python scripts/cohort_release_ledger.py append-release-activation-bundle 
   --current-stage canary-5 \
   --rollout /secure/release/cohort-rollout.json \
   --staging-evidence /secure/release/staging-evidence.final.json \
+  --quality-eval /secure/release/coworker-quality-eval.json \
   --release-activation-bundle /secure/release/release-activation-bundle.json
 ```
 
-Schema v16 refuses to append if the release ledger changed after bundle verification. This prevents recording a bundle that was verified against an earlier ledger head.
+Schema v16 refuses to append if the release ledger changed after bundle verification. For quality-bound bundles it also independently requires the exact supplied quality artifact SHA-256 to match the bundle before signing. This prevents recording either a stale ledger handoff or substituted quality proof.
 
 After append succeeds, copy the returned `head_entry_hash` into the independent change/deployment record.
 
