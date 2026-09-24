@@ -9,6 +9,7 @@ from scripts.cohort_post_scale_observation import (
     PostScaleObservationError,
     activation_epoch,
     evaluate_observation,
+    validate_rollout_continuity,
 )
 from scripts.cohort_release_ledger import (
     append_event,
@@ -311,3 +312,34 @@ def test_unledgered_activation_cannot_create_epoch(monkeypatch, tmp_path):
     ledger.write_text("", encoding="utf-8")
     with pytest.raises(PostScaleObservationError, match="Release ledger"):
         activation_epoch(activation_path, ledger, activation=activation())
+
+
+def test_schema_v12_post_scale_rejects_different_rollout(tmp_path):
+    rollout_path = write_json(tmp_path / "current-rollout.json", {
+        "release_id": "coworker-cohort-001",
+        "cohort": {"reference": "ticket", "max_users": 25},
+    })
+    value = activation()
+    value["schema_version"] = 12
+    value["artifact_sha256"] = {
+        "rollout_manifest": "0" * 64,
+    }
+
+    with pytest.raises(
+        PostScaleObservationError,
+        match="does not bind the current rollout manifest",
+    ):
+        validate_rollout_continuity(value, rollout_path)
+
+
+def test_post_scale_output_carries_rollout_identity():
+    rollout_hash = "a" * 64
+    result = evaluate_observation(
+        history(),
+        activation(),
+        plan(),
+        epoch_start=datetime(2026, 9, 22, 13, 2, tzinfo=timezone.utc),
+        now=datetime(2026, 9, 22, 13, 17, tzinfo=timezone.utc),
+        rollout_manifest_sha256=rollout_hash,
+    )
+    assert result["rollout_manifest_sha256"] == rollout_hash
