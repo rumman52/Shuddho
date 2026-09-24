@@ -702,6 +702,65 @@ def validate_action_email_threading_activation(
     }
 
 
+
+def validate_action_social_publishing_activation(
+    path: Path | None,
+    ledger_path: Path,
+    decision: dict,
+    settings: Settings,
+) -> dict | None:
+    if not getattr(settings, "action_social_publishing_enabled", False):
+        return None
+    if path is None:
+        raise ScaleActivationError(
+            "Social publishing is enabled but --action-social-publishing-activation is required."
+        )
+    value = load_json(path, "social publishing activation")
+    if value.get("status") != "action_social_publishing_verified":
+        raise ScaleActivationError("Social publishing activation has not been verified.")
+    if value.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError("Social publishing activation release_id does not match.")
+    if value.get("current_stage") != decision["current_stage"]:
+        raise ScaleActivationError("Social publishing activation current_stage does not match.")
+    runtime = value.get("runtime")
+    capabilities = runtime.get("capabilities") if isinstance(runtime, dict) else None
+    cohort = runtime.get("cohort") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(runtime, dict)
+        or not isinstance(capabilities, dict)
+        or capabilities.get("coworker") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("action_social_publishing") is not True
+        or not isinstance(cohort, dict)
+        or cohort.get("enforced") is not True
+    ):
+        raise ScaleActivationError(
+            "Social publishing activation does not prove required runtime controls."
+        )
+    try:
+        entries, _ = verified_release_entries(ledger_path, decision["release_id"])
+        entry = require_exact_attested_event(
+            entries,
+            schema_version=14,
+            event_type="action_social_publishing_verified",
+            current_stage=decision["current_stage"],
+            next_stage=None,
+            artifact_key="action_social_publishing_activation",
+            artifact_sha256=ledger_file_sha256(path),
+            label="Email-threading scale attestation",
+        )
+    except Exception as error:
+        raise ScaleActivationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    return {
+        "activation": value,
+        "ledger_sequence": entry["sequence"],
+        "ledger_entry_hash": entry["entry_hash"],
+        "activation_sha256": ledger_file_sha256(path),
+    }
+
+
 def require_deployed_configuration(settings: Settings, decision: dict, allowed_id: str, denied_id: str) -> None:
     if not settings.cohort_enforced:
         raise ScaleActivationError("SHUDDHO_COWORKER_COHORT_ENFORCED must remain true.")
@@ -745,6 +804,8 @@ def build_evidence(
     action_document_sharing_attestation: dict | None = None,
     action_email_threading_activation_path: Path | None = None,
     action_email_threading_attestation: dict | None = None,
+    action_social_publishing_activation_path: Path | None = None,
+    action_social_publishing_attestation: dict | None = None,
 ) -> dict:
     artifact_sha256 = {
         "scale_decision": sha256_file(scale_decision_path),
@@ -889,6 +950,24 @@ def build_evidence(
             "ledger_entry_hash": action_email_threading_attestation["ledger_entry_hash"],
         }
 
+    action_social_publishing_summary = None
+    if getattr(settings, "action_social_publishing_enabled", False):
+        if (
+            action_social_publishing_activation_path is None
+            or action_social_publishing_attestation is None
+        ):
+            raise ScaleActivationError(
+                "Social publishing activation evidence and ledger attestation "
+                "are required when social publishing is enabled."
+            )
+        artifact_sha256["action_social_publishing_activation"] = sha256_file(
+            action_social_publishing_activation_path
+        )
+        action_social_publishing_summary = {
+            "ledger_sequence": action_social_publishing_attestation["ledger_sequence"],
+            "ledger_entry_hash": action_social_publishing_attestation["ledger_entry_hash"],
+        }
+
     runtime_requirements = {
         "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
         "action_selection_enabled": bool(getattr(settings, "agent_action_selection_enabled", False)),
@@ -914,10 +993,18 @@ def build_evidence(
         runtime_requirements["action_recipients_enabled"] = bool(getattr(settings, "action_recipients_enabled", False))
         runtime_requirements["action_document_sharing_enabled"] = bool(getattr(settings, "action_document_sharing_enabled", False))
         runtime_requirements["action_email_threading_enabled"] = True
+    if getattr(settings, "action_social_publishing_enabled", False):
+        runtime_requirements["action_attachments_enabled"] = bool(getattr(settings, "action_attachments_enabled", False))
+        runtime_requirements["action_reminders_enabled"] = bool(getattr(settings, "action_reminders_enabled", False))
+        runtime_requirements["action_recipients_enabled"] = bool(getattr(settings, "action_recipients_enabled", False))
+        runtime_requirements["action_document_sharing_enabled"] = bool(getattr(settings, "action_document_sharing_enabled", False))
+        runtime_requirements["action_email_threading_enabled"] = bool(getattr(settings, "action_email_threading_enabled", False))
+        runtime_requirements["action_social_publishing_enabled"] = True
 
     return {
         "schema_version": (
-            8 if getattr(settings, "action_email_threading_enabled", False)
+            9 if getattr(settings, "action_social_publishing_enabled", False)
+            else 8 if getattr(settings, "action_email_threading_enabled", False)
             else 7 if getattr(settings, "action_document_sharing_enabled", False)
             else 6 if getattr(settings, "action_recipients_enabled", False)
             else 5 if getattr(settings, "action_reminders_enabled", False)
@@ -954,6 +1041,9 @@ def build_evidence(
         **({
             "action_email_threading": action_email_threading_summary,
         } if getattr(settings, "action_email_threading_enabled", False) else {}),
+        **({
+            "action_social_publishing": action_social_publishing_summary,
+        } if getattr(settings, "action_social_publishing_enabled", False) else {}),
         "artifact_sha256": artifact_sha256,
     }
 
@@ -974,6 +1064,7 @@ def main() -> None:
     parser.add_argument("--action-recipients-activation", type=Path)
     parser.add_argument("--action-document-sharing-activation", type=Path)
     parser.add_argument("--action-email-threading-activation", type=Path)
+    parser.add_argument("--action-social-publishing-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--freshness-minutes", type=int, default=30)
     parser.add_argument("--output", type=Path, required=True)
@@ -1054,6 +1145,12 @@ def main() -> None:
             decision,
             settings,
         )
+        action_social_publishing_attestation = validate_action_social_publishing_activation(
+            args.action_social_publishing_activation,
+            args.release_ledger,
+            decision,
+            settings,
+        )
         base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
         allowed_token = env_secret("SHUDDHO_SCALE_VERIFY_TOKEN_ALLOWED")
         denied_token = env_secret("SHUDDHO_SCALE_VERIFY_TOKEN_DENIED")
@@ -1114,6 +1211,8 @@ def main() -> None:
             action_document_sharing_attestation=action_document_sharing_attestation,
             action_email_threading_activation_path=args.action_email_threading_activation,
             action_email_threading_attestation=action_email_threading_attestation,
+            action_social_publishing_activation_path=args.action_social_publishing_activation,
+            action_social_publishing_attestation=action_social_publishing_attestation,
             now=now,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
