@@ -103,6 +103,7 @@ def runtime_manifest(
         "action_reminders": settings.action_reminders_enabled,
         "action_recipients": settings.action_recipients_enabled,
         "action_document_sharing": settings.action_document_sharing_enabled,
+        "action_email_threading": settings.action_email_threading_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
     }
@@ -229,6 +230,7 @@ def connections(identity: Identity, services: Services):
         "enabled": services.settings.actions_enabled,
         "reminders_enabled": services.settings.action_reminders_enabled,
         "document_sharing_enabled": services.settings.action_document_sharing_enabled,
+        "threading_enabled": services.settings.action_email_threading_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }
 
