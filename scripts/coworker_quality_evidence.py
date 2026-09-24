@@ -60,6 +60,8 @@ def validate_live_quality_evidence(
     rollout_sha256: str,
     min_pass_rate: float,
     min_fact_recall: float,
+    expected_provider_model: str | None = None,
+    expected_source_revision: str | None = None,
 ) -> datetime:
     if not isinstance(value, dict):
         raise QualityEvidenceError(
@@ -108,6 +110,24 @@ def validate_live_quality_evidence(
     ):
         raise QualityEvidenceError(
             "quality.provider_model must be a non-empty string."
+        )
+    if expected_provider_model is not None and provider_model != expected_provider_model:
+        raise QualityEvidenceError(
+            "Quality evaluation provider model does not match the live planner evidence."
+        )
+    source_revision = value.get("source_revision")
+    if (
+        not isinstance(source_revision, str)
+        or len(source_revision) != 40
+        or source_revision != source_revision.lower()
+        or any(char not in "0123456789abcdef" for char in source_revision)
+    ):
+        raise QualityEvidenceError(
+            "quality.source_revision must be a full lowercase 40-character Git SHA-1."
+        )
+    if expected_source_revision is not None and source_revision != expected_source_revision:
+        raise QualityEvidenceError(
+            "Quality evaluation source revision does not match the live planner evidence."
         )
     generated_at = value.get("generated_at")
     if not isinstance(generated_at, str):
