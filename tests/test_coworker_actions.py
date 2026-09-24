@@ -982,6 +982,36 @@ def test_linkedin_agent_proposal_is_inert_and_separately_gated(container):
         assert db.query(ExternalAction).filter(
             ExternalAction.owner_id == owner,
         ).all() == []
+
+    connection_id = str(uuid4())
+    with container.repository.sessions.begin() as db:
+        db.add(Connection(
+            id=connection_id,
+            owner_id=owner,
+            provider="linkedin",
+            capability="social",
+            subject="member_123",
+            email="urn:li:person:member_123",
+            scopes=["r_liteprofile", "w_member_social"],
+            token_ciphertext="not-used-before-explicit-approval",
+            active=True,
+        ))
+    action = container.actions.repo.promote_proposal(
+        owner,
+        allowed["id"],
+        saved["action_proposals"][0]["id"],
+        saved["action_proposals"][0]["proposal_hash"],
+        connection_id,
+    )
+    assert action["state"] == "awaiting_approval"
+    assert action["approved_at"] is None
+    assert action["receipt"] is None
+    assert action["preview"]["provider"] == "linkedin"
+    assert action["preview"]["account"] == "urn:li:person:member_123"
+    assert action["preview"]["payload"] == {
+        "kind": "social_publish_linkedin",
+        "text": "Launch update #Shuddho",
+    }
     assert provider.requests == []
 
 
