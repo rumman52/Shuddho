@@ -221,6 +221,7 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="action_selection_verified",
         ledger_artifact_key="action_selection_activation",
         capability="action_selection",
+        binds_rollout_manifest=False,
     ),
     ActivationRequirement(
         key="action_proposals",
