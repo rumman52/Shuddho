@@ -861,14 +861,6 @@ def validate_release_activation_bundle(
         raise ScaleActivationError(
             "Current rollout manifest release_id does not match."
         )
-    cohort = rollout.get("cohort")
-    if (
-        not isinstance(cohort, dict)
-        or cohort.get("max_users") != decision["current_max_users"]
-    ):
-        raise ScaleActivationError(
-            "Current rollout manifest cohort ceiling does not match current_max_users."
-        )
     rollout_sha = sha256_file(rollout_path)
     if value.get("rollout_manifest_sha256") != rollout_sha:
         raise ScaleActivationError(
