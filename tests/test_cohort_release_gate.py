@@ -568,3 +568,42 @@ def test_linkedin_agent_proposal_manifest_fails_closed_on_dependency_or_kill_swi
         bad_switch,
         max_cohort_users=25,
     )
+
+
+def live_quality(*, rollout_sha256):
+    return {
+        "mode": "live",
+        "release_id": "coworker-cohort-001",
+        "generated_at": "2026-09-24T12:00:00+00:00",
+        "provider_model": "deepseek-flash",
+        "fixture_sha256": "a" * 64,
+        "rollout_manifest_sha256": rollout_sha256,
+        "gate_decision": "PASS",
+        "failures": [],
+        "gate_failures": [],
+        "pass_rate": 1.0,
+        "required_fact_recall": 1.0,
+    }
+
+
+def test_final_gate_rejects_quality_from_different_rollout():
+    result = evaluate_release(
+        evidence(),
+        rollout(),
+        quality_evidence=live_quality(rollout_sha256="a" * 64),
+        rollout_sha256="b" * 64,
+    )
+    assert result["decision"] == "NO-GO"
+    assert "quality" in result["staging"]["missing"]
+
+
+def test_final_gate_accepts_rollout_bound_live_quality():
+    rollout_hash = "b" * 64
+    result = evaluate_release(
+        evidence(),
+        rollout(),
+        quality_evidence=live_quality(rollout_sha256=rollout_hash),
+        rollout_sha256=rollout_hash,
+    )
+    assert result["decision"] == "GO_CONTROLLED_COHORT"
+    assert "quality" not in result["staging"]["missing"]
