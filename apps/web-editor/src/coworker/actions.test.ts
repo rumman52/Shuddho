@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { CoworkerClient, type ExternalAction } from "./client";
 import { googleAuthorizationURL } from "./googleCallback";
 import { microsoftAuthorizationURL } from "./microsoftCallback";
+import { linkedInAuthorizationURL } from "./linkedinCallback";
 
 test("Google redirect must match the provider, current site, callback path and returned state", () => {
   const state = "a".repeat(43);
@@ -109,5 +110,31 @@ test("Microsoft connection client uses only fixed backend start and finish route
     ]);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+
+test("LinkedIn redirect must match provider, callback path and returned state", () => {
+  const state = "c".repeat(43);
+  const base = new URL("https://www.linkedin.com/oauth/v2/authorization");
+  base.searchParams.set("response_type", "code");
+  base.searchParams.set("client_id", "client");
+  base.searchParams.set("redirect_uri", "https://shuddho.example.org/oauth/linkedin/callback");
+  base.searchParams.set("state", state);
+  base.searchParams.set("scope", "r_liteprofile w_member_social");
+  assert.equal(
+    linkedInAuthorizationURL(base.href, state, "https://shuddho.example.org"),
+    base.href,
+  );
+  for (const changed of [
+    base.href.replace("www.linkedin.com", "attacker.example"),
+    base.href.replace("/oauth/v2/authorization", "/other"),
+    base.href.replace("/oauth/linkedin/callback", "/oauth/linkedin/other"),
+    base.href.replace(state, "d".repeat(43)),
+  ]) {
+    assert.throws(
+      () => linkedInAuthorizationURL(changed, state, "https://shuddho.example.org"),
+      /LinkedIn connection redirect/,
+    );
   }
 });
