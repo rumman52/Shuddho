@@ -9,6 +9,7 @@ from .action_repository import ActionRepository
 from .actions import ActionService
 from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
+from .linkedin_actions import LinkedInActions
 from .agent_repository import AgentRepository
 from .memory_repository import MemoryRepository
 from .recipient_repository import RecipientRepository
@@ -32,6 +33,8 @@ class Container:
             providers = {"google": GoogleActions(self.settings)}
             if self.settings.microsoft_actions_enabled:
                 providers["microsoft"] = MicrosoftActions(self.settings)
+            if self.settings.action_social_publishing_enabled:
+                providers["linkedin"] = LinkedInActions(self.settings)
             self.actions = ActionService(
                 ActionRepository(self.repository.sessions, self.settings),
                 providers,

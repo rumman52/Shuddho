@@ -104,6 +104,7 @@ def runtime_manifest(
         "action_recipients": settings.action_recipients_enabled,
         "action_document_sharing": settings.action_document_sharing_enabled,
         "action_email_threading": settings.action_email_threading_enabled,
+        "action_social_publishing": settings.action_social_publishing_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
     }
@@ -112,6 +113,8 @@ def runtime_manifest(
         providers.append("google")
         if settings.microsoft_actions_enabled:
             providers.append("microsoft")
+        if settings.action_social_publishing_enabled:
+            providers.append("linkedin")
     return {
         "schema_version": 1,
         "source_revision": settings.source_revision,
@@ -231,6 +234,7 @@ def connections(identity: Identity, services: Services):
         "reminders_enabled": services.settings.action_reminders_enabled,
         "document_sharing_enabled": services.settings.action_document_sharing_enabled,
         "threading_enabled": services.settings.action_email_threading_enabled,
+        "social_publishing_enabled": services.settings.action_social_publishing_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }
 
@@ -276,6 +280,16 @@ async def connect_microsoft(payload: OAuthStart, identity: Identity, services: S
 @router.post("/connections/microsoft/finish")
 async def finish_microsoft(payload: OAuthFinish, identity: Identity, services: Services):
     return await services.actions.finish_connect(identity.account_id, payload, "microsoft")
+
+
+@router.post("/connections/linkedin/start")
+async def connect_linkedin(payload: OAuthStart, identity: Identity, services: Services):
+    return await services.actions.connect(identity.account_id, payload, "linkedin")
+
+
+@router.post("/connections/linkedin/finish")
+async def finish_linkedin(payload: OAuthFinish, identity: Identity, services: Services):
+    return await services.actions.finish_connect(identity.account_id, payload, "linkedin")
 
 
 @router.delete("/connections/{connection_id}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -36,6 +37,7 @@ class Settings:
     action_recipients_enabled: bool = False
     action_document_sharing_enabled: bool = False
     action_email_threading_enabled: bool = False
+    action_social_publishing_enabled: bool = False
     agent_runtime_enabled: bool = False
     agent_memory_enabled: bool = False
     intelligent_planner_enabled: bool = False
@@ -57,6 +59,10 @@ class Settings:
     microsoft_client_secret: str = field(default="", repr=False)
     microsoft_redirect_uri: str = ""
     microsoft_tenant: str = "organizations"
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = field(default="", repr=False)
+    linkedin_redirect_uri: str = ""
+    linkedin_api_version: str = "202609"
     connector_encryption_key: str = field(default="", repr=False)
     max_daily_actions: int = 20
     max_action_recipients: int = 100
@@ -126,6 +132,7 @@ class Settings:
             action_recipients_enabled=os.getenv("SHUDDHO_ACTION_RECIPIENTS_ENABLED", "false").lower() == "true",
             action_document_sharing_enabled=os.getenv("SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED", "false").lower() == "true",
             action_email_threading_enabled=os.getenv("SHUDDHO_ACTION_EMAIL_THREADING_ENABLED", "false").lower() == "true",
+            action_social_publishing_enabled=os.getenv("SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED", "false").lower() == "true",
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
@@ -151,6 +158,10 @@ class Settings:
             microsoft_client_secret=os.getenv("SHUDDHO_MICROSOFT_CLIENT_SECRET", ""),
             microsoft_redirect_uri=os.getenv("SHUDDHO_MICROSOFT_REDIRECT_URI", ""),
             microsoft_tenant=os.getenv("SHUDDHO_MICROSOFT_TENANT", "organizations"),
+            linkedin_client_id=os.getenv("SHUDDHO_LINKEDIN_CLIENT_ID", ""),
+            linkedin_client_secret=os.getenv("SHUDDHO_LINKEDIN_CLIENT_SECRET", ""),
+            linkedin_redirect_uri=os.getenv("SHUDDHO_LINKEDIN_REDIRECT_URI", ""),
+            linkedin_api_version=os.getenv("SHUDDHO_LINKEDIN_API_VERSION", "202609"),
             connector_encryption_key=os.getenv("SHUDDHO_CONNECTOR_ENCRYPTION_KEY", ""),
             max_daily_actions=int(os.getenv("SHUDDHO_COWORKER_DAILY_ACTIONS", "20")),
             max_action_recipients=int(os.getenv("SHUDDHO_ACTION_RECIPIENTS_MAX", "100")),
@@ -217,6 +228,26 @@ class Settings:
                 raise ValueError("Action document sharing requires SHUDDHO_ARTIFACT_SERVICES_ENABLED=true")
         if self.action_email_threading_enabled and not self.actions_enabled:
             raise ValueError("Action email threading requires SHUDDHO_ACTIONS_ENABLED=true")
+        if self.action_social_publishing_enabled:
+            if not self.actions_enabled:
+                raise ValueError("Action social publishing requires SHUDDHO_ACTIONS_ENABLED=true")
+            callback = urlparse(self.linkedin_redirect_uri)
+            local = self.environment == "development" and callback.hostname in {"localhost", "127.0.0.1"}
+            if (
+                not self.linkedin_client_id
+                or not self.linkedin_client_secret
+                or not callback.netloc
+                or callback.scheme != "https" and not (local and callback.scheme == "http")
+                or callback.username
+                or callback.password
+                or callback.query
+                or callback.fragment
+                or callback.path != "/oauth/linkedin/callback"
+                or not re.fullmatch(r"20\d{4}", self.linkedin_api_version)
+            ):
+                raise ValueError(
+                    "LinkedIn social publishing requires OAuth credentials, a YYYYMM API version, and an HTTPS frontend /oauth/linkedin/callback redirect URI"
+                )
         if self.microsoft_actions_enabled:
             if not self.actions_enabled:
                 raise ValueError("Microsoft actions require SHUDDHO_ACTIONS_ENABLED=true")
