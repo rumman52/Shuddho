@@ -108,7 +108,7 @@ export function finishLinkedInCallback(
         "LinkedIn connection was cancelled. You can connect again when ready.",
       );
     }
-    const connection = await client.finishLinkedIn(
+    await client.finishLinkedIn(
       callback.get("code")!,
       saved.state,
     );
