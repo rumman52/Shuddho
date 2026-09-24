@@ -282,6 +282,16 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           : capability === "calendar"
             ? (provider === "google" ? "Google Calendar" : "Microsoft Calendar")
             : "Google Drive";
+      const google = provider === "google";
+      const controlLabel = provider === "linkedin"
+        ? "LinkedIn"
+        : microsoftEnabled
+          ? label
+          : capability === "email"
+            ? "Gmail"
+            : capability === "calendar"
+              ? "Calendar"
+              : "Google Drive";
       const accountLabel = provider === "linkedin" ? "Connected personal member" : connected?.email;
       const description = capability === "social"
         ? "Publish public text posts only after explicit approval"
@@ -292,13 +302,16 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
             : "Share one approved Shuddho artifact";
       return <div className="cw-connection" key={provider + capability}><div><strong>{label}</strong><small>{connected ? accountLabel : description}</small></div>
         {connected ? <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => {
-          if (!window.confirm(`Disconnect ${label}? Pending actions will be cancelled. An action already executing may still finish.`)) return;
+          const confirmation = provider === "linkedin"
+            ? `Disconnect LinkedIn? Pending actions will be cancelled. An action already executing may still finish.`
+            : `Disconnect ${connected.email} for ${capability}? Pending actions will be cancelled. An action already executing may still finish.`;
+          if (!window.confirm(confirmation)) return;
           void run("disconnect", async () => { const result = await client.disconnect(connected.id); setNotice(result.message); setReload(x => x + 1); if (action) updateAction(await client.action(action.id)); });
-        }}>Disconnect {label}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => provider === "google"
+        }}>Disconnect {controlLabel}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => google
           ? beginGoogleConnection(client, account, capability as "email" | "calendar" | "drive")
           : provider === "microsoft"
             ? beginMicrosoftConnection(client, account, capability as "email" | "calendar")
-            : beginLinkedInConnection(client, account))}>Connect {label}</button>}
+            : beginLinkedInConnection(client, account))}>Connect {controlLabel}</button>}
       </div>;
     })}</div>
     <p className="cw-fineprint">{provider === "google"
