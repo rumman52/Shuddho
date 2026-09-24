@@ -761,6 +761,69 @@ def validate_action_social_publishing_activation(
     }
 
 
+def validate_agent_linkedin_proposals_activation(
+    path: Path | None,
+    ledger_path: Path,
+    decision: dict,
+    settings: Settings,
+) -> dict | None:
+    if not getattr(settings, "agent_linkedin_proposals_enabled", False):
+        return None
+    if path is None:
+        raise ScaleActivationError(
+            "LinkedIn Agent proposals is enabled but --action-social-publishing-activation is required."
+        )
+    value = load_json(path, "LinkedIn Agent proposals activation")
+    if value.get("status") != "agent_linkedin_proposals_verified":
+        raise ScaleActivationError("LinkedIn Agent proposals activation has not been verified.")
+    if value.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError("LinkedIn Agent proposals activation release_id does not match.")
+    if value.get("current_stage") != decision["current_stage"]:
+        raise ScaleActivationError("LinkedIn Agent proposals activation current_stage does not match.")
+    runtime = value.get("runtime")
+    capabilities = runtime.get("capabilities") if isinstance(runtime, dict) else None
+    cohort = runtime.get("cohort") if isinstance(runtime, dict) else None
+    if (
+        not isinstance(runtime, dict)
+        or not isinstance(capabilities, dict)
+        or capabilities.get("coworker") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("agent_linkedin_proposals") is not True
+        or capabilities.get("action_proposals") is not True
+        or capabilities.get("action_social_publishing") is not True
+        or capabilities.get("actions") is not True
+        or capabilities.get("agent_runtime") is not True
+        or capabilities.get("intelligent_planner") is not True
+        or not isinstance(cohort, dict)
+        or cohort.get("enforced") is not True
+    ):
+        raise ScaleActivationError(
+            "LinkedIn Agent proposals activation does not prove required runtime controls."
+        )
+    try:
+        entries, _ = verified_release_entries(ledger_path, decision["release_id"])
+        entry = require_exact_attested_event(
+            entries,
+            schema_version=15,
+            event_type="agent_linkedin_proposals_verified",
+            current_stage=decision["current_stage"],
+            next_stage=None,
+            artifact_key="agent_linkedin_proposals_activation",
+            artifact_sha256=ledger_file_sha256(path),
+            label="LinkedIn Agent-proposals scale attestation",
+        )
+    except Exception as error:
+        raise ScaleActivationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    return {
+        "activation": value,
+        "ledger_sequence": entry["sequence"],
+        "ledger_entry_hash": entry["entry_hash"],
+        "activation_sha256": ledger_file_sha256(path),
+    }
+
+
 def require_deployed_configuration(settings: Settings, decision: dict, allowed_id: str, denied_id: str) -> None:
     if not settings.cohort_enforced:
         raise ScaleActivationError("SHUDDHO_COWORKER_COHORT_ENFORCED must remain true.")
@@ -806,6 +869,8 @@ def build_evidence(
     action_email_threading_attestation: dict | None = None,
     action_social_publishing_activation_path: Path | None = None,
     action_social_publishing_attestation: dict | None = None,
+    agent_linkedin_proposals_activation_path: Path | None = None,
+    agent_linkedin_proposals_attestation: dict | None = None,
 ) -> dict:
     artifact_sha256 = {
         "scale_decision": sha256_file(scale_decision_path),
@@ -968,11 +1033,31 @@ def build_evidence(
             "ledger_entry_hash": action_social_publishing_attestation["ledger_entry_hash"],
         }
 
+    agent_linkedin_proposals_summary = None
+    if getattr(settings, "agent_linkedin_proposals_enabled", False):
+        if (
+            agent_linkedin_proposals_activation_path is None
+            or agent_linkedin_proposals_attestation is None
+        ):
+            raise ScaleActivationError(
+                "LinkedIn Agent proposals activation evidence and ledger attestation "
+                "are required when LinkedIn Agent proposals are enabled."
+            )
+        artifact_sha256["agent_linkedin_proposals_activation"] = sha256_file(
+            agent_linkedin_proposals_activation_path
+        )
+        agent_linkedin_proposals_summary = {
+            "ledger_sequence": agent_linkedin_proposals_attestation["ledger_sequence"],
+            "ledger_entry_hash": agent_linkedin_proposals_attestation["ledger_entry_hash"],
+        }
+
     runtime_requirements = {
         "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
         "action_selection_enabled": bool(getattr(settings, "agent_action_selection_enabled", False)),
         "action_proposals_enabled": bool(getattr(settings, "agent_action_proposals_enabled", False)),
     }
+    if getattr(settings, "agent_linkedin_proposals_enabled", False):
+        runtime_requirements["agent_linkedin_proposals_enabled"] = True
     if getattr(settings, "action_attachments_enabled", False):
         runtime_requirements["action_attachments_enabled"] = True
     if getattr(settings, "action_reminders_enabled", False):
@@ -1003,7 +1088,8 @@ def build_evidence(
 
     return {
         "schema_version": (
-            9 if getattr(settings, "action_social_publishing_enabled", False)
+            10 if getattr(settings, "agent_linkedin_proposals_enabled", False)
+            else 9 if getattr(settings, "action_social_publishing_enabled", False)
             else 8 if getattr(settings, "action_email_threading_enabled", False)
             else 7 if getattr(settings, "action_document_sharing_enabled", False)
             else 6 if getattr(settings, "action_recipients_enabled", False)
@@ -1044,6 +1130,9 @@ def build_evidence(
         **({
             "action_social_publishing": action_social_publishing_summary,
         } if getattr(settings, "action_social_publishing_enabled", False) else {}),
+        **({
+            "agent_linkedin_proposals": agent_linkedin_proposals_summary,
+        } if getattr(settings, "agent_linkedin_proposals_enabled", False) else {}),
         "artifact_sha256": artifact_sha256,
     }
 
@@ -1065,6 +1154,7 @@ def main() -> None:
     parser.add_argument("--action-document-sharing-activation", type=Path)
     parser.add_argument("--action-email-threading-activation", type=Path)
     parser.add_argument("--action-social-publishing-activation", type=Path)
+    parser.add_argument("--agent-linkedin-proposals-activation", type=Path)
     parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--freshness-minutes", type=int, default=30)
     parser.add_argument("--output", type=Path, required=True)
@@ -1151,6 +1241,12 @@ def main() -> None:
             decision,
             settings,
         )
+        agent_linkedin_proposals_attestation = validate_agent_linkedin_proposals_activation(
+            args.agent_linkedin_proposals_activation,
+            args.release_ledger,
+            decision,
+            settings,
+        )
         base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
         allowed_token = env_secret("SHUDDHO_SCALE_VERIFY_TOKEN_ALLOWED")
         denied_token = env_secret("SHUDDHO_SCALE_VERIFY_TOKEN_DENIED")
@@ -1213,6 +1309,8 @@ def main() -> None:
             action_email_threading_attestation=action_email_threading_attestation,
             action_social_publishing_activation_path=args.action_social_publishing_activation,
             action_social_publishing_attestation=action_social_publishing_attestation,
+            agent_linkedin_proposals_activation_path=args.agent_linkedin_proposals_activation,
+            agent_linkedin_proposals_attestation=agent_linkedin_proposals_attestation,
             now=now,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
