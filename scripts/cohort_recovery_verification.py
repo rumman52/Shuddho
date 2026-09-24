@@ -169,7 +169,7 @@ def validate_recovery_configuration(
             raise RecoveryVerificationError(f"Rollout capability {key!r} must be boolean.")
         actual = bool(
             getattr(settings, attr, False)
-            if key in {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals"}
+            if key in {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_selection", "action_proposals"}
             else getattr(settings, attr)
         )
         if actual != expected:
@@ -200,7 +200,7 @@ def validate_recovery_configuration(
         "capabilities": {
             key: bool(
                 capabilities.get(key, False)
-                if key in {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_selection", "action_proposals"}
+                if key in {"action_attachments", "action_reminders", "action_recipients", "action_document_sharing", "action_email_threading", "action_selection", "action_proposals"}
                 else capabilities[key]
             )
             for key in ["coworker", *CAPABILITY_ATTRS]
