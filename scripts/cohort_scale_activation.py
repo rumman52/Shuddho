@@ -771,7 +771,7 @@ def validate_agent_linkedin_proposals_activation(
         return None
     if path is None:
         raise ScaleActivationError(
-            "LinkedIn Agent proposals is enabled but --action-social-publishing-activation is required."
+            "LinkedIn Agent proposals are enabled but --agent-linkedin-proposals-activation is required."
         )
     value = load_json(path, "LinkedIn Agent proposals activation")
     if value.get("status") != "agent_linkedin_proposals_verified":
@@ -791,7 +791,6 @@ def validate_agent_linkedin_proposals_activation(
         or capabilities.get("agent_linkedin_proposals") is not True
         or capabilities.get("action_proposals") is not True
         or capabilities.get("action_social_publishing") is not True
-        or capabilities.get("actions") is not True
         or capabilities.get("agent_runtime") is not True
         or capabilities.get("intelligent_planner") is not True
         or not isinstance(cohort, dict)
