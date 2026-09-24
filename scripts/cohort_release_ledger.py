@@ -26,6 +26,7 @@ ACTION_DOCUMENT_SHARING_SCHEMA_VERSION = 12
 ACTION_EMAIL_THREADING_SCHEMA_VERSION = 13
 ACTION_SOCIAL_PUBLISHING_SCHEMA_VERSION = 14
 AGENT_LINKEDIN_PROPOSALS_SCHEMA_VERSION = 15
+RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION = 16
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -120,6 +121,11 @@ AGENT_LINKEDIN_PROPOSALS_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "agent_linkedin_proposals_activation",
+}
+RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS = {
+    "rollout_manifest",
+    "staging_evidence",
+    "release_activation_bundle",
 }
 
 
@@ -373,6 +379,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             ACTION_EMAIL_THREADING_SCHEMA_VERSION,
             ACTION_SOCIAL_PUBLISHING_SCHEMA_VERSION,
             AGENT_LINKEDIN_PROPOSALS_SCHEMA_VERSION,
+            RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -467,6 +474,13 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(
                 f"Ledger entry {index} has an unsupported schema-v15 event type."
             )
+        if (
+            version == RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION
+            and event_type != "release_activation_bundle_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v16 event type."
+            )
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -502,6 +516,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             else ACTION_SOCIAL_PUBLISHING_ARTIFACT_KEYS
             if version == ACTION_SOCIAL_PUBLISHING_SCHEMA_VERSION
             else AGENT_LINKEDIN_PROPOSALS_ARTIFACT_KEYS
+            if version == AGENT_LINKEDIN_PROPOSALS_SCHEMA_VERSION
+            else RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
             raise ReleaseLedgerError(f"Ledger entry {index} has invalid artifact hashes.")
@@ -4946,6 +4962,118 @@ def append_agent_linkedin_proposals_event(
     return entry
 
 
+
+def append_release_activation_bundle_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    rollout_manifest: Path,
+    staging_evidence: Path,
+    release_activation_bundle: Path,
+    created_at: str | None = None,
+) -> dict:
+    rollout = load_json_object(rollout_manifest, "rollout manifest")
+    bundle = load_json_object(
+        release_activation_bundle,
+        "release activation bundle",
+    )
+    if rollout.get("release_id") != release_id:
+        raise ReleaseLedgerError(
+            "Release activation bundle rollout release_id does not match."
+        )
+    if (
+        bundle.get("schema_version") != 1
+        or bundle.get("status") != "release_activation_bundle_verified"
+        or bundle.get("release_id") != release_id
+        or bundle.get("current_stage") != current_stage
+    ):
+        raise ReleaseLedgerError(
+            "Release activation bundle has not verified this release/stage."
+        )
+    if bundle.get("rollout_manifest_sha256") != file_sha256(rollout_manifest):
+        raise ReleaseLedgerError(
+            "Release activation bundle does not bind this rollout manifest."
+        )
+    if bundle.get("staging_evidence_sha256") != file_sha256(staging_evidence):
+        raise ReleaseLedgerError(
+            "Release activation bundle does not bind this staging evidence."
+        )
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if state.get("release_id") != release_id:
+        raise ReleaseLedgerError(
+            "Release ledger release_id does not match activation bundle."
+        )
+    ledger_ref = bundle.get("ledger")
+    if (
+        not isinstance(ledger_ref, dict)
+        or ledger_ref.get("entries") != state["entries"]
+        or ledger_ref.get("head_entry_hash") != state["head_entry_hash"]
+    ):
+        raise ReleaseLedgerError(
+            "Release ledger changed after activation bundle verification."
+        )
+    if not entries or not any(
+        item.get("current_stage") == current_stage
+        or item.get("next_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "Activation bundle requires a ledger chain that reached current_stage."
+        )
+
+    bundle_hash = file_sha256(release_activation_bundle)
+    if any(
+        item.get("schema_version") == RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION
+        and item.get("event_type") == "release_activation_bundle_verified"
+        and item.get("artifact_sha256", {}).get("release_activation_bundle")
+        == bundle_hash
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "This release activation bundle is already recorded in the ledger."
+        )
+
+    core = {
+        "schema_version": RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": "release_activation_bundle_verified",
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": None,
+        "artifact_sha256": {
+            "rollout_manifest": file_sha256(rollout_manifest),
+            "staging_evidence": file_sha256(staging_evidence),
+            "release_activation_bundle": bundle_hash,
+        },
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {
+        **core,
+        "entry_hash": entry_hash,
+        "hmac_sha256": tag,
+    }
+    serialized = "".join(
+        json.dumps(
+            item,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Maintain a tamper-evident Shuddho controlled-cohort release ledger."
@@ -5168,6 +5296,20 @@ def main() -> None:
         required=True,
     )
 
+    activation_bundle_parser = sub.add_parser("append-release-activation-bundle")
+    activation_bundle_parser.add_argument("--ledger", type=Path, required=True)
+    activation_bundle_parser.add_argument("--release-id", required=True)
+    activation_bundle_parser.add_argument("--actor-reference", required=True)
+    activation_bundle_parser.add_argument("--change-reference", required=True)
+    activation_bundle_parser.add_argument("--current-stage", required=True)
+    activation_bundle_parser.add_argument("--rollout", type=Path, required=True)
+    activation_bundle_parser.add_argument("--staging-evidence", type=Path, required=True)
+    activation_bundle_parser.add_argument(
+        "--release-activation-bundle",
+        type=Path,
+        required=True,
+    )
+
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--ledger", type=Path, required=True)
 
@@ -5230,6 +5372,25 @@ def main() -> None:
                 deployment_change=args.deployment_change,
                 operator_status=args.operator_status,
                 rollout_activation=args.rollout_activation,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        elif args.command == "append-release-activation-bundle":
+            entry = append_release_activation_bundle_event(
+                ledger=args.ledger,
+                key=key,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                rollout_manifest=args.rollout,
+                staging_evidence=args.staging_evidence,
+                release_activation_bundle=args.release_activation_bundle,
             )
             result = {
                 "appended": True,
