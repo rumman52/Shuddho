@@ -1392,6 +1392,32 @@ def test_schema_v8_action_proposals_accepts_legacy_google_provider_default(
     assert entry["event_type"] == "action_proposals_verified"
 
 
+def test_schema_v8_action_proposals_accepts_newer_runtime_false_capabilities(
+    tmp_path,
+):
+    ledger = tmp_path / "release-ledger-action-proposals-forward-compatible.jsonl"
+    seed_cohort_25_ledger(ledger, tmp_path)
+    files = action_proposals_files(tmp_path)
+
+    activation = json.loads(files[4].read_text(encoding="utf-8"))
+    runtime_capabilities = activation["runtime"]["capabilities"]
+    runtime_capabilities["action_email_threading"] = False
+    runtime_capabilities["action_social_publishing"] = False
+    runtime_capabilities["agent_linkedin_proposals"] = False
+    activation["runtime_manifest_sha256"] = hashlib.sha256(json.dumps(
+        activation["runtime"],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    files[4].write_text(json.dumps(activation), encoding="utf-8")
+
+    entry = append_action_proposals(ledger, files)
+
+    assert entry["schema_version"] == 8
+    assert entry["event_type"] == "action_proposals_verified"
+
+
 def test_schema_v8_action_proposals_requires_existing_stage_chain(tmp_path):
     ledger = tmp_path / "release-ledger-action-proposals-stage.jsonl"
     files = action_proposals_files(tmp_path)
