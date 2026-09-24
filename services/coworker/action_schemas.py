@@ -85,6 +85,17 @@ class EmailSendWithAttachments(EmailSend):
     kind: Literal["email_send_with_attachments"]
 
 
+class EmailThreadReply(EmailSend):
+    kind: Literal["email_thread_reply"]
+    parent_action_id: UUID
+
+    @model_validator(mode="after")
+    def thread_boundary(self):
+        if self.bcc:
+            raise ValueError("Thread replies do not allow Bcc recipients")
+        return self
+
+
 class CalendarCreate(Strict):
     kind: Literal["calendar_create"]
     title: Short
@@ -145,7 +156,7 @@ class DocumentShare(Strict):
 
 
 ActionPayload = Annotated[
-    EmailSend | EmailSendWithAttachments | CalendarCreate | CalendarCreateWithReminder | DocumentShare,
+    EmailSend | EmailSendWithAttachments | EmailThreadReply | CalendarCreate | CalendarCreateWithReminder | DocumentShare,
     Field(discriminator="kind"),
 ]
 
