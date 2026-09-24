@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -16,6 +17,10 @@ from scripts.release_contract import (
     required_feature_flags,
     validate_optional_rollback,
 )
+from scripts.coworker_quality_evidence import (
+    QualityEvidenceError,
+    validate_live_quality_evidence,
+)
 from scripts.staging_gate import evaluate_required as evaluate_staging, load_evidence
 
 BASE_MONITORING = {
@@ -28,6 +33,14 @@ BASE_MONITORING = {
     "agent_failures",
 }
 EXPECTED_KILL_SWITCHES = dict(BASE_KILL_SWITCHES)
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def text_ref(value) -> bool:
@@ -213,7 +226,14 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
     return sorted(set(failures))
 
 
-def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 25) -> dict:
+def evaluate_release(
+    evidence: dict,
+    rollout: dict,
+    *,
+    max_cohort_users: int = 25,
+    quality_evidence: dict | None = None,
+    rollout_sha256: str | None = None,
+) -> dict:
     capabilities = rollout.get("capabilities") if isinstance(rollout, dict) else {}
     if not isinstance(capabilities, dict):
         capabilities = {}
@@ -223,6 +243,32 @@ def evaluate_release(evidence: dict, rollout: dict, *, max_cohort_users: int = 2
         action_providers,
     )
     staging = evaluate_staging(evidence, conditional_gate_ids)
+    if quality_evidence is not None:
+        quality_passed = False
+        try:
+            if rollout_sha256 is None:
+                raise QualityEvidenceError(
+                    "Rollout SHA-256 is required for quality evidence verification."
+                )
+            validate_live_quality_evidence(
+                quality_evidence,
+                release_id=rollout.get("release_id"),
+                rollout_sha256=rollout_sha256,
+                min_pass_rate=1.0,
+                min_fact_recall=1.0,
+            )
+            quality_passed = True
+        except QualityEvidenceError:
+            quality_passed = False
+        for check in staging["checks"]:
+            if check["id"] == "quality":
+                check["passed"] = quality_passed
+                break
+        staging["missing"] = [
+            item["id"] for item in staging["checks"] if not item["passed"]
+        ]
+        staging["passed"] = len(staging["checks"]) - len(staging["missing"])
+        staging["decision"] = "GO" if not staging["missing"] else "NO-GO"
     cohort_record = evidence.get("cohort_admission")
     cohort_ref = cohort_record.get("evidence") if isinstance(cohort_record, dict) else None
     cohort_passed = (
@@ -272,6 +318,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Make the final Shuddho controlled-cohort GO/NO-GO decision.")
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--rollout", type=Path, required=True)
+    parser.add_argument("--quality-eval", type=Path, required=True)
     parser.add_argument("--max-cohort-users", type=int, default=25)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -282,6 +329,8 @@ def main() -> None:
         load_evidence(args.evidence),
         load_rollout(args.rollout),
         max_cohort_users=args.max_cohort_users,
+        quality_evidence=load_evidence(args.quality_eval),
+        rollout_sha256=file_sha256(args.rollout),
     )
     encoded = json.dumps(result, indent=2)
     if args.output:
