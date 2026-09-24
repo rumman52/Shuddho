@@ -92,6 +92,11 @@ class ActionRepository:
                 "action_email_threading_disabled",
                 "Email threading is not enabled in this deployment.",
             )
+        if spec.social_publish and not self.settings.action_social_publishing_enabled:
+            return (
+                "action_social_publishing_disabled",
+                "Social publishing is not enabled in this deployment.",
+            )
         return None
 
     def _require_optional_feature(self, spec):
@@ -339,7 +344,7 @@ class ActionRepository:
             row.consumed, row.verifier_ciphertext = True, ""
             return {"state_hash": state_hash, "verifier": value["verifier"], "capability": row.capability, "provider": row.provider}
 
-    def finish_connection(self, owner, attempt, profile, refresh_token, scopes):
+    def finish_connection(self, owner, attempt, profile, credentials, scopes):
         self.enabled()
         with self.sessions.begin() as db:
             self._account(db, owner)
@@ -361,9 +366,13 @@ class ActionRepository:
             connection_id = str(uuid4())
             if attempt.get("provider") != row.provider:
                 raise CoworkerError("oauth_expired", "The connection provider changed. Start again.", 409)
+            if isinstance(credentials, str):
+                credentials = {"refresh_token": credentials}
+            if not isinstance(credentials, dict) or not credentials:
+                raise CoworkerError("connection_failed", "The connected service returned no usable credentials.", 409)
             connection = Connection(id=connection_id, owner_id=owner, provider=row.provider, capability=attempt["capability"],
                                     subject=profile["sub"], email=profile["email"], scopes=scopes,
-                                    token_ciphertext=self.vault().seal({"refresh_token": refresh_token}, owner + ":connection:" + connection_id))
+                                    token_ciphertext=self.vault().seal(credentials, owner + ":connection:" + connection_id))
             db.add(connection)
             row.expires_at = utcnow()  # Prevent a second finish after exchange.
             self._audit(db, owner, connection_id, "connection.created")
@@ -396,13 +405,19 @@ class ActionRepository:
             if not row or not row.active:
                 raise CoworkerError("connection_removed", "Reconnect your connected account.", 409)
             secret = self.vault().open(row.token_ciphertext, row.owner_id + ":connection:" + row.id)
-            return {"refresh_token": secret["refresh_token"], "scopes": row.scopes}
+            if not isinstance(secret, dict):
+                raise CoworkerError("connection_removed", "Reconnect your connected account.", 409)
+            return dict(secret) | {"scopes": row.scopes}
 
     def rotate_token(self, connection_id, refresh_token):
         with self.sessions.begin() as db:
             row = db.scalar(select(Connection).where(Connection.id == connection_id).with_for_update())
             if row and row.active:
-                row.token_ciphertext = self.vault().seal({"refresh_token": refresh_token}, row.owner_id + ":connection:" + row.id)
+                current = self.vault().open(row.token_ciphertext, row.owner_id + ":connection:" + row.id)
+                if not isinstance(current, dict):
+                    current = {}
+                current["refresh_token"] = refresh_token
+                row.token_ciphertext = self.vault().seal(current, row.owner_id + ":connection:" + row.id)
 
     def prepare(self, owner, request: ActionPrepare, key):
         body = request.model_dump(mode="json")
@@ -517,7 +532,7 @@ class ActionRepository:
             action_id = str(uuid4())
             expires = utcnow() + timedelta(seconds=spec.approval_ttl_seconds)
             preview = {
-                "version": 4 if spec.owned_artifact_required else 3 if spec.attachments_allowed else 2,
+                "version": 5 if spec.social_publish else 4 if spec.owned_artifact_required else 3 if spec.attachments_allowed else 2,
                 "provider": connection.provider,
                 "connection_id": connection.id,
                 "account": connection.email,
