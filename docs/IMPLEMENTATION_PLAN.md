@@ -318,3 +318,5 @@ The following release-control continuity increment adds [Release Activation Bund
 
 The next downstream-continuity increment adds [Downstream Rollout Identity Continuity](DOWNSTREAM_ROLLOUT_IDENTITY_CONTINUITY.md). New operational post-scale observation, capacity qualification and scale-review runs carry the exact rollout SHA-256 through the dynamic requalification loop into the next scale decision; schema-v12 post-recovery progression likewise requires the recovery artifact and signed recovery ledger event to bind the current rollout. Historical helper/evidence semantics remain unchanged.
 
+The following quality-evidence hardening increment adds [Rollout-Bound Live Quality Evidence](ROLLOUT_BOUND_LIVE_QUALITY_EVIDENCE.md). Live multilingual quality evaluation now binds the exact reviewed rollout SHA-256; final cohort admission parses that artifact instead of trusting only a staging reference, bounded scale review requires the same rollout identity, and activation-bundle/schema-v16 handoff binds and independently rechecks the exact quality artifact hash.
+
