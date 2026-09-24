@@ -16,7 +16,7 @@ class Strict(BaseModel):
 
 Text = Annotated[str, StringConstraints(max_length=20000)]
 Short = Annotated[str, StringConstraints(min_length=1, max_length=300)]
-Capability = Literal["email", "calendar", "drive"]
+Capability = Literal["email", "calendar", "drive", "social"]
 
 
 def address(value: str) -> str:
@@ -155,8 +155,21 @@ class DocumentShare(Strict):
         return normalized
 
 
+class LinkedInSocialPublish(Strict):
+    kind: Literal["social_publish_linkedin"]
+    text: Annotated[str, StringConstraints(min_length=1, max_length=3000)]
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value):
+        value = clean_text(value)
+        if not value.strip():
+            raise ValueError("Write the exact LinkedIn post before review")
+        return value
+
+
 ActionPayload = Annotated[
-    EmailSend | EmailSendWithAttachments | EmailThreadReply | CalendarCreate | CalendarCreateWithReminder | DocumentShare,
+    EmailSend | EmailSendWithAttachments | EmailThreadReply | CalendarCreate | CalendarCreateWithReminder | DocumentShare | LinkedInSocialPublish,
     Field(discriminator="kind"),
 ]
 
