@@ -102,7 +102,11 @@ def main():
     r["generated_at"]=datetime.now(timezone.utc).isoformat()
     r["fixture_sha256"]=sha256_file(a.cases)
     r["provider_model"]=os.environ.get("DEEPSEEK_MODEL","deepseek-flash") if a.live else None
-    if rollout_sha is not None: r["rollout_manifest_sha256"]=rollout_sha
+    if rollout_sha is not None:
+        r["rollout_manifest_sha256"]=rollout_sha
+        revision=(os.environ.get("SHUDDHO_SOURCE_REVISION") or os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GITHUB_SHA") or "").strip().lower()
+        if len(revision)!=40 or any(ch not in "0123456789abcdef" for ch in revision): raise SystemExit("Live quality evaluation requires a full lowercase source revision.")
+        r["source_revision"]=revision
     enc=json.dumps(r,ensure_ascii=False,indent=2)
     if a.output:a.output.write_text(enc+"\n",encoding="utf-8")
     print(enc)
