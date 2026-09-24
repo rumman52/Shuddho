@@ -1296,3 +1296,31 @@ def test_recovery_configuration_accepts_qualified_linkedin_agent_proposal_flags(
         deployed_at=datetime(2026, 9, 24, 7, 5, tzinfo=timezone.utc),
     )
     assert result["capabilities"]["agent_linkedin_proposals"] is True
+
+
+def test_recovery_rejects_release_bundle_for_different_rollout(tmp_path):
+    rollout_path = tmp_path / "current-rollout.json"
+    rollout_path.write_text(json.dumps(rollout()), encoding="utf-8")
+    rollback_path = tmp_path / "rollback.json"
+    rollback_path.write_text("{}", encoding="utf-8")
+    bundle_path = tmp_path / "release-activation-bundle.json"
+    bundle_path.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "release_activation_bundle_verified",
+        "release_id": "coworker-cohort-001",
+        "current_stage": "canary-5",
+        "rollout_manifest_sha256": "0" * 64,
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        recovery.RecoveryVerificationError,
+        match="does not bind the current rollout manifest",
+    ):
+        recovery.validate_release_activation_bundle_recovery(
+            activation_path=bundle_path,
+            ledger_path=tmp_path / "unused-ledger.jsonl",
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+            rollback_path=rollback_path,
+            rollout_path=rollout_path,
+        )

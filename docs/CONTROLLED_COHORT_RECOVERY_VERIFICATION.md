@@ -83,7 +83,7 @@ uv run --extra coworker python scripts/cohort_recovery_verification.py \
   --output /secure/release/recovery-verification.json
 ```
 
-The verifier requires the exact schema-v16 release activation bundle to be freshly ledgered after the exact rollback-completion event. Every activation sequence referenced by that bundle must also be post-rollback; stale pre-rollback activation evidence fails closed. New output is schema v11 while historical evidence keeps its original semantics.
+The verifier requires the exact schema-v16 release activation bundle to be freshly ledgered after the exact rollback-completion event. Every activation sequence referenced by that bundle must also be post-rollback; stale pre-rollback activation evidence fails closed. New output is schema v12 and also binds the exact reviewed rollout-manifest SHA-256 through the post-rollback schema-v16 bundle and ledger event, while historical evidence keeps its original semantics.
 
 The evidence output is sanitized. It records:
 

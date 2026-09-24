@@ -32,6 +32,7 @@ export SHUDDHO_SCALE_VERIFY_TOKEN_DENIED=...
 
 uv run --extra coworker python scripts/cohort_scale_activation.py \
   --scale-decision /secure/release/bounded-scale-decision.json \
+  --rollout /secure/release/cohort-rollout.json \
   --deployment-change /secure/release/cohort-scale-deployment.json \
   --operator-status /secure/release/post-scale-operator-status.json \
   --provider-policy-activation /secure/release/provider-policy-activation.json \
@@ -45,7 +46,7 @@ uv run --extra coworker python scripts/cohort_scale_activation.py \
   --output /secure/release/bounded-scale-activation.json
 ```
 
-The verifier reads the real deployed Coworker settings, verifies the tamper-evident release ledger, requires the exact schema-v16 release activation bundle for the current stage, and checks the deployed HTTPS API. New output is schema v11 and binds that bundle's exact ledger sequence/hash in addition to the existing per-capability proofs. It does not update the allowlist, provider policy, or any feature flag.
+The verifier reads the real deployed Coworker settings, verifies the tamper-evident release ledger, requires the exact schema-v16 release activation bundle for the current stage, and checks the deployed HTTPS API. New output is schema v12 and binds the exact rollout-manifest SHA-256 plus that bundle's exact ledger sequence/hash in addition to the existing per-capability proofs. It does not update the allowlist, provider policy, or any feature flag.
 
 ## Release ledger
 
