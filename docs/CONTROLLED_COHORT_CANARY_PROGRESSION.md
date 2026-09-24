@@ -86,7 +86,7 @@ The gate verifies the ledger with `SHUDDHO_RELEASE_LEDGER_HMAC_KEY` and requires
 2. `rollback_completed`;
 3. `recovery_verified`.
 
-The ledger's latest recovery entry must SHA-256-bind the exact recovery-verification artifact supplied to the progression command.
+The ledger's latest recovery entry must SHA-256-bind the exact recovery-verification artifact supplied to the progression command. For schema-v12 recovery evidence, both the recovery artifact and signed recovery ledger entry must also bind the exact rollout manifest passed to progression.
 
 Only health snapshots generated **after** the recovery artifact's `verified_at` timestamp count toward future progression. All pre-recovery health, including the original STOP, remains preserved but is outside the new observation epoch.
 
