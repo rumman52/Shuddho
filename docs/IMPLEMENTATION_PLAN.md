@@ -316,3 +316,5 @@ The next release-control enforcement increment adds [Release Activation Bundle S
 
 The following release-control continuity increment adds [Release Activation Bundle Rollout Continuity](RELEASE_ACTIVATION_BUNDLE_ROLLOUT_CONTINUITY.md). New scale and recovery evidence upgrades to schema v12 and binds the exact reviewed rollout-manifest SHA-256 through the schema-v16 bundle, its ledger event and the downstream ledger consumer. Same-release/same-stage activation bundles from a different rollout manifest fail closed; historical evidence remains verifiable under its original schema.
 
+The next downstream-continuity increment adds [Downstream Rollout Identity Continuity](DOWNSTREAM_ROLLOUT_IDENTITY_CONTINUITY.md). New operational post-scale observation, capacity qualification and scale-review runs carry the exact rollout SHA-256 through the dynamic requalification loop into the next scale decision; schema-v12 post-recovery progression likewise requires the recovery artifact and signed recovery ledger event to bind the current rollout. Historical helper/evidence semantics remain unchanged.
+
