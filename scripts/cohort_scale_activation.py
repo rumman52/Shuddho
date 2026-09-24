@@ -823,6 +823,54 @@ def validate_agent_linkedin_proposals_activation(
     }
 
 
+def validate_release_activation_bundle(
+    path: Path,
+    ledger_path: Path,
+    decision: dict,
+) -> dict:
+    value = load_json(path, "release activation bundle")
+    if (
+        value.get("schema_version") != 1
+        or value.get("status") != "release_activation_bundle_verified"
+    ):
+        raise ScaleActivationError(
+            "Release activation bundle has not been verified."
+        )
+    if value.get("release_id") != decision["release_id"]:
+        raise ScaleActivationError(
+            "Release activation bundle release_id does not match."
+        )
+    if value.get("current_stage") != decision["current_stage"]:
+        raise ScaleActivationError(
+            "Release activation bundle current_stage does not match."
+        )
+    try:
+        entries, _ = verified_release_entries(
+            ledger_path,
+            decision["release_id"],
+        )
+        entry = require_exact_attested_event(
+            entries,
+            schema_version=16,
+            event_type="release_activation_bundle_verified",
+            current_stage=decision["current_stage"],
+            next_stage=None,
+            artifact_key="release_activation_bundle",
+            artifact_sha256=ledger_file_sha256(path),
+            label="Release activation bundle scale attestation",
+        )
+    except Exception as error:
+        raise ScaleActivationError(
+            f"Release ledger verification failed: {error}"
+        ) from None
+    return {
+        "activation": value,
+        "ledger_sequence": entry["sequence"],
+        "ledger_entry_hash": entry["entry_hash"],
+        "activation_sha256": ledger_file_sha256(path),
+    }
+
+
 def require_deployed_configuration(settings: Settings, decision: dict, allowed_id: str, denied_id: str) -> None:
     if not settings.cohort_enforced:
         raise ScaleActivationError("SHUDDHO_COWORKER_COHORT_ENFORCED must remain true.")
@@ -870,6 +918,8 @@ def build_evidence(
     action_social_publishing_attestation: dict | None = None,
     agent_linkedin_proposals_activation_path: Path | None = None,
     agent_linkedin_proposals_attestation: dict | None = None,
+    release_activation_bundle_path: Path | None = None,
+    release_activation_bundle_attestation: dict | None = None,
 ) -> dict:
     artifact_sha256 = {
         "scale_decision": sha256_file(scale_decision_path),
@@ -1050,6 +1100,26 @@ def build_evidence(
             "ledger_entry_hash": agent_linkedin_proposals_attestation["ledger_entry_hash"],
         }
 
+    release_activation_bundle_summary = None
+    if (
+        release_activation_bundle_path is not None
+        or release_activation_bundle_attestation is not None
+    ):
+        if (
+            release_activation_bundle_path is None
+            or release_activation_bundle_attestation is None
+        ):
+            raise ScaleActivationError(
+                "Release activation bundle evidence and ledger attestation are both required."
+            )
+        artifact_sha256["release_activation_bundle"] = sha256_file(
+            release_activation_bundle_path
+        )
+        release_activation_bundle_summary = {
+            "ledger_sequence": release_activation_bundle_attestation["ledger_sequence"],
+            "ledger_entry_hash": release_activation_bundle_attestation["ledger_entry_hash"],
+        }
+
     runtime_requirements = {
         "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
         "action_selection_enabled": bool(getattr(settings, "agent_action_selection_enabled", False)),
@@ -1085,9 +1155,24 @@ def build_evidence(
         runtime_requirements["action_email_threading_enabled"] = bool(getattr(settings, "action_email_threading_enabled", False))
         runtime_requirements["action_social_publishing_enabled"] = True
 
+    if release_activation_bundle_summary is not None:
+        runtime_requirements = {
+            "microsoft_actions_enabled": bool(getattr(settings, "microsoft_actions_enabled", False)),
+            "action_selection_enabled": bool(getattr(settings, "agent_action_selection_enabled", False)),
+            "action_proposals_enabled": bool(getattr(settings, "agent_action_proposals_enabled", False)),
+            "action_attachments_enabled": bool(getattr(settings, "action_attachments_enabled", False)),
+            "action_reminders_enabled": bool(getattr(settings, "action_reminders_enabled", False)),
+            "action_recipients_enabled": bool(getattr(settings, "action_recipients_enabled", False)),
+            "action_document_sharing_enabled": bool(getattr(settings, "action_document_sharing_enabled", False)),
+            "action_email_threading_enabled": bool(getattr(settings, "action_email_threading_enabled", False)),
+            "action_social_publishing_enabled": bool(getattr(settings, "action_social_publishing_enabled", False)),
+            "agent_linkedin_proposals_enabled": bool(getattr(settings, "agent_linkedin_proposals_enabled", False)),
+        }
+
     return {
         "schema_version": (
-            10 if getattr(settings, "agent_linkedin_proposals_enabled", False)
+            11 if release_activation_bundle_summary is not None
+            else 10 if getattr(settings, "agent_linkedin_proposals_enabled", False)
             else 9 if getattr(settings, "action_social_publishing_enabled", False)
             else 8 if getattr(settings, "action_email_threading_enabled", False)
             else 7 if getattr(settings, "action_document_sharing_enabled", False)
@@ -1132,6 +1217,9 @@ def build_evidence(
         **({
             "agent_linkedin_proposals": agent_linkedin_proposals_summary,
         } if getattr(settings, "agent_linkedin_proposals_enabled", False) else {}),
+        **({
+            "release_activation_bundle": release_activation_bundle_summary,
+        } if release_activation_bundle_summary is not None else {}),
         "artifact_sha256": artifact_sha256,
     }
 
@@ -1144,6 +1232,7 @@ def main() -> None:
     parser.add_argument("--deployment-change", type=Path, required=True)
     parser.add_argument("--operator-status", type=Path, required=True)
     parser.add_argument("--provider-policy-activation", type=Path, required=True)
+    parser.add_argument("--release-activation-bundle", type=Path, required=True)
     parser.add_argument("--microsoft-rollout-activation", type=Path)
     parser.add_argument("--action-selection-activation", type=Path)
     parser.add_argument("--action-proposals-activation", type=Path)
@@ -1186,6 +1275,11 @@ def main() -> None:
         )
 
         settings = Settings.from_env()
+        release_activation_bundle_attestation = validate_release_activation_bundle(
+            args.release_activation_bundle,
+            args.release_ledger,
+            decision,
+        )
         validate_microsoft_rollout_activation(
             args.microsoft_rollout_activation,
             args.release_ledger,
@@ -1310,6 +1404,8 @@ def main() -> None:
             action_social_publishing_attestation=action_social_publishing_attestation,
             agent_linkedin_proposals_activation_path=args.agent_linkedin_proposals_activation,
             agent_linkedin_proposals_attestation=agent_linkedin_proposals_attestation,
+            release_activation_bundle_path=args.release_activation_bundle,
+            release_activation_bundle_attestation=release_activation_bundle_attestation,
             now=now,
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
