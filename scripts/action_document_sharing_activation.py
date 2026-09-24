@@ -169,6 +169,7 @@ def validate_reviewed_rollout(
     normalized.setdefault("action_reminders", False)
     normalized.setdefault("action_recipients", False)
     normalized.setdefault("action_document_sharing", False)
+    normalized.setdefault("action_email_threading", False)
     normalized.setdefault("action_selection", False)
     normalized.setdefault("action_proposals", False)
     return {
