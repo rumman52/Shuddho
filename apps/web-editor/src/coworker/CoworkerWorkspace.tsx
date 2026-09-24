@@ -5,6 +5,7 @@ import ActionWorkspace from "./ActionWorkspace";
 import AgentWorkspace from "./AgentWorkspace";
 import { hasPendingGoogleCallback } from "./googleCallback";
 import { hasPendingMicrosoftCallback } from "./microsoftCallback";
+import { hasPendingLinkedInCallback } from "./linkedinCallback";
 
 const originalService: WorkSkill = {
   id: "report_email", name: "Report & email", description: "Turn your sources into a report and an email draft.",
@@ -25,7 +26,7 @@ const languages = [
 ];
 const message = (error: unknown) => error instanceof Error ? error.message : "This action could not finish. Please try again.";
 
-export function TaskResult({ task, client, revise, prepareEmail }: { task: CoworkerTask; client: CoworkerClient; revise: () => void; prepareEmail?: (draft: EmailDraft) => void }) {
+export function TaskResult({ task, client, revise, prepareEmail, prepareSocial }: { task: CoworkerTask; client: CoworkerClient; revise: () => void; prepareEmail?: (draft: EmailDraft) => void; prepareSocial?: (text: string) => void }) {
   const [downloadError, setDownloadError] = useState("");
   const [downloading, setDownloading] = useState("");
   const draft = task.draft;
@@ -40,6 +41,7 @@ export function TaskResult({ task, client, revise, prepareEmail }: { task: Cowor
       {draft.missing_information.length > 0 && <aside className="cw-missing"><strong>A few details need your input</strong><ul>{draft.missing_information.map((item, index) => <li key={index} dir="auto">{item}</li>)}</ul><button type="button" className="cw-secondary" onClick={revise}>Add details & revise</button></aside>}
       <DraftPreview draft={draft} sources={task.sources} preview={task.preview} />
       {prepareEmail && "email" in draft && terminal(task.state) && <button className="cw-secondary" onClick={() => prepareEmail(draft.email)}>Prepare this email for sending</button>}
+      {prepareSocial && draft.kind === "social" && terminal(task.state) && draft.posts.filter(post => post.platform === "linkedin").map((post, index) => <button key={"linkedin-" + index} className="cw-secondary" onClick={() => prepareSocial(post.text)}>Prepare this LinkedIn post for publishing</button>)}
       {task.research && <p className="cw-fineprint">Search: <bdi>{task.research.query}</bdi> · Date range: {task.research.time_range === "any" ? "Any time" : `Past ${task.research.time_range}`}. {task.research.skipped_results > 0 && `${task.research.skipped_results} results were excluded because usable evidence was unavailable, duplicated, or outside the date range.`}</p>}
       <p className="cw-fineprint">{task.skill_id === "research" ? "Review each finding against its evidence. Source dates are estimates of publication or update; retrieval today does not establish current accuracy." : "Review the facts and wording before using these drafts. Source references point to your provided material."}</p>
     </>}
@@ -54,8 +56,9 @@ export function TaskResult({ task, client, revise, prepareEmail }: { task: Cowor
 }
 
 export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
-  const [view, setView] = useState<"drafts" | "actions" | "agent">(() => hasPendingGoogleCallback() || hasPendingMicrosoftCallback() ? "actions" : "drafts");
+  const [view, setView] = useState<"drafts" | "actions" | "agent">(() => hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback() ? "actions" : "drafts");
   const [actionDraft, setActionDraft] = useState<EmailDraft | null>(null);
+  const [socialActionDraft, setSocialActionDraft] = useState<string | null>(null);
   const [focusActionId, setFocusActionId] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [skills, setSkills] = useState<WorkSkill[]>([originalService]);
@@ -87,6 +90,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     accountEmail.current = email;
     setView("drafts");
     setActionDraft(null);
+    setSocialActionDraft(null);
     setFocusActionId(null);
     setWorkspace(null);
     setSkills([originalService]);
@@ -193,7 +197,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     {error && <div className="cw-error cw-banner" role="alert">{error} {!workspace && <button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Try again</button>}</div>}
     {notice && <p className="cw-notice cw-banner" role="status">{notice}</p>}
     <nav className="cw-work-tabs" aria-label="Coworker services"><button aria-pressed={view === "drafts"} onClick={() => setView("drafts")}>Drafts & files</button><button aria-pressed={view === "agent"} onClick={() => setView("agent")}>Agent</button><button aria-pressed={view === "actions"} onClick={() => setView("actions")}>Email & calendar</button></nav>
-    {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}
+    {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}
     {view === "agent" && workspace && <AgentWorkspace client={client} documents={documents} openActions={() => setView("actions")} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     <div className="cw-layout" hidden={view !== "drafts"}><section className="cw-compose" aria-label="Create a coworker task">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>Give your coworker a brief</h2><p>Bring the facts. Describe the outcome.</p></div></div>
@@ -249,7 +253,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     </section>
     <div className="cw-output-column" ref={outputColumn} tabIndex={-1}>
       {connection && <p className="cw-notice" role="status">{connection}</p>}
-      {task ? <><TaskResult key={task.id} task={task} client={client} revise={revise} prepareEmail={draft => { setActionDraft(draft); setView("actions"); }} />{!terminal(task.state) && <button className="cw-text-button cw-cancel" type="button" disabled={busy === "cancel" || task.state === "cancelling"} onClick={async () => {
+      {task ? <><TaskResult key={task.id} task={task} client={client} revise={revise} prepareEmail={draft => { setActionDraft(draft); setSocialActionDraft(null); setView("actions"); }} prepareSocial={text => { setSocialActionDraft(text); setActionDraft(null); setView("actions"); }} />{!terminal(task.state) && <button className="cw-text-button cw-cancel" type="button" disabled={busy === "cancel" || task.state === "cancelling"} onClick={async () => {
         setBusy("cancel"); setError("");
         try { setTask(await client.cancel(task.id)); } catch (error) { setError(message(error)); }
         finally { setBusy(""); }
