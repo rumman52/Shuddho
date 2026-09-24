@@ -1054,10 +1054,12 @@ def append_recovery_event(
             elif document_hash is not None or document_summary is not None:
                 raise ReleaseLedgerError(
                     "Recovery evidence contains document-sharing attestation data while document sharing is not required."
-                )        if recovery_schema == 8:
+                )
+
+        if recovery_schema == 8:
             threading_required = requirements["action_email_threading_enabled"]
             threading_hash = recovery_hashes.get("action_email_threading_activation")
-            threading_summary = recovery_value.get("action_document_sharing")
+            threading_summary = recovery_value.get("action_email_threading")
             if threading_required:
                 if not valid_hash(threading_hash) or not isinstance(threading_summary, dict):
                     raise ReleaseLedgerError(
