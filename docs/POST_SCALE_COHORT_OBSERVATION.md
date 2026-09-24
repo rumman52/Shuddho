@@ -44,6 +44,7 @@ The checked-in starting policy uses a 75% enrollment ratio. This is a review def
 uv run python scripts/cohort_post_scale_observation.py \
   --history-dir /secure/release/cohort-health-history \
   --plan docs/cohort-post-scale-observation-plan.template.json \
+  --rollout /secure/release/cohort-rollout.json \
   --scale-activation /secure/release/bounded-scale-activation.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --output /secure/release/post-scale-observation.json
@@ -51,4 +52,4 @@ uv run python scripts/cohort_post_scale_observation.py \
 
 A successful result does not approve another expansion. It only allows the current dynamic stage to enter a new measured capacity/quality requalification cycle.
 
-The capacity qualification gate accepts this result when its `final_stage` is set to the same dynamic stage.
+For schema-v12 scale evidence, the observation gate also requires the exact current rollout-manifest SHA-256 and carries it forward in the requalification artifact. The capacity qualification gate accepts this result when its `final_stage` is set to the same dynamic stage.
