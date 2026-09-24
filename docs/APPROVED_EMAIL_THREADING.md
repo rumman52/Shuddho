@@ -55,19 +55,19 @@ The same send-only uncertainty rule remains: a lost Gmail send response is not b
 
 ## Release status
 
-Implementation is not production qualification. Keep the flag off in production until a separate release increment provides:
+The implementation and release-safety machinery are now complete for a **reviewed controlled cohort**, while the capability remains disabled by default.
 
-1. CI coverage for parent ownership, recipient/subject invariants, approval tampering and kill-switch behavior;
-2. guarded live Gmail evidence proving the returned thread id remains stable across an approved follow-up;
-3. exact deployed-revision/runtime activation evidence;
-4. a dedicated release-ledger attestation and rollback switch;
-5. bounded scale/recovery consumption of that attestation;
-6. monitoring for provider rejection, uncertain outcomes and thread-receipt mismatch.
+Production enablement is allowed only when all of the following are present and mutually hash-bound:
 
-Exact rollback switch:
+1. guarded live Gmail evidence from `scripts/staging_live_email_threading.py`;
+2. a reviewed rollout declaring `actions=true` and `action_email_threading=true`;
+3. exact rollback switch `SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false`;
+4. deployed source revision and rollout/staging hashes;
+5. fresh clean operator health;
+6. `scripts/action_email_threading_activation.py` output proving the deployed runtime manifest exactly matches the reviewed rollout;
+7. schema-v13 `action_email_threading_verified` release-ledger attestation;
+8. schema-v8 scale/recovery evidence consuming that exact attestation.
 
-```text
-SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false
-```
+See [Email Threading Activation](ACTION_EMAIL_THREADING_ACTIVATION.md).
 
-Turning this switch off must cancel an unclaimed threaded reply at execution revalidation and must not disable history/receipt visibility for already completed actions.
+The OAuth boundary is unchanged: Gmail remains send-only. Arbitrary incoming-mail replies still require a separate future privacy/security design.
