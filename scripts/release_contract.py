@@ -192,9 +192,11 @@ OPTIONAL_CAPABILITIES = (
     ),
 )
 
-OPTIONAL_CAPABILITY_KEYS = frozenset(
-    item.capability for item in OPTIONAL_CAPABILITIES
-)
+OPTIONAL_CAPABILITIES_BY_KEY = {
+    item.capability: item
+    for item in OPTIONAL_CAPABILITIES
+}
+OPTIONAL_CAPABILITY_KEYS = frozenset(OPTIONAL_CAPABILITIES_BY_KEY)
 OPTIONAL_ROLLBACK_KEYS = frozenset(
     item.rollback_key for item in OPTIONAL_CAPABILITIES
 )
@@ -242,6 +244,22 @@ def required_feature_flags(capabilities: dict) -> dict[str, bool]:
         item.capability: capabilities.get(item.capability) is True
         for item in OPTIONAL_CAPABILITIES
     }
+
+
+def normalize_capabilities(capabilities: dict) -> dict:
+    normalized = dict(capabilities)
+    for capability in OPTIONAL_CAPABILITY_KEYS:
+        normalized.setdefault(capability, False)
+    return normalized
+
+
+def optional_capability_contract(capability: str) -> OptionalCapability:
+    try:
+        return OPTIONAL_CAPABILITIES_BY_KEY[capability]
+    except KeyError:
+        raise ValueError(
+            f"Unknown optional release capability: {capability}"
+        ) from None
 
 
 def validate_optional_capabilities(
