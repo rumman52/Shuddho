@@ -3993,7 +3993,7 @@ def append_action_email_threading_event(
         or runtime_capabilities != expected_capabilities
         or runtime_capabilities.get("coworker") is not True
         or runtime_capabilities.get("actions") is not True
-        or runtime_runtime_capabilities.get("action_email_threading") is not True
+        or runtime_capabilities.get("action_email_threading") is not True
     ):
         raise ReleaseLedgerError(
             "Email-threading activation does not prove the exact reviewed runtime."
