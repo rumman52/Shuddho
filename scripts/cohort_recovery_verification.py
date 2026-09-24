@@ -1312,7 +1312,7 @@ def validate_agent_linkedin_proposals_recovery_activation(
         return None
     if activation_path is None or ledger_path is None:
         raise RecoveryVerificationError(
-            "LinkedIn Agent proposals is enabled but a fresh LinkedIn Agent-proposals activation "
+             "LinkedIn Agent proposals are enabled but a fresh LinkedIn Agent-proposals activation "
             "and the release ledger are required for recovery."
         )
     activation = load_json(
@@ -1342,7 +1342,6 @@ def validate_agent_linkedin_proposals_recovery_activation(
         or capabilities.get("agent_linkedin_proposals") is not True
         or capabilities.get("action_proposals") is not True
         or capabilities.get("action_social_publishing") is not True
-        or capabilities.get("actions") is not True
         or capabilities.get("agent_runtime") is not True
         or capabilities.get("intelligent_planner") is not True
         or not isinstance(cohort, dict)
