@@ -698,7 +698,7 @@ def action_proposals_activation_file(tmp_path):
         "source_revision": "a" * 40,
         "environment": "production",
         "capabilities": capabilities,
-        "action_providers": [],
+        "action_providers": ["google"],
         "cohort": {
             "enforced": True,
             "configured_members": 25,
@@ -1487,7 +1487,7 @@ def _valid_scale_rollout():
         "release_id": "coworker-cohort-001",
         "environment": "production",
         "cohort": {"reference": "approved-cohort", "max_users": 25},
-        "action_providers": ["google"],
+        "action_providers": [],
         "capabilities": {
             "coworker": True,
             "work_services": True,
