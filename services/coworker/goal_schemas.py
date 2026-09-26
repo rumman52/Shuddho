@@ -151,8 +151,21 @@ class GoalPatch(GoalModel):
 
     @model_validator(mode="after")
     def has_change(self):
-        if not (self.model_fields_set - {"expected_revision"}):
+        fields = self.model_fields_set - {"expected_revision"}
+        if not fields:
             raise ValueError("Patch at least one goal field")
+        required_fields = {
+            "objective",
+            "success_criteria",
+            "constraints",
+            "timezone",
+            "milestones",
+            "budget",
+            "authorized_resources",
+        }
+        null_fields = sorted(field for field in fields & required_fields if getattr(self, field) is None)
+        if null_fields:
+            raise ValueError(f"Goal fields cannot be null: {', '.join(null_fields)}")
         if self.authorized_resources is not None:
             keys = {(item.kind, item.reference) for item in self.authorized_resources}
             if len(keys) != len(self.authorized_resources):
