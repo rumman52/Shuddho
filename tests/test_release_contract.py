@@ -89,6 +89,7 @@ def test_runtime_v3_requires_agent_runtime_planner_and_staging_evidence():
 def test_context_retrieval_requires_runtime_v3_and_staging_evidence():
     rollout = load("docs/cohort-rollout.template.json")
     rollout["capabilities"]["runtime_v3"] = True
+    rollout["capabilities"]["memory"] = True
     rollout["capabilities"]["context_retrieval"] = True
     assert "context_retrieval" in required_conditional_gate_ids(
         rollout["capabilities"], set()
