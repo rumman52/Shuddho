@@ -253,24 +253,26 @@ class Dispatcher:
         actions = self.container.actions.repo
         agent = self.container.agent
         automations = self.container.automations
+        # Reconciliation runs even while the feature kill switch is off so
+        # previously active Temporal Schedules are paused and remain recoverable.
+        for desired in await asyncio.to_thread(automations.claim_reconciliation):
+            try:
+                enabled = await self.automation_schedules.apply(desired)
+                await asyncio.to_thread(
+                    automations.reconciliation_applied,
+                    desired["id"],
+                    int(desired["desired_revision"]),
+                    enabled,
+                )
+            except Exception:
+                logger.exception("Automation schedule reconciliation failed.")
+                await asyncio.to_thread(
+                    automations.reconciliation_failed,
+                    desired["id"],
+                    int(desired["desired_revision"]),
+                    "temporal_schedule_unavailable",
+                )
         if self.container.settings.automations_enabled:
-            for desired in await asyncio.to_thread(automations.claim_reconciliation):
-                try:
-                    enabled = await self.automation_schedules.apply(desired)
-                    await asyncio.to_thread(
-                        automations.reconciliation_applied,
-                        desired["id"],
-                        int(desired["desired_revision"]),
-                        enabled,
-                    )
-                except Exception:
-                    logger.exception("Automation schedule reconciliation failed.")
-                    await asyncio.to_thread(
-                        automations.reconciliation_failed,
-                        desired["id"],
-                        int(desired["desired_revision"]),
-                        "temporal_schedule_unavailable",
-                    )
             for buffered in await asyncio.to_thread(automations.claim_buffered_occurrences):
                 try:
                     await asyncio.to_thread(
@@ -281,8 +283,10 @@ class Dispatcher:
                     )
                 except Exception:
                     logger.exception("Buffered automation occurrence could not resume.")
-            for notification_id in await asyncio.to_thread(automations.claim_notifications):
-                await asyncio.to_thread(automations.deliver_notification, notification_id)
+        # Accepted work remains visible even after the admission kill switch is
+        # disabled; notification delivery itself grants no new execution authority.
+        for notification_id in await asyncio.to_thread(automations.claim_notifications):
+            await asyncio.to_thread(automations.deliver_notification, notification_id)
         for action_id in await asyncio.to_thread(actions.claim_outbox):
             try:
                 await self.client.start_workflow(
