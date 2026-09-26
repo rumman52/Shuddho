@@ -7,7 +7,7 @@ from datetime import timedelta
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate
 from .errors import CoworkerError
@@ -28,6 +28,56 @@ BLOCKED_HOSTS = {
     "metadata.google.internal",
     "metadata",
 }
+
+
+def validate_resolved_addresses(hostname: str, addresses: list[str]) -> list[str]:
+    """Fail closed unless DNS resolved only to public routable IP addresses."""
+    if not addresses:
+        raise CoworkerError("browser_dns_unresolved", "The browser target did not resolve to an allowed address.", 403)
+    clean: list[str] = []
+    for raw in addresses:
+        try:
+            value = ipaddress.ip_address(raw)
+        except ValueError:
+            raise CoworkerError("browser_dns_invalid", "The browser target resolved to an invalid address.", 403) from None
+        if not value.is_global:
+            raise CoworkerError(
+                "browser_network_blocked",
+                "The browser target resolved to a private or reserved address.",
+                403,
+            )
+        text = value.compressed
+        if text not in clean:
+            clean.append(text)
+    if len(clean) > 16:
+        raise CoworkerError("browser_dns_invalid", "The browser target resolved to too many addresses.", 403)
+    return clean
+
+
+def _bounded_observation(value: dict) -> dict:
+    final_url = value.get("final_url")
+    title = value.get("title")
+    redirects = value.get("redirect_chain", [])
+    resolved = value.get("resolved_ips", {})
+    if not isinstance(final_url, str):
+        raise CoworkerError("browser_observation_invalid", "The browser worker returned an invalid final URL.", 409)
+    if title is not None and (not isinstance(title, str) or len(title) > 300):
+        raise CoworkerError("browser_observation_invalid", "The browser worker returned an invalid page title.", 409)
+    if not isinstance(redirects, list) or len(redirects) > 10 or any(not isinstance(item, str) for item in redirects):
+        raise CoworkerError("browser_observation_invalid", "The browser worker returned an invalid redirect chain.", 409)
+    if not isinstance(resolved, dict) or len(resolved) > 12:
+        raise CoworkerError("browser_observation_invalid", "The browser worker returned invalid DNS evidence.", 409)
+    normalized_resolved: dict[str, list[str]] = {}
+    for host, addresses in resolved.items():
+        if not isinstance(host, str) or not isinstance(addresses, list):
+            raise CoworkerError("browser_observation_invalid", "The browser worker returned invalid DNS evidence.", 409)
+        normalized_resolved[host.lower().rstrip(".")] = validate_resolved_addresses(host, addresses)
+    return {
+        "final_url": final_url,
+        "title": title,
+        "redirect_chain": redirects,
+        "resolved_ips": normalized_resolved,
+    }
 
 
 def _digest(value: dict) -> str:
@@ -323,3 +373,163 @@ class BrowserRepository:
                     action="browser_session.cancelled",
                 ))
             return self._dto(row)
+
+
+    # Trusted isolated-worker boundary. These methods are intentionally not
+    # mounted on the end-user API.
+    def claim_commands(self, worker_id: str, limit: int = 5) -> list[dict]:
+        self._require_enabled()
+        if not worker_id or len(worker_id) > 64:
+            raise CoworkerError("browser_worker_invalid", "The browser worker identity is invalid.", 403)
+        now = utcnow()
+        with self.sessions.begin() as db:
+            rows = db.scalars(
+                select(BrowserCommand)
+                .join(BrowserSession, BrowserSession.id == BrowserCommand.session_id)
+                .where(
+                    BrowserSession.cancel_requested.is_(False),
+                    BrowserSession.takeover_required.is_(False),
+                    BrowserSession.state.in_(("prepared", "running", "queued")),
+                    BrowserSession.expires_at > now,
+                    BrowserCommand.state.in_(("prepared", "running")),
+                    BrowserCommand.attempts < self.settings.browser_command_max_attempts,
+                    or_(BrowserCommand.lease_until.is_(None), BrowserCommand.lease_until < now),
+                )
+                .order_by(BrowserCommand.created_at)
+                .limit(max(1, min(limit, 10)))
+                .with_for_update(skip_locked=True)
+            ).all()
+            claimed: list[dict] = []
+            for command in rows:
+                session = db.get(BrowserSession, command.session_id)
+                command.state = "running"
+                command.attempts += 1
+                command.claimed_by = worker_id
+                command.lease_until = now + timedelta(seconds=self.settings.browser_worker_lease_seconds)
+                command.started_at = command.started_at or now
+                session.state = "running"
+                session.worker_session_ref = worker_id
+                session.updated_at = now
+                claimed.append({
+                    "id": command.id,
+                    "session_id": command.session_id,
+                    "owner_id": command.owner_id,
+                    "sequence": command.sequence,
+                    "kind": command.kind,
+                    "target_url": command.target_url,
+                    "target_origin": command.target_origin,
+                    "allowed_origins": list(session.allowed_origins or []),
+                    "expires_at": iso(session.expires_at),
+                    "policy": dict(command.payload or {}),
+                    "attempt": command.attempts,
+                })
+            return claimed
+
+    def complete_command(self, worker_id: str, command_id: str, observation: dict) -> dict:
+        self._require_enabled()
+        checked = _bounded_observation(observation)
+        now = utcnow()
+        with self.sessions.begin() as db:
+            command = db.scalar(select(BrowserCommand).where(
+                BrowserCommand.id == command_id,
+            ).with_for_update())
+            if command is None:
+                raise not_found()
+            session = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == command.session_id,
+                BrowserSession.owner_id == command.owner_id,
+            ).with_for_update())
+            if command.state != "running" or command.claimed_by != worker_id:
+                raise CoworkerError("browser_worker_claim_invalid", "This browser command is not owned by this worker.", 409)
+            if session is None or session.cancel_requested or session.state in TERMINAL_BROWSER_STATES:
+                command.state = "cancelled"
+                command.error_code = "session_cancelled"
+                command.finished_at = now
+                command.lease_until = None
+                command.claimed_by = None
+                raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
+            if aware(session.expires_at) <= now:
+                session.state = "expired"
+                command.state = "failed"
+                command.error_code = "session_expired"
+                command.finished_at = now
+                command.lease_until = None
+                command.claimed_by = None
+                raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
+
+            urls = [*checked["redirect_chain"], checked["final_url"]]
+            normalized_chain: list[str] = []
+            for raw_url in urls:
+                normalized, origin = normalize_browser_target(raw_url)
+                if origin not in set(session.allowed_origins or []):
+                    command.state = "failed"
+                    command.error_code = "redirect_origin_blocked"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                    session.state = "failed"
+                    session.error_code = "redirect_origin_blocked"
+                    raise CoworkerError("browser_origin_not_allowed", "The browser worker observed a redirect outside the approved origin.", 409)
+                normalized_chain.append(normalized)
+
+            command.result = {
+                "final_url": normalized_chain[-1],
+                "title": checked["title"],
+                "redirect_chain": normalized_chain[:-1],
+                "resolved_ips": checked["resolved_ips"],
+            }
+            command.state = "succeeded"
+            command.error_code = None
+            command.finished_at = now
+            command.lease_until = None
+            command.claimed_by = None
+            session.state = "prepared"
+            session.worker_session_ref = None
+            session.last_url = normalized_chain[-1]
+            session.last_title = checked["title"]
+            session.updated_at = now
+            db.add(AuditEvent(
+                id=str(uuid4()), owner_id=session.owner_id, resource_id=session.id,
+                action="browser_navigation.succeeded",
+            ))
+            return {
+                "id": command.id,
+                "state": command.state,
+                "result": dict(command.result or {}),
+            }
+
+    def fail_command(self, worker_id: str, command_id: str, error_code: str) -> dict:
+        self._require_enabled()
+        allowed = {
+            "navigation_failed",
+            "network_blocked",
+            "dns_failed",
+            "worker_interrupted",
+            "unsupported_site",
+        }
+        if error_code not in allowed:
+            error_code = "navigation_failed"
+        now = utcnow()
+        with self.sessions.begin() as db:
+            command = db.scalar(select(BrowserCommand).where(
+                BrowserCommand.id == command_id,
+            ).with_for_update())
+            if command is None:
+                raise not_found()
+            if command.state != "running" or command.claimed_by != worker_id:
+                raise CoworkerError("browser_worker_claim_invalid", "This browser command is not owned by this worker.", 409)
+            session = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == command.session_id,
+                BrowserSession.owner_id == command.owner_id,
+            ).with_for_update())
+            command.state = "failed"
+            command.error_code = error_code
+            command.finished_at = now
+            command.lease_until = None
+            command.claimed_by = None
+            if session is not None and session.state not in TERMINAL_BROWSER_STATES:
+                session.state = "failed"
+                session.worker_session_ref = None
+                session.error_code = error_code
+                session.updated_at = now
+            return {"id": command.id, "state": command.state, "error_code": error_code}
