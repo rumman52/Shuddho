@@ -231,6 +231,11 @@ def test_read_grant_owner_scope_sync_sanitization_and_agent_context(container):
     item = context["items"][0]
     assert item["provenance"]["grant_id"] == grant["id"]
     assert "Project update" in item["excerpt"]
+    planner_context, _source_map = container.context.planner_context(
+        owner,
+        run["id"],
+    )
+    assert item["source_id"] not in planner_context["allowed_memory_source_ids"]
 
 
 def test_duplicate_and_older_snapshot_updates_do_not_overwrite(container):
