@@ -14,6 +14,8 @@ from temporalio.client import (
     ScheduleState,
 )
 
+from .workflow import AutomationOccurrenceWorkflow
+
 
 DAY = {"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
 
@@ -39,7 +41,7 @@ def temporal_schedule(value: dict, task_queue: str):
     enabled = value["state"] == "active"
     return Schedule(
         action=ScheduleActionStartWorkflow(
-            "shuddho_automation_occurrence_v1",
+            AutomationOccurrenceWorkflow.run,
             {"automation_id": value["id"], "revision": int(value["revision"])},
             id=workflow_base_id(value["id"], int(value["revision"])),
             task_queue=task_queue,
