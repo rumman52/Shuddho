@@ -91,6 +91,25 @@ export default function AgentWorkspace({
   }, [client, reload]);
 
   useEffect(() => {
+    if (!run) {
+      setContext(null);
+      return;
+    }
+    const controller = new AbortController();
+    Promise.all([
+      client.agentContext(run.id, controller.signal),
+      client.memoryProposals(controller.signal),
+    ]).then(([nextContext, proposals]) => {
+      if (controller.signal.aborted) return;
+      setContext(nextContext);
+      setMemoryProposals(proposals.proposals);
+    }).catch(failure => {
+      if (!controller.signal.aborted) setError(errorMessage(failure));
+    });
+    return () => controller.abort();
+  }, [client, run?.id]);
+
+  useEffect(() => {
     if (!run || ["completed", "failed", "cancelled"].includes(run.state)) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -208,7 +227,7 @@ export default function AgentWorkspace({
           <p role="status"><span className={`cw-status cw-status-${run.state}`}>{stateLabel[run.state]}</span> {run.message}</p>
           <div className="cw-agent-meta"><span>Runtime: v{run.runtime_version || "legacy"}</span><span>Planner: {run.planner_mode ?? "pending"}</span><span>Calls: {run.planner_calls}</span><span>Reserved tokens: {run.planner_tokens}</span><span>Actual tokens: {run.planner_actual_tokens}</span>{run.planner_cost_microusd > 0 && <span>Planner cost: {(run.planner_cost_microusd / 1_000_000).toFixed(4)} USD</span>}</div>
           {context?.enabled && <details className="cw-agent-decisions"><summary>Authorized context ({context.items.length})</summary>{context.items.length > 0 ? <ul>{context.items.map(item => <li key={item.source_id}><strong>{item.label}</strong><small> {item.source_id} · version {item.provenance.version_id.slice(0, 8)}…</small></li>)}</ul> : <p>No active document context was retrieved.</p>}{context.invalidated.length > 0 && <p>{context.invalidated.length} attached source{context.invalidated.length === 1 ? "" : "s"} invalidated by deletion or source state.</p>}</details>}
-          {memoryProposals.filter(item => item.run_id === run.id && item.state === "proposed").length > 0 && <section className="cw-proposals" aria-label="Memory proposals"><div><span className="cw-eyebrow">Memory review</span><h3>Nothing is remembered until you accept it.</h3><p>These proposals are inert context suggestions. They do not grant permission or approve actions.</p></div>{memoryProposals.filter(item => item.run_id === run.id && item.state === "proposed").map(proposal => <article className="cw-proposal-card" key={proposal.id}><div className="cw-proposal-heading"><div><strong>{proposal.namespace}.{proposal.key}</strong><small>Proposed memory · {proposal.source_refs.map(item => item.source_id).join(", ")}</small></div></div><p dir="auto">{proposal.value}</p><div className="cw-proposal-controls"><button className="cw-primary" type="button" disabled={Boolean(busy)} onClick={() => void perform("memory-accept:" + proposal.id, async () => { await client.acceptMemoryProposal(proposal.id); await refreshRun(); })}>Accept memory</button><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => void perform("memory-reject:" + proposal.id, async () => { await client.rejectMemoryProposal(proposal.id); await refreshRun(); })}>Reject</button></div></article>)}</section>}
+          {memoryProposals.filter(item => item.run_id === run.id && item.state === "proposed").length > 0 && <section className="cw-proposals" aria-label="Memory proposals"><div><span className="cw-eyebrow">Memory review</span><h3>Nothing is remembered until you accept it.</h3><p>These proposals are inert context suggestions. They do not grant permission or approve actions.</p></div>{memoryProposals.filter(item => item.run_id === run.id && item.state === "proposed").map(proposal => <article className="cw-proposal-card" key={proposal.id}><div className="cw-proposal-heading"><div><strong>{proposal.namespace}.{proposal.key}</strong><small>Proposed memory · {proposal.source_refs.map(item => item.source_id).join(", ")}</small></div></div><p dir="auto">{proposal.value}</p><div className="cw-proposal-controls"><button className="cw-primary" type="button" disabled={Boolean(busy)} onClick={() => void perform("memory-accept:" + proposal.id, async () => { const result = await client.acceptMemoryProposal(proposal.id); setMemoryProposals(previous => previous.map(item => item.id === proposal.id ? result.proposal : item)); if (result.fact) setMemoryFacts(previous => [result.fact!, ...previous.filter(item => item.id !== result.fact!.id)]); })}>Accept memory</button><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => void perform("memory-reject:" + proposal.id, async () => { const rejected = await client.rejectMemoryProposal(proposal.id); setMemoryProposals(previous => previous.map(item => item.id === proposal.id ? rejected : item)); })}>Reject</button></div></article>)}</section>}
           {run.decisions.length > 0 && <details className="cw-agent-decisions"><summary>Planner decisions ({run.decisions.length})</summary><ol>{run.decisions.map(item => <li key={item.sequence}><strong>{item.decision}</strong><small> call {item.planner_call} · {item.observation_count} verified observation{item.observation_count === 1 ? "" : "s"} · prompt {item.prompt_sha256.slice(0, 10)}…</small></li>)}</ol></details>}
           {run.steps.length > 0 && <ol className="cw-agent-steps">{run.steps.map(step => <li key={step.id}><span>{step.ordinal}</span><div><strong>{step.tool ?? "Planning"}</strong><small>{step.state}{step.depends_on.length ? ` · after ${step.depends_on.join(", ")}` : ""}</small></div></li>)}</ol>}
           {run.action_proposals.length > 0 && <section className="cw-proposals" aria-label="Agent action proposals">
