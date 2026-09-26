@@ -9,6 +9,7 @@ import {
   type MemoryFact,
   type MemoryProposal,
   type AgentContext,
+  type ConnectorReadGrant,
 } from "./client";
 
 const stateLabel: Record<AgentRun["state"], string> = {
@@ -58,6 +59,8 @@ export default function AgentWorkspace({
   const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
   const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
   const [selectedMemoryNamespaces, setSelectedMemoryNamespaces] = useState<string[]>([]);
+  const [readGrants, setReadGrants] = useState<ConnectorReadGrant[]>([]);
+  const [selectedReadGrants, setSelectedReadGrants] = useState<string[]>([]);
   const [context, setContext] = useState<AgentContext | null>(null);
   const [goal, setGoal] = useState("");
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
@@ -76,13 +79,15 @@ export default function AgentWorkspace({
       client.connections(controller.signal),
       client.memory(controller.signal),
       client.memoryProposals(controller.signal),
-    ]).then(([tools, history, accounts, memory, proposals]) => {
+      client.connectorReadGrants(controller.signal),
+    ]).then(([tools, history, accounts, memory, proposals, reads]) => {
       if (controller.signal.aborted) return;
       setEnabled(tools.enabled);
       setRuns(history.runs);
       setConnections(accounts.connections.filter(item => item.active));
       setMemoryFacts(memory.facts.filter(item => item.active));
       setMemoryProposals(proposals.proposals);
+      setReadGrants(reads.grants.filter(item => item.state === "active"));
       setRun(current => current ?? history.runs[0] ?? null);
     }).catch(failure => {
       if (!controller.signal.aborted) setError(errorMessage(failure));
@@ -146,6 +151,7 @@ export default function AgentWorkspace({
       document_ids: selectedDocs,
       action_ids: [],
       memory_namespaces: selectedMemoryNamespaces,
+      connector_read_grant_ids: selectedReadGrants,
       output_language: language,
     };
     const fingerprint = JSON.stringify(input);
@@ -156,6 +162,35 @@ export default function AgentWorkspace({
       const next = await client.createAgentRun(input, submission.current!.key);
       setRun(next);
       setRuns(previous => [next, ...previous.filter(item => item.id !== next.id)]);
+    });
+  }
+
+  async function authorizeRead(connection: ConnectedAccount) {
+    await perform("read-authorize:" + connection.id, async () => {
+      const expiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const grant = await client.createConnectorReadGrant(
+        connection.id,
+        expiry,
+        crypto.randomUUID(),
+      );
+      await client.syncConnectorReadGrant(grant.id, true);
+      setReadGrants(previous => [grant, ...previous.filter(item => item.id !== grant.id)]);
+      setSelectedReadGrants(previous => previous.includes(grant.id) ? previous : [...previous, grant.id]);
+    });
+  }
+
+  async function syncRead(grant: ConnectorReadGrant) {
+    await perform("read-sync:" + grant.id, async () => {
+      await client.syncConnectorReadGrant(grant.id);
+    });
+  }
+
+  async function revokeRead(grant: ConnectorReadGrant) {
+    if (!window.confirm("Stop this connected source from being used by future Agent runs?")) return;
+    await perform("read-revoke:" + grant.id, async () => {
+      await client.revokeConnectorReadGrant(grant.id);
+      setReadGrants(previous => previous.filter(item => item.id !== grant.id));
+      setSelectedReadGrants(previous => previous.filter(id => id !== grant.id));
     });
   }
 
@@ -216,6 +251,20 @@ export default function AgentWorkspace({
           <label>Goal<textarea dir="auto" rows={7} minLength={3} maxLength={4000} required value={goal} onChange={event => setGoal(event.target.value)} placeholder="For example, draft a project update and suggest an email to recipient@example.org with the exact subject and message…" /></label>
           {documents.length > 0 && <fieldset className="cw-agent-files"><legend>Owned source files (optional)</legend>{documents.slice(0, 20).map(document => <label key={document.id}><input type="checkbox" checked={selectedDocs.includes(document.id)} disabled={!selectedDocs.includes(document.id) && selectedDocs.length >= 5} onChange={event => setSelectedDocs(previous => event.target.checked ? [...previous, document.id] : previous.filter(id => id !== document.id))} /><span>{document.filename}</span></label>)}</fieldset>}
           {memoryFacts.length > 0 && <fieldset className="cw-agent-files"><legend>Explicit memory namespaces (optional)</legend>{Array.from(new Set(memoryFacts.map(item => item.namespace))).map(namespace => <label key={namespace}><input type="checkbox" checked={selectedMemoryNamespaces.includes(namespace)} onChange={event => setSelectedMemoryNamespaces(previous => event.target.checked ? [...previous, namespace] : previous.filter(item => item !== namespace))} /><span>{namespace}</span></label>)}</fieldset>}
+          {connections.some(item => item.provider === "google" && (item.capability === "email_read" || item.capability === "calendar_read")) || readGrants.length > 0 ? <fieldset className="cw-agent-files"><legend>Connected read context (optional)</legend>
+            {connections.filter(item => item.provider === "google" && (item.capability === "email_read" || item.capability === "calendar_read")).map(connection => {
+              const grant = readGrants.find(item => item.connection_id === connection.id);
+              const label = connection.capability === "email_read" ? "Gmail read context" : "Calendar read context";
+              return <div className="cw-connection" key={connection.id}><div><strong>{label}</strong><small>{connection.email} · provider content is untrusted data</small></div>
+                {grant ? <div>
+                  <label><input type="checkbox" checked={selectedReadGrants.includes(grant.id)} disabled={!selectedReadGrants.includes(grant.id) && selectedReadGrants.length >= 4} onChange={event => setSelectedReadGrants(previous => event.target.checked ? [...previous, grant.id] : previous.filter(id => id !== grant.id))} /> Use in this run</label>
+                  <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void syncRead(grant)}>Sync</button>
+                  <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void revokeRead(grant)}>Revoke Agent access</button>
+                </div> : <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => void authorizeRead(connection)}>Allow Agent context for 7 days</button>}
+              </div>;
+            })}
+            <small>OAuth consent connects the account. A separate, revocable read grant controls whether synchronized data may enter Agent context.</small>
+          </fieldset> : <p className="cw-fineprint">To use connected email or calendar context, connect a Google read source in Actions first.</p>}
           <label>Output language<input value={language} onChange={event => setLanguage(event.target.value)} pattern="(auto|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*)" maxLength={35} required /></label>
           <button className="cw-primary" disabled={!enabled || Boolean(busy) || goal.trim().length < 3}>{busy === "create" ? "Starting Agent…" : "Start bounded Agent run"}<span aria-hidden="true">↗</span></button>
           <p className="cw-fineprint">Starting a run does not approve or execute an external action.</p>
@@ -226,7 +275,7 @@ export default function AgentWorkspace({
           <div className="cw-history-title"><div><span className="cw-eyebrow">02 · Run</span><h2 dir="auto">{run.goal}</h2></div><button className="cw-text-button" disabled={Boolean(busy)} onClick={() => void refreshRun()}>Refresh</button></div>
           <p role="status"><span className={`cw-status cw-status-${run.state}`}>{stateLabel[run.state]}</span> {run.message}</p>
           <div className="cw-agent-meta"><span>Runtime: v{run.runtime_version || "legacy"}</span><span>Planner: {run.planner_mode ?? "pending"}</span><span>Calls: {run.planner_calls}</span><span>Reserved tokens: {run.planner_tokens}</span><span>Actual tokens: {run.planner_actual_tokens}</span>{run.planner_cost_microusd > 0 && <span>Planner cost: {(run.planner_cost_microusd / 1_000_000).toFixed(4)} USD</span>}</div>
-          {context?.enabled && <details className="cw-agent-decisions"><summary>Authorized context ({context.items.length})</summary>{context.items.length > 0 ? <ul>{context.items.map(item => <li key={item.source_id}><strong>{item.label}</strong><small> {item.source_id} · version {item.provenance.version_id.slice(0, 8)}…</small></li>)}</ul> : <p>No active document context was retrieved.</p>}{context.invalidated.length > 0 && <p>{context.invalidated.length} attached source{context.invalidated.length === 1 ? "" : "s"} invalidated by deletion or source state.</p>}</details>}
+          {context?.enabled && <details className="cw-agent-decisions"><summary>Authorized context ({context.items.length})</summary>{context.items.length > 0 ? <ul>{context.items.map(item => <li key={item.source_id}><strong>{item.label}</strong><small> {item.source_id} · {item.provenance.version_id ? `version ${item.provenance.version_id.slice(0, 8)}…` : `${item.provenance.provider ?? "connected"} · synchronized snapshot`}</small></li>)}</ul> : <p>No active document context was retrieved.</p>}{context.invalidated.length > 0 && <p>{context.invalidated.length} attached source{context.invalidated.length === 1 ? "" : "s"} invalidated by deletion or source state.</p>}</details>}
           {memoryProposals.filter(item => item.run_id === run.id && item.state === "proposed").length > 0 && <section className="cw-proposals" aria-label="Memory proposals"><div><span className="cw-eyebrow">Memory review</span><h3>Nothing is remembered until you accept it.</h3><p>These proposals are inert context suggestions. They do not grant permission or approve actions.</p></div>{memoryProposals.filter(item => item.run_id === run.id && item.state === "proposed").map(proposal => <article className="cw-proposal-card" key={proposal.id}><div className="cw-proposal-heading"><div><strong>{proposal.namespace}.{proposal.key}</strong><small>Proposed memory · {proposal.source_refs.map(item => item.source_id).join(", ")}</small></div></div><p dir="auto">{proposal.value}</p><div className="cw-proposal-controls"><button className="cw-primary" type="button" disabled={Boolean(busy)} onClick={() => void perform("memory-accept:" + proposal.id, async () => { const result = await client.acceptMemoryProposal(proposal.id); setMemoryProposals(previous => previous.map(item => item.id === proposal.id ? result.proposal : item)); if (result.fact) setMemoryFacts(previous => [result.fact!, ...previous.filter(item => item.id !== result.fact!.id)]); })}>Accept memory</button><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => void perform("memory-reject:" + proposal.id, async () => { const rejected = await client.rejectMemoryProposal(proposal.id); setMemoryProposals(previous => previous.map(item => item.id === proposal.id ? rejected : item)); })}>Reject</button></div></article>)}</section>}
           {run.decisions.length > 0 && <details className="cw-agent-decisions"><summary>Planner decisions ({run.decisions.length})</summary><ol>{run.decisions.map(item => <li key={item.sequence}><strong>{item.decision}</strong><small> call {item.planner_call} · {item.observation_count} verified observation{item.observation_count === 1 ? "" : "s"} · prompt {item.prompt_sha256.slice(0, 10)}…</small></li>)}</ol></details>}
           {run.steps.length > 0 && <ol className="cw-agent-steps">{run.steps.map(step => <li key={step.id}><span>{step.ordinal}</span><div><strong>{step.tool ?? "Planning"}</strong><small>{step.state}{step.depends_on.length ? ` · after ${step.depends_on.join(", ")}` : ""}</small></div></li>)}</ol>}
