@@ -114,5 +114,9 @@
   "runtime_v3": {
     "status": "pending",
     "evidence": ""
+  },
+  "context_retrieval": {
+    "status": "pending",
+    "evidence": ""
   }
 }
