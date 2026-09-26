@@ -10,6 +10,7 @@ from .actions import ActionService
 from .permission_gateway import PermissionGateway
 from .credential_broker import CredentialBroker
 from .connector_reads import ConnectorReadRepository, ConnectorReadService
+from .connector_push import GooglePushVerifier
 from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
 from .linkedin_actions import LinkedInActions
@@ -78,6 +79,7 @@ class Container:
             self.connector_reads = ConnectorReadService(
                 read_repository,
                 self.credentials,
+                GooglePushVerifier(self.settings),
             )
         if self.agent is None:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
