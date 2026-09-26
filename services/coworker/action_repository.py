@@ -407,24 +407,43 @@ class ActionRepository:
             db.execute(update(OAuthAttempt).where(OAuthAttempt.owner_id == owner).values(expires_at=utcnow(), consumed=True, verifier_ciphertext=""))
         return {"message": "Disconnected from Shuddho. Pending actions were cancelled; an action already executing may still finish. You can also revoke Shuddho in the connected provider's account settings."}
 
+    @staticmethod
+    def _trusted_grant(db, row, execution_grant_id, required_scopes):
+        if not execution_grant_id:
+            raise CoworkerError(
+                "connector_direct_credential_access",
+                "Connector credentials require a valid execution grant.",
+                403,
+            )
+        grant = db.scalar(select(ExecutionGrant).where(
+            ExecutionGrant.id == execution_grant_id,
+            ExecutionGrant.owner_id == row.owner_id,
+            ExecutionGrant.connection_id == row.id,
+            ExecutionGrant.state == "active",
+            ExecutionGrant.audience == CONNECTOR_ACTION_AUDIENCE,
+        ))
+        if (
+            grant is None
+            or aware(grant.expires_at) <= utcnow()
+            or required_scopes is not None
+            and list(grant.required_scopes or []) != list(required_scopes)
+        ):
+            raise CoworkerError(
+                "connector_direct_credential_access",
+                "Connector credentials require a valid execution grant.",
+                403,
+            )
+        return grant
+
     def credentials(
         self,
         connection_id,
         *,
         owner_id=None,
         required_scopes=None,
-        trusted_audience=None,
+        execution_grant_id=None,
     ):
         # Trusted connector/credential boundary only; never serialized to an API.
-        if (
-            self.settings.connector_trust_boundary_enabled
-            and trusted_audience != CONNECTOR_ACTION_AUDIENCE
-        ):
-            raise CoworkerError(
-                "connector_direct_credential_access",
-                "Connector credentials are available only through the trusted credential boundary.",
-                403,
-            )
         with self.sessions() as db:
             row = db.get(Connection, connection_id)
             if (
@@ -433,6 +452,13 @@ class ActionRepository:
                 or owner_id is not None and row.owner_id != owner_id
             ):
                 raise CoworkerError("connection_removed", "Reconnect your connected account.", 409)
+            if self.settings.connector_trust_boundary_enabled:
+                self._trusted_grant(
+                    db,
+                    row,
+                    execution_grant_id,
+                    required_scopes,
+                )
             scopes = list(row.scopes or [])
             if required_scopes is not None and any(scope not in scopes for scope in required_scopes):
                 raise CoworkerError(
@@ -451,20 +477,18 @@ class ActionRepository:
         refresh_token,
         *,
         owner_id=None,
-        trusted_audience=None,
+        execution_grant_id=None,
     ):
-        if (
-            self.settings.connector_trust_boundary_enabled
-            and trusted_audience != CONNECTOR_ACTION_AUDIENCE
-        ):
-            raise CoworkerError(
-                "connector_direct_credential_access",
-                "Connector credentials are available only through the trusted credential boundary.",
-                403,
-            )
         with self.sessions.begin() as db:
             row = db.scalar(select(Connection).where(Connection.id == connection_id).with_for_update())
             if row and row.active and (owner_id is None or row.owner_id == owner_id):
+                if self.settings.connector_trust_boundary_enabled:
+                    self._trusted_grant(
+                        db,
+                        row,
+                        execution_grant_id,
+                        None,
+                    )
                 current = self.vault().open(row.token_ciphertext, row.owner_id + ":connection:" + row.id)
                 if not isinstance(current, dict):
                     current = {}
