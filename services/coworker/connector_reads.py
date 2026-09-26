@@ -981,6 +981,14 @@ class ConnectorReadService:
                 self.repo.subscription_failed,
                 value["owner_id"], value["id"], "subscription_renewal_failed",
             )
+            return
+        # Provider notifications can be delayed or dropped. A successful
+        # renewal is also a bounded periodic reconciliation point so manual
+        # polling remains a safety net rather than a second scheduler.
+        try:
+            await self.sync(value["owner_id"], value["grant_id"])
+        except Exception:
+            pass
 
 
     async def sync(
