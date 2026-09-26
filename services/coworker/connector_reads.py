@@ -625,15 +625,10 @@ class ConnectorReadRepository:
     ) -> bool:
         now = utcnow()
         with self.sessions.begin() as db:
-            row = db.scalar(select(ConnectorSubscription).join(
-                ConnectorReadGrant, ConnectorReadGrant.id == ConnectorSubscription.grant_id
-            ).where(
+            row = db.scalar(select(ConnectorSubscription).where(
                 ConnectorSubscription.provider == "google",
                 ConnectorSubscription.capability == "calendar_read",
                 ConnectorSubscription.provider_subscription_id == channel_id,
-                ConnectorSubscription.state.in_(["pending", "active", "renewing"]),
-                ConnectorReadGrant.state == "active",
-                ConnectorReadGrant.expires_at > now,
             ).order_by(ConnectorSubscription.generation.desc()).limit(1))
             if row is None or not row.token_hash or not hmac.compare_digest(
                 row.token_hash, _token_hash(channel_token)
@@ -641,6 +636,22 @@ class ConnectorReadRepository:
                 return False
             if row.provider_resource_id and row.provider_resource_id != resource_id:
                 return False
+
+            grant = db.scalar(select(ConnectorReadGrant).where(
+                ConnectorReadGrant.id == row.grant_id,
+                ConnectorReadGrant.owner_id == row.owner_id,
+            ))
+            if (
+                row.state not in {"pending", "active", "renewing"}
+                or grant is None
+                or grant.state != "active"
+                or aware(grant.expires_at) <= now
+            ):
+                # This is a previously authenticated Shuddho channel that has
+                # been superseded/revoked. Acknowledge it without restoring
+                # authority or queueing work, so Google need not retry it.
+                return True
+
             event_id = message_number
             if db.scalar(select(ConnectorEvent.id).where(
                 ConnectorEvent.subscription_id == row.id,
