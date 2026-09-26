@@ -70,13 +70,13 @@ export type AgentContext = {
 };
 
 export type ConnectorReadGrant = {
-  id: string; connection_id: string; provider: "google"; capability: "email_read" | "calendar_read";
+  id: string; connection_id: string; provider: "google" | "microsoft"; capability: "email_read" | "calendar_read";
   operation: string; version: string; purpose: "agent_context"; destination: "planner_context";
   state: "active" | "revoked" | "expired"; expires_at: string; created_at: string; revoked_at: string | null;
 };
 export type ConnectorReadSubscription = {
-  id: string; grant_id: string; connection_id: string; provider: "google";
-  capability: "email_read" | "calendar_read"; kind: "gmail_pubsub" | "calendar_webhook";
+  id: string; grant_id: string; connection_id: string; provider: "google" | "microsoft";
+  capability: "email_read" | "calendar_read"; kind: "gmail_pubsub" | "calendar_webhook" | "microsoft_graph_webhook";
   generation: number; state: "pending" | "active" | "renewing" | "superseded" | "revoked" | "failed";
   provider_subscription_id: string | null; provider_resource_id: string | null;
   expires_at: string | null; renew_after: string | null; attempts: number; last_error_code: string | null;
@@ -243,7 +243,7 @@ export class CoworkerClient {
   finishGoogle(code: string, state: string) {
     return this.response("/api/v1/connections/google/finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) }, 45000).then(response => response.json() as Promise<ConnectedAccount>);
   }
-  connectMicrosoft(capability: "email" | "calendar") {
+  connectMicrosoft(capability: "email" | "calendar" | "email_read" | "calendar_read") {
     return this.json<{ authorization_url: string; state: string }>("/api/v1/connections/microsoft/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capability }) });
   }
   finishMicrosoft(code: string, state: string) {

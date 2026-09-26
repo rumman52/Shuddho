@@ -56,7 +56,7 @@ export function microsoftAuthorizationURL(
 export async function beginMicrosoftConnection(
   client: CoworkerClient,
   account: string,
-  capability: "email" | "calendar",
+  capability: "email" | "calendar" | "email_read" | "calendar_read",
 ) {
   const result = await client.connectMicrosoft(capability);
   const url = microsoftAuthorizationURL(

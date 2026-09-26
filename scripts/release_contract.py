@@ -100,6 +100,11 @@ OPTIONAL_CAPABILITIES = (
                 "Live Google read consent, bounded Gmail/Calendar synchronization, authenticated provider event intake, duplicate/out-of-order delivery handling, subscription renewal, cursor recovery, owner isolation, grant expiry/revocation, disconnect invalidation and Agent-context containment passed in controlled staging.",
                 provider="google",
             ),
+            StagingGate(
+                "connector_reads_microsoft",
+                "When Microsoft is enabled, live Microsoft read consent, bounded Outlook Mail/Calendar delta synchronization, clientState-bound change notifications, renewal, cursor recovery, owner isolation, grant expiry/revocation, disconnect invalidation and Agent-context containment passed in controlled staging.",
+                provider="microsoft",
+            ),
         ),
     ),
     OptionalCapability(

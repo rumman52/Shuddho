@@ -53,6 +53,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "context_retrieval",
         "connector_trust_boundary",
         "connector_reads",
+        "connector_reads_microsoft",
     } == covered
 
 
@@ -70,6 +71,12 @@ def test_connector_reads_require_pa05_context_runtime_google_and_staging_evidenc
     rollout["action_providers"] = ["google"]
     rollout["monitoring"]["actions"] = "actions-dashboard"
     assert "connector_reads" in required_conditional_gate_ids(
+        rollout["capabilities"], {"google"}
+    )
+    assert "connector_reads_microsoft" in required_conditional_gate_ids(
+        rollout["capabilities"], {"google", "microsoft"}
+    )
+    assert "connector_reads_microsoft" not in required_conditional_gate_ids(
         rollout["capabilities"], {"google"}
     )
     rollout["capabilities"]["context_retrieval"] = False

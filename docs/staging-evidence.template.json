@@ -71,6 +71,10 @@
     "status": "pending",
     "evidence": ""
   },
+  "connector_reads_microsoft": {
+    "status": "pending",
+    "evidence": ""
+  },
   "microsoft_actions": {
     "status": "pending",
     "evidence": ""

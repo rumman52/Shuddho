@@ -544,6 +544,37 @@ async def google_calendar_events(
     return Response(status_code=204)
 
 
+@router.post("/connectors/microsoft/events", status_code=202)
+async def microsoft_connector_events(
+    request: Request,
+    services: Services,
+    validation_token: Annotated[str | None, Query(alias="validationToken", max_length=1024)] = None,
+):
+    if validation_token is not None:
+        if (
+            not services.settings.connector_reads_enabled
+            or not services.settings.microsoft_actions_enabled
+            or not validation_token
+            or any(ord(char) < 32 or ord(char) == 127 for char in validation_token)
+        ):
+            raise CoworkerError("connector_push_invalid", "Invalid Microsoft validation token.", 400)
+        return Response(
+            content=validation_token,
+            media_type="text/plain",
+            status_code=200,
+            headers={"Cache-Control": "no-store"},
+        )
+    body = await request.body()
+    if len(body) > 65536:
+        raise CoworkerError("connector_push_invalid", "Push payload is too large.", 413)
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeError):
+        raise CoworkerError("connector_push_invalid", "Invalid Microsoft push payload.", 400) from None
+    await services.connector_reads.ingest_microsoft_push(payload)
+    return Response(status_code=202)
+
+
 @router.get("/connections")
 def connections(identity: Identity, services: Services):
     return {

@@ -274,7 +274,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           ? (["email", "calendar", "drive", "email_read", "calendar_read"] as const)
           : (["email", "calendar", "drive"] as const))
         : provider === "microsoft"
-          ? (["email", "calendar"] as const)
+          ? (readsEnabled
+            ? (["email", "calendar", "email_read", "calendar_read"] as const)
+            : (["email", "calendar"] as const))
           : (["social"] as const)
     ).map(capability => {
       const connected = connections.find(value => value.provider === provider && value.capability === capability);
@@ -285,9 +287,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           : capability === "calendar"
             ? (provider === "google" ? "Google Calendar" : "Microsoft Calendar")
             : capability === "email_read"
-              ? "Gmail read context"
+              ? (provider === "google" ? "Gmail read context" : "Outlook read context")
               : capability === "calendar_read"
-                ? "Google Calendar read context"
+                ? (provider === "google" ? "Google Calendar read context" : "Microsoft Calendar read context")
                 : "Google Drive";
       const google = provider === "google";
       const controlLabel = provider === "linkedin"
@@ -311,7 +313,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           : capability === "calendar"
             ? "Create events in your primary calendar"
             : capability === "email_read"
-              ? "Read bounded Gmail metadata/snippets only after a separate Agent read grant"
+              ? (provider === "google"
+                ? "Read bounded Gmail metadata/snippets only after a separate Agent read grant"
+                : "Read bounded Outlook mail metadata only after a separate Agent read grant")
               : capability === "calendar_read"
                 ? "Read bounded calendar events only after a separate Agent read grant"
                 : "Share one approved Shuddho artifact";
@@ -325,7 +329,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
         }}>Disconnect {controlLabel}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => google
           ? beginGoogleConnection(client, account, capability as "email" | "calendar" | "drive" | "email_read" | "calendar_read")
           : provider === "microsoft"
-            ? beginMicrosoftConnection(client, account, capability as "email" | "calendar")
+            ? beginMicrosoftConnection(client, account, capability as "email" | "calendar" | "email_read" | "calendar_read")
             : beginLinkedInConnection(client, account))}>Connect {controlLabel}</button>}
       </div>;
     })}</div>
