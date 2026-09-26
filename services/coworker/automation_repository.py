@@ -6,7 +6,7 @@ from datetime import datetime, time, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 
 from .agent_schemas import AgentRunCreate
 from .automation_schemas import AutomationCreate, AutomationPatch
@@ -100,6 +100,11 @@ class AutomationRepository:
                 if previous.fingerprint != fingerprint:
                     raise CoworkerError("idempotency_conflict", "This request key belongs to another automation.", 409)
                 return self._dto(previous), False
+            active_count = db.scalar(select(func.count()).select_from(Automation).where(
+                Automation.owner_id == owner, Automation.state != "cancelled",
+            ))
+            if active_count >= self.settings.max_automations:
+                raise CoworkerError("automation_limit", "This workspace reached its automation limit.", 429)
             goal = db.scalar(select(PersonalGoal).where(
                 PersonalGoal.id == str(request.goal_id), PersonalGoal.owner_id == owner,
             ).with_for_update())
@@ -245,7 +250,9 @@ class AutomationRepository:
             row = db.get(Automation, automation_id)
             outbox = db.get(AutomationScheduleOutbox, automation_id)
             if row is not None and outbox is not None and outbox.desired_revision == revision:
-                row.schedule_error_code = code[:80]; outbox.lease_until = None
+                row.schedule_error_code = code[:80]
+                delay = min(300, max(5, 2 ** min(outbox.attempts, 8)))
+                outbox.lease_until = utcnow() + timedelta(seconds=delay)
 
     @staticmethod
     def occurrence_key(owner: str, automation_id: str, revision: int, due_at: datetime) -> str:
@@ -381,10 +388,21 @@ class AutomationRepository:
         return quiet_end.astimezone(timezone.utc)
 
     def claim_buffered_occurrences(self, limit: int = 10) -> list[dict]:
-        """Release BUFFER_ONE occurrences only after the previous run is terminal."""
+        """Release BUFFER_ONE occurrences after the previous run is terminal.
+
+        The accepting state is a short durable lease: a process loss before admission
+        is reclaimable rather than stranding the occurrence forever.
+        """
         with self.sessions.begin() as db:
+            now = utcnow()
             rows = db.scalars(select(AutomationOccurrence).where(
-                AutomationOccurrence.state == "buffered",
+                or_(
+                    AutomationOccurrence.state == "buffered",
+                    and_(
+                        AutomationOccurrence.state == "accepting",
+                        AutomationOccurrence.updated_at < now - timedelta(seconds=30),
+                    ),
+                ),
             ).order_by(AutomationOccurrence.due_at).limit(limit).with_for_update(skip_locked=True)).all()
             result = []
             for occurrence in rows:
@@ -397,7 +415,7 @@ class AutomationRepository:
                 ).limit(1))
                 if active is not None:
                     continue
-                occurrence.state = "accepting"; occurrence.reason = None; occurrence.updated_at = utcnow()
+                occurrence.state = "accepting"; occurrence.reason = None; occurrence.updated_at = now
                 result.append({
                     "automation_id": occurrence.automation_id,
                     "revision": occurrence.automation_revision,
