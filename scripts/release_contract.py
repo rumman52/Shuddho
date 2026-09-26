@@ -108,6 +108,18 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="browser",
+        rollback_key="browser_kill_switch",
+        kill_switch="SHUDDHO_BROWSER_ENABLED=false",
+        dependencies=("runtime_v3", "connector_trust_boundary"),
+        staging_gates=(
+            StagingGate(
+                "browser",
+                "Supervised browser sessions passed owner isolation, HTTPS/origin restrictions, DNS/IP and redirect revalidation in the isolated worker, takeover pause/resume, secret concealment, cancellation, cleanup and blocked internal-address tests.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="connector_trust_boundary",
         rollback_key="connector_trust_boundary_kill_switch",
         kill_switch="SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false",
@@ -284,6 +296,14 @@ OPTIONAL_CAPABILITIES = (
 )
 
 ACTIVATION_REQUIREMENTS = (
+    ActivationRequirement(
+        key="browser",
+        status="browser_verified",
+        ledger_schema_version=23,
+        ledger_event_type="browser_verified",
+        ledger_artifact_key="browser_activation",
+        capability="browser",
+    ),
     ActivationRequirement(
         key="connector_reads",
         status="connector_reads_verified",

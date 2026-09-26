@@ -271,6 +271,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "context_retrieval": False,
         "connector_trust_boundary": False,
         "connector_reads": False,
+        "browser": False,
     }
 
     passed = evaluate_release(

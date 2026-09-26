@@ -34,6 +34,7 @@ class Settings:
     actions_enabled: bool = False
     connector_trust_boundary_enabled: bool = False
     connector_reads_enabled: bool = False
+    browser_enabled: bool = False
     action_attachments_enabled: bool = False
     action_reminders_enabled: bool = False
     action_recipients_enabled: bool = False
@@ -79,6 +80,8 @@ class Settings:
     max_daily_actions: int = 20
     max_action_recipients: int = 100
     max_active_agent_runs: int = 2
+    max_active_browser_sessions: int = 2
+    browser_session_ttl_seconds: int = 900
     agent_run_timeout_seconds: int = 1800
     max_personal_goals: int = 100
     max_automations: int = 100
@@ -150,6 +153,7 @@ class Settings:
             actions_enabled=os.getenv("SHUDDHO_ACTIONS_ENABLED", "false").lower() == "true",
             connector_trust_boundary_enabled=os.getenv("SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED", "false").lower() == "true",
             connector_reads_enabled=os.getenv("SHUDDHO_CONNECTOR_READS_ENABLED", "false").lower() == "true",
+            browser_enabled=os.getenv("SHUDDHO_BROWSER_ENABLED", "false").lower() == "true",
             action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
             action_reminders_enabled=os.getenv("SHUDDHO_ACTION_REMINDERS_ENABLED", "false").lower() == "true",
             action_recipients_enabled=os.getenv("SHUDDHO_ACTION_RECIPIENTS_ENABLED", "false").lower() == "true",
@@ -199,6 +203,8 @@ class Settings:
             max_daily_actions=int(os.getenv("SHUDDHO_COWORKER_DAILY_ACTIONS", "20")),
             max_action_recipients=int(os.getenv("SHUDDHO_ACTION_RECIPIENTS_MAX", "100")),
             max_active_agent_runs=int(os.getenv("SHUDDHO_COWORKER_ACTIVE_AGENT_RUNS", "2")),
+            max_active_browser_sessions=int(os.getenv("SHUDDHO_BROWSER_MAX_ACTIVE_SESSIONS", "2")),
+            browser_session_ttl_seconds=int(os.getenv("SHUDDHO_BROWSER_SESSION_TTL_SECONDS", "900")),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
             max_personal_goals=int(os.getenv("SHUDDHO_PERSONAL_GOALS_MAX", "100")),
             max_automations=int(os.getenv("SHUDDHO_AUTOMATIONS_MAX", "100")),
@@ -297,6 +303,15 @@ class Settings:
                     callback.username or callback.password or callback.query or callback.fragment or
                     callback.path != "/oauth/google/callback"):
                 raise ValueError("Actions require Google OAuth credentials and an HTTPS frontend /oauth/google/callback redirect URI")
+        if self.browser_enabled:
+            if not self.agent_runtime_v3_enabled:
+                raise ValueError("Browser broker requires Agent Runtime v3 (SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true)")
+            if not self.connector_trust_boundary_enabled:
+                raise ValueError("Browser broker requires SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
+            if not 1 <= self.max_active_browser_sessions <= 4:
+                raise ValueError("SHUDDHO_BROWSER_MAX_ACTIVE_SESSIONS must be between 1 and 4")
+            if not 60 <= self.browser_session_ttl_seconds <= 1800:
+                raise ValueError("SHUDDHO_BROWSER_SESSION_TTL_SECONDS must be between 60 and 1800")
         if self.agent_runtime_v3_enabled:
             if not self.agent_runtime_enabled or not self.intelligent_planner_enabled:
                 raise ValueError("Agent Runtime v3 requires SHUDDHO_AGENT_RUNTIME_ENABLED=true and SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
@@ -394,7 +409,7 @@ class Settings:
             raise ValueError("SHUDDHO_AUTH_ISSUER must be the HTTPS issuer of the managed identity provider")
         if min(self.max_daily_tasks, self.max_active_tasks, self.daily_token_budget,
                self.task_token_budget, self.max_account_bytes, self.max_daily_actions, self.max_action_recipients,
-               self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_personal_goals, self.max_automations, self.max_memory_facts,
+               self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_active_browser_sessions, self.browser_session_ttl_seconds, self.max_personal_goals, self.max_automations, self.max_memory_facts,
                self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_context_items, self.max_agent_context_item_bytes,
                self.max_agent_context_bytes, self.max_memory_proposals, self.max_agent_planner_calls, self.max_agent_v3_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens, self.agent_v3_planner_token_budget,
