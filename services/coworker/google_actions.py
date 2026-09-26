@@ -7,7 +7,7 @@ import hashlib
 import html
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.policy import SMTP
 from email.utils import format_datetime
@@ -406,8 +406,8 @@ class GoogleActions:
             }
         else:
             now = datetime.now(timezone.utc)
-            params["timeMin"] = (now.replace(microsecond=0) - __import__("datetime").timedelta(days=30)).isoformat()
-            params["timeMax"] = (now.replace(microsecond=0) + __import__("datetime").timedelta(days=180)).isoformat()
+            params["timeMin"] = (now.replace(microsecond=0) - timedelta(days=30)).isoformat()
+            params["timeMax"] = (now.replace(microsecond=0) + timedelta(days=180)).isoformat()
         result = await self.request(
             "GET",
             EVENTS_URL,
