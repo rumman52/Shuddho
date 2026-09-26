@@ -149,12 +149,32 @@ class AgentObservation(AgentModel):
     summary: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentMemoryProposal(AgentModel):
+    namespace: Namespace
+    key: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$")
+    value: str = Field(min_length=1, max_length=2000)
+    language: str = Field(default="auto", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
+    source_ids: list[str] = Field(min_length=1, max_length=5)
+
+    @field_validator("value")
+    @classmethod
+    def safe_value(cls, value: str) -> str:
+        return _safe_text(value)
+
+    @model_validator(mode="after")
+    def unique_sources(self):
+        if len(set(self.source_ids)) != len(self.source_ids):
+            raise ValueError("Memory proposal source IDs must be unique")
+        return self
+
+
 class AgentV3Decision(AgentModel):
     decision: Literal["next_step", "needs_input", "awaiting_approval", "wait", "blocked", "complete"]
     tool: str | None = Field(default=None, min_length=3, max_length=80, pattern=r"^[a-z][a-z0-9_.-]+$")
     objective: str | None = Field(default=None, min_length=3, max_length=500)
     message: str | None = Field(default=None, min_length=1, max_length=300)
     wait_seconds: int | None = Field(default=None, ge=1, le=60)
+    memory_proposal: AgentMemoryProposal | None = None
 
     @field_validator("objective", "message")
     @classmethod
@@ -178,6 +198,8 @@ class AgentV3Decision(AgentModel):
                 raise ValueError("Non-step decisions cannot select a tool or wait duration")
             if self.decision in {"needs_input", "blocked", "awaiting_approval"} and self.message is None:
                 raise ValueError(f"{self.decision} requires a message")
+        if self.memory_proposal is not None and self.decision not in {"next_step", "complete"}:
+            raise ValueError("Memory proposals are allowed only with next_step or complete decisions")
         return self
 
 

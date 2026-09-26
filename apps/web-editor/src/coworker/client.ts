@@ -52,6 +52,23 @@ export type PersonalAutomation = {
   schedule_applied_revision: number | null; schedule_applied_enabled: boolean; schedule_error_code: string | null;
   created_at: string; updated_at: string;
 };
+export type MemoryFact = {
+  id: string; namespace: "profile" | "preferences" | "project" | "organization" | "writing";
+  key: string; value: string; language: string; version: number; active: boolean;
+};
+export type MemoryProposal = {
+  id: string; run_id: string; namespace: MemoryFact["namespace"]; key: string; value: string; language: string;
+  source_refs: { source_id: string; type: string; document_id?: string; version_id?: string; sha256?: string }[];
+  state: "proposed" | "accepted" | "rejected" | "expired"; accepted_fact_id: string | null;
+  expires_at: string; created_at: string; reviewed_at: string | null;
+};
+export type AgentContext = {
+  enabled: boolean;
+  items: { source_id: string; label: string; excerpt: string; sha256: string; provenance: { document_id: string; version_id: string } }[];
+  invalidated: { source_id: string; label: string; reason: string }[];
+  memory: { facts: { namespace: string; key: string; value: string; language: string }[]; provenance: { id: string; version: number }[] };
+};
+
 export type AgentNotification = {
   id: string; automation_id: string | null; occurrence_id: string | null; kind: string; title: string; message: string;
   state: "delivered" | "read"; visible_at: string; read_at: string | null; created_at: string;
@@ -270,6 +287,11 @@ export class CoworkerClient {
   }
   notifications(signal?: AbortSignal) { return this.json<{ enabled: boolean; notifications: AgentNotification[] }>("/api/v1/notifications", { signal }); }
   readNotification(id: string) { return this.json<{ id: string; state: "read"; read_at: string }>(`/api/v1/notifications/${identifier(id)}/read`, { method: "POST" }); }
+  memory(signal?: AbortSignal) { return this.json<{ enabled: boolean; facts: MemoryFact[] }>("/api/v1/memory", { signal }); }
+  memoryProposals(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals: MemoryProposal[] }>("/api/v1/memory-proposals", { signal }); }
+  acceptMemoryProposal(id: string) { return this.json<{ proposal: MemoryProposal; fact: MemoryFact | null }>(`/api/v1/memory-proposals/${identifier(id)}/accept`, { method: "POST" }); }
+  rejectMemoryProposal(id: string) { return this.json<MemoryProposal>(`/api/v1/memory-proposals/${identifier(id)}/reject`, { method: "POST" }); }
+  agentContext(id: string, signal?: AbortSignal) { return this.json<AgentContext>(`/api/v1/agent-runs/${identifier(id)}/context`, { signal }); }
   agentTools(signal?: AbortSignal) { return this.json<{ enabled: boolean; tools: AgentTool[] }>("/api/v1/agent-tools", { signal }); }
   agentRuns(signal?: AbortSignal) { return this.json<{ runs: AgentRun[] }>("/api/v1/agent-runs", { signal }); }
   agentRun(id: string, signal?: AbortSignal) { return this.json<AgentRun>(`/api/v1/agent-runs/${identifier(id)}`, { signal }); }

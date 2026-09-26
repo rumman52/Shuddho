@@ -294,6 +294,28 @@ class MemoryFact(Base):
     )
 
 
+class MemoryProposal(Base):
+    __tablename__ = "cw_memory_proposals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    namespace: Mapped[str] = mapped_column(String(60))
+    key: Mapped[str] = mapped_column(String(100))
+    value: Mapped[str] = mapped_column(Text)
+    language: Mapped[str] = mapped_column(String(35), default="auto")
+    source_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    state: Mapped[str] = mapped_column(String(30), default="proposed")
+    accepted_fact_id: Mapped[str | None] = mapped_column(ForeignKey("cw_memory_facts.id"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index("cw_memory_proposals_owner_state", "owner_id", "state"),
+        Index("cw_memory_proposals_run_created", "run_id", "created_at"),
+    )
+
+
 class PersonalGoal(Base):
     __tablename__ = "cw_personal_goals"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

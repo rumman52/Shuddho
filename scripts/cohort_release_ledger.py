@@ -30,6 +30,7 @@ RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION = 16
 PERSONAL_GOALS_SCHEMA_VERSION = 17
 AUTOMATIONS_SCHEMA_VERSION = 18
 RUNTIME_V3_SCHEMA_VERSION = 19
+CONTEXT_RETRIEVAL_SCHEMA_VERSION = 20
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -150,6 +151,13 @@ RUNTIME_V3_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "runtime_v3_activation",
+}
+CONTEXT_RETRIEVAL_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "context_retrieval_activation",
 }
 
 
@@ -407,6 +415,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             PERSONAL_GOALS_SCHEMA_VERSION,
             AUTOMATIONS_SCHEMA_VERSION,
             RUNTIME_V3_SCHEMA_VERSION,
+            CONTEXT_RETRIEVAL_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -514,6 +523,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v18 event type.")
         if version == RUNTIME_V3_SCHEMA_VERSION and event_type != "runtime_v3_verified":
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v19 event type.")
+        if version == CONTEXT_RETRIEVAL_SCHEMA_VERSION and event_type != "context_retrieval_verified":
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v20 event type.")
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -556,6 +567,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             if version == AUTOMATIONS_SCHEMA_VERSION
             else RUNTIME_V3_ARTIFACT_KEYS
             if version == RUNTIME_V3_SCHEMA_VERSION
+            else CONTEXT_RETRIEVAL_ARTIFACT_KEYS
+            if version == CONTEXT_RETRIEVAL_SCHEMA_VERSION
             else RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:

@@ -14,6 +14,7 @@ from .agent_repository import AgentRepository
 from .goal_repository import GoalRepository
 from .automation_repository import AutomationRepository
 from .memory_repository import MemoryRepository
+from .context import ContextService
 from .recipient_repository import RecipientRepository
 from .retention import RetentionService
 
@@ -29,6 +30,7 @@ class Container:
     goals: GoalRepository | None = None
     automations: AutomationRepository | None = None
     memory: MemoryRepository | None = None
+    context: ContextService | None = None
     recipients: RecipientRepository | None = None
     retention: RetentionService | None = None
 
@@ -52,6 +54,13 @@ class Container:
             self.automations = AutomationRepository(self.repository.sessions, self.settings, self.agent)
         if self.memory is None:
             self.memory = MemoryRepository(self.repository.sessions, self.settings)
+        if self.context is None:
+            self.context = ContextService(
+                self.repository.sessions,
+                self.settings,
+                self.storage,
+                self.memory,
+            )
         if self.recipients is None:
             self.recipients = RecipientRepository(self.repository.sessions, self.settings)
         if self.retention is None:

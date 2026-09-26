@@ -152,6 +152,9 @@ class AgentRuntime:
         ]
         tools = intelligent_tool_names(self.container.settings, run["actions"])
         remaining = self.repo.v3_remaining_budget(run_id)
+        context_payload, context_sources = self.container.context.planner_context(
+            run["owner_id"], run_id
+        )
         dependencies = {
             "steps": [{
                 "ordinal": step["ordinal"],
@@ -159,6 +162,7 @@ class AgentRuntime:
                 "depends_on": step["depends_on"],
             } for step in current["steps"] if step["ordinal"] > 0],
             "consequential_actions_require_explicit_approval": True,
+            "context": context_payload,
         }
         if not tools and not self.repo.v3_can_complete(run_id):
             self.repo.v3_terminal(
@@ -195,6 +199,13 @@ class AgentRuntime:
                 cost_microusd=cost_microusd,
             )
             self.repo.set_planner_mode(run_id, "v3")
+            if decision.memory_proposal is not None:
+                self.container.memory.propose_from_agent(
+                    run["owner_id"],
+                    run_id,
+                    decision.memory_proposal,
+                    context_sources,
+                )
 
             if decision.decision == "next_step":
                 ordinal = self.repo.append_v3_step(

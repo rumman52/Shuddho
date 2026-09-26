@@ -268,6 +268,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "personal_goals": False,
         "automations": False,
         "runtime_v3": False,
+        "context_retrieval": False,
     }
 
     passed = evaluate_release(

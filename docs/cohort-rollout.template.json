@@ -31,7 +31,8 @@
     "action_social_publishing": false,
     "agent_linkedin_proposals": false,
     "automations": false,
-    "runtime_v3": false
+    "runtime_v3": false,
+    "context_retrieval": false
   },
   "rollback": {
     "runbook_reference": "deployment-runbook-or-ticket",
@@ -51,7 +52,8 @@
     "action_social_publishing_kill_switch": "SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false",
     "agent_linkedin_proposals_kill_switch": "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false",
     "automations_kill_switch": "SHUDDHO_AUTOMATIONS_ENABLED=false",
-    "runtime_v3_kill_switch": "SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false"
+    "runtime_v3_kill_switch": "SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false",
+    "context_retrieval_kill_switch": "SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false"
   },
   "monitoring": {
     "queue_age": "dashboard-or-alert-reference",
