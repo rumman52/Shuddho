@@ -270,6 +270,10 @@ class ExecutionGrant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
+        UniqueConstraint(
+            "action_id", "purpose", "preview_hash",
+            name="uq_cw_execution_grants_action_purpose_preview",
+        ),
         Index("cw_execution_grants_owner_state", "owner_id", "state"),
         Index("cw_execution_grants_action_created", "action_id", "created_at"),
         Index("cw_execution_grants_connection_state", "connection_id", "state"),
