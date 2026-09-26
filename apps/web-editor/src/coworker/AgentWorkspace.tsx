@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   CoworkerClient,
+  WorkspaceError,
   type AgentActionProposal,
   type AgentRun,
   type ConnectedAccount,
@@ -79,7 +80,12 @@ export default function AgentWorkspace({
       client.connections(controller.signal),
       client.memory(controller.signal),
       client.memoryProposals(controller.signal),
-      client.connectorReadGrants(controller.signal),
+      client.connectorReadGrants(controller.signal).catch(failure => {
+        if (failure instanceof WorkspaceError && failure.status === 404) {
+          return { enabled: false, grants: [] as ConnectorReadGrant[] };
+        }
+        throw failure;
+      }),
     ]).then(([tools, history, accounts, memory, proposals, reads]) => {
       if (controller.signal.aborted) return;
       setEnabled(tools.enabled);
