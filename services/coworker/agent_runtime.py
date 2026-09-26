@@ -3,6 +3,7 @@ from __future__ import annotations
 from .agent_planner import deterministic_plan, intelligent_tool_names, proposal_to_plan
 from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+from .agent_schemas import AgentObservation
 from .errors import CoworkerError
 from .runner import DocumentRunner
 from .schemas import ResearchOptions, TaskCreate
