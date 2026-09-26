@@ -8,7 +8,7 @@ from .errors import CoworkerError
 from .models import (
     Account, ActionProposal, ActionRecipient, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
-    Connection, DailyUsage, Document, DocumentVersion, ExternalAction, MemoryFact,
+    Connection, DailyUsage, Document, DocumentVersion, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
     PersonalGoalRevision, Step, Task, TaskEvent, ToolInvocation, ToolReceipt, Workspace, utcnow,
 )
@@ -156,6 +156,7 @@ class RetentionService:
 
             db.execute(delete(DocumentVersion).where(DocumentVersion.owner_id == owner))
             db.execute(delete(Document).where(Document.owner_id == owner))
+            db.execute(delete(MemoryProposal).where(MemoryProposal.owner_id == owner))
             db.execute(delete(MemoryFact).where(MemoryFact.owner_id == owner))
             db.execute(delete(ExternalAction).where(ExternalAction.owner_id == owner))
             db.execute(delete(OAuthAttempt).where(OAuthAttempt.owner_id == owner))
