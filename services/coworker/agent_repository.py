@@ -328,7 +328,7 @@ class AgentRepository:
                     "message": item.message,
                     "created_at": iso(item.created_at),
                 } for item in rows],
-                "terminal": run.state in {"completed", "failed", "cancelled"},
+                "terminal": run.state in {"completed", "failed", "cancelled", "needs_input", "blocked"},
                 "sequence": run.event_sequence,
             }
 
@@ -1181,10 +1181,18 @@ class AgentRepository:
             incomplete = db.scalar(select(func.count()).select_from(ToolInvocation).where(
                 ToolInvocation.run_id == run.id, ToolInvocation.state != "completed",
             ))
-            receipts = db.scalar(select(func.count()).select_from(ToolReceipt).where(
+            receipt_rows = db.scalars(select(ToolReceipt).where(
                 ToolReceipt.run_id == run.id, ToolReceipt.status == "completed",
-            ))
-            return incomplete == 0 and receipts == invocations
+            )).all()
+            if len(receipt_rows) != invocations:
+                return False
+            for receipt in receipt_rows:
+                summary = receipt.summary if isinstance(receipt.summary, dict) else {}
+                if summary.get("has_missing_information") is True:
+                    return False
+                if receipt.resource_type == "action" and summary.get("provider_confirmed") is not True:
+                    return False
+            return incomplete == 0
 
     def v3_terminal(self, run_id: str, state: str, message: str) -> None:
         if state not in {"needs_input", "blocked"}:
