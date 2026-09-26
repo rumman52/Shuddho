@@ -63,6 +63,10 @@
     "status": "pending",
     "evidence": ""
   },
+  "connector_trust_boundary": {
+    "status": "pending",
+    "evidence": ""
+  },
   "microsoft_actions": {
     "status": "pending",
     "evidence": ""
