@@ -250,8 +250,8 @@ class Settings:
                 raise ValueError("SHUDDHO_AGENT_V3_PLANNER_CALLS must be between 1 and 4")
             if self.agent_v3_planner_token_budget < self.max_agent_v3_planner_calls:
                 raise ValueError("SHUDDHO_AGENT_V3_PLANNER_TOKEN_BUDGET is too small for the planner-call limit")
-        if self.context_retrieval_enabled and not self.agent_runtime_enabled:
-            raise ValueError("Context retrieval requires SHUDDHO_AGENT_RUNTIME_ENABLED=true")
+        if self.context_retrieval_enabled and not self.agent_runtime_v3_enabled:
+            raise ValueError("Context retrieval requires SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true")
         if self.automations_enabled:
             if not self.personal_goals_enabled or not self.agent_runtime_enabled:
                 raise ValueError("Automations require SHUDDHO_PERSONAL_GOALS_ENABLED=true and SHUDDHO_AGENT_RUNTIME_ENABLED=true")
