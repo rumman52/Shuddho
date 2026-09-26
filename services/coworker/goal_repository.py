@@ -176,7 +176,7 @@ class GoalRepository:
         return self._transition(owner, goal_id, expected_revision, "paused", {"active", "blocked"})
 
     def resume(self, owner: str, goal_id: str, expected_revision: int) -> dict:
-        return self._transition(owner, goal_id, expected_revision, "active", {"paused"})
+        return self._transition(owner, goal_id, expected_revision, "active", {"draft", "paused"})
 
     def cancel(self, owner: str, goal_id: str, expected_revision: int) -> dict:
         return self._transition(owner, goal_id, expected_revision, "cancelled", {"draft", "active", "paused", "blocked"})
