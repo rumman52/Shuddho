@@ -26,6 +26,7 @@ ACTION_TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unkno
 ROLLBACK_MODES = {
     "global": ("global_kill_switch", "SHUDDHO_COWORKER_ENABLED"),
     "agent": ("agent_kill_switch", "SHUDDHO_AGENT_RUNTIME_ENABLED"),
+    "runtime_v3": ("runtime_v3_kill_switch", "SHUDDHO_AGENT_RUNTIME_V3_ENABLED"),
     "parallel": ("parallel_kill_switch", "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED"),
     "research": ("research_kill_switch", "SHUDDHO_RESEARCH_SERVICES_ENABLED"),
     "actions": ("actions_kill_switch", "SHUDDHO_ACTIONS_ENABLED"),
