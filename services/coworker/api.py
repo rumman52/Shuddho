@@ -27,6 +27,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTra
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
+from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -272,6 +273,7 @@ def runtime_manifest(
         "actions": settings.actions_enabled,
         "connector_trust_boundary": settings.connector_trust_boundary_enabled,
         "connector_reads": settings.connector_reads_enabled,
+        "browser": settings.browser_enabled,
         "action_attachments": settings.action_attachments_enabled,
         "action_reminders": settings.action_reminders_enabled,
         "action_recipients": settings.action_recipients_enabled,
@@ -301,6 +303,74 @@ def runtime_manifest(
             "max_users": settings.cohort_max_users,
         },
     }
+
+
+@router.post("/browser-sessions", status_code=201)
+def create_browser_session(
+    payload: BrowserSessionCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = services.browser.create(
+        identity.account_id,
+        payload,
+        idempotency_key,
+    )
+    response.headers["Location"] = f'/api/v1/browser-sessions/{value["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return value
+
+
+@router.get("/browser-sessions")
+def list_browser_sessions(identity: Identity, services: Services):
+    if not services.settings.browser_enabled:
+        return {"enabled": False, "sessions": []}
+    return {"enabled": True, "sessions": services.browser.list(identity.account_id)}
+
+
+@router.get("/browser-sessions/{session_id}")
+def get_browser_session(session_id: UUID, identity: Identity, services: Services):
+    return services.browser.get(identity.account_id, str(session_id))
+
+
+@router.post("/browser-sessions/{session_id}/navigate", status_code=202)
+def prepare_browser_navigation(
+    session_id: UUID,
+    payload: BrowserNavigateCreate,
+    identity: Identity,
+    services: Services,
+):
+    return services.browser.prepare_navigation(
+        identity.account_id,
+        str(session_id),
+        payload,
+    )
+
+
+@router.post("/browser-sessions/{session_id}/takeover")
+def request_browser_takeover(
+    session_id: UUID,
+    payload: BrowserTakeoverCreate,
+    identity: Identity,
+    services: Services,
+):
+    return services.browser.request_takeover(
+        identity.account_id,
+        str(session_id),
+        payload.reason,
+    )
+
+
+@router.post("/browser-sessions/{session_id}/resume")
+def resume_browser_session(session_id: UUID, identity: Identity, services: Services):
+    return services.browser.resume(identity.account_id, str(session_id))
+
+
+@router.delete("/browser-sessions/{session_id}")
+def cancel_browser_session(session_id: UUID, identity: Identity, services: Services):
+    return services.browser.cancel(identity.account_id, str(session_id))
 
 
 @router.get("/agent-tools")
