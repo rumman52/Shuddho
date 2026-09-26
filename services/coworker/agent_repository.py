@@ -7,11 +7,11 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select
 
-from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, action_proposal_hash
+from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, AgentV3Decision, action_proposal_hash
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -180,6 +180,14 @@ class AgentRepository:
                 state="queued",
                 phase="planning",
                 message="Agent run created. Waiting for the bounded planner runtime.",
+                runtime_version=(
+                    3 if self.settings.agent_runtime_v3_enabled
+                    else 2 if (
+                        self.settings.agent_dependency_graph_enabled
+                        and self.settings.agent_parallel_execution_enabled
+                    )
+                    else 1
+                ),
                 deadline_at=now + timedelta(seconds=self.settings.agent_run_timeout_seconds),
             )
             db.add(run)
@@ -231,6 +239,10 @@ class AgentRepository:
             ActionProposal.agent_run_id == run.id,
             ActionProposal.owner_id == run.owner_id,
         ).order_by(ActionProposal.created_at)).all()
+        decisions = db.scalars(select(AgentDecision).where(
+            AgentDecision.run_id == run.id,
+            AgentDecision.owner_id == run.owner_id,
+        ).order_by(AgentDecision.sequence)).all()
         documents = list(db.scalars(select(DocumentVersion.document_id).where(
             DocumentVersion.id.in_(run.input_versions), DocumentVersion.owner_id == run.owner_id,
         ))) if run.input_versions else []
@@ -253,6 +265,22 @@ class AgentRepository:
             "planner_calls": run.planner_calls,
             "planner_tokens": run.planner_tokens,
             "planner_mode": run.planner_mode,
+            "runtime_version": run.runtime_version,
+            "planner_actual_tokens": run.planner_actual_tokens,
+            "planner_cost_microusd": run.planner_cost_microusd,
+            "decisions": [{
+                "sequence": item.sequence,
+                "planner_call": item.planner_call,
+                "decision": item.decision_type,
+                "payload": item.payload,
+                "model": item.model,
+                "prompt_sha256": item.prompt_sha256,
+                "tool_schema_sha256": item.tool_schema_sha256,
+                "observation_count": item.observation_count,
+                "total_tokens": item.total_tokens,
+                "cost_microusd": item.cost_microusd,
+                "created_at": iso(item.created_at),
+            } for item in decisions],
             "created_at": iso(run.created_at),
             "updated_at": iso(run.updated_at),
             "deadline_at": iso(run.deadline_at),
@@ -311,9 +339,17 @@ class AgentRepository:
                 raise not_found()
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
-            if run.planner_calls >= self.settings.max_agent_planner_calls:
+            max_calls = (
+                self.settings.max_agent_v3_planner_calls
+                if run.runtime_version == 3 else self.settings.max_agent_planner_calls
+            )
+            token_budget = (
+                self.settings.agent_v3_planner_token_budget
+                if run.runtime_version == 3 else self.settings.agent_planner_token_budget
+            )
+            if run.planner_calls >= max_calls:
                 raise CoworkerError("planner_call_limit", "This agent run reached its planner call limit.", 429)
-            if reserve_tokens < 1 or run.planner_tokens + reserve_tokens > self.settings.agent_planner_token_budget:
+            if reserve_tokens < 1 or run.planner_tokens + reserve_tokens > token_budget:
                 raise CoworkerError("planner_budget", "This agent run reached its planner token budget.", 429)
             if db.scalar(select(Account.id).where(Account.id == run.owner_id).with_for_update()) is None:
                 raise not_found()
@@ -336,18 +372,29 @@ class AgentRepository:
             self._audit(db, run.owner_id, run.id, "agent_planner_budget_reserved")
             return {"call": run.planner_calls, "reserved_tokens": reserve_tokens, "day": day}
 
-    def settle_planner_capacity(self, run_id: str, call: int, actual_tokens: int | None) -> None:
+    def settle_planner_capacity(
+        self,
+        run_id: str,
+        call: int,
+        actual_tokens: int | None,
+        cost_microusd: int | None = None,
+    ) -> None:
         with self.sessions.begin() as db:
             settle_provider_lease(
                 db, kind="planner", resource_id=run_id, sequence=call,
                 actual_tokens=actual_tokens,
             )
+            run = db.get(AgentRun, run_id)
+            if run is not None and actual_tokens is not None:
+                run.planner_actual_tokens += max(0, int(actual_tokens))
+                if cost_microusd is not None:
+                    run.planner_cost_microusd += max(0, int(cost_microusd))
 
     def release_planner_capacity(self, run_id: str, call: int) -> None:
         self.settle_planner_capacity(run_id, call, None)
 
     def set_planner_mode(self, run_id: str, mode: str):
-        if mode not in {"deterministic", "intelligent", "fallback", "replanned"}:
+        if mode not in {"deterministic", "intelligent", "fallback", "replanned", "v3"}:
             raise CoworkerError("planner_mode", "Unsupported planner mode.", 422)
         with self.sessions.begin() as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
@@ -828,6 +875,7 @@ class AgentRepository:
                              "state": action_rows[action_id].state}
                             for action_id in run.action_ids if action_id in action_rows],
                 "state": run.state, "phase": run.phase, "cancel_requested": run.cancel_requested,
+                "runtime_version": run.runtime_version,
             }
 
     def handoff_context(self, owner: str, run_id: str, step_id: str) -> dict:
@@ -939,6 +987,223 @@ class AgentRepository:
                 "consequential": invocation.consequential,
                 "approval_required": invocation.approval_required,
             }
+
+    def verified_observations(self, owner: str, run_id: str) -> list[dict]:
+        """Return bounded, owner-scoped evidence from persisted receipts only."""
+        with self.sessions() as db:
+            run = self._run(db, owner, run_id)
+            rows = db.execute(select(AgentStep, ToolInvocation, ToolReceipt).join(
+                ToolInvocation, ToolInvocation.step_id == AgentStep.id,
+            ).join(
+                ToolReceipt, ToolReceipt.invocation_id == ToolInvocation.id,
+            ).where(
+                AgentStep.run_id == run.id,
+                AgentStep.owner_id == owner,
+                ToolInvocation.owner_id == owner,
+                ToolReceipt.owner_id == owner,
+                ToolReceipt.status == "completed",
+            ).order_by(AgentStep.ordinal)).all()
+            result = []
+            for step, invocation, receipt in rows[:8]:
+                summary = receipt.summary if isinstance(receipt.summary, dict) else {}
+                safe_summary = {
+                    key: summary[key]
+                    for key in (
+                        "task_state", "artifact_count", "has_missing_information",
+                        "action_state", "provider_confirmed",
+                    )
+                    if key in summary and isinstance(summary[key], (str, int, bool, type(None)))
+                }
+                if receipt.resource_type == "task" and receipt.resource_id:
+                    task = db.scalar(select(Task).where(
+                        Task.id == receipt.resource_id,
+                        Task.owner_id == owner,
+                        Task.agent_run_id == run.id,
+                        Task.agent_step_id == step.id,
+                    ))
+                    draft = db.get(Step, (task.id, "draft")) if task is not None else None
+                    if task is not None and draft is not None and isinstance(draft.output.get("draft"), dict):
+                        encoded = json.dumps(
+                            draft.output["draft"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                        )
+                        safe_summary["result_excerpt"] = encoded[:1800]
+                status = (
+                    "provider_confirmed"
+                    if receipt.resource_type == "action" and safe_summary.get("provider_confirmed") is True
+                    else "needs_input"
+                    if safe_summary.get("has_missing_information") is True
+                    else "completed"
+                )
+                result.append({
+                    "ordinal": step.ordinal,
+                    "tool": invocation.tool_name,
+                    "status": status,
+                    "resource_type": receipt.resource_type,
+                    "summary": safe_summary,
+                })
+            return result
+
+    def v3_remaining_budget(self, run_id: str) -> dict:
+        with self.sessions() as db:
+            run = db.get(AgentRun, run_id)
+            if run is None:
+                raise not_found()
+            step_count = db.scalar(select(func.count()).select_from(ToolInvocation).where(
+                ToolInvocation.run_id == run.id,
+            ))
+            return {
+                "tool_steps_remaining": max(0, 8 - int(step_count or 0)),
+                "planner_calls_remaining": max(
+                    0, self.settings.max_agent_v3_planner_calls - run.planner_calls
+                ),
+                "planner_tokens_remaining": max(
+                    0, self.settings.agent_v3_planner_token_budget - run.planner_tokens
+                ),
+            }
+
+    def append_v3_step(self, owner: str, run_id: str, tool_name: str, objective: str) -> int:
+        """Translate one model-selected registered tool into server-owned arguments."""
+        from .agent_planner import action_selection_candidates, intelligent_tool_names
+
+        with self.sessions.begin() as db:
+            run = self._run(db, owner, run_id, lock=True)
+            if run.runtime_version != 3:
+                raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
+            if run.cancel_requested or run.state == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            existing = db.scalar(select(func.count()).select_from(ToolInvocation).where(
+                ToolInvocation.run_id == run.id,
+            ))
+            if existing >= 8:
+                raise CoworkerError("agent_step_limit", "This agent run reached its tool-step limit.", 429)
+            action_rows = {action.id: action for action in db.scalars(select(ExternalAction).where(
+                ExternalAction.id.in_(run.action_ids), ExternalAction.owner_id == owner,
+            ))} if run.action_ids else {}
+            actions = [{
+                "id": action_rows[action_id].id,
+                "kind": action_rows[action_id].kind,
+                "state": action_rows[action_id].state,
+            } for action_id in run.action_ids if action_id in action_rows]
+            allowed = set(intelligent_tool_names(self.settings, actions))
+            if tool_name not in allowed:
+                raise CoworkerError("planner_tool_scope", "The planner selected a tool outside the allowed registry.", 409)
+
+            candidates = action_selection_candidates(actions) if self.settings.agent_action_selection_enabled else {}
+            selected = candidates.get(tool_name)
+            if selected is not None:
+                actual_name = "email.send" if selected["kind"] == "email_send" else "calendar.create"
+                arguments = {"action_id": selected["id"]}
+            else:
+                actual_name = tool_name
+                run_docs = list(self._run_document_ids(db, run))
+                arguments = {
+                    "instruction": objective,
+                    "notes": run.goal if actual_name == "report.create" else "",
+                    "document_ids": run_docs,
+                    "output_language": run.output_language,
+                }
+                if actual_name == "research.search":
+                    arguments["query"] = objective[:400]
+                    arguments["time_range"] = "any"
+
+            spec = tool(actual_name)
+            if not spec.enabled(self.settings):
+                raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
+            validated = spec.validate(arguments)
+            ordinal = int(existing or 0) + 1
+            planned = AgentPlanStep(tool=actual_name, arguments=validated.model_dump(mode="json"))
+            step = AgentStep(
+                id=str(uuid4()), run_id=run.id, owner_id=owner, ordinal=ordinal,
+                tool_name=spec.name, state="planned",
+                input={"arguments": validated.model_dump(mode="json"), "v3_objective": objective},
+                output={},
+                depends_on_ordinals=self._dependency_ordinals(db, run.id, owner, ordinal, planned),
+            )
+            db.add(step); db.flush()
+            db.add(ToolInvocation(
+                id=str(uuid4()), run_id=run.id, step_id=step.id, owner_id=owner,
+                tool_name=spec.name, tool_version=spec.version,
+                arguments=validated.model_dump(mode="json"), state="prepared",
+                consequential=spec.consequential, approval_required=spec.approval_required,
+            ))
+            self._event(db, run, "planning", "v3_decision", f"Runtime v3 selected bounded step {ordinal}.")
+            return ordinal
+
+    def record_v3_decision(
+        self,
+        run_id: str,
+        decision: AgentV3Decision,
+        *,
+        planner_call: int,
+        model: str,
+        prompt_sha256: str,
+        tool_schema_sha256: str,
+        observation_count: int,
+        total_tokens: int | None,
+        cost_microusd: int | None,
+    ) -> None:
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            if run.runtime_version != 3:
+                raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
+            existing = db.scalar(select(AgentDecision).where(
+                AgentDecision.run_id == run.id,
+                AgentDecision.planner_call == planner_call,
+            ))
+            if existing is not None:
+                return
+            sequence = db.scalar(select(func.count()).select_from(AgentDecision).where(
+                AgentDecision.run_id == run.id,
+            )) + 1
+            db.add(AgentDecision(
+                run_id=run.id, sequence=sequence, owner_id=run.owner_id,
+                planner_call=planner_call, decision_type=decision.decision,
+                payload=decision.model_dump(mode="json", exclude_none=True),
+                model=model[:120], prompt_sha256=prompt_sha256,
+                tool_schema_sha256=tool_schema_sha256,
+                observation_count=observation_count,
+                total_tokens=total_tokens, cost_microusd=cost_microusd,
+            ))
+            self._audit(db, run.owner_id, run.id, "agent_v3_decision_recorded")
+
+    def v3_can_complete(self, run_id: str) -> bool:
+        with self.sessions() as db:
+            run = db.get(AgentRun, run_id)
+            if run is None:
+                raise not_found()
+            invocations = db.scalar(select(func.count()).select_from(ToolInvocation).where(
+                ToolInvocation.run_id == run.id,
+            ))
+            if not invocations:
+                return False
+            incomplete = db.scalar(select(func.count()).select_from(ToolInvocation).where(
+                ToolInvocation.run_id == run.id, ToolInvocation.state != "completed",
+            ))
+            receipts = db.scalar(select(func.count()).select_from(ToolReceipt).where(
+                ToolReceipt.run_id == run.id, ToolReceipt.status == "completed",
+            ))
+            return incomplete == 0 and receipts == invocations
+
+    def v3_terminal(self, run_id: str, state: str, message: str) -> None:
+        if state not in {"needs_input", "blocked"}:
+            raise CoworkerError("agent_state", "Unsupported Runtime v3 terminal state.", 422)
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            if run.state in {"completed", "failed", "cancelled", "needs_input", "blocked"}:
+                return
+            self._event(db, run, state, state, message[:300])
+            self._audit(db, run.owner_id, run.id, f"agent_run_{state}")
+
+    def v3_approval_waiting(self, run_id: str) -> bool:
+        with self.sessions() as db:
+            return db.scalar(select(func.count()).select_from(ToolInvocation).where(
+                ToolInvocation.run_id == run_id,
+                ToolInvocation.state == "awaiting_approval",
+            )) > 0
 
     def begin_invocation(self, run_id: str, ordinal: int):
         with self.sessions.begin() as db:
@@ -1084,5 +1349,17 @@ class AgentRepository:
             ))
             if remaining:
                 raise CoworkerError("agent_incomplete", "The agent run still has unfinished steps.", 409)
+            completed_invocations = db.scalar(select(func.count()).select_from(ToolInvocation).where(
+                ToolInvocation.run_id == run_id, ToolInvocation.state == "completed",
+            ))
+            verified_receipts = db.scalar(select(func.count()).select_from(ToolReceipt).where(
+                ToolReceipt.run_id == run_id, ToolReceipt.status == "completed",
+            ))
+            if completed_invocations != verified_receipts:
+                raise CoworkerError(
+                    "agent_unverified_completion",
+                    "The agent run cannot complete without one verified receipt per completed tool.",
+                    409,
+                )
             self._event(db, run, "completed", "complete", "Agent run completed.")
             self._audit(db, run.owner_id, run.id, "agent_run_completed")
