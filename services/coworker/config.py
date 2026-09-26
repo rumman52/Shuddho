@@ -313,7 +313,7 @@ class Settings:
             raise ValueError("SHUDDHO_AUTH_ISSUER must be the HTTPS issuer of the managed identity provider")
         if min(self.max_daily_tasks, self.max_active_tasks, self.daily_token_budget,
                self.task_token_budget, self.max_account_bytes, self.max_daily_actions, self.max_action_recipients,
-               self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_personal_goals, self.max_memory_facts,
+               self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_personal_goals, self.max_automations, self.max_memory_facts,
                self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens,
                self.max_agent_handoff_bytes, self.max_agent_handoff_sources,
