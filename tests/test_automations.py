@@ -12,6 +12,7 @@ jwt = pytest.importorskip("jwt")
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
@@ -21,7 +22,7 @@ from services.coworker.auth import JwtVerifier
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.migrate import upgrade
-from services.coworker.models import Automation, AutomationScheduleOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, Automation, AutomationScheduleOutbox, PersonalGoal, utcnow
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -234,7 +235,9 @@ def test_account_erasure_removes_goals_and_automation_state(automation_client, a
     client, headers = automation_client
     auth = headers()
     goal, automation = create_goal_and_automation(client, auth)
-    owner_id = client.get("/api/v1/account", headers=auth).json()["account_id"]
+    with automation_container.repository.sessions() as db:
+        owner_id = db.scalar(select(Account.id).where(Account.subject == "alice"))
+    assert owner_id
 
     result = automation_container.retention.erase_account(owner_id)
     assert result["database_erased"] is True
