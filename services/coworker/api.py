@@ -27,7 +27,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTra
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
-from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate
+from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerNetworkCheck, BrowserWorkerObservation
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -371,6 +371,43 @@ def resume_browser_session(session_id: UUID, identity: Identity, services: Servi
 @router.delete("/browser-sessions/{session_id}")
 def cancel_browser_session(session_id: UUID, identity: Identity, services: Services):
     return services.browser.cancel(identity.account_id, str(session_id))
+
+
+@router.post("/internal/browser-worker/claim")
+def claim_browser_commands(payload: BrowserWorkerClaim, request: Request, services: Services):
+    if request.headers.get("X-Shuddho-Browser-Worker-Token") != services.settings.browser_worker_token:
+        raise CoworkerError("browser_worker_unauthorized", "Browser worker authentication failed.", 403)
+    return {"commands": services.browser.claim_commands(payload.worker_id, payload.limit)}
+
+
+@router.post("/internal/browser-worker/network-check")
+def browser_worker_network_check(payload: BrowserWorkerNetworkCheck, request: Request, services: Services):
+    if request.headers.get("X-Shuddho-Browser-Worker-Token") != services.settings.browser_worker_token:
+        raise CoworkerError("browser_worker_unauthorized", "Browser worker authentication failed.", 403)
+    return services.browser.validate_worker_network_target(payload.url, payload.resolved_ips)
+
+
+@router.post("/internal/browser-worker/commands/{command_id}/complete")
+def complete_browser_command(command_id: UUID, payload: BrowserWorkerObservation, request: Request, services: Services):
+    if request.headers.get("X-Shuddho-Browser-Worker-Token") != services.settings.browser_worker_token:
+        raise CoworkerError("browser_worker_unauthorized", "Browser worker authentication failed.", 403)
+    return services.browser.complete_command(
+        payload.worker_id,
+        str(command_id),
+        {
+            "final_url": payload.final_url,
+            "title": payload.title,
+            "redirect_chain": payload.redirect_chain,
+            "resolved_ips": payload.resolved_ips,
+        },
+    )
+
+
+@router.post("/internal/browser-worker/commands/{command_id}/fail")
+def fail_browser_command(command_id: UUID, payload: BrowserWorkerFailure, request: Request, services: Services):
+    if request.headers.get("X-Shuddho-Browser-Worker-Token") != services.settings.browser_worker_token:
+        raise CoworkerError("browser_worker_unauthorized", "Browser worker authentication failed.", 403)
+    return services.browser.fail_command(payload.worker_id, str(command_id), payload.error_code)
 
 
 @router.get("/agent-tools")
