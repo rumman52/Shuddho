@@ -1083,6 +1083,12 @@ class AgentRepository:
                 raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            placeholder = db.scalar(select(AgentStep).where(
+                AgentStep.run_id == run.id, AgentStep.owner_id == owner, AgentStep.ordinal == 0,
+            ))
+            if placeholder is not None:
+                db.delete(placeholder)
+                db.flush()
             existing = db.scalar(select(func.count()).select_from(ToolInvocation).where(
                 ToolInvocation.run_id == run.id,
             ))
