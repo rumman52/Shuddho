@@ -387,10 +387,20 @@ def claim_browser_commands(payload: BrowserWorkerClaim, request: Request, servic
     return {"commands": services.browser.claim_commands(payload.worker_id, payload.limit)}
 
 
-@router.post("/internal/browser-worker/network-check")
-def browser_worker_network_check(payload: BrowserWorkerNetworkCheck, request: Request, services: Services):
+@router.post("/internal/browser-worker/commands/{command_id}/network-check")
+def browser_worker_network_check(
+    command_id: UUID,
+    payload: BrowserWorkerNetworkCheck,
+    request: Request,
+    services: Services,
+):
     require_browser_worker(request, services)
-    return services.browser.validate_worker_network_target(payload.url, payload.resolved_ips)
+    return services.browser.validate_worker_network_target(
+        payload.worker_id,
+        str(command_id),
+        payload.url,
+        payload.resolved_ips,
+    )
 
 
 @router.post("/internal/browser-worker/commands/{command_id}/complete")
