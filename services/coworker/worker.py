@@ -271,6 +271,16 @@ class Dispatcher:
                         int(desired["desired_revision"]),
                         "temporal_schedule_unavailable",
                     )
+            for buffered in await asyncio.to_thread(automations.claim_buffered_occurrences):
+                try:
+                    await asyncio.to_thread(
+                        automations.accept_occurrence,
+                        str(buffered["automation_id"]),
+                        int(buffered["revision"]),
+                        datetime.fromisoformat(str(buffered["due_at"]).replace("Z", "+00:00")),
+                    )
+                except Exception:
+                    logger.exception("Buffered automation occurrence could not resume.")
             for notification_id in await asyncio.to_thread(automations.claim_notifications):
                 await asyncio.to_thread(automations.deliver_notification, notification_id)
         for action_id in await asyncio.to_thread(actions.claim_outbox):
