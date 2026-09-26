@@ -67,11 +67,12 @@ def _snippet(text: str, goal: str, limit: int) -> str:
 class ContextService:
     """Owner-scoped, deletion-aware context over resources already bound to a run."""
 
-    def __init__(self, sessions, settings, storage, memory):
+    def __init__(self, sessions, settings, storage, memory, connector_reads=None):
         self.sessions = sessions
         self.settings = settings
         self.storage = storage
         self.memory = memory
+        self.connector_reads = connector_reads
 
     def _run_and_sources(self, owner: str, run_id: str) -> tuple[AgentRun, list[dict]]:
         with self.sessions() as db:
@@ -180,6 +181,101 @@ class ContextService:
                 "version_id": source["version_id"],
                 "sha256": source["sha256"],
             }
+        if (
+            self.settings.connector_reads_enabled
+            and self.connector_reads is not None
+            and list(run.connector_read_grant_ids or [])
+        ):
+            for grant_id in list(run.connector_read_grant_ids or []):
+                if len(items) >= self.settings.max_agent_context_items or remaining <= 0:
+                    break
+                try:
+                    snapshots = self.connector_reads.repo.snapshots(
+                        owner,
+                        grant_id,
+                        limit=min(
+                            8,
+                            self.settings.max_agent_context_items - len(items),
+                        ),
+                    )
+                except CoworkerError as error:
+                    invalidated.append({
+                        "source_id": "connector-" + grant_id[:8],
+                        "label": "Connected source",
+                        "reason": error.code,
+                    })
+                    continue
+                for snapshot in snapshots:
+                    if len(items) >= self.settings.max_agent_context_items or remaining <= 0:
+                        break
+                    payload = snapshot.get("payload")
+                    if not isinstance(payload, dict):
+                        continue
+                    kind = payload.get("kind")
+                    if kind == "email":
+                        text = "\n".join([
+                            "Email metadata",
+                            "From: " + str(payload.get("from") or ""),
+                            "To: " + str(payload.get("to") or ""),
+                            "Cc: " + str(payload.get("cc") or ""),
+                            "Subject: " + str(payload.get("subject") or ""),
+                            "Date: " + str(payload.get("date") or ""),
+                            "Snippet: " + str(payload.get("snippet") or ""),
+                        ])
+                        label = "Connected email · " + (
+                            str(payload.get("subject") or "No subject")[:80]
+                        )
+                    elif kind == "calendar_event":
+                        text = "\n".join([
+                            "Calendar event",
+                            "Title: " + str(payload.get("summary") or ""),
+                            "When: " + json.dumps(
+                                {
+                                    "start": payload.get("start") or {},
+                                    "end": payload.get("end") or {},
+                                },
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                            "Location: " + str(payload.get("location") or ""),
+                            "Description: " + str(payload.get("description") or ""),
+                        ])
+                        label = "Connected calendar · " + (
+                            str(payload.get("summary") or "Untitled event")[:80]
+                        )
+                    else:
+                        continue
+                    excerpt_limit = min(
+                        self.settings.max_agent_context_item_bytes,
+                        remaining,
+                    )
+                    excerpt = _snippet(text, run.goal, excerpt_limit)
+                    if not excerpt:
+                        continue
+                    source_id = "conn-" + snapshot["id"][:12]
+                    used = len(excerpt.encode("utf-8"))
+                    remaining -= used
+                    items.append({
+                        "source_id": source_id,
+                        "label": label,
+                        "excerpt": excerpt,
+                        "sha256": snapshot["sha256"],
+                        "provenance": {
+                            "grant_id": grant_id,
+                            "snapshot_id": snapshot["id"],
+                            "provider": snapshot["provider"],
+                            "capability": snapshot["capability"],
+                        },
+                    })
+                    source_map[source_id] = {
+                        "type": "connector_snapshot",
+                        "grant_id": grant_id,
+                        "snapshot_id": snapshot["id"],
+                        "provider": snapshot["provider"],
+                        "capability": snapshot["capability"],
+                        "sha256": snapshot["sha256"],
+                    }
+
         return {
             "enabled": True,
             "items": items,
