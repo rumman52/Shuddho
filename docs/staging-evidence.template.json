@@ -106,5 +106,9 @@
   "action_proposals": {
     "status": "pending",
     "evidence": ""
+  },
+  "automations": {
+    "status": "pending",
+    "evidence": ""
   }
 }
