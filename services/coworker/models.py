@@ -280,6 +280,82 @@ class ExecutionGrant(Base):
     )
 
 
+class ConnectorReadGrant(Base):
+    __tablename__ = "cw_connector_read_grants"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("cw_connections.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    provider: Mapped[str] = mapped_column(String(20))
+    capability: Mapped[str] = mapped_column(String(30))
+    operation: Mapped[str] = mapped_column(String(60))
+    contract_version: Mapped[str] = mapped_column(String(20))
+    audience: Mapped[str] = mapped_column(String(80))
+    required_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    purpose: Mapped[str] = mapped_column(String(40), default="agent_context")
+    destination: Mapped[str] = mapped_column(String(60), default="planner_context")
+    state: Mapped[str] = mapped_column(String(20), default="active")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_id", "idempotency_key",
+            name="uq_cw_connector_read_grants_owner_idempotency",
+        ),
+        Index("cw_connector_read_grants_owner_state", "owner_id", "state"),
+        Index("cw_connector_read_grants_connection_state", "connection_id", "state"),
+    )
+
+
+class ConnectorCursor(Base):
+    __tablename__ = "cw_connector_cursors"
+    grant_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_connector_read_grants.id"), primary_key=True
+    )
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("cw_connections.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    capability: Mapped[str] = mapped_column(String(30))
+    cursor: Mapped[str | None] = mapped_column(String(1024))
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    state: Mapped[str] = mapped_column(String(20), default="active")
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        Index("cw_connector_cursors_owner_updated", "owner_id", "updated_at"),
+        Index("cw_connector_cursors_connection", "connection_id"),
+    )
+
+
+class ConnectorSnapshot(Base):
+    __tablename__ = "cw_connector_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    grant_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_connector_read_grants.id"), index=True
+    )
+    connection_id: Mapped[str] = mapped_column(ForeignKey("cw_connections.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    capability: Mapped[str] = mapped_column(String(30))
+    provider_resource_id: Mapped[str] = mapped_column(String(512))
+    provider_version: Mapped[str] = mapped_column(String(128))
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(20), default="active")
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint(
+            "grant_id", "provider_resource_id",
+            name="uq_cw_connector_snapshots_grant_resource",
+        ),
+        Index("cw_connector_snapshots_owner_updated", "owner_id", "updated_at"),
+        Index("cw_connector_snapshots_grant_state", "grant_id", "state"),
+    )
+
+
 class ActionProposal(Base):
     __tablename__ = "cw_action_proposals"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -493,6 +569,7 @@ class AgentRun(Base):
     input_versions: Mapped[list[str]] = mapped_column(JSON, default=list)
     action_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     memory_namespaces: Mapped[list[str]] = mapped_column(JSON, default=list)
+    connector_read_grant_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     state: Mapped[str] = mapped_column(String(30), default="queued")
     phase: Mapped[str] = mapped_column(String(30), default="planning")
     message: Mapped[str] = mapped_column(String(300), default="Queued for planning.")
