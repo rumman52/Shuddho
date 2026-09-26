@@ -33,6 +33,7 @@ class Settings:
     research_services_enabled: bool = False
     actions_enabled: bool = False
     connector_trust_boundary_enabled: bool = False
+    connector_reads_enabled: bool = False
     action_attachments_enabled: bool = False
     action_reminders_enabled: bool = False
     action_recipients_enabled: bool = False
@@ -143,6 +144,7 @@ class Settings:
             research_services_enabled=os.getenv("SHUDDHO_RESEARCH_SERVICES_ENABLED", "false").lower() == "true",
             actions_enabled=os.getenv("SHUDDHO_ACTIONS_ENABLED", "false").lower() == "true",
             connector_trust_boundary_enabled=os.getenv("SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED", "false").lower() == "true",
+            connector_reads_enabled=os.getenv("SHUDDHO_CONNECTOR_READS_ENABLED", "false").lower() == "true",
             action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
             action_reminders_enabled=os.getenv("SHUDDHO_ACTION_REMINDERS_ENABLED", "false").lower() == "true",
             action_recipients_enabled=os.getenv("SHUDDHO_ACTION_RECIPIENTS_ENABLED", "false").lower() == "true",
@@ -237,6 +239,11 @@ class Settings:
                 )
         if self.connector_trust_boundary_enabled and not self.actions_enabled:
             raise ValueError("Connector trust boundary requires SHUDDHO_ACTIONS_ENABLED=true")
+        if self.connector_reads_enabled:
+            if not self.actions_enabled or not self.connector_trust_boundary_enabled:
+                raise ValueError("Connector reads require SHUDDHO_ACTIONS_ENABLED=true and SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
+            if not self.context_retrieval_enabled or not self.agent_runtime_v3_enabled:
+                raise ValueError("Connector reads require SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=true and SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true")
         if self.actions_enabled:
             from .action_security import TokenVault
             TokenVault(self.connector_encryption_key)
