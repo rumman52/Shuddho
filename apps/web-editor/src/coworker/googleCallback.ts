@@ -23,7 +23,7 @@ export function googleAuthorizationURL(value: string, state: string, origin: str
   return url.href;
 }
 
-export async function beginGoogleConnection(client: CoworkerClient, account: string, capability: "email" | "calendar" | "drive") {
+export async function beginGoogleConnection(client: CoworkerClient, account: string, capability: "email" | "calendar" | "drive" | "email_read" | "calendar_read") {
   const result = await client.connectGoogle(capability);
   const url = googleAuthorizationURL(result.authorization_url, result.state, window.location.origin);
   try { sessionStorage.setItem(storageKey, JSON.stringify({ state: result.state, account })); }
