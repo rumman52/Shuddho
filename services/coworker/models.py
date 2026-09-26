@@ -250,6 +250,32 @@ class ExternalAction(Base):
     )
 
 
+class ExecutionGrant(Base):
+    __tablename__ = "cw_execution_grants"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    action_id: Mapped[str] = mapped_column(ForeignKey("cw_external_actions.id"), index=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("cw_connections.id"), index=True)
+    purpose: Mapped[str] = mapped_column(String(20))
+    provider: Mapped[str] = mapped_column(String(20))
+    capability: Mapped[str] = mapped_column(String(20))
+    action_kind: Mapped[str] = mapped_column(String(30))
+    action_version: Mapped[str] = mapped_column(String(20))
+    audience: Mapped[str] = mapped_column(String(80))
+    required_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    destinations_sha256: Mapped[str] = mapped_column(String(64))
+    preview_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(20), default="active")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index("cw_execution_grants_owner_state", "owner_id", "state"),
+        Index("cw_execution_grants_action_created", "action_id", "created_at"),
+        Index("cw_execution_grants_connection_state", "connection_id", "state"),
+    )
+
+
 class ActionProposal(Base):
     __tablename__ = "cw_action_proposals"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
