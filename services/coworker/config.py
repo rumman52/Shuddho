@@ -305,7 +305,7 @@ class Settings:
                 raise ValueError("Actions require Google OAuth credentials and an HTTPS frontend /oauth/google/callback redirect URI")
         if self.browser_enabled:
             if not self.agent_runtime_v3_enabled:
-                raise ValueError("Browser broker requires SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true")
+                raise ValueError("Browser broker requires Agent Runtime v3 (SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true)")
             if not self.connector_trust_boundary_enabled:
                 raise ValueError("Browser broker requires SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
             if not 1 <= self.max_active_browser_sessions <= 4:
