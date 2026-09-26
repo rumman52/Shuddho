@@ -194,6 +194,22 @@ CONNECTOR_READ_CAPABILITIES = {
         required_scopes=("https://www.googleapis.com/auth/calendar.readonly",),
         max_items_per_sync=50,
     ),
+    ("microsoft", "email_read"): ConnectorReadSpec(
+        provider="microsoft",
+        capability="email_read",
+        operation="graph.mail.inbox.delta",
+        version="1",
+        required_scopes=("Mail.ReadBasic",),
+        max_items_per_sync=30,
+    ),
+    ("microsoft", "calendar_read"): ConnectorReadSpec(
+        provider="microsoft",
+        capability="calendar_read",
+        operation="graph.calendar_view.delta",
+        version="1",
+        required_scopes=("Calendars.Read",),
+        max_items_per_sync=50,
+    ),
 }
 
 
