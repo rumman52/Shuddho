@@ -226,6 +226,18 @@ OPTIONAL_CAPABILITIES = (
             ),
         ),
     ),
+    OptionalCapability(
+        capability="runtime_v3",
+        rollback_key="runtime_v3_kill_switch",
+        kill_switch="SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false",
+        dependencies=("agent_runtime", "intelligent_planner"),
+        staging_gates=(
+            StagingGate(
+                "runtime_v3",
+                "Result-aware Agent Runtime v3 changed its next step from verified observations, rejected unverified completion, respected planner/tool budgets, and preserved v1/v2 workflow compatibility and rollback routing.",
+            ),
+        ),
+    ),
 )
 
 ACTIVATION_REQUIREMENTS = (
@@ -326,6 +338,14 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="automations_verified",
         ledger_artifact_key="automations_activation",
         capability="automations",
+    ),
+    ActivationRequirement(
+        key="runtime_v3",
+        status="runtime_v3_verified",
+        ledger_schema_version=19,
+        ledger_event_type="runtime_v3_verified",
+        ledger_artifact_key="runtime_v3_activation",
+        capability="runtime_v3",
     ),
 )
 
