@@ -21,6 +21,7 @@ from services.coworker.api import mount
 from services.coworker.auth import JwtVerifier
 from services.coworker.config import Settings
 from services.coworker.container import Container
+from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
 from services.coworker.models import Account, Automation, AutomationScheduleOutbox, PersonalGoal, utcnow
 
@@ -238,6 +239,19 @@ def test_account_erasure_removes_goals_and_automation_state(automation_client, a
     with automation_container.repository.sessions() as db:
         owner_id = db.scalar(select(Account.id).where(Account.subject == "alice"))
     assert owner_id
+
+    with pytest.raises(CoworkerError, match="reconcile automation schedule deletion"):
+        automation_container.retention.erase_account(owner_id)
+
+    cancelled = client.post(
+        f'/api/v1/automations/{automation["id"]}/cancel',
+        headers=auth,
+        json={"expected_revision": 1},
+    )
+    assert cancelled.status_code == 200 and cancelled.json()["state"] == "cancelled"
+    automation_container.automations.reconciliation_applied(
+        automation["id"], cancelled.json()["revision"], False
+    )
 
     result = automation_container.retention.erase_account(owner_id)
     assert result["database_erased"] is True
