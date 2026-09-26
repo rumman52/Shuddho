@@ -14,7 +14,7 @@ from services.coworker.errors import CoworkerError
 from services.coworker.auth import Principal
 from services.coworker.memory_schemas import MemoryFactCreate
 from services.coworker.migrate import upgrade
-from services.coworker.schemas import AgentRunCreate, UploadRequest
+from services.coworker.schemas import UploadRequest
 
 ISSUER = "https://identity.example.test/auth/v1"
 
