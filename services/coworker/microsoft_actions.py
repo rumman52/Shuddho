@@ -19,7 +19,7 @@ GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 ME_URL = GRAPH_ROOT + "/me"
 SEND_URL = GRAPH_ROOT + "/me/sendMail"
 EVENTS_URL = GRAPH_ROOT + "/me/events"
-MAIL_DELTA_URL = GRAPH_ROOT + "/me/mailFolders('inbox')/messages/delta"
+MAIL_DELTA_URL = GRAPH_ROOT + "/me/mailFolders/inbox/messages/delta"
 CALENDAR_DELTA_URL = GRAPH_ROOT + "/me/calendarView/delta"
 SUBSCRIPTIONS_URL = GRAPH_ROOT + "/subscriptions"
 SCOPES = {
@@ -553,7 +553,7 @@ class MicrosoftActions:
         gmail_topic: str,
     ) -> dict:
         if capability == "email_read":
-            resource = "/me/mailFolders('inbox')/messages"
+            resource = "/me/mailFolders/inbox/messages"
         elif capability == "calendar_read":
             resource = "/me/events"
         else:
