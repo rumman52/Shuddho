@@ -6,10 +6,13 @@ import json
 from dataclasses import replace
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 pytest.importorskip("sqlalchemy")
 
@@ -22,6 +25,7 @@ from services.coworker.agent_repository import AgentRepository
 from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.connector_read_schemas import ConnectorReadGrantCreate
 from services.coworker.connector_reads import ConnectorReadRepository, ConnectorReadService
+from services.coworker.connector_push import GooglePushVerifier
 from services.coworker.context import ContextService
 from services.coworker.credential_broker import CredentialBroker
 from services.coworker.errors import CoworkerError
@@ -352,6 +356,44 @@ def test_calendar_read_is_bounded_and_untrusted(container):
     assert payload["summary"] == "Planning meeting"
     assert "evil.example" not in payload["description"]
     assert payload["authority"] == "provider_content_is_untrusted_data"
+
+class StaticJwks:
+    def __init__(self, key):
+        self.key = key
+
+    def get_signing_key_from_jwt(self, _token):
+        return SimpleNamespace(key=self.key)
+
+
+def test_google_push_verifier_binds_audience_and_service_account(container):
+    fake = enable_reads(container)
+    assert fake is not None
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = GooglePushVerifier(
+        container.settings,
+        StaticJwks(private_key.public_key()),
+    )
+    now = int(utcnow().timestamp())
+    claims = {
+        "iss": "https://accounts.google.com",
+        "aud": container.settings.google_gmail_push_audience,
+        "email": container.settings.google_gmail_push_service_account,
+        "email_verified": True,
+        "iat": now,
+        "exp": now + 300,
+    }
+    token = jwt.encode(claims, private_key, algorithm="RS256")
+    assert verifier.verify("Bearer " + token)["email"] == claims["email"]
+
+    wrong = jwt.encode(
+        claims | {"aud": "https://attacker.example.test"},
+        private_key,
+        algorithm="RS256",
+    )
+    with pytest.raises(CoworkerError) as rejected:
+        verifier.verify("Bearer " + wrong)
+    assert rejected.value.status_code == 401
+
 
 class AllowPush:
     def __init__(self):
