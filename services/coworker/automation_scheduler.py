@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+from datetime import timedelta
+
+from temporalio.client import (
+    Schedule,
+    ScheduleActionStartWorkflow,
+    ScheduleAlreadyRunningError,
+    ScheduleCalendarSpec,
+    ScheduleOverlapPolicy,
+    SchedulePolicy,
+    ScheduleRange,
+    ScheduleSpec,
+    ScheduleState,
+)
+
+
+DAY = {"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
+
+
+def schedule_id(automation_id: str) -> str:
+    return "shuddho-automation-" + automation_id
+
+
+def workflow_base_id(automation_id: str, revision: int) -> str:
+    return f"shuddho-automation-{automation_id}-r{revision}"
+
+
+def temporal_schedule(value: dict, task_queue: str):
+    spec = value["schedule"]
+    weekdays = [] if spec["kind"] == "daily" else [ScheduleRange(start=DAY[item]) for item in spec["weekdays"]]
+    calendar = ScheduleCalendarSpec(
+        day_of_week=weekdays or [ScheduleRange(start=0, end=6)],
+        hour=[ScheduleRange(start=int(spec["hour"]))],
+        minute=[ScheduleRange(start=int(spec["minute"]))],
+        second=[ScheduleRange(start=0)],
+    )
+    overlap = ScheduleOverlapPolicy.BUFFER_ONE if value["overlap_policy"] == "buffer_one" else ScheduleOverlapPolicy.SKIP
+    enabled = value["state"] == "active"
+    return Schedule(
+        action=ScheduleActionStartWorkflow(
+            "shuddho_automation_occurrence_v1",
+            {"automation_id": value["id"], "revision": int(value["revision"])},
+            id=workflow_base_id(value["id"], int(value["revision"])),
+            task_queue=task_queue,
+            execution_timeout=timedelta(minutes=5),
+        ),
+        spec=ScheduleSpec(calendars=[calendar], time_zone_name=value["timezone"]),
+        policy=SchedulePolicy(
+            overlap=overlap,
+            catchup_window=timedelta(seconds=int(value["catchup_window_seconds"])),
+        ),
+        state=ScheduleState(
+            paused=not enabled,
+            note=f"Shuddho PA-02 automation revision {value['revision']}",
+        ),
+    )
+
+
+class AutomationScheduleReconciler:
+    """Maps PostgreSQL desired state to one Temporal Schedule per automation."""
+
+    def __init__(self, client, task_queue: str):
+        self.client = client
+        self.task_queue = task_queue
+
+    async def apply(self, value: dict) -> bool:
+        sid = schedule_id(value["id"])
+        handle = self.client.get_schedule_handle(sid)
+        if value["state"] == "cancelled":
+            try:
+                await handle.delete()
+            except Exception as error:
+                # Temporal reports NOT_FOUND through RPCError; a missing cancelled
+                # schedule is already reconciled. Avoid importing private gRPC details.
+                if "not found" not in str(error).lower():
+                    raise
+            return False
+
+        desired = temporal_schedule(value, self.task_queue)
+        try:
+            await self.client.create_schedule(sid, desired)
+        except ScheduleAlreadyRunningError:
+            # Replacement is safe because PostgreSQL revision + occurrence dedupe
+            # remain authoritative. A firing that races replacement is either the
+            # exact new occurrence or is recorded as stale_revision and cannot run.
+            await handle.delete()
+            await self.client.create_schedule(sid, desired)
+        return value["state"] == "active"
