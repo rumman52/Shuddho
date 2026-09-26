@@ -202,6 +202,18 @@ OPTIONAL_CAPABILITIES = (
             ),
         ),
     ),
+    OptionalCapability(
+        capability="personal_goals",
+        rollback_key="personal_goals_kill_switch",
+        kill_switch="SHUDDHO_PERSONAL_GOALS_ENABLED=false",
+        dependencies=("agent_runtime",),
+        staging_gates=(
+            StagingGate(
+                "personal_goals",
+                "Owner-scoped persistent goal CRUD, revision conflicts, lifecycle transitions and exact AgentRun revision binding passed in controlled staging.",
+            ),
+        ),
+    ),
 )
 
 ACTIVATION_REQUIREMENTS = (
@@ -287,6 +299,14 @@ ACTIVATION_REQUIREMENTS = (
         ledger_artifact_key="agent_linkedin_proposals_activation",
         capability="agent_linkedin_proposals",
     ),
+    ActivationRequirement(
+        key="personal_goals",
+        status="personal_goals_verified",
+        ledger_schema_version=17,
+        ledger_event_type="personal_goals_verified",
+        ledger_artifact_key="personal_goals_activation",
+        capability="personal_goals",
+    ),
 )
 
 ACTIVATION_REQUIREMENTS_BY_KEY = {
@@ -328,7 +348,6 @@ def required_conditional_gate_ids(
         required.append("actions")
         if "microsoft" in action_providers:
             required.append("microsoft_actions")
-
     for item in OPTIONAL_CAPABILITIES:
         if capabilities.get(item.capability) is not True:
             continue

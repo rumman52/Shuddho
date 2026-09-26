@@ -11,6 +11,7 @@ from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
 from .linkedin_actions import LinkedInActions
 from .agent_repository import AgentRepository
+from .goal_repository import GoalRepository
 from .memory_repository import MemoryRepository
 from .recipient_repository import RecipientRepository
 from .retention import RetentionService
@@ -24,6 +25,7 @@ class Container:
     verifier: JwtVerifier
     actions: ActionService | None = None
     agent: AgentRepository | None = None
+    goals: GoalRepository | None = None
     memory: MemoryRepository | None = None
     recipients: RecipientRepository | None = None
     retention: RetentionService | None = None
@@ -42,6 +44,8 @@ class Container:
             )
         if self.agent is None:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
+        if self.goals is None:
+            self.goals = GoalRepository(self.repository.sessions, self.settings)
         if self.memory is None:
             self.memory = MemoryRepository(self.repository.sessions, self.settings)
         if self.recipients is None:
