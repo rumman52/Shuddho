@@ -178,6 +178,9 @@ class BrowserRepository:
                 resource_id=row.id,
                 action="browser_session.prepared",
             ))
+            # SQLAlchemy column defaults (created_at/updated_at) are populated
+            # during flush. Materialize them before serializing the new row.
+            db.flush()
             return self._dto(row), True
 
     def list(self, owner: str) -> list[dict]:
