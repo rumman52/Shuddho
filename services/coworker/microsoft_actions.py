@@ -6,8 +6,8 @@ import base64
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
-from urllib.parse import urlencode
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -19,9 +19,14 @@ GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 ME_URL = GRAPH_ROOT + "/me"
 SEND_URL = GRAPH_ROOT + "/me/sendMail"
 EVENTS_URL = GRAPH_ROOT + "/me/events"
+MAIL_DELTA_URL = GRAPH_ROOT + "/me/mailFolders('inbox')/messages/delta"
+CALENDAR_DELTA_URL = GRAPH_ROOT + "/me/calendarView/delta"
+SUBSCRIPTIONS_URL = GRAPH_ROOT + "/subscriptions"
 SCOPES = {
     "email": "Mail.Send",
     "calendar": "Calendars.ReadWrite",
+    "email_read": "Mail.ReadBasic",
+    "calendar_read": "Calendars.Read",
 }
 PROFILE_SCOPE = "User.Read"
 
@@ -171,6 +176,36 @@ class MicrosoftActions:
             "code_challenge_method": "S256",
         })
 
+    @staticmethod
+    def _graph_delta_url(url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return False
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "graph.microsoft.com"
+            or parsed.username
+            or parsed.password
+            or parsed.port not in {None, 443}
+            or parsed.fragment
+            or len(url) > 8192
+        ):
+            return False
+        return parsed.path in {
+            "/v1.0/me/mailFolders('inbox')/messages/delta",
+            "/v1.0/me/mailFolders/inbox/messages/delta",
+            "/v1.0/me/calendarView/delta",
+        }
+
+    @staticmethod
+    def _safe_excerpt(value, limit=1000):
+        if not isinstance(value, str):
+            return ""
+        value = re.sub(r"https?://\S+", "[link removed]", value, flags=re.IGNORECASE)
+        value = re.sub(r"[\x00-\x1f\x7f]", " ", value)
+        return re.sub(r"\s+", " ", value).strip()[:limit]
+
     async def request(
         self,
         method,
@@ -184,9 +219,16 @@ class MicrosoftActions:
     ):
         token_url = _token_url(self.settings)
         event_pattern = re.escape(EVENTS_URL) + r"/[A-Za-z0-9._~%-]{1,512}"
+        subscription_pattern = re.escape(SUBSCRIPTIONS_URL) + r"/[A-Za-z0-9._~%-]{1,512}"
+        delta_url = self._graph_delta_url(url)
         if (
-            url not in {token_url, ME_URL, SEND_URL, EVENTS_URL}
+            url not in {
+                token_url, ME_URL, SEND_URL, EVENTS_URL,
+                MAIL_DELTA_URL, CALENDAR_DELTA_URL, SUBSCRIPTIONS_URL,
+            }
             and not re.fullmatch(event_pattern, url)
+            and not re.fullmatch(subscription_pattern, url)
+            and not delta_url
         ):
             raise ValueError("Unknown connector endpoint")
         try:
@@ -208,6 +250,18 @@ class MicrosoftActions:
                         params=params,
                     ) as response:
                         if response.status_code < 200 or response.status_code >= 300:
+                            is_cursor_request = (
+                                delta_url
+                                and url not in {MAIL_DELTA_URL, CALENDAR_DELTA_URL}
+                            )
+                            if (
+                                is_cursor_request
+                                and response.status_code in {400, 404, 410}
+                            ):
+                                raise ConnectorFailure(
+                                    "provider_cursor_invalid",
+                                    definitive=True,
+                                )
                             code = (
                                 "connection_authorization"
                                 if response.status_code in {401, 403}
@@ -306,6 +360,253 @@ class MicrosoftActions:
             return {"sub": subject, "email": address(email)}
         except (KeyError, TypeError, ValueError):
             raise ConnectorFailure("oauth_identity_invalid", definitive=True) from None
+
+    @staticmethod
+    def _recipient_addresses(values) -> list[str]:
+        result = []
+        for item in values if isinstance(values, list) else []:
+            if not isinstance(item, dict):
+                continue
+            email = item.get("emailAddress")
+            value = email.get("address") if isinstance(email, dict) else None
+            if isinstance(value, str) and len(value) <= 254:
+                result.append(value)
+            if len(result) >= 20:
+                break
+        return result
+
+    async def read_email(
+        self,
+        access_token: str,
+        cursor: str | None,
+        max_items: int,
+    ) -> dict:
+        max_items = max(1, min(int(max_items), 30))
+        url = cursor or MAIL_DELTA_URL
+        params = None if cursor else {
+            "$top": str(max_items),
+            "$select": (
+                "id,conversationId,receivedDateTime,lastModifiedDateTime,"
+                "subject,sender,toRecipients,ccRecipients,isRead,hasAttachments"
+            ),
+        }
+        result = await self.request("GET", url, token=access_token, params=params)
+        next_cursor = result.get("@odata.nextLink") or result.get("@odata.deltaLink")
+        if (
+            not isinstance(next_cursor, str)
+            or not self._graph_delta_url(next_cursor)
+            or len(next_cursor) > 8192
+        ):
+            raise ConnectorFailure("provider_response_invalid", definitive=True)
+        changes = []
+        now_version = datetime.now(timezone.utc).isoformat()
+        values = result.get("value")
+        if not isinstance(values, list) or len(values) > max_items:
+            raise ConnectorFailure("provider_snapshot_limit", definitive=True)
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            resource_id = item.get("id")
+            if not isinstance(resource_id, str) or not 1 <= len(resource_id) <= 512:
+                continue
+            removed = isinstance(item.get("@removed"), dict)
+            version = item.get("lastModifiedDateTime") or now_version
+            if not isinstance(version, str) or not version:
+                version = now_version
+            sender = item.get("sender")
+            sender_address = ""
+            if isinstance(sender, dict):
+                email = sender.get("emailAddress")
+                if isinstance(email, dict) and isinstance(email.get("address"), str):
+                    sender_address = email["address"][:254]
+            payload = {
+                "kind": "email",
+                "message_id": resource_id,
+            }
+            if not removed:
+                payload.update({
+                    "conversation_id": item.get("conversationId")
+                    if isinstance(item.get("conversationId"), str) else None,
+                    "from": sender_address,
+                    "to": self._recipient_addresses(item.get("toRecipients")),
+                    "cc": self._recipient_addresses(item.get("ccRecipients")),
+                    "subject": self._safe_excerpt(item.get("subject"), 300),
+                    "received_at": item.get("receivedDateTime")
+                    if isinstance(item.get("receivedDateTime"), str) else None,
+                    "is_read": item.get("isRead")
+                    if isinstance(item.get("isRead"), bool) else None,
+                    "has_attachments": item.get("hasAttachments")
+                    if isinstance(item.get("hasAttachments"), bool) else None,
+                    "authority": "provider_content_is_untrusted_data",
+                })
+            changes.append({
+                "resource_id": resource_id,
+                "provider_version": version[:128],
+                "state": "deleted" if removed else "active",
+                "payload": payload,
+            })
+        return {"cursor": next_cursor, "changes": changes}
+
+    async def read_calendar(
+        self,
+        access_token: str,
+        cursor: str | None,
+        max_items: int,
+    ) -> dict:
+        max_items = max(1, min(int(max_items), 50))
+        url = cursor or CALENDAR_DELTA_URL
+        if cursor:
+            params = None
+        else:
+            now = datetime.now(timezone.utc)
+            params = {
+                "startDateTime": (now - timedelta(days=7)).isoformat(),
+                "endDateTime": (now + timedelta(days=60)).isoformat(),
+                "$top": str(max_items),
+                "$select": (
+                    "id,subject,bodyPreview,start,end,location,attendees,"
+                    "lastModifiedDateTime,isCancelled"
+                ),
+            }
+        result = await self.request("GET", url, token=access_token, params=params)
+        next_cursor = result.get("@odata.nextLink") or result.get("@odata.deltaLink")
+        if (
+            not isinstance(next_cursor, str)
+            or not self._graph_delta_url(next_cursor)
+            or len(next_cursor) > 8192
+        ):
+            raise ConnectorFailure("provider_response_invalid", definitive=True)
+        changes = []
+        now_version = datetime.now(timezone.utc).isoformat()
+        values = result.get("value")
+        if not isinstance(values, list) or len(values) > max_items:
+            raise ConnectorFailure("provider_snapshot_limit", definitive=True)
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            resource_id = item.get("id")
+            if not isinstance(resource_id, str) or not 1 <= len(resource_id) <= 512:
+                continue
+            removed = isinstance(item.get("@removed"), dict) or item.get("isCancelled") is True
+            version = item.get("lastModifiedDateTime") or now_version
+            if not isinstance(version, str) or not version:
+                version = now_version
+            attendees = []
+            for entry in item.get("attendees", []) if isinstance(item.get("attendees"), list) else []:
+                if not isinstance(entry, dict):
+                    continue
+                email = entry.get("emailAddress")
+                address_value = email.get("address") if isinstance(email, dict) else None
+                if isinstance(address_value, str):
+                    attendees.append(address_value[:254])
+                if len(attendees) >= 20:
+                    break
+            payload = {"kind": "calendar_event", "event_id": resource_id}
+            if not removed:
+                location = item.get("location")
+                display_name = (
+                    location.get("displayName")
+                    if isinstance(location, dict) else ""
+                )
+                payload.update({
+                    "status": "confirmed",
+                    "summary": self._safe_excerpt(item.get("subject"), 300),
+                    "description": self._safe_excerpt(item.get("bodyPreview"), 1000),
+                    "location": self._safe_excerpt(display_name, 300),
+                    "start": item.get("start") if isinstance(item.get("start"), dict) else {},
+                    "end": item.get("end") if isinstance(item.get("end"), dict) else {},
+                    "attendees": attendees,
+                    "authority": "provider_content_is_untrusted_data",
+                })
+            changes.append({
+                "resource_id": resource_id,
+                "provider_version": version[:128],
+                "state": "deleted" if removed else "active",
+                "payload": payload,
+            })
+        return {"cursor": next_cursor, "changes": changes}
+
+    async def read_connected(
+        self,
+        capability: str,
+        access_token: str,
+        cursor: str | None,
+        max_items: int,
+    ) -> dict:
+        if capability == "email_read":
+            return await self.read_email(access_token, cursor, max_items)
+        if capability == "calendar_read":
+            return await self.read_calendar(access_token, cursor, max_items)
+        raise ConnectorFailure("connector_read_unregistered", definitive=True)
+
+    async def start_read_watch(
+        self,
+        capability: str,
+        access_token: str,
+        *,
+        channel_id: str,
+        callback_url: str,
+        channel_token: str,
+        gmail_topic: str,
+    ) -> dict:
+        if capability == "email_read":
+            resource = "/me/mailFolders('inbox')/messages"
+        elif capability == "calendar_read":
+            resource = "/me/events"
+        else:
+            raise ConnectorFailure("connector_read_unregistered", definitive=True)
+        expiration = datetime.now(timezone.utc) + timedelta(days=2)
+        result = await self.request(
+            "POST",
+            SUBSCRIPTIONS_URL,
+            token=access_token,
+            body={
+                "changeType": "created,updated,deleted",
+                "notificationUrl": callback_url,
+                "resource": resource,
+                "expirationDateTime": expiration.isoformat().replace("+00:00", "Z"),
+                "clientState": channel_token,
+            },
+        )
+        provider_id = result.get("id")
+        resource_result = result.get("resource")
+        expires = result.get("expirationDateTime")
+        if (
+            not isinstance(provider_id, str)
+            or not 1 <= len(provider_id) <= 512
+            or resource_result != resource
+            or not isinstance(expires, str)
+        ):
+            raise ConnectorFailure("provider_response_invalid", definitive=True)
+        try:
+            expires_at = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                raise ValueError()
+        except ValueError:
+            raise ConnectorFailure("provider_response_invalid", definitive=True) from None
+        return {
+            "provider_subscription_id": provider_id,
+            "provider_resource_id": resource,
+            "provider_cursor_hint": None,
+            "expires_at_ms": int(expires_at.timestamp() * 1000),
+        }
+
+    async def stop_read_watch(
+        self,
+        capability: str,
+        access_token: str,
+        *,
+        provider_subscription_id: str | None,
+        provider_resource_id: str | None,
+    ) -> None:
+        if not provider_subscription_id:
+            return
+        await self.request(
+            "DELETE",
+            SUBSCRIPTIONS_URL + "/" + provider_subscription_id,
+            token=access_token,
+            allow_empty=True,
+        )
 
     async def execute(self, action, access_token, attachments=None):
         if action["kind"] in {"email_send", "email_send_with_attachments"}:
