@@ -201,6 +201,24 @@ def list_memory(identity: Identity, services: Services):
     return {"enabled": services.settings.agent_memory_enabled, "facts": services.memory.list(identity.account_id)}
 
 
+@router.get("/memory-proposals")
+def list_memory_proposals(identity: Identity, services: Services):
+    return {
+        "enabled": services.settings.context_retrieval_enabled and services.settings.agent_memory_enabled,
+        "proposals": services.memory.proposals(identity.account_id),
+    }
+
+
+@router.post("/memory-proposals/{proposal_id}/accept")
+def accept_memory_proposal(proposal_id: UUID, identity: Identity, services: Services):
+    return services.memory.accept_proposal(identity.account_id, str(proposal_id))
+
+
+@router.post("/memory-proposals/{proposal_id}/reject")
+def reject_memory_proposal(proposal_id: UUID, identity: Identity, services: Services):
+    return services.memory.reject_proposal(identity.account_id, str(proposal_id))
+
+
 @router.post("/memory", status_code=201)
 def create_memory(payload: MemoryFactCreate, identity: Identity, services: Services):
     return services.memory.create(identity.account_id, payload)
@@ -303,6 +321,11 @@ def list_agent_runs(identity: Identity, services: Services):
 @router.get("/agent-runs/{run_id}")
 def get_agent_run(run_id: UUID, identity: Identity, services: Services):
     return services.agent.get(identity.account_id, str(run_id))
+
+
+@router.get("/agent-runs/{run_id}/context")
+def agent_run_context(run_id: UUID, identity: Identity, services: Services):
+    return services.context.for_run(identity.account_id, str(run_id))
 
 
 @router.get("/agent-runs/{run_id}/events")
