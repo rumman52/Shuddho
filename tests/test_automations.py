@@ -23,7 +23,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Account, Automation, AutomationScheduleOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationScheduleOutbox, PersonalGoal, utcnow
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -155,15 +155,29 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
     due_at = utcnow().replace(microsecond=0)
 
     first = automation_container.automations.accept_occurrence(automation["id"], 1, due_at)
-    second = automation_container.automations.accept_occurrence(automation["id"], 1, due_at)
     assert first["state"] == "accepted"
+
+    restarted = Container.create(automation_container.settings)
+    try:
+        second = restarted.automations.accept_occurrence(automation["id"], 1, due_at)
+    finally:
+        restarted.repository.sessions.kw["bind"].dispose()
     assert second["replayed"] is True
     assert second["run_id"] == first["run_id"]
 
+    overlap_due = due_at + timedelta(minutes=1)
     overlap = automation_container.automations.accept_occurrence(
-        automation["id"], 1, due_at + timedelta(minutes=1)
+        automation["id"], 1, overlap_due
     )
     assert overlap["state"] == "skipped" and overlap["reason"] == "overlap"
+    with automation_container.repository.sessions.begin() as db:
+        db.get(AgentRun, first["run_id"]).state = "completed"
+    duplicate_overlap = automation_container.automations.accept_occurrence(
+        automation["id"], 1, overlap_due
+    )
+    assert duplicate_overlap["state"] == "skipped"
+    assert duplicate_overlap["reason"] == "overlap"
+    assert duplicate_overlap["replayed"] is True
 
     goal_view = client.get(f'/api/v1/goals/{automation["goal_id"]}', headers=auth).json()
     matching = [item for item in goal_view["run_links"] if item["run_id"] == first["run_id"]]
@@ -178,6 +192,49 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
 
     read = client.post(f'/api/v1/notifications/{notification_ids[0]}/read', headers=auth)
     assert read.status_code == 200 and read.json()["state"] == "read"
+
+
+def test_buffer_one_keeps_only_one_waiting_occurrence(automation_client, automation_container):
+    client, headers = automation_client
+    auth = headers()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "buffer-goal"},
+        json=goal_payload(),
+    ).json()
+    body = automation_payload(goal)
+    body["overlap_policy"] = "buffer_one"
+    automation = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "buffer-automation"},
+        json=body,
+    ).json()
+    due = utcnow().replace(microsecond=0)
+
+    first = automation_container.automations.accept_occurrence(automation["id"], 1, due)
+    assert first["state"] == "accepted"
+    buffered = automation_container.automations.accept_occurrence(
+        automation["id"], 1, due + timedelta(minutes=1)
+    )
+    assert buffered["state"] == "buffered"
+    overflow = automation_container.automations.accept_occurrence(
+        automation["id"], 1, due + timedelta(minutes=2)
+    )
+    assert overflow["state"] == "skipped" and overflow["reason"] == "buffer_full"
+    assert automation_container.automations.claim_buffered_occurrences() == []
+
+    with automation_container.repository.sessions.begin() as db:
+        db.get(AgentRun, first["run_id"]).state = "completed"
+
+    ready = automation_container.automations.claim_buffered_occurrences()
+    assert len(ready) == 1
+    released = automation_container.automations.accept_occurrence(
+        ready[0]["automation_id"],
+        ready[0]["revision"],
+        __import__("datetime").datetime.fromisoformat(ready[0]["due_at"]),
+    )
+    assert released["state"] == "accepted"
+    assert released["run_id"] != first["run_id"]
 
 
 def test_stale_expired_and_kill_switch_occurrences_never_start_work(automation_client, automation_container):
