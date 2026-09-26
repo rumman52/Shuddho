@@ -91,8 +91,25 @@ class RetentionService:
             active_actions = db.scalar(select(ExternalAction.id).where(
                 ExternalAction.owner_id == owner, ExternalAction.state.not_in(TERMINAL_ACTIONS),
             ).limit(1))
-            if active_tasks or active_runs or active_actions:
-                raise CoworkerError("account_active", "Cancel or finish active coworker work before erasing this account.", 409)
+            pending_automation = db.scalar(
+                select(Automation.id).outerjoin(
+                    AutomationScheduleOutbox,
+                    AutomationScheduleOutbox.automation_id == Automation.id,
+                ).where(
+                    Automation.owner_id == owner,
+                    (
+                        (Automation.state != "cancelled")
+                        | Automation.schedule_applied_enabled.is_(True)
+                        | AutomationScheduleOutbox.delivered.is_(False)
+                    ),
+                ).limit(1)
+            )
+            if active_tasks or active_runs or active_actions or pending_automation:
+                raise CoworkerError(
+                    "account_active",
+                    "Cancel or finish active work and reconcile automation schedule deletion before erasing this account.",
+                    409,
+                )
 
             documents = list(db.scalars(select(DocumentVersion).where(DocumentVersion.owner_id == owner)).all())
             artifacts = list(db.scalars(select(Artifact).where(Artifact.owner_id == owner)).all())
