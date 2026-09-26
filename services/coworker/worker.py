@@ -225,27 +225,6 @@ class Dispatcher:
 
     async def dispatch_agent_run(self, run_id: str):
         agent = self.container.agent
-        automations = self.container.automations
-        if self.container.settings.automations_enabled:
-            for desired in await asyncio.to_thread(automations.claim_reconciliation):
-                try:
-                    enabled = await self.automation_schedules.apply(desired)
-                    await asyncio.to_thread(
-                        automations.reconciliation_applied,
-                        desired["id"],
-                        int(desired["desired_revision"]),
-                        enabled,
-                    )
-                except Exception:
-                    logger.exception("Automation schedule reconciliation failed.")
-                    await asyncio.to_thread(
-                        automations.reconciliation_failed,
-                        desired["id"],
-                        int(desired["desired_revision"]),
-                        "temporal_schedule_unavailable",
-                    )
-            for notification_id in await asyncio.to_thread(automations.claim_notifications):
-                await asyncio.to_thread(automations.deliver_notification, notification_id)
         run = await asyncio.to_thread(agent.worker_run, run_id)
         if run["state"] not in {"completed", "failed", "cancelled"}:
             try:
@@ -273,6 +252,27 @@ class Dispatcher:
         repo = self.container.repository
         actions = self.container.actions.repo
         agent = self.container.agent
+        automations = self.container.automations
+        if self.container.settings.automations_enabled:
+            for desired in await asyncio.to_thread(automations.claim_reconciliation):
+                try:
+                    enabled = await self.automation_schedules.apply(desired)
+                    await asyncio.to_thread(
+                        automations.reconciliation_applied,
+                        desired["id"],
+                        int(desired["desired_revision"]),
+                        enabled,
+                    )
+                except Exception:
+                    logger.exception("Automation schedule reconciliation failed.")
+                    await asyncio.to_thread(
+                        automations.reconciliation_failed,
+                        desired["id"],
+                        int(desired["desired_revision"]),
+                        "temporal_schedule_unavailable",
+                    )
+            for notification_id in await asyncio.to_thread(automations.claim_notifications):
+                await asyncio.to_thread(automations.deliver_notification, notification_id)
         for action_id in await asyncio.to_thread(actions.claim_outbox):
             try:
                 await self.client.start_workflow(
