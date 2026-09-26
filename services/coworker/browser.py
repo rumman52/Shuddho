@@ -373,6 +373,7 @@ class BrowserRepository:
 
     def request_takeover(self, owner: str, session_id: str, reason: str) -> dict:
         self._require_enabled()
+        now = utcnow()
         with self.sessions.begin() as db:
             row = db.scalar(select(BrowserSession).where(
                 BrowserSession.id == session_id,
@@ -380,11 +381,21 @@ class BrowserRepository:
             ).with_for_update())
             if row is None:
                 raise not_found()
-            if aware(row.expires_at) <= utcnow() or row.state in TERMINAL_BROWSER_STATES:
+            if aware(row.expires_at) <= now or row.state in TERMINAL_BROWSER_STATES:
                 raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
             row.state = "takeover"
             row.takeover_required = True
-            row.updated_at = utcnow()
+            row.worker_session_ref = None
+            row.updated_at = now
+            for command in db.scalars(select(BrowserCommand).where(
+                BrowserCommand.session_id == session_id,
+                BrowserCommand.state == "running",
+            ).with_for_update()).all():
+                command.state = "cancelled"
+                command.error_code = "takeover_requested"
+                command.finished_at = now
+                command.lease_until = None
+                command.claimed_by = None
             db.add(AuditEvent(
                 id=str(uuid4()), owner_id=owner, resource_id=row.id,
                 action="browser_takeover." + reason,
@@ -416,6 +427,7 @@ class BrowserRepository:
 
     def cancel(self, owner: str, session_id: str) -> dict:
         self._require_enabled()
+        now = utcnow()
         with self.sessions.begin() as db:
             row = db.scalar(select(BrowserSession).where(
                 BrowserSession.id == session_id,
@@ -427,7 +439,17 @@ class BrowserRepository:
                 row.cancel_requested = True
                 row.state = "cancelled"
                 row.takeover_required = False
-                row.updated_at = utcnow()
+                row.worker_session_ref = None
+                row.updated_at = now
+                for command in db.scalars(select(BrowserCommand).where(
+                    BrowserCommand.session_id == session_id,
+                    BrowserCommand.state.in_(("prepared", "running")),
+                ).with_for_update()).all():
+                    command.state = "cancelled"
+                    command.error_code = "session_cancelled"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
                 db.add(AuditEvent(
                     id=str(uuid4()), owner_id=owner, resource_id=row.id,
                     action="browser_session.cancelled",
@@ -496,6 +518,77 @@ class BrowserRepository:
                 })
             return claimed
 
+    def worker_control(self, worker_id: str, command_id: str) -> dict:
+        """Return the authoritative control-plane action for an in-flight worker command."""
+        self._require_enabled()
+        now = utcnow()
+        with self.sessions.begin() as db:
+            command = db.scalar(select(BrowserCommand).where(
+                BrowserCommand.id == command_id,
+            ).with_for_update())
+            if command is None:
+                raise not_found()
+            session = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == command.session_id,
+                BrowserSession.owner_id == command.owner_id,
+            ).with_for_update())
+            if session is None:
+                raise not_found()
+
+            if session.cancel_requested or session.state == "cancelled":
+                if command.state in {"prepared", "running"}:
+                    command.state = "cancelled"
+                    command.error_code = "session_cancelled"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                session.worker_session_ref = None
+                return {"action": "stop", "reason": "session_cancelled"}
+
+            if session.takeover_required or session.state == "takeover":
+                if command.state == "running":
+                    command.state = "cancelled"
+                    command.error_code = "takeover_requested"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                session.worker_session_ref = None
+                return {"action": "pause", "reason": "takeover_requested"}
+
+            if aware(session.expires_at) <= now:
+                session.state = "expired"
+                session.worker_session_ref = None
+                session.updated_at = now
+                if command.state in {"prepared", "running"}:
+                    command.state = "failed"
+                    command.error_code = "session_expired"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                return {"action": "stop", "reason": "session_expired"}
+
+            if session.state in TERMINAL_BROWSER_STATES:
+                session.worker_session_ref = None
+                return {"action": "stop", "reason": "session_" + session.state}
+
+            if (
+                command.state != "running"
+                or command.claimed_by != worker_id
+                or command.lease_until is None
+                or aware(command.lease_until) <= now
+            ):
+                raise CoworkerError(
+                    "browser_worker_claim_invalid",
+                    "This browser command is not actively owned by this worker.",
+                    409,
+                )
+            return {
+                "action": "continue",
+                "reason": None,
+                "lease_until": iso(command.lease_until),
+                "session_expires_at": iso(session.expires_at),
+            }
+
     def complete_command(self, worker_id: str, command_id: str, observation: dict) -> dict:
         self._require_enabled()
         checked = _bounded_observation(observation)
@@ -510,15 +603,28 @@ class BrowserRepository:
                 BrowserSession.id == command.session_id,
                 BrowserSession.owner_id == command.owner_id,
             ).with_for_update())
+            if session is None:
+                raise not_found()
+            if session.takeover_required or session.state == "takeover":
+                if command.state == "running":
+                    command.state = "cancelled"
+                    command.error_code = "takeover_requested"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                session.worker_session_ref = None
+                raise CoworkerError("browser_takeover_active", "Browser execution paused for user takeover.", 409)
+            if session.cancel_requested or session.state in TERMINAL_BROWSER_STATES:
+                if command.state == "running":
+                    command.state = "cancelled"
+                    command.error_code = "session_cancelled"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                session.worker_session_ref = None
+                raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
             if command.state != "running" or command.claimed_by != worker_id:
                 raise CoworkerError("browser_worker_claim_invalid", "This browser command is not owned by this worker.", 409)
-            if session is None or session.cancel_requested or session.state in TERMINAL_BROWSER_STATES:
-                command.state = "cancelled"
-                command.error_code = "session_cancelled"
-                command.finished_at = now
-                command.lease_until = None
-                command.claimed_by = None
-                raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
             if aware(session.expires_at) <= now:
                 session.state = "expired"
                 command.state = "failed"
