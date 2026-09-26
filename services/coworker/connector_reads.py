@@ -828,9 +828,9 @@ class ConnectorReadService:
         return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
 
     @staticmethod
-    def _renew_after(capability: str, expires_at: datetime) -> datetime:
+    def _renew_after(provider: str, capability: str, expires_at: datetime) -> datetime:
         now = utcnow()
-        if capability == "email_read":
+        if provider == "google" and capability == "email_read":
             return max(
                 now,
                 min(now + timedelta(hours=24), expires_at - timedelta(hours=24)),
@@ -894,6 +894,60 @@ class ConnectorReadService:
             raise CoworkerError("connector_push_unauthorized", "Unknown Calendar push channel.", 401)
         return True
 
+    async def ingest_microsoft_push(self, payload: dict) -> int:
+        if (
+            not self.repo.settings.connector_reads_enabled
+            or not self.repo.settings.microsoft_actions_enabled
+        ):
+            raise CoworkerError("connector_reads_disabled", "Connected reads are disabled.", 404)
+        if not isinstance(payload, dict) or set(payload) - {"value"}:
+            raise CoworkerError("connector_push_invalid", "Invalid Microsoft push payload.", 400)
+        values = payload.get("value")
+        if not isinstance(values, list) or not 1 <= len(values) <= 100:
+            raise CoworkerError("connector_push_invalid", "Invalid Microsoft push payload.", 400)
+        accepted = 0
+        for item in values:
+            if not isinstance(item, dict):
+                raise CoworkerError("connector_push_invalid", "Invalid Microsoft push payload.", 400)
+            subscription_id = item.get("subscriptionId")
+            client_state = item.get("clientState")
+            change_type = item.get("changeType")
+            resource = item.get("resource")
+            if (
+                not isinstance(subscription_id, str)
+                or not 1 <= len(subscription_id) <= 512
+                or not isinstance(client_state, str)
+                or not 1 <= len(client_state) <= 512
+                or change_type not in {"created", "updated", "deleted"}
+                or not isinstance(resource, str)
+                or not 1 <= len(resource) <= 1024
+            ):
+                raise CoworkerError("connector_push_invalid", "Invalid Microsoft push payload.", 400)
+            canonical = json.dumps(
+                {
+                    "subscriptionId": subscription_id,
+                    "clientState": client_state,
+                    "changeType": change_type,
+                    "resource": resource,
+                    "resourceData": item.get("resourceData"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            payload_sha256 = hashlib.sha256(canonical).hexdigest()
+            ok = await asyncio.to_thread(
+                self.repo.enqueue_microsoft_event,
+                provider_subscription_id=subscription_id,
+                client_state=client_state,
+                provider_event_id=payload_sha256,
+                payload_sha256=payload_sha256,
+            )
+            if not ok:
+                raise CoworkerError("connector_push_unauthorized", "Unknown Microsoft subscription.", 401)
+            accepted += 1
+        return accepted
+
     async def subscribe(
         self,
         owner: str,
@@ -905,7 +959,7 @@ class ConnectorReadService:
             owner, grant_id, audience=CONNECTOR_READ_AUDIENCE,
         )
         settings = self.repo.settings
-        if grant["provider"] != "google" or not hasattr(adapter, "start_read_watch"):
+        if not hasattr(adapter, "start_read_watch"):
             raise CoworkerError(
                 "connector_subscription_unavailable",
                 "This provider does not support event subscriptions in this deployment.",
@@ -919,29 +973,49 @@ class ConnectorReadService:
             )
         channel_id = str(uuid4())
         channel_token = secrets.token_urlsafe(32)
-        if grant["capability"] == "email_read":
-            if not all((
-                settings.google_gmail_pubsub_topic,
-                settings.google_gmail_pubsub_subscription,
-                settings.google_gmail_push_audience,
-                settings.google_gmail_push_service_account,
-            )):
+        if grant["provider"] == "google":
+            if grant["capability"] == "email_read":
+                if not all((
+                    settings.google_gmail_pubsub_topic,
+                    settings.google_gmail_pubsub_subscription,
+                    settings.google_gmail_push_audience,
+                    settings.google_gmail_push_service_account,
+                )):
+                    raise CoworkerError(
+                        "connector_subscription_unconfigured",
+                        "Gmail event delivery is not configured in this deployment.",
+                        503,
+                    )
+                provider_subscription_id = settings.google_gmail_pubsub_subscription
+                callback_url = settings.connector_webhook_base_url + "/api/v1/connectors/google/gmail/events"
+                token_hash = None
+                kind = "gmail_pubsub"
+            elif grant["capability"] == "calendar_read":
+                provider_subscription_id = channel_id
+                callback_url = settings.connector_webhook_base_url + "/api/v1/connectors/google/calendar/events"
+                token_hash = _token_hash(channel_token)
+                kind = "calendar_webhook"
+            else:
+                raise CoworkerError("connector_read_unregistered", "This read capability is not registered.", 409)
+        elif grant["provider"] == "microsoft":
+            if not settings.microsoft_actions_enabled:
                 raise CoworkerError(
-                    "connector_subscription_unconfigured",
-                    "Gmail event delivery is not configured in this deployment.",
+                    "connection_provider_disabled",
+                    "Microsoft connected reads are not enabled in this deployment.",
                     503,
                 )
-            provider_subscription_id = settings.google_gmail_pubsub_subscription
-            callback_url = settings.connector_webhook_base_url + "/api/v1/connectors/google/gmail/events"
-            token_hash = None
-            kind = "gmail_pubsub"
-        elif grant["capability"] == "calendar_read":
-            provider_subscription_id = channel_id
-            callback_url = settings.connector_webhook_base_url + "/api/v1/connectors/google/calendar/events"
+            if grant["capability"] not in {"email_read", "calendar_read"}:
+                raise CoworkerError("connector_read_unregistered", "This read capability is not registered.", 409)
+            provider_subscription_id = None
+            callback_url = settings.connector_webhook_base_url + "/api/v1/connectors/microsoft/events"
             token_hash = _token_hash(channel_token)
-            kind = "calendar_webhook"
+            kind = "microsoft_graph_webhook"
         else:
-            raise CoworkerError("connector_read_unregistered", "This read capability is not registered.", 409)
+            raise CoworkerError(
+                "connector_subscription_unavailable",
+                "This provider does not support event subscriptions in this deployment.",
+                503,
+            )
         reserved = await asyncio.to_thread(
             self.repo.reserve_subscription,
             owner, grant_id, kind=kind,
@@ -958,7 +1032,7 @@ class ConnectorReadService:
             )
             expires_at = self._expiry(
                 provider.get("expires_at_ms"),
-                fallback_hours=24 if grant["capability"] == "calendar_read" else 168,
+                fallback_hours=48 if grant["provider"] == "microsoft" else (24 if grant["capability"] == "calendar_read" else 168),
             )
             active = await asyncio.to_thread(
                 self.repo.activate_subscription,
@@ -969,7 +1043,7 @@ class ConnectorReadService:
                 ),
                 provider_resource_id=provider.get("provider_resource_id"),
                 expires_at=expires_at,
-                renew_after=self._renew_after(grant["capability"], expires_at),
+                renew_after=self._renew_after(grant["provider"], grant["capability"], expires_at),
                 replaced_subscription_id=replace_subscription_id,
             )
             return active
