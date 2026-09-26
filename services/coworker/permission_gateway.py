@@ -234,7 +234,7 @@ class PermissionGateway:
                 )
             )
             if existing is not None:
-                if (
+                binding_invalid = (
                     existing.state != "active"
                     or existing.connection_id != connection.id
                     or existing.owner_id != action.owner_id
@@ -248,13 +248,24 @@ class PermissionGateway:
                         existing.destinations_sha256,
                         expected["destinations_sha256"],
                     )
-                    or aware(existing.expires_at) <= utcnow()
-                ):
+                )
+                if binding_invalid:
                     raise CoworkerError(
                         "connector_grant_invalid",
                         "The connector execution grant is no longer valid.",
                         409,
                     )
+                if aware(existing.expires_at) <= utcnow():
+                    if purpose != "reconcile":
+                        raise CoworkerError(
+                            "connector_grant_invalid",
+                            "The connector execution grant is no longer valid.",
+                            409,
+                        )
+                    # Reconciliation is read-only and may be requested long
+                    # after the original mutation window. Renew only the short
+                    # grant TTL while preserving the exact immutable binding.
+                    existing.expires_at = expected["expires_at"]
                 return self._dto(existing)
 
             grant = ExecutionGrant(
@@ -346,8 +357,6 @@ class PermissionGateway:
                 )
                 or aware(grant.expires_at) <= utcnow()
             ):
-                grant.state = "revoked"
-                grant.revoked_at = utcnow()
                 raise CoworkerError(
                     "connector_grant_invalid",
                     "The connector execution grant is no longer valid.",
