@@ -501,6 +501,16 @@ def test_calendar_channel_token_duplicate_and_out_of_order_delivery(container):
         row = db.get(ConnectorEvent, stale["id"])
         assert row.state == "ignored"
 
+    asyncio.run(container.connector_reads.revoke(owner, grant["id"]))
+    assert asyncio.run(container.connector_reads.ingest_calendar_push(
+        channel_id=channel_id,
+        channel_token=token,
+        resource_id="calendar-resource-1",
+        message_number="3",
+        resource_state="exists",
+    )) is True
+    assert container.connector_reads.repo.claim_events() == []
+
 
 def test_subscription_renewal_supersedes_old_generation(container):
     fake = enable_reads(container)
