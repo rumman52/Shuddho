@@ -16,7 +16,7 @@ class Strict(BaseModel):
 
 Text = Annotated[str, StringConstraints(max_length=20000)]
 Short = Annotated[str, StringConstraints(min_length=1, max_length=300)]
-Capability = Literal["email", "calendar", "drive", "social"]
+Capability = Literal["email", "calendar", "drive", "social", "email_read", "calendar_read"]
 
 
 def address(value: str) -> str:
