@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for PA-04 tests")
 
-from services.coworker.agent_schemas import AgentMemoryProposal
+from services.coworker.agent_schemas import AgentMemoryProposal, AgentRunCreate
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
