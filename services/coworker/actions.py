@@ -5,14 +5,25 @@ import hashlib
 from .action_registry import action_spec
 from .action_repository import ActionRepository, TERMINAL
 from .connector_actions import ConnectorFailure
+from .connector_registry import CONNECTOR_ACTION_AUDIENCE
 from .errors import CoworkerError
 
 
 class ActionService:
-    def __init__(self, repository: ActionRepository, providers: dict[str, object], storage=None):
+    def __init__(
+        self,
+        repository: ActionRepository,
+        providers: dict[str, object],
+        storage=None,
+        *,
+        permission_gateway=None,
+        credential_broker=None,
+    ):
         self.repo = repository
         self.providers = dict(providers)
         self.storage = storage
+        self.permission_gateway = permission_gateway
+        self.credential_broker = credential_broker
         # Backward-compatible internal surface for existing Google-only
         # workers/tests while multi-provider routing uses provider_for().
         self.provider = self.providers.get("google")
@@ -166,6 +177,39 @@ class ActionService:
             )
         return adapter, token["access_token"]
 
+    async def authorized_access(self, action, *, purpose: str):
+        if not self.repo.settings.connector_trust_boundary_enabled:
+            return await self.access(action)
+        if self.permission_gateway is None or self.credential_broker is None:
+            raise CoworkerError(
+                "connector_trust_boundary_unavailable",
+                "The connector trust boundary is not available to this worker.",
+                503,
+            )
+        grant = await asyncio.to_thread(
+            self.permission_gateway.authorize_action,
+            action["id"],
+            purpose=purpose,
+            audience=CONNECTOR_ACTION_AUDIENCE,
+        )
+        return grant
+
+    async def grant_access(self, grant, action, *, purpose: str):
+        if not self.repo.settings.connector_trust_boundary_enabled:
+            return await self.access(action)
+        if self.credential_broker is None:
+            raise CoworkerError(
+                "connector_trust_boundary_unavailable",
+                "The connector credential boundary is not available to this worker.",
+                503,
+            )
+        return await self.credential_broker.issue_access(
+            grant,
+            action,
+            purpose=purpose,
+            audience=CONNECTOR_ACTION_AUDIENCE,
+        )
+
     async def load_attachments(self, action):
         if action["kind"] != "email_send_with_attachments":
             return []
@@ -288,23 +332,53 @@ class ActionService:
                 unstarted=True,
             )
             return
-        try:
-            adapter, token = await self.access(action)
-        except (ConnectorFailure, CoworkerError):
-            await asyncio.to_thread(
-                self.repo.finish,
-                action_id,
-                "failed",
-                error_code="connection_unavailable",
-                unstarted=True,
-            )
-            return
+        boundary_enabled = self.repo.settings.connector_trust_boundary_enabled
+        grant = None
+        if boundary_enabled:
+            try:
+                grant = await self.authorized_access(action, purpose="execute")
+            except (ConnectorFailure, CoworkerError):
+                await asyncio.to_thread(
+                    self.repo.finish,
+                    action_id,
+                    "failed",
+                    error_code="connection_unavailable",
+                    unstarted=True,
+                )
+                return
+        else:
+            try:
+                adapter, token = await self.access(action)
+            except (ConnectorFailure, CoworkerError):
+                await asyncio.to_thread(
+                    self.repo.finish,
+                    action_id,
+                    "failed",
+                    error_code="connection_unavailable",
+                    unstarted=True,
+                )
+                return
         claimed = await asyncio.to_thread(
             self.repo.claim_execution,
             action_id,
         )
         if not claimed:
             return
+        if boundary_enabled:
+            try:
+                adapter, token = await self.grant_access(
+                    grant,
+                    claimed,
+                    purpose="execute",
+                )
+            except (ConnectorFailure, CoworkerError):
+                await asyncio.to_thread(
+                    self.repo.finish,
+                    action_id,
+                    "failed",
+                    error_code="connection_unavailable",
+                )
+                return
         try:
             if claimed["kind"] == "email_send_with_attachments":
                 receipt = await adapter.execute(claimed, token, attachments)
@@ -345,7 +419,18 @@ class ActionService:
         if spec.reconcile_supported and self.repo.settings.actions_enabled:
             try:
                 if adapter is None or token is None:
-                    adapter, token = await self.access(action)
+                    if self.repo.settings.connector_trust_boundary_enabled:
+                        grant = await self.authorized_access(
+                            action,
+                            purpose="reconcile",
+                        )
+                        adapter, token = await self.grant_access(
+                            grant,
+                            action,
+                            purpose="reconcile",
+                        )
+                    else:
+                        adapter, token = await self.access(action)
                 receipt = await adapter.reconcile(action, token)
             except (ConnectorFailure, CoworkerError):
                 pass
