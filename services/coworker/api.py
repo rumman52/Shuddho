@@ -23,6 +23,7 @@ from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
 from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
+from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 
@@ -127,6 +128,74 @@ def run_goal(
     return run
 
 
+@router.post("/automations", status_code=201)
+def create_automation(
+    payload: AutomationCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    automation, created = services.automations.create(identity.account_id, payload, idempotency_key)
+    response.headers["Location"] = f'/api/v1/automations/{automation["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["ETag"] = f'"{automation["revision"]}"'
+    return automation
+
+
+@router.get("/automations")
+def list_automations(identity: Identity, services: Services):
+    if not services.settings.automations_enabled:
+        return {"enabled": False, "automations": []}
+    return {"enabled": True, "automations": services.automations.list(identity.account_id)}
+
+
+@router.get("/automations/{automation_id}")
+def get_automation(automation_id: UUID, identity: Identity, services: Services, response: Response):
+    value = services.automations.get(identity.account_id, str(automation_id))
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
+
+
+@router.get("/automations/{automation_id}/revisions")
+def automation_revisions(automation_id: UUID, identity: Identity, services: Services):
+    return {"revisions": services.automations.revisions(identity.account_id, str(automation_id))}
+
+
+@router.patch("/automations/{automation_id}")
+def patch_automation(automation_id: UUID, payload: AutomationPatch, identity: Identity, services: Services, response: Response):
+    value = services.automations.update(identity.account_id, str(automation_id), payload)
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
+
+
+@router.post("/automations/{automation_id}/pause")
+def pause_automation(automation_id: UUID, payload: AutomationTransition, identity: Identity, services: Services):
+    return services.automations.pause(identity.account_id, str(automation_id), payload.expected_revision)
+
+
+@router.post("/automations/{automation_id}/resume")
+def resume_automation(automation_id: UUID, payload: AutomationTransition, identity: Identity, services: Services):
+    return services.automations.resume(identity.account_id, str(automation_id), payload.expected_revision)
+
+
+@router.post("/automations/{automation_id}/cancel")
+def cancel_automation(automation_id: UUID, payload: AutomationTransition, identity: Identity, services: Services):
+    return services.automations.cancel(identity.account_id, str(automation_id), payload.expected_revision)
+
+
+@router.get("/notifications")
+def list_notifications(identity: Identity, services: Services):
+    if not services.settings.automations_enabled:
+        return {"enabled": False, "notifications": []}
+    return {"enabled": True, "notifications": services.automations.notifications(identity.account_id)}
+
+
+@router.post("/notifications/{notification_id}/read")
+def read_notification(notification_id: UUID, identity: Identity, services: Services):
+    return services.automations.mark_read(identity.account_id, str(notification_id))
+
+
 @router.get("/memory")
 def list_memory(identity: Identity, services: Services):
     return {"enabled": services.settings.agent_memory_enabled, "facts": services.memory.list(identity.account_id)}
@@ -170,6 +239,7 @@ def runtime_manifest(
         "artifact_services": settings.artifact_services_enabled,
         "agent_runtime": settings.agent_runtime_enabled,
         "personal_goals": settings.personal_goals_enabled,
+        "automations": settings.automations_enabled,
         "intelligent_planner": settings.intelligent_planner_enabled,
         "memory": settings.agent_memory_enabled,
         "handoffs": settings.agent_handoffs_enabled,
