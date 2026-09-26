@@ -269,6 +269,7 @@ def runtime_manifest(
         "outcome_replan": settings.agent_outcome_replan_enabled,
         "research": settings.research_services_enabled,
         "actions": settings.actions_enabled,
+        "connector_trust_boundary": settings.connector_trust_boundary_enabled,
         "action_attachments": settings.action_attachments_enabled,
         "action_reminders": settings.action_reminders_enabled,
         "action_recipients": settings.action_recipients_enabled,

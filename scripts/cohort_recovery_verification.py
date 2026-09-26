@@ -44,6 +44,7 @@ CAPABILITY_ATTRS = {
     "outcome_replan": "agent_outcome_replan_enabled",
     "research": "research_services_enabled",
     "actions": "actions_enabled",
+    "connector_trust_boundary": "connector_trust_boundary_enabled",
     "action_attachments": "action_attachments_enabled",
     "action_reminders": "action_reminders_enabled",
     "action_recipients": "action_recipients_enabled",

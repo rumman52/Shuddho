@@ -31,6 +31,7 @@ ROLLBACK_MODES = {
     "parallel": ("parallel_kill_switch", "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED"),
     "research": ("research_kill_switch", "SHUDDHO_RESEARCH_SERVICES_ENABLED"),
     "actions": ("actions_kill_switch", "SHUDDHO_ACTIONS_ENABLED"),
+    "connector_trust_boundary": ("connector_trust_boundary_kill_switch", "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED"),
 }
 
 
@@ -158,6 +159,8 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
     elif mode == "agent":
         required_zero.update({"active_agent_runs", "undelivered_agent_outbox"})
     elif mode == "actions":
+        required_zero.update({"active_provider_actions"})
+    elif mode == "connector_trust_boundary":
         required_zero.update({"active_provider_actions"})
     elif mode == "research":
         # Research runs on the durable task path. Require no active task work before

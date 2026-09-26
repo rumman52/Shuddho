@@ -7,6 +7,8 @@ from .repository import Repository
 from .storage import make_storage
 from .action_repository import ActionRepository
 from .actions import ActionService
+from .permission_gateway import PermissionGateway
+from .credential_broker import CredentialBroker
 from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
 from .linkedin_actions import LinkedInActions
@@ -26,6 +28,8 @@ class Container:
     storage: object
     verifier: JwtVerifier
     actions: ActionService | None = None
+    permissions: PermissionGateway | None = None
+    credentials: CredentialBroker | None = None
     agent: AgentRepository | None = None
     goals: GoalRepository | None = None
     automations: AutomationRepository | None = None
@@ -41,10 +45,27 @@ class Container:
                 providers["microsoft"] = MicrosoftActions(self.settings)
             if self.settings.action_social_publishing_enabled:
                 providers["linkedin"] = LinkedInActions(self.settings)
+            action_repository = ActionRepository(
+                self.repository.sessions,
+                self.settings,
+            )
+            if self.permissions is None:
+                self.permissions = PermissionGateway(
+                    self.repository.sessions,
+                    self.settings,
+                )
+            if self.credentials is None:
+                self.credentials = CredentialBroker(
+                    action_repository,
+                    self.permissions,
+                    providers,
+                )
             self.actions = ActionService(
-                ActionRepository(self.repository.sessions, self.settings),
+                action_repository,
                 providers,
                 self.storage,
+                permission_gateway=self.permissions,
+                credential_broker=self.credentials,
             )
         if self.agent is None:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
