@@ -6,9 +6,9 @@ from dataclasses import replace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 
 pytest.importorskip("sqlalchemy")
+from sqlalchemy import select
 
 from action_samples import action_request, connected, enable_actions
 from test_coworker import account, container
