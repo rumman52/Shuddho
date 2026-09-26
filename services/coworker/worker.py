@@ -20,7 +20,7 @@ from .repository import TERMINAL
 from .agent_runtime import AgentRuntime
 from .automation_scheduler import AutomationScheduleReconciler
 from .runner import DocumentRunner
-from .workflow import AgentWorkflow, AgentWorkflowV2, ApprovedActionWorkflow, AutomationOccurrenceWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from .workflow import AgentWorkflow, AgentWorkflowV2, AgentWorkflowV3, ApprovedActionWorkflow, AutomationOccurrenceWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 logger = logging.getLogger("shuddho.coworker")
 TRANSIENT_CAPACITY_ERRORS = {"provider_capacity_busy", "workspace_provider_busy"}
@@ -161,6 +161,22 @@ class AgentActivities:
             logger.error("Agent replanning failed run=%s", value.get("run_id"))
             raise ApplicationError("Agent replanning is temporarily unavailable.", type="agent_replanning_unavailable") from None
 
+    @activity.defn(name="shuddho_agent_decide_v3")
+    async def decide_v3(self, run_id: str):
+        try:
+            return await self.runtime.decide_v3(run_id)
+        except CoworkerError as error:
+            raise ApplicationError(
+                error.message, type=error.code,
+                non_retryable=error.code not in TRANSIENT_CAPACITY_ERRORS,
+            ) from None
+        except Exception:
+            logger.error("Agent Runtime v3 decision failed run=%s", run_id)
+            raise ApplicationError(
+                "Agent Runtime v3 planning is temporarily unavailable.",
+                type="agent_v3_planning_unavailable",
+            ) from None
+
     @activity.defn(name="shuddho_agent_readiness_v2")
     async def readiness(self, value: dict):
         try:
@@ -228,15 +244,31 @@ class Dispatcher:
         run = await asyncio.to_thread(agent.worker_run, run_id)
         if run["state"] not in {"completed", "failed", "cancelled"}:
             try:
-                parallel = (
-                    self.container.settings.agent_dependency_graph_enabled
-                    and self.container.settings.agent_parallel_execution_enabled
-                )
-                workflow_entry = AgentWorkflowV2.run if parallel else AgentWorkflow.run
-                workflow_input = (
-                    {"run_id": run_id, "max_parallel_steps": self.container.settings.max_agent_parallel_steps}
-                    if parallel else run_id
-                )
+                runtime_version = int(run.get("runtime_version", 0))
+                if runtime_version == 3:
+                    workflow_entry = AgentWorkflowV3.run
+                    workflow_input = {"run_id": run_id}
+                elif runtime_version == 2:
+                    workflow_entry = AgentWorkflowV2.run
+                    workflow_input = {
+                        "run_id": run_id,
+                        "max_parallel_steps": self.container.settings.max_agent_parallel_steps,
+                    }
+                elif runtime_version == 1:
+                    workflow_entry = AgentWorkflow.run
+                    workflow_input = run_id
+                else:
+                    # Migration-safe legacy behavior: rows created before PA-03
+                    # retain the old deployment-time v1/v2 routing rule.
+                    parallel = (
+                        self.container.settings.agent_dependency_graph_enabled
+                        and self.container.settings.agent_parallel_execution_enabled
+                    )
+                    workflow_entry = AgentWorkflowV2.run if parallel else AgentWorkflow.run
+                    workflow_input = (
+                        {"run_id": run_id, "max_parallel_steps": self.container.settings.max_agent_parallel_steps}
+                        if parallel else run_id
+                    )
                 await self.client.start_workflow(
                     workflow_entry, workflow_input, id="shuddho-agent-" + run_id,
                     task_queue=self.container.settings.task_queue,
@@ -355,9 +387,9 @@ async def main():
             loop.add_signal_handler(name, stop.set)
         except NotImplementedError:
             pass
-    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AutomationOccurrenceWorkflow, AgentWorkflow, AgentWorkflowV2],
+    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AutomationOccurrenceWorkflow, AgentWorkflow, AgentWorkflowV2, AgentWorkflowV3],
                       activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted,
-                                  agent_activities.plan, agent_activities.replan, agent_activities.readiness, agent_activities.step, agent_activities.complete, agent_activities.failed, automation_activities.accept],
+                                  agent_activities.plan, agent_activities.replan, agent_activities.decide_v3, agent_activities.readiness, agent_activities.step, agent_activities.complete, agent_activities.failed, automation_activities.accept],
                       # Four short deterministic steps: replay is inexpensive.
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,

@@ -39,6 +39,7 @@ class Settings:
     action_email_threading_enabled: bool = False
     action_social_publishing_enabled: bool = False
     agent_runtime_enabled: bool = False
+    agent_runtime_v3_enabled: bool = False
     personal_goals_enabled: bool = False
     automations_enabled: bool = False
     agent_memory_enabled: bool = False
@@ -79,6 +80,9 @@ class Settings:
     max_agent_planner_calls: int = 2
     agent_planner_token_budget: int = 16000
     agent_planner_max_output_tokens: int = 1200
+    max_agent_v3_planner_calls: int = 4
+    agent_v3_planner_token_budget: int = 24000
+    agent_v3_planner_cost_microusd_per_1k_tokens: int = 0
     max_agent_handoff_bytes: int = 12000
     max_agent_handoff_sources: int = 2
     max_agent_parallel_steps: int = 2
@@ -139,6 +143,7 @@ class Settings:
             action_email_threading_enabled=os.getenv("SHUDDHO_ACTION_EMAIL_THREADING_ENABLED", "false").lower() == "true",
             action_social_publishing_enabled=os.getenv("SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED", "false").lower() == "true",
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
+            agent_runtime_v3_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_V3_ENABLED", "false").lower() == "true",
             personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",
             automations_enabled=os.getenv("SHUDDHO_AUTOMATIONS_ENABLED", "false").lower() == "true",
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
@@ -183,6 +188,9 @@ class Settings:
             max_agent_planner_calls=int(os.getenv("SHUDDHO_AGENT_PLANNER_CALLS", "2")),
             agent_planner_token_budget=int(os.getenv("SHUDDHO_AGENT_PLANNER_TOKEN_BUDGET", "16000")),
             agent_planner_max_output_tokens=int(os.getenv("SHUDDHO_AGENT_PLANNER_MAX_OUTPUT_TOKENS", "1200")),
+            max_agent_v3_planner_calls=int(os.getenv("SHUDDHO_AGENT_V3_PLANNER_CALLS", "4")),
+            agent_v3_planner_token_budget=int(os.getenv("SHUDDHO_AGENT_V3_PLANNER_TOKEN_BUDGET", "24000")),
+            agent_v3_planner_cost_microusd_per_1k_tokens=int(os.getenv("SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS", "0")),
             max_agent_handoff_bytes=int(os.getenv("SHUDDHO_AGENT_HANDOFF_BYTES", "12000")),
             max_agent_handoff_sources=int(os.getenv("SHUDDHO_AGENT_HANDOFF_SOURCES", "2")),
             max_agent_parallel_steps=int(os.getenv("SHUDDHO_AGENT_MAX_PARALLEL_STEPS", "2")),
@@ -225,6 +233,13 @@ class Settings:
                     callback.username or callback.password or callback.query or callback.fragment or
                     callback.path != "/oauth/google/callback"):
                 raise ValueError("Actions require Google OAuth credentials and an HTTPS frontend /oauth/google/callback redirect URI")
+        if self.agent_runtime_v3_enabled:
+            if not self.agent_runtime_enabled or not self.intelligent_planner_enabled:
+                raise ValueError("Agent Runtime v3 requires SHUDDHO_AGENT_RUNTIME_ENABLED=true and SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
+            if not 1 <= self.max_agent_v3_planner_calls <= 4:
+                raise ValueError("SHUDDHO_AGENT_V3_PLANNER_CALLS must be between 1 and 4")
+            if self.agent_v3_planner_token_budget < self.max_agent_v3_planner_calls:
+                raise ValueError("SHUDDHO_AGENT_V3_PLANNER_TOKEN_BUDGET is too small for the planner-call limit")
         if self.automations_enabled:
             if not self.personal_goals_enabled or not self.agent_runtime_enabled:
                 raise ValueError("Automations require SHUDDHO_PERSONAL_GOALS_ENABLED=true and SHUDDHO_AGENT_RUNTIME_ENABLED=true")
@@ -314,8 +329,8 @@ class Settings:
         if min(self.max_daily_tasks, self.max_active_tasks, self.daily_token_budget,
                self.task_token_budget, self.max_account_bytes, self.max_daily_actions, self.max_action_recipients,
                self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_personal_goals, self.max_automations, self.max_memory_facts,
-               self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls,
-               self.agent_planner_token_budget, self.agent_planner_max_output_tokens,
+               self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls, self.max_agent_v3_planner_calls,
+               self.agent_planner_token_budget, self.agent_planner_max_output_tokens, self.agent_v3_planner_token_budget,
                self.max_agent_handoff_bytes, self.max_agent_handoff_sources,
                self.max_agent_parallel_steps, self.cohort_max_users,
                self.provider_max_concurrent_calls, self.provider_max_concurrent_per_workspace,

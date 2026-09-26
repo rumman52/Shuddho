@@ -27,6 +27,9 @@ ACTION_EMAIL_THREADING_SCHEMA_VERSION = 13
 ACTION_SOCIAL_PUBLISHING_SCHEMA_VERSION = 14
 AGENT_LINKEDIN_PROPOSALS_SCHEMA_VERSION = 15
 RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION = 16
+PERSONAL_GOALS_SCHEMA_VERSION = 17
+AUTOMATIONS_SCHEMA_VERSION = 18
+RUNTIME_V3_SCHEMA_VERSION = 19
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -126,6 +129,27 @@ RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS = {
     "rollout_manifest",
     "staging_evidence",
     "release_activation_bundle",
+}
+PERSONAL_GOALS_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "personal_goals_activation",
+}
+AUTOMATIONS_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "automations_activation",
+}
+RUNTIME_V3_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "runtime_v3_activation",
 }
 
 
@@ -380,6 +404,9 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             ACTION_SOCIAL_PUBLISHING_SCHEMA_VERSION,
             AGENT_LINKEDIN_PROPOSALS_SCHEMA_VERSION,
             RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION,
+            PERSONAL_GOALS_SCHEMA_VERSION,
+            AUTOMATIONS_SCHEMA_VERSION,
+            RUNTIME_V3_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -481,6 +508,12 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(
                 f"Ledger entry {index} has an unsupported schema-v16 event type."
             )
+        if version == PERSONAL_GOALS_SCHEMA_VERSION and event_type != "personal_goals_verified":
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v17 event type.")
+        if version == AUTOMATIONS_SCHEMA_VERSION and event_type != "automations_verified":
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v18 event type.")
+        if version == RUNTIME_V3_SCHEMA_VERSION and event_type != "runtime_v3_verified":
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v19 event type.")
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -517,6 +550,12 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             if version == ACTION_SOCIAL_PUBLISHING_SCHEMA_VERSION
             else AGENT_LINKEDIN_PROPOSALS_ARTIFACT_KEYS
             if version == AGENT_LINKEDIN_PROPOSALS_SCHEMA_VERSION
+            else PERSONAL_GOALS_ARTIFACT_KEYS
+            if version == PERSONAL_GOALS_SCHEMA_VERSION
+            else AUTOMATIONS_ARTIFACT_KEYS
+            if version == AUTOMATIONS_SCHEMA_VERSION
+            else RUNTIME_V3_ARTIFACT_KEYS
+            if version == RUNTIME_V3_SCHEMA_VERSION
             else RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:

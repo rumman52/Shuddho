@@ -3,6 +3,7 @@ from __future__ import annotations
 from .agent_planner import deterministic_plan, intelligent_tool_names, proposal_to_plan
 from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+from .agent_schemas import AgentObservation
 from .errors import CoworkerError
 from .runner import DocumentRunner
 from .schemas import ResearchOptions, TaskCreate
@@ -127,6 +128,112 @@ class AgentRuntime:
             self.repo.release_unselected_actions(run_id)
         self.repo.set_planner_mode(run_id, "replanned")
         return len([step for step in saved["steps"] if step["ordinal"] >= from_ordinal])
+
+    def _v3_planner_reservation(self) -> int:
+        per_call = max(
+            1,
+            self.container.settings.agent_v3_planner_token_budget
+            // self.container.settings.max_agent_v3_planner_calls,
+        )
+        return min(per_call, self.container.settings.agent_v3_planner_token_budget)
+
+    async def decide_v3(self, run_id: str) -> dict:
+        run = self.repo.worker_run(run_id)
+        if run["runtime_version"] != 3:
+            raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
+        if run["cancel_requested"] or run["state"] == "cancelled":
+            raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+        self.repo.assert_v3_within_deadline(run_id)
+
+        current = self.repo.get(run["owner_id"], run_id)
+        observations = [
+            AgentObservation.model_validate(item).model_dump(mode="json")
+            for item in self.repo.verified_observations(run["owner_id"], run_id)
+        ]
+        tools = intelligent_tool_names(self.container.settings, run["actions"])
+        remaining = self.repo.v3_remaining_budget(run_id)
+        dependencies = {
+            "steps": [{
+                "ordinal": step["ordinal"],
+                "state": step["state"],
+                "depends_on": step["depends_on"],
+            } for step in current["steps"] if step["ordinal"] > 0],
+            "consequential_actions_require_explicit_approval": True,
+        }
+        if not tools and not self.repo.v3_can_complete(run_id):
+            self.repo.v3_terminal(
+                run_id,
+                "blocked",
+                "No registered tool is currently available for this bounded run.",
+            )
+            return {"decision": "blocked"}
+
+        reservation = self.repo.reserve_planner(run_id, self._v3_planner_reservation())
+        actual_tokens = None
+        cost_microusd = None
+        try:
+            decision, actual_tokens, _latency, evidence = await self.planner.decide(
+                run["goal"],
+                tools,
+                observations,
+                remaining_budget=remaining,
+                dependencies=dependencies,
+            )
+            if actual_tokens is not None and self.container.settings.agent_v3_planner_cost_microusd_per_1k_tokens > 0:
+                cost_microusd = (
+                    actual_tokens * self.container.settings.agent_v3_planner_cost_microusd_per_1k_tokens + 999
+                ) // 1000
+            self.repo.record_v3_decision(
+                run_id,
+                decision,
+                planner_call=reservation["call"],
+                model=evidence["model"],
+                prompt_sha256=evidence["prompt_sha256"],
+                tool_schema_sha256=evidence["tool_schema_sha256"],
+                observation_count=len(observations),
+                total_tokens=actual_tokens,
+                cost_microusd=cost_microusd,
+            )
+            self.repo.set_planner_mode(run_id, "v3")
+
+            if decision.decision == "next_step":
+                ordinal = self.repo.append_v3_step(
+                    run["owner_id"], run_id, decision.tool, decision.objective
+                )
+                return {"decision": "next_step", "ordinal": ordinal}
+            if decision.decision == "complete":
+                if not self.repo.v3_can_complete(run_id):
+                    raise CoworkerError(
+                        "agent_unverified_completion",
+                        "Runtime v3 requested completion without verified tool receipts.",
+                        409,
+                    )
+                return {"decision": "complete"}
+            if decision.decision == "needs_input":
+                self.repo.v3_terminal(run_id, "needs_input", decision.message)
+                return {"decision": "needs_input"}
+            if decision.decision == "blocked":
+                self.repo.v3_terminal(run_id, "blocked", decision.message)
+                return {"decision": "blocked"}
+            if decision.decision == "awaiting_approval":
+                if not self.repo.v3_approval_waiting(run_id):
+                    raise CoworkerError(
+                        "approval_state_unverified",
+                        "Runtime v3 cannot claim an approval wait without a persisted waiting action.",
+                        409,
+                    )
+                return {"decision": "awaiting_approval"}
+            return {"decision": "wait", "wait_seconds": int(decision.wait_seconds)}
+        except PlannerFailure as error:
+            actual_tokens = error.total_tokens
+            raise
+        finally:
+            self.repo.settle_planner_capacity(
+                run_id,
+                reservation["call"],
+                actual_tokens,
+                cost_microusd,
+            )
 
     async def execute_step(self, run_id: str, ordinal: int) -> dict:
         run = self.repo.worker_run(run_id)

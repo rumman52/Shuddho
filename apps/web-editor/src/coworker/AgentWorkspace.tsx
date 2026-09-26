@@ -13,6 +13,8 @@ const stateLabel: Record<AgentRun["state"], string> = {
   planning: "Planning",
   running: "Running",
   awaiting_approval: "Waiting for approval",
+  needs_input: "Needs input",
+  blocked: "Blocked",
   completed: "Completed",
   failed: "Could not finish",
   cancelled: "Cancelled",
@@ -90,7 +92,7 @@ export default function AgentWorkspace({
       } catch (failure) {
         if (!controller.signal.aborted) setError(errorMessage(failure));
       }
-      if (!controller.signal.aborted && !["completed", "failed", "cancelled"].includes(run.state)) {
+      if (!controller.signal.aborted && !["completed", "failed", "cancelled", "needs_input", "blocked"].includes(run.state)) {
         timer = setTimeout(poll, 2200);
       }
     };
@@ -186,7 +188,8 @@ export default function AgentWorkspace({
         {run ? <section className="cw-agent-run" aria-label="Agent run details">
           <div className="cw-history-title"><div><span className="cw-eyebrow">02 · Run</span><h2 dir="auto">{run.goal}</h2></div><button className="cw-text-button" disabled={Boolean(busy)} onClick={() => void refreshRun()}>Refresh</button></div>
           <p role="status"><span className={`cw-status cw-status-${run.state}`}>{stateLabel[run.state]}</span> {run.message}</p>
-          <div className="cw-agent-meta"><span>Planner: {run.planner_mode ?? "pending"}</span><span>Calls: {run.planner_calls}</span><span>Tokens: {run.planner_tokens}</span></div>
+          <div className="cw-agent-meta"><span>Runtime: v{run.runtime_version || "legacy"}</span><span>Planner: {run.planner_mode ?? "pending"}</span><span>Calls: {run.planner_calls}</span><span>Reserved tokens: {run.planner_tokens}</span><span>Actual tokens: {run.planner_actual_tokens}</span>{run.planner_cost_microusd > 0 && <span>Planner cost: {(run.planner_cost_microusd / 1_000_000).toFixed(4)} USD</span>}</div>
+          {run.decisions.length > 0 && <details className="cw-agent-decisions"><summary>Planner decisions ({run.decisions.length})</summary><ol>{run.decisions.map(item => <li key={item.sequence}><strong>{item.decision}</strong><small> call {item.planner_call} · {item.observation_count} verified observation{item.observation_count === 1 ? "" : "s"} · prompt {item.prompt_sha256.slice(0, 10)}…</small></li>)}</ol></details>}
           {run.steps.length > 0 && <ol className="cw-agent-steps">{run.steps.map(step => <li key={step.id}><span>{step.ordinal}</span><div><strong>{step.tool ?? "Planning"}</strong><small>{step.state}{step.depends_on.length ? ` · after ${step.depends_on.join(", ")}` : ""}</small></div></li>)}</ol>}
           {run.action_proposals.length > 0 && <section className="cw-proposals" aria-label="Agent action proposals">
             <div><span className="cw-eyebrow">Suggested actions</span><h3>Nothing here is executable yet.</h3><p>Review the exact model suggestion, choose one of your connected accounts, then promote it into the normal immutable action preview.</p></div>

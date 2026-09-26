@@ -19,9 +19,9 @@ from services.coworker.drafting import DraftFailure
 from services.coworker.errors import CoworkerError
 from services.coworker.runner import DocumentRunner
 from services.coworker.agent_runtime import AgentRuntime
-from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate, AgentV3Decision
 from services.coworker.worker import ActionActivities, Activities, AgentActivities, Dispatcher
-from services.coworker.workflow import AgentWorkflow, AgentWorkflowV2, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from services.coworker.workflow import AgentWorkflow, AgentWorkflowV2, AgentWorkflowV3, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 
 def make_worker(env, runner, agent_runtime=None):
@@ -29,9 +29,9 @@ def make_worker(env, runner, agent_runtime=None):
     actions = ActionActivities(runner.container.actions)
     agent = AgentActivities(agent_runtime or AgentRuntime(runner.container, runner))
     return Worker(env.client, task_queue=runner.container.settings.task_queue,
-                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow, AgentWorkflowV2],
+                  workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow, AgentWorkflowV2, AgentWorkflowV3],
                   activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, actions.execute, actions.interrupted,
-                              agent.plan, agent.replan, agent.readiness, agent.step, agent.complete, agent.failed],
+                              agent.plan, agent.replan, agent.decide_v3, agent.readiness, agent.step, agent.complete, agent.failed],
                   max_cached_workflows=0,
                   graceful_shutdown_timeout=timedelta(seconds=2))
 
@@ -879,3 +879,209 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
         assert all(step["state"] == "completed" for step in final["steps"])
 
     asyncio.run(scenario())
+
+def test_agent_v3_result_aware_decisions_change_next_step_and_verify_completion(container):
+    async def scenario():
+        enabled = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            agent_runtime_v3_enabled=True,
+            intelligent_planner_enabled=True,
+            work_services_enabled=True,
+            max_agent_v3_planner_calls=4,
+            agent_v3_planner_token_budget=24000,
+        )
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(
+            owner,
+            AgentRunCreate(
+                goal="Create a project document, then use the verified result to draft a follow-up email.",
+                output_language="en",
+            ),
+            "agent-v3-result-aware",
+        )
+        assert run["runtime_version"] == 3
+
+        class ResultAwarePlanner:
+            def __init__(self):
+                self.calls = []
+            async def decide(self, goal, tools, observations, *, remaining_budget, dependencies):
+                self.calls.append(list(observations))
+                if len(self.calls) == 1:
+                    decision = AgentV3Decision(
+                        decision="next_step",
+                        tool="document.create",
+                        objective="Create the project document.",
+                    )
+                elif len(self.calls) == 2:
+                    assert observations and observations[0]["tool"] == "document.create"
+                    assert "result_excerpt" in observations[0]["summary"]
+                    decision = AgentV3Decision(
+                        decision="next_step",
+                        tool="email.draft",
+                        objective="Draft a follow-up email grounded in the verified document result.",
+                    )
+                else:
+                    assert len(observations) == 2
+                    decision = AgentV3Decision(decision="complete")
+                return decision, 50, 1, {
+                    "model": "synthetic-v3",
+                    "prompt_sha256": "a" * 64,
+                    "tool_schema_sha256": "b" * 64,
+                }
+
+        planner = ResultAwarePlanner()
+        runner = DocumentRunner(container, WorkModel())
+        runtime = AgentRuntime(container, runner, planner=planner)
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, runner, runtime):
+                await Dispatcher(container, env.client).tick()
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+                history = (await handle.fetch_history()).to_json()
+
+        saved = container.agent.get(owner, run["id"])
+        assert saved["state"] == "completed"
+        assert saved["runtime_version"] == 3
+        assert saved["planner_mode"] == "v3"
+        assert saved["planner_calls"] == 3
+        assert saved["planner_actual_tokens"] == 150
+        assert [item["decision"] for item in saved["decisions"]] == ["next_step", "next_step", "complete"]
+        assert [step["tool"] for step in saved["steps"]] == ["document.create", "email.draft"]
+        assert all(item["receipt"]["status"] == "completed" for item in saved["tool_invocations"])
+        assert "Create a project document, then use the verified result" not in history
+        assert "The team completed 12 reviews." not in history
+
+    asyncio.run(scenario())
+
+
+def test_agent_v3_rejects_unverified_completion_and_unregistered_tool(container):
+    async def scenario():
+        enabled = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            agent_runtime_v3_enabled=True,
+            intelligent_planner_enabled=True,
+            work_services_enabled=True,
+            max_agent_v3_planner_calls=4,
+            agent_v3_planner_token_budget=24000,
+        )
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+
+        class CompleteFirst:
+            async def decide(self, *_args, **_kwargs):
+                return AgentV3Decision(decision="complete"), 10, 1, {
+                    "model": "synthetic-v3", "prompt_sha256": "c" * 64, "tool_schema_sha256": "d" * 64,
+                }
+
+        run, _ = container.agent.create(
+            owner,
+            AgentRunCreate(goal="Create a document.", output_language="en"),
+            "agent-v3-unverified-complete",
+        )
+        runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()), planner=CompleteFirst())
+        with pytest.raises(CoworkerError) as incomplete:
+            await runtime.decide_v3(run["id"])
+        assert incomplete.value.code == "agent_unverified_completion"
+
+        class BadTool:
+            async def decide(self, *_args, **_kwargs):
+                return AgentV3Decision(
+                    decision="next_step", tool="shell.exec", objective="Run an arbitrary command."
+                ), 10, 1, {
+                    "model": "synthetic-v3", "prompt_sha256": "e" * 64, "tool_schema_sha256": "f" * 64,
+                }
+
+        second, _ = container.agent.create(
+            owner,
+            AgentRunCreate(goal="Run a command.", output_language="en"),
+            "agent-v3-bad-tool",
+        )
+        runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()), planner=BadTool())
+        with pytest.raises(CoworkerError) as scoped:
+            await runtime.decide_v3(second["id"])
+        assert scoped.value.code == "planner_tool_scope"
+
+    asyncio.run(scenario())
+
+
+def test_agent_runtime_version_is_frozen_per_new_run(container):
+    async def scenario():
+        owner = account(container)
+
+        v1_settings = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            agent_runtime_v3_enabled=False,
+            agent_dependency_graph_enabled=False,
+            agent_parallel_execution_enabled=False,
+            max_active_agent_runs=4,
+        )
+        container.settings = v1_settings
+        container.repository.settings = v1_settings
+        container.agent.settings = v1_settings
+        v1, _ = container.agent.create(
+            owner, AgentRunCreate(goal="Create a document.", output_language="en"), "frozen-v1"
+        )
+
+        v2_settings = replace(
+            v1_settings,
+            agent_dependency_graph_enabled=True,
+            agent_parallel_execution_enabled=True,
+        )
+        container.settings = v2_settings
+        container.repository.settings = v2_settings
+        container.agent.settings = v2_settings
+        v2, _ = container.agent.create(
+            owner, AgentRunCreate(goal="Create a document.", output_language="en"), "frozen-v2"
+        )
+
+        v3_settings = replace(
+            v2_settings,
+            agent_runtime_v3_enabled=True,
+            intelligent_planner_enabled=True,
+        )
+        container.settings = v3_settings
+        container.repository.settings = v3_settings
+        container.agent.settings = v3_settings
+        v3, _ = container.agent.create(
+            owner, AgentRunCreate(goal="Create a document.", output_language="en"), "frozen-v3"
+        )
+        assert [v1["runtime_version"], v2["runtime_version"], v3["runtime_version"]] == [1, 2, 3]
+
+        # Roll the feature flag back before dispatch. The already-admitted v3 run
+        # remains v3; new admission returns to the prior v2 path.
+        rolled_back = replace(v3_settings, agent_runtime_v3_enabled=False)
+        container.settings = rolled_back
+        container.repository.settings = rolled_back
+        container.agent.settings = rolled_back
+
+        class Client:
+            def __init__(self):
+                self.entries = {}
+            async def start_workflow(self, entry, value, **kwargs):
+                self.entries[str(value["run_id"] if isinstance(value, dict) else value)] = entry
+
+        client = Client()
+        dispatcher = Dispatcher(container, client)
+        await dispatcher.dispatch_agent_run(v1["id"])
+        await dispatcher.dispatch_agent_run(v2["id"])
+        await dispatcher.dispatch_agent_run(v3["id"])
+        assert client.entries[v1["id"]] == AgentWorkflow.run
+        assert client.entries[v2["id"]] == AgentWorkflowV2.run
+        assert client.entries[v3["id"]] == AgentWorkflowV3.run
+
+        later, _ = container.agent.create(
+            owner, AgentRunCreate(goal="Create another document.", output_language="en"), "post-v3-rollback"
+        )
+        assert later["runtime_version"] == 2
+
+    asyncio.run(scenario())
+

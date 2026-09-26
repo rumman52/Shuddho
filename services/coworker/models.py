@@ -450,6 +450,9 @@ class AgentRun(Base):
     planner_calls: Mapped[int] = mapped_column(Integer, default=0)
     planner_tokens: Mapped[int] = mapped_column(Integer, default=0)
     planner_mode: Mapped[str] = mapped_column(String(30), default="deterministic")
+    runtime_version: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    planner_actual_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    planner_cost_microusd: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -457,6 +460,27 @@ class AgentRun(Base):
         UniqueConstraint("owner_id", "idempotency_key"),
         Index("cw_agent_runs_owner_created", "owner_id", "created_at"),
         Index("cw_agent_runs_state_deadline", "state", "deadline_at"),
+    )
+
+
+class AgentDecision(Base):
+    __tablename__ = "cw_agent_decisions"
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    planner_call: Mapped[int] = mapped_column(Integer)
+    decision_type: Mapped[str] = mapped_column(String(30))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    model: Mapped[str] = mapped_column(String(120))
+    prompt_sha256: Mapped[str] = mapped_column(String(64))
+    tool_schema_sha256: Mapped[str] = mapped_column(String(64))
+    observation_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    cost_microusd: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("run_id", "planner_call", name="uq_cw_agent_decisions_planner_call"),
+        Index("cw_agent_decisions_owner_run", "owner_id", "run_id"),
     )
 
 

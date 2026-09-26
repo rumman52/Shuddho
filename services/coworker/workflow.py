@@ -9,6 +9,75 @@ from temporalio.exceptions import ActivityError, ApplicationError
 
 
 
+@workflow.defn(name="shuddho_agent_run_v3")
+class AgentWorkflowV3:
+    """Result-aware bounded coordinator. Workflow history contains only IDs/status."""
+
+    @workflow.run
+    async def run(self, value: dict):
+        run_id = str(value["run_id"])
+        try:
+            while True:
+                decision = await workflow.execute_activity(
+                    "shuddho_agent_decide_v3",
+                    run_id,
+                    start_to_close_timeout=timedelta(seconds=45),
+                    schedule_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+                kind = str(decision.get("decision"))
+                if kind == "complete":
+                    await workflow.execute_activity(
+                        "shuddho_agent_complete_v1",
+                        run_id,
+                        start_to_close_timeout=timedelta(seconds=30),
+                        schedule_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=RetryPolicy(maximum_attempts=3),
+                    )
+                    return
+                if kind in {"needs_input", "blocked"}:
+                    return
+                if kind == "wait":
+                    await workflow.sleep(timedelta(seconds=max(1, min(int(decision.get("wait_seconds", 1)), 60))))
+                    continue
+                if kind == "awaiting_approval":
+                    await workflow.sleep(timedelta(seconds=5))
+                    continue
+                if kind != "next_step":
+                    raise ApplicationError("Runtime v3 returned an unsupported decision.", type="agent_v3_decision")
+
+                ordinal = int(decision["ordinal"])
+                while True:
+                    result = await workflow.execute_activity(
+                        "shuddho_agent_step_v1",
+                        {"run_id": run_id, "ordinal": ordinal},
+                        start_to_close_timeout=timedelta(minutes=8),
+                        schedule_to_close_timeout=timedelta(minutes=12),
+                        heartbeat_timeout=timedelta(seconds=15),
+                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), maximum_attempts=2),
+                    )
+                    if not result or result.get("status") in {"completed", "outcome_replan_required"}:
+                        break
+                    status = result.get("status")
+                    if status == "replan_required":
+                        break
+                    if status in {"awaiting_approval", "executing"}:
+                        await workflow.sleep(timedelta(seconds=5))
+                        continue
+                    raise ApplicationError("Runtime v3 tool step returned an unsupported state.", type="agent_step_state")
+        except (ActivityError, ApplicationError) as error:
+            cause = error.cause if isinstance(error, ActivityError) else error
+            code = cause.type if isinstance(cause, ApplicationError) else "agent_v3_workflow_failed"
+            message = str(cause.message) if isinstance(cause, ApplicationError) else "This Agent Runtime v3 run could not finish."
+            await workflow.execute_activity(
+                "shuddho_agent_failed_v1",
+                {"run_id": run_id, "code": code, "message": message},
+                start_to_close_timeout=timedelta(seconds=30),
+                schedule_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=5),
+            )
+
+
 @workflow.defn(name="shuddho_automation_occurrence_v1")
 class AutomationOccurrenceWorkflow:
     """One finite Temporal Schedule firing; all authority stays in server activities."""
