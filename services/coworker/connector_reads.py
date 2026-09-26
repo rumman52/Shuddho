@@ -764,8 +764,11 @@ class ConnectorReadService:
     def _renew_after(capability: str, expires_at: datetime) -> datetime:
         now = utcnow()
         if capability == "email_read":
-            return min(now + timedelta(hours=24), expires_at - timedelta(hours=24))
-        return max(now + timedelta(minutes=15), expires_at - timedelta(hours=6))
+            return max(
+                now,
+                min(now + timedelta(hours=24), expires_at - timedelta(hours=24)),
+            )
+        return max(now, expires_at - timedelta(hours=6))
 
     async def ingest_gmail_push(
         self,
