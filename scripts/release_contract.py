@@ -230,7 +230,7 @@ OPTIONAL_CAPABILITIES = (
         capability="context_retrieval",
         rollback_key="context_retrieval_kill_switch",
         kill_switch="SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false",
-        dependencies=("agent_runtime", "runtime_v3"),
+        dependencies=("agent_runtime", "runtime_v3", "memory"),
         staging_gates=(
             StagingGate(
                 "context_retrieval",
