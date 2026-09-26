@@ -7,9 +7,9 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from .action_registry import build_approval_scope, stable_digest, validate_approval_scope
-from .connector_registry import CONNECTOR_ACTION_AUDIENCE, connector_capability
+from .connector_registry import CONNECTOR_ACTION_AUDIENCE, CONNECTOR_READ_AUDIENCE, connector_capability, connector_read_capability
 from .errors import CoworkerError
-from .models import Connection, ExecutionGrant, ExternalAction, utcnow
+from .models import Connection, ConnectorReadGrant, ExecutionGrant, ExternalAction, utcnow
 from .repository import aware, iso, not_found
 
 
@@ -360,6 +360,156 @@ class PermissionGateway:
                     409,
                 )
             return self._dto(grant)
+
+    def validate_read_connection(
+        self,
+        owner_id: str,
+        connection_id: str,
+        *,
+        capability: str,
+        audience: str = CONNECTOR_READ_AUDIENCE,
+    ) -> dict:
+        if not self.settings.connector_reads_enabled:
+            raise CoworkerError(
+                "connector_reads_disabled",
+                "Connected reads are not enabled in this deployment.",
+                503,
+            )
+        if audience != CONNECTOR_READ_AUDIENCE:
+            raise CoworkerError(
+                "connector_audience",
+                "This connector request is not intended for the read worker.",
+                403,
+            )
+        with self.sessions() as db:
+            connection = db.scalar(select(Connection).where(
+                Connection.id == connection_id,
+                Connection.owner_id == owner_id,
+                Connection.active.is_(True),
+            ))
+            if connection is None:
+                raise not_found()
+            if connection.capability != capability:
+                raise CoworkerError(
+                    "connector_capability_scope",
+                    "The connected account does not match this read capability.",
+                    409,
+                )
+            spec = connector_read_capability(connection.provider, capability)
+            missing = [
+                scope for scope in spec.required_scopes
+                if scope not in set(connection.scopes or [])
+            ]
+            if missing:
+                raise CoworkerError(
+                    "connector_scope_missing",
+                    "The connected account no longer has the required read permission.",
+                    409,
+                )
+            return {
+                "owner_id": owner_id,
+                "connection_id": connection.id,
+                "provider": connection.provider,
+                "capability": capability,
+                "operation": spec.operation,
+                "version": spec.version,
+                "audience": spec.audience,
+                "required_scopes": list(spec.required_scopes),
+                "subject_id": connection.subject,
+                "account": connection.email,
+            }
+
+    def validate_read_grant(
+        self,
+        owner_id: str,
+        grant_id: str,
+        *,
+        audience: str = CONNECTOR_READ_AUDIENCE,
+    ) -> dict:
+        if not self.settings.connector_reads_enabled:
+            raise CoworkerError(
+                "connector_reads_disabled",
+                "Connected reads are not enabled in this deployment.",
+                503,
+            )
+        if audience != CONNECTOR_READ_AUDIENCE:
+            raise CoworkerError(
+                "connector_audience",
+                "This connector request is not intended for the read worker.",
+                403,
+            )
+        with self.sessions.begin() as db:
+            snapshot = db.scalar(select(ConnectorReadGrant).where(
+                ConnectorReadGrant.id == grant_id,
+                ConnectorReadGrant.owner_id == owner_id,
+            ))
+            if snapshot is None:
+                raise not_found()
+            connection = db.scalar(select(Connection).where(
+                Connection.id == snapshot.connection_id,
+                Connection.owner_id == owner_id,
+            ).with_for_update())
+            grant = db.scalar(select(ConnectorReadGrant).where(
+                ConnectorReadGrant.id == grant_id,
+                ConnectorReadGrant.owner_id == owner_id,
+                ConnectorReadGrant.connection_id == snapshot.connection_id,
+            ).with_for_update())
+            if connection is None or grant is None:
+                raise not_found()
+            if not connection.active or grant.state != "active":
+                raise CoworkerError(
+                    "connector_read_revoked",
+                    "This connected read authorization is no longer active.",
+                    409,
+                )
+            if aware(grant.expires_at) <= utcnow():
+                grant.state = "expired"
+                raise CoworkerError(
+                    "connector_read_expired",
+                    "This connected read authorization expired.",
+                    409,
+                )
+            spec = connector_read_capability(connection.provider, grant.capability)
+            if (
+                grant.provider != connection.provider
+                or grant.operation != spec.operation
+                or grant.contract_version != spec.version
+                or grant.audience != spec.audience
+                or list(grant.required_scopes or []) != list(spec.required_scopes)
+                or grant.purpose != "agent_context"
+                or grant.destination != "planner_context"
+            ):
+                raise CoworkerError(
+                    "connector_read_grant_invalid",
+                    "The connected read authorization no longer matches its registered capability.",
+                    409,
+                )
+            missing = [
+                scope for scope in spec.required_scopes
+                if scope not in set(connection.scopes or [])
+            ]
+            if missing:
+                raise CoworkerError(
+                    "connector_scope_missing",
+                    "The connected account no longer has the required read permission.",
+                    409,
+                )
+            return {
+                "id": grant.id,
+                "owner_id": grant.owner_id,
+                "connection_id": connection.id,
+                "provider": connection.provider,
+                "capability": grant.capability,
+                "operation": grant.operation,
+                "version": grant.contract_version,
+                "audience": grant.audience,
+                "required_scopes": list(grant.required_scopes or []),
+                "purpose": grant.purpose,
+                "destination": grant.destination,
+                "expires_at": iso(grant.expires_at),
+                "subject_id": connection.subject,
+                "account": connection.email,
+            }
 
     def revoke_connection(self, owner_id: str, connection_id: str) -> None:
         with self.sessions.begin() as db:
