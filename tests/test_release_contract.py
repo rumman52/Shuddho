@@ -52,8 +52,30 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "runtime_v3",
         "context_retrieval",
         "connector_trust_boundary",
+        "connector_reads",
     } == covered
 
+
+
+def test_connector_reads_require_pa05_context_runtime_google_and_staging_evidence():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["actions"] = True
+    rollout["capabilities"]["connector_trust_boundary"] = True
+    rollout["capabilities"]["agent_runtime"] = True
+    rollout["capabilities"]["intelligent_planner"] = True
+    rollout["capabilities"]["runtime_v3"] = True
+    rollout["capabilities"]["memory"] = True
+    rollout["capabilities"]["context_retrieval"] = True
+    rollout["capabilities"]["connector_reads"] = True
+    rollout["action_providers"] = ["google"]
+    rollout["monitoring"]["actions"] = "actions-dashboard"
+    assert "connector_reads" in required_conditional_gate_ids(
+        rollout["capabilities"], {"google"}
+    )
+    rollout["capabilities"]["context_retrieval"] = False
+    assert "connector_reads_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
 
 
 def test_connector_trust_boundary_requires_actions_and_staging_evidence():
