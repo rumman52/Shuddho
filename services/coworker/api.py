@@ -28,7 +28,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTra
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
-from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerNetworkCheck, BrowserWorkerObservation
+from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -401,6 +401,17 @@ def browser_worker_network_check(
         payload.url,
         payload.resolved_ips,
     )
+
+
+@router.post("/internal/browser-worker/commands/{command_id}/control")
+def browser_worker_control(
+    command_id: UUID,
+    payload: BrowserWorkerIdentity,
+    request: Request,
+    services: Services,
+):
+    require_browser_worker(request, services)
+    return services.browser.worker_control(payload.worker_id, str(command_id))
 
 
 @router.post("/internal/browser-worker/commands/{command_id}/complete")
