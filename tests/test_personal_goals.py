@@ -110,3 +110,55 @@ def test_goal_run_budget_and_resource_metadata_do_not_expand_authority(goal_clie
     assert first.status_code == 202 and first.json()["memory_namespaces"] == []
     second = client.post(f'/api/v1/goals/{goal["id"]}/run', headers=auth | {"Idempotency-Key": "goal-budget-run-2"}, json={"expected_revision": 1, "output_language": "en"})
     assert second.status_code == 409 and second.json()["error"]["code"] == "goal_run_budget"
+
+def test_goal_draft_activation_and_patch_null_contract(goal_client):
+    client, headers = goal_client
+    auth = headers()
+    body = payload()
+    body["state"] = "draft"
+    created = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "goal-draft-create"},
+        json=body,
+    )
+    assert created.status_code == 201
+    goal = created.json()
+    assert goal["state"] == "draft" and goal["revision"] == 1
+
+    blocked = client.post(
+        f'/api/v1/goals/{goal["id"]}/run',
+        headers=auth | {"Idempotency-Key": "goal-draft-run"},
+        json={"expected_revision": 1, "output_language": "en"},
+    )
+    assert blocked.status_code == 409 and blocked.json()["error"]["code"] == "goal_not_active"
+
+    resumed = client.post(
+        f'/api/v1/goals/{goal["id"]}/resume',
+        headers=auth,
+        json={"expected_revision": 1},
+    )
+    assert resumed.status_code == 200
+    goal = resumed.json()
+    assert goal["state"] == "active" and goal["revision"] == 2
+
+    for field in ("objective", "success_criteria", "constraints", "timezone", "milestones", "budget", "authorized_resources"):
+        rejected = client.patch(
+            f'/api/v1/goals/{goal["id"]}',
+            headers=auth,
+            json={"expected_revision": 2, field: None},
+        )
+        assert rejected.status_code == 422, field
+
+    current = client.get(f'/api/v1/goals/{goal["id"]}', headers=auth).json()
+    assert current["revision"] == 2
+    assert current["objective"] == goal["objective"]
+    assert current["timezone"] == goal["timezone"]
+
+    cleared = client.patch(
+        f'/api/v1/goals/{goal["id"]}',
+        headers=auth,
+        json={"expected_revision": 2, "deadline_at": None, "next_review_at": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["revision"] == 3
+
