@@ -364,6 +364,7 @@ class ActionService:
         )
         if not claimed:
             return
+        claimed = dict(claimed) | {"owner_id": action["owner_id"]}
         if boundary_enabled:
             try:
                 adapter, token = await self.grant_access(
