@@ -263,10 +263,12 @@ export default function AgentWorkspace({
           <label>Goal<textarea dir="auto" rows={7} minLength={3} maxLength={4000} required value={goal} onChange={event => setGoal(event.target.value)} placeholder="For example, draft a project update and suggest an email to recipient@example.org with the exact subject and message…" /></label>
           {documents.length > 0 && <fieldset className="cw-agent-files"><legend>Owned source files (optional)</legend>{documents.slice(0, 20).map(document => <label key={document.id}><input type="checkbox" checked={selectedDocs.includes(document.id)} disabled={!selectedDocs.includes(document.id) && selectedDocs.length >= 5} onChange={event => setSelectedDocs(previous => event.target.checked ? [...previous, document.id] : previous.filter(id => id !== document.id))} /><span>{document.filename}</span></label>)}</fieldset>}
           {memoryFacts.length > 0 && <fieldset className="cw-agent-files"><legend>Explicit memory namespaces (optional)</legend>{Array.from(new Set(memoryFacts.map(item => item.namespace))).map(namespace => <label key={namespace}><input type="checkbox" checked={selectedMemoryNamespaces.includes(namespace)} onChange={event => setSelectedMemoryNamespaces(previous => event.target.checked ? [...previous, namespace] : previous.filter(item => item !== namespace))} /><span>{namespace}</span></label>)}</fieldset>}
-          {connections.some(item => item.provider === "google" && (item.capability === "email_read" || item.capability === "calendar_read")) || readGrants.length > 0 ? <fieldset className="cw-agent-files"><legend>Connected read context (optional)</legend>
-            {connections.filter(item => item.provider === "google" && (item.capability === "email_read" || item.capability === "calendar_read")).map(connection => {
+          {connections.some(item => (item.provider === "google" || item.provider === "microsoft") && (item.capability === "email_read" || item.capability === "calendar_read")) || readGrants.length > 0 ? <fieldset className="cw-agent-files"><legend>Connected read context (optional)</legend>
+            {connections.filter(item => (item.provider === "google" || item.provider === "microsoft") && (item.capability === "email_read" || item.capability === "calendar_read")).map(connection => {
               const grant = readGrants.find(item => item.connection_id === connection.id);
-              const label = connection.capability === "email_read" ? "Gmail read context" : "Calendar read context";
+              const label = connection.capability === "email_read"
+                ? (connection.provider === "google" ? "Gmail read context" : "Outlook read context")
+                : (connection.provider === "google" ? "Google Calendar read context" : "Microsoft Calendar read context");
               return <div className="cw-connection" key={connection.id}><div><strong>{label}</strong><small>{connection.email} · provider content is untrusted data</small></div>
                 {grant ? <div>
                   <label><input type="checkbox" checked={selectedReadGrants.includes(grant.id)} disabled={!selectedReadGrants.includes(grant.id) && selectedReadGrants.length >= 4} onChange={event => setSelectedReadGrants(previous => event.target.checked ? [...previous, grant.id] : previous.filter(id => id !== grant.id))} /> Use in this run</label>
@@ -277,7 +279,7 @@ export default function AgentWorkspace({
               </div>;
             })}
             <small>OAuth consent connects the account. A separate, revocable read grant controls whether synchronized data may enter Agent context.</small>
-          </fieldset> : <p className="cw-fineprint">To use connected email or calendar context, connect a Google read source in Actions first.</p>}
+          </fieldset> : <p className="cw-fineprint">To use connected email or calendar context, connect a Google or Microsoft read source in Actions first.</p>}
           <label>Output language<input value={language} onChange={event => setLanguage(event.target.value)} pattern="(auto|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*)" maxLength={35} required /></label>
           <button className="cw-primary" disabled={!enabled || Boolean(busy) || goal.trim().length < 3}>{busy === "create" ? "Starting Agent…" : "Start bounded Agent run"}<span aria-hidden="true">↗</span></button>
           <p className="cw-fineprint">Starting a run does not approve or execute an external action.</p>
