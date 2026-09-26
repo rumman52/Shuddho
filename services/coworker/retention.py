@@ -14,7 +14,7 @@ from .models import (
 )
 
 TERMINAL_TASKS = {"completed", "failed", "cancelled", "needs_input"}
-TERMINAL_AGENT_RUNS = {"completed", "failed", "cancelled"}
+TERMINAL_AGENT_RUNS = {"completed", "failed", "cancelled", "needs_input", "blocked"}
 TERMINAL_ACTIONS = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
 
 
