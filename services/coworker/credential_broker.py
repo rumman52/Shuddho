@@ -63,7 +63,7 @@ class CredentialBroker:
             verified["connection_id"],
             owner_id=verified["owner_id"],
             required_scopes=verified["required_scopes"],
-            trusted_audience=audience,
+            execution_grant_id=verified["id"],
         )
         capability = verified["capability"]
         try:
@@ -110,7 +110,7 @@ class CredentialBroker:
                 verified["connection_id"],
                 token["refresh_token"],
                 owner_id=verified["owner_id"],
-                trusted_audience=audience,
+                execution_grant_id=verified["id"],
             )
 
         profile = await adapter.profile(access_token)
