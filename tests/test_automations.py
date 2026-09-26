@@ -21,7 +21,7 @@ from services.coworker.auth import JwtVerifier
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.migrate import upgrade
-from services.coworker.models import AutomationScheduleOutbox, NotificationOutbox, utcnow
+from services.coworker.models import Automation, AutomationScheduleOutbox, PersonalGoal, utcnow
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -229,4 +229,16 @@ def test_temporal_schedule_contract_uses_timezone_overlap_and_expiry():
     assert schedule.spec.time_zone_name == "Asia/Dhaka"
     assert schedule.policy.catchup_window == timedelta(seconds=1800)
     assert schedule.state.paused is False
+
+def test_account_erasure_removes_goals_and_automation_state(automation_client, automation_container):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation = create_goal_and_automation(client, auth)
+    owner_id = client.get("/api/v1/account", headers=auth).json()["account_id"]
+
+    result = automation_container.retention.erase_account(owner_id)
+    assert result["database_erased"] is True
+    with automation_container.repository.sessions() as db:
+        assert db.get(Automation, automation["id"]) is None
+        assert db.get(PersonalGoal, goal["id"]) is None
 
