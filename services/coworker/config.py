@@ -40,6 +40,7 @@ class Settings:
     action_social_publishing_enabled: bool = False
     agent_runtime_enabled: bool = False
     personal_goals_enabled: bool = False
+    automations_enabled: bool = False
     agent_memory_enabled: bool = False
     intelligent_planner_enabled: bool = False
     agent_handoffs_enabled: bool = False
@@ -71,6 +72,7 @@ class Settings:
     max_active_agent_runs: int = 2
     agent_run_timeout_seconds: int = 1800
     max_personal_goals: int = 100
+    max_automations: int = 100
     max_memory_facts: int = 200
     max_memory_context_facts: int = 20
     max_memory_context_bytes: int = 8192
@@ -138,6 +140,7 @@ class Settings:
             action_social_publishing_enabled=os.getenv("SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED", "false").lower() == "true",
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
             personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",
+            automations_enabled=os.getenv("SHUDDHO_AUTOMATIONS_ENABLED", "false").lower() == "true",
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
@@ -173,6 +176,7 @@ class Settings:
             max_active_agent_runs=int(os.getenv("SHUDDHO_COWORKER_ACTIVE_AGENT_RUNS", "2")),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
             max_personal_goals=int(os.getenv("SHUDDHO_PERSONAL_GOALS_MAX", "100")),
+            max_automations=int(os.getenv("SHUDDHO_AUTOMATIONS_MAX", "100")),
             max_memory_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_FACTS", "200")),
             max_memory_context_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_FACTS", "20")),
             max_memory_context_bytes=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_BYTES", "8192")),
@@ -221,6 +225,11 @@ class Settings:
                     callback.username or callback.password or callback.query or callback.fragment or
                     callback.path != "/oauth/google/callback"):
                 raise ValueError("Actions require Google OAuth credentials and an HTTPS frontend /oauth/google/callback redirect URI")
+        if self.automations_enabled:
+            if not self.personal_goals_enabled or not self.agent_runtime_enabled:
+                raise ValueError("Automations require SHUDDHO_PERSONAL_GOALS_ENABLED=true and SHUDDHO_AGENT_RUNTIME_ENABLED=true")
+            if self.max_automations < 1 or self.max_automations > 1000:
+                raise ValueError("SHUDDHO_AUTOMATIONS_MAX must be between 1 and 1000")
         if self.action_attachments_enabled and not self.actions_enabled:
             raise ValueError("Action attachments require SHUDDHO_ACTIONS_ENABLED=true")
         if self.action_reminders_enabled and not self.actions_enabled:
