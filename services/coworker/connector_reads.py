@@ -927,36 +927,15 @@ class ConnectorReadService:
             raise
 
     async def revoke(self, owner: str, grant_id: str) -> dict:
-        access = None
-        try:
-            access = await self.credential_broker.issue_read_access(
-                owner, grant_id, audience=CONNECTOR_READ_AUDIENCE,
-            )
-        except Exception:
-            access = None
-        subscriptions = await asyncio.to_thread(
+        # Local authorization is the security boundary. Revoke it before any
+        # optional provider cleanup so a slow/outageing provider can never
+        # delay loss of access. Google watches are time-bounded and subsequent
+        # callbacks are rejected because the persisted grant/subscription is
+        # no longer active.
+        await asyncio.to_thread(
             self.repo.revoke_subscriptions, owner, grant_id
         )
-        grant = await asyncio.to_thread(self.repo.revoke, owner, grant_id)
-        if access is not None:
-            _verified, adapter, token = access
-            for sub in subscriptions:
-                # Gmail users.stop is mailbox-wide. A user may have another
-                # still-authorized Gmail read grant on the same connection, so
-                # local revocation is authoritative and the external watch is
-                # allowed to expire. Calendar channels are per-subscription and
-                # can be stopped safely.
-                if sub["capability"] != "calendar_read":
-                    continue
-                try:
-                    await adapter.stop_read_watch(
-                        sub["capability"], token,
-                        provider_subscription_id=sub["provider_subscription_id"],
-                        provider_resource_id=sub["provider_resource_id"],
-                    )
-                except Exception:
-                    pass
-        return grant
+        return await asyncio.to_thread(self.repo.revoke, owner, grant_id)
 
     async def process_event(self, event: dict) -> None:
         if await asyncio.to_thread(self.repo.event_is_stale, event):
