@@ -256,7 +256,16 @@ class Settings:
                 raise ValueError("Connector reads require SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=true and SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true")
             if self.connector_webhook_base_url:
                 parsed = urlparse(self.connector_webhook_base_url)
-                if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
+                if (
+                    parsed.scheme != "https"
+                    or not parsed.netloc
+                    or parsed.username
+                    or parsed.password
+                    or parsed.path not in {"", "/"}
+                    or parsed.params
+                    or parsed.query
+                    or parsed.fragment
+                ):
                     raise ValueError("SHUDDHO_CONNECTOR_WEBHOOK_BASE_URL must be a clean HTTPS origin")
             gmail_push = any((
                 self.google_gmail_pubsub_topic,
