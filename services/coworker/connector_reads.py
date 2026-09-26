@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import hmac
 import json
@@ -654,7 +653,7 @@ class ConnectorReadRepository:
         now = utcnow()
         with self.sessions.begin() as db:
             rows = db.scalars(select(ConnectorEvent).where(
-                ConnectorEvent.state.in_(["pending", "retry"]),
+                ConnectorEvent.state.in_(["pending", "retry", "processing"]),
                 ConnectorEvent.available_at <= now,
                 ((ConnectorEvent.claim_until.is_(None)) | (ConnectorEvent.claim_until < now)),
                 ConnectorEvent.attempts < 8,
