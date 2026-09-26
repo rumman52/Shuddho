@@ -141,6 +141,46 @@ class AgentPlannerProposal(AgentModel):
     action_proposals: list[AgentActionProposal] = Field(default_factory=list, max_length=2)
 
 
+class AgentObservation(AgentModel):
+    ordinal: int = Field(ge=1, le=8)
+    tool: str = Field(min_length=3, max_length=80)
+    status: Literal["completed", "needs_input", "provider_confirmed"]
+    resource_type: str | None = Field(default=None, max_length=40)
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentV3Decision(AgentModel):
+    decision: Literal["next_step", "needs_input", "awaiting_approval", "wait", "blocked", "complete"]
+    tool: str | None = Field(default=None, min_length=3, max_length=80, pattern=r"^[a-z][a-z0-9_.-]+$")
+    objective: str | None = Field(default=None, min_length=3, max_length=500)
+    message: str | None = Field(default=None, min_length=1, max_length=300)
+    wait_seconds: int | None = Field(default=None, ge=1, le=60)
+
+    @field_validator("objective", "message")
+    @classmethod
+    def safe_text(cls, value: str | None) -> str | None:
+        return _safe_text(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def valid_decision(self):
+        if self.decision == "next_step":
+            if self.tool is None or self.objective is None:
+                raise ValueError("next_step requires tool and objective")
+            if self.message is not None or self.wait_seconds is not None:
+                raise ValueError("next_step accepts only tool and objective")
+        elif self.decision == "wait":
+            if self.wait_seconds is None:
+                raise ValueError("wait requires wait_seconds")
+            if self.tool is not None or self.objective is not None:
+                raise ValueError("wait cannot select a tool")
+        else:
+            if self.tool is not None or self.objective is not None or self.wait_seconds is not None:
+                raise ValueError("Non-step decisions cannot select a tool or wait duration")
+            if self.decision in {"needs_input", "blocked", "awaiting_approval"} and self.message is None:
+                raise ValueError(f"{self.decision} requires a message")
+        return self
+
+
 class ActionProposalPromotion(AgentModel):
     connection_id: UUID
     proposal_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
