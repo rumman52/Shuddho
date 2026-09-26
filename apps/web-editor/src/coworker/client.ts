@@ -263,7 +263,8 @@ export class CoworkerClient {
   revokeConnectorReadGrant(id: string) { return this.json<ConnectorReadGrant>(`/api/v1/connector-read-grants/${identifier(id)}`, { method: "DELETE" }); }
   syncConnectorReadGrant(id: string, forceFull = false) {
     return this.response(`/api/v1/connector-read-grants/${identifier(id)}/sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force_full: forceFull, max_items: 30 }) }, 65000).then(response => response.json() as Promise<{ grant_id: string; inserted: number; updated: number; deleted: number; ignored: number; cursor_recovered: boolean }>);
-  }  subscribeConnectorReadGrant(id: string) {
+  }
+  subscribeConnectorReadGrant(id: string) {
     return this.json<ConnectorReadSubscription>(`/api/v1/connector-read-grants/${identifier(id)}/subscribe`, { method: "POST" });
   }
   connectorReadSubscription(id: string, signal?: AbortSignal) {
