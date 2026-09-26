@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 
@@ -89,5 +90,5 @@ def decode_gmail_pubsub(payload: dict) -> dict:
         "message_id": message_id,
         "email": email.casefold(),
         "history_id": history_id,
-        "payload_sha256": __import__("hashlib").sha256(raw).hexdigest(),
+        "payload_sha256": hashlib.sha256(raw).hexdigest(),
     }
