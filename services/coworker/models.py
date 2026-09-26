@@ -318,7 +318,7 @@ class ConnectorCursor(Base):
     connection_id: Mapped[str] = mapped_column(ForeignKey("cw_connections.id"), index=True)
     provider: Mapped[str] = mapped_column(String(20))
     capability: Mapped[str] = mapped_column(String(30))
-    cursor: Mapped[str | None] = mapped_column(String(1024))
+    cursor: Mapped[str | None] = mapped_column(Text)
     generation: Mapped[int] = mapped_column(Integer, default=1)
     state: Mapped[str] = mapped_column(String(20), default="active")
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
