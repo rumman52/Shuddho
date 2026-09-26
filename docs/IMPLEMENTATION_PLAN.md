@@ -1,5 +1,7 @@
 # Shuddho: three implementation parts
 
+**Current architecture note, 26 September 2026.** The reviewed implementation baseline is PR #204 (`9c658742ac38c6a1f3bcaf7f6c92869be47ab4f2`). The tables below preserve the original three-part plan and historical increment status. Use the [current architecture index](ARCHITECTURE.md), [full personal-agent service catalog](PERSONAL_AGENT_SERVICES.md), and [personal-agent implementation plan](PERSONAL_AGENT_IMPLEMENTATION.md) for the proposed next program. Existing feature-specific release contracts and gates remain authoritative; the redesign does not activate capabilities.
+
 Working plan, 13 September 2026. Continue in the existing `rumman52/Shuddho` repository. Keep the writing editor useful throughout the transition.
 
 ## Decisions and implementation reality
@@ -321,4 +323,3 @@ The next downstream-continuity increment adds [Downstream Rollout Identity Conti
 The following quality-evidence hardening increment adds [Rollout-Bound Live Quality Evidence](ROLLOUT_BOUND_LIVE_QUALITY_EVIDENCE.md). Live multilingual quality evaluation now binds the exact reviewed rollout SHA-256; final cohort admission parses that artifact instead of trusting only a staging reference, bounded scale review requires the same rollout identity, and activation-bundle/schema-v16 handoff binds and independently rechecks the exact quality artifact hash.
 
 The next AI-runtime continuity increment adds [Live Model Identity Continuity](LIVE_MODEL_IDENTITY_CONTINUITY.md). Live planner evidence now binds release, rollout, fixture, provider model and exact source revision. Final cohort admission machine-verifies it and requires multilingual quality evidence to match the same model/revision. The activation bundle carries both exact artifact hashes and schema-v16 append independently rechecks them before signing.
-

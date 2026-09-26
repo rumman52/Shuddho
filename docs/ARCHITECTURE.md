@@ -1,120 +1,40 @@
-# Shuddho repaired architecture
+# Shuddho architecture
 
-Shuddho is an original Bangla writing assistant. The repaired architecture keeps the existing Python Bangla NLP app as the linguistic source of truth and makes the TypeScript API a common gateway for web, extension, and future clients.
+Shuddho is a multilingual writing platform with a bounded AI coworker foundation. The target is a personal AI agent that plans, executes, follows up, and produces verified results across personal and professional work.
 
-## Current repaired architecture
+**Status: proposed redesign, 26 September 2026.** Implementation baseline: `9c658742ac38c6a1f3bcaf7f6c92869be47ab4f2` (PR #204). This documentation creates no runtime capability, deployment, permission, activation, or live-provider evidence.
 
-```mermaid
-flowchart TD
-  WebEditor[Web Editor / Vite] --> Gateway[Common TypeScript API Gateway]
-  Next[Next App MVP] --> Gateway
-  Extension[Chrome Extension] --> Gateway
-  Future[Future Desktop/Mobile/API Clients] --> Gateway
-  Gateway --> Prefs[Preferences Store MVP]
-  Gateway --> Docs[Document Store MVP]
-  Gateway --> Events[Privacy-safe Event Sink]
-  Gateway --> Sync[WebSocket Document Sync]
-  Gateway --> Privacy[Privacy / DLP Preprocessor]
-  Privacy --> Provider{Bangla Provider}
-  Provider --> Python[Python FastAPI Bangla Engine]
-  Provider --> Fallback[Conservative Bangla Local Fallback]
-  Python --> Pipeline[Normalizer + Sentence Splitter + Tokenizer + Rule + Spell + Grammar + Tone + Rewrite]
-  Pipeline --> Canonical[Canonical CheckResponse]
-  Fallback --> Canonical
-```
+| Document | Purpose |
+| --- | --- |
+| [Personal agent architecture](PERSONAL_AGENT_ARCHITECTURE.md) | Components, execution, data, permissions, isolation and compatibility |
+| [Service catalog](PERSONAL_AGENT_SERVICES.md) | All 16 requested categories plus Shuddho services and completion evidence |
+| [Implementation plan](PERSONAL_AGENT_IMPLEMENTATION.md) | Engineering increments, acceptance scenarios, rollout and operating responsibilities |
+| [Existing implementation history](IMPLEMENTATION_PLAN.md) | Writing/coworker and release-control increments |
+| [Historical writing architecture](legacy/WRITING_ARCHITECTURE.md) | Preserved TypeScript-gateway-era design; historical context |
 
-## Check request flow
+**The actual starting point is React/Vite, FastAPI and Temporal.** The active editor is `apps/web-editor`; the writing API is `services/api/shuddho_api`; coworker code is in `services/coworker`. Its repository capabilities include durable tasks/runs, typed tools, Temporal v1/v2, artifacts, bounded research, structured memory and approved actions. Repository presence is distinct from verified deployment.
 
-```mermaid
-sequenceDiagram
-  participant Client
-  participant Gateway
-  participant Privacy
-  participant Python as Python Bangla API
-  participant Fallback as Local Bangla Fallback
-  participant Events
-  Client->>Gateway: POST /api/check {text, language: bn, revision}
-  Gateway->>Gateway: validate size/language and assign requestId
-  Gateway->>Privacy: redact/log policy hook
-  Gateway->>Python: POST /analyze
-  alt Python available
-    Python-->>Gateway: legacy AnalyzeResponse
-    Gateway->>Gateway: adapt to canonical suggestions + UTF-16 spans
-  else Python unavailable and fallback enabled
-    Gateway->>Fallback: run conservative Bangla rules
-    Fallback-->>Gateway: canonical CheckResponse + warning
-  end
-  Gateway->>Events: suggestion_generated without raw text
-  Gateway-->>Client: CheckResponse
-```
-
-## Bangla NLP pipeline
-
-```mermaid
-flowchart LR
-  Text[Bangla text] --> NFC[NFC normalization]
-  NFC --> Split[Bangla sentence splitter]
-  Split --> Tokens[Tokenizer / grapheme span mapper]
-  Tokens --> Rules[Rule engine]
-  Tokens --> Spell[Spell engine]
-  Tokens --> Grammar[Grammar checks]
-  Tokens --> Tone[Tone engine]
-  Tokens --> Rewrite[Rewrite engine]
-  Rules --> Rank[Rank + dedupe]
-  Spell --> Rank
-  Grammar --> Rank
-  Tone --> Rank
-  Rewrite --> Rank
-  Rank --> Suggestions[Normalized Suggestion Response]
-```
-
-## WebSocket document sync flow
-
-```mermaid
-sequenceDiagram
-  participant ClientA
-  participant WS as /ws/docs/:documentId
-  participant Store as InMemory DocumentStore
-  ClientA->>WS: client_hello
-  WS-->>ClientA: server_hello {document, revision}
-  ClientA->>WS: edit {baseRevision, text/op}
-  WS->>Store: applyDelta
-  alt revision matches
-    Store-->>WS: document revision+1
-    WS-->>ClientA: ack + latest document
-  else mismatch
-    Store-->>WS: authoritative document
-    WS-->>ClientA: resync_required
-  end
-```
-
-The MVP sync protocol is intentionally not OT/CRDT; it is a server-authoritative revision skeleton that can evolve into full collaborative editing.
-
-## Future hybrid on-device/cloud architecture
+Preserve free/local Bangla writing, the selected DeepSeek provider, backend-only secrets, explicit Gemma rollback, existing approval hashes/receipts and release evidence. Keep production features governed by their existing gates.
 
 ```mermaid
 flowchart TD
-  Client[Client] --> LocalPolicy{Can local model handle privately?}
-  LocalPolicy -- yes --> OnDevice[On-device Bangla provider]
-  LocalPolicy -- no / low confidence --> Gateway[API Gateway]
-  Gateway --> Policy[Enterprise/privacy policy]
-  Policy --> Cloud[Cloud Bangla orchestrator]
-  Cloud --> Python[Python rule/spell/grammar]
-  Cloud --> ML[Future ML/LLM adapter]
-  OnDevice --> Merge[Merge + rank]
-  Python --> Merge
-  ML --> Merge
-  Merge --> UI[Suggestion UI]
-  UI --> Events[Consent-aware feedback]
+  UI["Writing, Chat and Goals"] --> API["Authenticated FastAPI"]
+  API --> Runs["Goals and Temporal runs"]
+  Events["Schedules and verified events"] --> Runs
+  Runs <--> Context["Owned context and memory"]
+  Runs <--> Model["DeepSeek gateway"]
+  Runs --> Authority["Permission and budget checks"]
+  Authority --> Tools["Typed service workers"]
+  Authority --> Isolated["Isolated browser and code workers"]
+  Tools --> Evidence["Receipts and artifacts"]
+  Isolated --> Evidence
+  Evidence --> Runs
+  Evidence --> Delivery["Progress and notifications"]
+  Delivery --> UI
 ```
 
-## Decisions
+This shows execution relationships. All external paths, including search/inference, require the detailed design's data-release and egress checks; the diagram grants no unrestricted network access.
 
-- Python Bangla engine remains the source of linguistic truth.
-- TypeScript API is the common gateway and provider orchestrator.
-- Frontends should call `/api/check` and receive canonical `CheckResponse`.
-- Suggestion IDs and suppression keys are stable hashes, never request IDs.
-- Python code point offsets are converted to browser UTF-16 offsets; grapheme snapping avoids splitting Bangla clusters.
-- The Next MVP uses a textarea and side-panel cards instead of mutating `contentEditable` HTML every render.
-- Events are privacy-safe and do not store raw full user text.
-- Postgres and Redis are prepared for durable production mode; local dev can use memory mode.
+**The next code slice is persistent goals linked to existing runs.** Follow with schedules and durable notifications, then result-aware execution and consented connector reads. Browser, code and transactions have separate qualification gates. All services in the catalog remain in scope.
+
+Existing [staging gates](PART_3_AGENT_EVAL_STAGING_GATES.md), [action policy](CONSEQUENTIAL_ACTION_POLICY.md), [release contract](../scripts/release_contract.py) and [model identity continuity](LIVE_MODEL_IDENTITY_CONTINUITY.md) remain authoritative for the implemented system.
