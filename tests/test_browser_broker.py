@@ -11,10 +11,10 @@ pytest.importorskip("sqlalchemy")
 from action_samples import enable_actions
 from test_coworker import account, container, signed_client
 
-from services.coworker.browser import BrowserRepository, normalize_browser_target
+from services.coworker.browser import BrowserRepository, normalize_browser_target, validate_resolved_addresses
 from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate
 from services.coworker.errors import CoworkerError
-from services.coworker.models import BrowserSession, utcnow
+from services.coworker.models import BrowserCommand, BrowserSession, utcnow
 
 
 def enable_browser(container):
@@ -191,3 +191,132 @@ def test_browser_api_is_owner_scoped_and_never_claims_worker_execution(container
     )
     assert prepared.status_code == 202
     assert prepared.json()["state"] == "prepared"
+
+
+def test_browser_worker_rejects_private_dns_and_requires_claim_owner(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    navigation = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/worker"),
+    )
+
+    with pytest.raises(CoworkerError) as private:
+        validate_resolved_addresses("example.com", ["127.0.0.1"])
+    assert private.value.code == "browser_network_blocked"
+
+    claimed = container.browser.claim_commands("worker-a")
+    assert [item["id"] for item in claimed] == [navigation["id"]]
+    assert claimed[0]["attempt"] == 1
+
+    with pytest.raises(CoworkerError) as wrong_worker:
+        container.browser.complete_command(
+            "worker-b",
+            navigation["id"],
+            {
+                "final_url": "https://example.com/worker",
+                "title": "Example",
+                "redirect_chain": [],
+                "resolved_ips": {"example.com": ["93.184.216.34"]},
+            },
+        )
+    assert wrong_worker.value.code == "browser_worker_claim_invalid"
+
+    completed = container.browser.complete_command(
+        "worker-a",
+        navigation["id"],
+        {
+            "final_url": "https://example.com/worker",
+            "title": "Example",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        },
+    )
+    assert completed["state"] == "succeeded"
+    assert completed["result"]["final_url"] == "https://example.com/worker"
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "prepared"
+    assert current["last_url"] == "https://example.com/worker"
+    assert current["execution"]["worker_attached"] is False
+
+
+def test_browser_worker_lease_recovery_is_bounded(container):
+    settings = enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    navigation = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/recover"),
+    )
+    first = container.browser.claim_commands("worker-a")
+    assert first[0]["attempt"] == 1
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(BrowserCommand, navigation["id"])
+        row.lease_until = utcnow() - timedelta(seconds=1)
+
+    recovered = container.browser.claim_commands("worker-b")
+    assert recovered[0]["id"] == navigation["id"]
+    assert recovered[0]["attempt"] == 2
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(BrowserCommand, navigation["id"])
+        row.lease_until = utcnow() - timedelta(seconds=1)
+
+    assert container.browser.claim_commands("worker-c") == []
+    assert settings.browser_command_max_attempts == 2
+
+
+def test_browser_worker_rejects_missing_dns_evidence_and_cross_origin_redirect(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    navigation = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    container.browser.claim_commands("worker-a")
+
+    with pytest.raises(CoworkerError) as missing:
+        container.browser.complete_command(
+            "worker-a",
+            navigation["id"],
+            {
+                "final_url": "https://example.com/final",
+                "title": "Example",
+                "redirect_chain": [],
+                "resolved_ips": {},
+            },
+        )
+    assert missing.value.code == "browser_dns_evidence_missing"
+
+    failed = container.browser.fail_command("worker-a", navigation["id"], "network_blocked")
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "network_blocked"
+
+    other = create_session(container, owner, key="browser-redirect")
+    redirect = container.browser.prepare_navigation(
+        owner,
+        other["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    container.browser.claim_commands("worker-b")
+    with pytest.raises(CoworkerError) as cross_origin:
+        container.browser.complete_command(
+            "worker-b",
+            redirect["id"],
+            {
+                "final_url": "https://evil.example/final",
+                "title": "Redirected",
+                "redirect_chain": ["https://example.com/start"],
+                "resolved_ips": {
+                    "example.com": ["93.184.216.34"],
+                    "evil.example": ["93.184.216.34"],
+                },
+            },
+        )
+    assert cross_origin.value.code == "browser_origin_not_allowed"
