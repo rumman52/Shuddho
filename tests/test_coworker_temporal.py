@@ -1022,6 +1022,7 @@ def test_agent_runtime_version_is_frozen_per_new_run(container):
             agent_runtime_v3_enabled=False,
             agent_dependency_graph_enabled=False,
             agent_parallel_execution_enabled=False,
+            max_active_agent_runs=4,
         )
         container.settings = v1_settings
         container.repository.settings = v1_settings
