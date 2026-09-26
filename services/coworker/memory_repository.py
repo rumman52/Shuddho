@@ -147,6 +147,16 @@ class MemoryRepository:
             ).with_for_update())
             if run is None:
                 raise not_found()
+            existing = db.scalar(select(MemoryProposal).where(
+                MemoryProposal.owner_id == owner,
+                MemoryProposal.run_id == run.id,
+                MemoryProposal.namespace == proposal.namespace,
+                MemoryProposal.key == proposal.key,
+                MemoryProposal.state == "proposed",
+                MemoryProposal.expires_at > utcnow(),
+            ).order_by(MemoryProposal.created_at.desc()).limit(1))
+            if existing is not None:
+                return self._proposal_dto(existing)
             active = db.scalar(select(func.count()).select_from(MemoryProposal).where(
                 MemoryProposal.owner_id == owner,
                 MemoryProposal.state == "proposed",
