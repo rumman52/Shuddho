@@ -28,6 +28,7 @@ def enable_browser(container):
         browser_enabled=True,
         max_active_browser_sessions=2,
         browser_session_ttl_seconds=300,
+        browser_worker_token="test-browser-worker-token-0123456789abcdef",
     )
     settings.validate()
     container.settings = settings
@@ -320,3 +321,95 @@ def test_browser_worker_rejects_missing_dns_evidence_and_cross_origin_redirect(c
             },
         )
     assert cross_origin.value.code == "browser_origin_not_allowed"
+
+
+def test_browser_worker_internal_api_requires_service_token_and_claim_binding(container, signed_client):
+    settings = enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    command = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/internal"),
+    )
+    client, headers = signed_client
+
+    denied = client.post(
+        "/api/v1/internal/browser-worker/claim",
+        json={"worker_id": "worker-a", "limit": 1},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "browser_worker_unauthorized"
+
+    worker_headers = {"X-Shuddho-Browser-Worker-Token": settings.browser_worker_token}
+    claimed = client.post(
+        "/api/v1/internal/browser-worker/claim",
+        headers=worker_headers,
+        json={"worker_id": "worker-a", "limit": 1},
+    )
+    assert claimed.status_code == 200
+    assert claimed.json()["commands"][0]["id"] == command["id"]
+
+    cross_origin = client.post(
+        f'/api/v1/internal/browser-worker/commands/{command["id"]}/network-check',
+        headers=worker_headers,
+        json={
+            "worker_id": "worker-a",
+            "url": "https://other.example/resource",
+            "resolved_ips": ["93.184.216.34"],
+        },
+    )
+    assert cross_origin.status_code == 403
+    assert cross_origin.json()["error"]["code"] == "browser_origin_not_allowed"
+
+    allowed = client.post(
+        f'/api/v1/internal/browser-worker/commands/{command["id"]}/network-check',
+        headers=worker_headers,
+        json={
+            "worker_id": "worker-a",
+            "url": "https://example.com/resource",
+            "resolved_ips": ["93.184.216.34"],
+        },
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["origin"] == "https://example.com"
+
+    wrong_worker = client.post(
+        f'/api/v1/internal/browser-worker/commands/{command["id"]}/network-check',
+        headers=worker_headers,
+        json={
+            "worker_id": "worker-b",
+            "url": "https://example.com/resource",
+            "resolved_ips": ["93.184.216.34"],
+        },
+    )
+    assert wrong_worker.status_code == 409
+    assert wrong_worker.json()["error"]["code"] == "browser_worker_claim_invalid"
+
+
+def test_browser_worker_claims_strict_session_sequence(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    first = container.browser.prepare_navigation(
+        owner, session["id"], BrowserNavigateCreate(url="https://example.com/one")
+    )
+    second = container.browser.prepare_navigation(
+        owner, session["id"], BrowserNavigateCreate(url="https://example.com/two")
+    )
+
+    claimed = container.browser.claim_commands("worker-a", limit=5)
+    assert [item["id"] for item in claimed] == [first["id"]]
+
+    container.browser.complete_command(
+        "worker-a",
+        first["id"],
+        {
+            "final_url": "https://example.com/one",
+            "title": "One",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        },
+    )
+    claimed_next = container.browser.claim_commands("worker-b", limit=5)
+    assert [item["id"] for item in claimed_next] == [second["id"]]
