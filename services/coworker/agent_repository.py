@@ -11,7 +11,7 @@ from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, a
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -64,12 +64,25 @@ class AgentRepository:
             DocumentVersion.id.in_(run.input_versions), DocumentVersion.owner_id == run.owner_id,
         )))
 
-    def create(self, owner: str, request: AgentRunCreate, idempotency_key: str) -> tuple[dict, bool]:
+    def create(
+        self,
+        owner: str,
+        request: AgentRunCreate,
+        idempotency_key: str,
+        *,
+        persistent_goal_id: str | None = None,
+        persistent_goal_revision: int | None = None,
+    ) -> tuple[dict, bool]:
         if not self.settings.agent_runtime_enabled:
             raise CoworkerError("agent_runtime_unavailable", "Agent runs are not enabled in this workspace yet.", 409)
         if request.memory_namespaces and not self.settings.agent_memory_enabled:
             raise CoworkerError("agent_memory_unavailable", "Structured memory is not enabled in this workspace yet.", 409)
         payload = request.model_dump(mode="json")
+        if persistent_goal_id is not None:
+            payload = payload | {
+                "persistent_goal_id": persistent_goal_id,
+                "persistent_goal_revision": persistent_goal_revision,
+            }
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
             if db.scalar(select(Account.id).where(Account.id == owner).with_for_update()) is None:
@@ -87,6 +100,29 @@ class AgentRepository:
             ))
             if active >= self.settings.max_active_agent_runs:
                 raise CoworkerError("active_agent_limit", "Your coworker already has the maximum active agent runs.", 429)
+
+            if persistent_goal_id is not None:
+                if not self.settings.personal_goals_enabled:
+                    raise CoworkerError("personal_goals_unavailable", "Persistent goals are not enabled in this workspace yet.", 409)
+                goal_row = db.scalar(select(PersonalGoal).where(
+                    PersonalGoal.id == persistent_goal_id,
+                    PersonalGoal.owner_id == owner,
+                ).with_for_update())
+                if goal_row is None:
+                    raise not_found()
+                if persistent_goal_revision != goal_row.revision:
+                    raise CoworkerError("goal_revision_conflict", "This goal changed. Review the latest revision before starting more work.", 409)
+                if goal_row.state != "active":
+                    raise CoworkerError("goal_not_active", "Only an active goal can start a new bounded run.", 409)
+                if request.goal != goal_row.objective:
+                    raise CoworkerError("goal_revision_conflict", "The run objective no longer matches this goal revision.", 409)
+                max_runs = int((goal_row.budget if isinstance(goal_row.budget, dict) else {}).get("max_runs", 20))
+                used_runs = db.scalar(select(func.count()).select_from(AgentRun).where(
+                    AgentRun.owner_id == owner,
+                    AgentRun.goal_id == persistent_goal_id,
+                ))
+                if used_runs >= max_runs:
+                    raise CoworkerError("goal_run_budget", "This goal reached its configured bounded-run budget.", 409)
 
             versions: list[str] = []
             for document_id in request.document_ids:
@@ -132,6 +168,8 @@ class AgentRepository:
                 id=run_id,
                 owner_id=owner,
                 workspace_id=self._workspace(db, owner),
+                goal_id=persistent_goal_id,
+                goal_revision=persistent_goal_revision,
                 idempotency_key=idempotency_key,
                 fingerprint=fingerprint,
                 goal=request.goal,
@@ -198,6 +236,8 @@ class AgentRepository:
         ))) if run.input_versions else []
         return {
             "id": run.id,
+            "persistent_goal_id": run.goal_id,
+            "persistent_goal_revision": run.goal_revision,
             "goal": run.goal,
             "output_language": run.output_language,
             "document_ids": documents,
@@ -782,6 +822,7 @@ class AgentRepository:
             ))} if run.action_ids else {}
             return {
                 "id": run.id, "owner_id": run.owner_id, "goal": run.goal,
+                "persistent_goal_id": run.goal_id, "persistent_goal_revision": run.goal_revision,
                 "output_language": run.output_language, "document_ids": documents,
                 "actions": [{"id": action_rows[action_id].id, "kind": action_rows[action_id].kind,
                              "state": action_rows[action_id].state}

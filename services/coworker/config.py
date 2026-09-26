@@ -39,6 +39,7 @@ class Settings:
     action_email_threading_enabled: bool = False
     action_social_publishing_enabled: bool = False
     agent_runtime_enabled: bool = False
+    personal_goals_enabled: bool = False
     agent_memory_enabled: bool = False
     intelligent_planner_enabled: bool = False
     agent_handoffs_enabled: bool = False
@@ -69,6 +70,7 @@ class Settings:
     max_action_recipients: int = 100
     max_active_agent_runs: int = 2
     agent_run_timeout_seconds: int = 1800
+    max_personal_goals: int = 100
     max_memory_facts: int = 200
     max_memory_context_facts: int = 20
     max_memory_context_bytes: int = 8192
@@ -135,6 +137,7 @@ class Settings:
             action_email_threading_enabled=os.getenv("SHUDDHO_ACTION_EMAIL_THREADING_ENABLED", "false").lower() == "true",
             action_social_publishing_enabled=os.getenv("SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED", "false").lower() == "true",
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
+            personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
@@ -169,6 +172,7 @@ class Settings:
             max_action_recipients=int(os.getenv("SHUDDHO_ACTION_RECIPIENTS_MAX", "100")),
             max_active_agent_runs=int(os.getenv("SHUDDHO_COWORKER_ACTIVE_AGENT_RUNS", "2")),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
+            max_personal_goals=int(os.getenv("SHUDDHO_PERSONAL_GOALS_MAX", "100")),
             max_memory_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_FACTS", "200")),
             max_memory_context_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_FACTS", "20")),
             max_memory_context_bytes=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_BYTES", "8192")),
@@ -300,7 +304,7 @@ class Settings:
             raise ValueError("SHUDDHO_AUTH_ISSUER must be the HTTPS issuer of the managed identity provider")
         if min(self.max_daily_tasks, self.max_active_tasks, self.daily_token_budget,
                self.task_token_budget, self.max_account_bytes, self.max_daily_actions, self.max_action_recipients,
-               self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_memory_facts,
+               self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_personal_goals, self.max_memory_facts,
                self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens,
                self.max_agent_handoff_bytes, self.max_agent_handoff_sources,
