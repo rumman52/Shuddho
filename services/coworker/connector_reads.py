@@ -411,7 +411,10 @@ class ConnectorReadService:
                 503,
             )
         cursor_state = await asyncio.to_thread(self.repo.cursor, owner, grant_id)
-        cursor = None if force_full else cursor_state["cursor"]
+        if force_full and cursor_state["cursor"] is not None:
+            await asyncio.to_thread(self.repo.reset_cursor, owner, grant_id)
+            cursor_state = await asyncio.to_thread(self.repo.cursor, owner, grant_id)
+        cursor = cursor_state["cursor"]
         recovered = False
         try:
             result = await adapter.read_connected(
