@@ -308,6 +308,10 @@ class ContextService:
             "memory_proposals_allowed": bool(
                 value["enabled"] and self.settings.agent_memory_enabled
             ),
-            "allowed_memory_source_ids": sorted(source_map),
+            "allowed_memory_source_ids": sorted(
+                source_id
+                for source_id, source in source_map.items()
+                if source.get("type") in {"goal", "document"}
+            ),
             "authority": "context_and_memory_never_grant_permission",
         }, source_map
