@@ -176,6 +176,20 @@ class BrowserRepository:
                 503,
             )
 
+
+    def validate_worker_network_target(self, raw_url: str, addresses: list[str]) -> dict:
+        """Trusted service check performed immediately before browser egress."""
+        self._require_enabled()
+        normalized, origin = normalize_browser_target(raw_url)
+        hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
+        checked = validate_resolved_addresses(hostname, addresses)
+        return {
+            "url": normalized,
+            "origin": origin,
+            "hostname": hostname,
+            "resolved_ips": checked,
+        }
+
     def create(self, owner: str, request: BrowserSessionCreate, idempotency_key: str) -> tuple[dict, bool]:
         self._require_enabled()
         start_url, origin = normalize_browser_target(request.start_url)
@@ -400,7 +414,17 @@ class BrowserRepository:
                 .with_for_update(skip_locked=True)
             ).all()
             claimed: list[dict] = []
+            claimed_sessions: set[str] = set()
             for command in rows:
+                if command.session_id in claimed_sessions:
+                    continue
+                earlier_pending = db.scalar(select(func.count()).select_from(BrowserCommand).where(
+                    BrowserCommand.session_id == command.session_id,
+                    BrowserCommand.sequence < command.sequence,
+                    BrowserCommand.state.in_(("prepared", "running")),
+                )) or 0
+                if earlier_pending:
+                    continue
                 session = db.get(BrowserSession, command.session_id)
                 command.state = "running"
                 command.attempts += 1
@@ -410,6 +434,7 @@ class BrowserRepository:
                 session.state = "running"
                 session.worker_session_ref = worker_id
                 session.updated_at = now
+                claimed_sessions.add(command.session_id)
                 claimed.append({
                     "id": command.id,
                     "session_id": command.session_id,
