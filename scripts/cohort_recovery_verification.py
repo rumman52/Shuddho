@@ -33,6 +33,7 @@ CAPABILITY_ATTRS = {
     "work_services": "work_services_enabled",
     "artifact_services": "artifact_services_enabled",
     "agent_runtime": "agent_runtime_enabled",
+    "runtime_v3": "agent_runtime_v3_enabled",
     "intelligent_planner": "intelligent_planner_enabled",
     "memory": "agent_memory_enabled",
     "handoffs": "agent_handoffs_enabled",
