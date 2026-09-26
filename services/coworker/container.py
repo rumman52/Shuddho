@@ -9,6 +9,7 @@ from .action_repository import ActionRepository
 from .actions import ActionService
 from .permission_gateway import PermissionGateway
 from .credential_broker import CredentialBroker
+from .connector_reads import ConnectorReadRepository, ConnectorReadService
 from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
 from .linkedin_actions import LinkedInActions
@@ -30,6 +31,7 @@ class Container:
     actions: ActionService | None = None
     permissions: PermissionGateway | None = None
     credentials: CredentialBroker | None = None
+    connector_reads: ConnectorReadService | None = None
     agent: AgentRepository | None = None
     goals: GoalRepository | None = None
     automations: AutomationRepository | None = None
@@ -67,6 +69,16 @@ class Container:
                 permission_gateway=self.permissions,
                 credential_broker=self.credentials,
             )
+        if self.connector_reads is None:
+            read_repository = ConnectorReadRepository(
+                self.repository.sessions,
+                self.settings,
+                self.permissions,
+            )
+            self.connector_reads = ConnectorReadService(
+                read_repository,
+                self.credentials,
+            )
         if self.agent is None:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
         if self.goals is None:
@@ -81,6 +93,7 @@ class Container:
                 self.settings,
                 self.storage,
                 self.memory,
+                self.connector_reads,
             )
         if self.recipients is None:
             self.recipients = RecipientRepository(self.repository.sessions, self.settings)
