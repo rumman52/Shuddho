@@ -49,7 +49,7 @@ class GooglePushVerifier:
 
 
 def decode_gmail_pubsub(payload: dict) -> dict:
-    if not isinstance(payload, dict) or set(payload) - {"message", "subscription"}:
+    if not isinstance(payload, dict) or set(payload) - {"message", "subscription", "deliveryAttempt"}:
         raise CoworkerError("connector_push_invalid", "Invalid Gmail push payload.", 400)
     message = payload.get("message")
     subscription = payload.get("subscription")
