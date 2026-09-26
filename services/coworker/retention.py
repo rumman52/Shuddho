@@ -139,6 +139,7 @@ class RetentionService:
             db.execute(delete(ToolInvocation).where(ToolInvocation.owner_id == owner))
             db.execute(delete(AgentEvent).where(AgentEvent.owner_id == owner))
             db.execute(delete(AgentDecision).where(AgentDecision.owner_id == owner))
+            db.execute(delete(MemoryProposal).where(MemoryProposal.owner_id == owner))
             if run_ids:
                 db.execute(delete(AgentOutbox).where(AgentOutbox.run_id.in_(run_ids)))
             db.execute(delete(AgentStep).where(AgentStep.owner_id == owner))
@@ -156,7 +157,6 @@ class RetentionService:
 
             db.execute(delete(DocumentVersion).where(DocumentVersion.owner_id == owner))
             db.execute(delete(Document).where(Document.owner_id == owner))
-            db.execute(delete(MemoryProposal).where(MemoryProposal.owner_id == owner))
             db.execute(delete(MemoryFact).where(MemoryFact.owner_id == owner))
             db.execute(delete(ExternalAction).where(ExternalAction.owner_id == owner))
             db.execute(delete(OAuthAttempt).where(OAuthAttempt.owner_id == owner))
