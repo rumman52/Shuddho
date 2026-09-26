@@ -29,6 +29,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [documentSharingEnabled, setDocumentSharingEnabled] = useState(false);
   const [threadingEnabled, setThreadingEnabled] = useState(false);
   const [socialPublishingEnabled, setSocialPublishingEnabled] = useState(false);
+  const [readsEnabled, setReadsEnabled] = useState(false);
   const [replyParentId, setReplyParentId] = useState<string | null>(null);
   const [savedRecipients, setSavedRecipients] = useState<ActionRecipient[]>([]);
   const [recipientName, setRecipientName] = useState("");
@@ -77,7 +78,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
       });
       Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal), directory]).then(([value, recent, available, recipientDirectory]) => {
         if (!alive) return;
-        setEnabled(value.enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setSocialPublishingEnabled(value.social_publishing_enabled); setConnections(value.connections); setHistory(recent.actions);
+        setEnabled(value.enabled); setReadsEnabled(value.reads_enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setSocialPublishingEnabled(value.social_publishing_enabled); setConnections(value.connections); setHistory(recent.actions);
         setAttachmentsEnabled(available.attachments_enabled); setDocumentSharingEnabled(current => current || available.document_sharing_enabled); setArtifacts(available.artifacts);
         setRecipientDirectoryEnabled(recipientDirectory.enabled); setSavedRecipients(recipientDirectory.recipients); setLoaded(true);
       }).catch(failure => { if (alive) { setError(message(failure)); setLoaded(true); } });
@@ -269,7 +270,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
     </select></label>}
     <div className="cw-connection-grid">{(
       provider === "google"
-        ? (["email", "calendar", "drive"] as const)
+        ? (readsEnabled
+          ? (["email", "calendar", "drive", "email_read", "calendar_read"] as const)
+          : (["email", "calendar", "drive"] as const))
         : provider === "microsoft"
           ? (["email", "calendar"] as const)
           : (["social"] as const)
@@ -281,7 +284,11 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           ? (provider === "google" ? "Gmail" : "Outlook / Microsoft Mail")
           : capability === "calendar"
             ? (provider === "google" ? "Google Calendar" : "Microsoft Calendar")
-            : "Google Drive";
+            : capability === "email_read"
+              ? "Gmail read context"
+              : capability === "calendar_read"
+                ? "Google Calendar read context"
+                : "Google Drive";
       const google = provider === "google";
       const controlLabel = provider === "linkedin"
         ? "LinkedIn"
@@ -291,7 +298,11 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
             ? "Gmail"
             : capability === "calendar"
               ? "Calendar"
-              : "Google Drive";
+              : capability === "email_read"
+                ? "Gmail read"
+                : capability === "calendar_read"
+                  ? "Calendar read"
+                  : "Google Drive";
       const accountLabel = provider === "linkedin" ? "Connected personal member" : connected?.email;
       const description = capability === "social"
         ? "Publish public text posts only after explicit approval"
@@ -299,7 +310,11 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           ? "Send emails you approve"
           : capability === "calendar"
             ? "Create events in your primary calendar"
-            : "Share one approved Shuddho artifact";
+            : capability === "email_read"
+              ? "Read bounded Gmail metadata/snippets only after a separate Agent read grant"
+              : capability === "calendar_read"
+                ? "Read bounded calendar events only after a separate Agent read grant"
+                : "Share one approved Shuddho artifact";
       return <div className="cw-connection" key={provider + capability}><div><strong>{label}</strong><small>{connected ? accountLabel : description}</small></div>
         {connected ? <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => {
           const confirmation = provider === "linkedin"
@@ -308,7 +323,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           if (!window.confirm(confirmation)) return;
           void run("disconnect", async () => { const result = await client.disconnect(connected.id); setNotice(result.message); setReload(x => x + 1); if (action) updateAction(await client.action(action.id)); });
         }}>Disconnect {controlLabel}</button> : <button className="cw-secondary" disabled={!enabled || Boolean(busy)} onClick={() => void run("connect", () => google
-          ? beginGoogleConnection(client, account, capability as "email" | "calendar" | "drive")
+          ? beginGoogleConnection(client, account, capability as "email" | "calendar" | "drive" | "email_read" | "calendar_read")
           : provider === "microsoft"
             ? beginMicrosoftConnection(client, account, capability as "email" | "calendar")
             : beginLinkedInConnection(client, account))}>Connect {controlLabel}</button>}
