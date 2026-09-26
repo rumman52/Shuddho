@@ -97,7 +97,7 @@ OPTIONAL_CAPABILITIES = (
         staging_gates=(
             StagingGate(
                 "connector_reads",
-                "Live Google read consent, bounded Gmail/Calendar synchronization, cursor recovery, owner isolation, grant expiry/revocation, disconnect invalidation and Agent-context containment passed in controlled staging.",
+                "Live Google read consent, bounded Gmail/Calendar synchronization, authenticated provider event intake, duplicate/out-of-order delivery handling, subscription renewal, cursor recovery, owner isolation, grant expiry/revocation, disconnect invalidation and Agent-context containment passed in controlled staging.",
                 provider="google",
             ),
         ),
