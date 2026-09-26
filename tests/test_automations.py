@@ -23,7 +23,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Account, AgentRun, Automation, AutomationScheduleOutbox, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, NotificationOutbox, PersonalGoal, utcnow
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -147,6 +147,17 @@ def test_automation_crud_is_owner_scoped_revisioned_and_reconciled(automation_cl
     )
     assert resumed.status_code == 200 and resumed.json()["state"] == "active"
 
+    automation_container.automations.settings = replace(
+        automation_container.settings, max_automations=1
+    )
+    limited = client.post(
+        "/api/v1/automations",
+        headers=alice | {"Idempotency-Key": "automation-limit-second"},
+        json=automation_payload(goal),
+    )
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "automation_limit"
+
 
 def test_kill_switch_reconciliation_pauses_and_restores_persisted_desired_state(automation_client, automation_container):
     client, headers = automation_client
@@ -257,10 +268,17 @@ def test_buffer_one_keeps_only_one_waiting_occurrence(automation_client, automat
 
     ready = automation_container.automations.claim_buffered_occurrences()
     assert len(ready) == 1
+    assert automation_container.automations.claim_buffered_occurrences() == []
+    with automation_container.repository.sessions.begin() as db:
+        occurrence = db.get(AutomationOccurrence, buffered["occurrence_id"])
+        occurrence.updated_at = utcnow() - timedelta(seconds=31)
+    reclaimed = automation_container.automations.claim_buffered_occurrences()
+    assert len(reclaimed) == 1 and reclaimed[0]["automation_id"] == automation["id"]
+
     released = automation_container.automations.accept_occurrence(
-        ready[0]["automation_id"],
-        ready[0]["revision"],
-        __import__("datetime").datetime.fromisoformat(ready[0]["due_at"]),
+        reclaimed[0]["automation_id"],
+        reclaimed[0]["revision"],
+        __import__("datetime").datetime.fromisoformat(reclaimed[0]["due_at"]),
     )
     assert released["state"] == "accepted"
     assert released["run_id"] != first["run_id"]
