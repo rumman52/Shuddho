@@ -55,6 +55,7 @@ async function validateHost(commandId, host) {
 }
 
 async function createPinnedProxy(command, evidence) {
+  const sockets = new Set();
   const server = http.createServer((_req, res) => {
     res.writeHead(403, { "Content-Type": "text/plain", "Connection": "close" });
     res.end("HTTPS CONNECT only");
@@ -68,6 +69,8 @@ async function createPinnedProxy(command, evidence) {
       evidence[checked.hostname] = checked.resolved_ips;
       const pinnedIp = checked.resolved_ips[0];
       const upstream = net.connect({ host: pinnedIp, port: 443 });
+      sockets.add(upstream);
+      sockets.add(clientSocket);
       upstream.setTimeout(NAVIGATION_TIMEOUT_MS);
 
       upstream.once("connect", () => {
@@ -77,6 +80,8 @@ async function createPinnedProxy(command, evidence) {
         upstream.pipe(clientSocket);
       });
       upstream.once("timeout", () => upstream.destroy(new Error("upstream_timeout")));
+      upstream.once("close", () => sockets.delete(upstream));
+      clientSocket.once("close", () => sockets.delete(clientSocket));
       upstream.once("error", () => clientSocket.destroy());
       clientSocket.once("error", () => upstream.destroy());
     } catch {
@@ -94,6 +99,40 @@ async function createPinnedProxy(command, evidence) {
   return {
     server,
     url: `http://127.0.0.1:${address.port}`,
+    destroy() {
+      for (const socket of sockets) socket.destroy();
+      sockets.clear();
+    },
+  };
+}
+
+async function monitorControl(commandId, onStop) {
+  let finished = false;
+  const loop = (async () => {
+    while (!finished && !stopping) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (finished || stopping) break;
+      try {
+        const control = await api(`/api/v1/internal/browser-worker/commands/${commandId}/control`, {
+          worker_id: WORKER_ID,
+        });
+        if (control.action === "stop" || control.action === "pause") {
+          await onStop(control);
+          break;
+        }
+      } catch (error) {
+        if (error?.code === "browser_worker_claim_invalid") {
+          await onStop({ action: "stop", reason: "claim_lost" });
+          break;
+        }
+      }
+    }
+  })();
+  return {
+    async finish() {
+      finished = true;
+      await loop;
+    },
   };
 }
 
@@ -101,6 +140,8 @@ async function execute(command) {
   const evidence = {};
   let proxy;
   let browser;
+  let control;
+  let interrupted = null;
   try {
     proxy = await createPinnedProxy(command, evidence);
     browser = await chromium.launch({
@@ -108,6 +149,12 @@ async function execute(command) {
       proxy: { server: proxy.url },
       env: { HOME: process.env.HOME || "/tmp" },
     });
+    control = await monitorControl(command.id, async (value) => {
+      interrupted = value;
+      if (browser) await browser.close().catch(() => {});
+      if (proxy) proxy.destroy();
+    });
+
     const context = await browser.newContext({
       acceptDownloads: false,
       ignoreHTTPSErrors: false,
@@ -128,6 +175,11 @@ async function execute(command) {
     });
 
     await page.goto(command.target_url, { waitUntil: "domcontentloaded" });
+    if (interrupted) {
+      throw Object.assign(new Error(interrupted.reason || "worker_interrupted"), {
+        code: interrupted.reason || "worker_interrupted",
+      });
+    }
     const finalUrl = page.url();
     const title = (await page.title()).slice(0, 300);
     const redirectChain = navigationUrls
@@ -144,7 +196,8 @@ async function execute(command) {
   } catch (error) {
     const code = ["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"]
       .includes(error?.code) ? "network_blocked"
-      : error?.code === "browser_worker_claim_invalid" ? "worker_interrupted"
+      : ["browser_worker_claim_invalid", "session_cancelled", "takeover_requested", "session_expired", "claim_lost"]
+          .includes(error?.code) ? "worker_interrupted"
       : "navigation_failed";
     try {
       await api(`/api/v1/internal/browser-worker/commands/${command.id}/fail`, {
@@ -153,8 +206,12 @@ async function execute(command) {
       });
     } catch {}
   } finally {
+    if (control) await control.finish().catch(() => {});
     if (browser) await browser.close().catch(() => {});
-    if (proxy) await new Promise((resolve) => proxy.server.close(resolve));
+    if (proxy) {
+      proxy.destroy();
+      await new Promise((resolve) => proxy.server.close(resolve));
+    }
   }
 }
 
