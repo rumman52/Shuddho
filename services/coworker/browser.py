@@ -71,7 +71,10 @@ def normalize_browser_target(raw_url: str) -> tuple[str, str]:
         # slice. The isolated worker must resolve DNS and re-check every
         # address/redirect before network egress.
         raise CoworkerError("browser_target_blocked", "Direct IP browser targets are not allowed.", 403)
-    port = parsed.port
+    try:
+        port = parsed.port
+    except ValueError:
+        raise CoworkerError("browser_target_invalid", "This browser target port is invalid.", 400) from None
     if port not in {None, 443}:
         raise CoworkerError("browser_target_blocked", "Only standard HTTPS browser targets are allowed.", 403)
     netloc = ascii_host
