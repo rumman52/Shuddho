@@ -215,6 +215,7 @@ class MicrosoftActions:
         data=None,
         body=None,
         params=None,
+        headers=None,
         allow_empty=False,
     ):
         token_url = _token_url(self.settings)
@@ -242,9 +243,10 @@ class MicrosoftActions:
                     async with client.stream(
                         method,
                         url,
-                        headers={
-                            "Authorization": "Bearer " + token
-                        } if token else {},
+                        headers=(
+                            {**(headers or {}), "Authorization": "Bearer " + token}
+                            if token else dict(headers or {})
+                        ),
                         data=data,
                         json=body,
                         params=params,
@@ -462,13 +464,14 @@ class MicrosoftActions:
             params = {
                 "startDateTime": (now - timedelta(days=7)).isoformat(),
                 "endDateTime": (now + timedelta(days=60)).isoformat(),
-                "$top": str(max_items),
-                "$select": (
-                    "id,subject,bodyPreview,start,end,location,attendees,"
-                    "lastModifiedDateTime,isCancelled"
-                ),
             }
-        result = await self.request("GET", url, token=access_token, params=params)
+        result = await self.request(
+            "GET",
+            url,
+            token=access_token,
+            params=params,
+            headers={"Prefer": f"odata.maxpagesize={max_items}"},
+        )
         next_cursor = result.get("@odata.nextLink") or result.get("@odata.deltaLink")
         if (
             not isinstance(next_cursor, str)
