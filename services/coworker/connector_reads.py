@@ -669,6 +669,52 @@ class ConnectorReadRepository:
             db.add(event)
             return True
 
+    def enqueue_microsoft_event(
+        self,
+        *,
+        provider_subscription_id: str,
+        client_state: str,
+        provider_event_id: str,
+        payload_sha256: str,
+    ) -> bool:
+        now = utcnow()
+        with self.sessions.begin() as db:
+            row = db.scalar(select(ConnectorSubscription).where(
+                ConnectorSubscription.provider == "microsoft",
+                ConnectorSubscription.provider_subscription_id == provider_subscription_id,
+            ).order_by(ConnectorSubscription.generation.desc()).limit(1))
+            if row is None or not row.token_hash or not hmac.compare_digest(
+                row.token_hash, _token_hash(client_state)
+            ):
+                return False
+            grant = db.scalar(select(ConnectorReadGrant).where(
+                ConnectorReadGrant.id == row.grant_id,
+                ConnectorReadGrant.owner_id == row.owner_id,
+            ))
+            if (
+                row.state not in {"pending", "active", "renewing"}
+                or grant is None
+                or grant.state != "active"
+                or aware(grant.expires_at) <= now
+            ):
+                return True
+            if db.scalar(select(ConnectorEvent.id).where(
+                ConnectorEvent.subscription_id == row.id,
+                ConnectorEvent.provider_event_id == provider_event_id,
+            )):
+                return True
+            db.add(ConnectorEvent(
+                id=str(uuid4()),
+                owner_id=row.owner_id,
+                grant_id=row.grant_id,
+                subscription_id=row.id,
+                provider="microsoft",
+                capability=row.capability,
+                provider_event_id=provider_event_id,
+                payload_sha256=payload_sha256,
+            ))
+            return True
+
     def claim_events(self, limit: int = 20) -> list[dict]:
         if not self.settings.connector_reads_enabled:
             return []
