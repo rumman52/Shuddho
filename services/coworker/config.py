@@ -61,6 +61,11 @@ class Settings:
     google_client_id: str = ""
     google_client_secret: str = field(default="", repr=False)
     google_redirect_uri: str = ""
+    connector_webhook_base_url: str = ""
+    google_gmail_pubsub_topic: str = ""
+    google_gmail_pubsub_subscription: str = ""
+    google_gmail_push_audience: str = ""
+    google_gmail_push_service_account: str = ""
     microsoft_actions_enabled: bool = False
     microsoft_client_id: str = ""
     microsoft_client_secret: str = field(default="", repr=False)
@@ -176,6 +181,11 @@ class Settings:
             google_client_id=os.getenv("SHUDDHO_GOOGLE_CLIENT_ID", ""),
             google_client_secret=os.getenv("SHUDDHO_GOOGLE_CLIENT_SECRET", ""),
             google_redirect_uri=os.getenv("SHUDDHO_GOOGLE_REDIRECT_URI", ""),
+            connector_webhook_base_url=os.getenv("SHUDDHO_CONNECTOR_WEBHOOK_BASE_URL", "").rstrip("/"),
+            google_gmail_pubsub_topic=os.getenv("SHUDDHO_GOOGLE_GMAIL_PUBSUB_TOPIC", ""),
+            google_gmail_pubsub_subscription=os.getenv("SHUDDHO_GOOGLE_GMAIL_PUBSUB_SUBSCRIPTION", ""),
+            google_gmail_push_audience=os.getenv("SHUDDHO_GOOGLE_GMAIL_PUSH_AUDIENCE", ""),
+            google_gmail_push_service_account=os.getenv("SHUDDHO_GOOGLE_GMAIL_PUSH_SERVICE_ACCOUNT", "").lower(),
             microsoft_actions_enabled=os.getenv("SHUDDHO_MICROSOFT_ACTIONS_ENABLED", "false").lower() == "true",
             microsoft_client_id=os.getenv("SHUDDHO_MICROSOFT_CLIENT_ID", ""),
             microsoft_client_secret=os.getenv("SHUDDHO_MICROSOFT_CLIENT_SECRET", ""),
@@ -244,6 +254,30 @@ class Settings:
                 raise ValueError("Connector reads require SHUDDHO_ACTIONS_ENABLED=true and SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
             if not self.context_retrieval_enabled or not self.agent_runtime_v3_enabled:
                 raise ValueError("Connector reads require SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=true and SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true")
+            if self.connector_webhook_base_url:
+                parsed = urlparse(self.connector_webhook_base_url)
+                if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
+                    raise ValueError("SHUDDHO_CONNECTOR_WEBHOOK_BASE_URL must be a clean HTTPS origin")
+            gmail_push = any((
+                self.google_gmail_pubsub_topic,
+                self.google_gmail_pubsub_subscription,
+                self.google_gmail_push_audience,
+                self.google_gmail_push_service_account,
+            ))
+            if gmail_push and not all((
+                self.connector_webhook_base_url,
+                self.google_gmail_pubsub_topic,
+                self.google_gmail_pubsub_subscription,
+                self.google_gmail_push_audience,
+                self.google_gmail_push_service_account,
+            )):
+                raise ValueError("Gmail push requires webhook base URL, topic, subscription, audience, and service account")
+            if self.google_gmail_pubsub_topic and not re.fullmatch(r"projects/[A-Za-z0-9._:-]+/topics/[A-Za-z0-9._~-]+", self.google_gmail_pubsub_topic):
+                raise ValueError("SHUDDHO_GOOGLE_GMAIL_PUBSUB_TOPIC is invalid")
+            if self.google_gmail_pubsub_subscription and not re.fullmatch(r"projects/[A-Za-z0-9._:-]+/subscriptions/[A-Za-z0-9._~-]+", self.google_gmail_pubsub_subscription):
+                raise ValueError("SHUDDHO_GOOGLE_GMAIL_PUBSUB_SUBSCRIPTION is invalid")
+            if self.google_gmail_push_service_account and not re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com", self.google_gmail_push_service_account):
+                raise ValueError("SHUDDHO_GOOGLE_GMAIL_PUSH_SERVICE_ACCOUNT is invalid")
         if self.actions_enabled:
             from .action_security import TokenVault
             TokenVault(self.connector_encryption_key)
