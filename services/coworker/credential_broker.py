@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from .connector_actions import ConnectorFailure
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE
 from .errors import CoworkerError
@@ -37,7 +39,8 @@ class CredentialBroker:
         purpose: str,
         audience: str = CONNECTOR_ACTION_AUDIENCE,
     ):
-        verified = self.permission_gateway.validate_grant(
+        verified = await asyncio.to_thread(
+            self.permission_gateway.validate_grant,
             grant["id"],
             action["id"],
             purpose=purpose,
@@ -55,7 +58,8 @@ class CredentialBroker:
             )
 
         adapter = self.provider_for(verified["provider"])
-        credentials = self.repository.credentials(
+        credentials = await asyncio.to_thread(
+            self.repository.credentials,
             verified["connection_id"],
             owner_id=verified["owner_id"],
             required_scopes=verified["required_scopes"],
@@ -100,7 +104,8 @@ class CredentialBroker:
             isinstance(token.get("refresh_token"), str)
             and 1 <= len(token["refresh_token"]) <= 8192
         ):
-            self.repository.rotate_token(
+            await asyncio.to_thread(
+                self.repository.rotate_token,
                 verified["connection_id"],
                 token["refresh_token"],
                 owner_id=verified["owner_id"],
