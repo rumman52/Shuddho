@@ -435,12 +435,46 @@ def create_connector_read_grant(
 
 
 @router.delete("/connector-read-grants/{grant_id}")
-def revoke_connector_read_grant(
+async def revoke_connector_read_grant(
     grant_id: UUID,
     identity: Identity,
     services: Services,
 ):
-    return services.connector_reads.repo.revoke(identity.account_id, str(grant_id))
+    return await services.connector_reads.revoke(identity.account_id, str(grant_id))
+
+
+@router.post("/connector-read-grants/{grant_id}/subscribe")
+async def subscribe_connector_read_grant(
+    grant_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    current = await run_in_threadpool(
+        services.connector_reads.repo.latest_subscription,
+        identity.account_id,
+        str(grant_id),
+    )
+    if current and current["state"] == "active":
+        return current
+    return await services.connector_reads.subscribe(
+        identity.account_id,
+        str(grant_id),
+    )
+
+
+@router.get("/connector-read-grants/{grant_id}/subscription")
+async def connector_read_subscription(
+    grant_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return {
+        "subscription": await run_in_threadpool(
+            services.connector_reads.repo.latest_subscription,
+            identity.account_id,
+            str(grant_id),
+        )
+    }
 
 
 @router.post("/connector-read-grants/{grant_id}/sync")
@@ -470,6 +504,44 @@ def connector_read_snapshots(
             str(grant_id),
         )
     }
+
+
+@router.post("/connectors/google/gmail/events", status_code=204)
+async def google_gmail_events(
+    request: Request,
+    services: Services,
+    authorization: Annotated[str | None, Header()] = None,
+):
+    body = await request.body()
+    if len(body) > 65536:
+        raise CoworkerError("connector_push_invalid", "Push payload is too large.", 413)
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeError):
+        raise CoworkerError("connector_push_invalid", "Invalid Gmail push payload.", 400) from None
+    if not isinstance(payload, dict):
+        raise CoworkerError("connector_push_invalid", "Invalid Gmail push payload.", 400)
+    await services.connector_reads.ingest_gmail_push(authorization, payload)
+    return Response(status_code=204)
+
+
+@router.post("/connectors/google/calendar/events", status_code=204)
+async def google_calendar_events(
+    services: Services,
+    x_goog_channel_id: Annotated[str | None, Header()] = None,
+    x_goog_channel_token: Annotated[str | None, Header()] = None,
+    x_goog_resource_id: Annotated[str | None, Header()] = None,
+    x_goog_message_number: Annotated[str | None, Header()] = None,
+    x_goog_resource_state: Annotated[str | None, Header()] = None,
+):
+    await services.connector_reads.ingest_calendar_push(
+        channel_id=x_goog_channel_id or "",
+        channel_token=x_goog_channel_token or "",
+        resource_id=x_goog_resource_id or "",
+        message_number=x_goog_message_number or "",
+        resource_state=x_goog_resource_state or "",
+    )
+    return Response(status_code=204)
 
 
 @router.get("/connections")
