@@ -144,7 +144,10 @@ class AgentRuntime:
             raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
 
         current = self.repo.get(run["owner_id"], run_id)
-        observations = self.repo.verified_observations(run["owner_id"], run_id)
+        observations = [
+            AgentObservation.model_validate(item).model_dump(mode="json")
+            for item in self.repo.verified_observations(run["owner_id"], run_id)
+        ]
         tools = intelligent_tool_names(self.container.settings, run["actions"])
         remaining = self.repo.v3_remaining_budget(run_id)
         dependencies = {
