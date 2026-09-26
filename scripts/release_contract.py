@@ -89,6 +89,20 @@ class ActivationRequirement:
 
 OPTIONAL_CAPABILITIES = (
     OptionalCapability(
+        capability="connector_reads",
+        rollback_key="connector_reads_kill_switch",
+        kill_switch="SHUDDHO_CONNECTOR_READS_ENABLED=false",
+        dependencies=("connector_trust_boundary", "context_retrieval", "runtime_v3"),
+        required_providers=("google",),
+        staging_gates=(
+            StagingGate(
+                "connector_reads",
+                "Live Google read consent, bounded Gmail/Calendar synchronization, cursor recovery, owner isolation, grant expiry/revocation, disconnect invalidation and Agent-context containment passed in controlled staging.",
+                provider="google",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="connector_trust_boundary",
         rollback_key="connector_trust_boundary_kill_switch",
         kill_switch="SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false",
@@ -265,6 +279,14 @@ OPTIONAL_CAPABILITIES = (
 )
 
 ACTIVATION_REQUIREMENTS = (
+    ActivationRequirement(
+        key="connector_reads",
+        status="connector_reads_verified",
+        ledger_schema_version=22,
+        ledger_event_type="connector_reads_verified",
+        ledger_artifact_key="connector_reads_activation",
+        capability="connector_reads",
+    ),
     ActivationRequirement(
         key="connector_trust_boundary",
         status="connector_trust_boundary_verified",
