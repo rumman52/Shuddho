@@ -176,6 +176,7 @@ class PermissionGateway:
 
     def authorize_action(
         self,
+        owner_id: str,
         action_id: str,
         *,
         purpose: str,
@@ -190,7 +191,10 @@ class PermissionGateway:
         with self.sessions.begin() as db:
             action = db.scalar(
                 select(ExternalAction)
-                .where(ExternalAction.id == action_id)
+                .where(
+                    ExternalAction.id == action_id,
+                    ExternalAction.owner_id == owner_id,
+                )
                 .with_for_update()
             )
             if action is None:
