@@ -329,6 +329,15 @@ class Dispatcher:
             except WorkflowAlreadyStartedError:
                 pass
             await asyncio.to_thread(actions.delivered, action_id)
+        if self.container.settings.connector_reads_enabled:
+            for subscription in await asyncio.to_thread(
+                self.container.connector_reads.repo.claim_renewals
+            ):
+                await self.container.connector_reads.renew_subscription(subscription)
+            for event in await asyncio.to_thread(
+                self.container.connector_reads.repo.claim_events
+            ):
+                await self.container.connector_reads.process_event(event)
         if self.container.settings.agent_runtime_enabled:
             for run_id in await asyncio.to_thread(agent.claim_outbox):
                 await self.dispatch_agent_run(run_id)

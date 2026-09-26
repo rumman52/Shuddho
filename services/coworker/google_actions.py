@@ -32,7 +32,11 @@ SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 GMAIL_MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 GMAIL_HISTORY_URL = "https://gmail.googleapis.com/gmail/v1/users/me/history"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+GMAIL_WATCH_URL = "https://gmail.googleapis.com/gmail/v1/users/me/watch"
+GMAIL_STOP_URL = "https://gmail.googleapis.com/gmail/v1/users/me/stop"
 EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+CALENDAR_WATCH_URL = EVENTS_URL + "/watch"
+CALENDAR_STOP_URL = "https://www.googleapis.com/calendar/v3/channels/stop"
 DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
 
@@ -138,7 +142,7 @@ class GoogleActions:
             "code_challenge": challenge, "code_challenge_method": "S256", "access_type": "offline",
             "prompt": "consent select_account", "include_granted_scopes": "false"})
 
-    async def request(self, method, url, *, token=None, data=None, body=None, params=None, content=None, headers=None):
+    async def request(self, method, url, *, token=None, data=None, body=None, params=None, content=None, headers=None, allow_empty=False):
         # Callers provide only constants or code-owned provider-resource paths.
         event_path = re.fullmatch(re.escape(EVENTS_URL) + r"/shuddho[a-f0-9]{32}", url)
         permission_path = re.fullmatch(
@@ -160,6 +164,10 @@ class GoogleActions:
                 GMAIL_MESSAGES_URL,
                 GMAIL_HISTORY_URL,
                 GMAIL_PROFILE_URL,
+                GMAIL_WATCH_URL,
+                GMAIL_STOP_URL,
+                CALENDAR_WATCH_URL,
+                CALENDAR_STOP_URL,
             }
             and not event_path
             and not permission_path
@@ -204,6 +212,8 @@ class GoogleActions:
                             if len(raw) + len(chunk) > 256 * 1024:
                                 raise GoogleFailure("provider_response_invalid")
                             raw.extend(chunk)
+            if not raw and allow_empty:
+                return {}
             result = json.loads(raw)
             if not isinstance(result, dict):
                 raise ValueError()
@@ -447,6 +457,105 @@ class GoogleActions:
                 },
             })
         return {"cursor": next_cursor, "changes": changes}
+
+    async def start_read_watch(
+        self,
+        capability: str,
+        access_token: str,
+        *,
+        channel_id: str,
+        callback_url: str,
+        channel_token: str,
+        gmail_topic: str,
+    ) -> dict:
+        if capability == "email_read":
+            result = await self.request(
+                "POST",
+                GMAIL_WATCH_URL,
+                token=access_token,
+                body={
+                    "topicName": gmail_topic,
+                    "labelIds": ["INBOX"],
+                    "labelFilterBehavior": "INCLUDE",
+                },
+            )
+            history_id = result.get("historyId")
+            expiration = result.get("expiration")
+            if (
+                not isinstance(history_id, str)
+                or not history_id.isdecimal()
+                or not isinstance(expiration, str)
+                or not expiration.isdecimal()
+            ):
+                raise GoogleFailure("provider_response_invalid", definitive=True)
+            return {
+                "provider_subscription_id": None,
+                "provider_resource_id": None,
+                "provider_cursor_hint": history_id,
+                "expires_at_ms": int(expiration),
+            }
+        if capability == "calendar_read":
+            result = await self.request(
+                "POST",
+                CALENDAR_WATCH_URL,
+                token=access_token,
+                body={
+                    "id": channel_id,
+                    "type": "web_hook",
+                    "address": callback_url,
+                    "token": channel_token,
+                },
+            )
+            if (
+                result.get("id") != channel_id
+                or not isinstance(result.get("resourceId"), str)
+                or not result["resourceId"]
+            ):
+                raise GoogleFailure("provider_response_invalid", definitive=True)
+            expiration = result.get("expiration")
+            if expiration is not None and (
+                not isinstance(expiration, str) or not expiration.isdecimal()
+            ):
+                raise GoogleFailure("provider_response_invalid", definitive=True)
+            return {
+                "provider_subscription_id": channel_id,
+                "provider_resource_id": result["resourceId"][:512],
+                "provider_cursor_hint": None,
+                "expires_at_ms": int(expiration) if expiration else None,
+            }
+        raise GoogleFailure("connector_read_unregistered", definitive=True)
+
+    async def stop_read_watch(
+        self,
+        capability: str,
+        access_token: str,
+        *,
+        provider_subscription_id: str | None,
+        provider_resource_id: str | None,
+    ) -> None:
+        if capability == "email_read":
+            await self.request(
+                "POST",
+                GMAIL_STOP_URL,
+                token=access_token,
+                allow_empty=True,
+            )
+            return
+        if capability == "calendar_read":
+            if not provider_subscription_id or not provider_resource_id:
+                return
+            await self.request(
+                "POST",
+                CALENDAR_STOP_URL,
+                token=access_token,
+                body={
+                    "id": provider_subscription_id,
+                    "resourceId": provider_resource_id,
+                },
+                allow_empty=True,
+            )
+            return
+        raise GoogleFailure("connector_read_unregistered", definitive=True)
 
     async def read_connected(
         self,

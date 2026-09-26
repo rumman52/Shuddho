@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from dataclasses import replace
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
 import pytest
 
 pytest.importorskip("sqlalchemy")
+
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from test_coworker import account, container
 
@@ -21,21 +26,26 @@ from services.coworker.agent_repository import AgentRepository
 from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.connector_read_schemas import ConnectorReadGrantCreate
 from services.coworker.connector_reads import ConnectorReadRepository, ConnectorReadService
+from services.coworker.connector_push import GooglePushVerifier
 from services.coworker.context import ContextService
 from services.coworker.credential_broker import CredentialBroker
 from services.coworker.errors import CoworkerError
 from services.coworker.google_actions import (
+    CALENDAR_STOP_URL,
+    CALENDAR_WATCH_URL,
     EVENTS_URL,
     GMAIL_HISTORY_URL,
     GMAIL_MESSAGES_URL,
     GMAIL_PROFILE_URL,
+    GMAIL_STOP_URL,
+    GMAIL_WATCH_URL,
     GoogleActions,
     SCOPES,
     TOKEN_URL,
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import ConnectorReadGrant, ConnectorSnapshot, utcnow
+from services.coworker.models import ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, utcnow
 
 
 class ReadGoogle:
@@ -44,6 +54,8 @@ class ReadGoogle:
         self.history_invalid_once = False
         self.message_subject = "Project update"
         self.event_summary = "Planning meeting"
+        self.calendar_watch_body = None
+        self.gmail_watch_calls = 0
 
     def transport(self, request):
         self.requests.append(request)
@@ -66,6 +78,23 @@ class ReadGoogle:
                 "emailAddress": "reader@example.test",
                 "historyId": "101",
             })
+        if request.method == "POST" and url == GMAIL_WATCH_URL:
+            self.gmail_watch_calls += 1
+            return httpx.Response(200, json={
+                "historyId": "101",
+                "expiration": "1893456000000",
+            })
+        if request.method == "POST" and url == GMAIL_STOP_URL:
+            return httpx.Response(204)
+        if request.method == "POST" and url == CALENDAR_WATCH_URL:
+            self.calendar_watch_body = json.loads(request.content)
+            return httpx.Response(200, json={
+                "id": self.calendar_watch_body["id"],
+                "resourceId": "calendar-resource-1",
+                "expiration": "1893456000000",
+            })
+        if request.method == "POST" and url == CALENDAR_STOP_URL:
+            return httpx.Response(204)
         if request.method == "GET" and url == GMAIL_MESSAGES_URL:
             return httpx.Response(200, json={"messages": [{"id": "m1"}]})
         if request.method == "GET" and url == GMAIL_MESSAGES_URL + "/m1":
@@ -119,6 +148,11 @@ def enable_reads(container):
         google_client_id="read-client",
         google_client_secret="read-secret",
         google_redirect_uri="http://127.0.0.1:5173/oauth/google/callback",
+        connector_webhook_base_url="https://agent.example.test",
+        google_gmail_pubsub_topic="projects/test-project/topics/shuddho-gmail",
+        google_gmail_pubsub_subscription="projects/test-project/subscriptions/shuddho-gmail",
+        google_gmail_push_audience="https://agent.example.test/api/v1/connectors/google/gmail/events",
+        google_gmail_push_service_account="push@test-project.iam.gserviceaccount.com",
         connector_encryption_key=base64.urlsafe_b64encode(b"\x22" * 32).decode(),
     )
     settings.validate()
@@ -323,3 +357,210 @@ def test_calendar_read_is_bounded_and_untrusted(container):
     assert payload["summary"] == "Planning meeting"
     assert "evil.example" not in payload["description"]
     assert payload["authority"] == "provider_content_is_untrusted_data"
+
+class StaticJwks:
+    def __init__(self, key):
+        self.key = key
+
+    def get_signing_key_from_jwt(self, _token):
+        return SimpleNamespace(key=self.key)
+
+
+def test_google_push_verifier_binds_audience_and_service_account(container):
+    fake = enable_reads(container)
+    assert fake is not None
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = GooglePushVerifier(
+        container.settings,
+        StaticJwks(private_key.public_key()),
+    )
+    now = int(utcnow().timestamp())
+    claims = {
+        "iss": "https://accounts.google.com",
+        "aud": container.settings.google_gmail_push_audience,
+        "email": container.settings.google_gmail_push_service_account,
+        "email_verified": True,
+        "iat": now,
+        "exp": now + 300,
+    }
+    token = jwt.encode(claims, private_key, algorithm="RS256")
+    assert verifier.verify("Bearer " + token)["email"] == claims["email"]
+
+    wrong = jwt.encode(
+        claims | {"aud": "https://attacker.example.test"},
+        private_key,
+        algorithm="RS256",
+    )
+    with pytest.raises(CoworkerError) as rejected:
+        verifier.verify("Bearer " + wrong)
+    assert rejected.value.status_code == 401
+
+
+class AllowPush:
+    def __init__(self):
+        self.calls = 0
+
+    def verify(self, authorization):
+        self.calls += 1
+        if authorization != "Bearer signed-google-token":
+            raise CoworkerError("connector_push_unauthorized", "Invalid push identity.", 401)
+        return {"email": "push@test-project.iam.gserviceaccount.com"}
+
+
+def test_gmail_subscription_event_dedupe_and_cursor_progress(container):
+    fake = enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+
+    subscription = asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    assert subscription["state"] == "active"
+    assert subscription["kind"] == "gmail_pubsub"
+    assert fake.gmail_watch_calls == 1
+
+    data = base64.urlsafe_b64encode(json.dumps({
+        "emailAddress": "reader@example.test",
+        "historyId": "102",
+    }).encode()).decode().rstrip("=")
+    payload = {
+        "subscription": "projects/test-project/subscriptions/shuddho-gmail",
+        "message": {"messageId": "pubsub-1", "data": data},
+    }
+    assert asyncio.run(container.connector_reads.ingest_gmail_push(
+        "Bearer signed-google-token", payload
+    )) == 1
+    assert asyncio.run(container.connector_reads.ingest_gmail_push(
+        "Bearer signed-google-token", payload
+    )) == 0
+
+    events = container.connector_reads.repo.claim_events()
+    assert len(events) == 1
+    asyncio.run(container.connector_reads.process_event(events[0]))
+    assert container.connector_reads.repo.cursor(owner, grant["id"])["cursor"] == "102"
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, events[0]["id"])
+        assert row.state == "processed"
+
+
+def test_calendar_channel_token_duplicate_and_out_of_order_delivery(container):
+    fake = enable_reads(container)
+    owner = account(container)
+    connection = connect_read(container, owner, "calendar_read")
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    subscription = asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+
+    assert subscription["state"] == "active"
+    assert subscription["kind"] == "calendar_webhook"
+    assert fake.calendar_watch_body is not None
+    channel_id = fake.calendar_watch_body["id"]
+    token = fake.calendar_watch_body["token"]
+
+    with pytest.raises(CoworkerError) as wrong_token:
+        asyncio.run(container.connector_reads.ingest_calendar_push(
+            channel_id=channel_id,
+            channel_token="wrong",
+            resource_id="calendar-resource-1",
+            message_number="2",
+            resource_state="exists",
+        ))
+    assert wrong_token.value.status_code == 401
+
+    assert asyncio.run(container.connector_reads.ingest_calendar_push(
+        channel_id=channel_id,
+        channel_token=token,
+        resource_id="calendar-resource-1",
+        message_number="2",
+        resource_state="exists",
+    )) is True
+    assert asyncio.run(container.connector_reads.ingest_calendar_push(
+        channel_id=channel_id,
+        channel_token=token,
+        resource_id="calendar-resource-1",
+        message_number="2",
+        resource_state="exists",
+    )) is True
+
+    event = container.connector_reads.repo.claim_events()[0]
+    asyncio.run(container.connector_reads.process_event(event))
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorSubscription, subscription["id"])
+        assert row.last_event_sequence == "2"
+
+    assert asyncio.run(container.connector_reads.ingest_calendar_push(
+        channel_id=channel_id,
+        channel_token=token,
+        resource_id="calendar-resource-1",
+        message_number="1",
+        resource_state="exists",
+    )) is True
+    stale = container.connector_reads.repo.claim_events()[0]
+    asyncio.run(container.connector_reads.process_event(stale))
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, stale["id"])
+        assert row.state == "ignored"
+
+    asyncio.run(container.connector_reads.revoke(owner, grant["id"]))
+    assert asyncio.run(container.connector_reads.ingest_calendar_push(
+        channel_id=channel_id,
+        channel_token=token,
+        resource_id="calendar-resource-1",
+        message_number="3",
+        resource_state="exists",
+    )) is True
+    assert container.connector_reads.repo.claim_events() == []
+
+
+def test_subscription_renewal_supersedes_old_generation(container):
+    fake = enable_reads(container)
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    first = asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorSubscription, first["id"])
+        row.renew_after = utcnow() - timedelta(seconds=1)
+
+    claimed = container.connector_reads.repo.claim_renewals()
+    assert len(claimed) == 1
+    asyncio.run(container.connector_reads.renew_subscription(claimed[0]))
+    latest = container.connector_reads.repo.latest_subscription(owner, grant["id"])
+    assert latest["generation"] == 2
+    assert latest["state"] == "active"
+    assert fake.gmail_watch_calls == 2
+    with container.repository.sessions() as db:
+        old = db.get(ConnectorSubscription, first["id"])
+        assert old.state == "superseded"
+
+
+def test_event_claim_recovers_after_expired_worker_lease(container):
+    enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    data = base64.urlsafe_b64encode(json.dumps({
+        "emailAddress": "reader@example.test",
+        "historyId": "102",
+    }).encode()).decode().rstrip("=")
+    asyncio.run(container.connector_reads.ingest_gmail_push(
+        "Bearer signed-google-token",
+        {
+            "subscription": "projects/test-project/subscriptions/shuddho-gmail",
+            "message": {"messageId": "pubsub-crash", "data": data},
+        },
+    ))
+    first = container.connector_reads.repo.claim_events()[0]
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        row.claim_until = utcnow() - timedelta(seconds=1)
+    second = container.connector_reads.repo.claim_events()[0]
+    assert second["id"] == first["id"]
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        assert row.attempts == 2
+

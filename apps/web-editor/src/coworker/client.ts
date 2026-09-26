@@ -74,6 +74,14 @@ export type ConnectorReadGrant = {
   operation: string; version: string; purpose: "agent_context"; destination: "planner_context";
   state: "active" | "revoked" | "expired"; expires_at: string; created_at: string; revoked_at: string | null;
 };
+export type ConnectorReadSubscription = {
+  id: string; grant_id: string; connection_id: string; provider: "google";
+  capability: "email_read" | "calendar_read"; kind: "gmail_pubsub" | "calendar_webhook";
+  generation: number; state: "pending" | "active" | "renewing" | "superseded" | "revoked" | "failed";
+  provider_subscription_id: string | null; provider_resource_id: string | null;
+  expires_at: string | null; renew_after: string | null; attempts: number; last_error_code: string | null;
+};
+
 
 export type AgentNotification = {
   id: string; automation_id: string | null; occurrence_id: string | null; kind: string; title: string; message: string;
@@ -256,6 +264,13 @@ export class CoworkerClient {
   syncConnectorReadGrant(id: string, forceFull = false) {
     return this.response(`/api/v1/connector-read-grants/${identifier(id)}/sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force_full: forceFull, max_items: 30 }) }, 65000).then(response => response.json() as Promise<{ grant_id: string; inserted: number; updated: number; deleted: number; ignored: number; cursor_recovered: boolean }>);
   }
+  subscribeConnectorReadGrant(id: string) {
+    return this.json<ConnectorReadSubscription>(`/api/v1/connector-read-grants/${identifier(id)}/subscribe`, { method: "POST" });
+  }
+  connectorReadSubscription(id: string, signal?: AbortSignal) {
+    return this.json<{ subscription: ConnectorReadSubscription | null }>(`/api/v1/connector-read-grants/${identifier(id)}/subscription`, { signal });
+  }
+
   actionRecipients(signal?: AbortSignal) { return this.json<{ enabled: boolean; recipients: ActionRecipient[] }>("/api/v1/action-recipients", { signal }); }
   createActionRecipient(name: string, email: string) {
     return this.json<ActionRecipient>("/api/v1/action-recipients", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email }) });

@@ -19,7 +19,7 @@ from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE, CONNECTOR_READ_AUDIENCE
 from .errors import CoworkerError
-from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ConnectorReadGrant, ExecutionGrant, ExternalAction, OAuthAttempt, utcnow
+from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, OAuthAttempt, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
@@ -401,6 +401,14 @@ class ActionRepository:
         ).with_for_update()):
             grant.state = "revoked"
             grant.revoked_at = now
+        for subscription in db.scalars(select(ConnectorSubscription).where(
+            ConnectorSubscription.connection_id == connection.id,
+            ConnectorSubscription.owner_id == connection.owner_id,
+            ConnectorSubscription.state.in_(["pending", "active", "renewing"]),
+        ).with_for_update()):
+            subscription.state = "revoked"
+            subscription.claim_until = None
+            subscription.updated_at = now
         for action in db.scalars(select(ExternalAction).where(ExternalAction.connection_id == connection.id, ExternalAction.state.in_(["awaiting_approval", "queued"])).with_for_update()):
             action.state, action.finished_at = "cancelled", now
             self._audit(db, connection.owner_id, action.id, "action.cancelled_disconnect")

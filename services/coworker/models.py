@@ -329,6 +329,79 @@ class ConnectorCursor(Base):
     )
 
 
+class ConnectorSubscription(Base):
+    __tablename__ = "cw_connector_subscriptions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    grant_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_connector_read_grants.id"), index=True
+    )
+    connection_id: Mapped[str] = mapped_column(ForeignKey("cw_connections.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    capability: Mapped[str] = mapped_column(String(30))
+    kind: Mapped[str] = mapped_column(String(30))
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    state: Mapped[str] = mapped_column(String(20), default="pending")
+    provider_subscription_id: Mapped[str | None] = mapped_column(String(512))
+    provider_resource_id: Mapped[str | None] = mapped_column(String(512))
+    token_hash: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    renew_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(60))
+    last_event_sequence: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint(
+            "grant_id", "generation",
+            name="uq_cw_connector_subscriptions_grant_generation",
+        ),
+        Index("cw_connector_subscriptions_owner_state", "owner_id", "state"),
+        Index("cw_connector_subscriptions_grant_state", "grant_id", "state"),
+        Index("cw_connector_subscriptions_due", "state", "renew_after"),
+        Index(
+            "cw_connector_subscriptions_provider_id",
+            "provider", "provider_subscription_id",
+        ),
+    )
+
+
+class ConnectorEvent(Base):
+    __tablename__ = "cw_connector_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    grant_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_connector_read_grants.id"), index=True
+    )
+    subscription_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_connector_subscriptions.id"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(20))
+    capability: Mapped[str] = mapped_column(String(30))
+    provider_event_id: Mapped[str] = mapped_column(String(256))
+    provider_sequence: Mapped[str | None] = mapped_column(String(64))
+    provider_cursor_hint: Mapped[str | None] = mapped_column(String(1024))
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(20), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    claim_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(String(60))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_id", "provider_event_id",
+            name="uq_cw_connector_events_subscription_event",
+        ),
+        Index("cw_connector_events_owner_state", "owner_id", "state"),
+        Index("cw_connector_events_grant_state", "grant_id", "state"),
+        Index("cw_connector_events_available", "state", "available_at"),
+    )
+
+
 class ConnectorSnapshot(Base):
     __tablename__ = "cw_connector_snapshots"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
