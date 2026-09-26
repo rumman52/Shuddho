@@ -23,7 +23,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Account, AgentRun, Automation, AutomationScheduleOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationScheduleOutbox, NotificationOutbox, PersonalGoal, utcnow
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -209,6 +209,11 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
 
     notification_ids = automation_container.automations.claim_notifications()
     assert len(notification_ids) == 1
+    assert automation_container.automations.claim_notifications() == []
+    with automation_container.repository.sessions.begin() as db:
+        outbox = db.get(NotificationOutbox, notification_ids[0])
+        outbox.lease_until = utcnow() - timedelta(seconds=1)
+    assert automation_container.automations.claim_notifications() == notification_ids
     automation_container.automations.deliver_notification(notification_ids[0])
     assert automation_container.automations.claim_notifications() == []
     inbox = client.get("/api/v1/notifications", headers=auth).json()
@@ -332,14 +337,16 @@ def test_temporal_schedule_contract_uses_timezone_overlap_and_expiry():
         "id": "00000000-0000-0000-0000-000000000001",
         "revision": 3,
         "state": "active",
-        "timezone": "Asia/Dhaka",
+        "timezone": "America/New_York",
         "schedule": {"kind": "weekly", "hour": 8, "minute": 30, "weekdays": ["mon", "wed"]},
         "overlap_policy": "buffer_one",
         "catchup_window_seconds": 1800,
         "expires_at": "2026-10-30T00:00:00+00:00",
     }
     schedule = temporal_schedule(value, "test-queue")
-    assert schedule.spec.time_zone_name == "Asia/Dhaka"
+    assert schedule.spec.time_zone_name == "America/New_York"
+    assert schedule.spec.calendars[0].hour[0].start == 8
+    assert schedule.spec.calendars[0].minute[0].start == 30
     assert schedule.policy.catchup_window == timedelta(seconds=1800)
     assert schedule.state.paused is False
 
