@@ -9,7 +9,7 @@ export type WorkSkill = { id: SkillId; name: string; description: string; instru
 export type DraftMetadata = { output_language: string; missing_information: string[] };
 export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
 export type EmailDraft = { subject: string; body: string };
-export type ConnectedAccount = { id: string; provider: "google" | "microsoft" | "linkedin"; capability: "email" | "calendar" | "drive" | "social"; email: string; active: boolean };
+export type ConnectedAccount = { id: string; provider: "google" | "microsoft" | "linkedin"; capability: "email" | "calendar" | "drive" | "social" | "email_read" | "calendar_read"; email: string; active: boolean };
 export type ActionRecipient = { id: string; name: string; email: string; created_at: string; updated_at: string };
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type AttachmentEmailAction = { kind: "email_send_with_attachments"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
@@ -64,9 +64,15 @@ export type MemoryProposal = {
 };
 export type AgentContext = {
   enabled: boolean;
-  items: { source_id: string; label: string; excerpt: string; sha256: string; provenance: { document_id: string; version_id: string } }[];
+  items: { source_id: string; label: string; excerpt: string; sha256: string; provenance: { document_id?: string; version_id?: string; grant_id?: string; snapshot_id?: string; provider?: string; capability?: string } }[];
   invalidated: { source_id: string; label: string; reason: string }[];
   memory: { facts: { namespace: string; key: string; value: string; language: string }[]; provenance: { id: string; version: number }[] };
+};
+
+export type ConnectorReadGrant = {
+  id: string; connection_id: string; provider: "google"; capability: "email_read" | "calendar_read";
+  operation: string; version: string; purpose: "agent_context"; destination: "planner_context";
+  state: "active" | "revoked" | "expired"; expires_at: string; created_at: string; revoked_at: string | null;
 };
 
 export type AgentNotification = {
@@ -75,6 +81,7 @@ export type AgentNotification = {
 };
 export type AgentRun = {
   id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
+  connector_read_grant_ids: string[];
   memory_namespaces: string[]; state: AgentRunState; phase: string; message: string; error_code: string | null; cancel_requested: boolean;
   event_sequence: number; planner_calls: number; planner_tokens: number; planner_mode: string | null;
   runtime_version: number; planner_actual_tokens: number; planner_cost_microusd: number;
@@ -83,7 +90,7 @@ export type AgentRun = {
   steps: AgentStep[]; tool_invocations: { id: string; step_id: string; tool: string; version: string; state: string; consequential: boolean; approval_required: boolean;
     receipt: { status: string; resource_type: string; resource_id: string | null; summary: Record<string, unknown>; created_at: string } | null }[];
 };
-export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: string[]; memory_namespaces: string[]; output_language: string };
+export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: string[]; memory_namespaces: string[]; connector_read_grant_ids: string[]; output_language: string };
 export type ExternalAction = {
   id: string; connection_id: string; kind: ActionPayload["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
@@ -221,8 +228,8 @@ export class CoworkerClient {
   deleteDocument(id: string) { return this.json<{ message: string }>(`/api/v1/documents/${identifier(id)}`, { method: "DELETE" }); }
   task(id: string, signal?: AbortSignal) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}`, { signal }); }
   cancel(id: string) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}/cancel`, { method: "POST" }); }
-  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reminders_enabled: boolean; document_sharing_enabled: boolean; threading_enabled: boolean; social_publishing_enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
-  connectGoogle(capability: "email" | "calendar" | "drive") {
+  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reads_enabled: boolean; reminders_enabled: boolean; document_sharing_enabled: boolean; threading_enabled: boolean; social_publishing_enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
+  connectGoogle(capability: "email" | "calendar" | "drive" | "email_read" | "calendar_read") {
     return this.json<{ authorization_url: string; state: string }>("/api/v1/connections/google/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capability }) });
   }
   finishGoogle(code: string, state: string) {
@@ -241,6 +248,14 @@ export class CoworkerClient {
     return this.response("/api/v1/connections/linkedin/finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) }, 45000).then(response => response.json() as Promise<ConnectedAccount>);
   }
   disconnect(id: string) { return this.json<{ message: string }>(`/api/v1/connections/${identifier(id)}`, { method: "DELETE" }); }
+  connectorReadGrants(signal?: AbortSignal) { return this.json<{ enabled: boolean; grants: ConnectorReadGrant[] }>("/api/v1/connector-read-grants", { signal }); }
+  createConnectorReadGrant(connectionId: string, expiresAt: string, key: string) {
+    return this.json<ConnectorReadGrant>("/api/v1/connector-read-grants", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ connection_id: identifier(connectionId), purpose: "agent_context", destination: "planner_context", expires_at: expiresAt }) });
+  }
+  revokeConnectorReadGrant(id: string) { return this.json<ConnectorReadGrant>(`/api/v1/connector-read-grants/${identifier(id)}`, { method: "DELETE" }); }
+  syncConnectorReadGrant(id: string, forceFull = false) {
+    return this.response(`/api/v1/connector-read-grants/${identifier(id)}/sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force_full: forceFull, max_items: 30 }) }, 65000).then(response => response.json() as Promise<{ grant_id: string; inserted: number; updated: number; deleted: number; ignored: number; cursor_recovered: boolean }>);
+  }
   actionRecipients(signal?: AbortSignal) { return this.json<{ enabled: boolean; recipients: ActionRecipient[] }>("/api/v1/action-recipients", { signal }); }
   createActionRecipient(name: string, email: string) {
     return this.json<ActionRecipient>("/api/v1/action-recipients", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email }) });
