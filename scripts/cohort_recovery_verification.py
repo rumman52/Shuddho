@@ -34,6 +34,7 @@ CAPABILITY_ATTRS = {
     "artifact_services": "artifact_services_enabled",
     "agent_runtime": "agent_runtime_enabled",
     "runtime_v3": "agent_runtime_v3_enabled",
+    "context_retrieval": "context_retrieval_enabled",
     "intelligent_planner": "intelligent_planner_enabled",
     "memory": "agent_memory_enabled",
     "handoffs": "agent_handoffs_enabled",
