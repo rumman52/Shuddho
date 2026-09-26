@@ -143,6 +143,7 @@ class AgentRuntime:
             raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
         if run["cancel_requested"] or run["state"] == "cancelled":
             raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+        self.repo.assert_v3_within_deadline(run_id)
 
         current = self.repo.get(run["owner_id"], run_id)
         observations = [
