@@ -120,7 +120,7 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
             if not capabilities["coworker"] or not capabilities["work_services"]:
                 failures.append("core_capabilities")
             agent_children = {
-                "intelligent_planner", "memory", "handoffs", "multi_handoffs",
+                "intelligent_planner", "memory", "personal_goals", "handoffs", "multi_handoffs",
                 "dependency_graph", "parallel_execution", "outcome_replan",
             }
             if not capabilities["agent_runtime"] and any(capabilities[key] for key in agent_children):

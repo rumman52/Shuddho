@@ -29,8 +29,23 @@ export type AgentActionProposal = {
   promoted_action_id: string | null; created_at: string; expires_at: string; promoted_at: string | null; dismissed_at: string | null;
 };
 export type AgentStep = { id: string; ordinal: number; tool: string | null; state: string; error_code: string | null; depends_on: number[] };
+export type PersonalGoalState = "draft" | "active" | "paused" | "blocked" | "completed" | "cancelled" | "archived";
+export type PersonalGoal = {
+  id: string; objective: string; success_criteria: string[]; constraints: string[];
+  deadline_at: string | null; timezone: string; revision: number; state: PersonalGoalState;
+  milestones: { label: string; due_at: string | null; completed: boolean }[];
+  budget: { max_runs: number; max_planner_tokens: number | null };
+  authorized_resources: { kind: "document" | "memory_namespace"; reference: string }[];
+  next_review_at: string | null; created_at: string; updated_at: string;
+  run_links: { run_id: string; goal_revision: number; state: AgentRunState; created_at: string }[];
+};
+export type PersonalGoalCreate = {
+  objective: string; success_criteria: string[]; constraints: string[]; deadline_at: string | null;
+  timezone: string; state: "draft" | "active"; milestones: { label: string; due_at: string | null; completed: boolean }[];
+  budget: { max_runs: number; max_planner_tokens: number | null }; authorized_resources: []; next_review_at: string | null;
+};
 export type AgentRun = {
-  id: string; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
+  id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
   memory_namespaces: string[]; state: AgentRunState; phase: string; message: string; error_code: string | null; cancel_requested: boolean;
   event_sequence: number; planner_calls: number; planner_tokens: number; planner_mode: string | null; created_at: string; updated_at: string; deadline_at: string;
   steps: AgentStep[]; tool_invocations: { id: string; step_id: string; tool: string; version: string; state: string; consequential: boolean; approval_required: boolean;
@@ -213,6 +228,20 @@ export class CoworkerClient {
   }
   cancelAction(id: string) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}/cancel`, { method: "POST" }); }
   reconcileAction(id: string) { return this.response(`/api/v1/actions/${identifier(id)}/reconcile`, { method: "POST" }, 65000).then(response => response.json() as Promise<ExternalAction>); }
+  goals(signal?: AbortSignal) { return this.json<{ enabled: boolean; goals: PersonalGoal[] }>("/api/v1/goals", { signal }); }
+  goal(id: string, signal?: AbortSignal) { return this.json<PersonalGoal>(`/api/v1/goals/${identifier(id)}`, { signal }); }
+  createGoal(input: PersonalGoalCreate, key: string) {
+    return this.json<PersonalGoal>("/api/v1/goals", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+  updateGoal(id: string, revision: number, input: Partial<Pick<PersonalGoalCreate, "objective" | "success_criteria" | "constraints" | "deadline_at" | "timezone" | "milestones" | "budget" | "next_review_at">>) {
+    return this.json<PersonalGoal>(`/api/v1/goals/${identifier(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision, ...input }) });
+  }
+  transitionGoal(id: string, revision: number, action: "pause" | "resume" | "cancel") {
+    return this.json<PersonalGoal>(`/api/v1/goals/${identifier(id)}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }) });
+  }
+  runGoal(id: string, revision: number, outputLanguage: string, key: string) {
+    return this.json<AgentRun>(`/api/v1/goals/${identifier(id)}/run`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ expected_revision: revision, output_language: outputLanguage }) });
+  }
   agentTools(signal?: AbortSignal) { return this.json<{ enabled: boolean; tools: AgentTool[] }>("/api/v1/agent-tools", { signal }); }
   agentRuns(signal?: AbortSignal) { return this.json<{ runs: AgentRun[] }>("/api/v1/agent-runs", { signal }); }
   agentRun(id: string, signal?: AbortSignal) { return this.json<AgentRun>(`/api/v1/agent-runs/${identifier(id)}`, { signal }); }

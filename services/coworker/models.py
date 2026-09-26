@@ -294,11 +294,52 @@ class MemoryFact(Base):
     )
 
 
+class PersonalGoal(Base):
+    __tablename__ = "cw_personal_goals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    objective: Mapped[str] = mapped_column(Text)
+    success_criteria: Mapped[list[str]] = mapped_column(JSON, default=list)
+    constraints: Mapped[list[str]] = mapped_column(JSON, default=list)
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    state: Mapped[str] = mapped_column(String(30), default="active")
+    milestones: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    budget: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    authorized_resources: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_personal_goals_owner_idempotency"),
+        Index("cw_personal_goals_owner_created", "owner_id", "created_at"),
+        Index("cw_personal_goals_workspace_state", "workspace_id", "state"),
+    )
+
+
+class PersonalGoalRevision(Base):
+    __tablename__ = "cw_personal_goal_revisions"
+    goal_id: Mapped[str] = mapped_column(ForeignKey("cw_personal_goals.id"), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        Index("cw_personal_goal_revisions_owner_goal", "owner_id", "goal_id"),
+    )
+
+
 class AgentRun(Base):
     __tablename__ = "cw_agent_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"))
     workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"))
+    goal_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    goal_revision: Mapped[int | None] = mapped_column(Integer)
     idempotency_key: Mapped[str] = mapped_column(String(128))
     fingerprint: Mapped[str] = mapped_column(String(64))
     goal: Mapped[str] = mapped_column(Text)

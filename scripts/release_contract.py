@@ -32,6 +32,7 @@ BASE_CAPABILITY_KEYS = frozenset({
     "work_services",
     "artifact_services",
     "agent_runtime",
+    "personal_goals",
     "intelligent_planner",
     "memory",
     "handoffs",
@@ -46,6 +47,7 @@ BASE_CAPABILITY_KEYS = frozenset({
 BASE_KILL_SWITCHES = {
     "global_kill_switch": "SHUDDHO_COWORKER_ENABLED=false",
     "agent_kill_switch": "SHUDDHO_AGENT_RUNTIME_ENABLED=false",
+    "personal_goals_kill_switch": "SHUDDHO_PERSONAL_GOALS_ENABLED=false",
     "parallel_kill_switch": "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=false",
     "research_kill_switch": "SHUDDHO_RESEARCH_SERVICES_ENABLED=false",
     "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false",
@@ -55,6 +57,7 @@ BASE_CONDITIONAL_GATES = {
     "research": "Live search provider retrieval/citation validation passed.",
     "actions": "Live Google approval/execution/receipt validation passed without auto-approval.",
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
+    "personal_goals": "Owner-scoped persistent goal CRUD, revision conflicts, lifecycle transitions and exact AgentRun revision binding passed in controlled staging.",
 }
 
 
@@ -328,6 +331,8 @@ def required_conditional_gate_ids(
         required.append("actions")
         if "microsoft" in action_providers:
             required.append("microsoft_actions")
+    if capabilities.get("personal_goals") is True:
+        required.append("personal_goals")
 
     for item in OPTIONAL_CAPABILITIES:
         if capabilities.get(item.capability) is not True:

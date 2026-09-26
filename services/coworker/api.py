@@ -22,6 +22,7 @@ from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
+from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 
@@ -46,6 +47,84 @@ async def account(request: Request, principal: Annotated[Principal, Depends(requ
 
 Identity = Annotated[Principal, Depends(account)]
 Services = Annotated[Container, Depends(get_container)]
+
+
+@router.post("/goals", status_code=201)
+def create_goal(
+    payload: GoalCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    goal, created = services.goals.create(identity.account_id, payload, idempotency_key)
+    response.headers["Location"] = f'/api/v1/goals/{goal["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["ETag"] = f'"{goal["revision"]}"'
+    return goal
+
+
+@router.get("/goals")
+def list_goals(identity: Identity, services: Services):
+    if not services.settings.personal_goals_enabled:
+        return {"enabled": False, "goals": []}
+    return {"enabled": True, "goals": services.goals.list(identity.account_id)}
+
+
+@router.get("/goals/{goal_id}")
+def get_goal(goal_id: UUID, identity: Identity, services: Services, response: Response):
+    goal = services.goals.get(identity.account_id, str(goal_id))
+    response.headers["ETag"] = f'"{goal["revision"]}"'
+    return goal
+
+
+@router.get("/goals/{goal_id}/revisions")
+def goal_revisions(goal_id: UUID, identity: Identity, services: Services):
+    return {"revisions": services.goals.revisions(identity.account_id, str(goal_id))}
+
+
+@router.patch("/goals/{goal_id}")
+def patch_goal(goal_id: UUID, payload: GoalPatch, identity: Identity, services: Services, response: Response):
+    goal = services.goals.update(identity.account_id, str(goal_id), payload)
+    response.headers["ETag"] = f'"{goal["revision"]}"'
+    return goal
+
+
+@router.post("/goals/{goal_id}/pause")
+def pause_goal(goal_id: UUID, payload: GoalTransition, identity: Identity, services: Services):
+    return services.goals.pause(identity.account_id, str(goal_id), payload.expected_revision)
+
+
+@router.post("/goals/{goal_id}/resume")
+def resume_goal(goal_id: UUID, payload: GoalTransition, identity: Identity, services: Services):
+    return services.goals.resume(identity.account_id, str(goal_id), payload.expected_revision)
+
+
+@router.post("/goals/{goal_id}/cancel")
+def cancel_goal(goal_id: UUID, payload: GoalTransition, identity: Identity, services: Services):
+    return services.goals.cancel(identity.account_id, str(goal_id), payload.expected_revision)
+
+
+@router.post("/goals/{goal_id}/run", status_code=202)
+def run_goal(
+    goal_id: UUID,
+    payload: GoalRunCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    goal = services.goals.get(identity.account_id, str(goal_id))
+    run, created = services.agent.create(
+        identity.account_id,
+        AgentRunCreate(goal=goal["objective"], document_ids=[], action_ids=[], memory_namespaces=[], output_language=payload.output_language),
+        idempotency_key,
+        persistent_goal_id=str(goal_id),
+        persistent_goal_revision=payload.expected_revision,
+    )
+    response.headers["Location"] = f'/api/v1/agent-runs/{run["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return run
 
 
 @router.get("/memory")
@@ -90,6 +169,7 @@ def runtime_manifest(
         "work_services": settings.work_services_enabled,
         "artifact_services": settings.artifact_services_enabled,
         "agent_runtime": settings.agent_runtime_enabled,
+        "personal_goals": settings.personal_goals_enabled,
         "intelligent_planner": settings.intelligent_planner_enabled,
         "memory": settings.agent_memory_enabled,
         "handoffs": settings.agent_handoffs_enabled,
