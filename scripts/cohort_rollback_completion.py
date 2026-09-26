@@ -172,7 +172,10 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
     elif mode == "connector_trust_boundary":
         required_zero.update({"active_provider_actions"})
     elif mode == "connector_reads":
-        required_zero.update({"active_connector_read_grants"})
+        # The kill switch blocks new read admission and context use immediately.
+        # Existing persisted grants remain inert for audit/re-enable semantics;
+        # only active Agent work that could have observed read context must drain.
+        required_zero.update({"active_agent_runs", "undelivered_agent_outbox"})
     elif mode == "research":
         # Research runs on the durable task path. Require no active task work before
         # considering the research rollback fully drained.
