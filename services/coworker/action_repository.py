@@ -17,6 +17,7 @@ from sqlalchemy import func, or_, select, update
 from .action_registry import action_spec, build_approval_scope, validate_approval_scope
 from .action_schemas import ActionPrepare
 from .action_security import TokenVault
+from .connector_registry import CONNECTOR_ACTION_AUDIENCE
 from .errors import CoworkerError
 from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ExecutionGrant, ExternalAction, OAuthAttempt, utcnow
 from .repository import aware, iso, not_found
@@ -406,8 +407,24 @@ class ActionRepository:
             db.execute(update(OAuthAttempt).where(OAuthAttempt.owner_id == owner).values(expires_at=utcnow(), consumed=True, verifier_ciphertext=""))
         return {"message": "Disconnected from Shuddho. Pending actions were cancelled; an action already executing may still finish. You can also revoke Shuddho in the connected provider's account settings."}
 
-    def credentials(self, connection_id, *, owner_id=None, required_scopes=None):
+    def credentials(
+        self,
+        connection_id,
+        *,
+        owner_id=None,
+        required_scopes=None,
+        trusted_audience=None,
+    ):
         # Trusted connector/credential boundary only; never serialized to an API.
+        if (
+            self.settings.connector_trust_boundary_enabled
+            and trusted_audience != CONNECTOR_ACTION_AUDIENCE
+        ):
+            raise CoworkerError(
+                "connector_direct_credential_access",
+                "Connector credentials are available only through the trusted credential boundary.",
+                403,
+            )
         with self.sessions() as db:
             row = db.get(Connection, connection_id)
             if (
@@ -428,7 +445,23 @@ class ActionRepository:
                 raise CoworkerError("connection_removed", "Reconnect your connected account.", 409)
             return dict(secret) | {"scopes": scopes}
 
-    def rotate_token(self, connection_id, refresh_token, *, owner_id=None):
+    def rotate_token(
+        self,
+        connection_id,
+        refresh_token,
+        *,
+        owner_id=None,
+        trusted_audience=None,
+    ):
+        if (
+            self.settings.connector_trust_boundary_enabled
+            and trusted_audience != CONNECTOR_ACTION_AUDIENCE
+        ):
+            raise CoworkerError(
+                "connector_direct_credential_access",
+                "Connector credentials are available only through the trusted credential boundary.",
+                403,
+            )
         with self.sessions.begin() as db:
             row = db.scalar(select(Connection).where(Connection.id == connection_id).with_for_update())
             if row and row.active and (owner_id is None or row.owner_id == owner_id):
