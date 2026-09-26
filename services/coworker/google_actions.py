@@ -379,7 +379,10 @@ class GoogleActions:
                     message = entry.get("message") if isinstance(entry, dict) else None
                     if isinstance(message, dict) and isinstance(message.get("id"), str):
                         deleted.add(message["id"])
-            ids = list(dict.fromkeys(ids))[:max_items]
+            ids = list(dict.fromkeys(ids))
+            if listing.get("nextPageToken") or len(ids) + len(deleted) > max_items:
+                # Never advance a history cursor while omitting unread changes.
+                raise GoogleFailure("provider_snapshot_limit", definitive=True)
         for message_id in ids:
             changes.append(await self._gmail_message(access_token, message_id))
         for message_id in sorted(deleted):
