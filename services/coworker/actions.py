@@ -56,12 +56,12 @@ class ActionService:
                 503,
             )
         if (
-            provider != "google"
+            provider not in {"google", "microsoft"}
             and request.capability in {"email_read", "calendar_read"}
         ):
             raise CoworkerError(
                 "connection_provider_disabled",
-                "Connected reads are not qualified for this provider yet.",
+                "Connected reads are not qualified for this provider.",
                 409,
             )
         if (
