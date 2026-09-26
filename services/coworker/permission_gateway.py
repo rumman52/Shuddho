@@ -463,7 +463,6 @@ class PermissionGateway:
                     409,
                 )
             if aware(grant.expires_at) <= utcnow():
-                grant.state = "expired"
                 raise CoworkerError(
                     "connector_read_expired",
                     "This connected read authorization expired.",
