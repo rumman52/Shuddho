@@ -4,8 +4,9 @@ import time
 from pathlib import Path
 
 import httpx
-import jwt
 import pytest
+
+jwt = pytest.importorskip("jwt")
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
