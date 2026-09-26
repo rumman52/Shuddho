@@ -119,6 +119,13 @@ def test_execution_grant_binds_owner_audience_scope_and_destinations(container):
         )
     assert wrong_audience.value.code == "connector_audience"
 
+    with pytest.raises(CoworkerError) as direct_secret:
+        container.actions.repo.credentials(
+            action["connection_id"],
+            owner_id=alice,
+        )
+    assert direct_secret.value.code == "connector_direct_credential_access"
+
     grant = gateway.authorize_action(
         alice,
         action["id"],
