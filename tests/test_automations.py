@@ -84,7 +84,7 @@ def automation_payload(goal):
         "goal_id": goal["id"], "goal_revision": goal["revision"], "timezone": "Asia/Dhaka",
         "schedule": {"kind": "daily", "hour": 8, "minute": 30, "weekdays": []},
         "output_language": "en", "overlap_policy": "skip", "catchup_window_seconds": 3600,
-        "quiet_hours": {"start": "22:00", "end": "07:00"}, "expires_at": None,
+        "quiet_hours": None, "expires_at": None,
     }
 
 
@@ -157,6 +157,11 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
     assert first["state"] == "accepted"
     assert second["replayed"] is True
     assert second["run_id"] == first["run_id"]
+
+    overlap = automation_container.automations.accept_occurrence(
+        automation["id"], 1, due_at + timedelta(minutes=1)
+    )
+    assert overlap["state"] == "skipped" and overlap["reason"] == "overlap"
 
     goal_view = client.get(f'/api/v1/goals/{automation["goal_id"]}', headers=auth).json()
     matching = [item for item in goal_view["run_links"] if item["run_id"] == first["run_id"]]
