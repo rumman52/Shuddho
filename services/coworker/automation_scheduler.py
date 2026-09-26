@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from temporalio.client import (
     Schedule,
@@ -47,7 +47,11 @@ def temporal_schedule(value: dict, task_queue: str):
             task_queue=task_queue,
             execution_timeout=timedelta(minutes=5),
         ),
-        spec=ScheduleSpec(calendars=[calendar], time_zone_name=value["timezone"]),
+        spec=ScheduleSpec(
+            calendars=[calendar],
+            time_zone_name=value["timezone"],
+            end_at=datetime.fromisoformat(value["expires_at"].replace("Z", "+00:00")) if value.get("expires_at") else None,
+        ),
         policy=SchedulePolicy(
             overlap=overlap,
             catchup_window=timedelta(seconds=int(value["catchup_window_seconds"])),
