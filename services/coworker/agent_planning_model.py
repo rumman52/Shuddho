@@ -57,6 +57,11 @@ class DeepSeekAgentPlanner:
             "verified_observations": observations,
             "remaining_budget": remaining_budget,
             "dependencies": dependencies,
+            "permissions": {
+                "tool_scope": "server-provided-only",
+                "consequential_execution": "existing-approved-action-only",
+                "model_may_expand_authority": False,
+            },
         }
         prompt_sha256 = hashlib.sha256(
             json.dumps(
