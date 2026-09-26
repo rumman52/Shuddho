@@ -268,9 +268,32 @@ class AutomationRepository:
                 reason = "expired"
             elif objective is None:
                 reason = "goal_missing"
+            elif utcnow() - due_at > timedelta(seconds=row.catchup_window_seconds):
+                reason = "catchup_window"
+            active_run = db.scalar(select(AgentRun.id).join(
+                AutomationOccurrence, AutomationOccurrence.run_id == AgentRun.id,
+            ).where(
+                AutomationOccurrence.automation_id == row.id,
+                AutomationOccurrence.id != previous.id,
+                AgentRun.state.in_({"queued", "planning", "running", "awaiting_approval"}),
+            ).limit(1))
             if reason:
                 previous.state = "skipped"; previous.reason = reason; previous.updated_at = utcnow()
                 return {"occurrence_id": previous.id, "run_id": None, "state": "skipped", "reason": reason, "replayed": False}
+            if active_run is not None:
+                if row.overlap_policy == "skip":
+                    previous.state = "skipped"; previous.reason = "overlap"; previous.updated_at = utcnow()
+                    return {"occurrence_id": previous.id, "run_id": None, "state": "skipped", "reason": "overlap", "replayed": False}
+                buffered = db.scalar(select(AutomationOccurrence.id).where(
+                    AutomationOccurrence.automation_id == row.id,
+                    AutomationOccurrence.state == "buffered",
+                    AutomationOccurrence.id != previous.id,
+                ).limit(1))
+                if buffered is not None:
+                    previous.state = "skipped"; previous.reason = "buffer_full"; previous.updated_at = utcnow()
+                    return {"occurrence_id": previous.id, "run_id": None, "state": "skipped", "reason": "buffer_full", "replayed": False}
+                previous.state = "buffered"; previous.reason = "overlap"; previous.updated_at = utcnow()
+                return {"occurrence_id": previous.id, "run_id": None, "state": "buffered", "reason": "overlap", "replayed": False}
 
         idempotency_key = f"automation:{automation_id}:{revision}:{self.occurrence_key(owner, automation_id, revision, due_at)[:40]}"
         try:
@@ -332,6 +355,31 @@ class AutomationRepository:
             end_date += timedelta(days=1)
         quiet_end = datetime.combine(end_date, end, tzinfo=zone)
         return quiet_end.astimezone(timezone.utc)
+
+    def claim_buffered_occurrences(self, limit: int = 10) -> list[dict]:
+        """Release BUFFER_ONE occurrences only after the previous run is terminal."""
+        with self.sessions.begin() as db:
+            rows = db.scalars(select(AutomationOccurrence).where(
+                AutomationOccurrence.state == "buffered",
+            ).order_by(AutomationOccurrence.due_at).limit(limit).with_for_update(skip_locked=True)).all()
+            result = []
+            for occurrence in rows:
+                active = db.scalar(select(AgentRun.id).join(
+                    AutomationOccurrence, AutomationOccurrence.run_id == AgentRun.id,
+                ).where(
+                    AutomationOccurrence.automation_id == occurrence.automation_id,
+                    AutomationOccurrence.id != occurrence.id,
+                    AgentRun.state.in_({"queued", "planning", "running", "awaiting_approval"}),
+                ).limit(1))
+                if active is not None:
+                    continue
+                occurrence.state = "accepting"; occurrence.reason = None; occurrence.updated_at = utcnow()
+                result.append({
+                    "automation_id": occurrence.automation_id,
+                    "revision": occurrence.automation_revision,
+                    "due_at": iso(occurrence.due_at),
+                })
+            return result
 
     def claim_notifications(self, limit: int = 20) -> list[str]:
         with self.sessions.begin() as db:
