@@ -191,6 +191,12 @@ export default function AgentWorkspace({
     });
   }
 
+  async function enableReadUpdates(grant: ConnectorReadGrant) {
+    await perform("read-subscribe:" + grant.id, async () => {
+      await client.subscribeConnectorReadGrant(grant.id);
+    });
+  }
+
   async function revokeRead(grant: ConnectorReadGrant) {
     if (!window.confirm("Stop this connected source from being used by future Agent runs?")) return;
     await perform("read-revoke:" + grant.id, async () => {
@@ -265,6 +271,7 @@ export default function AgentWorkspace({
                 {grant ? <div>
                   <label><input type="checkbox" checked={selectedReadGrants.includes(grant.id)} disabled={!selectedReadGrants.includes(grant.id) && selectedReadGrants.length >= 4} onChange={event => setSelectedReadGrants(previous => event.target.checked ? [...previous, grant.id] : previous.filter(id => id !== grant.id))} /> Use in this run</label>
                   <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void syncRead(grant)}>Sync</button>
+                  <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void enableReadUpdates(grant)}>Enable automatic updates</button>
                   <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void revokeRead(grant)}>Revoke Agent access</button>
                 </div> : <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => void authorizeRead(connection)}>Allow Agent context for 7 days</button>}
               </div>;
