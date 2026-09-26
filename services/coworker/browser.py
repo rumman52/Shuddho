@@ -177,12 +177,58 @@ class BrowserRepository:
             )
 
 
-    def validate_worker_network_target(self, raw_url: str, addresses: list[str]) -> dict:
+    def validate_worker_network_target(
+        self,
+        worker_id: str,
+        command_id: str,
+        raw_url: str,
+        addresses: list[str],
+    ) -> dict:
         """Trusted service check performed immediately before browser egress."""
         self._require_enabled()
         normalized, origin = normalize_browser_target(raw_url)
         hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
         checked = validate_resolved_addresses(hostname, addresses)
+        now = utcnow()
+        with self.sessions() as db:
+            command = db.scalar(select(BrowserCommand).where(
+                BrowserCommand.id == command_id,
+            ))
+            if command is None:
+                raise not_found()
+            session = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == command.session_id,
+                BrowserSession.owner_id == command.owner_id,
+            ))
+            if (
+                command.state != "running"
+                or command.claimed_by != worker_id
+                or command.lease_until is None
+                or aware(command.lease_until) <= now
+            ):
+                raise CoworkerError(
+                    "browser_worker_claim_invalid",
+                    "This browser command is not actively owned by this worker.",
+                    409,
+                )
+            if (
+                session is None
+                or session.cancel_requested
+                or session.takeover_required
+                or session.state in TERMINAL_BROWSER_STATES
+                or aware(session.expires_at) <= now
+            ):
+                raise CoworkerError(
+                    "browser_session_closed",
+                    "This browser session is not available for network access.",
+                    409,
+                )
+            if origin not in set(session.allowed_origins or []):
+                raise CoworkerError(
+                    "browser_origin_not_allowed",
+                    "This network request leaves the session's approved origin.",
+                    403,
+                )
         return {
             "url": normalized,
             "origin": origin,
