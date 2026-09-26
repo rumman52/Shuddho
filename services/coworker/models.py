@@ -628,6 +628,54 @@ class NotificationOutbox(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class BrowserSession(Base):
+    __tablename__ = "cw_browser_sessions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    purpose: Mapped[str] = mapped_column(String(30))
+    start_url: Mapped[str] = mapped_column(Text)
+    start_origin: Mapped[str] = mapped_column(String(512))
+    allowed_origins: Mapped[list[str]] = mapped_column(JSON, default=list)
+    state: Mapped[str] = mapped_column(String(30), default="prepared")
+    takeover_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    worker_session_ref: Mapped[str | None] = mapped_column(String(128))
+    last_url: Mapped[str | None] = mapped_column(Text)
+    last_title: Mapped[str | None] = mapped_column(String(300))
+    error_code: Mapped[str | None] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_browser_sessions_owner_idempotency"),
+        Index("cw_browser_sessions_owner_created", "owner_id", "created_at"),
+        Index("cw_browser_sessions_state_expiry", "state", "expires_at"),
+    )
+
+
+class BrowserCommand(Base):
+    __tablename__ = "cw_browser_commands"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("cw_browser_sessions.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(30))
+    target_url: Mapped[str | None] = mapped_column(Text)
+    target_origin: Mapped[str | None] = mapped_column(String(512))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    state: Mapped[str] = mapped_column(String(30), default="prepared")
+    error_code: Mapped[str | None] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("session_id", "sequence", name="uq_cw_browser_commands_session_sequence"),
+        Index("cw_browser_commands_owner_session", "owner_id", "session_id"),
+    )
+
+
 class AgentRun(Base):
     __tablename__ = "cw_agent_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
