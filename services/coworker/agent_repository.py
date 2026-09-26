@@ -11,7 +11,7 @@ from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, A
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -139,6 +139,39 @@ class AgentRepository:
                     raise not_found()
                 versions.append(row[0].id)
 
+            connector_read_grant_ids: list[str] = []
+            if request.connector_read_grant_ids and not self.settings.connector_reads_enabled:
+                raise CoworkerError(
+                    "connector_reads_disabled",
+                    "Connected reads are not enabled in this deployment.",
+                    503,
+                )
+            for grant_id in request.connector_read_grant_ids:
+                grant = db.scalar(select(ConnectorReadGrant).where(
+                    ConnectorReadGrant.id == str(grant_id),
+                    ConnectorReadGrant.owner_id == owner,
+                ))
+                if grant is None:
+                    raise not_found()
+                connection = db.scalar(select(Connection).where(
+                    Connection.id == grant.connection_id,
+                    Connection.owner_id == owner,
+                    Connection.active.is_(True),
+                ))
+                if (
+                    connection is None
+                    or grant.state != "active"
+                    or aware(grant.expires_at) <= utcnow()
+                    or grant.destination != "planner_context"
+                    or grant.purpose != "agent_context"
+                ):
+                    raise CoworkerError(
+                        "connector_read_unavailable",
+                        "A selected connected read authorization is no longer active.",
+                        409,
+                    )
+                connector_read_grant_ids.append(grant.id)
+
             run_id = str(uuid4())
             action_ids: list[str] = []
             if request.action_ids and not self.settings.actions_enabled:
@@ -177,6 +210,7 @@ class AgentRepository:
                 input_versions=versions,
                 action_ids=action_ids,
                 memory_namespaces=list(request.memory_namespaces),
+                connector_read_grant_ids=connector_read_grant_ids,
                 state="queued",
                 phase="planning",
                 message="Agent run created. Waiting for the bounded planner runtime.",
@@ -256,6 +290,7 @@ class AgentRepository:
             "action_ids": list(run.action_ids),
             "action_proposals": [self._proposal_dto(item) for item in proposals],
             "memory_namespaces": list(run.memory_namespaces),
+            "connector_read_grant_ids": list(run.connector_read_grant_ids or []),
             "state": run.state,
             "phase": run.phase,
             "message": run.message,

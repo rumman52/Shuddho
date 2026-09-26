@@ -47,6 +47,24 @@ class ActionService:
                 409,
             )
         if (
+            request.capability in {"email_read", "calendar_read"}
+            and not self.repo.settings.connector_reads_enabled
+        ):
+            raise CoworkerError(
+                "connector_reads_disabled",
+                "Connected reads are not enabled in this deployment.",
+                503,
+            )
+        if (
+            provider != "google"
+            and request.capability in {"email_read", "calendar_read"}
+        ):
+            raise CoworkerError(
+                "connection_provider_disabled",
+                "Connected reads are not qualified for this provider yet.",
+                409,
+            )
+        if (
             request.capability == "drive"
             and not self.repo.settings.action_document_sharing_enabled
         ):

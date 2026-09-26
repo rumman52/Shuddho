@@ -22,11 +22,16 @@ SCOPES = {
     "email": "https://www.googleapis.com/auth/gmail.send",
     "calendar": "https://www.googleapis.com/auth/calendar.events.owned",
     "drive": "https://www.googleapis.com/auth/drive.file",
+    "email_read": "https://www.googleapis.com/auth/gmail.readonly",
+    "calendar_read": "https://www.googleapis.com/auth/calendar.readonly",
 }
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+GMAIL_MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+GMAIL_HISTORY_URL = "https://gmail.googleapis.com/gmail/v1/users/me/history"
+GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
@@ -140,6 +145,10 @@ class GoogleActions:
             re.escape(DRIVE_FILES_URL) + r"/[A-Za-z0-9_-]{1,256}/permissions",
             url,
         )
+        gmail_message_path = re.fullmatch(
+            re.escape(GMAIL_MESSAGES_URL) + r"/[A-Za-z0-9_-]{1,256}",
+            url,
+        )
         if (
             url not in {
                 TOKEN_URL,
@@ -148,9 +157,13 @@ class GoogleActions:
                 EVENTS_URL,
                 DRIVE_FILES_URL,
                 DRIVE_UPLOAD_URL,
+                GMAIL_MESSAGES_URL,
+                GMAIL_HISTORY_URL,
+                GMAIL_PROFILE_URL,
             }
             and not event_path
             and not permission_path
+            and not gmail_message_path
         ):
             raise ValueError("Unknown connector endpoint")
         try:
@@ -172,8 +185,18 @@ class GoogleActions:
                         params=request_params,
                     ) as response:
                         if response.status_code < 200 or response.status_code >= 300:
-                            # 5xx, redirects, conflicts and timeouts may hide a
-                            # successful mutation. Do not blindly repeat it.
+                            # Cursor expiry is a recoverable read condition; mutations
+                            # retain the existing uncertainty semantics.
+                            if (
+                                response.status_code in {404, 410}
+                                and url in {GMAIL_HISTORY_URL, EVENTS_URL}
+                                and params
+                                and ("startHistoryId" in params or "syncToken" in params)
+                            ):
+                                raise GoogleFailure(
+                                    "provider_cursor_invalid",
+                                    definitive=True,
+                                )
                             code = "connection_authorization" if response.status_code in {401, 403} else "provider_rejected"
                             raise GoogleFailure(code, definitive=response.status_code in {400, 401, 403, 404, 410, 422, 429})
                         raw = bytearray()
@@ -246,6 +269,197 @@ class GoogleActions:
             and isinstance(value.get("emailAddress"), str)
             and value["emailAddress"].casefold() == recipient.casefold()
         )
+
+    @staticmethod
+    def _header_map(payload: dict) -> dict[str, str]:
+        values = {}
+        for item in payload.get("headers", []):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            value = item.get("value")
+            if isinstance(name, str) and isinstance(value, str):
+                values[name.casefold()] = re.sub(r"[\x00-\x1f\x7f]", " ", value).strip()[:1000]
+        return values
+
+    @staticmethod
+    def _safe_excerpt(value: object, limit: int = 600) -> str:
+        text = value if isinstance(value, str) else ""
+        text = re.sub(r"https?://\S+", "[link omitted]", text)
+        text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+        return re.sub(r"\s+", " ", text).strip()[:limit]
+
+    async def _gmail_message(self, access_token: str, message_id: str) -> dict:
+        value = await self.request(
+            "GET",
+            GMAIL_MESSAGES_URL + "/" + message_id,
+            token=access_token,
+            params={
+                "format": "metadata",
+                "metadataHeaders": ["From", "To", "Cc", "Subject", "Date"],
+            },
+        )
+        headers = self._header_map(value.get("payload") or {})
+        internal = value.get("internalDate")
+        try:
+            received_at = datetime.fromtimestamp(
+                int(internal) / 1000,
+                tz=timezone.utc,
+            ).isoformat()
+        except (TypeError, ValueError, OverflowError):
+            received_at = None
+        resource_id = value.get("id")
+        history_id = value.get("historyId") or "0"
+        if (
+            not isinstance(resource_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", resource_id)
+            or not isinstance(history_id, str)
+            or not history_id.isdecimal()
+        ):
+            raise GoogleFailure("provider_response_invalid", definitive=True)
+        return {
+            "resource_id": resource_id,
+            "provider_version": history_id,
+            "state": "active",
+            "payload": {
+                "kind": "email",
+                "message_id": resource_id,
+                "thread_id": value.get("threadId") if isinstance(value.get("threadId"), str) else None,
+                "from": headers.get("from", ""),
+                "to": headers.get("to", ""),
+                "cc": headers.get("cc", ""),
+                "subject": headers.get("subject", ""),
+                "date": headers.get("date", ""),
+                "received_at": received_at,
+                "snippet": self._safe_excerpt(value.get("snippet")),
+                "authority": "provider_content_is_untrusted_data",
+            },
+        }
+
+    async def read_email(self, access_token: str, cursor: str | None, max_items: int) -> dict:
+        max_items = max(1, min(int(max_items), 30))
+        changes: list[dict] = []
+        deleted: set[str] = set()
+        if cursor is None:
+            profile = await self.request("GET", GMAIL_PROFILE_URL, token=access_token)
+            next_cursor = profile.get("historyId")
+            if not isinstance(next_cursor, str) or not next_cursor.isdecimal():
+                raise GoogleFailure("provider_response_invalid", definitive=True)
+            listing = await self.request(
+                "GET",
+                GMAIL_MESSAGES_URL,
+                token=access_token,
+                params={"maxResults": str(max_items), "labelIds": "INBOX"},
+            )
+            ids = [
+                item["id"] for item in listing.get("messages", [])
+                if isinstance(item, dict)
+                and isinstance(item.get("id"), str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{1,256}", item["id"])
+            ][:max_items]
+        else:
+            listing = await self.request(
+                "GET",
+                GMAIL_HISTORY_URL,
+                token=access_token,
+                params={"startHistoryId": cursor, "maxResults": "100"},
+            )
+            next_cursor = listing.get("historyId") or cursor
+            if not isinstance(next_cursor, str) or not next_cursor.isdecimal():
+                raise GoogleFailure("provider_response_invalid", definitive=True)
+            ids = []
+            for history in listing.get("history", []):
+                if not isinstance(history, dict):
+                    continue
+                for entry in history.get("messagesAdded", []):
+                    message = entry.get("message") if isinstance(entry, dict) else None
+                    if isinstance(message, dict) and isinstance(message.get("id"), str):
+                        ids.append(message["id"])
+                for entry in history.get("messagesDeleted", []):
+                    message = entry.get("message") if isinstance(entry, dict) else None
+                    if isinstance(message, dict) and isinstance(message.get("id"), str):
+                        deleted.add(message["id"])
+            ids = list(dict.fromkeys(ids))
+            if listing.get("nextPageToken") or len(ids) + len(deleted) > max_items:
+                # Never advance a history cursor while omitting unread changes.
+                raise GoogleFailure("provider_snapshot_limit", definitive=True)
+        for message_id in ids:
+            changes.append(await self._gmail_message(access_token, message_id))
+        for message_id in sorted(deleted):
+            changes.append({
+                "resource_id": message_id,
+                "provider_version": next_cursor,
+                "state": "deleted",
+                "payload": {"kind": "email", "message_id": message_id},
+            })
+        return {"cursor": next_cursor, "changes": changes}
+
+    async def read_calendar(self, access_token: str, cursor: str | None, max_items: int) -> dict:
+        max_items = max(1, min(int(max_items), 50))
+        params = {
+            "maxResults": str(max_items),
+            "singleEvents": "true",
+            "showDeleted": "true",
+        }
+        if cursor is not None:
+            params = {
+                "maxResults": str(max_items),
+                "showDeleted": "true",
+                "syncToken": cursor,
+            }
+        result = await self.request(
+            "GET",
+            EVENTS_URL,
+            token=access_token,
+            params=params,
+        )
+        next_cursor = result.get("nextSyncToken")
+        if not isinstance(next_cursor, str) or not next_cursor or result.get("nextPageToken"):
+            raise GoogleFailure("provider_snapshot_limit", definitive=True)
+        changes = []
+        for item in result.get("items", [])[:max_items]:
+            if not isinstance(item, dict):
+                continue
+            resource_id = item.get("id")
+            updated = item.get("updated") or item.get("created") or ""
+            if not isinstance(resource_id, str) or not resource_id or not isinstance(updated, str):
+                continue
+            cancelled = item.get("status") == "cancelled"
+            attendees = [
+                entry.get("email", "") for entry in item.get("attendees", [])
+                if isinstance(entry, dict) and isinstance(entry.get("email"), str)
+            ][:20]
+            changes.append({
+                "resource_id": resource_id[:512],
+                "provider_version": updated[:128],
+                "state": "deleted" if cancelled else "active",
+                "payload": {
+                    "kind": "calendar_event",
+                    "event_id": resource_id[:512],
+                    "status": item.get("status"),
+                    "summary": self._safe_excerpt(item.get("summary"), 300),
+                    "description": self._safe_excerpt(item.get("description"), 1000),
+                    "location": self._safe_excerpt(item.get("location"), 300),
+                    "start": item.get("start") if isinstance(item.get("start"), dict) else {},
+                    "end": item.get("end") if isinstance(item.get("end"), dict) else {},
+                    "attendees": attendees,
+                    "authority": "provider_content_is_untrusted_data",
+                },
+            })
+        return {"cursor": next_cursor, "changes": changes}
+
+    async def read_connected(
+        self,
+        capability: str,
+        access_token: str,
+        cursor: str | None,
+        max_items: int,
+    ) -> dict:
+        if capability == "email_read":
+            return await self.read_email(access_token, cursor, max_items)
+        if capability == "calendar_read":
+            return await self.read_calendar(access_token, cursor, max_items)
+        raise GoogleFailure("connector_read_unregistered", definitive=True)
 
     async def execute_document_share(self, action, access_token, artifact):
         if not isinstance(artifact, dict):

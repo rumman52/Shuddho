@@ -27,6 +27,7 @@ class AgentRunCreate(AgentModel):
     document_ids: list[UUID] = Field(default_factory=list, max_length=5)
     action_ids: list[UUID] = Field(default_factory=list, max_length=3)
     memory_namespaces: list[Namespace] = Field(default_factory=list, max_length=5)
+    connector_read_grant_ids: list[UUID] = Field(default_factory=list, max_length=4)
     output_language: str = Field(default="en", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
 
     @field_validator("goal")
@@ -42,6 +43,8 @@ class AgentRunCreate(AgentModel):
             raise ValueError("An action may be included only once")
         if len(set(self.memory_namespaces)) != len(self.memory_namespaces):
             raise ValueError("A memory namespace may be included only once")
+        if len(set(self.connector_read_grant_ids)) != len(self.connector_read_grant_ids):
+            raise ValueError("A connected read authorization may be included only once")
         return self
 
 

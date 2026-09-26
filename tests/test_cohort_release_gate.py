@@ -270,6 +270,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "runtime_v3": False,
         "context_retrieval": False,
         "connector_trust_boundary": False,
+        "connector_reads": False,
     }
 
     passed = evaluate_release(
