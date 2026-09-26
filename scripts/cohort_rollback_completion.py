@@ -27,6 +27,7 @@ ROLLBACK_MODES = {
     "global": ("global_kill_switch", "SHUDDHO_COWORKER_ENABLED"),
     "agent": ("agent_kill_switch", "SHUDDHO_AGENT_RUNTIME_ENABLED"),
     "runtime_v3": ("runtime_v3_kill_switch", "SHUDDHO_AGENT_RUNTIME_V3_ENABLED"),
+    "context_retrieval": ("context_retrieval_kill_switch", "SHUDDHO_CONTEXT_RETRIEVAL_ENABLED"),
     "parallel": ("parallel_kill_switch", "SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED"),
     "research": ("research_kill_switch", "SHUDDHO_RESEARCH_SERVICES_ENABLED"),
     "actions": ("actions_kill_switch", "SHUDDHO_ACTIONS_ENABLED"),
@@ -162,6 +163,8 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
         # Research runs on the durable task path. Require no active task work before
         # considering the research rollback fully drained.
         required_zero.update({"active_tasks", "undelivered_task_outbox"})
+    elif mode == "context_retrieval":
+        required_zero.update({"active_agent_runs", "undelivered_agent_outbox"})
     elif mode == "parallel":
         # Existing v2 runs remain supported after the flag is disabled. Completion
         # means there are no active Agent runs left that still depend on that path.
