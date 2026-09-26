@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
-from .action_registry import stable_digest, validate_approval_scope
+from .action_registry import build_approval_scope, stable_digest, validate_approval_scope
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE, connector_capability
 from .errors import CoworkerError
 from .models import Connection, ExecutionGrant, ExternalAction, utcnow
@@ -134,13 +134,10 @@ class PermissionGateway:
                 409,
             )
 
-        approval_scope = action.preview.get("approval_scope")
-        if not isinstance(approval_scope, dict):
-            raise CoworkerError(
-                "approval_changed",
-                "The approved connector destination scope is missing.",
-                409,
-            )
+        # Rebuild the deterministic scope from the immutable preview.
+        # This preserves safe execution of still-valid legacy v1 previews while
+        # newer previews are additionally checked by validate_approval_scope().
+        approval_scope = build_approval_scope(action.preview)
         destinations = approval_scope.get("destinations")
         if not isinstance(destinations, dict):
             raise CoworkerError(
