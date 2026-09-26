@@ -17,9 +17,9 @@ from sqlalchemy import func, or_, select, update
 from .action_registry import action_spec, build_approval_scope, validate_approval_scope
 from .action_schemas import ActionPrepare
 from .action_security import TokenVault
-from .connector_registry import CONNECTOR_ACTION_AUDIENCE
+from .connector_registry import CONNECTOR_ACTION_AUDIENCE, CONNECTOR_READ_AUDIENCE
 from .errors import CoworkerError
-from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ExecutionGrant, ExternalAction, OAuthAttempt, utcnow
+from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ConnectorReadGrant, ExecutionGrant, ExternalAction, OAuthAttempt, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
@@ -394,6 +394,13 @@ class ActionRepository:
         ).with_for_update()):
             grant.state = "revoked"
             grant.revoked_at = now
+        for grant in db.scalars(select(ConnectorReadGrant).where(
+            ConnectorReadGrant.connection_id == connection.id,
+            ConnectorReadGrant.owner_id == connection.owner_id,
+            ConnectorReadGrant.state == "active",
+        ).with_for_update()):
+            grant.state = "revoked"
+            grant.revoked_at = now
         for action in db.scalars(select(ExternalAction).where(ExternalAction.connection_id == connection.id, ExternalAction.state.in_(["awaiting_approval", "queued"])).with_for_update()):
             action.state, action.finished_at = "cancelled", now
             self._audit(db, connection.owner_id, action.id, "action.cancelled_disconnect")
@@ -435,6 +442,34 @@ class ActionRepository:
             )
         return grant
 
+    @staticmethod
+    def _trusted_read_grant(db, row, read_grant_id, required_scopes):
+        if not read_grant_id:
+            raise CoworkerError(
+                "connector_direct_credential_access",
+                "Connector read credentials require a valid read grant.",
+                403,
+            )
+        grant = db.scalar(select(ConnectorReadGrant).where(
+            ConnectorReadGrant.id == read_grant_id,
+            ConnectorReadGrant.owner_id == row.owner_id,
+            ConnectorReadGrant.connection_id == row.id,
+            ConnectorReadGrant.state == "active",
+            ConnectorReadGrant.audience == CONNECTOR_READ_AUDIENCE,
+        ))
+        if (
+            grant is None
+            or aware(grant.expires_at) <= utcnow()
+            or required_scopes is not None
+            and list(grant.required_scopes or []) != list(required_scopes)
+        ):
+            raise CoworkerError(
+                "connector_direct_credential_access",
+                "Connector read credentials require a valid read grant.",
+                403,
+            )
+        return grant
+
     def credentials(
         self,
         connection_id,
@@ -442,6 +477,7 @@ class ActionRepository:
         owner_id=None,
         required_scopes=None,
         execution_grant_id=None,
+        read_grant_id=None,
     ):
         # Trusted connector/credential boundary only; never serialized to an API.
         with self.sessions() as db:
@@ -453,12 +489,20 @@ class ActionRepository:
             ):
                 raise CoworkerError("connection_removed", "Reconnect your connected account.", 409)
             if self.settings.connector_trust_boundary_enabled:
-                self._trusted_grant(
-                    db,
-                    row,
-                    execution_grant_id,
-                    required_scopes,
-                )
+                if read_grant_id is not None:
+                    self._trusted_read_grant(
+                        db,
+                        row,
+                        read_grant_id,
+                        required_scopes,
+                    )
+                else:
+                    self._trusted_grant(
+                        db,
+                        row,
+                        execution_grant_id,
+                        required_scopes,
+                    )
             scopes = list(row.scopes or [])
             if required_scopes is not None and any(scope not in scopes for scope in required_scopes):
                 raise CoworkerError(
@@ -478,17 +522,26 @@ class ActionRepository:
         *,
         owner_id=None,
         execution_grant_id=None,
+        read_grant_id=None,
     ):
         with self.sessions.begin() as db:
             row = db.scalar(select(Connection).where(Connection.id == connection_id).with_for_update())
             if row and row.active and (owner_id is None or row.owner_id == owner_id):
                 if self.settings.connector_trust_boundary_enabled:
-                    self._trusted_grant(
-                        db,
-                        row,
-                        execution_grant_id,
-                        None,
-                    )
+                    if read_grant_id is not None:
+                        self._trusted_read_grant(
+                            db,
+                            row,
+                            read_grant_id,
+                            None,
+                        )
+                    else:
+                        self._trusted_grant(
+                            db,
+                            row,
+                            execution_grant_id,
+                            None,
+                        )
                 current = self.vault().open(row.token_ciphertext, row.owner_id + ":connection:" + row.id)
                 if not isinstance(current, dict):
                     current = {}
