@@ -925,6 +925,13 @@ class ConnectorReadService:
         if access is not None:
             _verified, adapter, token = access
             for sub in subscriptions:
+                # Gmail users.stop is mailbox-wide. A user may have another
+                # still-authorized Gmail read grant on the same connection, so
+                # local revocation is authoritative and the external watch is
+                # allowed to expire. Calendar channels are per-subscription and
+                # can be stopped safely.
+                if sub["capability"] != "calendar_read":
+                    continue
                 try:
                     await adapter.stop_read_watch(
                         sub["capability"], token,
