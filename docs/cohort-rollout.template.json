@@ -29,7 +29,8 @@
     "action_document_sharing": false,
     "action_email_threading": false,
     "action_social_publishing": false,
-    "agent_linkedin_proposals": false
+    "agent_linkedin_proposals": false,
+    "automations": false
   },
   "rollback": {
     "runbook_reference": "deployment-runbook-or-ticket",
@@ -47,7 +48,8 @@
     "action_document_sharing_kill_switch": "SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false",
     "action_email_threading_kill_switch": "SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false",
     "action_social_publishing_kill_switch": "SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false",
-    "agent_linkedin_proposals_kill_switch": "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false"
+    "agent_linkedin_proposals_kill_switch": "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false",
+    "automations_kill_switch": "SHUDDHO_AUTOMATIONS_ENABLED=false"
   },
   "monitoring": {
     "queue_age": "dashboard-or-alert-reference",
