@@ -3,6 +3,7 @@ import asyncio
 import base64
 import json
 from dataclasses import replace
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
@@ -463,7 +464,7 @@ def create_microsoft_read_grant(container, owner, connection):
         owner,
         ConnectorReadGrantCreate(
             connection_id=connection["id"],
-            expires_at=utcnow() + __import__("datetime").timedelta(days=7),
+            expires_at=utcnow() + timedelta(days=7),
         ),
         "microsoft-read-" + str(uuid4()),
     )
