@@ -333,6 +333,100 @@ class PersonalGoalRevision(Base):
     )
 
 
+class Automation(Base):
+    __tablename__ = "cw_automations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("cw_personal_goals.id"), index=True)
+    goal_revision: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    state: Mapped[str] = mapped_column(String(30), default="active")
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    schedule: Mapped[dict[str, Any]] = mapped_column(JSON)
+    output_language: Mapped[str] = mapped_column(String(35), default="en")
+    overlap_policy: Mapped[str] = mapped_column(String(30), default="skip")
+    catchup_window_seconds: Mapped[int] = mapped_column(Integer, default=3600)
+    quiet_hours: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    schedule_applied_revision: Mapped[int | None] = mapped_column(Integer)
+    schedule_applied_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    schedule_error_code: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_automations_owner_idempotency"),
+        Index("cw_automations_owner_created", "owner_id", "created_at"),
+        Index("cw_automations_workspace_state", "workspace_id", "state"),
+    )
+
+
+class AutomationRevision(Base):
+    __tablename__ = "cw_automation_revisions"
+    automation_id: Mapped[str] = mapped_column(ForeignKey("cw_automations.id"), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (Index("cw_automation_revisions_owner_automation", "owner_id", "automation_id"),)
+
+
+class AutomationScheduleOutbox(Base):
+    __tablename__ = "cw_automation_schedule_outbox"
+    automation_id: Mapped[str] = mapped_column(ForeignKey("cw_automations.id"), primary_key=True)
+    desired_revision: Mapped[int] = mapped_column(Integer)
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AutomationOccurrence(Base):
+    __tablename__ = "cw_automation_occurrences"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    automation_id: Mapped[str] = mapped_column(ForeignKey("cw_automations.id"), index=True)
+    automation_revision: Mapped[int] = mapped_column(Integer)
+    occurrence_key: Mapped[str] = mapped_column(String(255))
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    state: Mapped[str] = mapped_column(String(40))
+    reason: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("automation_id", "occurrence_key", name="uq_cw_automation_occurrence_key"),
+        Index("cw_automation_occurrences_owner_due", "owner_id", "due_at"),
+    )
+
+
+class Notification(Base):
+    __tablename__ = "cw_notifications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"))
+    automation_id: Mapped[str | None] = mapped_column(ForeignKey("cw_automations.id"), index=True)
+    occurrence_id: Mapped[str | None] = mapped_column(ForeignKey("cw_automation_occurrences.id"), unique=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    title: Mapped[str] = mapped_column(String(160))
+    message: Mapped[str] = mapped_column(String(300))
+    state: Mapped[str] = mapped_column(String(30), default="pending")
+    visible_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (Index("cw_notifications_owner_state_visible", "owner_id", "state", "visible_at"),)
+
+
+class NotificationOutbox(Base):
+    __tablename__ = "cw_notification_outbox"
+    notification_id: Mapped[str] = mapped_column(ForeignKey("cw_notifications.id"), primary_key=True)
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class AgentRun(Base):
     __tablename__ = "cw_agent_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

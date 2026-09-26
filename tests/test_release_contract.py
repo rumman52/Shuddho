@@ -48,6 +48,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "action_selection",
         "action_proposals",
         "personal_goals",
+        "automations",
     } == covered
 
 
@@ -59,6 +60,17 @@ def test_personal_goals_require_agent_runtime_and_staging_evidence():
     )
     rollout["capabilities"]["agent_runtime"] = False
     assert "personal_goals_dependency" in validate_rollout(rollout, max_cohort_users=25)
+
+
+def test_automations_require_goals_agent_runtime_and_staging_evidence():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["personal_goals"] = True
+    rollout["capabilities"]["automations"] = True
+    assert "automations" in required_conditional_gate_ids(
+        rollout["capabilities"], set()
+    )
+    rollout["capabilities"]["personal_goals"] = False
+    assert "automations_dependency" in validate_rollout(rollout, max_cohort_users=25)
 
 
 def test_required_gate_resolution_is_provider_aware_and_ordered():

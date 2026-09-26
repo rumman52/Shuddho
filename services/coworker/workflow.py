@@ -1,10 +1,38 @@
 """Deterministic Temporal definition. History carries IDs and safe status only."""
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
+
+
+
+
+@workflow.defn(name="shuddho_automation_occurrence_v1")
+class AutomationOccurrenceWorkflow:
+    """One finite Temporal Schedule firing; all authority stays in server activities."""
+
+    @workflow.run
+    async def run(self, value: dict):
+        automation_id = str(value["automation_id"])
+        revision = int(value["revision"])
+        prefix = f"shuddho-automation-{automation_id}-r{revision}-"
+        workflow_id = workflow.info().workflow_id
+        if not workflow_id.startswith(prefix):
+            raise ApplicationError("Scheduled workflow identity is invalid.", type="automation_workflow_identity")
+        due_text = workflow_id[len(prefix):]
+        try:
+            due_at = datetime.fromisoformat(due_text.replace("Z", "+00:00")).isoformat()
+        except ValueError:
+            raise ApplicationError("Scheduled occurrence time is invalid.", type="automation_occurrence_time") from None
+        await workflow.execute_activity(
+            "shuddho_accept_automation_occurrence_v1",
+            {"automation_id": automation_id, "revision": revision, "due_at": due_at},
+            start_to_close_timeout=timedelta(seconds=45),
+            schedule_to_close_timeout=timedelta(minutes=3),
+            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), maximum_attempts=5),
+        )
 
 
 @workflow.defn(name="shuddho_approved_action_v1")

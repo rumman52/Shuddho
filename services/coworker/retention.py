@@ -7,9 +7,10 @@ from sqlalchemy import delete, select
 from .errors import CoworkerError
 from .models import (
     Account, ActionProposal, ActionRecipient, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent,
+    Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, DailyUsage, Document, DocumentVersion, ExternalAction, MemoryFact,
-    ModelAttempt, OAuthAttempt, Outbox, Step, Task, TaskEvent, ToolInvocation,
-    ToolReceipt, Workspace, utcnow,
+    ModelAttempt, Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
+    PersonalGoalRevision, Step, Task, TaskEvent, ToolInvocation, ToolReceipt, Workspace, utcnow,
 )
 
 TERMINAL_TASKS = {"completed", "failed", "cancelled", "needs_input"}
@@ -90,8 +91,25 @@ class RetentionService:
             active_actions = db.scalar(select(ExternalAction.id).where(
                 ExternalAction.owner_id == owner, ExternalAction.state.not_in(TERMINAL_ACTIONS),
             ).limit(1))
-            if active_tasks or active_runs or active_actions:
-                raise CoworkerError("account_active", "Cancel or finish active coworker work before erasing this account.", 409)
+            pending_automation = db.scalar(
+                select(Automation.id).outerjoin(
+                    AutomationScheduleOutbox,
+                    AutomationScheduleOutbox.automation_id == Automation.id,
+                ).where(
+                    Automation.owner_id == owner,
+                    (
+                        (Automation.state != "cancelled")
+                        | Automation.schedule_applied_enabled.is_(True)
+                        | AutomationScheduleOutbox.delivered.is_(False)
+                    ),
+                ).limit(1)
+            )
+            if active_tasks or active_runs or active_actions or pending_automation:
+                raise CoworkerError(
+                    "account_active",
+                    "Cancel or finish active work and reconcile automation schedule deletion before erasing this account.",
+                    409,
+                )
 
             documents = list(db.scalars(select(DocumentVersion).where(DocumentVersion.owner_id == owner)).all())
             artifacts = list(db.scalars(select(Artifact).where(Artifact.owner_id == owner)).all())
@@ -103,6 +121,17 @@ class RetentionService:
 
             run_ids = list(db.scalars(select(AgentRun.id).where(AgentRun.owner_id == owner)).all())
             step_ids = list(db.scalars(select(AgentStep.id).where(AgentStep.owner_id == owner)).all())
+            automation_ids = list(db.scalars(select(Automation.id).where(Automation.owner_id == owner)).all())
+            notification_ids = list(db.scalars(select(Notification.id).where(Notification.owner_id == owner)).all())
+
+            if notification_ids:
+                db.execute(delete(NotificationOutbox).where(NotificationOutbox.notification_id.in_(notification_ids)))
+            db.execute(delete(Notification).where(Notification.owner_id == owner))
+            db.execute(delete(AutomationOccurrence).where(AutomationOccurrence.owner_id == owner))
+            if automation_ids:
+                db.execute(delete(AutomationScheduleOutbox).where(AutomationScheduleOutbox.automation_id.in_(automation_ids)))
+                db.execute(delete(AutomationRevision).where(AutomationRevision.automation_id.in_(automation_ids)))
+            db.execute(delete(Automation).where(Automation.owner_id == owner))
 
             db.execute(delete(ActionProposal).where(ActionProposal.owner_id == owner))
             db.execute(delete(ActionRecipient).where(ActionRecipient.owner_id == owner))
@@ -113,6 +142,8 @@ class RetentionService:
                 db.execute(delete(AgentOutbox).where(AgentOutbox.run_id.in_(run_ids)))
             db.execute(delete(AgentStep).where(AgentStep.owner_id == owner))
             db.execute(delete(AgentRun).where(AgentRun.owner_id == owner))
+            db.execute(delete(PersonalGoalRevision).where(PersonalGoalRevision.owner_id == owner))
+            db.execute(delete(PersonalGoal).where(PersonalGoal.owner_id == owner))
 
             db.execute(delete(Artifact).where(Artifact.owner_id == owner))
             db.execute(delete(ModelAttempt).where(ModelAttempt.owner_id == owner))

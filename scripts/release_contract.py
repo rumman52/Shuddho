@@ -214,6 +214,18 @@ OPTIONAL_CAPABILITIES = (
             ),
         ),
     ),
+    OptionalCapability(
+        capability="automations",
+        rollback_key="automations_kill_switch",
+        kill_switch="SHUDDHO_AUTOMATIONS_ENABLED=false",
+        dependencies=("personal_goals", "agent_runtime"),
+        staging_gates=(
+            StagingGate(
+                "automations",
+                "Temporal Schedule reconciliation, canonical occurrence dedupe, restart recovery, quiet hours, expiry and durable in-app notification delivery passed in controlled staging.",
+            ),
+        ),
+    ),
 )
 
 ACTIVATION_REQUIREMENTS = (
@@ -306,6 +318,14 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="personal_goals_verified",
         ledger_artifact_key="personal_goals_activation",
         capability="personal_goals",
+    ),
+    ActivationRequirement(
+        key="automations",
+        status="automations_verified",
+        ledger_schema_version=18,
+        ledger_event_type="automations_verified",
+        ledger_artifact_key="automations_activation",
+        capability="automations",
     ),
 )
 

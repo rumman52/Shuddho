@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from temporalio import activity
 from temporalio.client import Client
@@ -18,8 +18,9 @@ from .drafting import DraftFailure
 from .errors import CoworkerError
 from .repository import TERMINAL
 from .agent_runtime import AgentRuntime
+from .automation_scheduler import AutomationScheduleReconciler
 from .runner import DocumentRunner
-from .workflow import AgentWorkflow, AgentWorkflowV2, ApprovedActionWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
+from .workflow import AgentWorkflow, AgentWorkflowV2, ApprovedActionWorkflow, AutomationOccurrenceWorkflow, ReportEmailWorkflow, ResearchWorkflow, WorkServicesWorkflow
 
 logger = logging.getLogger("shuddho.coworker")
 TRANSIENT_CAPACITY_ERRORS = {"provider_capacity_busy", "workspace_provider_busy"}
@@ -43,6 +44,26 @@ class ActionActivities:
             await asyncio.to_thread(self.service.repo.finish, action_id, "outcome_unknown", error_code="worker_interrupted")
         except Exception:
             raise ApplicationError("Could not record action status.", type="action_status_unavailable") from None
+
+
+class AutomationActivities:
+    def __init__(self, repository):
+        self.repository = repository
+
+    @activity.defn(name="shuddho_accept_automation_occurrence_v1")
+    async def accept(self, value: dict):
+        try:
+            due_at = datetime.fromisoformat(str(value["due_at"]).replace("Z", "+00:00"))
+            return await asyncio.to_thread(
+                self.repository.accept_occurrence,
+                str(value["automation_id"]),
+                int(value["revision"]),
+                due_at,
+            )
+        except CoworkerError as error:
+            raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
+        except Exception:
+            raise ApplicationError("Could not accept the scheduled occurrence.", type="automation_accept_unavailable") from None
 
 
 class Activities:
@@ -200,6 +221,7 @@ class AgentActivities:
 class Dispatcher:
     def __init__(self, container: Container, client):
         self.container, self.client = container, client
+        self.automation_schedules = AutomationScheduleReconciler(client, container.settings.task_queue)
 
     async def dispatch_agent_run(self, run_id: str):
         agent = self.container.agent
@@ -230,6 +252,41 @@ class Dispatcher:
         repo = self.container.repository
         actions = self.container.actions.repo
         agent = self.container.agent
+        automations = self.container.automations
+        # Reconciliation runs even while the feature kill switch is off so
+        # previously active Temporal Schedules are paused and remain recoverable.
+        for desired in await asyncio.to_thread(automations.claim_reconciliation):
+            try:
+                enabled = await self.automation_schedules.apply(desired)
+                await asyncio.to_thread(
+                    automations.reconciliation_applied,
+                    desired["id"],
+                    int(desired["desired_revision"]),
+                    enabled,
+                )
+            except Exception:
+                logger.exception("Automation schedule reconciliation failed.")
+                await asyncio.to_thread(
+                    automations.reconciliation_failed,
+                    desired["id"],
+                    int(desired["desired_revision"]),
+                    "temporal_schedule_unavailable",
+                )
+        if self.container.settings.automations_enabled:
+            for buffered in await asyncio.to_thread(automations.claim_buffered_occurrences):
+                try:
+                    await asyncio.to_thread(
+                        automations.accept_occurrence,
+                        str(buffered["automation_id"]),
+                        int(buffered["revision"]),
+                        datetime.fromisoformat(str(buffered["due_at"]).replace("Z", "+00:00")),
+                    )
+                except Exception:
+                    logger.exception("Buffered automation occurrence could not resume.")
+        # Accepted work remains visible even after the admission kill switch is
+        # disabled; notification delivery itself grants no new execution authority.
+        for notification_id in await asyncio.to_thread(automations.claim_notifications):
+            await asyncio.to_thread(automations.deliver_notification, notification_id)
         for action_id in await asyncio.to_thread(actions.claim_outbox):
             try:
                 await self.client.start_workflow(
@@ -290,6 +347,7 @@ async def main():
     activities = Activities(DocumentRunner(container))
     action_activities = ActionActivities(container.actions)
     agent_activities = AgentActivities(AgentRuntime(container, DocumentRunner(container)))
+    automation_activities = AutomationActivities(container.automations)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for name in (signal.SIGTERM, signal.SIGINT):
@@ -297,9 +355,9 @@ async def main():
             loop.add_signal_handler(name, stop.set)
         except NotImplementedError:
             pass
-    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AgentWorkflow, AgentWorkflowV2],
+    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AutomationOccurrenceWorkflow, AgentWorkflow, AgentWorkflowV2],
                       activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted,
-                                  agent_activities.plan, agent_activities.replan, agent_activities.readiness, agent_activities.step, agent_activities.complete, agent_activities.failed],
+                                  agent_activities.plan, agent_activities.replan, agent_activities.readiness, agent_activities.step, agent_activities.complete, agent_activities.failed, automation_activities.accept],
                       # Four short deterministic steps: replay is inexpensive.
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,
