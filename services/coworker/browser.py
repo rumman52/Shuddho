@@ -470,6 +470,13 @@ class BrowserRepository:
                     session.state = "failed"
                     session.error_code = "redirect_origin_blocked"
                     raise CoworkerError("browser_origin_not_allowed", "The browser worker observed a redirect outside the approved origin.", 409)
+                hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
+                if hostname not in checked["resolved_ips"]:
+                    raise CoworkerError(
+                        "browser_dns_evidence_missing",
+                        "The browser worker did not provide DNS evidence for every observed host.",
+                        409,
+                    )
                 normalized_chain.append(normalized)
 
             command.result = {
