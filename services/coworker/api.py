@@ -238,6 +238,7 @@ def runtime_manifest(
         "work_services": settings.work_services_enabled,
         "artifact_services": settings.artifact_services_enabled,
         "agent_runtime": settings.agent_runtime_enabled,
+        "runtime_v3": settings.agent_runtime_v3_enabled,
         "personal_goals": settings.personal_goals_enabled,
         "automations": settings.automations_enabled,
         "intelligent_planner": settings.intelligent_planner_enabled,
