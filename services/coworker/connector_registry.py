@@ -55,11 +55,7 @@ CONNECTOR_CAPABILITIES = {
         provider="google",
         capability="email",
         version="1",
-        required_scopes=(
-            "openid",
-            "email",
-            "https://www.googleapis.com/auth/gmail.send",
-        ),
+        required_scopes=("https://www.googleapis.com/auth/gmail.send",),
         action_kinds=frozenset({
             "email_send",
             "email_send_with_attachments",
@@ -70,11 +66,7 @@ CONNECTOR_CAPABILITIES = {
         provider="google",
         capability="calendar",
         version="1",
-        required_scopes=(
-            "openid",
-            "email",
-            "https://www.googleapis.com/auth/calendar.events.owned",
-        ),
+        required_scopes=("https://www.googleapis.com/auth/calendar.events.owned",),
         action_kinds=frozenset({
             "calendar_create",
             "calendar_create_with_reminder",
@@ -84,18 +76,14 @@ CONNECTOR_CAPABILITIES = {
         provider="google",
         capability="drive",
         version="1",
-        required_scopes=(
-            "openid",
-            "email",
-            "https://www.googleapis.com/auth/drive.file",
-        ),
+        required_scopes=("https://www.googleapis.com/auth/drive.file",),
         action_kinds=frozenset({"document_share"}),
     ),
     ("microsoft", "email"): ConnectorCapabilitySpec(
         provider="microsoft",
         capability="email",
         version="1",
-        required_scopes=("User.Read", "Mail.Send"),
+        required_scopes=("Mail.Send",),
         action_kinds=frozenset({
             "email_send",
             "email_send_with_attachments",
@@ -105,7 +93,7 @@ CONNECTOR_CAPABILITIES = {
         provider="microsoft",
         capability="calendar",
         version="1",
-        required_scopes=("User.Read", "Calendars.ReadWrite"),
+        required_scopes=("Calendars.ReadWrite",),
         action_kinds=frozenset({
             "calendar_create",
             "calendar_create_with_reminder",
@@ -115,7 +103,7 @@ CONNECTOR_CAPABILITIES = {
         provider="linkedin",
         capability="social",
         version="1",
-        required_scopes=("r_liteprofile", "w_member_social"),
+        required_scopes=("w_member_social",),
         action_kinds=frozenset({"social_publish_linkedin"}),
     ),
 }
