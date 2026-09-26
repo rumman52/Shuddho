@@ -26,6 +26,7 @@ from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
 from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
+from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -270,6 +271,7 @@ def runtime_manifest(
         "research": settings.research_services_enabled,
         "actions": settings.actions_enabled,
         "connector_trust_boundary": settings.connector_trust_boundary_enabled,
+        "connector_reads": settings.connector_reads_enabled,
         "action_attachments": settings.action_attachments_enabled,
         "action_reminders": settings.action_reminders_enabled,
         "action_recipients": settings.action_recipients_enabled,
@@ -404,6 +406,72 @@ def dismiss_action_proposal(
     )
 
 
+@router.get("/connector-read-grants")
+def connector_read_grants(identity: Identity, services: Services):
+    if not services.settings.connector_reads_enabled:
+        return {"enabled": False, "grants": []}
+    return {
+        "enabled": True,
+        "grants": services.connector_reads.repo.list(identity.account_id),
+    }
+
+
+@router.post("/connector-read-grants", status_code=201)
+def create_connector_read_grant(
+    payload: ConnectorReadGrantCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    grant, created = services.connector_reads.repo.create(
+        identity.account_id,
+        payload,
+        idempotency_key,
+    )
+    response.headers["Location"] = f'/api/v1/connector-read-grants/{grant["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return grant
+
+
+@router.delete("/connector-read-grants/{grant_id}")
+def revoke_connector_read_grant(
+    grant_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return services.connector_reads.repo.revoke(identity.account_id, str(grant_id))
+
+
+@router.post("/connector-read-grants/{grant_id}/sync")
+async def sync_connector_read_grant(
+    grant_id: UUID,
+    payload: ConnectorReadSyncRequest,
+    identity: Identity,
+    services: Services,
+):
+    return await services.connector_reads.sync(
+        identity.account_id,
+        str(grant_id),
+        force_full=payload.force_full,
+        max_items=payload.max_items,
+    )
+
+
+@router.get("/connector-read-grants/{grant_id}/snapshots")
+def connector_read_snapshots(
+    grant_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return {
+        "snapshots": services.connector_reads.repo.snapshots(
+            identity.account_id,
+            str(grant_id),
+        )
+    }
+
+
 @router.get("/connections")
 def connections(identity: Identity, services: Services):
     return {
@@ -412,6 +480,7 @@ def connections(identity: Identity, services: Services):
         "document_sharing_enabled": services.settings.action_document_sharing_enabled,
         "threading_enabled": services.settings.action_email_threading_enabled,
         "social_publishing_enabled": services.settings.action_social_publishing_enabled,
+        "reads_enabled": services.settings.connector_reads_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }
 
