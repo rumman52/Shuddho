@@ -47,6 +47,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "agent_linkedin_proposals",
         "action_selection",
         "action_proposals",
+        "personal_goals",
     } == covered
 
 
@@ -57,7 +58,7 @@ def test_personal_goals_require_agent_runtime_and_staging_evidence():
         rollout["capabilities"], set()
     )
     rollout["capabilities"]["agent_runtime"] = False
-    assert "agent_dependency" in validate_rollout(rollout, max_cohort_users=25)
+    assert "personal_goals_dependency" in validate_rollout(rollout, max_cohort_users=25)
 
 
 def test_required_gate_resolution_is_provider_aware_and_ordered():
