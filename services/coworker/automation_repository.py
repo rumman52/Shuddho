@@ -199,18 +199,36 @@ class AutomationRepository:
         return self._transition(owner, automation_id, expected, "cancelled", {"active", "paused"})
 
     def claim_reconciliation(self, limit: int = 10) -> list[dict]:
+        """Lease desired schedule changes, including runtime kill-switch drift."""
         with self.sessions.begin() as db:
             now = utcnow()
-            rows = db.scalars(select(AutomationScheduleOutbox).where(
-                AutomationScheduleOutbox.delivered.is_(False),
+            if self.settings.automations_enabled:
+                drift = or_(
+                    AutomationScheduleOutbox.delivered.is_(False),
+                    Automation.schedule_applied_revision.is_(None),
+                    Automation.schedule_applied_revision != Automation.revision,
+                    (Automation.state == "active") & Automation.schedule_applied_enabled.is_(False),
+                    (Automation.state != "active") & Automation.schedule_applied_enabled.is_(True),
+                )
+            else:
+                drift = or_(
+                    AutomationScheduleOutbox.delivered.is_(False),
+                    Automation.schedule_applied_enabled.is_(True),
+                )
+            rows = db.execute(select(AutomationScheduleOutbox, Automation).join(
+                Automation, Automation.id == AutomationScheduleOutbox.automation_id,
+            ).where(
+                drift,
                 or_(AutomationScheduleOutbox.lease_until.is_(None), AutomationScheduleOutbox.lease_until < now),
-            ).limit(limit).with_for_update(skip_locked=True)).all()
+            ).order_by(Automation.updated_at).limit(limit).with_for_update(skip_locked=True)).all()
             result = []
-            for outbox in rows:
-                outbox.lease_until = now + timedelta(seconds=30); outbox.attempts += 1
-                row = db.get(Automation, outbox.automation_id)
-                if row is not None:
-                    result.append(self._dto(row) | {"desired_revision": outbox.desired_revision})
+            for outbox, row in rows:
+                outbox.lease_until = now + timedelta(seconds=30)
+                outbox.attempts += 1
+                desired = self._dto(row)
+                if not self.settings.automations_enabled and desired["state"] == "active":
+                    desired["state"] = "paused"
+                result.append(desired | {"desired_revision": outbox.desired_revision})
             return result
 
     def reconciliation_applied(self, automation_id: str, revision: int, enabled: bool) -> None:
@@ -245,8 +263,14 @@ class AutomationRepository:
             previous = db.scalar(select(AutomationOccurrence).where(
                 AutomationOccurrence.automation_id == row.id, AutomationOccurrence.occurrence_key == key,
             ))
-            if previous is not None and previous.run_id:
-                return {"occurrence_id": previous.id, "run_id": previous.run_id, "state": previous.state, "replayed": True}
+            if previous is not None:
+                if previous.run_id:
+                    return {"occurrence_id": previous.id, "run_id": previous.run_id, "state": previous.state, "replayed": True}
+                if previous.state in {"skipped", "blocked", "buffered"}:
+                    return {
+                        "occurrence_id": previous.id, "run_id": None, "state": previous.state,
+                        "reason": previous.reason, "replayed": True,
+                    }
             if previous is None:
                 previous = AutomationOccurrence(
                     id=str(uuid4()), owner_id=row.owner_id, automation_id=row.id, automation_revision=revision,
@@ -275,7 +299,7 @@ class AutomationRepository:
             ).where(
                 AutomationOccurrence.automation_id == row.id,
                 AutomationOccurrence.id != previous.id,
-                AgentRun.state.in_({"queued", "planning", "running", "awaiting_approval"}),
+                AgentRun.state.not_in({"completed", "failed", "cancelled"}),
             ).limit(1))
             if reason:
                 previous.state = "skipped"; previous.reason = reason; previous.updated_at = utcnow()
@@ -369,7 +393,7 @@ class AutomationRepository:
                 ).where(
                     AutomationOccurrence.automation_id == occurrence.automation_id,
                     AutomationOccurrence.id != occurrence.id,
-                    AgentRun.state.in_({"queued", "planning", "running", "awaiting_approval"}),
+                    AgentRun.state.not_in({"completed", "failed", "cancelled"}),
                 ).limit(1))
                 if active is not None:
                     continue
