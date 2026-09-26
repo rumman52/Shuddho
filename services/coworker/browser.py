@@ -176,6 +176,66 @@ class BrowserRepository:
                 503,
             )
 
+
+    def validate_worker_network_target(
+        self,
+        worker_id: str,
+        command_id: str,
+        raw_url: str,
+        addresses: list[str],
+    ) -> dict:
+        """Trusted service check performed immediately before browser egress."""
+        self._require_enabled()
+        normalized, origin = normalize_browser_target(raw_url)
+        hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
+        checked = validate_resolved_addresses(hostname, addresses)
+        now = utcnow()
+        with self.sessions() as db:
+            command = db.scalar(select(BrowserCommand).where(
+                BrowserCommand.id == command_id,
+            ))
+            if command is None:
+                raise not_found()
+            session = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == command.session_id,
+                BrowserSession.owner_id == command.owner_id,
+            ))
+            if (
+                command.state != "running"
+                or command.claimed_by != worker_id
+                or command.lease_until is None
+                or aware(command.lease_until) <= now
+            ):
+                raise CoworkerError(
+                    "browser_worker_claim_invalid",
+                    "This browser command is not actively owned by this worker.",
+                    409,
+                )
+            if (
+                session is None
+                or session.cancel_requested
+                or session.takeover_required
+                or session.state in TERMINAL_BROWSER_STATES
+                or aware(session.expires_at) <= now
+            ):
+                raise CoworkerError(
+                    "browser_session_closed",
+                    "This browser session is not available for network access.",
+                    409,
+                )
+            if origin not in set(session.allowed_origins or []):
+                raise CoworkerError(
+                    "browser_origin_not_allowed",
+                    "This network request leaves the session's approved origin.",
+                    403,
+                )
+        return {
+            "url": normalized,
+            "origin": origin,
+            "hostname": hostname,
+            "resolved_ips": checked,
+        }
+
     def create(self, owner: str, request: BrowserSessionCreate, idempotency_key: str) -> tuple[dict, bool]:
         self._require_enabled()
         start_url, origin = normalize_browser_target(request.start_url)
@@ -400,7 +460,17 @@ class BrowserRepository:
                 .with_for_update(skip_locked=True)
             ).all()
             claimed: list[dict] = []
+            claimed_sessions: set[str] = set()
             for command in rows:
+                if command.session_id in claimed_sessions:
+                    continue
+                earlier_pending = db.scalar(select(func.count()).select_from(BrowserCommand).where(
+                    BrowserCommand.session_id == command.session_id,
+                    BrowserCommand.sequence < command.sequence,
+                    BrowserCommand.state.in_(("prepared", "running")),
+                )) or 0
+                if earlier_pending:
+                    continue
                 session = db.get(BrowserSession, command.session_id)
                 command.state = "running"
                 command.attempts += 1
@@ -410,6 +480,7 @@ class BrowserRepository:
                 session.state = "running"
                 session.worker_session_ref = worker_id
                 session.updated_at = now
+                claimed_sessions.add(command.session_id)
                 claimed.append({
                     "id": command.id,
                     "session_id": command.session_id,

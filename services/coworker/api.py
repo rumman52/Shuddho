@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import time
@@ -27,7 +28,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTra
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
-from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate
+from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerNetworkCheck, BrowserWorkerObservation
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -50,6 +51,13 @@ async def account(request: Request, principal: Annotated[Principal, Depends(requ
 
 Identity = Annotated[Principal, Depends(account)]
 Services = Annotated[Container, Depends(get_container)]
+
+
+def require_browser_worker(request: Request, services: Container) -> None:
+    supplied = request.headers.get("X-Shuddho-Browser-Worker-Token", "")
+    expected = services.settings.browser_worker_token
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise CoworkerError("browser_worker_unauthorized", "Browser worker authentication failed.", 403)
 
 
 @router.post("/goals", status_code=201)
@@ -371,6 +379,49 @@ def resume_browser_session(session_id: UUID, identity: Identity, services: Servi
 @router.delete("/browser-sessions/{session_id}")
 def cancel_browser_session(session_id: UUID, identity: Identity, services: Services):
     return services.browser.cancel(identity.account_id, str(session_id))
+
+
+@router.post("/internal/browser-worker/claim")
+def claim_browser_commands(payload: BrowserWorkerClaim, request: Request, services: Services):
+    require_browser_worker(request, services)
+    return {"commands": services.browser.claim_commands(payload.worker_id, payload.limit)}
+
+
+@router.post("/internal/browser-worker/commands/{command_id}/network-check")
+def browser_worker_network_check(
+    command_id: UUID,
+    payload: BrowserWorkerNetworkCheck,
+    request: Request,
+    services: Services,
+):
+    require_browser_worker(request, services)
+    return services.browser.validate_worker_network_target(
+        payload.worker_id,
+        str(command_id),
+        payload.url,
+        payload.resolved_ips,
+    )
+
+
+@router.post("/internal/browser-worker/commands/{command_id}/complete")
+def complete_browser_command(command_id: UUID, payload: BrowserWorkerObservation, request: Request, services: Services):
+    require_browser_worker(request, services)
+    return services.browser.complete_command(
+        payload.worker_id,
+        str(command_id),
+        {
+            "final_url": payload.final_url,
+            "title": payload.title,
+            "redirect_chain": payload.redirect_chain,
+            "resolved_ips": payload.resolved_ips,
+        },
+    )
+
+
+@router.post("/internal/browser-worker/commands/{command_id}/fail")
+def fail_browser_command(command_id: UUID, payload: BrowserWorkerFailure, request: Request, services: Services):
+    require_browser_worker(request, services)
+    return services.browser.fail_command(payload.worker_id, str(command_id), payload.error_code)
 
 
 @router.get("/agent-tools")

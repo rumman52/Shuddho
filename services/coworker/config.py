@@ -84,6 +84,7 @@ class Settings:
     browser_session_ttl_seconds: int = 900
     browser_worker_lease_seconds: int = 30
     browser_command_max_attempts: int = 2
+    browser_worker_token: str = field(default="", repr=False)
     agent_run_timeout_seconds: int = 1800
     max_personal_goals: int = 100
     max_automations: int = 100
@@ -209,6 +210,7 @@ class Settings:
             browser_session_ttl_seconds=int(os.getenv("SHUDDHO_BROWSER_SESSION_TTL_SECONDS", "900")),
             browser_worker_lease_seconds=int(os.getenv("SHUDDHO_BROWSER_WORKER_LEASE_SECONDS", "30")),
             browser_command_max_attempts=int(os.getenv("SHUDDHO_BROWSER_COMMAND_MAX_ATTEMPTS", "2")),
+            browser_worker_token=os.getenv("SHUDDHO_BROWSER_WORKER_TOKEN", ""),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
             max_personal_goals=int(os.getenv("SHUDDHO_PERSONAL_GOALS_MAX", "100")),
             max_automations=int(os.getenv("SHUDDHO_AUTOMATIONS_MAX", "100")),
@@ -320,6 +322,8 @@ class Settings:
                 raise ValueError("SHUDDHO_BROWSER_WORKER_LEASE_SECONDS must be between 10 and 120")
             if not 1 <= self.browser_command_max_attempts <= 3:
                 raise ValueError("SHUDDHO_BROWSER_COMMAND_MAX_ATTEMPTS must be between 1 and 3")
+            if len(self.browser_worker_token) < 32:
+                raise ValueError("SHUDDHO_BROWSER_WORKER_TOKEN must contain at least 32 characters when browser execution is enabled")
         if self.agent_runtime_v3_enabled:
             if not self.agent_runtime_enabled or not self.intelligent_planner_enabled:
                 raise ValueError("Agent Runtime v3 requires SHUDDHO_AGENT_RUNTIME_ENABLED=true and SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
