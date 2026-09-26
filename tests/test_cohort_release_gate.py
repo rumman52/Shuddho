@@ -266,6 +266,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "action_selection": True,
         "action_proposals": False,
         "personal_goals": False,
+        "automations": False,
     }
 
     passed = evaluate_release(
