@@ -2,8 +2,15 @@
 
 Shuddho is a global multilingual writing platform evolving into an AI coworker for everyday and professional work. Its existing Bangla rules, spelling, punctuation, spacing, and dictionary engines remain the foundation of the free writing experience.
 
-Part 1 adds a configurable DeepSeek writing-review adapter and fixes editor/API reliability. The default is `SHUDDHO_LLM_PROVIDER=deepseek` with `DEEPSEEK_MODEL=deepseek-flash`. Explicit `gemma` configuration remains supported for existing deployments and rollback. Agent workflows, authenticated accounts, and global infrastructure are planned work, not capabilities delivered by this change.
+Writing review uses a configurable DeepSeek adapter. The default is `SHUDDHO_LLM_PROVIDER=deepseek` with `DEEPSEEK_MODEL=deepseek-flash`. Explicit `gemma` configuration remains supported for existing deployments and rollback.
 
+The repository also contains the authenticated coworker foundation: durable tasks and agent runs, Temporal workflows, native artifacts, bounded research, structured memory, and approval-controlled external actions. These capabilities retain their feature flags and live staging/activation gates; repository code does not establish production availability.
+
+The proposed personal-agent redesign covers persistent goals, recurring work, connected reads, isolated browser/code execution, and qualified personal transactions while preserving Shuddho's writing services.
+
+- [Current architecture and personal-agent redesign](docs/ARCHITECTURE.md)
+- [Complete personal-agent service catalog](docs/PERSONAL_AGENT_SERVICES.md)
+- [Personal-agent implementation and release plan](docs/PERSONAL_AGENT_IMPLEMENTATION.md)
 - [Three-part implementation plan](docs/IMPLEMENTATION_PLAN.md)
 - [Part 1 changes, configuration, and verification](docs/PART_1_WRITING_FOUNDATION.md)
 
