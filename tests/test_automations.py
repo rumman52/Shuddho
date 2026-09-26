@@ -148,6 +148,30 @@ def test_automation_crud_is_owner_scoped_revisioned_and_reconciled(automation_cl
     assert resumed.status_code == 200 and resumed.json()["state"] == "active"
 
 
+def test_kill_switch_reconciliation_pauses_and_restores_persisted_desired_state(automation_client, automation_container):
+    client, headers = automation_client
+    auth = headers()
+    _, automation = create_goal_and_automation(client, auth)
+
+    initial = automation_container.automations.claim_reconciliation()
+    assert len(initial) == 1 and initial[0]["state"] == "active"
+    automation_container.automations.reconciliation_applied(
+        automation["id"], automation["revision"], True
+    )
+
+    disabled = replace(automation_container.settings, automations_enabled=False)
+    automation_container.automations.settings = disabled
+    paused = automation_container.automations.claim_reconciliation()
+    assert len(paused) == 1 and paused[0]["state"] == "paused"
+    automation_container.automations.reconciliation_applied(
+        automation["id"], automation["revision"], False
+    )
+
+    automation_container.automations.settings = automation_container.settings
+    restored = automation_container.automations.claim_reconciliation()
+    assert len(restored) == 1 and restored[0]["state"] == "active"
+
+
 def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_client, automation_container):
     client, headers = automation_client
     auth = headers()
@@ -253,6 +277,36 @@ def test_stale_expired_and_kill_switch_occurrences_never_start_work(automation_c
     automation_container.automations.settings = replace(automation_container.settings, automations_enabled=False)
     killed = automation_container.automations.accept_occurrence(automation["id"], revised["revision"], due + timedelta(seconds=1))
     assert killed["state"] == "skipped" and killed["reason"] == "kill_switch"
+
+
+def test_catchup_window_and_expiry_skip_late_occurrences(automation_client, automation_container):
+    client, headers = automation_client
+    auth = headers()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "expiry-goal"},
+        json=goal_payload(),
+    ).json()
+
+    body = automation_payload(goal)
+    body["catchup_window_seconds"] = 60
+    body["expires_at"] = (utcnow() + timedelta(minutes=5)).isoformat()
+    automation = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "expiry-automation"},
+        json=body,
+    ).json()
+
+    late = automation_container.automations.accept_occurrence(
+        automation["id"], 1, utcnow() - timedelta(minutes=2)
+    )
+    assert late["state"] == "skipped" and late["reason"] == "catchup_window"
+
+    expired_due = utcnow() + timedelta(minutes=10)
+    expired = automation_container.automations.accept_occurrence(
+        automation["id"], 1, expired_due
+    )
+    assert expired["state"] == "skipped" and expired["reason"] == "expired"
 
 
 def test_quiet_hours_delay_notification_visibility():
