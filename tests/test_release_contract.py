@@ -50,6 +50,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "personal_goals",
         "automations",
         "runtime_v3",
+        "context_retrieval",
     } == covered
 
 
@@ -83,6 +84,19 @@ def test_runtime_v3_requires_agent_runtime_planner_and_staging_evidence():
     rollout["capabilities"]["intelligent_planner"] = False
     assert "runtime_v3_dependency" in validate_rollout(rollout, max_cohort_users=25)
 
+
+
+def test_context_retrieval_requires_runtime_v3_and_staging_evidence():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["runtime_v3"] = True
+    rollout["capabilities"]["context_retrieval"] = True
+    assert "context_retrieval" in required_conditional_gate_ids(
+        rollout["capabilities"], set()
+    )
+    rollout["capabilities"]["runtime_v3"] = False
+    assert "context_retrieval_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
 
 def test_required_gate_resolution_is_provider_aware_and_ordered():
     capabilities = {
