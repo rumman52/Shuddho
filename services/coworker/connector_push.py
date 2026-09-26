@@ -20,6 +20,7 @@ class GooglePushVerifier:
             GOOGLE_JWKS_URL,
             cache_jwk_set=True,
             lifespan=3600,
+            timeout=5,
         )
 
     def verify(self, authorization: str | None) -> dict:
