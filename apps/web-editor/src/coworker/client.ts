@@ -44,6 +44,18 @@ export type PersonalGoalCreate = {
   timezone: string; state: "draft" | "active"; milestones: { label: string; due_at: string | null; completed: boolean }[];
   budget: { max_runs: number; max_planner_tokens: number | null }; authorized_resources: []; next_review_at: string | null;
 };
+export type AutomationSchedule = { kind: "daily" | "weekly"; hour: number; minute: number; weekdays: string[] };
+export type PersonalAutomation = {
+  id: string; goal_id: string; goal_revision: number; revision: number; state: "active" | "paused" | "cancelled";
+  timezone: string; schedule: AutomationSchedule; output_language: string; overlap_policy: "skip" | "buffer_one";
+  catchup_window_seconds: number; quiet_hours: { start: string; end: string } | null; expires_at: string | null;
+  schedule_applied_revision: number | null; schedule_applied_enabled: boolean; schedule_error_code: string | null;
+  created_at: string; updated_at: string;
+};
+export type AgentNotification = {
+  id: string; automation_id: string | null; occurrence_id: string | null; kind: string; title: string; message: string;
+  state: "delivered" | "read"; visible_at: string; read_at: string | null; created_at: string;
+};
 export type AgentRun = {
   id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
   memory_namespaces: string[]; state: AgentRunState; phase: string; message: string; error_code: string | null; cancel_requested: boolean;
@@ -242,6 +254,19 @@ export class CoworkerClient {
   runGoal(id: string, revision: number, outputLanguage: string, key: string) {
     return this.json<AgentRun>(`/api/v1/goals/${identifier(id)}/run`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ expected_revision: revision, output_language: outputLanguage }) });
   }
+  automations(signal?: AbortSignal) { return this.json<{ enabled: boolean; automations: PersonalAutomation[] }>("/api/v1/automations", { signal }); }
+  createAutomation(input: {
+    goal_id: string; goal_revision: number; timezone: string; schedule: AutomationSchedule; output_language: string;
+    overlap_policy: "skip" | "buffer_one"; catchup_window_seconds: number;
+    quiet_hours: { start: string; end: string } | null; expires_at: string | null;
+  }, key: string) {
+    return this.json<PersonalAutomation>("/api/v1/automations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+  transitionAutomation(id: string, revision: number, action: "pause" | "resume" | "cancel") {
+    return this.json<PersonalAutomation>(`/api/v1/automations/${identifier(id)}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }) });
+  }
+  notifications(signal?: AbortSignal) { return this.json<{ enabled: boolean; notifications: AgentNotification[] }>("/api/v1/notifications", { signal }); }
+  readNotification(id: string) { return this.json<{ id: string; state: "read"; read_at: string }>(`/api/v1/notifications/${identifier(id)}/read`, { method: "POST" }); }
   agentTools(signal?: AbortSignal) { return this.json<{ enabled: boolean; tools: AgentTool[] }>("/api/v1/agent-tools", { signal }); }
   agentRuns(signal?: AbortSignal) { return this.json<{ runs: AgentRun[] }>("/api/v1/agent-runs", { signal }); }
   agentRun(id: string, signal?: AbortSignal) { return this.json<AgentRun>(`/api/v1/agent-runs/${identifier(id)}`, { signal }); }
