@@ -15,6 +15,7 @@ from services.coworker.database import session_factory
 from services.coworker.models import (
     AgentOutbox,
     AgentRun,
+    ConnectorReadGrant,
     ExternalAction,
     Outbox,
     Task,
@@ -32,6 +33,7 @@ ROLLBACK_MODES = {
     "research": ("research_kill_switch", "SHUDDHO_RESEARCH_SERVICES_ENABLED"),
     "actions": ("actions_kill_switch", "SHUDDHO_ACTIONS_ENABLED"),
     "connector_trust_boundary": ("connector_trust_boundary_kill_switch", "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED"),
+    "connector_reads": ("connector_reads_kill_switch", "SHUDDHO_CONNECTOR_READS_ENABLED"),
 }
 
 
@@ -119,6 +121,12 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
                     ExternalAction.state.not_in(ACTION_TERMINAL),
                 )
             ) or 0
+            active_read_grants = db.scalar(
+                select(func.count()).select_from(ConnectorReadGrant).where(
+                    ConnectorReadGrant.owner_id.in_(owners),
+                    ConnectorReadGrant.state == "active",
+                )
+            ) or 0
             unknown_actions = db.scalar(
                 select(func.count()).select_from(ExternalAction).where(
                     ExternalAction.owner_id.in_(owners),
@@ -148,6 +156,7 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
         "active_tasks": int(active_tasks),
         "active_agent_runs": int(active_agents),
         "active_provider_actions": int(active_actions),
+        "active_connector_read_grants": int(active_read_grants),
         "outcome_unknown_actions": int(unknown_actions),
         "undelivered_task_outbox": int(undelivered_task_outbox),
         "undelivered_agent_outbox": int(undelivered_agent_outbox),
@@ -162,6 +171,8 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
         required_zero.update({"active_provider_actions"})
     elif mode == "connector_trust_boundary":
         required_zero.update({"active_provider_actions"})
+    elif mode == "connector_reads":
+        required_zero.update({"active_connector_read_grants"})
     elif mode == "research":
         # Research runs on the durable task path. Require no active task work before
         # considering the research rollback fully drained.
