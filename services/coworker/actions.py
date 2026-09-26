@@ -188,6 +188,7 @@ class ActionService:
             )
         grant = await asyncio.to_thread(
             self.permission_gateway.authorize_action,
+            action["owner_id"],
             action["id"],
             purpose=purpose,
             audience=CONNECTOR_ACTION_AUDIENCE,
