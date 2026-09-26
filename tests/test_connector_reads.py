@@ -10,11 +10,12 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
-import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 pytest.importorskip("sqlalchemy")
+
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from test_coworker import account, container
 
