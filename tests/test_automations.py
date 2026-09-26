@@ -212,3 +212,21 @@ def test_automations_are_fail_closed_without_dependencies(tmp_path):
             auth_issuer=ISSUER, environment="development", storage_backend="local",
             local_storage_path=tmp_path / "objects", automations_enabled=True,
         ).validate()
+
+def test_temporal_schedule_contract_uses_timezone_overlap_and_expiry():
+    from services.coworker.automation_scheduler import temporal_schedule
+    value = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "revision": 3,
+        "state": "active",
+        "timezone": "Asia/Dhaka",
+        "schedule": {"kind": "weekly", "hour": 8, "minute": 30, "weekdays": ["mon", "wed"]},
+        "overlap_policy": "buffer_one",
+        "catchup_window_seconds": 1800,
+        "expires_at": "2026-10-30T00:00:00+00:00",
+    }
+    schedule = temporal_schedule(value, "test-queue")
+    assert schedule.spec.time_zone_name == "Asia/Dhaka"
+    assert schedule.policy.catchup_window == timedelta(seconds=1800)
+    assert schedule.state.paused is False
+
