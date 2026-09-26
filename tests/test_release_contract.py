@@ -51,8 +51,23 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "automations",
         "runtime_v3",
         "context_retrieval",
+        "connector_trust_boundary",
     } == covered
 
+
+
+def test_connector_trust_boundary_requires_actions_and_staging_evidence():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["actions"] = True
+    rollout["capabilities"]["connector_trust_boundary"] = True
+    rollout["monitoring"]["actions"] = "actions-dashboard"
+    assert "connector_trust_boundary" in required_conditional_gate_ids(
+        rollout["capabilities"], {"google"}
+    )
+    rollout["capabilities"]["actions"] = False
+    assert "connector_trust_boundary_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
 
 def test_personal_goals_require_agent_runtime_and_staging_evidence():
     rollout = load("docs/cohort-rollout.template.json")
