@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from .connector_actions import ConnectorFailure
 from .connector_read_schemas import ConnectorReadGrantCreate
 from .connector_registry import CONNECTOR_READ_AUDIENCE, connector_read_capability
+from .connector_push import decode_gmail_pubsub
 from .errors import CoworkerError
 from .models import (
     Account,
@@ -765,6 +766,63 @@ class ConnectorReadService:
         if capability == "email_read":
             return min(now + timedelta(hours=24), expires_at - timedelta(hours=24))
         return max(now + timedelta(minutes=15), expires_at - timedelta(hours=6))
+
+    async def ingest_gmail_push(
+        self,
+        authorization: str | None,
+        payload: dict,
+    ) -> int:
+        if not self.repo.settings.connector_reads_enabled:
+            raise CoworkerError("connector_reads_disabled", "Connected reads are disabled.", 404)
+        if self.push_verifier is None:
+            raise CoworkerError("connector_push_unavailable", "Push verification is unavailable.", 503)
+        await asyncio.to_thread(self.push_verifier.verify, authorization)
+        event = decode_gmail_pubsub(payload)
+        if event["subscription"] != self.repo.settings.google_gmail_pubsub_subscription:
+            raise CoworkerError("connector_push_unauthorized", "Unexpected push subscription.", 401)
+        return await asyncio.to_thread(
+            self.repo.enqueue_gmail_event,
+            subscription_name=event["subscription"],
+            email=event["email"],
+            message_id=event["message_id"],
+            history_id=event["history_id"],
+            payload_sha256=event["payload_sha256"],
+        )
+
+    async def ingest_calendar_push(
+        self,
+        *,
+        channel_id: str,
+        channel_token: str,
+        resource_id: str,
+        message_number: str,
+        resource_state: str,
+    ) -> bool:
+        if not self.repo.settings.connector_reads_enabled:
+            raise CoworkerError("connector_reads_disabled", "Connected reads are disabled.", 404)
+        if (
+            not channel_id or len(channel_id) > 512
+            or not channel_token or len(channel_token) > 512
+            or not resource_id or len(resource_id) > 512
+            or not message_number.isdecimal() or len(message_number) > 32
+            or resource_state not in {"sync", "exists", "not_exists"}
+        ):
+            raise CoworkerError("connector_push_invalid", "Invalid Calendar push headers.", 400)
+        digest = hashlib.sha256(
+            (channel_id + "\n" + resource_id + "\n" + message_number + "\n" + resource_state).encode()
+        ).hexdigest()
+        accepted = await asyncio.to_thread(
+            self.repo.enqueue_calendar_event,
+            channel_id=channel_id,
+            channel_token=channel_token,
+            resource_id=resource_id,
+            message_number=message_number,
+            resource_state=resource_state,
+            payload_sha256=digest,
+        )
+        if not accepted:
+            raise CoworkerError("connector_push_unauthorized", "Unknown Calendar push channel.", 401)
+        return True
 
     async def subscribe(
         self,
