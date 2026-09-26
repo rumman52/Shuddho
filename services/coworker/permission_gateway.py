@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+from datetime import timedelta
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -166,7 +167,11 @@ class PermissionGateway:
             "required_scopes": list(contract.required_scopes),
             "destinations_sha256": stable_digest(destinations),
             "preview_hash": action.preview_hash,
-            "expires_at": action.expires_at,
+            "expires_at": (
+                action.expires_at
+                if purpose == "execute"
+                else utcnow() + timedelta(minutes=5)
+            ),
         }, contract
 
     def authorize_action(
