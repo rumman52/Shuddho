@@ -18,7 +18,7 @@ from .action_registry import action_spec, build_approval_scope, validate_approva
 from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .errors import CoworkerError
-from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ExternalAction, OAuthAttempt, utcnow
+from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ExecutionGrant, ExternalAction, OAuthAttempt, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
@@ -384,9 +384,17 @@ class ActionRepository:
             return [connection_dto(row) for row in db.scalars(select(Connection).where(Connection.owner_id == owner, Connection.active.is_(True)).order_by(Connection.created_at.desc()))]
 
     def _disconnect(self, db, connection):
+        now = utcnow()
         connection.active, connection.token_ciphertext = False, ""
+        for grant in db.scalars(select(ExecutionGrant).where(
+            ExecutionGrant.connection_id == connection.id,
+            ExecutionGrant.owner_id == connection.owner_id,
+            ExecutionGrant.state == "active",
+        ).with_for_update()):
+            grant.state = "revoked"
+            grant.revoked_at = now
         for action in db.scalars(select(ExternalAction).where(ExternalAction.connection_id == connection.id, ExternalAction.state.in_(["awaiting_approval", "queued"])).with_for_update()):
-            action.state, action.finished_at = "cancelled", utcnow()
+            action.state, action.finished_at = "cancelled", now
             self._audit(db, connection.owner_id, action.id, "action.cancelled_disconnect")
         self._audit(db, connection.owner_id, connection.id, "connection.disconnected")
 
@@ -398,21 +406,32 @@ class ActionRepository:
             db.execute(update(OAuthAttempt).where(OAuthAttempt.owner_id == owner).values(expires_at=utcnow(), consumed=True, verifier_ciphertext=""))
         return {"message": "Disconnected from Shuddho. Pending actions were cancelled; an action already executing may still finish. You can also revoke Shuddho in the connected provider's account settings."}
 
-    def credentials(self, connection_id):
-        # Internal worker/service call only; never serialized to an API.
+    def credentials(self, connection_id, *, owner_id=None, required_scopes=None):
+        # Trusted connector/credential boundary only; never serialized to an API.
         with self.sessions() as db:
             row = db.get(Connection, connection_id)
-            if not row or not row.active:
+            if (
+                not row
+                or not row.active
+                or owner_id is not None and row.owner_id != owner_id
+            ):
                 raise CoworkerError("connection_removed", "Reconnect your connected account.", 409)
+            scopes = list(row.scopes or [])
+            if required_scopes is not None and any(scope not in scopes for scope in required_scopes):
+                raise CoworkerError(
+                    "connector_scope_missing",
+                    "The connected account no longer has the required permission.",
+                    409,
+                )
             secret = self.vault().open(row.token_ciphertext, row.owner_id + ":connection:" + row.id)
             if not isinstance(secret, dict):
                 raise CoworkerError("connection_removed", "Reconnect your connected account.", 409)
-            return dict(secret) | {"scopes": row.scopes}
+            return dict(secret) | {"scopes": scopes}
 
-    def rotate_token(self, connection_id, refresh_token):
+    def rotate_token(self, connection_id, refresh_token, *, owner_id=None):
         with self.sessions.begin() as db:
             row = db.scalar(select(Connection).where(Connection.id == connection_id).with_for_update())
-            if row and row.active:
+            if row and row.active and (owner_id is None or row.owner_id == owner_id):
                 current = self.vault().open(row.token_ciphertext, row.owner_id + ":connection:" + row.id)
                 if not isinstance(current, dict):
                     current = {}
