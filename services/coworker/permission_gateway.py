@@ -189,25 +189,36 @@ class PermissionGateway:
                 503,
             )
         with self.sessions.begin() as db:
+            snapshot = db.scalar(
+                select(ExternalAction).where(
+                    ExternalAction.id == action_id,
+                    ExternalAction.owner_id == owner_id,
+                )
+            )
+            if snapshot is None:
+                raise not_found()
+            # Match the existing connector lock order: connection before action.
+            # This serializes disconnect/revocation against grant admission.
+            connection = db.scalar(
+                select(Connection)
+                .where(
+                    Connection.id == snapshot.connection_id,
+                    Connection.owner_id == owner_id,
+                )
+                .with_for_update()
+            )
+            if connection is None:
+                raise not_found()
             action = db.scalar(
                 select(ExternalAction)
                 .where(
                     ExternalAction.id == action_id,
                     ExternalAction.owner_id == owner_id,
+                    ExternalAction.connection_id == connection.id,
                 )
                 .with_for_update()
             )
             if action is None:
-                raise not_found()
-            connection = db.scalar(
-                select(Connection)
-                .where(
-                    Connection.id == action.connection_id,
-                    Connection.owner_id == action.owner_id,
-                )
-                .with_for_update()
-            )
-            if connection is None:
                 raise not_found()
             expected, contract = self._authorize_rows(
                 action,
@@ -275,30 +286,41 @@ class PermissionGateway:
         audience: str = CONNECTOR_ACTION_AUDIENCE,
     ) -> dict:
         with self.sessions.begin() as db:
-            grant = db.scalar(
-                select(ExecutionGrant)
-                .where(ExecutionGrant.id == grant_id)
+            snapshot = db.get(ExecutionGrant, grant_id)
+            if snapshot is None:
+                raise not_found()
+            # Connection is the first mutable trust-boundary lock everywhere.
+            # Disconnect therefore cannot race between grant validation and
+            # credential issuance.
+            connection = db.scalar(
+                select(Connection)
+                .where(
+                    Connection.id == snapshot.connection_id,
+                    Connection.owner_id == snapshot.owner_id,
+                )
                 .with_for_update()
             )
-            if grant is None:
+            if connection is None:
                 raise not_found()
+            grant = db.scalar(
+                select(ExecutionGrant)
+                .where(
+                    ExecutionGrant.id == grant_id,
+                    ExecutionGrant.connection_id == connection.id,
+                    ExecutionGrant.owner_id == connection.owner_id,
+                )
+                .with_for_update()
+            )
             action = db.scalar(
                 select(ExternalAction)
                 .where(
                     ExternalAction.id == action_id,
-                    ExternalAction.owner_id == grant.owner_id,
+                    ExternalAction.owner_id == connection.owner_id,
+                    ExternalAction.connection_id == connection.id,
                 )
                 .with_for_update()
             )
-            connection = db.scalar(
-                select(Connection)
-                .where(
-                    Connection.id == grant.connection_id,
-                    Connection.owner_id == grant.owner_id,
-                )
-                .with_for_update()
-            )
-            if action is None or connection is None:
+            if grant is None or action is None:
                 raise not_found()
             expected, contract = self._authorize_rows(
                 action,
