@@ -227,6 +227,18 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="context_retrieval",
+        rollback_key="context_retrieval_kill_switch",
+        kill_switch="SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false",
+        dependencies=("agent_runtime", "runtime_v3"),
+        staging_gates=(
+            StagingGate(
+                "context_retrieval",
+                "Owner-scoped document context, provenance, deletion invalidation, reviewable memory proposals, cross-owner denial and restart-safe retrieval passed in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="runtime_v3",
         rollback_key="runtime_v3_kill_switch",
         kill_switch="SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false",
@@ -338,6 +350,14 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="automations_verified",
         ledger_artifact_key="automations_activation",
         capability="automations",
+    ),
+    ActivationRequirement(
+        key="context_retrieval",
+        status="context_retrieval_verified",
+        ledger_schema_version=20,
+        ledger_event_type="context_retrieval_verified",
+        ledger_artifact_key="context_retrieval_activation",
+        capability="context_retrieval",
     ),
     ActivationRequirement(
         key="runtime_v3",
