@@ -12,7 +12,9 @@ from temporalio.client import (
     ScheduleRange,
     ScheduleSpec,
     ScheduleState,
+    ScheduleUpdate,
 )
+from temporalio.service import RPCError, RPCStatusCode
 
 from .workflow import AutomationOccurrenceWorkflow
 
@@ -76,10 +78,8 @@ class AutomationScheduleReconciler:
         if value["state"] == "cancelled":
             try:
                 await handle.delete()
-            except Exception as error:
-                # Temporal reports NOT_FOUND through RPCError; a missing cancelled
-                # schedule is already reconciled. Avoid importing private gRPC details.
-                if "not found" not in str(error).lower():
+            except RPCError as error:
+                if error.status != RPCStatusCode.NOT_FOUND:
                     raise
             return False
 
@@ -87,9 +87,5 @@ class AutomationScheduleReconciler:
         try:
             await self.client.create_schedule(sid, desired)
         except ScheduleAlreadyRunningError:
-            # Replacement is safe because PostgreSQL revision + occurrence dedupe
-            # remain authoritative. A firing that races replacement is either the
-            # exact new occurrence or is recorded as stale_revision and cannot run.
-            await handle.delete()
-            await self.client.create_schedule(sid, desired)
+            await handle.update(lambda _input: ScheduleUpdate(schedule=desired))
         return value["state"] == "active"
