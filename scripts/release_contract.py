@@ -89,6 +89,18 @@ class ActivationRequirement:
 
 OPTIONAL_CAPABILITIES = (
     OptionalCapability(
+        capability="connector_trust_boundary",
+        rollback_key="connector_trust_boundary_kill_switch",
+        kill_switch="SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false",
+        dependencies=("actions",),
+        staging_gates=(
+            StagingGate(
+                "connector_trust_boundary",
+                "Deterministic connector capability contracts, audience/scope/owner/destination enforcement, revocation races, secret exclusion and fixed-egress provider dispatch passed in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="action_attachments",
         rollback_key="action_attachments_kill_switch",
         kill_switch="SHUDDHO_ACTION_ATTACHMENTS_ENABLED=false",
@@ -253,6 +265,14 @@ OPTIONAL_CAPABILITIES = (
 )
 
 ACTIVATION_REQUIREMENTS = (
+    ActivationRequirement(
+        key="connector_trust_boundary",
+        status="connector_trust_boundary_verified",
+        ledger_schema_version=21,
+        ledger_event_type="connector_trust_boundary_verified",
+        ledger_artifact_key="connector_trust_boundary_activation",
+        capability="connector_trust_boundary",
+    ),
     ActivationRequirement(
         key="microsoft_actions",
         status="microsoft_rollout_verified",
