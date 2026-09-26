@@ -21,6 +21,7 @@ from .memory_repository import MemoryRepository
 from .context import ContextService
 from .recipient_repository import RecipientRepository
 from .retention import RetentionService
+from .browser import BrowserRepository
 
 
 @dataclass
@@ -40,6 +41,7 @@ class Container:
     context: ContextService | None = None
     recipients: RecipientRepository | None = None
     retention: RetentionService | None = None
+    browser: BrowserRepository | None = None
 
     def __post_init__(self):
         if self.actions is None:
@@ -99,6 +101,8 @@ class Container:
             )
         if self.recipients is None:
             self.recipients = RecipientRepository(self.repository.sessions, self.settings)
+        if self.browser is None:
+            self.browser = BrowserRepository(self.repository.sessions, self.settings)
         if self.retention is None:
             self.retention = RetentionService(self.repository.sessions, self.storage)
 
