@@ -56,6 +56,9 @@ class ConnectorReadRepository:
 
     @staticmethod
     def _grant_dto(row: ConnectorReadGrant) -> dict:
+        state = row.state
+        if state == "active" and aware(row.expires_at) <= utcnow():
+            state = "expired"
         return {
             "id": row.id,
             "connection_id": row.connection_id,
@@ -65,7 +68,7 @@ class ConnectorReadRepository:
             "version": row.contract_version,
             "purpose": row.purpose,
             "destination": row.destination,
-            "state": row.state,
+            "state": state,
             "expires_at": iso(row.expires_at),
             "created_at": iso(row.created_at),
             "revoked_at": iso(row.revoked_at) if row.revoked_at else None,
