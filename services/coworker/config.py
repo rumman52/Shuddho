@@ -43,6 +43,7 @@ class Settings:
     personal_goals_enabled: bool = False
     automations_enabled: bool = False
     agent_memory_enabled: bool = False
+    context_retrieval_enabled: bool = False
     intelligent_planner_enabled: bool = False
     agent_handoffs_enabled: bool = False
     agent_multi_handoffs_enabled: bool = False
@@ -77,6 +78,10 @@ class Settings:
     max_memory_facts: int = 200
     max_memory_context_facts: int = 20
     max_memory_context_bytes: int = 8192
+    max_agent_context_items: int = 5
+    max_agent_context_item_bytes: int = 4096
+    max_agent_context_bytes: int = 12288
+    max_memory_proposals: int = 20
     max_agent_planner_calls: int = 2
     agent_planner_token_budget: int = 16000
     agent_planner_max_output_tokens: int = 1200
@@ -147,6 +152,7 @@ class Settings:
             personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",
             automations_enabled=os.getenv("SHUDDHO_AUTOMATIONS_ENABLED", "false").lower() == "true",
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
+            context_retrieval_enabled=os.getenv("SHUDDHO_CONTEXT_RETRIEVAL_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_multi_handoffs_enabled=os.getenv("SHUDDHO_AGENT_MULTI_HANDOFFS_ENABLED", "false").lower() == "true",
@@ -185,6 +191,10 @@ class Settings:
             max_memory_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_FACTS", "200")),
             max_memory_context_facts=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_FACTS", "20")),
             max_memory_context_bytes=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_BYTES", "8192")),
+            max_agent_context_items=int(os.getenv("SHUDDHO_AGENT_CONTEXT_ITEMS", "5")),
+            max_agent_context_item_bytes=int(os.getenv("SHUDDHO_AGENT_CONTEXT_ITEM_BYTES", "4096")),
+            max_agent_context_bytes=int(os.getenv("SHUDDHO_AGENT_CONTEXT_BYTES", "12288")),
+            max_memory_proposals=int(os.getenv("SHUDDHO_AGENT_MEMORY_PROPOSALS", "20")),
             max_agent_planner_calls=int(os.getenv("SHUDDHO_AGENT_PLANNER_CALLS", "2")),
             agent_planner_token_budget=int(os.getenv("SHUDDHO_AGENT_PLANNER_TOKEN_BUDGET", "16000")),
             agent_planner_max_output_tokens=int(os.getenv("SHUDDHO_AGENT_PLANNER_MAX_OUTPUT_TOKENS", "1200")),
@@ -240,6 +250,8 @@ class Settings:
                 raise ValueError("SHUDDHO_AGENT_V3_PLANNER_CALLS must be between 1 and 4")
             if self.agent_v3_planner_token_budget < self.max_agent_v3_planner_calls:
                 raise ValueError("SHUDDHO_AGENT_V3_PLANNER_TOKEN_BUDGET is too small for the planner-call limit")
+        if self.context_retrieval_enabled and not self.agent_runtime_enabled:
+            raise ValueError("Context retrieval requires SHUDDHO_AGENT_RUNTIME_ENABLED=true")
         if self.automations_enabled:
             if not self.personal_goals_enabled or not self.agent_runtime_enabled:
                 raise ValueError("Automations require SHUDDHO_PERSONAL_GOALS_ENABLED=true and SHUDDHO_AGENT_RUNTIME_ENABLED=true")
@@ -329,7 +341,8 @@ class Settings:
         if min(self.max_daily_tasks, self.max_active_tasks, self.daily_token_budget,
                self.task_token_budget, self.max_account_bytes, self.max_daily_actions, self.max_action_recipients,
                self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_personal_goals, self.max_automations, self.max_memory_facts,
-               self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_planner_calls, self.max_agent_v3_planner_calls,
+               self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_context_items, self.max_agent_context_item_bytes,
+               self.max_agent_context_bytes, self.max_memory_proposals, self.max_agent_planner_calls, self.max_agent_v3_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens, self.agent_v3_planner_token_budget,
                self.max_agent_handoff_bytes, self.max_agent_handoff_sources,
                self.max_agent_parallel_steps, self.cohort_max_users,
