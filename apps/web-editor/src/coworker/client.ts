@@ -21,7 +21,7 @@ export type LinkedInSocialPublishAction = { kind: "social_publish_linkedin"; tex
 export type ActionPayload = EmailAction | AttachmentEmailAction | EmailThreadReplyAction | CalendarAction | CalendarReminderAction | DocumentShareAction | LinkedInSocialPublishAction;
 export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[]; artifact_ids?: string[] };
 export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
-export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "completed" | "failed" | "cancelled";
+export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "needs_input" | "blocked" | "completed" | "failed" | "cancelled";
 export type AgentTool = { name: string; version: string; kind: "task" | "approved_action"; consequential: boolean; approval_required: boolean; timeout_seconds: number };
 export type AgentActionProposal = {
   id: string; kind: EmailAction["kind"] | CalendarAction["kind"] | LinkedInSocialPublishAction["kind"]; payload: EmailAction | CalendarAction | LinkedInSocialPublishAction; rationale: string;
@@ -59,7 +59,10 @@ export type AgentNotification = {
 export type AgentRun = {
   id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
   memory_namespaces: string[]; state: AgentRunState; phase: string; message: string; error_code: string | null; cancel_requested: boolean;
-  event_sequence: number; planner_calls: number; planner_tokens: number; planner_mode: string | null; created_at: string; updated_at: string; deadline_at: string;
+  event_sequence: number; planner_calls: number; planner_tokens: number; planner_mode: string | null;
+  runtime_version: number; planner_actual_tokens: number; planner_cost_microusd: number;
+  decisions: { sequence: number; planner_call: number; decision: string; payload: Record<string, unknown>; model: string; prompt_sha256: string; tool_schema_sha256: string; observation_count: number; total_tokens: number | null; cost_microusd: number | null; created_at: string }[];
+  created_at: string; updated_at: string; deadline_at: string;
   steps: AgentStep[]; tool_invocations: { id: string; step_id: string; tool: string; version: string; state: string; consequential: boolean; approval_required: boolean;
     receipt: { status: string; resource_type: string; resource_id: string | null; summary: Record<string, unknown>; created_at: string } | null }[];
 };
