@@ -90,7 +90,7 @@ class CredentialBroker:
                     definitive=True,
                 )
             granted = set(returned_scopes.split())
-            if any(scope not in granted for scope in verified["required_scopes"] if scope not in {"openid", "email", "User.Read", "r_liteprofile"}):
+            if any(scope not in granted for scope in verified["required_scopes"]):
                 raise ConnectorFailure(
                     "connection_scope_missing",
                     definitive=True,
