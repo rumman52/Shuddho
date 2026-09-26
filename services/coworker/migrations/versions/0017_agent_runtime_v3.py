@@ -14,7 +14,7 @@ depends_on = None
 def upgrade():
     op.add_column(
         "cw_agent_runs",
-        sa.Column("runtime_version", sa.Integer(), nullable=False, server_default="1"),
+        sa.Column("runtime_version", sa.Integer(), nullable=False, server_default="0"),
     )
     op.add_column(
         "cw_agent_runs",
