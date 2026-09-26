@@ -1043,6 +1043,18 @@ class AgentRepository:
                 })
             return result
 
+    def assert_v3_within_deadline(self, run_id: str) -> None:
+        with self.sessions() as db:
+            run = db.get(AgentRun, run_id)
+            if run is None:
+                raise not_found()
+            if aware(run.deadline_at) <= utcnow():
+                raise CoworkerError(
+                    "agent_deadline",
+                    "This bounded Agent Runtime v3 run reached its active-runtime deadline.",
+                    409,
+                )
+
     def v3_remaining_budget(self, run_id: str) -> dict:
         with self.sessions() as db:
             run = db.get(AgentRun, run_id)
