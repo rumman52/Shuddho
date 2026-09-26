@@ -521,7 +521,14 @@ class ConnectorReadRepository:
             ))
             return self._subscription_dto(row)
 
-    def subscription_failed(self, owner: str, subscription_id: str, code: str) -> None:
+    def subscription_failed(
+        self,
+        owner: str,
+        subscription_id: str,
+        code: str,
+        *,
+        retry: bool = True,
+    ) -> None:
         with self.sessions.begin() as db:
             row = db.scalar(select(ConnectorSubscription).where(
                 ConnectorSubscription.id == subscription_id,
@@ -532,8 +539,12 @@ class ConnectorReadRepository:
             row.attempts += 1
             row.last_error_code = code[:60]
             row.claim_until = None
-            row.state = "failed" if row.attempts >= 8 else "pending"
-            row.renew_after = utcnow() + timedelta(seconds=min(900, 2 ** min(row.attempts, 9)))
+            row.state = "failed" if not retry or row.attempts >= 8 else "pending"
+            row.renew_after = (
+                None
+                if row.state == "failed"
+                else utcnow() + timedelta(seconds=min(900, 2 ** min(row.attempts, 9)))
+            )
             row.updated_at = utcnow()
 
     def claim_renewals(self, limit: int = 10) -> list[dict]:
@@ -908,7 +919,10 @@ class ConnectorReadService:
         except Exception:
             await asyncio.to_thread(
                 self.repo.subscription_failed,
-                owner, reserved["id"], "provider_subscription_failed",
+                owner,
+                reserved["id"],
+                "provider_subscription_failed",
+                retry=replace_subscription_id is None,
             )
             raise
 
