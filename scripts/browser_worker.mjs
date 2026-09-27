@@ -136,6 +136,54 @@ async function monitorControl(commandId, onStop) {
   };
 }
 
+async function resolveFormField(page, spec) {
+  const candidates = [];
+  if (spec.by === "label") {
+    const locator = page.getByLabel(spec.field, { exact: true });
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) candidates.push(locator.nth(index));
+  } else if (spec.by === "name") {
+    const locator = page.locator("input, textarea");
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) {
+      const item = locator.nth(index);
+      if ((await item.getAttribute("name")) === spec.field) candidates.push(item);
+    }
+  }
+  if (candidates.length === 0) {
+    throw Object.assign(new Error("form_field_not_found"), { code: "form_field_not_found" });
+  }
+  if (candidates.length !== 1) {
+    throw Object.assign(new Error("form_field_ambiguous"), { code: "form_field_ambiguous" });
+  }
+  return candidates[0];
+}
+
+async function fillPreparedField(page, spec) {
+  const locator = await resolveFormField(page, spec);
+  const metadata = await locator.evaluate((element) => ({
+    tag: element.tagName.toLowerCase(),
+    type: (element.getAttribute("type") || "text").toLowerCase(),
+    autocomplete: (element.getAttribute("autocomplete") || "").toLowerCase(),
+    disabled: Boolean(element.disabled),
+    readOnly: Boolean(element.readOnly),
+  }));
+  const blockedTypes = new Set(["password", "file", "hidden", "submit", "button", "image", "checkbox", "radio"]);
+  const sensitiveAutocomplete = new Set(["current-password", "new-password", "one-time-code", "cc-number", "cc-csc"]);
+  if (
+    metadata.disabled
+    || metadata.readOnly
+    || !["input", "textarea"].includes(metadata.tag)
+    || blockedTypes.has(metadata.type)
+  ) {
+    throw Object.assign(new Error("form_field_not_editable"), { code: "form_field_not_editable" });
+  }
+  if (sensitiveAutocomplete.has(metadata.autocomplete)) {
+    throw Object.assign(new Error("sensitive_field_requires_takeover"), { code: "sensitive_field_requires_takeover" });
+  }
+  await locator.fill(spec.value);
+}
+
 async function execute(command) {
   const evidence = {};
   let proxy;
@@ -175,6 +223,18 @@ async function execute(command) {
     });
 
     await page.goto(command.target_url, { waitUntil: "domcontentloaded" });
+    const preparedFields = [];
+    if (command.kind === "prepare_form") {
+      if (command.policy?.allow_form_submission !== false || !Array.isArray(command.policy?.fields)) {
+        throw Object.assign(new Error("form_mutation_blocked"), { code: "form_mutation_blocked" });
+      }
+      for (const field of command.policy.fields) {
+        await fillPreparedField(page, field);
+        preparedFields.push(field.field);
+      }
+    } else if (command.kind !== "navigate") {
+      throw Object.assign(new Error("unsupported_site"), { code: "unsupported_site" });
+    }
     if (interrupted) {
       throw Object.assign(new Error(interrupted.reason || "worker_interrupted"), {
         code: interrupted.reason || "worker_interrupted",
@@ -192,12 +252,23 @@ async function execute(command) {
       title,
       redirect_chain: redirectChain,
       resolved_ips: evidence,
+      prepared_fields: preparedFields,
+      submission_performed: false,
     });
   } catch (error) {
+    const passThrough = new Set([
+      "sensitive_field_requires_takeover",
+      "form_field_not_found",
+      "form_field_ambiguous",
+      "form_field_not_editable",
+      "form_mutation_blocked",
+      "unsupported_site",
+    ]);
     const code = ["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"]
       .includes(error?.code) ? "network_blocked"
       : ["browser_worker_claim_invalid", "session_cancelled", "takeover_requested", "session_expired", "claim_lost"]
           .includes(error?.code) ? "worker_interrupted"
+      : passThrough.has(error?.code) ? error.code
       : "navigation_failed";
     try {
       await api(`/api/v1/internal/browser-worker/commands/${command.id}/fail`, {
