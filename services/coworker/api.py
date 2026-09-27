@@ -28,7 +28,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTra
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
-from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation
+from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserTakeoverInputCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -392,6 +392,20 @@ def request_browser_takeover(
         identity.account_id,
         str(session_id),
         payload.reason,
+    )
+
+
+@router.post("/browser-sessions/{session_id}/takeover-input", status_code=202)
+def prepare_browser_takeover_input(
+    session_id: UUID,
+    payload: BrowserTakeoverInputCreate,
+    identity: Identity,
+    services: Services,
+):
+    return services.browser.prepare_takeover_input(
+        identity.account_id,
+        str(session_id),
+        payload,
     )
 
 
