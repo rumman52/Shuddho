@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
@@ -1095,3 +1096,98 @@ def test_browser_cancel_clears_pending_takeover_secret(container):
         command = db.get(BrowserCommand, prepared["id"])
         assert command.secret_sealed is None
         assert command.state == "cancelled"
+
+
+def test_visual_takeover_frame_is_encrypted_owner_only_and_destroyed_on_resume(container, signed_client):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-visual-takeover")
+    takeover = container.browser.request_takeover(owner, session["id"], "captcha")
+    assert takeover["takeover_required"] is True
+    assert takeover["execution"]["takeover_frame_available"] is False
+
+    prepared = container.browser.prepare_takeover_frame(owner, session["id"])
+    assert prepared["kind"] == "takeover_frame"
+    claimed = container.browser.claim_commands("worker-visual-takeover")
+    assert [item["id"] for item in claimed] == [prepared["id"]]
+    assert claimed[0]["takeover_input"] is None
+
+    jpeg = b"\xff\xd8\xff\xe0" + (b"visual-frame" * 20) + b"\xff\xd9"
+    completed = container.browser.complete_command(
+        "worker-visual-takeover",
+        prepared["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Sign in",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+        },
+    )
+    assert completed["state"] == "succeeded"
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "takeover"
+    assert current["takeover_required"] is True
+    assert current["execution"]["takeover_frame_available"] is True
+    assert current["execution"]["takeover_frame_version"] == 1
+
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserSession, session["id"])
+        assert stored.takeover_frame_sealed
+        assert base64.b64encode(jpeg).decode("ascii") not in stored.takeover_frame_sealed
+        assert stored.takeover_frame_byte_size == len(jpeg)
+
+    client, headers = signed_client
+    visible = client.get(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover-frame',
+        headers=headers(),
+    )
+    assert visible.status_code == 200
+    assert visible.headers["content-type"].startswith("image/jpeg")
+    assert visible.headers["cache-control"] == "no-store, private"
+    assert visible.headers["x-content-type-options"] == "nosniff"
+    assert visible.headers["x-shuddho-browser-frame-version"] == "1"
+    assert visible.content == jpeg
+
+    denied = client.get(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover-frame',
+        headers=headers("visual-frame-bob"),
+    )
+    assert denied.status_code == 404
+
+    resumed = container.browser.resume(owner, session["id"])
+    assert resumed["execution"]["takeover_frame_available"] is False
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserSession, session["id"])
+        assert stored.takeover_frame_sealed is None
+        assert stored.takeover_frame_version == 0
+
+
+def test_visual_takeover_frame_rejects_mutation_or_non_jpeg_evidence(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-visual-invalid")
+    container.browser.request_takeover(owner, session["id"], "login")
+    prepared = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-visual-invalid")
+
+    with pytest.raises(CoworkerError) as invalid:
+        container.browser.complete_command(
+            "worker-visual-invalid",
+            prepared["id"],
+            {
+                "final_url": "https://example.com/login",
+                "title": "Sign in",
+                "redirect_chain": [],
+                "resolved_ips": {"example.com": ["93.184.216.34"]},
+                "prepared_fields": [],
+                "submission_performed": False,
+                "takeover_frame_b64": base64.b64encode(b"not-a-jpeg").decode("ascii"),
+                "takeover_frame_content_type": "image/jpeg",
+            },
+        )
+    assert invalid.value.code == "browser_takeover_frame_invalid"

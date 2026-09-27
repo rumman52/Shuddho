@@ -75,6 +75,7 @@ export function browserRequestAllowed({ kind, method, preparingForm, navigationR
   const verb = String(method || "").toUpperCase();
   if (kind === "prepare_form" && !["GET", "HEAD"].includes(verb)) return false;
   if (kind === "prepare_form" && preparingForm && navigationRequest && mainFrame) return false;
+  if (kind === "takeover_frame" && !["GET", "HEAD"].includes(verb)) return false;
   return true;
 }
 
