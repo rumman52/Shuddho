@@ -1440,3 +1440,43 @@ def test_human_takeover_interaction_is_at_most_once_after_worker_lease_loss(cont
         assert stored.state == "takeover"
         assert stored.takeover_required is True
         assert stored.takeover_frame_sealed is None
+
+
+def test_human_takeover_interaction_api_accepts_owner_frame_version(container, signed_client):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-human-api")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+    frame_command = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-human-api-frame")
+    jpeg = b"\xff\xd8\xff\xe0" + (b"api-human-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-human-api-frame",
+        frame_command["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+    client, headers = signed_client
+    accepted = client.post(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover-interaction',
+        headers=headers(),
+        json={"frame_version": 1, "kind": "key", "key": "Tab"},
+    )
+    assert accepted.status_code == 202
+    body = accepted.json()
+    assert body["kind"] == "takeover_interaction"
+    assert body["policy"] == {
+        "human_only": True,
+        "frame_version": 1,
+        "interaction_kind": "key",
+    }
