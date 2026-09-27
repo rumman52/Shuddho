@@ -207,7 +207,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
           </select></label>
           <label>Start URL<input type="url" required value={startUrl} onChange={event => { setStartUrl(event.target.value); createKey.current = ""; }} /></label>
           <button className="cw-primary" type="submit" disabled={Boolean(busy)}>{busy === "create" ? "Preparing…" : "Start supervised session"}<span aria-hidden="true">↗</span></button>
-          <p className="cw-fineprint">Only clean HTTPS targets are accepted. Internal addresses, direct IPs, arbitrary scripts and downloads remain blocked.</p>
+          <p className="cw-fineprint">Only clean HTTPS targets are accepted. Internal addresses, direct IPs, arbitrary scripts, downloads, popups and new windows remain blocked.</p>
         </form>
 
         {selected && <div className="cw-agent-run">
