@@ -1148,7 +1148,7 @@ def test_visual_takeover_frame_is_encrypted_owner_only_and_destroyed_on_resume(c
     )
     assert visible.status_code == 200
     assert visible.headers["content-type"].startswith("image/jpeg")
-    assert visible.headers["cache-control"] == "no-store, private"
+    assert visible.headers["cache-control"] == "no-store"
     assert visible.headers["x-content-type-options"] == "nosniff"
     assert visible.headers["x-shuddho-browser-frame-version"] == "1"
     assert visible.content == jpeg
