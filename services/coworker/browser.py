@@ -815,7 +815,7 @@ class BrowserRepository:
             session.updated_at = now
             db.add(AuditEvent(
                 id=str(uuid4()), owner_id=session.owner_id, resource_id=session.id,
-                action="browser_navigation.succeeded",
+                action="browser_form.prepared" if command.kind == "prepare_form" else "browser_navigation.succeeded",
             ))
             return {
                 "id": command.id,
