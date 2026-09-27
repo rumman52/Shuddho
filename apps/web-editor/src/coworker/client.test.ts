@@ -102,3 +102,33 @@ test("aborting an event stream stops updates and closes the pending read", async
     assert.equal(snapshotCount, 1);
   } finally { globalThis.fetch = original; }
 });
+
+
+test("browser workspace client keeps commands owner-authenticated and bounded to API routes", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    if (String(url).endsWith("/commands")) return new Response(JSON.stringify({ commands: [] }), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ id: "a".repeat(8) + "-" + "a".repeat(4) + "-" + "a".repeat(4) + "-" + "a".repeat(4) + "-" + "a".repeat(12), state: "prepared" }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("https://api.test", async () => "browser-token");
+    const id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    await client.createBrowserSession("research", "https://example.com/", "browser-session-key");
+    await client.browserCommands(id);
+    await client.navigateBrowser(id, "https://example.com/results");
+    await client.requestBrowserTakeover(id, "sensitive_input");
+
+    assert.equal(seen[0].url, "https://api.test/api/v1/browser-sessions");
+    assert.equal(new Headers(seen[0].options?.headers).get("Idempotency-Key"), "browser-session-key");
+    assert.equal(seen[1].url, "https://api.test/api/v1/browser-sessions/" + id + "/commands");
+    assert.equal(seen[2].url, "https://api.test/api/v1/browser-sessions/" + id + "/navigate");
+    assert.equal(seen[3].url, "https://api.test/api/v1/browser-sessions/" + id + "/takeover");
+    for (const request of seen) {
+      assert.equal(new Headers(request.options?.headers).get("Authorization"), "Bearer browser-token");
+      assert.equal(request.options?.credentials, "omit");
+      assert.equal(request.options?.redirect, "error");
+    }
+  } finally { globalThis.fetch = original; }
+});
