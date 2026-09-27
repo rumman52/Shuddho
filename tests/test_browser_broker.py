@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 pytest.importorskip("sqlalchemy")
+from sqlalchemy import select
 
 from action_samples import enable_actions
 from test_coworker import account, container, signed_client
@@ -540,6 +541,13 @@ def test_browser_form_preparation_is_same_origin_bounded_and_non_submitting(cont
     assert completed["state"] == "succeeded"
     assert completed["result"]["prepared_fields"] == ["Full name", "email"]
     assert completed["result"]["submission_performed"] is False
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserCommand, command["id"])
+        assert stored.payload["values_scrubbed"] is True
+        assert stored.payload["fields"] == [
+            {"by": "label", "field": "Full name"},
+            {"by": "name", "field": "email"},
+        ]
 
     client, headers = signed_client
     api_session = client.post(
@@ -557,6 +565,7 @@ def test_browser_form_preparation_is_same_origin_bounded_and_non_submitting(cont
     )
     assert prepared.status_code == 202
     assert prepared.json()["policy"]["allow_form_submission"] is False
+    container.browser.cancel(owner, api_session["id"])
 
     with pytest.raises(CoworkerError) as wrong_purpose:
         research = create_session(container, owner, key="browser-research-form-denied")
@@ -604,9 +613,7 @@ def test_browser_form_preparation_requires_takeover_for_sensitive_fields(contain
 
     with container.repository.sessions() as db:
         commands = db.scalars(
-            __import__("sqlalchemy").select(BrowserCommand).where(
-                BrowserCommand.session_id == session["id"]
-            )
+            select(BrowserCommand).where(BrowserCommand.session_id == session["id"])
         ).all()
         assert commands == []
 
