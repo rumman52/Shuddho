@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select
 
-from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate
+from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate
 from .errors import CoworkerError
 from .models import Account, AuditEvent, BrowserCommand, BrowserSession, Workspace, utcnow
 from .repository import aware, iso, not_found
@@ -59,6 +59,8 @@ def _bounded_observation(value: dict) -> dict:
     title = value.get("title")
     redirects = value.get("redirect_chain", [])
     resolved = value.get("resolved_ips", {})
+    prepared_fields = value.get("prepared_fields", [])
+    submission_performed = value.get("submission_performed", False)
     if not isinstance(final_url, str):
         raise CoworkerError("browser_observation_invalid", "The browser worker returned an invalid final URL.", 409)
     if title is not None and (not isinstance(title, str) or len(title) > 300):
@@ -67,6 +69,14 @@ def _bounded_observation(value: dict) -> dict:
         raise CoworkerError("browser_observation_invalid", "The browser worker returned an invalid redirect chain.", 409)
     if not isinstance(resolved, dict) or len(resolved) > 12:
         raise CoworkerError("browser_observation_invalid", "The browser worker returned invalid DNS evidence.", 409)
+    if (
+        not isinstance(prepared_fields, list)
+        or len(prepared_fields) > 10
+        or any(not isinstance(item, str) or not item or len(item) > 160 for item in prepared_fields)
+    ):
+        raise CoworkerError("browser_observation_invalid", "The browser worker returned invalid prepared-field evidence.", 409)
+    if not isinstance(submission_performed, bool):
+        raise CoworkerError("browser_observation_invalid", "The browser worker returned invalid submission evidence.", 409)
     normalized_resolved: dict[str, list[str]] = {}
     for host, addresses in resolved.items():
         if not isinstance(host, str) or not isinstance(addresses, list):
@@ -77,6 +87,8 @@ def _bounded_observation(value: dict) -> dict:
         "title": title,
         "redirect_chain": redirects,
         "resolved_ips": normalized_resolved,
+        "prepared_fields": prepared_fields,
+        "submission_performed": submission_performed,
     }
 
 
@@ -371,6 +383,92 @@ class BrowserRepository:
                 "policy": command.payload,
             }
 
+    def prepare_form(self, owner: str, session_id: str, request: BrowserFormPrepareCreate) -> dict:
+        self._require_enabled()
+        target_url, origin = normalize_browser_target(request.url)
+        sensitive_markers = {
+            "password", "passcode", "pin", "otp", "one time", "one-time",
+            "verification code", "security code", "cvv", "cvc", "card number",
+            "credit card", "debit card", "ssn", "social security", "secret",
+        }
+        fields: list[dict[str, str]] = []
+        for item in request.fields:
+            marker = item.field.lower()
+            if any(value in marker for value in sensitive_markers):
+                raise CoworkerError(
+                    "sensitive_field_requires_takeover",
+                    "Sensitive credentials or authentication fields require supervised user takeover.",
+                    409,
+                )
+            fields.append({"by": item.by, "field": item.field, "value": item.value})
+
+        with self.sessions.begin() as db:
+            row = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == session_id,
+                BrowserSession.owner_id == owner,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if row.purpose != "form_prepare":
+                raise CoworkerError(
+                    "browser_form_not_allowed",
+                    "This browser session was not created for form preparation.",
+                    409,
+                )
+            if aware(row.expires_at) <= utcnow():
+                row.state = "expired"
+                raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
+            if row.state in TERMINAL_BROWSER_STATES or row.cancel_requested:
+                raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
+            if row.state == "takeover":
+                raise CoworkerError("browser_takeover_active", "Resume the session after user takeover.", 409)
+            if origin not in set(row.allowed_origins or []):
+                raise CoworkerError(
+                    "browser_origin_not_allowed",
+                    "This form target leaves the session's approved origin.",
+                    409,
+                )
+            sequence = (db.scalar(select(func.max(BrowserCommand.sequence)).where(
+                BrowserCommand.session_id == session_id,
+            )) or 0) + 1
+            command = BrowserCommand(
+                id=str(uuid4()),
+                session_id=session_id,
+                owner_id=owner,
+                sequence=sequence,
+                kind="prepare_form",
+                target_url=target_url,
+                target_origin=origin,
+                payload={
+                    "policy_version": "browser-v1",
+                    "requires_dns_ip_validation": True,
+                    "redirect_validation": True,
+                    "allow_downloads": False,
+                    "allow_script_injection": False,
+                    "allow_form_submission": False,
+                    "fields": fields,
+                },
+                state="prepared",
+            )
+            db.add(command)
+            row.updated_at = utcnow()
+            db.add(AuditEvent(
+                id=str(uuid4()), owner_id=owner, resource_id=row.id,
+                action="browser_form.prepared",
+            ))
+            return {
+                "id": command.id,
+                "sequence": sequence,
+                "kind": command.kind,
+                "target_url": target_url,
+                "target_origin": origin,
+                "state": command.state,
+                "policy": {
+                    "allow_form_submission": False,
+                    "field_count": len(fields),
+                },
+            }
+
     def request_takeover(self, owner: str, session_id: str, reason: str) -> dict:
         self._require_enabled()
         now = utcnow()
@@ -656,11 +754,35 @@ class BrowserRepository:
                     )
                 normalized_chain.append(normalized)
 
+            if checked["submission_performed"]:
+                command.state = "failed"
+                command.error_code = "form_submission_blocked"
+                command.finished_at = now
+                command.lease_until = None
+                command.claimed_by = None
+                session.state = "failed"
+                session.error_code = "form_submission_blocked"
+                raise CoworkerError(
+                    "browser_form_submission_blocked",
+                    "The browser worker reported a form submission, which is not authorized.",
+                    409,
+                )
+            if command.kind == "prepare_form":
+                expected = [item.get("field") for item in (command.payload or {}).get("fields", [])]
+                if checked["prepared_fields"] != expected:
+                    raise CoworkerError(
+                        "browser_form_evidence_mismatch",
+                        "The browser worker did not prepare exactly the requested fields.",
+                        409,
+                    )
+
             command.result = {
                 "final_url": normalized_chain[-1],
                 "title": checked["title"],
                 "redirect_chain": normalized_chain[:-1],
                 "resolved_ips": checked["resolved_ips"],
+                "prepared_fields": checked["prepared_fields"],
+                "submission_performed": False,
             }
             command.state = "succeeded"
             command.error_code = None
@@ -690,6 +812,11 @@ class BrowserRepository:
             "dns_failed",
             "worker_interrupted",
             "unsupported_site",
+            "sensitive_field_requires_takeover",
+            "form_field_not_found",
+            "form_field_ambiguous",
+            "form_field_not_editable",
+            "form_mutation_blocked",
         }
         if error_code not in allowed:
             error_code = "navigation_failed"
