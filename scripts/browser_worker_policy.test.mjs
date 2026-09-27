@@ -13,6 +13,8 @@ test("browser worker identity and API base are bounded", () => {
   assert.equal(safeWorkerId("browser-worker.1"), "browser-worker.1");
   assert.throws(() => safeWorkerId("x"), /invalid_worker_id/);
   assert.equal(normalizedBaseUrl("http://127.0.0.1:8000/"), "http://127.0.0.1:8000");
+  assert.equal(normalizedBaseUrl("https://browser-api.example.com/"), "https://browser-api.example.com");
+  assert.throws(() => normalizedBaseUrl("http://browser-api.example.com"), /invalid_worker_api_base_url/);
   assert.throws(() => normalizedBaseUrl("https://user:secret@example.com"), /invalid_worker_api_base_url/);
 });
 
