@@ -28,7 +28,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTra
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
-from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserTakeoverInputCreate, BrowserTakeoverInteractionCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation
+from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserTakeoverInputCreate, BrowserTakeoverInteractionCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation, BrowserWorkerTakeoverHeartbeat
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -465,6 +465,19 @@ def resume_browser_session(session_id: UUID, identity: Identity, services: Servi
 @router.delete("/browser-sessions/{session_id}")
 def cancel_browser_session(session_id: UUID, identity: Identity, services: Services):
     return services.browser.cancel(identity.account_id, str(session_id))
+
+
+@router.post("/internal/browser-worker/takeover-heartbeat")
+def browser_worker_takeover_heartbeat(
+    payload: BrowserWorkerTakeoverHeartbeat,
+    request: Request,
+    services: Services,
+):
+    require_browser_worker(request, services)
+    return services.browser.heartbeat_takeover_contexts(
+        payload.worker_id,
+        [str(value) for value in payload.session_ids],
+    )
 
 
 @router.post("/internal/browser-worker/claim")
