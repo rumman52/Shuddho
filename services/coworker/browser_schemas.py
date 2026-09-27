@@ -31,7 +31,7 @@ class BrowserFormPrepareCreate(BrowserModel):
 
 
 class BrowserTakeoverCreate(BrowserModel):
-    reason: Literal["login", "mfa", "captcha", "sensitive_input"]
+    reason: Literal["login", "mfa", "captcha", "webauthn", "sensitive_input"]
 
 
 class BrowserTakeoverInputCreate(BrowserModel):
