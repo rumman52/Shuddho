@@ -1729,3 +1729,7 @@ def test_webauthn_takeover_rejects_unknown_takeover_reason(container, signed_cli
         json={"reason": "virtual_authenticator"},
     )
     assert rejected.status_code == 422
+
+    with pytest.raises(CoworkerError) as repository_rejected:
+        container.browser.request_takeover(owner, session["id"], "virtual_authenticator")
+    assert repository_rejected.value.code == "browser_takeover_reason_invalid"
