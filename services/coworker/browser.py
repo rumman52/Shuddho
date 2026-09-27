@@ -92,6 +92,22 @@ def _bounded_observation(value: dict) -> dict:
     }
 
 
+def _scrub_form_payload(command: BrowserCommand) -> None:
+    if command.kind != "prepare_form":
+        return
+    payload = dict(command.payload or {})
+    scrubbed: list[dict[str, str]] = []
+    for item in payload.get("fields", []):
+        if isinstance(item, dict):
+            by = item.get("by")
+            field = item.get("field")
+            if isinstance(by, str) and isinstance(field, str):
+                scrubbed.append({"by": by, "field": field})
+    payload["fields"] = scrubbed
+    payload["values_scrubbed"] = True
+    command.payload = payload
+
+
 def _digest(value: dict) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -494,6 +510,7 @@ class BrowserRepository:
                 command.finished_at = now
                 command.lease_until = None
                 command.claimed_by = None
+                _scrub_form_payload(command)
             db.add(AuditEvent(
                 id=str(uuid4()), owner_id=owner, resource_id=row.id,
                 action="browser_takeover." + reason,
@@ -548,6 +565,7 @@ class BrowserRepository:
                     command.finished_at = now
                     command.lease_until = None
                     command.claimed_by = None
+                    _scrub_form_payload(command)
                 db.add(AuditEvent(
                     id=str(uuid4()), owner_id=owner, resource_id=row.id,
                     action="browser_session.cancelled",
@@ -776,6 +794,7 @@ class BrowserRepository:
                         409,
                     )
 
+            _scrub_form_payload(command)
             command.result = {
                 "final_url": normalized_chain[-1],
                 "title": checked["title"],
@@ -835,6 +854,7 @@ class BrowserRepository:
             ).with_for_update())
             command.state = "failed"
             command.error_code = error_code
+            _scrub_form_payload(command)
             command.finished_at = now
             command.lease_until = None
             command.claimed_by = None
