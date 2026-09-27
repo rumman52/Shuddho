@@ -539,9 +539,8 @@ async function execute(command) {
     if (retainAfterFailure && runtime) {
       liveTakeovers.set(command.session_id, runtime);
       pauseRuntime(runtime);
-    } else if (affinityKind) {
+    } else if (affinityKind && liveTakeovers.get(command.session_id) === runtime) {
       await releaseLiveTakeover(command.session_id);
-      if (runtime && !liveTakeovers.has(command.session_id)) await closeRuntime(runtime);
     }
   } finally {
     if (control) await control.finish().catch(() => {});
