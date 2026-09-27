@@ -33,6 +33,13 @@ class BrowserTakeoverCreate(BrowserModel):
     reason: Literal["login", "mfa", "captcha", "sensitive_input"]
 
 
+class BrowserTakeoverInputCreate(BrowserModel):
+    by: Literal["label", "name"]
+    field: str = Field(min_length=1, max_length=160)
+    value: str = Field(min_length=1, max_length=1000)
+    submit: bool = True
+
+
 class BrowserWorkerIdentity(BrowserModel):
     worker_id: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
 

@@ -13,6 +13,11 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
   const [startUrl, setStartUrl] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [fields, setFields] = useState<BrowserFormField[]>([{ by: "label", field: "", value: "" }]);
+  const [takeoverReason, setTakeoverReason] = useState<"login" | "mfa" | "captcha" | "sensitive_input">("login");
+  const [takeoverBy, setTakeoverBy] = useState<"label" | "name">("label");
+  const [takeoverField, setTakeoverField] = useState("");
+  const [takeoverValue, setTakeoverValue] = useState("");
+  const [takeoverSubmit, setTakeoverSubmit] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -49,7 +54,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
   }, [client, selectedId]);
 
   useEffect(() => {
-    if (!selectedId || !selected || !["queued", "running"].includes(selected.state)) return;
+    if (!selectedId || !selected || !["queued", "running", "takeover"].includes(selected.state)) return;
     const timer = window.setInterval(() => {
       void loadSelected(selectedId).catch(error => setError(errorMessage(error)));
     }, 2000);
@@ -99,6 +104,31 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
     await act("form", () => client.prepareBrowserForm(selected.id, targetUrl, clean), "Form fields prepared without submitting the form.");
   }
 
+  async function startTakeover() {
+    if (!selected) return;
+    await act("takeover", () => client.requestBrowserTakeover(selected.id, takeoverReason), "Browser execution paused for supervised user takeover.");
+  }
+
+  async function submitTakeoverInput(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !takeoverField.trim() || !takeoverValue) return;
+    if (busy) return;
+    setBusy("takeover-input"); setError(""); setNotice("");
+    try {
+      await client.prepareBrowserTakeoverInput(selected.id, {
+        by: takeoverBy,
+        field: takeoverField.trim(),
+        value: takeoverValue,
+        submit: takeoverSubmit,
+      });
+      setTakeoverValue("");
+      await loadSelected(selected.id);
+      await load();
+      setNotice("Sensitive input was sealed for the isolated browser worker and is not stored in command history.");
+    } catch (error) { setError(errorMessage(error)); }
+    finally { setBusy(""); }
+  }
+
   function updateField(index: number, patch: Partial<BrowserFormField>) {
     setFields(previous => previous.map((field, current) => current === index ? { ...field, ...patch } : field));
   }
@@ -127,9 +157,24 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
           <div className="cw-agent-meta"><span>{selected.state}</span><span>{selected.purpose}</span><span>expires {new Date(selected.expires_at).toLocaleTimeString()}</span><span>{selected.execution.authenticated_state_available ? "session continuity protected" : "no authenticated state saved"}</span></div>
           <p><bdi>{selected.last_title || selected.last_url || selected.start_url}</bdi></p>
           <p className="cw-fineprint">Browser cookies and local storage are kept server-side in encrypted, owner-bound session state. They are never shown in this workspace and are destroyed when the session is cancelled or expires.</p>
-          {selected.takeover_required ? <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => act("resume", () => client.resumeBrowser(selected.id), "Session resumed after user takeover.")}>Resume after takeover</button> :
+          {selected.takeover_required ? <div>
+            <p className="cw-fineprint">Takeover reason: {selected.takeover_reason || "sensitive input"}. Secrets entered below are sent only to the authenticated backend, encrypted at rest, delivered to the isolated browser worker, and omitted from browser history.</p>
+            {selected.takeover_reason === "captcha" ? <p className="cw-fineprint">CAPTCHA still requires a future interactive browser surface. Secret injection is intentionally unavailable for CAPTCHA challenges.</p> :
+            <form onSubmit={submitTakeoverInput}>
+              <label>Find sensitive field by<select value={takeoverBy} onChange={event => setTakeoverBy(event.target.value as "label" | "name")}><option value="label">Exact label</option><option value="name">Exact name attribute</option></select></label>
+              <label>Field identifier<input maxLength={160} required value={takeoverField} onChange={event => setTakeoverField(event.target.value)} /></label>
+              <label>Sensitive value<input type="password" autoComplete="off" maxLength={1000} required value={takeoverValue} onChange={event => setTakeoverValue(event.target.value)} /></label>
+              <label><input type="checkbox" checked={takeoverSubmit} onChange={event => setTakeoverSubmit(event.target.checked)} /> Submit authentication form after filling</label>
+              <button className="cw-secondary" type="submit" disabled={Boolean(busy)}>{busy === "takeover-input" ? "Sending securely…" : "Send sensitive input"}</button>
+            </form>}
+            <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => act("resume", () => client.resumeBrowser(selected.id), "Session resumed without sending sensitive input.")}>Resume without input</button>
+            <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => act("cancel", () => client.cancelBrowser(selected.id), "Browser session cancelled.")}>Cancel session</button>
+          </div> :
           !["cancelled", "completed", "expired", "failed"].includes(selected.state) && <div>
-            <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => act("takeover", () => client.requestBrowserTakeover(selected.id, "sensitive_input"), "Browser execution paused for supervised user takeover.")}>Request takeover</button>
+            <label>Takeover reason<select value={takeoverReason} onChange={event => setTakeoverReason(event.target.value as typeof takeoverReason)}>
+              <option value="login">Login / password</option><option value="mfa">MFA / OTP</option><option value="sensitive_input">Other sensitive input</option><option value="captcha">CAPTCHA</option>
+            </select></label>
+            <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => void startTakeover()}>Request takeover</button>
             <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => act("cancel", () => client.cancelBrowser(selected.id), "Browser session cancelled.")}>Cancel session</button>
           </div>}
         </div>}

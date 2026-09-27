@@ -3,7 +3,7 @@ import net from "node:net";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { browserContextOptions, browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
+import { browserContextOptions, browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
 const WORKER_TOKEN = process.env.SHUDDHO_BROWSER_WORKER_TOKEN || "";
@@ -159,6 +159,24 @@ async function resolveFormField(page, spec) {
   return candidates[0];
 }
 
+async function fillTakeoverField(page, spec) {
+  const locator = await resolveFormField(page, spec);
+  const metadata = await locator.evaluate((element) => ({
+    tag: element.tagName.toLowerCase(),
+    type: (element.getAttribute("type") || "text").toLowerCase(),
+    autocomplete: (element.getAttribute("autocomplete") || "").toLowerCase(),
+    disabled: Boolean(element.disabled),
+    readOnly: Boolean(element.readOnly),
+  }));
+  if (takeoverFieldPolicy(metadata) !== "fillable") {
+    throw Object.assign(new Error("form_field_not_editable"), { code: "form_field_not_editable" });
+  }
+  await locator.fill(spec.value);
+  if (spec.submit) {
+    await locator.press("Enter");
+  }
+}
+
 async function fillPreparedField(page, spec) {
   const locator = await resolveFormField(page, spec);
   const metadata = await locator.evaluate((element) => ({
@@ -246,6 +264,15 @@ async function execute(command) {
         }
       }
       preparingForm = false;
+    } else if (command.kind === "takeover_input") {
+      if (!command.takeover_input || typeof command.takeover_input.value !== "string") {
+        throw Object.assign(new Error("sensitive_field_requires_takeover"), { code: "sensitive_field_requires_takeover" });
+      }
+      await fillTakeoverField(page, command.takeover_input);
+      preparedFields.push(command.takeover_input.field);
+      if (command.takeover_input.submit) {
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+      }
     } else if (command.kind !== "navigate") {
       throw Object.assign(new Error("unsupported_site"), { code: "unsupported_site" });
     }
@@ -268,7 +295,7 @@ async function execute(command) {
       redirect_chain: redirectChain,
       resolved_ips: evidence,
       prepared_fields: preparedFields,
-      submission_performed: false,
+      submission_performed: command.kind === "takeover_input" ? Boolean(command.takeover_input?.submit) : false,
       storage_state: storageState,
     });
   } catch (error) {

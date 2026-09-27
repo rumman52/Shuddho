@@ -118,13 +118,16 @@ test("browser workspace client keeps commands owner-authenticated and bounded to
     await client.createBrowserSession("research", "https://example.com/", "browser-session-key");
     await client.browserCommands(id);
     await client.navigateBrowser(id, "https://example.com/results");
-    await client.requestBrowserTakeover(id, "sensitive_input");
+    await client.requestBrowserTakeover(id, "login");
+    await client.prepareBrowserTakeoverInput(id, { by: "label", field: "Password", value: "not-logged", submit: true });
 
     assert.equal(seen[0].url, "https://api.test/api/v1/browser-sessions");
     assert.equal(new Headers(seen[0].options?.headers).get("Idempotency-Key"), "browser-session-key");
     assert.equal(seen[1].url, "https://api.test/api/v1/browser-sessions/" + id + "/commands");
     assert.equal(seen[2].url, "https://api.test/api/v1/browser-sessions/" + id + "/navigate");
     assert.equal(seen[3].url, "https://api.test/api/v1/browser-sessions/" + id + "/takeover");
+    assert.equal(seen[4].url, "https://api.test/api/v1/browser-sessions/" + id + "/takeover-input");
+    assert.deepEqual(JSON.parse(String(seen[4].options?.body)), { by: "label", field: "Password", value: "not-logged", submit: true });
     for (const request of seen) {
       assert.equal(new Headers(request.options?.headers).get("Authorization"), "Bearer browser-token");
       assert.equal(request.options?.credentials, "omit");

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { browserContextOptions, browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
+import { browserContextOptions, browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -58,4 +58,12 @@ test("browser context continuity never relaxes isolation options", () => {
     serviceWorkers: "block",
     storageState: state,
   });
+});
+
+
+test("browser takeover policy permits password and OTP fields but not unsafe controls", () => {
+  assert.equal(takeoverFieldPolicy({ tag: "input", type: "password", autocomplete: "current-password", disabled: false, readOnly: false }), "fillable");
+  assert.equal(takeoverFieldPolicy({ tag: "input", type: "text", autocomplete: "one-time-code", disabled: false, readOnly: false }), "fillable");
+  assert.equal(takeoverFieldPolicy({ tag: "input", type: "file", autocomplete: "", disabled: false, readOnly: false }), "not_editable");
+  assert.equal(takeoverFieldPolicy({ tag: "input", type: "hidden", autocomplete: "", disabled: false, readOnly: false }), "not_editable");
 });
