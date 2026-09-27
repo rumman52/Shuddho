@@ -413,3 +413,85 @@ def test_browser_worker_claims_strict_session_sequence(container):
     )
     claimed_next = container.browser.claim_commands("worker-b", limit=5)
     assert [item["id"] for item in claimed_next] == [second["id"]]
+
+
+def test_browser_cancel_stops_active_worker_command_and_clears_claim(container, signed_client):
+    settings = enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    command = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/cancel"),
+    )
+    container.browser.claim_commands("worker-a")
+
+    client, headers = signed_client
+    worker_headers = {"X-Shuddho-Browser-Worker-Token": settings.browser_worker_token}
+    before = client.post(
+        f'/api/v1/internal/browser-worker/commands/{command["id"]}/control',
+        headers=worker_headers,
+        json={"worker_id": "worker-a"},
+    )
+    assert before.status_code == 200
+    assert before.json()["action"] == "continue"
+
+    cancelled = container.browser.cancel(owner, session["id"])
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["execution"]["worker_attached"] is False
+
+    after = client.post(
+        f'/api/v1/internal/browser-worker/commands/{command["id"]}/control',
+        headers=worker_headers,
+        json={"worker_id": "worker-a"},
+    )
+    assert after.status_code == 200
+    assert after.json() == {"action": "stop", "reason": "session_cancelled"}
+
+    with container.repository.sessions() as db:
+        row = db.get(BrowserCommand, command["id"])
+        assert row.state == "cancelled"
+        assert row.error_code == "session_cancelled"
+        assert row.claimed_by is None
+        assert row.lease_until is None
+
+
+def test_browser_takeover_pauses_active_worker_and_resume_does_not_revive_old_command(container, signed_client):
+    settings = enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    command = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/login"),
+    )
+    container.browser.claim_commands("worker-a")
+    takeover = container.browser.request_takeover(owner, session["id"], "mfa")
+    assert takeover["state"] == "takeover"
+    assert takeover["execution"]["worker_attached"] is False
+
+    client, headers = signed_client
+    worker_headers = {"X-Shuddho-Browser-Worker-Token": settings.browser_worker_token}
+    control = client.post(
+        f'/api/v1/internal/browser-worker/commands/{command["id"]}/control',
+        headers=worker_headers,
+        json={"worker_id": "worker-a"},
+    )
+    assert control.status_code == 200
+    assert control.json() == {"action": "pause", "reason": "takeover_requested"}
+
+    resumed = container.browser.resume(owner, session["id"])
+    assert resumed["state"] == "prepared"
+    with container.repository.sessions() as db:
+        old = db.get(BrowserCommand, command["id"])
+        assert old.state == "cancelled"
+        assert old.error_code == "takeover_requested"
+        assert old.claimed_by is None
+
+    next_command = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/after-mfa"),
+    )
+    claimed = container.browser.claim_commands("worker-b")
+    assert [item["id"] for item in claimed] == [next_command["id"]]
