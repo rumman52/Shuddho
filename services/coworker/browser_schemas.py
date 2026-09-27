@@ -18,6 +18,17 @@ class BrowserNavigateCreate(BrowserModel):
     url: str = Field(min_length=8, max_length=4096)
 
 
+class BrowserFormFieldValue(BrowserModel):
+    by: Literal["label", "name"]
+    field: str = Field(min_length=1, max_length=160)
+    value: str = Field(max_length=1000)
+
+
+class BrowserFormPrepareCreate(BrowserModel):
+    url: str = Field(min_length=8, max_length=4096)
+    fields: list[BrowserFormFieldValue] = Field(min_length=1, max_length=10)
+
+
 class BrowserTakeoverCreate(BrowserModel):
     reason: Literal["login", "mfa", "captcha", "sensitive_input"]
 
@@ -40,6 +51,8 @@ class BrowserWorkerObservation(BrowserWorkerIdentity):
     title: str | None = Field(default=None, max_length=300)
     redirect_chain: list[str] = Field(default_factory=list, max_length=10)
     resolved_ips: dict[str, list[str]] = Field(default_factory=dict)
+    prepared_fields: list[str] = Field(default_factory=list, max_length=10)
+    submission_performed: bool = False
 
 
 class BrowserWorkerFailure(BrowserWorkerIdentity):
@@ -49,4 +62,9 @@ class BrowserWorkerFailure(BrowserWorkerIdentity):
         "dns_failed",
         "worker_interrupted",
         "unsupported_site",
+        "sensitive_field_requires_takeover",
+        "form_field_not_found",
+        "form_field_ambiguous",
+        "form_field_not_editable",
+        "form_mutation_blocked",
     ]
