@@ -861,6 +861,54 @@ def test_browser_session_state_rejects_cross_origin_or_oversized_secrets(contain
             },
         )
     assert too_large.value.code == "browser_storage_state_too_large"
+    container.browser.fail_command("worker-continuity-large", command2["id"], "navigation_failed")
+
+
+def test_browser_session_ciphertext_cannot_be_replayed_into_another_session(container):
+    enable_browser(container)
+    owner = account(container)
+    first = create_session(container, owner, key="browser-binding-first")
+    command = container.browser.prepare_navigation(
+        owner,
+        first["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    container.browser.claim_commands("worker-binding-first")
+    container.browser.complete_command(
+        "worker-binding-first",
+        command["id"],
+        {
+            "final_url": "https://example.com/start",
+            "title": "Example",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "storage_state": {
+                "cookies": [{"name": "session", "value": "secret", "domain": "example.com", "path": "/"}],
+                "origins": [],
+            },
+        },
+    )
+
+    second = create_session(container, owner, key="browser-binding-second")
+    second_command = container.browser.prepare_navigation(
+        owner,
+        second["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    with container.repository.sessions.begin() as db:
+        source = db.get(BrowserSession, first["id"])
+        target = db.get(BrowserSession, second["id"])
+        target.storage_state_sealed = source.storage_state_sealed
+        target.storage_state_version = source.storage_state_version
+
+    with pytest.raises(CoworkerError) as replay:
+        container.browser.claim_commands("worker-binding-second")
+    assert replay.value.code == "browser_storage_unavailable"
+
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserCommand, second_command["id"])
+        assert stored.state == "prepared"
+        assert stored.claimed_by is None
 
 
 def test_browser_session_expiry_destroys_encrypted_state(container):
