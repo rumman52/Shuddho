@@ -127,10 +127,8 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
 
   async function startTakeover() {
     if (!selected) return;
-    await act("takeover", async () => {
-      await client.requestBrowserTakeover(selected.id, takeoverReason);
-      await client.requestBrowserTakeoverFrame(selected.id);
-    }, "Browser execution paused for supervised user takeover. A read-only visual frame is being prepared.");
+    await act("takeover", () => client.requestBrowserTakeover(selected.id, takeoverReason), "Browser execution paused for supervised user takeover.");
+    await act("takeover-frame", () => client.requestBrowserTakeoverFrame(selected.id), "A read-only visual takeover frame is being prepared.");
   }
 
   async function refreshTakeoverFrame() {
