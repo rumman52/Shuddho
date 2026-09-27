@@ -1391,3 +1391,52 @@ def test_human_takeover_interaction_requires_exact_input_shape(container):
             BrowserTakeoverInteractionCreate(frame_version=1, kind="key", key="Tab", x=0.5),
         )
     assert invalid_key.value.code == "browser_takeover_interaction_invalid"
+
+
+def test_human_takeover_interaction_is_at_most_once_after_worker_lease_loss(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-human-at-most-once")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+    frame_command = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-at-most-once-frame")
+    jpeg = b"\xff\xd8\xff\xe0" + (b"at-most-once-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-at-most-once-frame",
+        frame_command["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+    prepared = container.browser.prepare_takeover_interaction(
+        owner,
+        session["id"],
+        BrowserTakeoverInteractionCreate(frame_version=1, kind="click", x=0.5, y=0.5),
+    )
+    claimed = container.browser.claim_commands("worker-at-most-once-a")
+    assert [item["id"] for item in claimed] == [prepared["id"]]
+
+    with container.repository.sessions.begin() as db:
+        command = db.get(BrowserCommand, prepared["id"])
+        command.lease_until = utcnow() - timedelta(seconds=1)
+
+    reclaimed = container.browser.claim_commands("worker-at-most-once-b")
+    assert reclaimed == []
+    with container.repository.sessions() as db:
+        command = db.get(BrowserCommand, prepared["id"])
+        stored = db.get(BrowserSession, session["id"])
+        assert command.state == "failed"
+        assert command.error_code == "takeover_interaction_uncertain"
+        assert command.attempts == 1
+        assert stored.state == "takeover"
+        assert stored.takeover_required is True
+        assert stored.takeover_frame_sealed is None
