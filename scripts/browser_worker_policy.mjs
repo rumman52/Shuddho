@@ -24,7 +24,14 @@ export function safeWorkerId(value) {
 
 export function normalizedBaseUrl(value) {
   const url = new URL(value);
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+  const loopbackHttp = url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+  if (
+    (url.protocol !== "https:" && !loopbackHttp)
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+  ) {
     throw new Error("invalid_worker_api_base_url");
   }
   return url.toString().replace(/\/$/, "");
@@ -54,4 +61,14 @@ export function browserRequestAllowed({ kind, method, preparingForm, navigationR
   if (kind === "prepare_form" && !["GET", "HEAD"].includes(verb)) return false;
   if (kind === "prepare_form" && preparingForm && navigationRequest && mainFrame) return false;
   return true;
+}
+
+
+export function browserContextOptions(storageState) {
+  return {
+    acceptDownloads: false,
+    ignoreHTTPSErrors: false,
+    serviceWorkers: "block",
+    ...(storageState ? { storageState } : {}),
+  };
 }

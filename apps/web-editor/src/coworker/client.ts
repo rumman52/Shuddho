@@ -89,7 +89,10 @@ export type BrowserSession = {
   state: BrowserSessionState; takeover_required: boolean; cancel_requested: boolean;
   last_url: string | null; last_title: string | null; error_code: string | null;
   created_at: string; updated_at: string; expires_at: string;
-  execution: { worker_attached: boolean; network_revalidation_required: boolean; arbitrary_script_execution: boolean; downloads_enabled: boolean };
+  execution: {
+    worker_attached: boolean; network_revalidation_required: boolean; arbitrary_script_execution: boolean; downloads_enabled: boolean;
+    authenticated_state_available: boolean; storage_state_version: number;
+  };
 };
 export type BrowserCommand = {
   id: string; sequence: number; kind: "navigate" | "prepare_form"; target_url: string | null;

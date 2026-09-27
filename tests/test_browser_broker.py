@@ -723,3 +723,227 @@ def test_browser_command_history_is_owner_scoped_and_sanitized(container, signed
         headers=headers("browser-history-bob"),
     )
     assert denied_api.status_code == 404
+
+
+def test_browser_session_state_is_encrypted_reused_and_cleared(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, key="browser-continuity")
+    first = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/login"),
+    )
+    claimed = container.browser.claim_commands("worker-continuity-a")
+    assert claimed[0]["id"] == first["id"]
+    assert claimed[0]["storage_state"] is None
+    assert claimed[0]["storage_state_version"] == 0
+
+    state = {
+        "cookies": [{
+            "name": "session",
+            "value": "secret-cookie-value",
+            "domain": ".example.com",
+            "path": "/",
+            "expires": -1,
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
+        }],
+        "origins": [{
+            "origin": "https://example.com",
+            "localStorage": [{"name": "session_hint", "value": "opaque-session-value"}],
+        }],
+    }
+    completed = container.browser.complete_command(
+        "worker-continuity-a",
+        first["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Signed in",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "storage_state": state,
+        },
+    )
+    assert completed["state"] == "succeeded"
+    current = container.browser.get(owner, session["id"])
+    assert current["execution"]["authenticated_state_available"] is True
+    assert current["execution"]["storage_state_version"] == 1
+
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserSession, session["id"])
+        assert stored.storage_state_sealed
+        assert "secret-cookie-value" not in stored.storage_state_sealed
+        assert "opaque-session-value" not in stored.storage_state_sealed
+
+    second = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/account"),
+    )
+    claimed_again = container.browser.claim_commands("worker-continuity-b")
+    assert claimed_again[0]["id"] == second["id"]
+    assert claimed_again[0]["storage_state"] == state
+    assert claimed_again[0]["storage_state_version"] == 1
+
+    container.browser.complete_command(
+        "worker-continuity-b",
+        second["id"],
+        {
+            "final_url": "https://example.com/account",
+            "title": "Account",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "storage_state": state,
+        },
+    )
+    assert container.browser.get(owner, session["id"])["execution"]["storage_state_version"] == 2
+
+    cancelled = container.browser.cancel(owner, session["id"])
+    assert cancelled["execution"]["authenticated_state_available"] is False
+    assert cancelled["execution"]["storage_state_version"] == 0
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserSession, session["id"])
+        assert stored.storage_state_sealed is None
+        assert stored.storage_state_updated_at is None
+
+
+def test_browser_session_state_rejects_cross_origin_or_oversized_secrets(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, key="browser-continuity-invalid")
+    command = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    container.browser.claim_commands("worker-continuity-invalid")
+
+    with pytest.raises(CoworkerError) as cross_origin:
+        container.browser.complete_command(
+            "worker-continuity-invalid",
+            command["id"],
+            {
+                "final_url": "https://example.com/start",
+                "title": "Example",
+                "redirect_chain": [],
+                "resolved_ips": {"example.com": ["93.184.216.34"]},
+                "storage_state": {
+                    "cookies": [{"name": "session", "value": "x", "domain": "evil.example", "path": "/"}],
+                    "origins": [],
+                },
+            },
+        )
+    assert cross_origin.value.code == "browser_storage_state_invalid"
+    container.browser.fail_command("worker-continuity-invalid", command["id"], "navigation_failed")
+
+    session2 = create_session(container, owner, key="browser-continuity-large")
+    command2 = container.browser.prepare_navigation(
+        owner,
+        session2["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    container.browser.claim_commands("worker-continuity-large")
+    with pytest.raises(CoworkerError) as too_large:
+        container.browser.complete_command(
+            "worker-continuity-large",
+            command2["id"],
+            {
+                "final_url": "https://example.com/start",
+                "title": "Example",
+                "redirect_chain": [],
+                "resolved_ips": {"example.com": ["93.184.216.34"]},
+                "storage_state": {
+                    "cookies": [{"name": "session", "value": "x" * 70000, "domain": "example.com", "path": "/"}],
+                    "origins": [],
+                },
+            },
+        )
+    assert too_large.value.code == "browser_storage_state_too_large"
+    container.browser.fail_command("worker-continuity-large", command2["id"], "navigation_failed")
+
+
+def test_browser_session_ciphertext_cannot_be_replayed_into_another_session(container):
+    enable_browser(container)
+    owner = account(container)
+    first = create_session(container, owner, key="browser-binding-first")
+    command = container.browser.prepare_navigation(
+        owner,
+        first["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    container.browser.claim_commands("worker-binding-first")
+    container.browser.complete_command(
+        "worker-binding-first",
+        command["id"],
+        {
+            "final_url": "https://example.com/start",
+            "title": "Example",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "storage_state": {
+                "cookies": [{"name": "session", "value": "secret", "domain": "example.com", "path": "/"}],
+                "origins": [],
+            },
+        },
+    )
+
+    second = create_session(container, owner, key="browser-binding-second")
+    second_command = container.browser.prepare_navigation(
+        owner,
+        second["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    with container.repository.sessions.begin() as db:
+        source = db.get(BrowserSession, first["id"])
+        target = db.get(BrowserSession, second["id"])
+        target.storage_state_sealed = source.storage_state_sealed
+        target.storage_state_version = source.storage_state_version
+
+    with pytest.raises(CoworkerError) as replay:
+        container.browser.claim_commands("worker-binding-second")
+    assert replay.value.code == "browser_storage_unavailable"
+
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserCommand, second_command["id"])
+        assert stored.state == "prepared"
+        assert stored.claimed_by is None
+
+
+def test_browser_session_expiry_destroys_encrypted_state(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, key="browser-continuity-expiry")
+    command = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/start"),
+    )
+    container.browser.claim_commands("worker-continuity-expiry")
+    container.browser.complete_command(
+        "worker-continuity-expiry",
+        command["id"],
+        {
+            "final_url": "https://example.com/start",
+            "title": "Example",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "storage_state": {
+                "cookies": [{"name": "session", "value": "secret", "domain": "example.com", "path": "/"}],
+                "origins": [],
+            },
+        },
+    )
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(BrowserSession, session["id"])
+        row.expires_at = utcnow() - timedelta(seconds=1)
+
+    expired = container.browser.get(owner, session["id"])
+    assert expired["state"] == "expired"
+    assert expired["execution"]["authenticated_state_available"] is False
+    with container.repository.sessions() as db:
+        row = db.get(BrowserSession, session["id"])
+        assert row.storage_state_sealed is None
+        assert row.cancel_requested is True
