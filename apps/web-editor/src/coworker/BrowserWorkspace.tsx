@@ -216,7 +216,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
           <p><bdi>{selected.last_title || selected.last_url || selected.start_url}</bdi></p>
           <p className="cw-fineprint">Browser cookies and local storage are kept server-side in encrypted, owner-bound session state. They are never shown in this workspace and are destroyed when the session is cancelled or expires.</p>
           {selected.takeover_required ? <div>
-            <p className="cw-fineprint">Takeover reason: {selected.takeover_reason || "sensitive input"}. Secrets entered below are sent only to the authenticated backend, encrypted at rest, delivered to the isolated browser worker, and omitted from browser history.</p>
+            <p className="cw-fineprint">Takeover reason: {selected.takeover_reason || "sensitive input"}. {selected.takeover_reason === "webauthn" ? "This takeover is read-only: passkey/security-key credentials are not accepted by Shuddho." : "Secrets entered below are sent only to the authenticated backend, encrypted at rest, delivered to the isolated browser worker, and omitted from browser history."}</p>
             <div className="cw-browser-frame">
               {takeoverFrameUrl ? selected.takeover_reason === "webauthn" ?
                 <div className="cw-browser-frame-surface" aria-label="Read-only WebAuthn takeover frame"><img src={takeoverFrameUrl} alt="Current browser page for read-only WebAuthn takeover inspection" /></div> :
