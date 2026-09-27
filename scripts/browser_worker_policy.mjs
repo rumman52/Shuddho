@@ -62,3 +62,13 @@ export function browserRequestAllowed({ kind, method, preparingForm, navigationR
   if (kind === "prepare_form" && preparingForm && navigationRequest && mainFrame) return false;
   return true;
 }
+
+
+export function browserContextOptions(storageState) {
+  return {
+    acceptDownloads: false,
+    ignoreHTTPSErrors: false,
+    serviceWorkers: "block",
+    ...(storageState ? { storageState } : {}),
+  };
+}
