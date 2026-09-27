@@ -285,13 +285,15 @@ async function createRuntime(command, evidence) {
     navigationUrls: [],
   };
   const proxy = await createPinnedProxy(state);
-  const browser = await chromium.launch({
-    headless: true,
-    proxy: { server: proxy.url },
-    env: { HOME: process.env.HOME || "/tmp" },
-  });
-  const context = await browser.newContext(browserContextOptions(command.storage_state));
-  const page = await context.newPage();
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      proxy: { server: proxy.url },
+      env: { HOME: process.env.HOME || "/tmp" },
+    });
+    const context = await browser.newContext(browserContextOptions(command.storage_state));
+    const page = await context.newPage();
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
   page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
 
@@ -321,7 +323,13 @@ async function createRuntime(command, evidence) {
     void download.cancel().catch(() => {});
   });
 
-  return { state, proxy, browser, context, page, sessionId: command.session_id };
+    return { state, proxy, browser, context, page, sessionId: command.session_id };
+  } catch (error) {
+    proxy.destroy();
+    if (browser) await browser.close().catch(() => {});
+    await new Promise((resolve) => proxy.server.close(() => resolve())).catch(() => {});
+    throw error;
+  }
 }
 
 function activateRuntime(runtime, command, evidence) {
@@ -507,6 +515,11 @@ async function execute(command) {
       .filter((url, index, values) => url !== finalUrl && values.indexOf(url) === index)
       .slice(0, 10);
     const storageState = await runtime.context.storageState();
+
+    if (control) {
+      await control.finish().catch(() => {});
+      control = null;
+    }
 
     await api(`/api/v1/internal/browser-worker/commands/${command.id}/complete`, {
       worker_id: WORKER_ID,
