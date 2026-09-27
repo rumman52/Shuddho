@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { browserContextOptions, browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { browserContextOptions, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -112,4 +112,11 @@ test("retained takeover context is network-silent while idle", () => {
       mainFrame: true,
     }), false);
   }
+});
+
+
+test("hostile popup and download surfaces fail closed with stable error codes", () => {
+  assert.equal(browserSurfaceViolation("popup"), "browser_popup_blocked");
+  assert.equal(browserSurfaceViolation("download"), "browser_download_blocked");
+  assert.equal(browserSurfaceViolation("dialog"), null);
 });
