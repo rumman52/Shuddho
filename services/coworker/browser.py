@@ -20,6 +20,7 @@ TERMINAL_BROWSER_STATES = {"cancelled", "completed", "expired", "failed"}
 ACTIVE_BROWSER_STATES = {"prepared", "queued", "running", "takeover"}
 TAKEOVER_COMMAND_KINDS = {"takeover_input", "takeover_frame", "takeover_interaction"}
 TAKEOVER_AFFINITY_KINDS = {"takeover_frame", "takeover_interaction"}
+TAKEOVER_REASONS = {"login", "mfa", "captcha", "webauthn", "sensitive_input"}
 BLOCKED_HOST_SUFFIXES = (
     ".localhost",
     ".local",
@@ -860,6 +861,8 @@ class BrowserRepository:
 
     def request_takeover(self, owner: str, session_id: str, reason: str) -> dict:
         self._require_enabled()
+        if reason not in TAKEOVER_REASONS:
+            raise CoworkerError("browser_takeover_reason_invalid", "Unsupported browser takeover reason.", 422)
         now = utcnow()
         with self.sessions.begin() as db:
             row = db.scalar(select(BrowserSession).where(
