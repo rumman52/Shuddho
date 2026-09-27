@@ -608,7 +608,7 @@ class BrowserRepository:
         raw_result = dict(row.result or {})
         result = {
             key: raw_result[key]
-            for key in ("final_url", "title", "redirect_chain", "prepared_fields", "submission_performed")
+            for key in ("final_url", "title", "redirect_chain", "prepared_fields", "submission_performed", "takeover_frame_version", "interaction_performed")
             if key in raw_result
         }
         return {
