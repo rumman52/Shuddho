@@ -38,6 +38,21 @@ export function normalizedBaseUrl(value) {
 }
 
 
+export function takeoverFieldPolicy(metadata) {
+  const blockedTypes = new Set(["file", "hidden", "submit", "button", "image", "checkbox", "radio"]);
+  if (
+    !metadata
+    || metadata.disabled
+    || metadata.readOnly
+    || !["input", "textarea"].includes(metadata.tag)
+    || blockedTypes.has(metadata.type)
+  ) {
+    return "not_editable";
+  }
+  return "fillable";
+}
+
+
 export function formFieldPolicy(metadata) {
   const blockedTypes = new Set(["password", "file", "hidden", "submit", "button", "image", "checkbox", "radio"]);
   const sensitiveAutocomplete = new Set(["current-password", "new-password", "one-time-code", "cc-number", "cc-csc"]);
