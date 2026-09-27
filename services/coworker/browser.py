@@ -728,6 +728,10 @@ class BrowserRepository:
                 raise CoworkerError("browser_takeover_not_active", "This session is not waiting for user takeover.", 409)
             if aware(row.expires_at) <= utcnow():
                 row.state = "expired"
+                row.takeover_required = False
+                row.cancel_requested = True
+                row.worker_session_ref = None
+                self._clear_storage_state(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
             row.state = "prepared"
             row.takeover_required = False
