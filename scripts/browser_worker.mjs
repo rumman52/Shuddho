@@ -3,7 +3,7 @@ import net from "node:net";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
+import { browserContextOptions, browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
 const WORKER_TOKEN = process.env.SHUDDHO_BROWSER_WORKER_TOKEN || "";
@@ -197,12 +197,7 @@ async function execute(command) {
       if (proxy) proxy.destroy();
     });
 
-    const context = await browser.newContext({
-      acceptDownloads: false,
-      ignoreHTTPSErrors: false,
-      serviceWorkers: "block",
-      ...(command.storage_state ? { storageState: command.storage_state } : {}),
-    });
+    const context = await browser.newContext(browserContextOptions(command.storage_state));
     const page = await context.newPage();
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
