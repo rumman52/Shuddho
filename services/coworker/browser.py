@@ -1018,6 +1018,12 @@ class BrowserRepository:
                 self._clear_storage_state(row)
                 self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
+            if row.takeover_reason == "webauthn":
+                raise CoworkerError(
+                    "browser_webauthn_requires_external_authenticator",
+                    "Passkey/security-key authentication requires a qualified external authenticator boundary and cannot use click/key takeover commands.",
+                    409,
+                )
             if not self._takeover_affinity_active(row, now):
                 self._clear_takeover_frame(row)
                 raise CoworkerError(
@@ -1128,6 +1134,12 @@ class BrowserRepository:
                 raise CoworkerError(
                     "browser_captcha_requires_interactive_takeover",
                     "CAPTCHA requires a supervised interactive browser surface and cannot be injected as a secret field.",
+                    409,
+                )
+            if row.takeover_reason == "webauthn":
+                raise CoworkerError(
+                    "browser_webauthn_requires_external_authenticator",
+                    "Passkeys and hardware security keys require a qualified external authenticator boundary; Shuddho will not inject, emulate, or expose WebAuthn credentials to the browser worker.",
                     409,
                 )
             target_url, origin = normalize_browser_target(row.last_url or row.start_url)
