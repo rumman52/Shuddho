@@ -395,6 +395,39 @@ def request_browser_takeover(
     )
 
 
+@router.post("/browser-sessions/{session_id}/takeover-frame", status_code=202)
+def prepare_browser_takeover_frame(
+    session_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return services.browser.prepare_takeover_frame(
+        identity.account_id,
+        str(session_id),
+    )
+
+
+@router.get("/browser-sessions/{session_id}/takeover-frame")
+def get_browser_takeover_frame(
+    session_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    data, content_type, version = services.browser.get_takeover_frame(
+        identity.account_id,
+        str(session_id),
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "no-store, private",
+            "X-Shuddho-Browser-Frame-Version": str(version),
+            "Content-Disposition": "inline",
+        },
+    )
+
+
 @router.post("/browser-sessions/{session_id}/takeover-input", status_code=202)
 def prepare_browser_takeover_input(
     session_id: UUID,
@@ -466,6 +499,8 @@ def complete_browser_command(command_id: UUID, payload: BrowserWorkerObservation
             "prepared_fields": payload.prepared_fields,
             "submission_performed": payload.submission_performed,
             "storage_state": payload.storage_state,
+            "takeover_frame_b64": payload.takeover_frame_b64,
+            "takeover_frame_content_type": payload.takeover_frame_content_type,
         },
     )
 
