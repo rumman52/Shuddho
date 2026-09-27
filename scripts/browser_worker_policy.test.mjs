@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
+import { browserContextOptions, browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -39,4 +39,23 @@ test("browser form policy prevents mutations and navigation while filling", () =
   assert.equal(browserRequestAllowed({
     kind: "navigate", method: "POST", preparingForm: false, navigationRequest: false, mainFrame: false,
   }), true);
+});
+
+
+test("browser context continuity never relaxes isolation options", () => {
+  const state = {
+    cookies: [{ name: "session", value: "opaque", domain: "example.com", path: "/" }],
+    origins: [],
+  };
+  assert.deepEqual(browserContextOptions(undefined), {
+    acceptDownloads: false,
+    ignoreHTTPSErrors: false,
+    serviceWorkers: "block",
+  });
+  assert.deepEqual(browserContextOptions(state), {
+    acceptDownloads: false,
+    ignoreHTTPSErrors: false,
+    serviceWorkers: "block",
+    storageState: state,
+  });
 });
