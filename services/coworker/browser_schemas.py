@@ -53,6 +53,7 @@ class BrowserWorkerObservation(BrowserWorkerIdentity):
     resolved_ips: dict[str, list[str]] = Field(default_factory=dict)
     prepared_fields: list[str] = Field(default_factory=list, max_length=10)
     submission_performed: bool = False
+    storage_state: dict | None = None
 
 
 class BrowserWorkerFailure(BrowserWorkerIdentity):
