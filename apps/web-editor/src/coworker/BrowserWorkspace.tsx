@@ -124,8 +124,9 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
 
         {selected && <div className="cw-agent-run">
           <strong>Selected session</strong>
-          <div className="cw-agent-meta"><span>{selected.state}</span><span>{selected.purpose}</span><span>expires {new Date(selected.expires_at).toLocaleTimeString()}</span></div>
+          <div className="cw-agent-meta"><span>{selected.state}</span><span>{selected.purpose}</span><span>expires {new Date(selected.expires_at).toLocaleTimeString()}</span><span>{selected.execution.authenticated_state_available ? "session continuity protected" : "no authenticated state saved"}</span></div>
           <p><bdi>{selected.last_title || selected.last_url || selected.start_url}</bdi></p>
+          <p className="cw-fineprint">Browser cookies and local storage are kept server-side in encrypted, owner-bound session state. They are never shown in this workspace and are destroyed when the session is cancelled or expires.</p>
           {selected.takeover_required ? <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => act("resume", () => client.resumeBrowser(selected.id), "Session resumed after user takeover.")}>Resume after takeover</button> :
           !["cancelled", "completed", "expired", "failed"].includes(selected.state) && <div>
             <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => act("takeover", () => client.requestBrowserTakeover(selected.id, "sensitive_input"), "Browser execution paused for supervised user takeover.")}>Request takeover</button>
