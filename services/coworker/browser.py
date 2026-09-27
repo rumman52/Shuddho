@@ -147,9 +147,13 @@ def _bounded_storage_state(value: dict | None, allowed_origins: list[str]) -> di
         name = cookie.get("name")
         cookie_value = cookie.get("value")
         path = cookie.get("path")
+        domain_host = domain.lower().lstrip(".").rstrip(".") if isinstance(domain, str) else ""
+        domain_allowed = any(
+            host == domain_host or (domain_host and "." in domain_host and host.endswith("." + domain_host))
+            for host in allowed_hosts
+        )
         if (
-            not isinstance(domain, str)
-            or domain.lower().lstrip(".").rstrip(".") not in allowed_hosts
+            not domain_allowed
             or not isinstance(name, str)
             or not name
             or len(name) > 256
