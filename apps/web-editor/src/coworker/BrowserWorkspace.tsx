@@ -54,7 +54,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
   }, [client, selectedId]);
 
   useEffect(() => {
-    if (!selectedId || !selected || !["queued", "running"].includes(selected.state)) return;
+    if (!selectedId || !selected || !["queued", "running", "takeover"].includes(selected.state)) return;
     const timer = window.setInterval(() => {
       void loadSelected(selectedId).catch(error => setError(errorMessage(error)));
     }, 2000);
