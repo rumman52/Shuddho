@@ -201,6 +201,7 @@ async function execute(command) {
       acceptDownloads: false,
       ignoreHTTPSErrors: false,
       serviceWorkers: "block",
+      ...(command.storage_state ? { storageState: command.storage_state } : {}),
     });
     const page = await context.newPage();
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
@@ -264,6 +265,7 @@ async function execute(command) {
       .filter((url, index, values) => url !== finalUrl && values.indexOf(url) === index)
       .slice(0, 10);
 
+    const storageState = await context.storageState();
     await api(`/api/v1/internal/browser-worker/commands/${command.id}/complete`, {
       worker_id: WORKER_ID,
       final_url: finalUrl,
@@ -272,6 +274,7 @@ async function execute(command) {
       resolved_ips: evidence,
       prepared_fields: preparedFields,
       submission_performed: false,
+      storage_state: storageState,
     });
   } catch (error) {
     const passThrough = new Set([
