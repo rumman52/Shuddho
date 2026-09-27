@@ -282,6 +282,33 @@ class BrowserRepository:
         row.storage_state_version = 0
         row.storage_state_updated_at = None
 
+    def _expire_stale_sessions(self, db, owner: str | None = None) -> None:
+        now = utcnow()
+        query = select(BrowserSession).where(
+            BrowserSession.state.not_in(tuple(TERMINAL_BROWSER_STATES)),
+            BrowserSession.expires_at <= now,
+        )
+        if owner is not None:
+            query = query.where(BrowserSession.owner_id == owner)
+        rows = db.scalars(query.with_for_update()).all()
+        for row in rows:
+            row.state = "expired"
+            row.takeover_required = False
+            row.cancel_requested = True
+            row.worker_session_ref = None
+            row.updated_at = now
+            self._clear_storage_state(row)
+            for command in db.scalars(select(BrowserCommand).where(
+                BrowserCommand.session_id == row.id,
+                BrowserCommand.state.in_(("prepared", "running")),
+            ).with_for_update()).all():
+                command.state = "failed"
+                command.error_code = "session_expired"
+                command.finished_at = now
+                command.lease_until = None
+                command.claimed_by = None
+                _scrub_form_payload(command)
+
     @staticmethod
     def _dto(row: BrowserSession) -> dict:
         state = row.state
@@ -384,6 +411,7 @@ class BrowserRepository:
         start_url, origin = normalize_browser_target(request.start_url)
         fingerprint = _digest({"purpose": request.purpose, "start_url": start_url})
         with self.sessions.begin() as db:
+            self._expire_stale_sessions(db, owner)
             account = db.get(Account, owner)
             workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
             if account is None or workspace_id is None:
@@ -438,7 +466,8 @@ class BrowserRepository:
 
     def list(self, owner: str) -> list[dict]:
         self._require_enabled()
-        with self.sessions() as db:
+        with self.sessions.begin() as db:
+            self._expire_stale_sessions(db, owner)
             rows = db.scalars(select(BrowserSession).where(
                 BrowserSession.owner_id == owner,
             ).order_by(BrowserSession.created_at.desc()).limit(50)).all()
@@ -446,7 +475,8 @@ class BrowserRepository:
 
     def get(self, owner: str, session_id: str) -> dict:
         self._require_enabled()
-        with self.sessions() as db:
+        with self.sessions.begin() as db:
+            self._expire_stale_sessions(db, owner)
             row = db.scalar(select(BrowserSession).where(
                 BrowserSession.id == session_id,
                 BrowserSession.owner_id == owner,
@@ -504,6 +534,9 @@ class BrowserRepository:
                 raise not_found()
             if aware(row.expires_at) <= utcnow():
                 row.state = "expired"
+                row.takeover_required = False
+                row.cancel_requested = True
+                self._clear_storage_state(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
             if row.state in TERMINAL_BROWSER_STATES or row.cancel_requested:
                 raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
@@ -585,6 +618,9 @@ class BrowserRepository:
                 )
             if aware(row.expires_at) <= utcnow():
                 row.state = "expired"
+                row.takeover_required = False
+                row.cancel_requested = True
+                self._clear_storage_state(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
             if row.state in TERMINAL_BROWSER_STATES or row.cancel_requested:
                 raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
@@ -647,7 +683,13 @@ class BrowserRepository:
             ).with_for_update())
             if row is None:
                 raise not_found()
-            if aware(row.expires_at) <= now or row.state in TERMINAL_BROWSER_STATES:
+            if aware(row.expires_at) <= now:
+                row.state = "expired"
+                row.takeover_required = False
+                row.cancel_requested = True
+                self._clear_storage_state(row)
+                raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
+            if row.state in TERMINAL_BROWSER_STATES:
                 raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
             row.state = "takeover"
             row.takeover_required = True
@@ -734,6 +776,7 @@ class BrowserRepository:
             raise CoworkerError("browser_worker_invalid", "The browser worker identity is invalid.", 403)
         now = utcnow()
         with self.sessions.begin() as db:
+            self._expire_stale_sessions(db)
             rows = db.scalars(
                 select(BrowserCommand)
                 .join(BrowserSession, BrowserSession.id == BrowserCommand.session_id)
@@ -923,6 +966,7 @@ class BrowserRepository:
                     command.claimed_by = None
                     session.state = "failed"
                     session.error_code = "redirect_origin_blocked"
+                    self._clear_storage_state(session)
                     raise CoworkerError("browser_origin_not_allowed", "The browser worker observed a redirect outside the approved origin.", 409)
                 hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
                 if hostname not in checked["resolved_ips"]:
