@@ -232,7 +232,11 @@ async function performTakeoverInteraction(page, policy, armInteraction) {
   }
   await page.waitForTimeout(250);
   await page.waitForLoadState("domcontentloaded", { timeout: 1500 }).catch(() => {});
-  return captureTakeoverFrame(page);
+  try {
+    return await captureTakeoverFrame(page);
+  } catch {
+    throw Object.assign(new Error("takeover_interaction_uncertain"), { code: "takeover_interaction_uncertain" });
+  }
 }
 
 async function fillPreparedField(page, spec) {
