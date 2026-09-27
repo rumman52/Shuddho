@@ -86,7 +86,7 @@ export type ConnectorReadSubscription = {
 export type BrowserSessionState = "prepared" | "queued" | "running" | "takeover" | "cancelled" | "completed" | "expired" | "failed";
 export type BrowserSession = {
   id: string; purpose: "research" | "form_prepare"; start_url: string; allowed_origins: string[];
-  state: BrowserSessionState; takeover_required: boolean; cancel_requested: boolean;
+  state: BrowserSessionState; takeover_required: boolean; takeover_reason: "login" | "mfa" | "captcha" | "sensitive_input" | null; cancel_requested: boolean;
   last_url: string | null; last_title: string | null; error_code: string | null;
   created_at: string; updated_at: string; expires_at: string;
   execution: {
@@ -95,7 +95,7 @@ export type BrowserSession = {
   };
 };
 export type BrowserCommand = {
-  id: string; sequence: number; kind: "navigate" | "prepare_form"; target_url: string | null;
+  id: string; sequence: number; kind: "navigate" | "prepare_form" | "takeover_input"; target_url: string | null;
   state: string; error_code: string | null; attempts: number;
   result: { final_url?: string; title?: string | null; redirect_chain?: string[]; prepared_fields?: string[]; submission_performed?: boolean };
   created_at: string; started_at: string | null; finished_at: string | null;
@@ -304,6 +304,11 @@ export class CoworkerClient {
   }
   requestBrowserTakeover(id: string, reason: "login" | "mfa" | "captcha" | "sensitive_input") {
     return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}/takeover`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
+  }
+  prepareBrowserTakeoverInput(id: string, input: { by: "label" | "name"; field: string; value: string; submit: boolean }) {
+    return this.json<BrowserCommand>(`/api/v1/browser-sessions/${identifier(id)}/takeover-input`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    });
   }
   resumeBrowser(id: string) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}/resume`, { method: "POST" }); }
   cancelBrowser(id: string) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}`, { method: "DELETE" }); }
