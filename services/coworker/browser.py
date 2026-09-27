@@ -737,7 +737,7 @@ class BrowserRepository:
             row.updated_at = now
             for command in db.scalars(select(BrowserCommand).where(
                 BrowserCommand.session_id == session_id,
-                BrowserCommand.state == "running",
+                BrowserCommand.state.in_(("prepared", "running")),
             ).with_for_update()).all():
                 command.state = "cancelled"
                 command.error_code = "takeover_requested"
@@ -1000,6 +1000,7 @@ class BrowserRepository:
                     command.finished_at = now
                     command.lease_until = None
                     command.claimed_by = None
+                    self._clear_command_secret(command)
                 session.worker_session_ref = None
                 return {"action": "stop", "reason": "session_cancelled"}
 
@@ -1010,6 +1011,7 @@ class BrowserRepository:
                     command.finished_at = now
                     command.lease_until = None
                     command.claimed_by = None
+                    self._clear_command_secret(command)
                 session.worker_session_ref = None
                 return {"action": "pause", "reason": "takeover_requested"}
 
@@ -1030,6 +1032,7 @@ class BrowserRepository:
                 return {"action": "stop", "reason": "session_expired"}
 
             if session.state in TERMINAL_BROWSER_STATES:
+                self._clear_command_secret(command)
                 session.worker_session_ref = None
                 return {"action": "stop", "reason": "session_" + session.state}
 
