@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
+import { browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -14,4 +14,27 @@ test("browser worker identity and API base are bounded", () => {
   assert.throws(() => safeWorkerId("x"), /invalid_worker_id/);
   assert.equal(normalizedBaseUrl("http://127.0.0.1:8000/"), "http://127.0.0.1:8000");
   assert.throws(() => normalizedBaseUrl("https://user:secret@example.com"), /invalid_worker_api_base_url/);
+});
+
+
+test("browser form policy blocks sensitive and non-editable fields", () => {
+  assert.equal(formFieldPolicy({ tag: "input", type: "text", autocomplete: "", disabled: false, readOnly: false }), "fillable");
+  assert.equal(formFieldPolicy({ tag: "input", type: "password", autocomplete: "", disabled: false, readOnly: false }), "not_editable");
+  assert.equal(formFieldPolicy({ tag: "input", type: "text", autocomplete: "one-time-code", disabled: false, readOnly: false }), "sensitive");
+  assert.equal(formFieldPolicy({ tag: "select", type: "text", autocomplete: "", disabled: false, readOnly: false }), "not_editable");
+});
+
+test("browser form policy prevents mutations and navigation while filling", () => {
+  assert.equal(browserRequestAllowed({
+    kind: "prepare_form", method: "POST", preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), false);
+  assert.equal(browserRequestAllowed({
+    kind: "prepare_form", method: "GET", preparingForm: true, navigationRequest: true, mainFrame: true,
+  }), false);
+  assert.equal(browserRequestAllowed({
+    kind: "prepare_form", method: "GET", preparingForm: true, navigationRequest: false, mainFrame: false,
+  }), true);
+  assert.equal(browserRequestAllowed({
+    kind: "navigate", method: "POST", preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), true);
 });

@@ -7,12 +7,13 @@ from uuid import uuid4
 import pytest
 
 pytest.importorskip("sqlalchemy")
+from sqlalchemy import select
 
 from action_samples import enable_actions
 from test_coworker import account, container, signed_client
 
 from services.coworker.browser import BrowserRepository, normalize_browser_target, validate_resolved_addresses
-from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate
+from services.coworker.browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate
 from services.coworker.errors import CoworkerError
 from services.coworker.models import BrowserCommand, BrowserSession, utcnow
 
@@ -495,3 +496,187 @@ def test_browser_takeover_pauses_active_worker_and_resume_does_not_revive_old_co
     )
     claimed = container.browser.claim_commands("worker-b")
     assert [item["id"] for item in claimed] == [next_command["id"]]
+
+
+def test_browser_form_preparation_is_same_origin_bounded_and_non_submitting(container, signed_client):
+    settings = enable_browser(container)
+    owner = account(container)
+    session = container.browser.create(
+        owner,
+        BrowserSessionCreate(purpose="form_prepare", start_url="https://example.com/form"),
+        "browser-form-prepare",
+    )[0]
+
+    command = container.browser.prepare_form(
+        owner,
+        session["id"],
+        BrowserFormPrepareCreate(
+            url="https://example.com/form",
+            fields=[
+                {"by": "label", "field": "Full name", "value": "Ada Lovelace"},
+                {"by": "name", "field": "email", "value": "ada@example.com"},
+            ],
+        ),
+    )
+    assert command["kind"] == "prepare_form"
+    assert command["policy"] == {"allow_form_submission": False, "field_count": 2}
+
+    claimed = container.browser.claim_commands("worker-form")
+    assert [item["id"] for item in claimed] == [command["id"]]
+    assert claimed[0]["policy"]["allow_form_submission"] is False
+    assert [item["field"] for item in claimed[0]["policy"]["fields"]] == ["Full name", "email"]
+
+    completed = container.browser.complete_command(
+        "worker-form",
+        command["id"],
+        {
+            "final_url": "https://example.com/form",
+            "title": "Form",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": ["Full name", "email"],
+            "submission_performed": False,
+        },
+    )
+    assert completed["state"] == "succeeded"
+    assert completed["result"]["prepared_fields"] == ["Full name", "email"]
+    assert completed["result"]["submission_performed"] is False
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserCommand, command["id"])
+        assert stored.payload["values_scrubbed"] is True
+        assert stored.payload["fields"] == [
+            {"by": "label", "field": "Full name"},
+            {"by": "name", "field": "email"},
+        ]
+
+    client, headers = signed_client
+    api_session = client.post(
+        "/api/v1/browser-sessions",
+        headers=headers() | {"Idempotency-Key": "browser-form-api"},
+        json={"purpose": "form_prepare", "start_url": "https://example.com/form"},
+    ).json()
+    prepared = client.post(
+        f'/api/v1/browser-sessions/{api_session["id"]}/prepare-form',
+        headers=headers(),
+        json={
+            "url": "https://example.com/form",
+            "fields": [{"by": "label", "field": "City", "value": "Dhaka"}],
+        },
+    )
+    assert prepared.status_code == 202
+    assert prepared.json()["policy"]["allow_form_submission"] is False
+    container.browser.cancel(owner, api_session["id"])
+
+    with pytest.raises(CoworkerError) as wrong_purpose:
+        research = create_session(container, owner, key="browser-research-form-denied")
+        container.browser.prepare_form(
+            owner,
+            research["id"],
+            BrowserFormPrepareCreate(
+                url="https://example.com/form",
+                fields=[{"by": "label", "field": "Name", "value": "Ada"}],
+            ),
+        )
+    assert wrong_purpose.value.code == "browser_form_not_allowed"
+
+    with pytest.raises(CoworkerError) as cross_origin:
+        container.browser.prepare_form(
+            owner,
+            session["id"],
+            BrowserFormPrepareCreate(
+                url="https://other.example/form",
+                fields=[{"by": "label", "field": "Name", "value": "Ada"}],
+            ),
+        )
+    assert cross_origin.value.code == "browser_origin_not_allowed"
+
+
+def test_browser_form_preparation_requires_takeover_for_sensitive_fields(container):
+    enable_browser(container)
+    owner = account(container)
+    session = container.browser.create(
+        owner,
+        BrowserSessionCreate(purpose="form_prepare", start_url="https://example.com/login"),
+        "browser-form-sensitive",
+    )[0]
+
+    with pytest.raises(CoworkerError) as sensitive:
+        container.browser.prepare_form(
+            owner,
+            session["id"],
+            BrowserFormPrepareCreate(
+                url="https://example.com/login",
+                fields=[{"by": "label", "field": "Password", "value": "do-not-store"}],
+            ),
+        )
+    assert sensitive.value.code == "sensitive_field_requires_takeover"
+
+    with container.repository.sessions() as db:
+        commands = db.scalars(
+            select(BrowserCommand).where(BrowserCommand.session_id == session["id"])
+        ).all()
+        assert commands == []
+
+
+def test_browser_form_completion_rejects_submission_or_mismatched_evidence(container):
+    enable_browser(container)
+    owner = account(container)
+
+    session = container.browser.create(
+        owner,
+        BrowserSessionCreate(purpose="form_prepare", start_url="https://example.com/form"),
+        "browser-form-evidence",
+    )[0]
+    command = container.browser.prepare_form(
+        owner,
+        session["id"],
+        BrowserFormPrepareCreate(
+            url="https://example.com/form",
+            fields=[{"by": "label", "field": "Name", "value": "Ada"}],
+        ),
+    )
+    container.browser.claim_commands("worker-form-a")
+    with pytest.raises(CoworkerError) as mismatch:
+        container.browser.complete_command(
+            "worker-form-a",
+            command["id"],
+            {
+                "final_url": "https://example.com/form",
+                "title": "Form",
+                "redirect_chain": [],
+                "resolved_ips": {"example.com": ["93.184.216.34"]},
+                "prepared_fields": [],
+                "submission_performed": False,
+            },
+        )
+    assert mismatch.value.code == "browser_form_evidence_mismatch"
+    container.browser.fail_command("worker-form-a", command["id"], "form_field_not_found")
+
+    session2 = container.browser.create(
+        owner,
+        BrowserSessionCreate(purpose="form_prepare", start_url="https://example.com/form"),
+        "browser-form-submission",
+    )[0]
+    command2 = container.browser.prepare_form(
+        owner,
+        session2["id"],
+        BrowserFormPrepareCreate(
+            url="https://example.com/form",
+            fields=[{"by": "label", "field": "Name", "value": "Ada"}],
+        ),
+    )
+    container.browser.claim_commands("worker-form-b")
+    with pytest.raises(CoworkerError) as submitted:
+        container.browser.complete_command(
+            "worker-form-b",
+            command2["id"],
+            {
+                "final_url": "https://example.com/form",
+                "title": "Form",
+                "redirect_chain": [],
+                "resolved_ips": {"example.com": ["93.184.216.34"]},
+                "prepared_fields": ["Name"],
+                "submission_performed": True,
+            },
+        )
+    assert submitted.value.code == "browser_form_submission_blocked"

@@ -115,7 +115,7 @@ OPTIONAL_CAPABILITIES = (
         staging_gates=(
             StagingGate(
                 "browser",
-                "Supervised browser sessions passed owner isolation, HTTPS/origin restrictions, DNS/IP and redirect revalidation in the isolated worker, takeover pause/resume, secret concealment, cancellation, cleanup and blocked internal-address tests.",
+                "Supervised browser sessions passed owner isolation, HTTPS/origin restrictions, DNS/IP and redirect revalidation in the isolated worker, bounded non-submitting form preparation, sensitive-field takeover enforcement, takeover pause/resume, secret concealment, cancellation, cleanup and blocked internal-address tests.",
             ),
         ),
     ),

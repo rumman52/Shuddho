@@ -3,7 +3,7 @@ import net from "node:net";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
+import { browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
 const WORKER_TOKEN = process.env.SHUDDHO_BROWSER_WORKER_TOKEN || "";
@@ -136,6 +136,48 @@ async function monitorControl(commandId, onStop) {
   };
 }
 
+async function resolveFormField(page, spec) {
+  const candidates = [];
+  if (spec.by === "label") {
+    const locator = page.getByLabel(spec.field, { exact: true });
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) candidates.push(locator.nth(index));
+  } else if (spec.by === "name") {
+    const locator = page.locator("input, textarea");
+    const count = await locator.count();
+    for (let index = 0; index < count; index += 1) {
+      const item = locator.nth(index);
+      if ((await item.getAttribute("name")) === spec.field) candidates.push(item);
+    }
+  }
+  if (candidates.length === 0) {
+    throw Object.assign(new Error("form_field_not_found"), { code: "form_field_not_found" });
+  }
+  if (candidates.length !== 1) {
+    throw Object.assign(new Error("form_field_ambiguous"), { code: "form_field_ambiguous" });
+  }
+  return candidates[0];
+}
+
+async function fillPreparedField(page, spec) {
+  const locator = await resolveFormField(page, spec);
+  const metadata = await locator.evaluate((element) => ({
+    tag: element.tagName.toLowerCase(),
+    type: (element.getAttribute("type") || "text").toLowerCase(),
+    autocomplete: (element.getAttribute("autocomplete") || "").toLowerCase(),
+    disabled: Boolean(element.disabled),
+    readOnly: Boolean(element.readOnly),
+  }));
+  const policy = formFieldPolicy(metadata);
+  if (policy === "not_editable") {
+    throw Object.assign(new Error("form_field_not_editable"), { code: "form_field_not_editable" });
+  }
+  if (policy === "sensitive") {
+    throw Object.assign(new Error("sensitive_field_requires_takeover"), { code: "sensitive_field_requires_takeover" });
+  }
+  await locator.fill(spec.value);
+}
+
 async function execute(command) {
   const evidence = {};
   let proxy;
@@ -164,6 +206,25 @@ async function execute(command) {
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
 
+    let preparingForm = false;
+    let formMutationBlocked = false;
+    await page.route("**/*", async (route) => {
+      const request = route.request();
+      const allowed = browserRequestAllowed({
+        kind: command.kind,
+        method: request.method(),
+        preparingForm,
+        navigationRequest: request.isNavigationRequest(),
+        mainFrame: request.frame() === page.mainFrame(),
+      });
+      if (!allowed) {
+        formMutationBlocked = formMutationBlocked || command.kind === "prepare_form";
+        await route.abort("blockedbyclient");
+        return;
+      }
+      await route.continue();
+    });
+
     const navigationUrls = [];
     page.on("request", (request) => {
       if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
@@ -175,6 +236,23 @@ async function execute(command) {
     });
 
     await page.goto(command.target_url, { waitUntil: "domcontentloaded" });
+    const preparedFields = [];
+    if (command.kind === "prepare_form") {
+      if (command.policy?.allow_form_submission !== false || !Array.isArray(command.policy?.fields)) {
+        throw Object.assign(new Error("form_mutation_blocked"), { code: "form_mutation_blocked" });
+      }
+      preparingForm = true;
+      for (const field of command.policy.fields) {
+        await fillPreparedField(page, field);
+        preparedFields.push(field.field);
+        if (formMutationBlocked) {
+          throw Object.assign(new Error("form_mutation_blocked"), { code: "form_mutation_blocked" });
+        }
+      }
+      preparingForm = false;
+    } else if (command.kind !== "navigate") {
+      throw Object.assign(new Error("unsupported_site"), { code: "unsupported_site" });
+    }
     if (interrupted) {
       throw Object.assign(new Error(interrupted.reason || "worker_interrupted"), {
         code: interrupted.reason || "worker_interrupted",
@@ -192,12 +270,23 @@ async function execute(command) {
       title,
       redirect_chain: redirectChain,
       resolved_ips: evidence,
+      prepared_fields: preparedFields,
+      submission_performed: false,
     });
   } catch (error) {
+    const passThrough = new Set([
+      "sensitive_field_requires_takeover",
+      "form_field_not_found",
+      "form_field_ambiguous",
+      "form_field_not_editable",
+      "form_mutation_blocked",
+      "unsupported_site",
+    ]);
     const code = ["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"]
       .includes(error?.code) ? "network_blocked"
       : ["browser_worker_claim_invalid", "session_cancelled", "takeover_requested", "session_expired", "claim_lost"]
           .includes(error?.code) ? "worker_interrupted"
+      : passThrough.has(error?.code) ? error.code
       : "navigation_failed";
     try {
       await api(`/api/v1/internal/browser-worker/commands/${command.id}/fail`, {

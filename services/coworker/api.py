@@ -28,7 +28,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTra
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
-from .browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation
+from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -357,6 +357,20 @@ def prepare_browser_navigation(
     )
 
 
+@router.post("/browser-sessions/{session_id}/prepare-form", status_code=202)
+def prepare_browser_form(
+    session_id: UUID,
+    payload: BrowserFormPrepareCreate,
+    identity: Identity,
+    services: Services,
+):
+    return services.browser.prepare_form(
+        identity.account_id,
+        str(session_id),
+        payload,
+    )
+
+
 @router.post("/browser-sessions/{session_id}/takeover")
 def request_browser_takeover(
     session_id: UUID,
@@ -425,6 +439,8 @@ def complete_browser_command(command_id: UUID, payload: BrowserWorkerObservation
             "title": payload.title,
             "redirect_chain": payload.redirect_chain,
             "resolved_ips": payload.resolved_ips,
+            "prepared_fields": payload.prepared_fields,
+            "submission_performed": payload.submission_performed,
         },
     )
 
