@@ -3,7 +3,7 @@ import net from "node:net";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
+import { browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId } from "./browser_worker_policy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
 const WORKER_TOKEN = process.env.SHUDDHO_BROWSER_WORKER_TOKEN || "";
@@ -168,17 +168,11 @@ async function fillPreparedField(page, spec) {
     disabled: Boolean(element.disabled),
     readOnly: Boolean(element.readOnly),
   }));
-  const blockedTypes = new Set(["password", "file", "hidden", "submit", "button", "image", "checkbox", "radio"]);
-  const sensitiveAutocomplete = new Set(["current-password", "new-password", "one-time-code", "cc-number", "cc-csc"]);
-  if (
-    metadata.disabled
-    || metadata.readOnly
-    || !["input", "textarea"].includes(metadata.tag)
-    || blockedTypes.has(metadata.type)
-  ) {
+  const policy = formFieldPolicy(metadata);
+  if (policy === "not_editable") {
     throw Object.assign(new Error("form_field_not_editable"), { code: "form_field_not_editable" });
   }
-  if (sensitiveAutocomplete.has(metadata.autocomplete)) {
+  if (policy === "sensitive") {
     throw Object.assign(new Error("sensitive_field_requires_takeover"), { code: "sensitive_field_requires_takeover" });
   }
   await locator.fill(spec.value);
@@ -216,14 +210,15 @@ async function execute(command) {
     let formMutationBlocked = false;
     await page.route("**/*", async (route) => {
       const request = route.request();
-      const method = request.method().toUpperCase();
-      if (command.kind === "prepare_form" && !["GET", "HEAD"].includes(method)) {
-        formMutationBlocked = true;
-        await route.abort("blockedbyclient");
-        return;
-      }
-      if (preparingForm && request.isNavigationRequest() && request.frame() === page.mainFrame()) {
-        formMutationBlocked = true;
+      const allowed = browserRequestAllowed({
+        kind: command.kind,
+        method: request.method(),
+        preparingForm,
+        navigationRequest: request.isNavigationRequest(),
+        mainFrame: request.frame() === page.mainFrame(),
+      });
+      if (!allowed) {
+        formMutationBlocked = formMutationBlocked || command.kind === "prepare_form";
         await route.abort("blockedbyclient");
         return;
       }
