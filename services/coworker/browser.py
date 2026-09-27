@@ -39,6 +39,7 @@ MAX_BROWSER_STORAGE_COOKIES = 100
 MAX_BROWSER_STORAGE_ORIGINS = 10
 MAX_BROWSER_LOCAL_STORAGE_ITEMS = 100
 MAX_BROWSER_TAKEOVER_FRAME_BYTES = 350000
+BROWSER_CONTENT_TRUST = "untrusted"
 
 
 def validate_resolved_addresses(hostname: str, addresses: list[str]) -> list[str]:
@@ -505,6 +506,9 @@ class BrowserRepository:
                 "network_revalidation_required": True,
                 "arbitrary_script_execution": False,
                 "downloads_enabled": False,
+                "page_content_trust": BROWSER_CONTENT_TRUST,
+                "page_content_exposed_to_planner": False,
+                "takeover_frame_exposed_to_planner": False,
                 "authenticated_state_available": bool(row.storage_state_sealed),
                 "storage_state_version": int(row.storage_state_version or 0),
                 "takeover_frame_available": bool(row.takeover_frame_sealed),
