@@ -115,7 +115,7 @@ OPTIONAL_CAPABILITIES = (
         staging_gates=(
             StagingGate(
                 "browser",
-                "Supervised browser sessions passed owner isolation, HTTPS/origin restrictions, DNS/IP and redirect revalidation in the isolated worker, bounded non-submitting form preparation, encrypted owner-bound session continuity, remote worker-control TLS enforcement, owner-initiated concealed login/MFA field handoff with worker-only secret delivery and destruction, encrypted owner-only read-only visual takeover frames with non-GET/HEAD traffic blocked and no model exposure, sensitive-field takeover enforcement, takeover pause/resume, CAPTCHA fail-closed interaction behavior, cancellation/expiry state destruction, cleanup and blocked internal-address tests.",
+                "Supervised browser sessions passed owner isolation, HTTPS/origin restrictions, DNS/IP and redirect revalidation in the isolated worker, bounded non-submitting form preparation, encrypted owner-bound session continuity, remote worker-control TLS enforcement, owner-initiated concealed login/MFA field handoff with worker-only secret delivery and destruction, encrypted owner-only visual takeover frames, human-only frame-version/SHA-bound click and navigation-key interaction with stale-frame fail-closed behavior and fresh-frame replacement, no planner/model interaction authority, sensitive-field takeover enforcement, takeover pause/resume, cancellation/expiry state destruction, cleanup and blocked internal-address tests.",
             ),
         ),
     ),
