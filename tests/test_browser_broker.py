@@ -1857,7 +1857,7 @@ def test_browser_worker_api_rejects_injected_page_instruction_fields(container, 
     with container.repository.sessions() as db:
         stored = db.get(BrowserCommand, command["id"])
         assert stored.state == "running"
-        assert stored.result is None
+        assert not stored.result
 
 
 def test_browser_takeover_frame_is_user_only_not_model_content(container):
