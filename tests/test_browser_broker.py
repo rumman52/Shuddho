@@ -1733,3 +1733,53 @@ def test_webauthn_takeover_rejects_unknown_takeover_reason(container, signed_cli
     with pytest.raises(CoworkerError) as repository_rejected:
         container.browser.request_takeover(owner, session["id"], "virtual_authenticator")
     assert repository_rejected.value.code == "browser_takeover_reason_invalid"
+
+
+def test_hostile_popup_failure_invalidates_live_takeover_context(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-popup-block")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+    frame = container.browser.prepare_takeover_frame(owner, session["id"])
+    claimed = container.browser.claim_commands("worker-popup-block")
+    assert [item["id"] for item in claimed] == [frame["id"]]
+
+    failed = container.browser.fail_command(
+        "worker-popup-block",
+        frame["id"],
+        "browser_popup_blocked",
+    )
+    assert failed == {
+        "id": frame["id"],
+        "state": "failed",
+        "error_code": "browser_popup_blocked",
+    }
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "takeover"
+    assert current["takeover_required"] is True
+    assert current["execution"]["takeover_live_context_available"] is False
+    assert current["execution"]["takeover_frame_available"] is False
+
+
+def test_hostile_download_failure_is_preserved_for_regular_navigation(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com", key="browser-download-block")
+    prepared = container.browser.prepare_navigation(
+        owner,
+        session["id"],
+        BrowserNavigateCreate(url="https://example.com/files"),
+    )
+    claimed = container.browser.claim_commands("worker-download-block")
+    assert [item["id"] for item in claimed] == [prepared["id"]]
+
+    failed = container.browser.fail_command(
+        "worker-download-block",
+        prepared["id"],
+        "browser_download_blocked",
+    )
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "browser_download_blocked"
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "failed"
+    assert current["error_code"] == "browser_download_blocked"

@@ -97,4 +97,6 @@ class BrowserWorkerFailure(BrowserWorkerIdentity):
         "takeover_context_missing",
         "takeover_interaction_failed",
         "takeover_interaction_uncertain",
+        "browser_popup_blocked",
+        "browser_download_blocked",
     ]

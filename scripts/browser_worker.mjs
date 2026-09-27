@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { browserContextOptions, browserRequestAllowed, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { browserContextOptions, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
 const WORKER_TOKEN = process.env.SHUDDHO_BROWSER_WORKER_TOKEN || "";
@@ -282,6 +282,7 @@ async function createRuntime(command, evidence) {
     preparingForm: false,
     humanInteractionArmed: false,
     formMutationBlocked: false,
+    surfaceViolation: null,
     navigationUrls: [],
   };
   const proxy = await createPinnedProxy(state);
@@ -319,7 +320,13 @@ async function createRuntime(command, evidence) {
       state.navigationUrls.push(request.url());
     }
   });
+  context.on("page", (candidate) => {
+    if (candidate === page) return;
+    state.surfaceViolation = state.surfaceViolation || browserSurfaceViolation("popup");
+    void candidate.close().catch(() => {});
+  });
   page.on("download", (download) => {
+    state.surfaceViolation = state.surfaceViolation || browserSurfaceViolation("download");
     void download.cancel().catch(() => {});
   });
 
@@ -391,6 +398,12 @@ async function revalidateCurrentPage(command, runtime, evidence) {
   evidence[checked.hostname] = checked.resolved_ips;
 }
 
+function assertNoSurfaceViolation(state) {
+  if (state?.surfaceViolation) {
+    throw Object.assign(new Error(state.surfaceViolation), { code: state.surfaceViolation });
+  }
+}
+
 function workerFailureCode(error) {
   const passThrough = new Set([
     "sensitive_field_requires_takeover",
@@ -404,6 +417,8 @@ function workerFailureCode(error) {
     "takeover_context_missing",
     "takeover_interaction_failed",
     "takeover_interaction_uncertain",
+    "browser_popup_blocked",
+    "browser_download_blocked",
     "unsupported_site",
   ]);
   if (["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"].includes(error?.code)) {
@@ -454,6 +469,7 @@ async function execute(command) {
     } else {
       await revalidateCurrentPage(command, runtime, evidence);
     }
+    assertNoSurfaceViolation(runtime.state);
 
     const preparedFields = [];
     let takeoverFrameB64 = null;
@@ -503,6 +519,8 @@ async function execute(command) {
       throw Object.assign(new Error("unsupported_site"), { code: "unsupported_site" });
     }
 
+    assertNoSurfaceViolation(runtime.state);
+
     if (interrupted) {
       throw Object.assign(new Error(interrupted.reason || "worker_interrupted"), {
         code: interrupted.reason || "worker_interrupted",
@@ -511,6 +529,7 @@ async function execute(command) {
 
     const finalUrl = runtime.page.url();
     const title = (await runtime.page.title()).slice(0, 300);
+    assertNoSurfaceViolation(runtime.state);
     const redirectChain = runtime.state.navigationUrls
       .filter((url, index, values) => url !== finalUrl && values.indexOf(url) === index)
       .slice(0, 10);

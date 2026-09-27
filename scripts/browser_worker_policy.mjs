@@ -71,6 +71,13 @@ export function formFieldPolicy(metadata) {
   return "fillable";
 }
 
+export function browserSurfaceViolation(eventType) {
+  if (eventType === "popup") return "browser_popup_blocked";
+  if (eventType === "download") return "browser_download_blocked";
+  return null;
+}
+
+
 export function browserRequestAllowed({ kind, method, preparingForm, humanInteractionArmed = false, navigationRequest, mainFrame }) {
   const verb = String(method || "").toUpperCase();
   if (kind === "idle") return false;
