@@ -469,6 +469,7 @@ async function execute(command) {
     } else {
       await revalidateCurrentPage(command, runtime, evidence);
     }
+    assertNoSurfaceViolation(runtime.state);
 
     const preparedFields = [];
     let takeoverFrameB64 = null;
