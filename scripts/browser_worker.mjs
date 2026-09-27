@@ -196,7 +196,7 @@ function frameSha256(frame) {
   return createHash("sha256").update(frame).digest("hex");
 }
 
-async function performTakeoverInteraction(page, policy) {
+async function performTakeoverInteraction(page, policy, armInteraction) {
   if (policy?.human_only !== true || !policy?.interaction || typeof policy?.expected_frame_sha256 !== "string") {
     throw Object.assign(new Error("takeover_context_missing"), { code: "takeover_context_missing" });
   }
@@ -205,6 +205,7 @@ async function performTakeoverInteraction(page, policy) {
     throw Object.assign(new Error("takeover_frame_stale"), { code: "takeover_frame_stale" });
   }
   const interaction = policy.interaction;
+  armInteraction();
   if (interaction.kind === "click") {
     const viewport = page.viewportSize();
     if (
@@ -278,6 +279,7 @@ async function execute(command) {
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
 
     let preparingForm = false;
+    let humanInteractionArmed = false;
     let formMutationBlocked = false;
     await page.route("**/*", async (route) => {
       const request = route.request();
@@ -285,6 +287,7 @@ async function execute(command) {
         kind: command.kind,
         method: request.method(),
         preparingForm,
+        humanInteractionArmed,
         navigationRequest: request.isNavigationRequest(),
         mainFrame: request.frame() === page.mainFrame(),
       });
@@ -340,7 +343,7 @@ async function execute(command) {
       }
     } else if (command.kind === "takeover_interaction") {
       try {
-        takeoverFrameB64 = (await performTakeoverInteraction(page, command.policy)).toString("base64");
+        takeoverFrameB64 = (await performTakeoverInteraction(page, command.policy, () => { humanInteractionArmed = true; })).toString("base64");
       } catch (error) {
         if (["takeover_frame_too_large", "takeover_frame_stale", "takeover_context_missing", "takeover_interaction_failed"].includes(error?.code)) throw error;
         throw Object.assign(new Error("takeover_interaction_uncertain"), { code: "takeover_interaction_uncertain" });
