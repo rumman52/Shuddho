@@ -323,6 +323,7 @@ class BrowserRepository:
         for row in rows:
             row.state = "expired"
             row.takeover_required = False
+            row.takeover_reason = None
             row.cancel_requested = True
             row.worker_session_ref = None
             row.updated_at = now
@@ -1014,6 +1015,8 @@ class BrowserRepository:
 
             if aware(session.expires_at) <= now:
                 session.state = "expired"
+                session.takeover_required = False
+                session.takeover_reason = None
                 session.worker_session_ref = None
                 self._clear_command_secret(command)
                 self._clear_storage_state(session)
@@ -1110,6 +1113,8 @@ class BrowserRepository:
                     command.lease_until = None
                     command.claimed_by = None
                     session.state = "failed"
+                    session.takeover_required = False
+                    session.takeover_reason = None
                     session.error_code = "redirect_origin_blocked"
                     session.worker_session_ref = None
                     session.updated_at = now
@@ -1135,6 +1140,8 @@ class BrowserRepository:
                 command.lease_until = None
                 command.claimed_by = None
                 session.state = "failed"
+                session.takeover_required = False
+                session.takeover_reason = None
                 session.error_code = "form_submission_blocked"
                 session.worker_session_ref = None
                 session.updated_at = now
@@ -1239,6 +1246,8 @@ class BrowserRepository:
             command.claimed_by = None
             if session is not None and session.state not in TERMINAL_BROWSER_STATES:
                 session.state = "failed"
+                session.takeover_required = False
+                session.takeover_reason = None
                 session.worker_session_ref = None
                 self._clear_storage_state(session)
                 session.error_code = error_code
