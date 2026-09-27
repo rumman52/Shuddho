@@ -421,7 +421,7 @@ def get_browser_takeover_frame(
         content=data,
         media_type=content_type,
         headers={
-            "Cache-Control": "no-store, private",
+            "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
             "X-Shuddho-Browser-Frame-Version": str(version),
             "Content-Disposition": "inline",
