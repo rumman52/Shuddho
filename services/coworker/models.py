@@ -651,6 +651,7 @@ class BrowserSession(Base):
     takeover_frame_version: Mapped[int] = mapped_column(Integer, default=0)
     takeover_frame_content_type: Mapped[str | None] = mapped_column(String(32))
     takeover_frame_byte_size: Mapped[int | None] = mapped_column(Integer)
+    takeover_frame_sha256: Mapped[str | None] = mapped_column(String(64))
     takeover_frame_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_url: Mapped[str | None] = mapped_column(Text)
     last_title: Mapped[str | None] = mapped_column(String(300))
