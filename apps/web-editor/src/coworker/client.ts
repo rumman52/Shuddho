@@ -96,9 +96,9 @@ export type BrowserSession = {
   };
 };
 export type BrowserCommand = {
-  id: string; sequence: number; kind: "navigate" | "prepare_form" | "takeover_input" | "takeover_frame"; target_url: string | null;
+  id: string; sequence: number; kind: "navigate" | "prepare_form" | "takeover_input" | "takeover_frame" | "takeover_interaction"; target_url: string | null;
   state: string; error_code: string | null; attempts: number;
-  result: { final_url?: string; title?: string | null; redirect_chain?: string[]; prepared_fields?: string[]; submission_performed?: boolean };
+  result: { final_url?: string; title?: string | null; redirect_chain?: string[]; prepared_fields?: string[]; submission_performed?: boolean; takeover_frame_version?: number; interaction_performed?: boolean };
   created_at: string; started_at: string | null; finished_at: string | null;
 };
 export type BrowserFormField = { by: "label" | "name"; field: string; value: string };
@@ -316,6 +316,11 @@ export class CoworkerClient {
   }
   browserTakeoverFrame(id: string, signal?: AbortSignal) {
     return this.response(`/api/v1/browser-sessions/${identifier(id)}/takeover-frame`, { signal }).then(response => response.blob());
+  }
+  interactBrowserTakeover(id: string, input: { frame_version: number; kind: "click" | "key"; x?: number; y?: number; key?: "Tab" | "Escape" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" }) {
+    return this.json<BrowserCommand>(`/api/v1/browser-sessions/${identifier(id)}/takeover-interaction`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    });
   }
   resumeBrowser(id: string) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}/resume`, { method: "POST" }); }
   cancelBrowser(id: string) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}`, { method: "DELETE" }); }
