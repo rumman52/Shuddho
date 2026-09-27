@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { BrowserCommand, BrowserFormField, BrowserSession, CoworkerClient } from "./client";
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "Browser workspace action failed.";
@@ -136,6 +136,37 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
     await act("takeover-frame", () => client.requestBrowserTakeoverFrame(selected.id), "A fresh read-only takeover frame is being prepared.");
   }
 
+  async function interactTakeoverClick(event: MouseEvent<HTMLButtonElement>) {
+    if (!selected || busy || !selected.execution.takeover_frame_available || selected.execution.takeover_frame_version < 1) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    await act(
+      "takeover-interaction",
+      () => client.interactBrowserTakeover(selected.id, {
+        frame_version: selected.execution.takeover_frame_version,
+        kind: "click",
+        x,
+        y,
+      }),
+      "Human-only click queued against this exact visual frame. A fresh frame will replace it after the worker verifies the page is unchanged.",
+    );
+  }
+
+  async function interactTakeoverKey(key: "Tab" | "Escape" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight") {
+    if (!selected || busy || !selected.execution.takeover_frame_available || selected.execution.takeover_frame_version < 1) return;
+    await act(
+      "takeover-interaction",
+      () => client.interactBrowserTakeover(selected.id, {
+        frame_version: selected.execution.takeover_frame_version,
+        kind: "key",
+        key,
+      }),
+      `Human-only ${key} key queued against this exact visual frame. A fresh frame will replace it after verification.`,
+    );
+  }
+
   async function submitTakeoverInput(event: FormEvent) {
     event.preventDefault();
     if (!selected || !takeoverField.trim() || !takeoverValue) return;
@@ -187,14 +218,25 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
           {selected.takeover_required ? <div>
             <p className="cw-fineprint">Takeover reason: {selected.takeover_reason || "sensitive input"}. Secrets entered below are sent only to the authenticated backend, encrypted at rest, delivered to the isolated browser worker, and omitted from browser history.</p>
             <div className="cw-browser-frame">
-              {takeoverFrameUrl ? <img src={takeoverFrameUrl} alt="Read-only visual snapshot of the supervised browser page" /> :
+              {takeoverFrameUrl ? <button
+                type="button"
+                className="cw-browser-frame-surface"
+                disabled={Boolean(busy)}
+                onClick={event => void interactTakeoverClick(event)}
+                aria-label="Human-only supervised browser frame. Click a visible control at this exact location."
+              ><img src={takeoverFrameUrl} alt="Current supervised browser page for human-only takeover" /></button> :
                 <div className="cw-browser-frame-empty">Visual takeover frame is being prepared.</div>}
+              <div className="cw-browser-frame-keyboard" aria-label="Human-only takeover navigation keys">
+                {(["Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] as const).map(key =>
+                  <button key={key} type="button" className="cw-text-button" disabled={Boolean(busy) || !takeoverFrameUrl} onClick={() => void interactTakeoverKey(key)}>{key}</button>
+                )}
+              </div>
               <div className="cw-browser-frame-actions">
                 <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => void refreshTakeoverFrame()}>{busy === "takeover-frame" ? "Refreshing…" : "Refresh visual frame"}</button>
-                <span>Read-only snapshot. The model does not receive the image and this view cannot click, type, or approve actions.</span>
+                <span>Human-only control. Every click/key is bound to the exact displayed frame and fails closed if the recreated page changed. DeepSeek never receives the frame or interaction authority.</span>
               </div>
             </div>
-            {selected.takeover_reason === "captcha" ? <p className="cw-fineprint">You can inspect the CAPTCHA/challenge here, but solving or interacting with it still requires a future direct interactive takeover surface. Secret injection remains unavailable for CAPTCHA challenges.</p> :
+            {selected.takeover_reason === "captcha" ? <p className="cw-fineprint">Use the visual frame yourself for CAPTCHA or other challenge interaction. Text/secret injection stays unavailable for CAPTCHA, and the agent/model cannot issue these clicks or keys.</p> :
             <form onSubmit={submitTakeoverInput}>
               <label>Find sensitive field by<select value={takeoverBy} onChange={event => setTakeoverBy(event.target.value as "label" | "name")}><option value="label">Exact label</option><option value="name">Exact name attribute</option></select></label>
               <label>Field identifier<input maxLength={160} required value={takeoverField} onChange={event => setTakeoverField(event.target.value)} /></label>
