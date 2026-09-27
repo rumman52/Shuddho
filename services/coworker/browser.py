@@ -363,7 +363,6 @@ class BrowserRepository:
         for row in rows:
             self._clear_takeover_affinity(row)
             row.worker_session_ref = None
-            self._clear_takeover_affinity(row)
             self._clear_takeover_frame(row)
             row.updated_at = now
             for command in db.scalars(select(BrowserCommand).where(
@@ -873,6 +872,8 @@ class BrowserRepository:
                 row.state = "expired"
                 row.takeover_required = False
                 row.cancel_requested = True
+                row.worker_session_ref = None
+                self._clear_takeover_affinity(row)
                 self._clear_storage_state(row)
                 self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
@@ -882,6 +883,7 @@ class BrowserRepository:
             row.takeover_required = True
             row.takeover_reason = reason
             row.worker_session_ref = None
+            self._clear_takeover_affinity(row)
             self._clear_takeover_frame(row)
             row.updated_at = now
             for command in db.scalars(select(BrowserCommand).where(
