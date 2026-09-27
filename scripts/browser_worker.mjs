@@ -212,6 +212,24 @@ async function execute(command) {
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
 
+    let preparingForm = false;
+    let formMutationBlocked = false;
+    await page.route("**/*", async (route) => {
+      const request = route.request();
+      const method = request.method().toUpperCase();
+      if (!["GET", "HEAD"].includes(method)) {
+        formMutationBlocked = formMutationBlocked || command.kind === "prepare_form";
+        await route.abort("blockedbyclient");
+        return;
+      }
+      if (preparingForm && request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        formMutationBlocked = true;
+        await route.abort("blockedbyclient");
+        return;
+      }
+      await route.continue();
+    });
+
     const navigationUrls = [];
     page.on("request", (request) => {
       if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
@@ -228,10 +246,15 @@ async function execute(command) {
       if (command.policy?.allow_form_submission !== false || !Array.isArray(command.policy?.fields)) {
         throw Object.assign(new Error("form_mutation_blocked"), { code: "form_mutation_blocked" });
       }
+      preparingForm = true;
       for (const field of command.policy.fields) {
         await fillPreparedField(page, field);
         preparedFields.push(field.field);
+        if (formMutationBlocked) {
+          throw Object.assign(new Error("form_mutation_blocked"), { code: "form_mutation_blocked" });
+        }
       }
+      preparingForm = false;
     } else if (command.kind !== "navigate") {
       throw Object.assign(new Error("unsupported_site"), { code: "unsupported_site" });
     }
