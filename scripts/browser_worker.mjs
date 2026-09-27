@@ -251,6 +251,7 @@ async function execute(command) {
 
     await page.goto(command.target_url, { waitUntil: "domcontentloaded" });
     const preparedFields = [];
+    let takeoverFrameB64 = null;
     if (command.kind === "prepare_form") {
       if (command.policy?.allow_form_submission !== false || !Array.isArray(command.policy?.fields)) {
         throw Object.assign(new Error("form_mutation_blocked"), { code: "form_mutation_blocked" });
@@ -272,6 +273,23 @@ async function execute(command) {
       preparedFields.push(command.takeover_input.field);
       if (command.takeover_input.submit) {
         await page.waitForLoadState("domcontentloaded").catch(() => {});
+      }
+    } else if (command.kind === "takeover_frame") {
+      try {
+        const frame = await page.screenshot({
+          type: "jpeg",
+          quality: 55,
+          fullPage: false,
+          animations: "disabled",
+          caret: "hide",
+        });
+        if (!frame?.length || frame.length > 350000) {
+          throw Object.assign(new Error("takeover_frame_too_large"), { code: "takeover_frame_too_large" });
+        }
+        takeoverFrameB64 = frame.toString("base64");
+      } catch (error) {
+        if (error?.code === "takeover_frame_too_large") throw error;
+        throw Object.assign(new Error("takeover_frame_capture_failed"), { code: "takeover_frame_capture_failed" });
       }
     } else if (command.kind !== "navigate") {
       throw Object.assign(new Error("unsupported_site"), { code: "unsupported_site" });
@@ -297,6 +315,8 @@ async function execute(command) {
       prepared_fields: preparedFields,
       submission_performed: command.kind === "takeover_input" ? Boolean(command.takeover_input?.submit) : false,
       storage_state: storageState,
+      takeover_frame_b64: takeoverFrameB64,
+      takeover_frame_content_type: takeoverFrameB64 ? "image/jpeg" : null,
     });
   } catch (error) {
     const passThrough = new Set([
@@ -305,6 +325,8 @@ async function execute(command) {
       "form_field_ambiguous",
       "form_field_not_editable",
       "form_mutation_blocked",
+      "takeover_frame_too_large",
+      "takeover_frame_capture_failed",
       "unsupported_site",
     ]);
     const code = ["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"]
