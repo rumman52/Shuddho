@@ -93,6 +93,7 @@ export type BrowserSession = {
     worker_attached: boolean; network_revalidation_required: boolean; arbitrary_script_execution: boolean; downloads_enabled: boolean;
     authenticated_state_available: boolean; storage_state_version: number;
     takeover_frame_available: boolean; takeover_frame_version: number; takeover_frame_updated_at: string | null;
+    takeover_live_context_available: boolean; takeover_live_context_expires_at: string | null;
   };
 };
 export type BrowserCommand = {

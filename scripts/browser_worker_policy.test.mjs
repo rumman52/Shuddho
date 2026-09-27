@@ -99,3 +99,17 @@ test("human takeover interaction stays read-only until the exact frame is verifi
     kind: "takeover_frame", method: "POST", preparingForm: false, navigationRequest: false, mainFrame: false,
   }), false);
 });
+
+
+test("retained takeover context is network-silent while idle", () => {
+  for (const method of ["GET", "HEAD", "POST", "PUT"]) {
+    assert.equal(browserRequestAllowed({
+      kind: "idle",
+      method,
+      preparingForm: false,
+      humanInteractionArmed: false,
+      navigationRequest: method === "GET",
+      mainFrame: true,
+    }), false);
+  }
+});

@@ -212,7 +212,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
 
         {selected && <div className="cw-agent-run">
           <strong>Selected session</strong>
-          <div className="cw-agent-meta"><span>{selected.state}</span><span>{selected.purpose}</span><span>expires {new Date(selected.expires_at).toLocaleTimeString()}</span><span>{selected.execution.authenticated_state_available ? "session continuity protected" : "no authenticated state saved"}</span></div>
+          <div className="cw-agent-meta"><span>{selected.state}</span><span>{selected.purpose}</span><span>expires {new Date(selected.expires_at).toLocaleTimeString()}</span><span>{selected.execution.authenticated_state_available ? "session continuity protected" : "no authenticated state saved"}</span>{selected.takeover_required && <span>{selected.execution.takeover_live_context_available ? "live takeover context protected" : "live takeover context unavailable"}</span>}</div>
           <p><bdi>{selected.last_title || selected.last_url || selected.start_url}</bdi></p>
           <p className="cw-fineprint">Browser cookies and local storage are kept server-side in encrypted, owner-bound session state. They are never shown in this workspace and are destroyed when the session is cancelled or expires.</p>
           {selected.takeover_required ? <div>
@@ -233,7 +233,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
               </div>
               <div className="cw-browser-frame-actions">
                 <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => void refreshTakeoverFrame()}>{busy === "takeover-frame" ? "Refreshing…" : "Refresh visual frame"}</button>
-                <span>Human-only control. Every click/key is bound to the exact displayed frame and fails closed if the recreated page changed. DeepSeek never receives the frame or interaction authority.</span>
+                <span>Human-only control. Every click/key is bound to this exact frame and the same short-lived isolated browser context. If that worker context expires, Shuddho fails closed and requires a fresh frame. DeepSeek never receives the frame or interaction authority.</span>
               </div>
             </div>
             {selected.takeover_reason === "captcha" ? <p className="cw-fineprint">Use the visual frame yourself for CAPTCHA or other challenge interaction. Text/secret injection stays unavailable for CAPTCHA, and the agent/model cannot issue these clicks or keys.</p> :

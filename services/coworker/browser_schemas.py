@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,6 +55,10 @@ class BrowserWorkerIdentity(BrowserModel):
 
 class BrowserWorkerClaim(BrowserWorkerIdentity):
     limit: int = Field(default=1, ge=1, le=5)
+
+
+class BrowserWorkerTakeoverHeartbeat(BrowserWorkerIdentity):
+    session_ids: list[UUID] = Field(default_factory=list, max_length=8)
 
 
 class BrowserWorkerNetworkCheck(BrowserWorkerIdentity):

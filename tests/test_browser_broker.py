@@ -1135,6 +1135,8 @@ def test_visual_takeover_frame_is_encrypted_owner_only_and_destroyed_on_resume(c
     assert current["takeover_required"] is True
     assert current["execution"]["takeover_frame_available"] is True
     assert current["execution"]["takeover_frame_version"] == 1
+    assert current["execution"]["takeover_live_context_available"] is True
+    assert current["execution"]["takeover_live_context_expires_at"] is not None
 
     with container.repository.sessions() as db:
         stored = db.get(BrowserSession, session["id"])
@@ -1162,6 +1164,7 @@ def test_visual_takeover_frame_is_encrypted_owner_only_and_destroyed_on_resume(c
 
     resumed = container.browser.resume(owner, session["id"])
     assert resumed["execution"]["takeover_frame_available"] is False
+    assert resumed["execution"]["takeover_live_context_available"] is False
     with container.repository.sessions() as db:
         stored = db.get(BrowserSession, session["id"])
         assert stored.takeover_frame_sealed is None
@@ -1245,7 +1248,9 @@ def test_human_takeover_interaction_is_owner_scoped_and_frame_bound(container, s
     )
     assert denied.status_code == 404
 
-    claimed = container.browser.claim_commands("worker-human-click")
+    wrong_worker = container.browser.claim_commands("worker-human-click")
+    assert wrong_worker == []
+    claimed = container.browser.claim_commands("worker-human-frame")
     assert [item["id"] for item in claimed] == [prepared["id"]]
     assert claimed[0]["policy"]["human_only"] is True
     assert claimed[0]["policy"]["expected_frame_version"] == 1
@@ -1258,7 +1263,7 @@ def test_human_takeover_interaction_is_owner_scoped_and_frame_bound(container, s
     }
 
     checked = container.browser.validate_worker_network_target(
-        "worker-human-click",
+        "worker-human-frame",
         prepared["id"],
         "https://example.com/login",
         ["93.184.216.34"],
@@ -1267,7 +1272,7 @@ def test_human_takeover_interaction_is_owner_scoped_and_frame_bound(container, s
 
     second_jpeg = b"\xff\xd8\xff\xe0" + (b"second-human-frame" * 18) + b"\xff\xd9"
     completed = container.browser.complete_command(
-        "worker-human-click",
+        "worker-human-frame",
         prepared["id"],
         {
             "final_url": "https://example.com/login",
@@ -1290,6 +1295,8 @@ def test_human_takeover_interaction_is_owner_scoped_and_frame_bound(container, s
     assert current["state"] == "takeover"
     assert current["takeover_required"] is True
     assert current["execution"]["takeover_frame_version"] == 2
+    assert current["execution"]["takeover_live_context_available"] is True
+    assert current["execution"]["takeover_live_context_expires_at"] is not None
 
     visible = client.get(
         f'/api/v1/browser-sessions/{session["id"]}/takeover-frame',
@@ -1336,9 +1343,10 @@ def test_human_takeover_interaction_failure_clears_stale_visual_frame(container)
         session["id"],
         BrowserTakeoverInteractionCreate(frame_version=1, kind="key", key="Escape"),
     )
-    container.browser.claim_commands("worker-human-stale")
+    assert container.browser.claim_commands("worker-human-stale") == []
+    container.browser.claim_commands("worker-human-stale-frame")
     failed = container.browser.fail_command(
-        "worker-human-stale",
+        "worker-human-stale-frame",
         prepared["id"],
         "takeover_frame_stale",
     )
@@ -1422,7 +1430,8 @@ def test_human_takeover_interaction_is_at_most_once_after_worker_lease_loss(cont
         session["id"],
         BrowserTakeoverInteractionCreate(frame_version=1, kind="click", x=0.5, y=0.5),
     )
-    claimed = container.browser.claim_commands("worker-at-most-once-a")
+    assert container.browser.claim_commands("worker-at-most-once-a") == []
+    claimed = container.browser.claim_commands("worker-at-most-once-frame")
     assert [item["id"] for item in claimed] == [prepared["id"]]
 
     with container.repository.sessions.begin() as db:
@@ -1480,3 +1489,184 @@ def test_human_takeover_interaction_api_accepts_owner_frame_version(container, s
         "frame_version": 1,
         "interaction_kind": "key",
     }
+
+
+def test_takeover_affinity_heartbeat_routes_only_to_bound_worker(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-affinity-route")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+    first = container.browser.prepare_takeover_frame(owner, session["id"])
+    claimed = container.browser.claim_commands("worker-affinity-a")
+    assert [item["id"] for item in claimed] == [first["id"]]
+    jpeg = b"\xff\xd8\xff\xe0" + (b"affinity-route-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-affinity-a",
+        first["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+
+    current = container.browser.get(owner, session["id"])
+    assert current["execution"]["takeover_live_context_available"] is True
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserSession, session["id"])
+        assert stored.takeover_worker_ref == "worker-affinity-a"
+        first_expiry = stored.takeover_worker_lease_until
+        assert first_expiry is not None
+
+    heartbeat = container.browser.heartbeat_takeover_contexts(
+        "worker-affinity-a",
+        [session["id"], session["id"]],
+    )
+    assert heartbeat == {
+        "keep_session_ids": [session["id"]],
+        "release_session_ids": [],
+    }
+
+    interaction = container.browser.prepare_takeover_interaction(
+        owner,
+        session["id"],
+        BrowserTakeoverInteractionCreate(frame_version=1, kind="key", key="Tab"),
+    )
+    assert container.browser.claim_commands("worker-affinity-b") == []
+    same_worker = container.browser.claim_commands("worker-affinity-a")
+    assert [item["id"] for item in same_worker] == [interaction["id"]]
+
+
+def test_takeover_affinity_expiry_fails_prepared_interaction_closed(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-affinity-expiry")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+    first = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-affinity-expiry-a")
+    jpeg = b"\xff\xd8\xff\xe0" + (b"affinity-expiry-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-affinity-expiry-a",
+        first["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+    interaction = container.browser.prepare_takeover_interaction(
+        owner,
+        session["id"],
+        BrowserTakeoverInteractionCreate(frame_version=1, kind="click", x=0.5, y=0.5),
+    )
+
+    with container.repository.sessions.begin() as db:
+        stored = db.get(BrowserSession, session["id"])
+        stored.takeover_worker_lease_until = utcnow() - timedelta(seconds=1)
+
+    assert container.browser.claim_commands("worker-affinity-expiry-b") == []
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserSession, session["id"])
+        command = db.get(BrowserCommand, interaction["id"])
+        assert command.state == "failed"
+        assert command.error_code == "takeover_context_missing"
+        assert stored.state == "takeover"
+        assert stored.takeover_required is True
+        assert stored.takeover_worker_ref is None
+        assert stored.takeover_worker_lease_until is None
+        assert stored.takeover_frame_sealed is None
+
+    current = container.browser.get(owner, session["id"])
+    assert current["execution"]["takeover_live_context_available"] is False
+    assert current["execution"]["takeover_frame_available"] is False
+
+
+def test_takeover_frame_refresh_requires_same_live_worker(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-affinity-refresh")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+    first = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-affinity-refresh-a")
+    jpeg = b"\xff\xd8\xff\xe0" + (b"affinity-refresh-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-affinity-refresh-a",
+        first["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+
+    refresh = container.browser.prepare_takeover_frame(owner, session["id"])
+    with container.repository.sessions() as db:
+        command = db.get(BrowserCommand, refresh["id"])
+        assert command.payload["require_live_context"] is True
+    assert container.browser.claim_commands("worker-affinity-refresh-b") == []
+    same_worker = container.browser.claim_commands("worker-affinity-refresh-a")
+    assert [item["id"] for item in same_worker] == [refresh["id"]]
+
+
+def test_takeover_heartbeat_releases_wrong_worker_and_cancel_clears_affinity(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-affinity-cancel")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+    first = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-affinity-cancel-a")
+    jpeg = b"\xff\xd8\xff\xe0" + (b"affinity-cancel-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-affinity-cancel-a",
+        first["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+
+    wrong = container.browser.heartbeat_takeover_contexts(
+        "worker-affinity-cancel-b",
+        [session["id"]],
+    )
+    assert wrong == {
+        "keep_session_ids": [],
+        "release_session_ids": [session["id"]],
+    }
+
+    cancelled = container.browser.cancel(owner, session["id"])
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["execution"]["takeover_live_context_available"] is False
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserSession, session["id"])
+        assert stored.takeover_worker_ref is None
+        assert stored.takeover_worker_lease_until is None

@@ -83,6 +83,7 @@ class Settings:
     max_active_browser_sessions: int = 2
     browser_session_ttl_seconds: int = 900
     browser_worker_lease_seconds: int = 30
+    browser_takeover_affinity_seconds: int = 90
     browser_command_max_attempts: int = 2
     browser_worker_token: str = field(default="", repr=False)
     agent_run_timeout_seconds: int = 1800
@@ -209,6 +210,7 @@ class Settings:
             max_active_browser_sessions=int(os.getenv("SHUDDHO_BROWSER_MAX_ACTIVE_SESSIONS", "2")),
             browser_session_ttl_seconds=int(os.getenv("SHUDDHO_BROWSER_SESSION_TTL_SECONDS", "900")),
             browser_worker_lease_seconds=int(os.getenv("SHUDDHO_BROWSER_WORKER_LEASE_SECONDS", "30")),
+            browser_takeover_affinity_seconds=int(os.getenv("SHUDDHO_BROWSER_TAKEOVER_AFFINITY_SECONDS", "90")),
             browser_command_max_attempts=int(os.getenv("SHUDDHO_BROWSER_COMMAND_MAX_ATTEMPTS", "2")),
             browser_worker_token=os.getenv("SHUDDHO_BROWSER_WORKER_TOKEN", ""),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
@@ -320,6 +322,10 @@ class Settings:
                 raise ValueError("SHUDDHO_BROWSER_SESSION_TTL_SECONDS must be between 60 and 1800")
             if not 10 <= self.browser_worker_lease_seconds <= 120:
                 raise ValueError("SHUDDHO_BROWSER_WORKER_LEASE_SECONDS must be between 10 and 120")
+            if not 30 <= self.browser_takeover_affinity_seconds <= 300:
+                raise ValueError("SHUDDHO_BROWSER_TAKEOVER_AFFINITY_SECONDS must be between 30 and 300")
+            if self.browser_takeover_affinity_seconds < self.browser_worker_lease_seconds:
+                raise ValueError("SHUDDHO_BROWSER_TAKEOVER_AFFINITY_SECONDS cannot be shorter than the browser worker lease")
             if not 1 <= self.browser_command_max_attempts <= 3:
                 raise ValueError("SHUDDHO_BROWSER_COMMAND_MAX_ATTEMPTS must be between 1 and 3")
             if len(self.browser_worker_token) < 32:
