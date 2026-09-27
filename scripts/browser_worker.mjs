@@ -442,7 +442,7 @@ async function execute(command) {
 
     control = await monitorControl(command.id, async (value) => {
       interrupted = value;
-      if (affinityKind) {
+      if (affinityKind && liveTakeovers.get(command.session_id) === runtime) {
         await releaseLiveTakeover(command.session_id);
       } else {
         await closeRuntime(runtime);
