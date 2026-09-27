@@ -361,7 +361,6 @@ class BrowserRepository:
             query = query.where(BrowserSession.owner_id == owner)
         rows = db.scalars(query.with_for_update()).all()
         for row in rows:
-            worker_ref = row.takeover_worker_ref
             self._clear_takeover_affinity(row)
             row.worker_session_ref = None
             self._clear_takeover_affinity(row)
@@ -390,7 +389,6 @@ class BrowserRepository:
                 owner_id=row.owner_id,
                 resource_id=row.id,
                 action="browser_takeover.affinity_expired",
-                metadata={"worker_ref": worker_ref} if worker_ref else {},
             ))
 
     @staticmethod
@@ -722,6 +720,7 @@ class BrowserRepository:
                 row.state = "expired"
                 row.takeover_required = False
                 row.cancel_requested = True
+                self._clear_takeover_affinity(row)
                 self._clear_storage_state(row)
                 self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
@@ -977,6 +976,7 @@ class BrowserRepository:
         self._require_enabled()
         with self.sessions.begin() as db:
             self._expire_stale_sessions(db, owner)
+            self._expire_takeover_affinities(db, utcnow(), owner)
             row = db.scalar(select(BrowserSession).where(
                 BrowserSession.id == session_id,
                 BrowserSession.owner_id == owner,
@@ -997,6 +997,7 @@ class BrowserRepository:
         self._require_enabled()
         now = utcnow()
         with self.sessions.begin() as db:
+            self._expire_takeover_affinities(db, now, owner)
             row = db.scalar(select(BrowserSession).where(
                 BrowserSession.id == session_id,
                 BrowserSession.owner_id == owner,
@@ -1011,6 +1012,7 @@ class BrowserRepository:
                 row.takeover_reason = None
                 row.cancel_requested = True
                 row.worker_session_ref = None
+                self._clear_takeover_affinity(row)
                 self._clear_storage_state(row)
                 self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
@@ -1196,6 +1198,7 @@ class BrowserRepository:
                 row.takeover_reason = None
                 row.cancel_requested = True
                 row.worker_session_ref = None
+                self._clear_takeover_affinity(row)
                 self._clear_storage_state(row)
                 self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
@@ -1227,6 +1230,7 @@ class BrowserRepository:
                 row.takeover_required = False
                 row.takeover_reason = None
                 row.worker_session_ref = None
+                self._clear_takeover_affinity(row)
                 self._clear_storage_state(row)
                 self._clear_takeover_frame(row)
                 row.updated_at = now
