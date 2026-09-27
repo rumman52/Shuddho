@@ -858,6 +858,7 @@ class BrowserRepository:
             target_url, origin = normalize_browser_target(row.last_url or row.start_url)
             if origin not in set(row.allowed_origins or []):
                 raise CoworkerError("browser_origin_not_allowed", "The takeover target is outside the approved origin.", 409)
+            self._clear_takeover_frame(row)
             sequence = (db.scalar(select(func.max(BrowserCommand.sequence)).where(
                 BrowserCommand.session_id == session_id,
             )) or 0) + 1
@@ -929,6 +930,7 @@ class BrowserRepository:
                 row.cancel_requested = True
                 row.worker_session_ref = None
                 self._clear_storage_state(row)
+                self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
             if row.takeover_reason == "captcha":
                 raise CoworkerError(
@@ -1003,9 +1005,11 @@ class BrowserRepository:
             if aware(row.expires_at) <= utcnow():
                 row.state = "expired"
                 row.takeover_required = False
+                row.takeover_reason = None
                 row.cancel_requested = True
                 row.worker_session_ref = None
                 self._clear_storage_state(row)
+                self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
             row.state = "prepared"
             row.takeover_required = False
@@ -1194,6 +1198,7 @@ class BrowserRepository:
 
             if session.state in TERMINAL_BROWSER_STATES:
                 self._clear_command_secret(command)
+                self._clear_takeover_frame(session)
                 session.worker_session_ref = None
                 return {"action": "stop", "reason": "session_" + session.state}
 
@@ -1251,6 +1256,8 @@ class BrowserRepository:
                     command.finished_at = now
                     command.lease_until = None
                     command.claimed_by = None
+                self._clear_command_secret(command)
+                self._clear_takeover_frame(session)
                 session.worker_session_ref = None
                 raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
             if command.state != "running" or command.claimed_by != worker_id:
