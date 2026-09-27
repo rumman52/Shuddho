@@ -358,8 +358,8 @@ class BrowserRepository:
             "attempts": row.attempts,
             "result": result,
             "created_at": iso(row.created_at),
-            "started_at": iso(row.started_at),
-            "finished_at": iso(row.finished_at),
+            "started_at": iso(row.started_at) if row.started_at else None,
+            "finished_at": iso(row.finished_at) if row.finished_at else None,
         }
 
     def list_commands(self, owner: str, session_id: str) -> list[dict]:
