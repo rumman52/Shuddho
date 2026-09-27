@@ -1179,6 +1179,39 @@ class BrowserRepository:
         now = utcnow()
         with self.sessions.begin() as db:
             self._expire_stale_sessions(db)
+            stale_interactions = db.scalars(
+                select(BrowserCommand)
+                .join(BrowserSession, BrowserSession.id == BrowserCommand.session_id)
+                .where(
+                    BrowserCommand.kind == "takeover_interaction",
+                    BrowserCommand.state == "running",
+                    BrowserCommand.lease_until.is_not(None),
+                    BrowserCommand.lease_until < now,
+                    BrowserSession.state == "takeover",
+                    BrowserSession.takeover_required.is_(True),
+                    BrowserSession.cancel_requested.is_(False),
+                    BrowserSession.expires_at > now,
+                )
+                .with_for_update(skip_locked=True)
+            ).all()
+            for stale in stale_interactions:
+                session = db.get(BrowserSession, stale.session_id)
+                stale.state = "failed"
+                stale.error_code = "takeover_interaction_uncertain"
+                stale.finished_at = now
+                stale.lease_until = None
+                stale.claimed_by = None
+                if session is not None:
+                    session.worker_session_ref = None
+                    session.state = "takeover"
+                    self._clear_takeover_frame(session)
+                    session.updated_at = now
+                    db.add(AuditEvent(
+                        id=str(uuid4()),
+                        owner_id=session.owner_id,
+                        resource_id=session.id,
+                        action="browser_takeover.interaction_uncertain",
+                    ))
             rows = db.scalars(
                 select(BrowserCommand)
                 .join(BrowserSession, BrowserSession.id == BrowserCommand.session_id)
@@ -1199,6 +1232,14 @@ class BrowserRepository:
                         ),
                     ),
                     BrowserCommand.attempts < self.settings.browser_command_max_attempts,
+                    or_(
+                        BrowserCommand.kind != "takeover_interaction",
+                        and_(
+                            BrowserCommand.kind == "takeover_interaction",
+                            BrowserCommand.state == "prepared",
+                            BrowserCommand.attempts == 0,
+                        ),
+                    ),
                     or_(BrowserCommand.lease_until.is_(None), BrowserCommand.lease_until < now),
                 )
                 .order_by(BrowserCommand.created_at)
