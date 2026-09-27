@@ -83,3 +83,16 @@ test("visual takeover frame policy is strictly read-only", () => {
     kind: "takeover_frame", method: "PUT", preparingForm: false, navigationRequest: false, mainFrame: false,
   }), false);
 });
+
+
+test("human takeover interaction may mutate only through its explicit worker command", () => {
+  assert.equal(browserRequestAllowed({
+    kind: "takeover_interaction", method: "GET", preparingForm: false, navigationRequest: true, mainFrame: true,
+  }), true);
+  assert.equal(browserRequestAllowed({
+    kind: "takeover_interaction", method: "POST", preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), true);
+  assert.equal(browserRequestAllowed({
+    kind: "takeover_frame", method: "POST", preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), false);
+});
