@@ -22,6 +22,7 @@ if (WORKER_TOKEN.length < 32) {
 }
 
 let stopping = false;
+const liveTakeovers = new Map();
 process.on("SIGTERM", () => { stopping = true; });
 process.on("SIGINT", () => { stopping = true; });
 
@@ -55,7 +56,7 @@ async function validateHost(commandId, host) {
   });
 }
 
-async function createPinnedProxy(command, evidence) {
+async function createPinnedProxy(state) {
   const sockets = new Set();
   const server = http.createServer((_req, res) => {
     res.writeHead(403, { "Content-Type": "text/plain", "Connection": "close" });
@@ -65,9 +66,10 @@ async function createPinnedProxy(command, evidence) {
   server.on("connect", async (req, clientSocket, head) => {
     let target;
     try {
+      if (!state.commandId || !state.evidence) throw new Error("browser_command_not_active");
       target = parseConnectAuthority(req.url || "");
-      const checked = await validateHost(command.id, target.host);
-      evidence[checked.hostname] = checked.resolved_ips;
+      const checked = await validateHost(state.commandId, target.host);
+      state.evidence[checked.hostname] = checked.resolved_ips;
       const pinnedIp = checked.resolved_ips[0];
       const upstream = net.connect({ host: pinnedIp, port: 443 });
       sockets.add(upstream);
@@ -97,12 +99,26 @@ async function createPinnedProxy(command, evidence) {
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("proxy_bind_failed");
+  function closeSockets() {
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
+  }
   return {
     server,
     url: `http://127.0.0.1:${address.port}`,
+    setCommand(commandId, evidence) {
+      state.commandId = commandId;
+      state.evidence = evidence;
+    },
+    pause() {
+      state.commandId = null;
+      state.evidence = null;
+      closeSockets();
+    },
     destroy() {
-      for (const socket of sockets) socket.destroy();
-      sockets.clear();
+      state.commandId = null;
+      state.evidence = null;
+      closeSockets();
     },
   };
 }
