@@ -451,6 +451,7 @@ def complete_browser_command(command_id: UUID, payload: BrowserWorkerObservation
             "resolved_ips": payload.resolved_ips,
             "prepared_fields": payload.prepared_fields,
             "submission_performed": payload.submission_performed,
+            "storage_state": payload.storage_state,
         },
     )
 
