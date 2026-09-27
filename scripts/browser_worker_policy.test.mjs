@@ -67,3 +67,19 @@ test("browser takeover policy permits password and OTP fields but not unsafe con
   assert.equal(takeoverFieldPolicy({ tag: "input", type: "file", autocomplete: "", disabled: false, readOnly: false }), "not_editable");
   assert.equal(takeoverFieldPolicy({ tag: "input", type: "hidden", autocomplete: "", disabled: false, readOnly: false }), "not_editable");
 });
+
+
+test("visual takeover frame policy is strictly read-only", () => {
+  assert.equal(browserRequestAllowed({
+    kind: "takeover_frame", method: "GET", preparingForm: false, navigationRequest: true, mainFrame: true,
+  }), true);
+  assert.equal(browserRequestAllowed({
+    kind: "takeover_frame", method: "HEAD", preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), true);
+  assert.equal(browserRequestAllowed({
+    kind: "takeover_frame", method: "POST", preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), false);
+  assert.equal(browserRequestAllowed({
+    kind: "takeover_frame", method: "PUT", preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), false);
+});
