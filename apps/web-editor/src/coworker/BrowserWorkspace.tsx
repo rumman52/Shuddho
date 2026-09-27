@@ -18,6 +18,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
   const [takeoverField, setTakeoverField] = useState("");
   const [takeoverValue, setTakeoverValue] = useState("");
   const [takeoverSubmit, setTakeoverSubmit] = useState(true);
+  const [takeoverFrameUrl, setTakeoverFrameUrl] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -60,6 +61,26 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
     }, 2000);
     return () => window.clearInterval(timer);
   }, [client, selectedId, selected?.state]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl = "";
+    if (!selectedId || !selected?.takeover_required || !selected.execution.takeover_frame_available) {
+      setTakeoverFrameUrl("");
+      return () => controller.abort();
+    }
+    client.browserTakeoverFrame(selectedId, controller.signal).then(blob => {
+      if (controller.signal.aborted) return;
+      objectUrl = URL.createObjectURL(blob);
+      setTakeoverFrameUrl(objectUrl);
+    }).catch(error => {
+      if (!controller.signal.aborted) setError(errorMessage(error));
+    });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [client, selectedId, selected?.takeover_required, selected?.execution.takeover_frame_version]);
 
   async function createSession(event: FormEvent) {
     event.preventDefault();
@@ -106,7 +127,15 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
 
   async function startTakeover() {
     if (!selected) return;
-    await act("takeover", () => client.requestBrowserTakeover(selected.id, takeoverReason), "Browser execution paused for supervised user takeover.");
+    await act("takeover", async () => {
+      await client.requestBrowserTakeover(selected.id, takeoverReason);
+      await client.requestBrowserTakeoverFrame(selected.id);
+    }, "Browser execution paused for supervised user takeover. A read-only visual frame is being prepared.");
+  }
+
+  async function refreshTakeoverFrame() {
+    if (!selected) return;
+    await act("takeover-frame", () => client.requestBrowserTakeoverFrame(selected.id), "A fresh read-only takeover frame is being prepared.");
   }
 
   async function submitTakeoverInput(event: FormEvent) {
@@ -159,7 +188,15 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
           <p className="cw-fineprint">Browser cookies and local storage are kept server-side in encrypted, owner-bound session state. They are never shown in this workspace and are destroyed when the session is cancelled or expires.</p>
           {selected.takeover_required ? <div>
             <p className="cw-fineprint">Takeover reason: {selected.takeover_reason || "sensitive input"}. Secrets entered below are sent only to the authenticated backend, encrypted at rest, delivered to the isolated browser worker, and omitted from browser history.</p>
-            {selected.takeover_reason === "captcha" ? <p className="cw-fineprint">CAPTCHA still requires a future interactive browser surface. Secret injection is intentionally unavailable for CAPTCHA challenges.</p> :
+            <div className="cw-browser-frame">
+              {takeoverFrameUrl ? <img src={takeoverFrameUrl} alt="Read-only visual snapshot of the supervised browser page" /> :
+                <div className="cw-browser-frame-empty">Visual takeover frame is being prepared.</div>}
+              <div className="cw-browser-frame-actions">
+                <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => void refreshTakeoverFrame()}>{busy === "takeover-frame" ? "Refreshing…" : "Refresh visual frame"}</button>
+                <span>Read-only snapshot. The model does not receive the image and this view cannot click, type, or approve actions.</span>
+              </div>
+            </div>
+            {selected.takeover_reason === "captcha" ? <p className="cw-fineprint">You can inspect the CAPTCHA/challenge here, but solving or interacting with it still requires a future direct interactive takeover surface. Secret injection remains unavailable for CAPTCHA challenges.</p> :
             <form onSubmit={submitTakeoverInput}>
               <label>Find sensitive field by<select value={takeoverBy} onChange={event => setTakeoverBy(event.target.value as "label" | "name")}><option value="label">Exact label</option><option value="name">Exact name attribute</option></select></label>
               <label>Field identifier<input maxLength={160} required value={takeoverField} onChange={event => setTakeoverField(event.target.value)} /></label>
