@@ -343,6 +343,16 @@ def get_browser_session(session_id: UUID, identity: Identity, services: Services
     return services.browser.get(identity.account_id, str(session_id))
 
 
+@router.get("/browser-sessions/{session_id}/commands")
+def list_browser_commands(session_id: UUID, identity: Identity, services: Services):
+    return {
+        "commands": services.browser.list_commands(
+            identity.account_id,
+            str(session_id),
+        )
+    }
+
+
 @router.post("/browser-sessions/{session_id}/navigate", status_code=202)
 def prepare_browser_navigation(
     session_id: UUID,
