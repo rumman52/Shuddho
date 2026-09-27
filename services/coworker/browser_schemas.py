@@ -56,6 +56,10 @@ class BrowserWorkerClaim(BrowserWorkerIdentity):
     limit: int = Field(default=1, ge=1, le=5)
 
 
+class BrowserWorkerTakeoverHeartbeat(BrowserWorkerIdentity):
+    session_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
 class BrowserWorkerNetworkCheck(BrowserWorkerIdentity):
     url: str = Field(min_length=8, max_length=4096)
     resolved_ips: list[str] = Field(min_length=1, max_length=16)
