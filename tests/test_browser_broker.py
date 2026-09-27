@@ -680,3 +680,46 @@ def test_browser_form_completion_rejects_submission_or_mismatched_evidence(conta
             },
         )
     assert submitted.value.code == "browser_form_submission_blocked"
+
+
+def test_browser_command_history_is_owner_scoped_and_sanitized(container, signed_client):
+    enable_browser(container)
+    owner = account(container)
+    bob = account(container, "browser-history-bob")
+    session = container.browser.create(
+        owner,
+        BrowserSessionCreate(purpose="form_prepare", start_url="https://example.com/form"),
+        "browser-history-session",
+    )[0]
+    command = container.browser.prepare_form(
+        owner,
+        session["id"],
+        BrowserFormPrepareCreate(
+            url="https://example.com/form",
+            fields=[{"by": "label", "field": "City", "value": "Dhaka"}],
+        ),
+    )
+
+    history = container.browser.list_commands(owner, session["id"])
+    assert history[0]["id"] == command["id"]
+    assert "payload" not in history[0]
+    assert "Dhaka" not in repr(history[0])
+
+    with pytest.raises(CoworkerError) as denied:
+        container.browser.list_commands(bob, session["id"])
+    assert denied.value.status_code == 404
+
+    client, headers = signed_client
+    allowed = client.get(
+        f'/api/v1/browser-sessions/{session["id"]}/commands',
+        headers=headers(),
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["commands"][0]["id"] == command["id"]
+    assert "Dhaka" not in allowed.text
+
+    denied_api = client.get(
+        f'/api/v1/browser-sessions/{session["id"]}/commands',
+        headers=headers("browser-history-bob"),
+    )
+    assert denied_api.status_code == 404

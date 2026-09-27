@@ -83,6 +83,22 @@ export type ConnectorReadSubscription = {
 };
 
 
+export type BrowserSessionState = "prepared" | "queued" | "running" | "takeover" | "cancelled" | "completed" | "expired" | "failed";
+export type BrowserSession = {
+  id: string; purpose: "research" | "form_prepare"; start_url: string; allowed_origins: string[];
+  state: BrowserSessionState; takeover_required: boolean; cancel_requested: boolean;
+  last_url: string | null; last_title: string | null; error_code: string | null;
+  created_at: string; updated_at: string; expires_at: string;
+  execution: { worker_attached: boolean; network_revalidation_required: boolean; arbitrary_script_execution: boolean; downloads_enabled: boolean };
+};
+export type BrowserCommand = {
+  id: string; sequence: number; kind: "navigate" | "prepare_form"; target_url: string | null;
+  state: string; error_code: string | null; attempts: number;
+  result: { final_url?: string; title?: string | null; redirect_chain?: string[]; prepared_fields?: string[]; submission_performed?: boolean };
+  created_at: string; started_at: string | null; finished_at: string | null;
+};
+export type BrowserFormField = { by: "label" | "name"; field: string; value: string };
+
 export type AgentNotification = {
   id: string; automation_id: string | null; occurrence_id: string | null; kind: string; title: string; message: string;
   state: "delivered" | "read"; visible_at: string; read_at: string | null; created_at: string;
@@ -270,6 +286,24 @@ export class CoworkerClient {
   connectorReadSubscription(id: string, signal?: AbortSignal) {
     return this.json<{ subscription: ConnectorReadSubscription | null }>(`/api/v1/connector-read-grants/${identifier(id)}/subscription`, { signal });
   }
+
+  browserSessions(signal?: AbortSignal) { return this.json<{ enabled: boolean; sessions: BrowserSession[] }>("/api/v1/browser-sessions", { signal }); }
+  browserSession(id: string, signal?: AbortSignal) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}`, { signal }); }
+  createBrowserSession(purpose: "research" | "form_prepare", startUrl: string, key: string) {
+    return this.json<BrowserSession>("/api/v1/browser-sessions", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ purpose, start_url: startUrl }) });
+  }
+  browserCommands(id: string, signal?: AbortSignal) { return this.json<{ commands: BrowserCommand[] }>(`/api/v1/browser-sessions/${identifier(id)}/commands`, { signal }); }
+  navigateBrowser(id: string, url: string) {
+    return this.json<BrowserCommand>(`/api/v1/browser-sessions/${identifier(id)}/navigate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+  }
+  prepareBrowserForm(id: string, url: string, fields: BrowserFormField[]) {
+    return this.json<BrowserCommand>(`/api/v1/browser-sessions/${identifier(id)}/prepare-form`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, fields }) });
+  }
+  requestBrowserTakeover(id: string, reason: "login" | "mfa" | "captcha" | "sensitive_input") {
+    return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}/takeover`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
+  }
+  resumeBrowser(id: string) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}/resume`, { method: "POST" }); }
+  cancelBrowser(id: string) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}`, { method: "DELETE" }); }
 
   actionRecipients(signal?: AbortSignal) { return this.json<{ enabled: boolean; recipients: ActionRecipient[] }>("/api/v1/action-recipients", { signal }); }
   createActionRecipient(name: string, email: string) {

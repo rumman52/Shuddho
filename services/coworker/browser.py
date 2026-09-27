@@ -340,6 +340,43 @@ class BrowserRepository:
                 raise not_found()
             return self._dto(row)
 
+    @staticmethod
+    def _command_dto(row: BrowserCommand) -> dict:
+        raw_result = dict(row.result or {})
+        result = {
+            key: raw_result[key]
+            for key in ("final_url", "title", "redirect_chain", "prepared_fields", "submission_performed")
+            if key in raw_result
+        }
+        return {
+            "id": row.id,
+            "sequence": row.sequence,
+            "kind": row.kind,
+            "target_url": row.target_url,
+            "state": row.state,
+            "error_code": row.error_code,
+            "attempts": row.attempts,
+            "result": result,
+            "created_at": iso(row.created_at),
+            "started_at": iso(row.started_at) if row.started_at else None,
+            "finished_at": iso(row.finished_at) if row.finished_at else None,
+        }
+
+    def list_commands(self, owner: str, session_id: str) -> list[dict]:
+        self._require_enabled()
+        with self.sessions() as db:
+            session = db.scalar(select(BrowserSession.id).where(
+                BrowserSession.id == session_id,
+                BrowserSession.owner_id == owner,
+            ))
+            if session is None:
+                raise not_found()
+            rows = db.scalars(select(BrowserCommand).where(
+                BrowserCommand.session_id == session_id,
+                BrowserCommand.owner_id == owner,
+            ).order_by(BrowserCommand.sequence.desc()).limit(50)).all()
+            return [self._command_dto(row) for row in rows]
+
     def prepare_navigation(self, owner: str, session_id: str, request: BrowserNavigateCreate) -> dict:
         self._require_enabled()
         target_url, origin = normalize_browser_target(request.url)
