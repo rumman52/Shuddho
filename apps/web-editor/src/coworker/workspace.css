@@ -171,8 +171,13 @@
 .cw-history strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; font-weight: 500; color: #655270; }
 .cw-history small { display: block; margin-top: 6px; font-size: 9px; color: #a194ac; }
 .cw-browser-frame { margin: 14px 0 18px; border: 1px solid #e3dceb; border-radius: 10px; overflow: hidden; background: #f8f6fb; }
-.cw-browser-frame img { display: block; width: 100%; height: auto; max-height: 460px; object-fit: contain; background: #fff; }
+.cw-browser-frame-surface { display: block; width: fit-content; max-width: 100%; margin: 0 auto; padding: 0; border: 0; background: #fff; cursor: crosshair; }
+.cw-browser-frame-surface:disabled { cursor: wait; opacity: .82; }
+.cw-browser-frame-surface:focus-visible { outline: 2px solid #776282; outline-offset: -2px; }
+.cw-browser-frame img { display: block; width: auto; max-width: 100%; height: auto; max-height: 460px; object-fit: contain; background: #fff; }
 .cw-browser-frame-empty { min-height: 180px; display: grid; place-items: center; padding: 24px; color: #8c8197; font-size: 11px; text-align: center; }
+.cw-browser-frame-keyboard { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-top: 1px solid #e3dceb; background: #fbfafc; }
+.cw-browser-frame-keyboard .cw-text-button { min-width: 64px; }
 .cw-browser-frame-actions { display: flex; align-items: center; gap: 12px; padding: 12px; border-top: 1px solid #e3dceb; }
 .cw-browser-frame-actions span { color: #8c8197; font-size: 10px; line-height: 1.6; }
 @media (max-width: 900px) {
@@ -197,6 +202,7 @@
   .cw-header h1 { font-size: 28px; }
   .cw-account { flex-direction: row; align-items: center; gap: 15px; }
   .cw-layout { grid-template-columns: 1fr; }
+  .cw-browser-frame-keyboard { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cw-browser-frame-actions { align-items: stretch; flex-direction: column; }
   .cw-empty { min-height: 330px; padding: 30px 20px; }
 }

@@ -1,5 +1,6 @@
 import http from "node:http";
 import net from "node:net";
+import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
@@ -177,6 +178,67 @@ async function fillTakeoverField(page, spec) {
   }
 }
 
+async function captureTakeoverFrame(page) {
+  const frame = await page.screenshot({
+    type: "jpeg",
+    quality: 55,
+    fullPage: false,
+    animations: "disabled",
+    caret: "hide",
+  });
+  if (!frame?.length || frame.length > 350000) {
+    throw Object.assign(new Error("takeover_frame_too_large"), { code: "takeover_frame_too_large" });
+  }
+  return frame;
+}
+
+function frameSha256(frame) {
+  return createHash("sha256").update(frame).digest("hex");
+}
+
+async function performTakeoverInteraction(page, policy, armInteraction) {
+  if (policy?.human_only !== true || !policy?.interaction || typeof policy?.expected_frame_sha256 !== "string") {
+    throw Object.assign(new Error("takeover_context_missing"), { code: "takeover_context_missing" });
+  }
+  const before = await captureTakeoverFrame(page);
+  if (frameSha256(before) !== policy.expected_frame_sha256) {
+    throw Object.assign(new Error("takeover_frame_stale"), { code: "takeover_frame_stale" });
+  }
+  const interaction = policy.interaction;
+  armInteraction();
+  if (interaction.kind === "click") {
+    const viewport = page.viewportSize();
+    if (
+      !viewport
+      || !Number.isFinite(interaction.x)
+      || !Number.isFinite(interaction.y)
+      || interaction.x < 0 || interaction.x > 1
+      || interaction.y < 0 || interaction.y > 1
+    ) {
+      throw Object.assign(new Error("takeover_interaction_failed"), { code: "takeover_interaction_failed" });
+    }
+    await page.mouse.click(
+      Math.max(0, Math.min(viewport.width - 1, interaction.x * viewport.width)),
+      Math.max(0, Math.min(viewport.height - 1, interaction.y * viewport.height)),
+    );
+  } else if (interaction.kind === "key") {
+    const allowedKeys = new Set(["Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+    if (!allowedKeys.has(interaction.key)) {
+      throw Object.assign(new Error("takeover_interaction_failed"), { code: "takeover_interaction_failed" });
+    }
+    await page.keyboard.press(interaction.key);
+  } else {
+    throw Object.assign(new Error("takeover_interaction_failed"), { code: "takeover_interaction_failed" });
+  }
+  await page.waitForTimeout(250);
+  await page.waitForLoadState("domcontentloaded", { timeout: 1500 }).catch(() => {});
+  try {
+    return await captureTakeoverFrame(page);
+  } catch {
+    throw Object.assign(new Error("takeover_interaction_uncertain"), { code: "takeover_interaction_uncertain" });
+  }
+}
+
 async function fillPreparedField(page, spec) {
   const locator = await resolveFormField(page, spec);
   const metadata = await locator.evaluate((element) => ({
@@ -221,6 +283,7 @@ async function execute(command) {
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
 
     let preparingForm = false;
+    let humanInteractionArmed = false;
     let formMutationBlocked = false;
     await page.route("**/*", async (route) => {
       const request = route.request();
@@ -228,6 +291,7 @@ async function execute(command) {
         kind: command.kind,
         method: request.method(),
         preparingForm,
+        humanInteractionArmed,
         navigationRequest: request.isNavigationRequest(),
         mainFrame: request.frame() === page.mainFrame(),
       });
@@ -276,20 +340,17 @@ async function execute(command) {
       }
     } else if (command.kind === "takeover_frame") {
       try {
-        const frame = await page.screenshot({
-          type: "jpeg",
-          quality: 55,
-          fullPage: false,
-          animations: "disabled",
-          caret: "hide",
-        });
-        if (!frame?.length || frame.length > 350000) {
-          throw Object.assign(new Error("takeover_frame_too_large"), { code: "takeover_frame_too_large" });
-        }
-        takeoverFrameB64 = frame.toString("base64");
+        takeoverFrameB64 = (await captureTakeoverFrame(page)).toString("base64");
       } catch (error) {
         if (error?.code === "takeover_frame_too_large") throw error;
         throw Object.assign(new Error("takeover_frame_capture_failed"), { code: "takeover_frame_capture_failed" });
+      }
+    } else if (command.kind === "takeover_interaction") {
+      try {
+        takeoverFrameB64 = (await performTakeoverInteraction(page, command.policy, () => { humanInteractionArmed = true; })).toString("base64");
+      } catch (error) {
+        if (["takeover_frame_too_large", "takeover_frame_stale", "takeover_context_missing", "takeover_interaction_failed"].includes(error?.code)) throw error;
+        throw Object.assign(new Error("takeover_interaction_uncertain"), { code: "takeover_interaction_uncertain" });
       }
     } else if (command.kind !== "navigate") {
       throw Object.assign(new Error("unsupported_site"), { code: "unsupported_site" });
@@ -317,6 +378,7 @@ async function execute(command) {
       storage_state: storageState,
       takeover_frame_b64: takeoverFrameB64,
       takeover_frame_content_type: takeoverFrameB64 ? "image/jpeg" : null,
+      interaction_performed: command.kind === "takeover_interaction",
     });
   } catch (error) {
     const passThrough = new Set([
@@ -327,6 +389,10 @@ async function execute(command) {
       "form_mutation_blocked",
       "takeover_frame_too_large",
       "takeover_frame_capture_failed",
+      "takeover_frame_stale",
+      "takeover_context_missing",
+      "takeover_interaction_failed",
+      "takeover_interaction_uncertain",
       "unsupported_site",
     ]);
     const code = ["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"]

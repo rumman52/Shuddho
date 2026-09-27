@@ -28,7 +28,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTra
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
-from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserTakeoverInputCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation
+from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserTakeoverInputCreate, BrowserTakeoverInteractionCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -429,6 +429,20 @@ def get_browser_takeover_frame(
     )
 
 
+@router.post("/browser-sessions/{session_id}/takeover-interaction", status_code=202)
+def prepare_browser_takeover_interaction(
+    session_id: UUID,
+    payload: BrowserTakeoverInteractionCreate,
+    identity: Identity,
+    services: Services,
+):
+    return services.browser.prepare_takeover_interaction(
+        identity.account_id,
+        str(session_id),
+        payload,
+    )
+
+
 @router.post("/browser-sessions/{session_id}/takeover-input", status_code=202)
 def prepare_browser_takeover_input(
     session_id: UUID,
@@ -502,6 +516,7 @@ def complete_browser_command(command_id: UUID, payload: BrowserWorkerObservation
             "storage_state": payload.storage_state,
             "takeover_frame_b64": payload.takeover_frame_b64,
             "takeover_frame_content_type": payload.takeover_frame_content_type,
+            "interaction_performed": payload.interaction_performed,
         },
     )
 

@@ -40,6 +40,14 @@ class BrowserTakeoverInputCreate(BrowserModel):
     submit: bool = True
 
 
+class BrowserTakeoverInteractionCreate(BrowserModel):
+    frame_version: int = Field(ge=1)
+    kind: Literal["click", "key"]
+    x: float | None = Field(default=None, ge=0.0, le=1.0)
+    y: float | None = Field(default=None, ge=0.0, le=1.0)
+    key: Literal["Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] | None = None
+
+
 class BrowserWorkerIdentity(BrowserModel):
     worker_id: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
 
@@ -63,6 +71,7 @@ class BrowserWorkerObservation(BrowserWorkerIdentity):
     storage_state: dict | None = None
     takeover_frame_b64: str | None = Field(default=None, max_length=500000)
     takeover_frame_content_type: Literal["image/jpeg"] | None = None
+    interaction_performed: bool = False
 
 
 class BrowserWorkerFailure(BrowserWorkerIdentity):
@@ -79,4 +88,8 @@ class BrowserWorkerFailure(BrowserWorkerIdentity):
         "form_mutation_blocked",
         "takeover_frame_too_large",
         "takeover_frame_capture_failed",
+        "takeover_frame_stale",
+        "takeover_context_missing",
+        "takeover_interaction_failed",
+        "takeover_interaction_uncertain",
     ]
