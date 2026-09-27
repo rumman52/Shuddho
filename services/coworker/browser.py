@@ -19,6 +19,7 @@ from .repository import aware, iso, not_found
 TERMINAL_BROWSER_STATES = {"cancelled", "completed", "expired", "failed"}
 ACTIVE_BROWSER_STATES = {"prepared", "queued", "running", "takeover"}
 TAKEOVER_COMMAND_KINDS = {"takeover_input", "takeover_frame", "takeover_interaction"}
+TAKEOVER_AFFINITY_KINDS = {"takeover_frame", "takeover_interaction"}
 BLOCKED_HOST_SUFFIXES = (
     ".localhost",
     ".local",
@@ -336,6 +337,63 @@ class BrowserRepository:
         row.takeover_frame_updated_at = None
 
     @staticmethod
+    def _clear_takeover_affinity(row: BrowserSession) -> None:
+        row.takeover_worker_ref = None
+        row.takeover_worker_lease_until = None
+
+    @staticmethod
+    def _takeover_affinity_active(row: BrowserSession, now) -> bool:
+        return bool(
+            row.takeover_worker_ref
+            and row.takeover_worker_lease_until
+            and aware(row.takeover_worker_lease_until) > now
+        )
+
+    def _expire_takeover_affinities(self, db, now, owner: str | None = None) -> None:
+        query = select(BrowserSession).where(
+            BrowserSession.takeover_required.is_(True),
+            BrowserSession.state == "takeover",
+            BrowserSession.takeover_worker_ref.is_not(None),
+            BrowserSession.takeover_worker_lease_until.is_not(None),
+            BrowserSession.takeover_worker_lease_until <= now,
+        )
+        if owner is not None:
+            query = query.where(BrowserSession.owner_id == owner)
+        rows = db.scalars(query.with_for_update()).all()
+        for row in rows:
+            worker_ref = row.takeover_worker_ref
+            self._clear_takeover_affinity(row)
+            row.worker_session_ref = None
+            self._clear_takeover_affinity(row)
+            self._clear_takeover_frame(row)
+            row.updated_at = now
+            for command in db.scalars(select(BrowserCommand).where(
+                BrowserCommand.session_id == row.id,
+                BrowserCommand.kind.in_(tuple(TAKEOVER_AFFINITY_KINDS)),
+                BrowserCommand.state.in_(("prepared", "running")),
+            ).with_for_update()).all():
+                requires_live = bool((command.payload or {}).get("require_live_context")) or command.kind == "takeover_interaction"
+                if not requires_live:
+                    continue
+                was_running = command.state == "running"
+                command.state = "failed"
+                command.error_code = (
+                    "takeover_interaction_uncertain"
+                    if was_running
+                    else "takeover_context_missing"
+                )
+                command.finished_at = now
+                command.lease_until = None
+                command.claimed_by = None
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=row.owner_id,
+                resource_id=row.id,
+                action="browser_takeover.affinity_expired",
+                metadata={"worker_ref": worker_ref} if worker_ref else {},
+            ))
+
+    @staticmethod
     def _secret_binding(command: BrowserCommand) -> str:
         return f"browser-takeover:{command.owner_id}:{command.session_id}:{command.id}"
 
@@ -402,6 +460,7 @@ class BrowserRepository:
             row.takeover_reason = None
             row.cancel_requested = True
             row.worker_session_ref = None
+            self._clear_takeover_affinity(row)
             row.updated_at = now
             self._clear_storage_state(row)
             self._clear_takeover_frame(row)
@@ -453,6 +512,12 @@ class BrowserRepository:
                 "takeover_frame_available": bool(row.takeover_frame_sealed),
                 "takeover_frame_version": int(row.takeover_frame_version or 0),
                 "takeover_frame_updated_at": iso(row.takeover_frame_updated_at) if row.takeover_frame_updated_at else None,
+                "takeover_live_context_available": BrowserRepository._takeover_affinity_active(row, utcnow()),
+                "takeover_live_context_expires_at": (
+                    iso(row.takeover_worker_lease_until)
+                    if row.takeover_worker_lease_until and BrowserRepository._takeover_affinity_active(row, utcnow())
+                    else None
+                ),
             },
         }
 
@@ -586,6 +651,7 @@ class BrowserRepository:
         self._require_enabled()
         with self.sessions.begin() as db:
             self._expire_stale_sessions(db, owner)
+            self._expire_takeover_affinities(db, utcnow(), owner)
             rows = db.scalars(select(BrowserSession).where(
                 BrowserSession.owner_id == owner,
             ).order_by(BrowserSession.created_at.desc()).limit(50)).all()
@@ -595,6 +661,7 @@ class BrowserRepository:
         self._require_enabled()
         with self.sessions.begin() as db:
             self._expire_stale_sessions(db, owner)
+            self._expire_takeover_affinities(db, utcnow(), owner)
             row = db.scalar(select(BrowserSession).where(
                 BrowserSession.id == session_id,
                 BrowserSession.owner_id == owner,
@@ -839,6 +906,7 @@ class BrowserRepository:
         self._require_enabled()
         now = utcnow()
         with self.sessions.begin() as db:
+            self._expire_takeover_affinities(db, now, owner)
             row = db.scalar(select(BrowserSession).where(
                 BrowserSession.id == session_id,
                 BrowserSession.owner_id == owner,
@@ -853,6 +921,7 @@ class BrowserRepository:
                 row.takeover_reason = None
                 row.cancel_requested = True
                 row.worker_session_ref = None
+                self._clear_takeover_affinity(row)
                 self._clear_storage_state(row)
                 self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
@@ -884,6 +953,7 @@ class BrowserRepository:
                     "allow_downloads": False,
                     "allow_script_injection": False,
                     "allow_mutation": False,
+                    "require_live_context": self._takeover_affinity_active(row, now),
                 },
                 state="prepared",
             )
@@ -944,6 +1014,13 @@ class BrowserRepository:
                 self._clear_storage_state(row)
                 self._clear_takeover_frame(row)
                 raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
+            if not self._takeover_affinity_active(row, now):
+                self._clear_takeover_frame(row)
+                raise CoworkerError(
+                    "browser_takeover_context_missing",
+                    "The live supervised browser context expired. Refresh the visual takeover frame before interacting.",
+                    409,
+                )
             if (
                 not row.takeover_frame_sealed
                 or not row.takeover_frame_sha256
@@ -1125,6 +1202,7 @@ class BrowserRepository:
             row.state = "prepared"
             row.takeover_required = False
             row.takeover_reason = None
+            self._clear_takeover_affinity(row)
             self._clear_takeover_frame(row)
             row.updated_at = utcnow()
             db.add(AuditEvent(
@@ -1172,6 +1250,37 @@ class BrowserRepository:
 
     # Trusted isolated-worker boundary. These methods are intentionally not
     # mounted on the end-user API.
+    def heartbeat_takeover_contexts(self, worker_id: str, session_ids: list[str]) -> dict:
+        self._require_enabled()
+        if not worker_id or len(worker_id) > 64:
+            raise CoworkerError("browser_worker_invalid", "The browser worker identity is invalid.", 403)
+        now = utcnow()
+        keep: list[str] = []
+        release: list[str] = []
+        unique_ids = list(dict.fromkeys(session_ids))[:8]
+        with self.sessions.begin() as db:
+            self._expire_stale_sessions(db)
+            self._expire_takeover_affinities(db, now)
+            for session_id in unique_ids:
+                row = db.get(BrowserSession, session_id)
+                if (
+                    row is None
+                    or row.state != "takeover"
+                    or not row.takeover_required
+                    or row.cancel_requested
+                    or aware(row.expires_at) <= now
+                    or row.takeover_worker_ref != worker_id
+                ):
+                    release.append(session_id)
+                    continue
+                row.takeover_worker_lease_until = min(
+                    aware(row.expires_at),
+                    now + timedelta(seconds=self.settings.browser_takeover_affinity_seconds),
+                )
+                row.updated_at = now
+                keep.append(session_id)
+        return {"keep_session_ids": keep, "release_session_ids": release}
+
     def claim_commands(self, worker_id: str, limit: int = 5) -> list[dict]:
         self._require_enabled()
         if not worker_id or len(worker_id) > 64:
@@ -1179,39 +1288,7 @@ class BrowserRepository:
         now = utcnow()
         with self.sessions.begin() as db:
             self._expire_stale_sessions(db)
-            stale_interactions = db.scalars(
-                select(BrowserCommand)
-                .join(BrowserSession, BrowserSession.id == BrowserCommand.session_id)
-                .where(
-                    BrowserCommand.kind == "takeover_interaction",
-                    BrowserCommand.state == "running",
-                    BrowserCommand.lease_until.is_not(None),
-                    BrowserCommand.lease_until < now,
-                    BrowserSession.state == "takeover",
-                    BrowserSession.takeover_required.is_(True),
-                    BrowserSession.cancel_requested.is_(False),
-                    BrowserSession.expires_at > now,
-                )
-                .with_for_update(skip_locked=True)
-            ).all()
-            for stale in stale_interactions:
-                session = db.get(BrowserSession, stale.session_id)
-                stale.state = "failed"
-                stale.error_code = "takeover_interaction_uncertain"
-                stale.finished_at = now
-                stale.lease_until = None
-                stale.claimed_by = None
-                if session is not None:
-                    session.worker_session_ref = None
-                    session.state = "takeover"
-                    self._clear_takeover_frame(session)
-                    session.updated_at = now
-                    db.add(AuditEvent(
-                        id=str(uuid4()),
-                        owner_id=session.owner_id,
-                        resource_id=session.id,
-                        action="browser_takeover.interaction_uncertain",
-                    ))
+            self._expire_takeover_affinities(db, now)
             rows = db.scalars(
                 select(BrowserCommand)
                 .join(BrowserSession, BrowserSession.id == BrowserCommand.session_id)
@@ -1230,6 +1307,13 @@ class BrowserRepository:
                             BrowserSession.state == "takeover",
                             BrowserCommand.kind.in_(tuple(TAKEOVER_COMMAND_KINDS)),
                         ),
+                    ),
+                    or_(
+                        BrowserCommand.kind.not_in(tuple(TAKEOVER_AFFINITY_KINDS)),
+                        BrowserSession.takeover_worker_ref.is_(None),
+                        BrowserSession.takeover_worker_ref == worker_id,
+                        BrowserSession.takeover_worker_lease_until.is_(None),
+                        BrowserSession.takeover_worker_lease_until < now,
                     ),
                     BrowserCommand.attempts < self.settings.browser_command_max_attempts,
                     or_(
@@ -1259,6 +1343,27 @@ class BrowserRepository:
                 if earlier_pending:
                     continue
                 session = db.get(BrowserSession, command.session_id)
+                if command.kind in TAKEOVER_AFFINITY_KINDS:
+                    active_affinity = self._takeover_affinity_active(session, now)
+                    requires_live = bool((command.payload or {}).get("require_live_context")) or command.kind == "takeover_interaction"
+                    if active_affinity and session.takeover_worker_ref != worker_id:
+                        continue
+                    if not active_affinity and requires_live:
+                        command.state = "failed"
+                        command.error_code = "takeover_context_missing"
+                        command.finished_at = now
+                        command.lease_until = None
+                        command.claimed_by = None
+                        self._clear_takeover_frame(session)
+                        self._clear_takeover_affinity(session)
+                        session.updated_at = now
+                        continue
+                    if not active_affinity:
+                        session.takeover_worker_ref = worker_id
+                    session.takeover_worker_lease_until = min(
+                        aware(session.expires_at),
+                        now + timedelta(seconds=self.settings.browser_takeover_affinity_seconds),
+                    )
                 command.state = "running"
                 command.attempts += 1
                 command.claimed_by = worker_id
@@ -1337,6 +1442,7 @@ class BrowserRepository:
                 session.takeover_reason = None
                 session.worker_session_ref = None
                 self._clear_command_secret(command)
+                self._clear_takeover_affinity(session)
                 self._clear_storage_state(session)
                 self._clear_takeover_frame(session)
                 session.updated_at = now
@@ -1350,6 +1456,7 @@ class BrowserRepository:
 
             if session.state in TERMINAL_BROWSER_STATES:
                 self._clear_command_secret(command)
+                self._clear_takeover_affinity(session)
                 self._clear_takeover_frame(session)
                 session.worker_session_ref = None
                 return {"action": "stop", "reason": "session_" + session.state}
@@ -1364,6 +1471,17 @@ class BrowserRepository:
                     "browser_worker_claim_invalid",
                     "This browser command is not actively owned by this worker.",
                     409,
+                )
+            if command.kind in TAKEOVER_AFFINITY_KINDS:
+                if session.takeover_worker_ref != worker_id:
+                    raise CoworkerError(
+                        "browser_takeover_worker_mismatch",
+                        "This live takeover context belongs to another browser worker.",
+                        409,
+                    )
+                session.takeover_worker_lease_until = min(
+                    aware(session.expires_at),
+                    now + timedelta(seconds=self.settings.browser_takeover_affinity_seconds),
                 )
             return {
                 "action": "continue",
@@ -1409,15 +1527,23 @@ class BrowserRepository:
                     command.lease_until = None
                     command.claimed_by = None
                 self._clear_command_secret(command)
+                self._clear_takeover_affinity(session)
                 self._clear_takeover_frame(session)
                 session.worker_session_ref = None
                 raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
             if command.state != "running" or command.claimed_by != worker_id:
                 raise CoworkerError("browser_worker_claim_invalid", "This browser command is not owned by this worker.", 409)
+            if command.kind in TAKEOVER_AFFINITY_KINDS and session.takeover_worker_ref != worker_id:
+                raise CoworkerError(
+                    "browser_takeover_worker_mismatch",
+                    "This live takeover context belongs to another browser worker.",
+                    409,
+                )
             if aware(session.expires_at) <= now:
                 session.state = "expired"
                 command.state = "failed"
                 self._clear_command_secret(command)
+                self._clear_takeover_affinity(session)
                 self._clear_storage_state(session)
                 self._clear_takeover_frame(session)
                 command.error_code = "session_expired"
@@ -1471,6 +1597,7 @@ class BrowserRepository:
                 session.worker_session_ref = None
                 session.updated_at = now
                 self._clear_command_secret(command)
+                self._clear_takeover_affinity(session)
                 self._clear_storage_state(session)
                 self._clear_takeover_frame(session)
                 raise CoworkerError(
@@ -1562,11 +1689,17 @@ class BrowserRepository:
             session.worker_session_ref = None
             if command.kind in {"takeover_frame", "takeover_interaction"}:
                 session.state = "takeover"
+                session.takeover_worker_ref = worker_id
+                session.takeover_worker_lease_until = min(
+                    aware(session.expires_at),
+                    now + timedelta(seconds=self.settings.browser_takeover_affinity_seconds),
+                )
             else:
                 session.state = "prepared"
             if command.kind == "takeover_input":
                 session.takeover_required = False
                 session.takeover_reason = None
+                self._clear_takeover_affinity(session)
                 self._clear_takeover_frame(session)
             session.last_url = normalized_chain[-1]
             session.last_title = checked["title"]
@@ -1635,6 +1768,8 @@ class BrowserRepository:
                     session.state = "takeover"
                     if command.kind == "takeover_interaction":
                         self._clear_takeover_frame(session)
+                    if error_code in {"takeover_context_missing", "takeover_interaction_uncertain", "worker_interrupted"}:
+                        self._clear_takeover_affinity(session)
                     session.updated_at = now
                 else:
                     session.state = "failed"
