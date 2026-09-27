@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select
 
+from .action_security import TokenVault
 from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate
 from .errors import CoworkerError
 from .models import Account, AuditEvent, BrowserCommand, BrowserSession, Workspace, utcnow
@@ -28,6 +29,11 @@ BLOCKED_HOSTS = {
     "metadata.google.internal",
     "metadata",
 }
+
+MAX_BROWSER_STORAGE_STATE_BYTES = 65536
+MAX_BROWSER_STORAGE_COOKIES = 100
+MAX_BROWSER_STORAGE_ORIGINS = 10
+MAX_BROWSER_LOCAL_STORAGE_ITEMS = 100
 
 
 def validate_resolved_addresses(hostname: str, addresses: list[str]) -> list[str]:
@@ -61,6 +67,7 @@ def _bounded_observation(value: dict) -> dict:
     resolved = value.get("resolved_ips", {})
     prepared_fields = value.get("prepared_fields", [])
     submission_performed = value.get("submission_performed", False)
+    storage_state = value.get("storage_state")
     if not isinstance(final_url, str):
         raise CoworkerError("browser_observation_invalid", "The browser worker returned an invalid final URL.", 409)
     if title is not None and (not isinstance(title, str) or len(title) > 300):
@@ -89,6 +96,7 @@ def _bounded_observation(value: dict) -> dict:
         "resolved_ips": normalized_resolved,
         "prepared_fields": prepared_fields,
         "submission_performed": submission_performed,
+        "storage_state": storage_state,
     }
 
 
@@ -106,6 +114,79 @@ def _scrub_form_payload(command: BrowserCommand) -> None:
     payload["fields"] = scrubbed
     payload["values_scrubbed"] = True
     command.payload = payload
+
+
+def _bounded_storage_state(value: dict | None, allowed_origins: list[str]) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid session state.", 409)
+    try:
+        encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid session state.", 409) from None
+    if len(encoded) > MAX_BROWSER_STORAGE_STATE_BYTES:
+        raise CoworkerError("browser_storage_state_too_large", "The browser session state exceeded its bounded size.", 409)
+
+    cookies = value.get("cookies", [])
+    origins = value.get("origins", [])
+    if not isinstance(cookies, list) or len(cookies) > MAX_BROWSER_STORAGE_COOKIES:
+        raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid cookies.", 409)
+    if not isinstance(origins, list) or len(origins) > MAX_BROWSER_STORAGE_ORIGINS:
+        raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid origin state.", 409)
+
+    allowed_hosts = {
+        (urlsplit(origin).hostname or "").lower().rstrip(".")
+        for origin in allowed_origins
+    }
+    normalized_cookies: list[dict] = []
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid cookies.", 409)
+        domain = cookie.get("domain")
+        name = cookie.get("name")
+        cookie_value = cookie.get("value")
+        path = cookie.get("path")
+        if (
+            not isinstance(domain, str)
+            or domain.lower().lstrip(".").rstrip(".") not in allowed_hosts
+            or not isinstance(name, str)
+            or not name
+            or len(name) > 256
+            or not isinstance(cookie_value, str)
+            or len(cookie_value) > 4096
+            or not isinstance(path, str)
+            or len(path) > 2048
+        ):
+            raise CoworkerError("browser_storage_state_invalid", "The browser worker returned out-of-scope cookie state.", 409)
+        normalized_cookies.append(dict(cookie))
+
+    normalized_origins: list[dict] = []
+    allowed = set(allowed_origins)
+    for item in origins:
+        if not isinstance(item, dict) or item.get("origin") not in allowed:
+            raise CoworkerError("browser_storage_state_invalid", "The browser worker returned out-of-scope origin state.", 409)
+        local_storage = item.get("localStorage", [])
+        if (
+            not isinstance(local_storage, list)
+            or len(local_storage) > MAX_BROWSER_LOCAL_STORAGE_ITEMS
+        ):
+            raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid local storage state.", 409)
+        clean_items: list[dict[str, str]] = []
+        for entry in local_storage:
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("name"), str)
+                or not entry["name"]
+                or len(entry["name"]) > 512
+                or not isinstance(entry.get("value"), str)
+                or len(entry["value"]) > 8192
+            ):
+                raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid local storage state.", 409)
+            clean_items.append({"name": entry["name"], "value": entry["value"]})
+        normalized_origins.append({"origin": item["origin"], "localStorage": clean_items})
+
+    return {"cookies": normalized_cookies, "origins": normalized_origins}
 
 
 def _digest(value: dict) -> str:
@@ -168,6 +249,38 @@ class BrowserRepository:
     def __init__(self, sessions, settings):
         self.sessions = sessions
         self.settings = settings
+        self._session_vault = TokenVault(settings.connector_encryption_key) if settings.browser_enabled else None
+
+    @staticmethod
+    def _storage_binding(row: BrowserSession) -> str:
+        return f"browser-session:{row.owner_id}:{row.id}"
+
+    def _open_storage_state(self, row: BrowserSession) -> dict | None:
+        if not row.storage_state_sealed:
+            return None
+        if self._session_vault is None:
+            raise CoworkerError("browser_storage_unavailable", "Encrypted browser session state is unavailable.", 503)
+        try:
+            value = self._session_vault.open(row.storage_state_sealed, self._storage_binding(row))
+        except CoworkerError:
+            raise CoworkerError("browser_storage_unavailable", "Encrypted browser session state could not be opened.", 503) from None
+        return _bounded_storage_state(value, list(row.allowed_origins or []))
+
+    def _store_storage_state(self, row: BrowserSession, value: dict | None, now) -> None:
+        if value is None:
+            return
+        checked = _bounded_storage_state(value, list(row.allowed_origins or []))
+        if self._session_vault is None:
+            raise CoworkerError("browser_storage_unavailable", "Encrypted browser session state is unavailable.", 503)
+        row.storage_state_sealed = self._session_vault.seal(checked or {}, self._storage_binding(row))
+        row.storage_state_version = int(row.storage_state_version or 0) + 1
+        row.storage_state_updated_at = now
+
+    @staticmethod
+    def _clear_storage_state(row: BrowserSession) -> None:
+        row.storage_state_sealed = None
+        row.storage_state_version = 0
+        row.storage_state_updated_at = None
 
     @staticmethod
     def _dto(row: BrowserSession) -> dict:
@@ -193,6 +306,8 @@ class BrowserRepository:
                 "network_revalidation_required": True,
                 "arbitrary_script_execution": False,
                 "downloads_enabled": False,
+                "authenticated_state_available": bool(row.storage_state_sealed),
+                "storage_state_version": int(row.storage_state_version or 0),
             },
         }
 
@@ -592,6 +707,7 @@ class BrowserRepository:
                 row.state = "cancelled"
                 row.takeover_required = False
                 row.worker_session_ref = None
+                self._clear_storage_state(row)
                 row.updated_at = now
                 for command in db.scalars(select(BrowserCommand).where(
                     BrowserCommand.session_id == session_id,
@@ -668,6 +784,8 @@ class BrowserRepository:
                     "expires_at": iso(session.expires_at),
                     "policy": dict(command.payload or {}),
                     "attempt": command.attempts,
+                    "storage_state": self._open_storage_state(session),
+                    "storage_state_version": int(session.storage_state_version or 0),
                 })
             return claimed
 
@@ -711,6 +829,7 @@ class BrowserRepository:
             if aware(session.expires_at) <= now:
                 session.state = "expired"
                 session.worker_session_ref = None
+                self._clear_storage_state(session)
                 session.updated_at = now
                 if command.state in {"prepared", "running"}:
                     command.state = "failed"
@@ -758,6 +877,10 @@ class BrowserRepository:
             ).with_for_update())
             if session is None:
                 raise not_found()
+            checked["storage_state"] = _bounded_storage_state(
+                checked.get("storage_state"),
+                list(session.allowed_origins or []),
+            )
             if session.takeover_required or session.state == "takeover":
                 if command.state == "running":
                     command.state = "cancelled"
@@ -781,6 +904,7 @@ class BrowserRepository:
             if aware(session.expires_at) <= now:
                 session.state = "expired"
                 command.state = "failed"
+                self._clear_storage_state(session)
                 command.error_code = "session_expired"
                 command.finished_at = now
                 command.lease_until = None
@@ -817,6 +941,7 @@ class BrowserRepository:
                 command.claimed_by = None
                 session.state = "failed"
                 session.error_code = "form_submission_blocked"
+                self._clear_storage_state(session)
                 raise CoworkerError(
                     "browser_form_submission_blocked",
                     "The browser worker reported a form submission, which is not authorized.",
@@ -831,6 +956,7 @@ class BrowserRepository:
                         409,
                     )
 
+            self._store_storage_state(session, checked.get("storage_state"), now)
             _scrub_form_payload(command)
             command.result = {
                 "final_url": normalized_chain[-1],
@@ -898,6 +1024,7 @@ class BrowserRepository:
             if session is not None and session.state not in TERMINAL_BROWSER_STATES:
                 session.state = "failed"
                 session.worker_session_ref = None
+                self._clear_storage_state(session)
                 session.error_code = error_code
                 session.updated_at = now
             return {"id": command.id, "state": command.state, "error_code": error_code}
