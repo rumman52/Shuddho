@@ -11,13 +11,14 @@ from uuid import uuid4
 from sqlalchemy import and_, func, or_, select
 
 from .action_security import TokenVault
-from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverInputCreate
+from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverInputCreate, BrowserTakeoverInteractionCreate
 from .errors import CoworkerError
 from .models import Account, AuditEvent, BrowserCommand, BrowserSession, Workspace, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL_BROWSER_STATES = {"cancelled", "completed", "expired", "failed"}
 ACTIVE_BROWSER_STATES = {"prepared", "queued", "running", "takeover"}
+TAKEOVER_COMMAND_KINDS = {"takeover_input", "takeover_frame", "takeover_interaction"}
 BLOCKED_HOST_SUFFIXES = (
     ".localhost",
     ".local",
@@ -72,6 +73,7 @@ def _bounded_observation(value: dict) -> dict:
     storage_state = value.get("storage_state")
     takeover_frame_b64 = value.get("takeover_frame_b64")
     takeover_frame_content_type = value.get("takeover_frame_content_type")
+    interaction_performed = value.get("interaction_performed", False)
     if not isinstance(final_url, str):
         raise CoworkerError("browser_observation_invalid", "The browser worker returned an invalid final URL.", 409)
     if title is not None and (not isinstance(title, str) or len(title) > 300):
@@ -88,6 +90,8 @@ def _bounded_observation(value: dict) -> dict:
         raise CoworkerError("browser_observation_invalid", "The browser worker returned invalid prepared-field evidence.", 409)
     if not isinstance(submission_performed, bool):
         raise CoworkerError("browser_observation_invalid", "The browser worker returned invalid submission evidence.", 409)
+    if not isinstance(interaction_performed, bool):
+        raise CoworkerError("browser_observation_invalid", "The browser worker returned invalid interaction evidence.", 409)
     normalized_resolved: dict[str, list[str]] = {}
     for host, addresses in resolved.items():
         if not isinstance(host, str) or not isinstance(addresses, list):
@@ -124,6 +128,7 @@ def _bounded_observation(value: dict) -> dict:
         "storage_state": storage_state,
         "takeover_frame": takeover_frame,
         "takeover_frame_content_type": takeover_frame_content_type,
+        "interaction_performed": interaction_performed,
     }
 
 
@@ -302,6 +307,7 @@ class BrowserRepository:
         row.takeover_frame_version = int(row.takeover_frame_version or 0) + 1
         row.takeover_frame_content_type = content_type
         row.takeover_frame_byte_size = len(value)
+        row.takeover_frame_sha256 = hashlib.sha256(value).hexdigest()
         row.takeover_frame_updated_at = now
 
     def _open_takeover_frame(self, row: BrowserSession) -> tuple[bytes, str]:
@@ -326,6 +332,7 @@ class BrowserRepository:
         row.takeover_frame_version = 0
         row.takeover_frame_content_type = None
         row.takeover_frame_byte_size = None
+        row.takeover_frame_sha256 = None
         row.takeover_frame_updated_at = None
 
     @staticmethod
@@ -495,7 +502,7 @@ class BrowserRepository:
             if (
                 session is None
                 or session.cancel_requested
-                or (session.takeover_required and command.kind not in {"takeover_input", "takeover_frame"})
+                or (session.takeover_required and command.kind not in TAKEOVER_COMMAND_KINDS)
                 or session.state in TERMINAL_BROWSER_STATES
                 or aware(session.expires_at) <= now
             ):
@@ -911,6 +918,110 @@ class BrowserRepository:
             data, content_type = self._open_takeover_frame(row)
             return data, content_type, int(row.takeover_frame_version or 0)
 
+    def prepare_takeover_interaction(
+        self,
+        owner: str,
+        session_id: str,
+        request: BrowserTakeoverInteractionCreate,
+    ) -> dict:
+        self._require_enabled()
+        now = utcnow()
+        with self.sessions.begin() as db:
+            row = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == session_id,
+                BrowserSession.owner_id == owner,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if row.state != "takeover" or not row.takeover_required:
+                raise CoworkerError("browser_takeover_not_active", "This session is not waiting for user takeover.", 409)
+            if aware(row.expires_at) <= now:
+                row.state = "expired"
+                row.takeover_required = False
+                row.takeover_reason = None
+                row.cancel_requested = True
+                row.worker_session_ref = None
+                self._clear_storage_state(row)
+                self._clear_takeover_frame(row)
+                raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
+            if (
+                not row.takeover_frame_sealed
+                or not row.takeover_frame_sha256
+                or int(row.takeover_frame_version or 0) != request.frame_version
+            ):
+                raise CoworkerError(
+                    "browser_takeover_frame_stale",
+                    "Refresh the visual takeover frame before interacting with the page.",
+                    409,
+                )
+            if request.kind == "click":
+                if request.x is None or request.y is None or request.key is not None:
+                    raise CoworkerError("browser_takeover_interaction_invalid", "Click takeover requires normalized x/y coordinates only.", 422)
+            elif request.kind == "key":
+                if request.key is None or request.x is not None or request.y is not None:
+                    raise CoworkerError("browser_takeover_interaction_invalid", "Key takeover requires one allowed navigation key only.", 422)
+            else:
+                raise CoworkerError("browser_takeover_interaction_invalid", "Unsupported takeover interaction.", 422)
+
+            active = db.scalar(select(func.count()).select_from(BrowserCommand).where(
+                BrowserCommand.session_id == session_id,
+                BrowserCommand.state.in_(("prepared", "running")),
+            )) or 0
+            if active:
+                raise CoworkerError("browser_takeover_busy", "Wait for the current takeover command before interacting again.", 409)
+            target_url, origin = normalize_browser_target(row.last_url or row.start_url)
+            if origin not in set(row.allowed_origins or []):
+                raise CoworkerError("browser_origin_not_allowed", "The takeover target is outside the approved origin.", 409)
+            sequence = (db.scalar(select(func.max(BrowserCommand.sequence)).where(
+                BrowserCommand.session_id == session_id,
+            )) or 0) + 1
+            interaction = {
+                "kind": request.kind,
+                "x": request.x,
+                "y": request.y,
+                "key": request.key,
+            }
+            command = BrowserCommand(
+                id=str(uuid4()),
+                session_id=session_id,
+                owner_id=owner,
+                sequence=sequence,
+                kind="takeover_interaction",
+                target_url=target_url,
+                target_origin=origin,
+                payload={
+                    "policy_version": "browser-v1",
+                    "requires_dns_ip_validation": True,
+                    "redirect_validation": True,
+                    "allow_downloads": False,
+                    "allow_script_injection": False,
+                    "human_only": True,
+                    "expected_frame_version": request.frame_version,
+                    "expected_frame_sha256": row.takeover_frame_sha256,
+                    "interaction": interaction,
+                },
+                state="prepared",
+            )
+            db.add(command)
+            row.updated_at = now
+            db.add(AuditEvent(
+                id=str(uuid4()), owner_id=owner, resource_id=row.id,
+                action="browser_takeover.interaction_prepared",
+            ))
+            return {
+                "id": command.id,
+                "sequence": sequence,
+                "kind": command.kind,
+                "target_url": target_url,
+                "target_origin": origin,
+                "state": command.state,
+                "policy": {
+                    "human_only": True,
+                    "frame_version": request.frame_version,
+                    "interaction_kind": request.kind,
+                },
+            }
+
     def prepare_takeover_input(self, owner: str, session_id: str, request: BrowserTakeoverInputCreate) -> dict:
         self._require_enabled()
         now = utcnow()
@@ -1079,12 +1190,12 @@ class BrowserRepository:
                         and_(
                             BrowserSession.takeover_required.is_(False),
                             BrowserSession.state.in_(("prepared", "running", "queued")),
-                            BrowserCommand.kind.not_in(("takeover_input", "takeover_frame")),
+                            BrowserCommand.kind.not_in(tuple(TAKEOVER_COMMAND_KINDS)),
                         ),
                         and_(
                             BrowserSession.takeover_required.is_(True),
                             BrowserSession.state == "takeover",
-                            BrowserCommand.kind.in_(("takeover_input", "takeover_frame")),
+                            BrowserCommand.kind.in_(tuple(TAKEOVER_COMMAND_KINDS)),
                         ),
                     ),
                     BrowserCommand.attempts < self.settings.browser_command_max_attempts,
@@ -1112,7 +1223,7 @@ class BrowserRepository:
                 command.claimed_by = worker_id
                 command.lease_until = now + timedelta(seconds=self.settings.browser_worker_lease_seconds)
                 command.started_at = command.started_at or now
-                if command.kind not in {"takeover_input", "takeover_frame"}:
+                if command.kind not in TAKEOVER_COMMAND_KINDS:
                     session.state = "running"
                 session.worker_session_ref = worker_id
                 session.updated_at = now
@@ -1168,7 +1279,7 @@ class BrowserRepository:
                 session.worker_session_ref = None
                 return {"action": "stop", "reason": "session_cancelled"}
 
-            if (session.takeover_required or session.state == "takeover") and command.kind not in {"takeover_input", "takeover_frame"}:
+            if (session.takeover_required or session.state == "takeover") and command.kind not in TAKEOVER_COMMAND_KINDS:
                 if command.state == "running":
                     command.state = "cancelled"
                     command.error_code = "takeover_requested"
@@ -1240,7 +1351,7 @@ class BrowserRepository:
                 checked.get("storage_state"),
                 list(session.allowed_origins or []),
             )
-            if (session.takeover_required or session.state == "takeover") and command.kind not in {"takeover_input", "takeover_frame"}:
+            if (session.takeover_required or session.state == "takeover") and command.kind not in TAKEOVER_COMMAND_KINDS:
                 if command.state == "running":
                     command.state = "cancelled"
                     command.error_code = "takeover_requested"
@@ -1345,7 +1456,7 @@ class BrowserRepository:
                     )
 
             if command.kind == "takeover_frame":
-                if checked["prepared_fields"] or checked["submission_performed"]:
+                if checked["prepared_fields"] or checked["submission_performed"] or checked["interaction_performed"]:
                     raise CoworkerError(
                         "browser_takeover_frame_invalid",
                         "The visual takeover command reported an unauthorized mutation.",
@@ -1363,10 +1474,29 @@ class BrowserRepository:
                     checked["takeover_frame_content_type"],
                     now,
                 )
-            elif checked["takeover_frame"] is not None:
+            elif command.kind == "takeover_interaction":
+                if checked["prepared_fields"] or checked["submission_performed"] or not checked["interaction_performed"]:
+                    raise CoworkerError(
+                        "browser_takeover_interaction_invalid",
+                        "The browser worker returned invalid human-interaction evidence.",
+                        409,
+                    )
+                if checked["takeover_frame"] is None or checked["takeover_frame_content_type"] != "image/jpeg":
+                    raise CoworkerError(
+                        "browser_takeover_frame_missing",
+                        "The browser worker did not return a fresh visual frame after the interaction.",
+                        409,
+                    )
+                self._store_takeover_frame(
+                    session,
+                    checked["takeover_frame"],
+                    checked["takeover_frame_content_type"],
+                    now,
+                )
+            elif checked["takeover_frame"] is not None or checked["interaction_performed"]:
                 raise CoworkerError(
                     "browser_takeover_frame_invalid",
-                    "A browser frame was returned for a command that did not request one.",
+                    "Takeover interaction evidence was returned for a command that did not request it.",
                     409,
                 )
 
@@ -1380,7 +1510,8 @@ class BrowserRepository:
                 "resolved_ips": checked["resolved_ips"],
                 "prepared_fields": checked["prepared_fields"],
                 "submission_performed": bool(checked["submission_performed"]) if command.kind == "takeover_input" else False,
-                **({"takeover_frame_version": int(session.takeover_frame_version or 0)} if command.kind == "takeover_frame" else {}),
+                **({"takeover_frame_version": int(session.takeover_frame_version or 0)} if command.kind in {"takeover_frame", "takeover_interaction"} else {}),
+                **({"interaction_performed": True} if command.kind == "takeover_interaction" else {}),
             }
             command.state = "succeeded"
             command.error_code = None
@@ -1388,7 +1519,7 @@ class BrowserRepository:
             command.lease_until = None
             command.claimed_by = None
             session.worker_session_ref = None
-            if command.kind == "takeover_frame":
+            if command.kind in {"takeover_frame", "takeover_interaction"}:
                 session.state = "takeover"
             else:
                 session.state = "prepared"
@@ -1405,6 +1536,7 @@ class BrowserRepository:
                     "browser_form.prepared" if command.kind == "prepare_form"
                     else "browser_takeover.input_completed" if command.kind == "takeover_input"
                     else "browser_takeover.frame_captured" if command.kind == "takeover_frame"
+                    else "browser_takeover.interaction_completed" if command.kind == "takeover_interaction"
                     else "browser_navigation.succeeded"
                 ),
             ))
@@ -1429,6 +1561,10 @@ class BrowserRepository:
             "form_mutation_blocked",
             "takeover_frame_too_large",
             "takeover_frame_capture_failed",
+            "takeover_frame_stale",
+            "takeover_context_missing",
+            "takeover_interaction_failed",
+            "takeover_interaction_uncertain",
         }
         if error_code not in allowed:
             error_code = "navigation_failed"
@@ -1454,8 +1590,10 @@ class BrowserRepository:
             command.claimed_by = None
             if session is not None and session.state not in TERMINAL_BROWSER_STATES:
                 session.worker_session_ref = None
-                if command.kind == "takeover_frame":
+                if command.kind in {"takeover_frame", "takeover_interaction"}:
                     session.state = "takeover"
+                    if command.kind == "takeover_interaction":
+                        self._clear_takeover_frame(session)
                     session.updated_at = now
                 else:
                     session.state = "failed"
