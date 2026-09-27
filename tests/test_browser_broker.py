@@ -13,7 +13,7 @@ from action_samples import enable_actions
 from test_coworker import account, container, signed_client
 
 from services.coworker.browser import BrowserRepository, normalize_browser_target, validate_resolved_addresses
-from services.coworker.browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate
+from services.coworker.browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverInputCreate
 from services.coworker.errors import CoworkerError
 from services.coworker.models import BrowserCommand, BrowserSession, utcnow
 
@@ -947,3 +947,151 @@ def test_browser_session_expiry_destroys_encrypted_state(container):
         row = db.get(BrowserSession, session["id"])
         assert row.storage_state_sealed is None
         assert row.cancel_requested is True
+
+
+def test_browser_takeover_secret_is_encrypted_worker_only_and_resumes(container, signed_client):
+    settings = enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-takeover-secret")
+    container.browser.request_takeover(owner, session["id"], "login")
+
+    prepared = container.browser.prepare_takeover_input(
+        owner,
+        session["id"],
+        BrowserTakeoverInputCreate(
+            by="label",
+            field="Password",
+            value="correct-horse-battery-staple",
+            submit=True,
+        ),
+    )
+    assert prepared["kind"] == "takeover_input"
+    assert prepared["policy"]["secret_concealed"] is True
+
+    with container.repository.sessions() as db:
+        command = db.get(BrowserCommand, prepared["id"])
+        assert command.secret_sealed
+        assert "correct-horse-battery-staple" not in command.secret_sealed
+
+    client, headers = signed_client
+    history = client.get(
+        f'/api/v1/browser-sessions/{session["id"]}/commands',
+        headers=headers(),
+    )
+    assert history.status_code == 200
+    assert "correct-horse-battery-staple" not in history.text
+    assert "secret_sealed" not in history.text
+
+    claimed = container.browser.claim_commands("worker-takeover")
+    assert [item["id"] for item in claimed] == [prepared["id"]]
+    assert claimed[0]["takeover_input"] == {
+        "by": "label",
+        "field": "Password",
+        "value": "correct-horse-battery-staple",
+        "submit": True,
+    }
+
+    checked = container.browser.validate_worker_network_target(
+        "worker-takeover",
+        prepared["id"],
+        "https://example.com/login",
+        ["93.184.216.34"],
+    )
+    assert checked["origin"] == "https://example.com"
+
+    completed = container.browser.complete_command(
+        "worker-takeover",
+        prepared["id"],
+        {
+            "final_url": "https://example.com/account",
+            "title": "Account",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": ["Password"],
+            "submission_performed": True,
+            "storage_state": {
+                "cookies": [{"name": "session", "value": "signed-in", "domain": "example.com", "path": "/"}],
+                "origins": [],
+            },
+        },
+    )
+    assert completed["state"] == "succeeded"
+    assert completed["result"]["submission_performed"] is True
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "prepared"
+    assert current["takeover_required"] is False
+    assert current["takeover_reason"] is None
+    assert current["execution"]["authenticated_state_available"] is True
+
+    with container.repository.sessions() as db:
+        command = db.get(BrowserCommand, prepared["id"])
+        assert command.secret_sealed is None
+
+
+def test_browser_takeover_input_requires_active_owner_takeover(container, signed_client):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, key="browser-takeover-owner")
+
+    with pytest.raises(CoworkerError) as inactive:
+        container.browser.prepare_takeover_input(
+            owner,
+            session["id"],
+            BrowserTakeoverInputCreate(by="name", field="otp", value="123456", submit=True),
+        )
+    assert inactive.value.code == "browser_takeover_not_active"
+
+    container.browser.request_takeover(owner, session["id"], "mfa")
+    client, headers = signed_client
+    denied = client.post(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover-input',
+        headers=headers("browser-takeover-bob"),
+        json={"by": "name", "field": "otp", "value": "123456", "submit": True},
+    )
+    assert denied.status_code == 404
+
+    accepted = client.post(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover-input',
+        headers=headers(),
+        json={"by": "name", "field": "otp", "value": "123456", "submit": True},
+    )
+    assert accepted.status_code == 202
+    assert "123456" not in accepted.text
+
+
+def test_browser_captcha_takeover_refuses_secret_injection(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, key="browser-takeover-captcha")
+    current = container.browser.request_takeover(owner, session["id"], "captcha")
+    assert current["takeover_reason"] == "captcha"
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.browser.prepare_takeover_input(
+            owner,
+            session["id"],
+            BrowserTakeoverInputCreate(by="label", field="Captcha", value="abcd", submit=True),
+        )
+    assert blocked.value.code == "browser_captcha_requires_interactive_takeover"
+
+
+def test_browser_cancel_clears_pending_takeover_secret(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, key="browser-takeover-cancel")
+    container.browser.request_takeover(owner, session["id"], "mfa")
+    prepared = container.browser.prepare_takeover_input(
+        owner,
+        session["id"],
+        BrowserTakeoverInputCreate(by="name", field="otp", value="654321", submit=False),
+    )
+    with container.repository.sessions() as db:
+        assert db.get(BrowserCommand, prepared["id"]).secret_sealed
+
+    cancelled = container.browser.cancel(owner, session["id"])
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["takeover_reason"] is None
+    with container.repository.sessions() as db:
+        command = db.get(BrowserCommand, prepared["id"])
+        assert command.secret_sealed is None
+        assert command.state == "cancelled"
