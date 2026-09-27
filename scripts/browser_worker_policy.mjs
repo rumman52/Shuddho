@@ -29,3 +29,29 @@ export function normalizedBaseUrl(value) {
   }
   return url.toString().replace(/\/$/, "");
 }
+
+
+export function formFieldPolicy(metadata) {
+  const blockedTypes = new Set(["password", "file", "hidden", "submit", "button", "image", "checkbox", "radio"]);
+  const sensitiveAutocomplete = new Set(["current-password", "new-password", "one-time-code", "cc-number", "cc-csc"]);
+  if (
+    !metadata
+    || metadata.disabled
+    || metadata.readOnly
+    || !["input", "textarea"].includes(metadata.tag)
+    || blockedTypes.has(metadata.type)
+  ) {
+    return "not_editable";
+  }
+  if (sensitiveAutocomplete.has(metadata.autocomplete)) {
+    return "sensitive";
+  }
+  return "fillable";
+}
+
+export function browserRequestAllowed({ kind, method, preparingForm, navigationRequest, mainFrame }) {
+  const verb = String(method || "").toUpperCase();
+  if (kind === "prepare_form" && !["GET", "HEAD"].includes(verb)) return false;
+  if (kind === "prepare_form" && preparingForm && navigationRequest && mainFrame) return false;
+  return true;
+}
