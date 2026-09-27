@@ -61,6 +61,8 @@ class BrowserWorkerObservation(BrowserWorkerIdentity):
     prepared_fields: list[str] = Field(default_factory=list, max_length=10)
     submission_performed: bool = False
     storage_state: dict | None = None
+    takeover_frame_b64: str | None = Field(default=None, max_length=500000)
+    takeover_frame_content_type: Literal["image/jpeg"] | None = None
 
 
 class BrowserWorkerFailure(BrowserWorkerIdentity):
@@ -75,4 +77,6 @@ class BrowserWorkerFailure(BrowserWorkerIdentity):
         "form_field_ambiguous",
         "form_field_not_editable",
         "form_mutation_blocked",
+        "takeover_frame_too_large",
+        "takeover_frame_capture_failed",
     ]
