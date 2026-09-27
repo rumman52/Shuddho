@@ -274,115 +274,240 @@ async function fillPreparedField(page, spec) {
   await locator.fill(spec.value);
 }
 
+async function createRuntime(command, evidence) {
+  const state = {
+    commandId: command.id,
+    evidence,
+    kind: command.kind,
+    preparingForm: false,
+    humanInteractionArmed: false,
+    formMutationBlocked: false,
+    navigationUrls: [],
+  };
+  const proxy = await createPinnedProxy(state);
+  const browser = await chromium.launch({
+    headless: true,
+    proxy: { server: proxy.url },
+    env: { HOME: process.env.HOME || "/tmp" },
+  });
+  const context = await browser.newContext(browserContextOptions(command.storage_state));
+  const page = await context.newPage();
+  page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+  page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
+
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    const allowed = browserRequestAllowed({
+      kind: state.kind,
+      method: request.method(),
+      preparingForm: state.preparingForm,
+      humanInteractionArmed: state.humanInteractionArmed,
+      navigationRequest: request.isNavigationRequest(),
+      mainFrame: request.frame() === page.mainFrame(),
+    });
+    if (!allowed) {
+      state.formMutationBlocked = state.formMutationBlocked || state.kind === "prepare_form";
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.continue();
+  });
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+      state.navigationUrls.push(request.url());
+    }
+  });
+  page.on("download", (download) => {
+    void download.cancel().catch(() => {});
+  });
+
+  return { state, proxy, browser, context, page, sessionId: command.session_id };
+}
+
+function activateRuntime(runtime, command, evidence) {
+  runtime.state.commandId = command.id;
+  runtime.state.evidence = evidence;
+  runtime.state.kind = command.kind;
+  runtime.state.preparingForm = false;
+  runtime.state.humanInteractionArmed = false;
+  runtime.state.formMutationBlocked = false;
+  runtime.state.navigationUrls = [];
+  runtime.proxy.setCommand(command.id, evidence);
+}
+
+function pauseRuntime(runtime) {
+  runtime.state.kind = "idle";
+  runtime.state.preparingForm = false;
+  runtime.state.humanInteractionArmed = false;
+  runtime.state.navigationUrls = [];
+  runtime.proxy.pause();
+}
+
+async function closeRuntime(runtime) {
+  if (!runtime) return;
+  runtime.proxy.destroy();
+  await runtime.browser.close().catch(() => {});
+  await new Promise((resolve) => runtime.proxy.server.close(() => resolve())).catch(() => {});
+}
+
+async function releaseLiveTakeover(sessionId) {
+  const runtime = liveTakeovers.get(sessionId);
+  if (!runtime) return;
+  liveTakeovers.delete(sessionId);
+  await closeRuntime(runtime);
+}
+
+async function heartbeatLiveTakeovers() {
+  const sessionIds = [...liveTakeovers.keys()];
+  if (!sessionIds.length) return;
+  const response = await api("/api/v1/internal/browser-worker/takeover-heartbeat", {
+    worker_id: WORKER_ID,
+    session_ids: sessionIds,
+  });
+  for (const sessionId of response.release_session_ids || []) {
+    await releaseLiveTakeover(sessionId);
+  }
+}
+
+async function revalidateCurrentPage(command, runtime, evidence) {
+  let parsed;
+  try {
+    parsed = new URL(runtime.page.url());
+  } catch {
+    throw Object.assign(new Error("takeover_context_missing"), { code: "takeover_context_missing" });
+  }
+  if (parsed.protocol !== "https:" || !parsed.hostname) {
+    throw Object.assign(new Error("takeover_context_missing"), { code: "takeover_context_missing" });
+  }
+  const checked = await validateHost(command.id, parsed.hostname);
+  evidence[checked.hostname] = checked.resolved_ips;
+}
+
+function workerFailureCode(error) {
+  const passThrough = new Set([
+    "sensitive_field_requires_takeover",
+    "form_field_not_found",
+    "form_field_ambiguous",
+    "form_field_not_editable",
+    "form_mutation_blocked",
+    "takeover_frame_too_large",
+    "takeover_frame_capture_failed",
+    "takeover_frame_stale",
+    "takeover_context_missing",
+    "takeover_interaction_failed",
+    "takeover_interaction_uncertain",
+    "unsupported_site",
+  ]);
+  if (["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"].includes(error?.code)) {
+    return "network_blocked";
+  }
+  if (["browser_worker_claim_invalid", "session_cancelled", "takeover_requested", "session_expired", "claim_lost"].includes(error?.code)) {
+    return "worker_interrupted";
+  }
+  return passThrough.has(error?.code) ? error.code : "navigation_failed";
+}
+
 async function execute(command) {
   const evidence = {};
-  let proxy;
-  let browser;
+  const affinityKind = command.kind === "takeover_frame" || command.kind === "takeover_interaction";
+  let runtime = affinityKind ? liveTakeovers.get(command.session_id) : null;
+  let createdRuntime = false;
   let control;
   let interrupted = null;
+  let completed = false;
+  let retainAfterFailure = false;
+
   try {
-    proxy = await createPinnedProxy(command, evidence);
-    browser = await chromium.launch({
-      headless: true,
-      proxy: { server: proxy.url },
-      env: { HOME: process.env.HOME || "/tmp" },
-    });
+    if (command.kind === "takeover_interaction" && !runtime) {
+      throw Object.assign(new Error("takeover_context_missing"), { code: "takeover_context_missing" });
+    }
+    if (command.kind === "takeover_frame" && command.policy?.require_live_context === true && !runtime) {
+      throw Object.assign(new Error("takeover_context_missing"), { code: "takeover_context_missing" });
+    }
+
+    if (!runtime) {
+      runtime = await createRuntime(command, evidence);
+      createdRuntime = true;
+    } else {
+      activateRuntime(runtime, command, evidence);
+    }
+
     control = await monitorControl(command.id, async (value) => {
       interrupted = value;
-      if (browser) await browser.close().catch(() => {});
-      if (proxy) proxy.destroy();
-    });
-
-    const context = await browser.newContext(browserContextOptions(command.storage_state));
-    const page = await context.newPage();
-    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
-    page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
-
-    let preparingForm = false;
-    let humanInteractionArmed = false;
-    let formMutationBlocked = false;
-    await page.route("**/*", async (route) => {
-      const request = route.request();
-      const allowed = browserRequestAllowed({
-        kind: command.kind,
-        method: request.method(),
-        preparingForm,
-        humanInteractionArmed,
-        navigationRequest: request.isNavigationRequest(),
-        mainFrame: request.frame() === page.mainFrame(),
-      });
-      if (!allowed) {
-        formMutationBlocked = formMutationBlocked || command.kind === "prepare_form";
-        await route.abort("blockedbyclient");
-        return;
-      }
-      await route.continue();
-    });
-
-    const navigationUrls = [];
-    page.on("request", (request) => {
-      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
-        navigationUrls.push(request.url());
+      if (affinityKind) {
+        await releaseLiveTakeover(command.session_id);
+      } else {
+        await closeRuntime(runtime);
       }
     });
-    page.on("download", (download) => {
-      void download.cancel().catch(() => {});
-    });
 
-    await page.goto(command.target_url, { waitUntil: "domcontentloaded" });
+    if (createdRuntime) {
+      await runtime.page.goto(command.target_url, { waitUntil: "domcontentloaded" });
+    } else {
+      await revalidateCurrentPage(command, runtime, evidence);
+    }
+
     const preparedFields = [];
     let takeoverFrameB64 = null;
     if (command.kind === "prepare_form") {
       if (command.policy?.allow_form_submission !== false || !Array.isArray(command.policy?.fields)) {
         throw Object.assign(new Error("form_mutation_blocked"), { code: "form_mutation_blocked" });
       }
-      preparingForm = true;
+      runtime.state.preparingForm = true;
       for (const field of command.policy.fields) {
-        await fillPreparedField(page, field);
+        await fillPreparedField(runtime.page, field);
         preparedFields.push(field.field);
-        if (formMutationBlocked) {
+        if (runtime.state.formMutationBlocked) {
           throw Object.assign(new Error("form_mutation_blocked"), { code: "form_mutation_blocked" });
         }
       }
-      preparingForm = false;
+      runtime.state.preparingForm = false;
     } else if (command.kind === "takeover_input") {
       if (!command.takeover_input || typeof command.takeover_input.value !== "string") {
         throw Object.assign(new Error("sensitive_field_requires_takeover"), { code: "sensitive_field_requires_takeover" });
       }
-      await fillTakeoverField(page, command.takeover_input);
+      await fillTakeoverField(runtime.page, command.takeover_input);
       preparedFields.push(command.takeover_input.field);
       if (command.takeover_input.submit) {
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        await runtime.page.waitForLoadState("domcontentloaded").catch(() => {});
       }
     } else if (command.kind === "takeover_frame") {
       try {
-        takeoverFrameB64 = (await captureTakeoverFrame(page)).toString("base64");
+        takeoverFrameB64 = (await captureTakeoverFrame(runtime.page)).toString("base64");
       } catch (error) {
         if (error?.code === "takeover_frame_too_large") throw error;
         throw Object.assign(new Error("takeover_frame_capture_failed"), { code: "takeover_frame_capture_failed" });
       }
     } else if (command.kind === "takeover_interaction") {
       try {
-        takeoverFrameB64 = (await performTakeoverInteraction(page, command.policy, () => { humanInteractionArmed = true; })).toString("base64");
+        takeoverFrameB64 = (await performTakeoverInteraction(
+          runtime.page,
+          command.policy,
+          () => { runtime.state.humanInteractionArmed = true; },
+        )).toString("base64");
       } catch (error) {
-        if (["takeover_frame_too_large", "takeover_frame_stale", "takeover_context_missing", "takeover_interaction_failed"].includes(error?.code)) throw error;
+        if (["takeover_frame_too_large", "takeover_frame_stale", "takeover_context_missing", "takeover_interaction_failed"].includes(error?.code)) {
+          throw error;
+        }
         throw Object.assign(new Error("takeover_interaction_uncertain"), { code: "takeover_interaction_uncertain" });
       }
     } else if (command.kind !== "navigate") {
       throw Object.assign(new Error("unsupported_site"), { code: "unsupported_site" });
     }
+
     if (interrupted) {
       throw Object.assign(new Error(interrupted.reason || "worker_interrupted"), {
         code: interrupted.reason || "worker_interrupted",
       });
     }
-    const finalUrl = page.url();
-    const title = (await page.title()).slice(0, 300);
-    const redirectChain = navigationUrls
+
+    const finalUrl = runtime.page.url();
+    const title = (await runtime.page.title()).slice(0, 300);
+    const redirectChain = runtime.state.navigationUrls
       .filter((url, index, values) => url !== finalUrl && values.indexOf(url) === index)
       .slice(0, 10);
+    const storageState = await runtime.context.storageState();
 
-    const storageState = await context.storageState();
     await api(`/api/v1/internal/browser-worker/commands/${command.id}/complete`, {
       worker_id: WORKER_ID,
       final_url: finalUrl,
@@ -396,44 +521,40 @@ async function execute(command) {
       takeover_frame_content_type: takeoverFrameB64 ? "image/jpeg" : null,
       interaction_performed: command.kind === "takeover_interaction",
     });
+    completed = true;
+
+    if (affinityKind) {
+      liveTakeovers.set(command.session_id, runtime);
+      pauseRuntime(runtime);
+    }
   } catch (error) {
-    const passThrough = new Set([
-      "sensitive_field_requires_takeover",
-      "form_field_not_found",
-      "form_field_ambiguous",
-      "form_field_not_editable",
-      "form_mutation_blocked",
-      "takeover_frame_too_large",
-      "takeover_frame_capture_failed",
-      "takeover_frame_stale",
-      "takeover_context_missing",
-      "takeover_interaction_failed",
-      "takeover_interaction_uncertain",
-      "unsupported_site",
-    ]);
-    const code = ["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"]
-      .includes(error?.code) ? "network_blocked"
-      : ["browser_worker_claim_invalid", "session_cancelled", "takeover_requested", "session_expired", "claim_lost"]
-          .includes(error?.code) ? "worker_interrupted"
-      : passThrough.has(error?.code) ? error.code
-      : "navigation_failed";
+    retainAfterFailure = affinityKind && runtime && ["takeover_frame_stale", "takeover_interaction_failed"].includes(error?.code);
+    const code = workerFailureCode(error);
     try {
       await api(`/api/v1/internal/browser-worker/commands/${command.id}/fail`, {
         worker_id: WORKER_ID,
         error_code: code,
       });
     } catch {}
+    if (retainAfterFailure && runtime) {
+      liveTakeovers.set(command.session_id, runtime);
+      pauseRuntime(runtime);
+    } else if (affinityKind) {
+      await releaseLiveTakeover(command.session_id);
+      if (runtime && !liveTakeovers.has(command.session_id)) await closeRuntime(runtime);
+    }
   } finally {
     if (control) await control.finish().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
-    if (proxy) {
-      proxy.destroy();
-      await new Promise((resolve) => proxy.server.close(resolve));
+    if (!affinityKind && runtime) {
+      await closeRuntime(runtime);
+    } else if (affinityKind && runtime && !completed && !retainAfterFailure && liveTakeovers.get(command.session_id) !== runtime) {
+      await closeRuntime(runtime);
     }
   }
 }
 
 async function pollOnce() {
+  await heartbeatLiveTakeovers();
   const value = await api("/api/v1/internal/browser-worker/claim", {
     worker_id: WORKER_ID,
     limit: 1,
@@ -453,4 +574,8 @@ while (!stopping) {
     }
   }
   if (!stopping) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+}
+
+for (const sessionId of [...liveTakeovers.keys()]) {
+  await releaseLiveTakeover(sessionId);
 }
