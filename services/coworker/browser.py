@@ -421,7 +421,7 @@ class BrowserRepository:
             if (
                 session is None
                 or session.cancel_requested
-                or session.takeover_required
+                or (session.takeover_required and command.kind != "takeover_input")
                 or session.state in TERMINAL_BROWSER_STATES
                 or aware(session.expires_at) <= now
             ):
@@ -886,7 +886,6 @@ class BrowserRepository:
                     command.lease_until = None
                     command.claimed_by = None
                     _scrub_form_payload(command)
-                self._clear_command_secret(command)
                     self._clear_command_secret(command)
                 db.add(AuditEvent(
                     id=str(uuid4()), owner_id=owner, resource_id=row.id,
@@ -1016,6 +1015,7 @@ class BrowserRepository:
             if aware(session.expires_at) <= now:
                 session.state = "expired"
                 session.worker_session_ref = None
+                self._clear_command_secret(command)
                 self._clear_storage_state(session)
                 session.updated_at = now
                 if command.state in {"prepared", "running"}:
@@ -1091,6 +1091,7 @@ class BrowserRepository:
             if aware(session.expires_at) <= now:
                 session.state = "expired"
                 command.state = "failed"
+                self._clear_command_secret(command)
                 self._clear_storage_state(session)
                 command.error_code = "session_expired"
                 command.finished_at = now
@@ -1112,6 +1113,7 @@ class BrowserRepository:
                     session.error_code = "redirect_origin_blocked"
                     session.worker_session_ref = None
                     session.updated_at = now
+                    self._clear_command_secret(command)
                     self._clear_storage_state(session)
                     raise CoworkerError("browser_origin_not_allowed", "The browser worker observed a redirect outside the approved origin.", 409)
                 hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
@@ -1136,6 +1138,7 @@ class BrowserRepository:
                 session.error_code = "form_submission_blocked"
                 session.worker_session_ref = None
                 session.updated_at = now
+                self._clear_command_secret(command)
                 self._clear_storage_state(session)
                 raise CoworkerError(
                     "browser_form_submission_blocked",
