@@ -13,7 +13,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
   const [startUrl, setStartUrl] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [fields, setFields] = useState<BrowserFormField[]>([{ by: "label", field: "", value: "" }]);
-  const [takeoverReason, setTakeoverReason] = useState<"login" | "mfa" | "captcha" | "sensitive_input">("login");
+  const [takeoverReason, setTakeoverReason] = useState<"login" | "mfa" | "captcha" | "webauthn" | "sensitive_input">("login");
   const [takeoverBy, setTakeoverBy] = useState<"label" | "name">("label");
   const [takeoverField, setTakeoverField] = useState("");
   const [takeoverValue, setTakeoverValue] = useState("");
@@ -216,27 +216,30 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
           <p><bdi>{selected.last_title || selected.last_url || selected.start_url}</bdi></p>
           <p className="cw-fineprint">Browser cookies and local storage are kept server-side in encrypted, owner-bound session state. They are never shown in this workspace and are destroyed when the session is cancelled or expires.</p>
           {selected.takeover_required ? <div>
-            <p className="cw-fineprint">Takeover reason: {selected.takeover_reason || "sensitive input"}. Secrets entered below are sent only to the authenticated backend, encrypted at rest, delivered to the isolated browser worker, and omitted from browser history.</p>
+            <p className="cw-fineprint">Takeover reason: {selected.takeover_reason || "sensitive input"}. {selected.takeover_reason === "webauthn" ? "This takeover is read-only: passkey/security-key credentials are not accepted by Shuddho." : "Secrets entered below are sent only to the authenticated backend, encrypted at rest, delivered to the isolated browser worker, and omitted from browser history."}</p>
             <div className="cw-browser-frame">
-              {takeoverFrameUrl ? <button
-                type="button"
-                className="cw-browser-frame-surface"
-                disabled={Boolean(busy)}
-                onClick={event => void interactTakeoverClick(event)}
-                aria-label="Human-only supervised browser frame. Click a visible control at this exact location."
-              ><img src={takeoverFrameUrl} alt="Current supervised browser page for human-only takeover" /></button> :
+              {takeoverFrameUrl ? selected.takeover_reason === "webauthn" ?
+                <div className="cw-browser-frame-surface" aria-label="Read-only WebAuthn takeover frame"><img src={takeoverFrameUrl} alt="Current browser page for read-only WebAuthn takeover inspection" /></div> :
+                <button
+                  type="button"
+                  className="cw-browser-frame-surface"
+                  disabled={Boolean(busy)}
+                  onClick={event => void interactTakeoverClick(event)}
+                  aria-label="Human-only supervised browser frame. Click a visible control at this exact location."
+                ><img src={takeoverFrameUrl} alt="Current supervised browser page for human-only takeover" /></button> :
                 <div className="cw-browser-frame-empty">Visual takeover frame is being prepared.</div>}
-              <div className="cw-browser-frame-keyboard" aria-label="Human-only takeover navigation keys">
+              {selected.takeover_reason !== "webauthn" && <div className="cw-browser-frame-keyboard" aria-label="Human-only takeover navigation keys">
                 {(["Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] as const).map(key =>
                   <button key={key} type="button" className="cw-text-button" disabled={Boolean(busy) || !takeoverFrameUrl} onClick={() => void interactTakeoverKey(key)}>{key}</button>
                 )}
-              </div>
+              </div>}
               <div className="cw-browser-frame-actions">
                 <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => void refreshTakeoverFrame()}>{busy === "takeover-frame" ? "Refreshing…" : "Refresh visual frame"}</button>
-                <span>Human-only control. Every click/key is bound to this exact frame and the same short-lived isolated browser context. If that worker context expires, Shuddho fails closed and requires a fresh frame. DeepSeek never receives the frame or interaction authority.</span>
+                <span>{selected.takeover_reason === "webauthn" ? "Read-only WebAuthn boundary. Shuddho does not inject, emulate, export, or expose passkey/security-key credentials to the browser worker or DeepSeek." : "Human-only control. Every click/key is bound to this exact frame and the same short-lived isolated browser context. If that worker context expires, Shuddho fails closed and requires a fresh frame. DeepSeek never receives the frame or interaction authority."}</span>
               </div>
             </div>
             {selected.takeover_reason === "captcha" ? <p className="cw-fineprint">Use the visual frame yourself for CAPTCHA or other challenge interaction. Text/secret injection stays unavailable for CAPTCHA, and the agent/model cannot issue these clicks or keys.</p> :
+            selected.takeover_reason === "webauthn" ? <p className="cw-fineprint">Passkeys and hardware security keys are intentionally fail-closed here. Shuddho can show the current page, but this worker cannot receive raw WebAuthn credentials, emulate an authenticator, or continue authentication through secret injection/click takeover. Use a future qualified authenticator handoff rather than bypassing this boundary.</p> :
             <form onSubmit={submitTakeoverInput}>
               <label>Find sensitive field by<select value={takeoverBy} onChange={event => setTakeoverBy(event.target.value as "label" | "name")}><option value="label">Exact label</option><option value="name">Exact name attribute</option></select></label>
               <label>Field identifier<input maxLength={160} required value={takeoverField} onChange={event => setTakeoverField(event.target.value)} /></label>
@@ -249,7 +252,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
           </div> :
           !["cancelled", "completed", "expired", "failed"].includes(selected.state) && <div>
             <label>Takeover reason<select value={takeoverReason} onChange={event => setTakeoverReason(event.target.value as typeof takeoverReason)}>
-              <option value="login">Login / password</option><option value="mfa">MFA / OTP</option><option value="sensitive_input">Other sensitive input</option><option value="captcha">CAPTCHA</option>
+              <option value="login">Login / password</option><option value="mfa">MFA / OTP</option><option value="webauthn">Passkey / security key (WebAuthn)</option><option value="sensitive_input">Other sensitive input</option><option value="captcha">CAPTCHA</option>
             </select></label>
             <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => void startTakeover()}>Request takeover</button>
             <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => act("cancel", () => client.cancelBrowser(selected.id), "Browser session cancelled.")}>Cancel session</button>

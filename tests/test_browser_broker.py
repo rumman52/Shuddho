@@ -1670,3 +1670,66 @@ def test_takeover_heartbeat_releases_wrong_worker_and_cancel_clears_affinity(con
         stored = db.get(BrowserSession, session["id"])
         assert stored.takeover_worker_ref is None
         assert stored.takeover_worker_lease_until is None
+
+
+def test_webauthn_takeover_is_read_only_and_fails_closed(container, signed_client):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-webauthn-boundary")
+
+    client, headers = signed_client
+    response = client.post(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover',
+        headers=headers(),
+        json={"reason": "webauthn"},
+    )
+    assert response.status_code == 200
+    assert response.json()["takeover_required"] is True
+    assert response.json()["takeover_reason"] == "webauthn"
+
+    frame = container.browser.prepare_takeover_frame(owner, session["id"])
+    assert frame["kind"] == "takeover_frame"
+    assert frame["policy"] == {"allow_mutation": False}
+
+    with pytest.raises(CoworkerError) as secret:
+        container.browser.prepare_takeover_input(
+            owner,
+            session["id"],
+            BrowserTakeoverInputCreate(
+                by="label",
+                field="Passkey",
+                value="do-not-inject",
+                submit=True,
+            ),
+        )
+    assert secret.value.code == "browser_webauthn_requires_external_authenticator"
+
+    with pytest.raises(CoworkerError) as interaction:
+        container.browser.prepare_takeover_interaction(
+            owner,
+            session["id"],
+            BrowserTakeoverInteractionCreate(
+                frame_version=1,
+                kind="key",
+                key="Tab",
+            ),
+        )
+    assert interaction.value.code == "browser_webauthn_requires_external_authenticator"
+
+
+def test_webauthn_takeover_rejects_unknown_takeover_reason(container, signed_client):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-webauthn-schema")
+    client, headers = signed_client
+
+    rejected = client.post(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover',
+        headers=headers(),
+        json={"reason": "virtual_authenticator"},
+    )
+    assert rejected.status_code == 422
+
+    with pytest.raises(CoworkerError) as repository_rejected:
+        container.browser.request_takeover(owner, session["id"], "virtual_authenticator")
+    assert repository_rejected.value.code == "browser_takeover_reason_invalid"

@@ -86,7 +86,7 @@ export type ConnectorReadSubscription = {
 export type BrowserSessionState = "prepared" | "queued" | "running" | "takeover" | "cancelled" | "completed" | "expired" | "failed";
 export type BrowserSession = {
   id: string; purpose: "research" | "form_prepare"; start_url: string; allowed_origins: string[];
-  state: BrowserSessionState; takeover_required: boolean; takeover_reason: "login" | "mfa" | "captcha" | "sensitive_input" | null; cancel_requested: boolean;
+  state: BrowserSessionState; takeover_required: boolean; takeover_reason: "login" | "mfa" | "captcha" | "webauthn" | "sensitive_input" | null; cancel_requested: boolean;
   last_url: string | null; last_title: string | null; error_code: string | null;
   created_at: string; updated_at: string; expires_at: string;
   execution: {
@@ -304,7 +304,7 @@ export class CoworkerClient {
   prepareBrowserForm(id: string, url: string, fields: BrowserFormField[]) {
     return this.json<BrowserCommand>(`/api/v1/browser-sessions/${identifier(id)}/prepare-form`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, fields }) });
   }
-  requestBrowserTakeover(id: string, reason: "login" | "mfa" | "captcha" | "sensitive_input") {
+  requestBrowserTakeover(id: string, reason: "login" | "mfa" | "captcha" | "webauthn" | "sensitive_input") {
     return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}/takeover`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
   }
   prepareBrowserTakeoverInput(id: string, input: { by: "label" | "name"; field: string; value: string; submit: boolean }) {
