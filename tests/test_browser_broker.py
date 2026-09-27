@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
@@ -14,7 +15,7 @@ from action_samples import enable_actions
 from test_coworker import account, container, signed_client
 
 from services.coworker.browser import BrowserRepository, normalize_browser_target, validate_resolved_addresses
-from services.coworker.browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverInputCreate
+from services.coworker.browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverInputCreate, BrowserTakeoverInteractionCreate
 from services.coworker.errors import CoworkerError
 from services.coworker.models import BrowserCommand, BrowserSession, utcnow
 
@@ -1191,3 +1192,202 @@ def test_visual_takeover_frame_rejects_mutation_or_non_jpeg_evidence(container):
             },
         )
     assert invalid.value.code == "browser_takeover_frame_invalid"
+
+
+def test_human_takeover_interaction_is_owner_scoped_and_frame_bound(container, signed_client):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-human-interaction")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+
+    frame_command = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-human-frame")
+    first_jpeg = b"\xff\xd8\xff\xe0" + (b"first-human-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-human-frame",
+        frame_command["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(first_jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+
+    prepared = container.browser.prepare_takeover_interaction(
+        owner,
+        session["id"],
+        BrowserTakeoverInteractionCreate(
+            frame_version=1,
+            kind="click",
+            x=0.25,
+            y=0.75,
+        ),
+    )
+    assert prepared["kind"] == "takeover_interaction"
+    assert prepared["policy"] == {
+        "human_only": True,
+        "frame_version": 1,
+        "interaction_kind": "click",
+    }
+
+    client, headers = signed_client
+    denied = client.post(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover-interaction',
+        headers=headers("human-interaction-bob"),
+        json={"frame_version": 1, "kind": "click", "x": 0.1, "y": 0.1},
+    )
+    assert denied.status_code == 404
+
+    claimed = container.browser.claim_commands("worker-human-click")
+    assert [item["id"] for item in claimed] == [prepared["id"]]
+    assert claimed[0]["policy"]["human_only"] is True
+    assert claimed[0]["policy"]["expected_frame_version"] == 1
+    assert claimed[0]["policy"]["expected_frame_sha256"] == hashlib.sha256(first_jpeg).hexdigest()
+    assert claimed[0]["policy"]["interaction"] == {
+        "kind": "click",
+        "x": 0.25,
+        "y": 0.75,
+        "key": None,
+    }
+
+    checked = container.browser.validate_worker_network_target(
+        "worker-human-click",
+        prepared["id"],
+        "https://example.com/login",
+        ["93.184.216.34"],
+    )
+    assert checked["origin"] == "https://example.com"
+
+    second_jpeg = b"\xff\xd8\xff\xe0" + (b"second-human-frame" * 18) + b"\xff\xd9"
+    completed = container.browser.complete_command(
+        "worker-human-click",
+        prepared["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge updated",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(second_jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": True,
+        },
+    )
+    assert completed["state"] == "succeeded"
+    assert completed["result"]["interaction_performed"] is True
+    assert completed["result"]["takeover_frame_version"] == 2
+
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "takeover"
+    assert current["takeover_required"] is True
+    assert current["execution"]["takeover_frame_version"] == 2
+
+    visible = client.get(
+        f'/api/v1/browser-sessions/{session["id"]}/takeover-frame',
+        headers=headers(),
+    )
+    assert visible.status_code == 200
+    assert visible.content == second_jpeg
+
+    with pytest.raises(CoworkerError) as stale:
+        container.browser.prepare_takeover_interaction(
+            owner,
+            session["id"],
+            BrowserTakeoverInteractionCreate(frame_version=1, kind="key", key="Tab"),
+        )
+    assert stale.value.code == "browser_takeover_frame_stale"
+
+
+def test_human_takeover_interaction_failure_clears_stale_visual_frame(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-human-stale")
+    container.browser.request_takeover(owner, session["id"], "captcha")
+    frame_command = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-human-stale-frame")
+    jpeg = b"\xff\xd8\xff\xe0" + (b"stale-human-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-human-stale-frame",
+        frame_command["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "Challenge",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+    prepared = container.browser.prepare_takeover_interaction(
+        owner,
+        session["id"],
+        BrowserTakeoverInteractionCreate(frame_version=1, kind="key", key="Escape"),
+    )
+    container.browser.claim_commands("worker-human-stale")
+    failed = container.browser.fail_command(
+        "worker-human-stale",
+        prepared["id"],
+        "takeover_frame_stale",
+    )
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "takeover_frame_stale"
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "takeover"
+    assert current["takeover_required"] is True
+    assert current["execution"]["takeover_frame_available"] is False
+    assert current["execution"]["takeover_frame_version"] == 0
+
+
+def test_human_takeover_interaction_requires_exact_input_shape(container):
+    enable_browser(container)
+    owner = account(container)
+    session = create_session(container, owner, url="https://example.com/login", key="browser-human-shape")
+    container.browser.request_takeover(owner, session["id"], "mfa")
+    frame_command = container.browser.prepare_takeover_frame(owner, session["id"])
+    container.browser.claim_commands("worker-human-shape-frame")
+    jpeg = b"\xff\xd8\xff\xe0" + (b"shape-human-frame" * 18) + b"\xff\xd9"
+    container.browser.complete_command(
+        "worker-human-shape-frame",
+        frame_command["id"],
+        {
+            "final_url": "https://example.com/login",
+            "title": "MFA",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "prepared_fields": [],
+            "submission_performed": False,
+            "storage_state": None,
+            "takeover_frame_b64": base64.b64encode(jpeg).decode("ascii"),
+            "takeover_frame_content_type": "image/jpeg",
+            "interaction_performed": False,
+        },
+    )
+
+    with pytest.raises(CoworkerError) as invalid_click:
+        container.browser.prepare_takeover_interaction(
+            owner,
+            session["id"],
+            BrowserTakeoverInteractionCreate(frame_version=1, kind="click", x=0.4, y=0.5, key="Tab"),
+        )
+    assert invalid_click.value.code == "browser_takeover_interaction_invalid"
+
+    with pytest.raises(CoworkerError) as invalid_key:
+        container.browser.prepare_takeover_interaction(
+            owner,
+            session["id"],
+            BrowserTakeoverInteractionCreate(frame_version=1, kind="key", key="Tab", x=0.5),
+        )
+    assert invalid_key.value.code == "browser_takeover_interaction_invalid"
