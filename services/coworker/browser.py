@@ -1809,6 +1809,8 @@ class BrowserRepository:
             "takeover_context_missing",
             "takeover_interaction_failed",
             "takeover_interaction_uncertain",
+            "browser_popup_blocked",
+            "browser_download_blocked",
         }
         if error_code not in allowed:
             error_code = "navigation_failed"
@@ -1838,7 +1840,7 @@ class BrowserRepository:
                     session.state = "takeover"
                     if command.kind == "takeover_interaction":
                         self._clear_takeover_frame(session)
-                    if error_code in {"takeover_context_missing", "takeover_interaction_uncertain", "worker_interrupted"}:
+                    if error_code in {"takeover_context_missing", "takeover_interaction_uncertain", "worker_interrupted", "browser_popup_blocked", "browser_download_blocked"}:
                         self._clear_takeover_affinity(session)
                     session.updated_at = now
                 else:
