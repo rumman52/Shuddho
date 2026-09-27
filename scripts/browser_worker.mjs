@@ -217,8 +217,8 @@ async function execute(command) {
     await page.route("**/*", async (route) => {
       const request = route.request();
       const method = request.method().toUpperCase();
-      if (!["GET", "HEAD"].includes(method)) {
-        formMutationBlocked = formMutationBlocked || command.kind === "prepare_form";
+      if (command.kind === "prepare_form" && !["GET", "HEAD"].includes(method)) {
+        formMutationBlocked = true;
         await route.abort("blockedbyclient");
         return;
       }
