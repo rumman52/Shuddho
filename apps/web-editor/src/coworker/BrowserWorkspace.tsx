@@ -10,7 +10,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
   const [selected, setSelected] = useState<BrowserSession | null>(null);
   const [commands, setCommands] = useState<BrowserCommand[]>([]);
   const [purpose, setPurpose] = useState<"research" | "form_prepare">("research");
-  const [startUrl, setStartUrl] = useState("https://example.com/");
+  const [startUrl, setStartUrl] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [fields, setFields] = useState<BrowserFormField[]>([{ by: "label", field: "", value: "" }]);
   const [busy, setBusy] = useState("");
@@ -32,7 +32,7 @@ export default function BrowserWorkspace({ client }: { client: CoworkerClient })
     ]);
     setSelected(session);
     setCommands(history.commands);
-    setTargetUrl(current => current || session.last_url || session.start_url);
+    setTargetUrl(session.last_url || session.start_url);
   }
 
   useEffect(() => {
