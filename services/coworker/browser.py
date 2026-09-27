@@ -312,6 +312,12 @@ class BrowserRepository:
                 command.lease_until = None
                 command.claimed_by = None
                 _scrub_form_payload(command)
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=row.owner_id,
+                resource_id=row.id,
+                action="browser_session.expired",
+            ))
 
     @staticmethod
     def _dto(row: BrowserSession) -> dict:
@@ -513,7 +519,8 @@ class BrowserRepository:
 
     def list_commands(self, owner: str, session_id: str) -> list[dict]:
         self._require_enabled()
-        with self.sessions() as db:
+        with self.sessions.begin() as db:
+            self._expire_stale_sessions(db, owner)
             session = db.scalar(select(BrowserSession.id).where(
                 BrowserSession.id == session_id,
                 BrowserSession.owner_id == owner,
@@ -974,6 +981,8 @@ class BrowserRepository:
                     command.claimed_by = None
                     session.state = "failed"
                     session.error_code = "redirect_origin_blocked"
+                    session.worker_session_ref = None
+                    session.updated_at = now
                     self._clear_storage_state(session)
                     raise CoworkerError("browser_origin_not_allowed", "The browser worker observed a redirect outside the approved origin.", 409)
                 hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
@@ -993,6 +1002,8 @@ class BrowserRepository:
                 command.claimed_by = None
                 session.state = "failed"
                 session.error_code = "form_submission_blocked"
+                session.worker_session_ref = None
+                session.updated_at = now
                 self._clear_storage_state(session)
                 raise CoworkerError(
                     "browser_form_submission_blocked",
