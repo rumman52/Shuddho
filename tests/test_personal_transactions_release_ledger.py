@@ -81,8 +81,14 @@ def test_append_personal_transactions_event_binds_activation_and_verifies(tmp_pa
     staging = write_json(tmp_path / "staging.json", {
         "personal_transactions": {
             "status": "passed",
-            "evidence": "live exact-term synthetic negotiation commitment passed",
+            "evidence": "qualified transaction operations: google:negotiation_commitment_email",
             "verified_at": "2026-09-28T10:10:00+00:00",
+            "operation_evidence": {
+                "google:negotiation_commitment_email": {
+                    "evidence": "live exact-term synthetic negotiation commitment passed",
+                    "verified_at": "2026-09-28T10:10:00+00:00",
+                }
+            },
         }
     })
     deployment = write_json(tmp_path / "deployment.json", {
