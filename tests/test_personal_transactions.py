@@ -144,6 +144,34 @@ def test_transaction_operation_allowlist_is_fail_closed(container):
     assert provider.sent == []
 
 
+def test_operation_allowlist_is_rechecked_before_approval(container):
+    enable_transactions(container)
+    owner = account(container)
+    action, _connection = prepare_transaction(
+        container,
+        owner,
+        "pa09-operation-approval-recheck",
+    )
+
+    narrowed = replace(
+        container.settings,
+        transaction_operations=frozenset(),
+    )
+    container.settings = narrowed
+    container.repository.settings = narrowed
+    container.actions.repo.settings = narrowed
+
+    with pytest.raises(CoworkerError) as denied:
+        container.actions.repo.approve(
+            owner,
+            action["id"],
+            action["preview_hash"],
+        )
+    assert denied.value.code == "personal_transaction_operation_disabled"
+    result = container.actions.repo.get(owner, action["id"])
+    assert result["state"] == "awaiting_approval"
+
+
 def test_operation_allowlist_is_rechecked_before_provider_mutation(container):
     enable_transactions(container)
     owner = account(container)
