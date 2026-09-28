@@ -49,7 +49,13 @@ proposal-to-preview bridge is independently default-off under
 requires the existing action-proposal and personal-transaction controls, plus an
 individually qualified `negotiation_commitment_email` operation. Its canonical
 release-contract identity is `negotiation_proposal_promotion`; staging evidence
-and activation evidence are separate from implementation and repository CI.
+and activation evidence are separate from implementation and repository CI. The
+executable evidence path is documented in [Controlled Live PA-09 Negotiation
+Proposal Promotion](CONTROLLED_STAGING_NEGOTIATION_PROPOSAL_PROMOTION.md) and
+[PA-09 Negotiation Proposal Promotion Activation](NEGOTIATION_PROPOSAL_PROMOTION_ACTIVATION.md).
+A passing activation must also be recorded as schema-v27
+`negotiation_proposal_promotion_verified` before the generic release-activation
+bundle can satisfy a rollout that enables this bridge.
 
 ## Context sent to the model
 
