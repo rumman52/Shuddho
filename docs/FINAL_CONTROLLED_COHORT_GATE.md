@@ -77,6 +77,7 @@ Optional capability gates are derived from the same canonical release contract u
 - `action_document_sharing`;
 - `action_email_threading`;
 - `action_social_publishing`;
+- `personal_transactions`;
 - `action_selection`;
 - `action_proposals`;
 - `agent_linkedin_proposals`.
@@ -125,6 +126,7 @@ The manifest must contain the exact kill switches:
 - `SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED=false` when Drive sharing is declared;
 - `SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false` when Gmail threading is declared;
 - `SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false` when LinkedIn publishing is declared;
+- `SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false` when PA-09 negotiation commitments are declared;
 - `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false` when action selection is declared;
 - `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false` when action proposals are declared;
 - `SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false` when LinkedIn Agent proposals are declared.
