@@ -751,7 +751,7 @@ class NegotiationRepository:
         review: NegotiationProposalReview,
     ) -> dict:
         self._require_enabled()
-        if not self.settings.agent_action_proposals_enabled:
+        if not self.settings.negotiation_proposal_promotion_enabled:
             raise CoworkerError(
                 "negotiation_proposal_promotion_disabled",
                 "Negotiation proposal promotion is disabled in this deployment.",
@@ -812,19 +812,11 @@ class NegotiationRepository:
                     "existing_action_id": row.promoted_action_id,
                     "source_binding": binding,
                 }
-            if row.state not in {"suggested", "promoting"}:
+            if row.state != "suggested":
                 raise CoworkerError(
                     "negotiation_proposal_unavailable",
                     "This negotiation proposal is no longer available for promotion.",
                     409,
-                )
-            if row.state == "suggested":
-                row.state = "promoting"
-                self._audit(
-                    db,
-                    owner,
-                    row.id,
-                    "negotiation_proposal.promotion_reserved",
                 )
             return {
                 "existing_action_id": None,
@@ -911,10 +903,10 @@ class NegotiationRepository:
                     current_revision=case.revision,
                     current_history_sequence=history_sequence,
                 )
-            if row.state != "promoting":
+            if row.state != "suggested":
                 raise CoworkerError(
                     "negotiation_proposal_unavailable",
-                    "This negotiation proposal is not reserved for promotion.",
+                    "This negotiation proposal is not available for promotion.",
                     409,
                 )
             row.state = "promoted"
@@ -932,34 +924,6 @@ class NegotiationRepository:
                 current_revision=case.revision,
                 current_history_sequence=history_sequence,
             )
-
-    def release_proposal_promotion(
-        self,
-        owner: str,
-        case_id: str,
-        proposal_id: str,
-    ) -> None:
-        with self.sessions.begin() as db:
-            self._case(db, owner, case_id)
-            row = db.scalar(
-                select(NegotiationProposal).where(
-                    NegotiationProposal.id == proposal_id,
-                    NegotiationProposal.case_id == case_id,
-                    NegotiationProposal.owner_id == owner,
-                ).with_for_update()
-            )
-            if (
-                row is not None
-                and row.state == "promoting"
-                and row.promoted_action_id is None
-            ):
-                row.state = "suggested"
-                self._audit(
-                    db,
-                    owner,
-                    row.id,
-                    "negotiation_proposal.promotion_released",
-                )
 
     def append_offer(
         self,
