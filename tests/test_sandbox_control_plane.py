@@ -74,6 +74,38 @@ def create_session(container, owner, key=None):
     )[0]
 
 
+def create_interactive_session(container, owner, key=None):
+    return container.sandbox.create(
+        owner,
+        SandboxSessionCreate(purpose="interactive_artifact", runtime="python311"),
+        key or "sandbox-interactive-" + str(uuid4()),
+    )[0]
+
+
+def completion_observation(html: bytes | None = None):
+    artifact = None
+    if html is not None:
+        artifact = {
+            "kind": "interactive_html",
+            "body_b64": base64.b64encode(html).decode("ascii"),
+            "sha256": hashlib.sha256(html).hexdigest(),
+            "byte_size": len(html),
+        }
+    return {
+        "policy_version": "sandbox-control-v1",
+        "executor_contract": "bwrap-python311-v1",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "elapsed_ms": 12,
+        "sandbox_destroyed": True,
+        "network_isolated": True,
+        "filesystem_isolated": True,
+        "environment_sanitized": True,
+        "artifact": artifact,
+    }
+
+
 def test_sandbox_flag_requires_runtime_v3_and_artifact_services(container):
     with pytest.raises(ValueError, match="Agent Runtime v3"):
         replace(container.settings, code_execution_enabled=True).validate()
@@ -436,3 +468,228 @@ def test_sandbox_completion_rejects_missing_isolation_evidence(container):
         )
     assert invalid.value.code == "sandbox_isolation_evidence_invalid"
 
+
+
+
+def test_interactive_artifact_is_owner_scoped_private_and_previewed_without_credentials(
+    container,
+    signed_client,
+):
+    settings = enable_sandbox(container)
+    owner = account(container)
+    bob = account(container, "sandbox-preview-bob")
+    session = create_interactive_session(container, owner, "sandbox-preview-success")
+    prepared = container.sandbox.prepare_execution(
+        owner,
+        session["id"],
+        SandboxExecutionCreate(
+            source=(
+                "from pathlib import Path\n"
+                "Path('/tmp/shuddho-preview.html').write_text('<html></html>')\n"
+            )
+        ),
+    )
+    claimed = container.sandbox.claim_executions("sandbox-preview-worker")
+    assert claimed[0]["purpose"] == "interactive_artifact"
+    assert claimed[0]["policy"]["artifacts"]["interactive_html"]["path"] == "/tmp/shuddho-preview.html"
+
+    html = (
+        b"<!doctype html><html><head><title>Private chart</title>"
+        b"<style>body{font-family:sans-serif} .bar{width:40%}</style></head>"
+        b"<body><main><h1>Private chart</h1><div class=\"bar\">40%</div>"
+        b"<details><summary>Details</summary><p>Owned data</p></details></main></body></html>"
+    )
+    completed = container.sandbox.complete_execution(
+        "sandbox-preview-worker",
+        prepared["id"],
+        completion_observation(html),
+    )
+    manifest = completed["result"]["artifact"]
+    assert manifest["artifact_class"] == "sandbox_interactive"
+    assert manifest["preview_available"] is True
+    assert manifest["content_type"] == "text/html; charset=utf-8"
+    assert manifest["sha256"] == hashlib.sha256(html).hexdigest()
+
+    # Interactive HTML is intentionally excluded from the existing approved
+    # email/document-sharing artifact chooser.
+    assert all(
+        item["id"] != manifest["id"]
+        for item in container.repository.list_artifacts(owner)
+    )
+    with pytest.raises(CoworkerError) as cross_owner:
+        container.sandbox.preview_url(bob, manifest["id"])
+    assert cross_owner.value.status_code == 404
+
+    preview = container.sandbox.preview_url(owner, manifest["id"])
+    assert preview["url"].startswith(settings.sandbox_preview_origin + "/sandbox-preview/")
+    assert preview["sandbox"] == {
+        "scripts": False,
+        "network": False,
+        "forms": False,
+        "privileged_api_bridge": False,
+        "workspace_credentials": False,
+    }
+    token = preview["url"].split("token=", 1)[1]
+
+    client, headers = signed_client
+    issued = client.get(
+        f'/api/v1/sandbox-artifacts/{manifest["id"]}/preview-url',
+        headers=headers(),
+    )
+    assert issued.status_code == 200
+    denied_owner = client.get(
+        f'/api/v1/sandbox-artifacts/{manifest["id"]}/preview-url',
+        headers=headers("sandbox-preview-bob"),
+    )
+    assert denied_owner.status_code == 404
+
+    isolated_headers = {"Host": "sandbox-preview.example.test"}
+    rendered = client.get(
+        f'/sandbox-preview/{manifest["id"]}?token={token}',
+        headers=isolated_headers,
+    )
+    assert rendered.status_code == 200
+    assert rendered.content == html
+    assert rendered.headers["cache-control"] == "no-store, max-age=0"
+    assert rendered.headers["x-content-type-options"] == "nosniff"
+    csp = rendered.headers["content-security-policy"]
+    assert "default-src 'none'" in csp
+    assert "script-src 'none'" in csp
+    assert "connect-src 'none'" in csp
+    assert "form-action 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert rendered.headers["cross-origin-opener-policy"] == "same-origin"
+    assert rendered.headers["referrer-policy"] == "no-referrer"
+
+    wrong_origin = client.get(
+        f'/sandbox-preview/{manifest["id"]}?token={token}',
+        headers={"Host": "shuddho-web-editor.vercel.app"},
+    )
+    assert wrong_origin.status_code == 404
+    cookie_leak = client.get(
+        f'/sandbox-preview/{manifest["id"]}?token={token}',
+        headers=isolated_headers | {"Cookie": "session=must-not-cross"},
+    )
+    assert cookie_leak.status_code == 400
+    auth_leak = client.get(
+        f'/sandbox-preview/{manifest["id"]}?token={token}',
+        headers=isolated_headers | {"Authorization": "Basic must-not-cross"},
+    )
+    assert auth_leak.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        b"<html><body><script>alert(1)</script></body></html>",
+        b"<html><body><img src=\"https://evil.example/x\"></body></html>",
+        b"<html><head><style>@import 'https://evil.example/x.css';</style></head><body></body></html>",
+        b"<html><body onclick=\"fetch('https://evil.example')\">x</body></html>",
+        b"<html><body><form action=\"https://evil.example\"></form></body></html>",
+        b"<html><body><iframe src=\"https://evil.example\"></iframe></body></html>",
+        b"<?xml version=\"1.0\"?><html><body>x</body></html>",
+    ],
+)
+def test_interactive_html_rejects_active_or_network_capable_markup(html):
+    with pytest.raises(CoworkerError) as unsafe:
+        validate_static_preview_html(html, 65536)
+    assert unsafe.value.code == "sandbox_artifact_unsafe"
+
+
+def test_interactive_completion_requires_safe_exact_artifact(container):
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_interactive_session(container, owner, "sandbox-preview-unsafe")
+    prepared = container.sandbox.prepare_execution(
+        owner,
+        session["id"],
+        SandboxExecutionCreate(source="print('preview')"),
+    )
+    container.sandbox.claim_executions("sandbox-preview-unsafe-worker")
+    html = b"<html><body><script>alert(document.cookie)</script></body></html>"
+    with pytest.raises(CoworkerError) as unsafe:
+        container.sandbox.complete_execution(
+            "sandbox-preview-unsafe-worker",
+            prepared["id"],
+            completion_observation(html),
+        )
+    assert unsafe.value.code == "sandbox_artifact_unsafe"
+    with container.repository.sessions() as db:
+        assert db.scalar(
+            __import__("sqlalchemy").select(Artifact).where(
+                Artifact.sandbox_execution_id == prepared["id"]
+            )
+        ) is None
+    container.sandbox.fail_execution(
+        "sandbox-preview-unsafe-worker",
+        prepared["id"],
+        "sandbox_artifact_unsafe",
+        True,
+    )
+
+
+def test_worker_artifact_reader_rejects_symlink_and_accepts_regular_file(tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    outside = tmp_path / "outside-secret"
+    outside.write_bytes(b"host secret")
+    symlink = scratch / "shuddho-preview.html"
+    symlink.symlink_to(outside)
+    with pytest.raises(WorkerError) as unsafe:
+        read_artifact_file(symlink, 65536)
+    assert unsafe.value.code == "sandbox_artifact_invalid"
+
+    symlink.unlink()
+    regular = b"<html><body><p>safe</p></body></html>"
+    symlink.write_bytes(regular)
+    assert read_artifact_file(symlink, 65536) == regular
+
+
+def test_expired_sandbox_artifact_is_purged_and_storage_accounting_released(container):
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_interactive_session(container, owner, "sandbox-preview-expiry")
+    prepared = container.sandbox.prepare_execution(
+        owner,
+        session["id"],
+        SandboxExecutionCreate(source="print('preview')"),
+    )
+    container.sandbox.claim_executions("sandbox-preview-expiry-worker")
+    html = b"<html><body><p>expires</p></body></html>"
+    completed = container.sandbox.complete_execution(
+        "sandbox-preview-expiry-worker",
+        prepared["id"],
+        completion_observation(html),
+    )
+    artifact_id = completed["result"]["artifact"]["id"]
+    with container.repository.sessions.begin() as db:
+        row = db.get(Artifact, artifact_id)
+        object_key = row.object_key
+        row.expires_at = utcnow() - timedelta(seconds=1)
+    assert container.storage.get(object_key, 65536) == html
+
+    result = container.retention.cleanup_expired_sandbox_artifacts()
+    assert result == {"deleted": 1, "failed": []}
+    with container.repository.sessions() as db:
+        assert db.get(Artifact, artifact_id) is None
+    with pytest.raises(FileNotFoundError):
+        container.storage.get(object_key, 65536)
+
+
+def test_sandbox_preview_configuration_fails_closed(container):
+    base = replace(
+        container.settings,
+        artifact_services_enabled=True,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_runtime_v3_enabled=True,
+        code_execution_enabled=True,
+        sandbox_worker_token="test-sandbox-worker-token-0123456789abcdef",
+        sandbox_preview_secret="test-sandbox-preview-secret-0123456789abcdef",
+        sandbox_preview_origin="https://sandbox-preview.example.test",
+    )
+    base.validate()
+    with pytest.raises(ValueError, match="PREVIEW_ORIGIN"):
+        replace(base, sandbox_preview_origin="https://sandbox-preview.example.test/path").validate()
+    with pytest.raises(ValueError, match="PREVIEW_SECRET"):
+        replace(base, sandbox_preview_secret="short").validate()
