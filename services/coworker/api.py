@@ -325,6 +325,7 @@ def runtime_manifest(
         "environment": settings.environment,
         "capabilities": capabilities,
         "action_providers": providers,
+        "transaction_operations": sorted(settings.transaction_operations),
         "cohort": {
             "enforced": settings.cohort_enforced,
             "configured_members": len(settings.cohort_account_ids),
