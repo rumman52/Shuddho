@@ -111,7 +111,7 @@ def test_reviewed_rollout_requires_all_promotion_prerequisites_and_kill_switch()
     broken["rollback"]["negotiation_proposal_promotion_kill_switch"] = "wrong"
     with pytest.raises(
         NegotiationProposalPromotionActivationError,
-        match="kill switch",
+        match="kill[_ ]switch",
     ):
         validate_reviewed_rollout(broken, max_cohort_users=25)
 
