@@ -451,7 +451,7 @@ def build_evidence(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify production activation of approval-bound LinkedIn personal transactions "
+            "Verify production activation of approval-bound PA-09 negotiation transactions "
             "against exact staging evidence, reviewed rollout, "
             "deployed revision/configuration, and fresh cohort health."
         )
