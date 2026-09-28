@@ -90,8 +90,16 @@ class NegotiationCasePatch(NegotiationModel):
         fields = self.model_fields_set - {"expected_revision"}
         if not fields:
             raise ValueError("Patch at least one negotiation case field")
-        if "limits" in fields and self.limits is None:
-            raise ValueError("Negotiation limits cannot be null")
+        null_fields = sorted(
+            field
+            for field in fields & {"subject", "objective", "limits"}
+            if getattr(self, field) is None
+        )
+        if null_fields:
+            raise ValueError(
+                "Negotiation case fields cannot be null: "
+                + ", ".join(null_fields)
+            )
         if self.limits is not None:
             names = [item.name.casefold() for item in self.limits]
             if len(names) != len(set(names)):
