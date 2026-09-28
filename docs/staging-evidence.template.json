@@ -79,6 +79,10 @@
     "status": "pending",
     "evidence": ""
   },
+  "code_execution": {
+    "status": "pending",
+    "evidence": ""
+  },
   "microsoft_actions": {
     "status": "pending",
     "evidence": ""
