@@ -31,6 +31,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [threadingEnabled, setThreadingEnabled] = useState(false);
   const [socialPublishingEnabled, setSocialPublishingEnabled] = useState(false);
   const [personalTransactionsEnabled, setPersonalTransactionsEnabled] = useState(false);
+  const [transactionOperations, setTransactionOperations] = useState<string[]>([]);
   const [readsEnabled, setReadsEnabled] = useState(false);
   const [replyParentId, setReplyParentId] = useState<string | null>(null);
   const [savedRecipients, setSavedRecipients] = useState<ActionRecipient[]>([]);
@@ -60,6 +61,8 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false); const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
+  const negotiationEnabled = personalTransactionsEnabled
+    && transactionOperations.includes(`${provider}:negotiation_commitment_email`);
   const currentCapability = mode === "negotiation" ? "email" : mode;
   const currentConnection = connections.find(
     value => value.provider === provider && value.capability === currentCapability,
@@ -84,13 +87,21 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
       });
       Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal), directory]).then(([value, recent, available, recipientDirectory]) => {
         if (!alive) return;
-        setEnabled(value.enabled); setReadsEnabled(value.reads_enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setSocialPublishingEnabled(value.social_publishing_enabled); setPersonalTransactionsEnabled(value.personal_transactions_enabled); setConnections(value.connections); setHistory(recent.actions);
+        setEnabled(value.enabled); setReadsEnabled(value.reads_enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setSocialPublishingEnabled(value.social_publishing_enabled); setPersonalTransactionsEnabled(value.personal_transactions_enabled); setTransactionOperations(value.transaction_operations ?? []); setConnections(value.connections); setHistory(recent.actions);
         setAttachmentsEnabled(available.attachments_enabled); setDocumentSharingEnabled(current => current || available.document_sharing_enabled); setArtifacts(available.artifacts);
         setRecipientDirectoryEnabled(recipientDirectory.enabled); setSavedRecipients(recipientDirectory.recipients); setLoaded(true);
       }).catch(failure => { if (alive) { setError(message(failure)); setLoaded(true); } });
     });
     return () => { alive = false; controller.abort(); };
   }, [client, account, reload]);
+
+  useEffect(() => {
+    if (mode === "negotiation" && !negotiationEnabled) {
+      setMode("email");
+      setChecked(false);
+      submission.current = undefined;
+    }
+  }, [mode, negotiationEnabled]);
 
   useEffect(() => {
     if (socialDraft === null) return;
@@ -361,7 +372,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
       {composing ? <form onSubmit={prepare}>
         <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "negotiation" | "calendar" | "drive" | "social")} disabled={Boolean(busy) || Boolean(replyParentId)}>
           {provider === "linkedin" ? <option value="social">Publish a LinkedIn post</option> : <>
-            <option value="email">Send an email</option>{personalTransactionsEnabled && <option value="negotiation">Commit negotiated terms by email</option>}<option value="calendar">Create a calendar event</option>{provider === "google" && documentSharingEnabled && <option value="drive">Share a document</option>}
+            <option value="email">Send an email</option>{negotiationEnabled && <option value="negotiation">Commit negotiated terms by email</option>}<option value="calendar">Create a calendar event</option>{provider === "google" && documentSharingEnabled && <option value="drive">Share a document</option>}
           </>}
         </select></label>
         <p className="cw-action-account">{currentConnection ? <>{mode === "social" ? <strong>Connected LinkedIn personal member</strong> : <>From <strong>{currentConnection.email}</strong></>}{mode === "calendar" && " · Primary calendar"}{mode === "drive" && " · Google Drive"}</> : `Connect ${provider === "linkedin" ? "LinkedIn" : provider === "google" ? (mode === "email" || mode === "negotiation" ? "Gmail" : mode === "calendar" ? "Google Calendar" : "Google Drive") : (mode === "email" || mode === "negotiation" ? "Microsoft Mail" : "Microsoft Calendar")} above to continue.`}</p>
