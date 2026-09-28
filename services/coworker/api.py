@@ -30,6 +30,8 @@ from .negotiation_schemas import (
     NegotiationCasePatch,
     NegotiationCaseTransition,
     NegotiationOfferCreate,
+    NegotiationProposalRequest,
+    NegotiationProposalReview,
 )
 from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
@@ -189,6 +191,44 @@ def append_negotiation_offer(
     )
     response.headers["Idempotent-Replayed"] = "false" if created else "true"
     return value
+
+
+@router.post("/negotiations/{case_id}/proposals", status_code=201)
+async def generate_negotiation_proposal(
+    case_id: UUID,
+    payload: NegotiationProposalRequest,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = await services.negotiation_proposals.generate(
+        identity.account_id,
+        str(case_id),
+        payload,
+        idempotency_key,
+    )
+    response.headers["Location"] = (
+        f'/api/v1/negotiations/{case_id}/proposals/{value["id"]}'
+    )
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return value
+
+
+@router.post("/negotiations/{case_id}/proposals/{proposal_id}/dismiss")
+def dismiss_negotiation_proposal(
+    case_id: UUID,
+    proposal_id: UUID,
+    payload: NegotiationProposalReview,
+    identity: Identity,
+    services: Services,
+):
+    return services.negotiation_proposals.dismiss(
+        identity.account_id,
+        str(case_id),
+        str(proposal_id),
+        payload,
+    )
 
 
 @router.post("/goals", status_code=201)
