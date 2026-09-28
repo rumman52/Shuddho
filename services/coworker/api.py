@@ -596,7 +596,10 @@ def sandbox_artifact_preview(
                 "frame-ancestors 'none'"
             ),
             "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
             "Cross-Origin-Resource-Policy": "same-origin",
+            "Origin-Agent-Cluster": "?1",
+            "X-Frame-Options": "DENY",
             "Referrer-Policy": "no-referrer",
             "Permissions-Policy": (
                 "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
