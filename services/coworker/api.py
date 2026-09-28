@@ -110,6 +110,10 @@ def list_negotiation_cases(identity: Identity, services: Services):
         return {"enabled": False, "cases": []}
     return {
         "enabled": True,
+        "proposals_enabled": (
+            services.settings.intelligent_planner_enabled
+            and bool(services.settings.deepseek_api_key)
+        ),
         "cases": services.negotiations.list(identity.account_id),
     }
 
