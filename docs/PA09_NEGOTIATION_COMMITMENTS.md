@@ -23,6 +23,7 @@ The feature is disabled by default:
 
 ```text
 SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false
+SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS=
 ```
 
 Enabling it also requires:
