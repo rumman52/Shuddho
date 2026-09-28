@@ -230,6 +230,31 @@ A schema-v7 event records release evidence only. It does not enable action selec
 
 Schema v8 adds one event type: `action_proposals_verified`.
 
+Schema v27 adds one event type: `negotiation_proposal_promotion_verified`.
+It binds the exact live promotion staging evidence, reviewed rollout, deployment
+record, clean post-deploy operator status and
+`negotiation_proposal_promotion_verified` activation artifact. The append path
+requires current-stage schema-v8 `action_proposals_verified` and schema-v26
+`personal_transactions_verified` attestations and independently rechecks the
+runtime capability snapshot plus exact transaction-operation authority.
+
+Example:
+
+```bash
+uv run python scripts/cohort_release_ledger.py append-negotiation-proposal-promotion \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --release-id coworker-cohort-001 \
+  --actor-reference security-review \
+  --change-reference change-negotiation-promotion-001 \
+  --current-stage canary-5 \
+  --staging-evidence /secure/release/staging-evidence.negotiation-promotion.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --deployment-change /secure/release/negotiation-promotion-deployment.json \
+  --operator-status /secure/release/post-negotiation-promotion-status.json \
+  --negotiation-proposal-promotion-activation /secure/release/negotiation-proposal-promotion-activation.json
+```
+
+
 It is appended only after the controlled live action-proposal staging gate and the production activation verifier both pass. The event requires the same release ID as the existing controlled-cohort ledger and a chain that has already reached the supplied current stage.
 
 It binds by SHA-256:
