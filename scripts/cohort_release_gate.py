@@ -26,6 +26,7 @@ from scripts.coworker_quality_evidence import (
     validate_live_quality_evidence,
 )
 from scripts.staging_gate import evaluate_required as evaluate_staging, load_evidence
+from services.coworker.action_registry import registered_transaction_operations
 
 BASE_MONITORING = {
     "queue_age",
@@ -86,7 +87,7 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
         "monitoring",
         "incident",
     }
-    allowed_keys = required_keys | {"action_providers"}
+    allowed_keys = required_keys | {"action_providers", "transaction_operations"}
     if not required_keys.issubset(rollout) or not set(rollout).issubset(allowed_keys):
         failures.append("manifest_shape")
         return failures
@@ -182,6 +183,32 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
                 for provider in item.required_providers
             ):
                 failures.append(f"{item.capability}_provider")
+
+    transaction_operations = rollout.get("transaction_operations", [])
+    operations_valid = (
+        isinstance(transaction_operations, list)
+        and len(transaction_operations) == len(set(transaction_operations))
+        and all(
+            isinstance(item, str)
+            and item in registered_transaction_operations()
+            for item in transaction_operations
+        )
+    )
+    if not operations_valid:
+        failures.append("transaction_operations")
+    elif isinstance(capabilities, dict):
+        transactions_enabled = capabilities.get("personal_transactions") is True
+        if transactions_enabled and not transaction_operations:
+            failures.append("personal_transactions_operations_required")
+        if transaction_operations and not transactions_enabled:
+            failures.append("transaction_operations_without_personal_transactions")
+        if providers_shape_valid:
+            declared = declared_action_providers(rollout)
+            if any(
+                item.split(":", 1)[0] not in declared
+                for item in transaction_operations
+            ):
+                failures.append("transaction_operations_provider")
 
     rollback = rollout["rollback"]
     if (
