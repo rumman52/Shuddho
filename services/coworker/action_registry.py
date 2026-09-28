@@ -206,6 +206,19 @@ ACTION_SPECS = {
 }
 
 
+def transaction_operation_key(provider: str, kind: str) -> str:
+    return f"{provider}:{kind}"
+
+
+def registered_transaction_operations() -> frozenset[str]:
+    return frozenset(
+        transaction_operation_key(provider, spec.kind)
+        for spec in ACTION_SPECS.values()
+        if spec.transaction_class is not None
+        for provider in spec.providers
+    )
+
+
 def stable_digest(value) -> str:
     return hashlib.sha256(
         json.dumps(
