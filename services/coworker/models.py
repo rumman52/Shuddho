@@ -625,6 +625,10 @@ class NegotiationProposal(Base):
     risk_notes: Mapped[list[str]] = mapped_column(JSON, default=list)
     proposal_hash: Mapped[str] = mapped_column(String(64))
     state: Mapped[str] = mapped_column(String(30), default="suggested")
+    promoted_action_id: Mapped[str | None] = mapped_column(
+        ForeignKey("cw_external_actions.id"), unique=True, index=True
+    )
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     model: Mapped[str] = mapped_column(String(100))
     prompt_sha256: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
