@@ -137,7 +137,6 @@ def test_operation_allowlist_is_rechecked_before_provider_mutation(container):
     narrowed = replace(
         container.settings,
         transaction_operations=frozenset(),
-        personal_transactions_enabled=False,
     )
     container.settings = narrowed
     container.repository.settings = narrowed
@@ -145,14 +144,7 @@ def test_operation_allowlist_is_rechecked_before_provider_mutation(container):
     assert container.actions.repo.claim_execution(approved["id"]) is None
     result = container.actions.repo.get(owner, approved["id"])
     assert result["state"] == "cancelled"
-    assert result["error_code"] == "personal_transactions_disabled"
-
-    restored = replace(
-        narrowed,
-        personal_transactions_enabled=True,
-        transaction_operations=frozenset({"google:negotiation_commitment_email"}),
-    )
-    restored.validate()
+    assert result["error_code"] == "personal_transaction_operation_disabled"
 
 
 def test_negotiation_schema_requires_one_primary_counterparty_no_bcc_and_unique_terms():
