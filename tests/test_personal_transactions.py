@@ -84,6 +84,77 @@ def test_personal_transaction_flag_requires_actions_and_trust_boundary(container
         ).validate()
 
 
+def test_transaction_operation_allowlist_is_fail_closed(container):
+    provider = enable_actions(container)
+
+    with pytest.raises(ValueError, match="at least one explicitly qualified"):
+        replace(
+            container.settings,
+            connector_trust_boundary_enabled=True,
+            personal_transactions_enabled=True,
+        ).validate()
+
+    with pytest.raises(ValueError, match="unregistered operations"):
+        replace(
+            container.settings,
+            connector_trust_boundary_enabled=True,
+            personal_transactions_enabled=True,
+            transaction_operations=frozenset({"google:not_registered"}),
+        ).validate()
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner, "email")
+    request = ActionPrepare.model_validate({
+        "connection_id": connection["id"],
+        "payload": payload(),
+    })
+    blocked = replace(
+        container.settings,
+        connector_trust_boundary_enabled=True,
+        personal_transactions_enabled=True,
+        transaction_operations=frozenset({"microsoft:negotiation_commitment_email"}),
+        microsoft_actions_enabled=True,
+        microsoft_client_id="client",
+        microsoft_client_secret="secret",
+        microsoft_redirect_uri="https://app.example.test/oauth/microsoft/callback",
+    )
+    blocked.validate()
+    container.settings = blocked
+    container.repository.settings = blocked
+    container.actions.repo.settings = blocked
+    with pytest.raises(CoworkerError) as denied:
+        container.actions.repo.prepare(owner, request, "pa09-operation-denied")
+    assert denied.value.code == "personal_transaction_operation_disabled"
+    assert provider.sent == []
+
+
+def test_operation_allowlist_is_rechecked_before_provider_mutation(container):
+    enable_transactions(container)
+    owner = account(container)
+    action, _connection = prepare_transaction(container, owner, "pa09-operation-recheck")
+    approved = container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+
+    narrowed = replace(
+        container.settings,
+        transaction_operations=frozenset(),
+        personal_transactions_enabled=False,
+    )
+    container.settings = narrowed
+    container.repository.settings = narrowed
+    container.actions.repo.settings = narrowed
+    assert container.actions.repo.claim_execution(approved["id"]) is None
+    result = container.actions.repo.get(owner, approved["id"])
+    assert result["state"] == "cancelled"
+    assert result["error_code"] == "personal_transactions_disabled"
+
+    restored = replace(
+        narrowed,
+        personal_transactions_enabled=True,
+        transaction_operations=frozenset({"google:negotiation_commitment_email"}),
+    )
+    restored.validate()
+
+
 def test_negotiation_schema_requires_one_primary_counterparty_no_bcc_and_unique_terms():
     value = NegotiationCommitmentEmail.model_validate(payload())
     assert value.to == ["counterparty@example.org"]
