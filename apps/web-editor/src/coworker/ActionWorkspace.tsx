@@ -257,7 +257,11 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
       } else if (p.kind === "document_share") {
         setMode("drive"); setAttachmentSelection([]); setSelectedSharedArtifact(action.preview.shared_artifact?.id ?? ""); setShareRecipient(p.recipients[0] ?? ""); setReminderMinutes(0);
       } else if (!("title" in p)) {
-        setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setSelectedSharedArtifact(""); setReminderMinutes(0);
+        const negotiation = p.kind === "negotiation_commitment_email";
+        setMode(negotiation ? "negotiation" : "email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setSelectedSharedArtifact(""); setReminderMinutes(0);
+        if (negotiation) {
+          setCounterparty(p.counterparty); setCommitmentSummary(p.commitment_summary); setNegotiationTerms(p.terms.map(term => term.name + "=" + term.value).join("\n"));
+        }
         setReplyParentId(p.kind === "email_thread_reply" ? p.parent_action_id : null);
       } else {
         setMode("calendar"); setAttachmentSelection([]); setSelectedSharedArtifact(""); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); setReminderMinutes(p.kind === "calendar_create_with_reminder" && remindersEnabled ? p.reminder_minutes_before_start : 0);
