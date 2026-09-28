@@ -109,7 +109,7 @@ def validate_claim_policy(claim: dict) -> dict:
         and 1 <= cpu <= wall <= 120
         and 64 <= memory <= 1024
         and 16 <= disk <= 512
-        and 1024 <= output <= 262144
+        and 1024 <= output <= 65536
     ):
         raise WorkerError("sandbox_policy_invalid")
     return policy
