@@ -143,6 +143,9 @@ class RetentionService:
                 db.execute(delete(AutomationRevision).where(AutomationRevision.automation_id.in_(automation_ids)))
             db.execute(delete(Automation).where(Automation.owner_id == owner))
 
+            # Sandbox artifacts reference executions, so delete the owned artifact
+            # rows before removing their sandbox execution records.
+            db.execute(delete(Artifact).where(Artifact.owner_id == owner))
             db.execute(delete(SandboxExecution).where(SandboxExecution.owner_id == owner))
             db.execute(delete(SandboxSession).where(SandboxSession.owner_id == owner))
             db.execute(delete(BrowserCommand).where(BrowserCommand.owner_id == owner))
@@ -167,7 +170,6 @@ class RetentionService:
             db.execute(delete(PersonalGoalRevision).where(PersonalGoalRevision.owner_id == owner))
             db.execute(delete(PersonalGoal).where(PersonalGoal.owner_id == owner))
 
-            db.execute(delete(Artifact).where(Artifact.owner_id == owner))
             db.execute(delete(ModelAttempt).where(ModelAttempt.owner_id == owner))
             if owned_task_ids:
                 db.execute(delete(Step).where(Step.task_id.in_(owned_task_ids)))
@@ -188,6 +190,55 @@ class RetentionService:
 
         deleted, failed = self._delete_objects(object_keys)
         return {"owner_id": owner, "database_erased": True, "objects_deleted": deleted, "objects_failed": failed}
+
+    def cleanup_expired_sandbox_artifacts(self, limit: int = 100) -> dict:
+        now = utcnow()
+        with self.sessions() as db:
+            candidates = [
+                {
+                    "id": row.id,
+                    "owner_id": row.owner_id,
+                    "object_key": row.object_key,
+                    "byte_size": row.byte_size,
+                }
+                for row in db.scalars(
+                    select(Artifact).where(
+                        Artifact.artifact_class == "sandbox_interactive",
+                        Artifact.expires_at.is_not(None),
+                        Artifact.expires_at <= now,
+                    ).order_by(Artifact.expires_at).limit(max(1, min(limit, 500)))
+                ).all()
+            ]
+        deleted = 0
+        failed: list[str] = []
+        for item in candidates:
+            try:
+                self.storage.delete(item["object_key"])
+            except Exception:
+                failed.append(item["object_key"])
+                continue
+            with self.sessions.begin() as db:
+                row = db.scalar(select(Artifact).where(
+                    Artifact.id == item["id"],
+                    Artifact.owner_id == item["owner_id"],
+                    Artifact.artifact_class == "sandbox_interactive",
+                ).with_for_update())
+                if row is None or row.expires_at is None or row.expires_at > utcnow():
+                    continue
+                account = db.scalar(select(Account).where(
+                    Account.id == row.owner_id,
+                ).with_for_update())
+                if account is not None:
+                    account.storage_bytes = max(0, account.storage_bytes - row.byte_size)
+                db.add(AuditEvent(
+                    id=str(__import__("uuid").uuid4()),
+                    owner_id=row.owner_id,
+                    resource_id=row.id,
+                    action="sandbox_artifact.expired",
+                ))
+                db.delete(row)
+                deleted += 1
+        return {"deleted": deleted, "failed": failed}
 
     def _delete_objects(self, keys: set[str]) -> tuple[int, list[str]]:
         deleted = 0
