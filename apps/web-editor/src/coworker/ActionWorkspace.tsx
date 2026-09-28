@@ -168,7 +168,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
     if (current.some(item => item.toLowerCase() === value.email.toLowerCase())) return;
     if (current.length >= 20) { setError("Remove a recipient before adding another one."); return; }
     const next = [...current, value.email].join(", ");
-    if (mode === "email") setTo(next);
+    if (mode === "email" || mode === "negotiation") setTo(next);
     else if (mode === "calendar") setAttendees(next);
     else setShareRecipient(value.email);
   }
