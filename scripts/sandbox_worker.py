@@ -279,9 +279,9 @@ def read_bounded(handle, limit: int) -> bytes:
 
 
 def read_artifact_file(path: Path, limit: int) -> bytes:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise WorkerError("sandbox_runner_unavailable")
+    flags = os.O_RDONLY | os.O_NOFOLLOW
     try:
         descriptor = os.open(path, flags)
     except FileNotFoundError:
