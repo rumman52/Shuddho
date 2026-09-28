@@ -200,7 +200,7 @@ class SandboxRepository:
                 action="sandbox_session.prepared",
             ))
             db.flush()
-            return self._session_dto(row)
+            return self._session_dto(row), True
 
     def claim_executions(self, worker_id: str, limit: int = 1) -> list[dict]:
         self._require_enabled()
@@ -281,11 +281,12 @@ class SandboxRepository:
                     execution.finished_at = now
                     execution.lease_until = None
                     execution.claimed_by = None
+                    session.state = "prepared"
+                    session.cleanup_state = "not_required"
+                    session.updated_at = now
                     continue
                 claimed.append({
                     "id": execution.id,
-                    "session_id": execution.session_id,
-                    "owner_id": execution.owner_id,
                     "sequence": execution.sequence,
                     "runtime": session.runtime,
                     "source": source,
@@ -376,6 +377,23 @@ class SandboxRepository:
                     "This sandbox execution is not actively owned by this worker.",
                     409,
                 )
+            if session.cancel_requested or session.state == "cancelled" or aware(session.expires_at) <= now:
+                execution.state = "cancelled" if session.cancel_requested or session.state == "cancelled" else "failed"
+                execution.error_code = "session_cancelled" if execution.state == "cancelled" else "session_expired"
+                execution.request_spec = {"source_scrubbed": True}
+                execution.finished_at = now
+                execution.lease_until = None
+                execution.claimed_by = None
+                session.cleanup_state = "required"
+                if aware(session.expires_at) <= now:
+                    session.state = "expired"
+                    session.cancel_requested = True
+                session.updated_at = now
+                raise CoworkerError(
+                    "sandbox_session_closed",
+                    "The sandbox session closed before this result could be accepted.",
+                    409,
+                )
             if (
                 observation.get("policy_version") != SANDBOX_POLICY_VERSION
                 or observation.get("executor_contract") != "bwrap-python311-v1"
@@ -400,7 +418,12 @@ class SandboxRepository:
                 raise CoworkerError("sandbox_output_limit", "Sandbox output exceeded the configured byte limit.", 409)
             exit_code = observation.get("exit_code")
             elapsed_ms = observation.get("elapsed_ms")
-            if not isinstance(exit_code, int) or not isinstance(elapsed_ms, int) or elapsed_ms < 0:
+            if (
+                not isinstance(exit_code, int)
+                or not -255 <= exit_code <= 255
+                or not isinstance(elapsed_ms, int)
+                or not 0 <= elapsed_ms <= self.settings.sandbox_wall_seconds * 1000
+            ):
                 raise CoworkerError("sandbox_result_invalid", "Sandbox result metadata is invalid.", 409)
             execution.result = {
                 "exit_code": exit_code,
