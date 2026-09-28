@@ -33,6 +33,10 @@ def enable_sandbox(container):
         sandbox_cpu_seconds=10,
         sandbox_memory_mb=256,
         sandbox_disk_mb=64,
+        sandbox_max_output_bytes=65536,
+        sandbox_worker_lease_seconds=30,
+        sandbox_execution_max_attempts=2,
+        sandbox_worker_token="test-sandbox-worker-token-0123456789abcdef",
     )
     settings.validate()
     container.settings = settings
@@ -186,3 +190,139 @@ def test_sandbox_api_is_owner_scoped_and_reports_control_plane_only(container, s
     assert prepared.status_code == 202
     assert prepared.json()["state"] == "prepared"
     assert prepared.json()["code_executed"] is False
+
+
+def test_sandbox_worker_claim_completion_and_api_auth(container, signed_client):
+    settings = enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner, "sandbox-worker-success")
+    prepared = container.sandbox.prepare_execution(
+        owner,
+        session["id"],
+        SandboxExecutionCreate(source="print('ok')\n"),
+    )
+
+    claimed = container.sandbox.claim_executions("sandbox-worker-a")
+    assert [item["id"] for item in claimed] == [prepared["id"]]
+    assert claimed[0]["source"] == "print('ok')\n"
+    assert claimed[0]["policy"]["network"] == "none"
+    assert claimed[0]["policy"]["executor"] == {
+        "contract": "bwrap-python311-v1",
+        "network_namespace": "private_empty",
+        "filesystem": "minimal_readonly_runtime",
+        "environment": "cleared",
+        "packages": "stdlib_only",
+    }
+    assert claimed[0]["policy"]["resource_limits"]["output_bytes"] == 65536
+
+    control = container.sandbox.worker_control("sandbox-worker-a", prepared["id"])
+    assert control["action"] == "continue"
+
+    completed = container.sandbox.complete_execution(
+        "sandbox-worker-a",
+        prepared["id"],
+        {
+            "policy_version": "sandbox-control-v1",
+            "executor_contract": "bwrap-python311-v1",
+            "exit_code": 0,
+            "stdout": "ok\n",
+            "stderr": "",
+            "elapsed_ms": 12,
+            "sandbox_destroyed": True,
+            "network_isolated": True,
+            "filesystem_isolated": True,
+            "environment_sanitized": True,
+        },
+    )
+    assert completed["state"] == "succeeded"
+    assert completed["result"]["stdout"] == "ok\n"
+    assert completed["result"]["output_trust"] == "untrusted"
+    assert completed["result"]["sandbox_destroyed"] is True
+
+    with container.repository.sessions() as db:
+        stored = db.get(SandboxExecution, prepared["id"])
+        assert stored.request_spec == {"source_scrubbed": True}
+        assert stored.claimed_by is None
+        assert stored.lease_until is None
+
+    client, headers = signed_client
+    denied = client.post(
+        "/api/v1/internal/sandbox-worker/claim",
+        json={"worker_id": "sandbox-worker-api", "limit": 1},
+    )
+    assert denied.status_code == 403
+
+    worker_headers = {"X-Shuddho-Sandbox-Worker-Token": settings.sandbox_worker_token}
+    allowed = client.post(
+        "/api/v1/internal/sandbox-worker/claim",
+        headers=worker_headers,
+        json={"worker_id": "sandbox-worker-api", "limit": 1},
+    )
+    assert allowed.status_code == 200
+
+
+def test_sandbox_worker_lease_recovery_is_bounded(container):
+    settings = enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner, "sandbox-worker-recovery")
+    prepared = container.sandbox.prepare_execution(
+        owner,
+        session["id"],
+        SandboxExecutionCreate(source="print('retry-safe')"),
+    )
+    first = container.sandbox.claim_executions("sandbox-worker-a")
+    assert first[0]["attempt"] == 1
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(SandboxExecution, prepared["id"])
+        row.lease_until = utcnow() - timedelta(seconds=1)
+
+    second = container.sandbox.claim_executions("sandbox-worker-b")
+    assert second[0]["id"] == prepared["id"]
+    assert second[0]["attempt"] == 2
+
+    with pytest.raises(CoworkerError) as stale:
+        container.sandbox.worker_control("sandbox-worker-a", prepared["id"])
+    assert stale.value.code == "sandbox_worker_claim_invalid"
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(SandboxExecution, prepared["id"])
+        row.lease_until = utcnow() - timedelta(seconds=1)
+
+    assert container.sandbox.claim_executions("sandbox-worker-c") == []
+    with container.repository.sessions() as db:
+        row = db.get(SandboxExecution, prepared["id"])
+        assert row.state == "failed"
+        assert row.error_code == "sandbox_worker_lost"
+        assert row.request_spec == {"source_scrubbed": True}
+
+
+def test_sandbox_completion_rejects_missing_isolation_evidence(container):
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner, "sandbox-isolation-proof")
+    prepared = container.sandbox.prepare_execution(
+        owner,
+        session["id"],
+        SandboxExecutionCreate(source="print(1)"),
+    )
+    container.sandbox.claim_executions("sandbox-worker-proof")
+    with pytest.raises(CoworkerError) as invalid:
+        container.sandbox.complete_execution(
+            "sandbox-worker-proof",
+            prepared["id"],
+            {
+                "policy_version": "sandbox-control-v1",
+                "executor_contract": "bwrap-python311-v1",
+                "exit_code": 0,
+                "stdout": "1\n",
+                "stderr": "",
+                "elapsed_ms": 5,
+                "sandbox_destroyed": True,
+                "network_isolated": False,
+                "filesystem_isolated": True,
+                "environment_sanitized": True,
+            },
+        )
+    assert invalid.value.code == "sandbox_isolation_evidence_invalid"
+
