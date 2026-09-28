@@ -114,6 +114,11 @@ def list_negotiation_cases(identity: Identity, services: Services):
             services.settings.intelligent_planner_enabled
             and bool(services.settings.deepseek_api_key)
         ),
+        "proposal_promotion_enabled": (
+            services.settings.intelligent_planner_enabled
+            and services.settings.agent_action_proposals_enabled
+            and bool(services.settings.deepseek_api_key)
+        ),
         "cases": services.negotiations.list(identity.account_id),
     }
 
@@ -228,6 +233,22 @@ def dismiss_negotiation_proposal(
     services: Services,
 ):
     return services.negotiation_proposals.dismiss(
+        identity.account_id,
+        str(case_id),
+        str(proposal_id),
+        payload,
+    )
+
+
+@router.post("/negotiations/{case_id}/proposals/{proposal_id}/promote")
+def promote_negotiation_proposal(
+    case_id: UUID,
+    proposal_id: UUID,
+    payload: NegotiationProposalReview,
+    identity: Identity,
+    services: Services,
+):
+    return services.negotiation_proposals.promote(
         identity.account_id,
         str(case_id),
         str(proposal_id),
