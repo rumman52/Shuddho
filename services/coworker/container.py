@@ -106,7 +106,11 @@ class Container:
         if self.browser is None:
             self.browser = BrowserRepository(self.repository.sessions, self.settings)
         if self.sandbox is None:
-            self.sandbox = SandboxRepository(self.repository.sessions, self.settings)
+            self.sandbox = SandboxRepository(
+                self.repository.sessions,
+                self.settings,
+                self.storage,
+            )
         if self.retention is None:
             self.retention = RetentionService(self.repository.sessions, self.storage)
 
