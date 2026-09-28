@@ -232,7 +232,7 @@ class SandboxRepository:
                 execution.lease_until = None
                 execution.claimed_by = None
                 if session is not None:
-                    session.state = "prepared"
+                    session.state = "failed"
                     session.cleanup_state = "required"
                     session.updated_at = now
                     db.add(AuditEvent(
