@@ -87,12 +87,14 @@ class SandboxRepository:
             row.updated_at = now
             for execution in db.scalars(select(SandboxExecution).where(
                 SandboxExecution.session_id == row.id,
-                SandboxExecution.state == "prepared",
+                SandboxExecution.state.in_(("prepared", "running")),
             ).with_for_update()).all():
                 execution.state = "failed"
                 execution.error_code = "session_expired"
                 execution.request_spec = {"source_scrubbed": True}
                 execution.finished_at = now
+                execution.lease_until = None
+                execution.claimed_by = None
             db.add(AuditEvent(
                 id=str(uuid4()),
                 owner_id=row.owner_id,
@@ -206,6 +208,36 @@ class SandboxRepository:
         now = utcnow()
         with self.sessions.begin() as db:
             self._expire_stale_sessions(db)
+            exhausted = db.scalars(
+                select(SandboxExecution)
+                .join(SandboxSession, SandboxSession.id == SandboxExecution.session_id)
+                .where(
+                    SandboxExecution.state == "running",
+                    SandboxExecution.lease_until.is_not(None),
+                    SandboxExecution.lease_until < now,
+                    SandboxExecution.attempts >= self.settings.sandbox_execution_max_attempts,
+                    SandboxSession.state.not_in(tuple(TERMINAL_SANDBOX_STATES)),
+                )
+                .with_for_update(skip_locked=True)
+            ).all()
+            for execution in exhausted:
+                session = db.get(SandboxSession, execution.session_id)
+                execution.state = "failed"
+                execution.error_code = "sandbox_worker_lost"
+                execution.request_spec = {"source_scrubbed": True}
+                execution.finished_at = now
+                execution.lease_until = None
+                execution.claimed_by = None
+                if session is not None:
+                    session.state = "prepared"
+                    session.cleanup_state = "required"
+                    session.updated_at = now
+                    db.add(AuditEvent(
+                        id=str(uuid4()),
+                        owner_id=execution.owner_id,
+                        resource_id=session.id,
+                        action="sandbox_execution.worker_lost",
+                    ))
             rows = db.scalars(
                 select(SandboxExecution)
                 .join(SandboxSession, SandboxSession.id == SandboxExecution.session_id)
