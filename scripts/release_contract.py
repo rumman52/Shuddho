@@ -151,7 +151,7 @@ OPTIONAL_CAPABILITIES = (
         staging_gates=(
             StagingGate(
                 "personal_transactions",
-                "Binding negotiation commitment email passed exact counterparty/message/final-term approval binding, changed-term invalidation, owner/connection checks, fixed provider egress, no blind retry after uncertain mutation, and confirmed provider acceptance receipts in controlled staging.",
+                "Binding negotiation commitments passed exact counterparty/message/final-term approval binding, changed-term invalidation, owner/connection checks, fixed provider egress, no blind retry after uncertain mutation, confirmed provider acceptance receipts, and owner-scoped negotiation-case/history/limit controls in controlled staging.",
             ),
         ),
     ),
