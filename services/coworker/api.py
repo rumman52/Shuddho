@@ -307,6 +307,7 @@ def runtime_manifest(
         "action_document_sharing": settings.action_document_sharing_enabled,
         "action_email_threading": settings.action_email_threading_enabled,
         "action_social_publishing": settings.action_social_publishing_enabled,
+        "personal_transactions": settings.personal_transactions_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
         "agent_linkedin_proposals": settings.agent_linkedin_proposals_enabled,
