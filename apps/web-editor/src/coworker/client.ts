@@ -134,6 +134,10 @@ export type AgentNotification = {
   id: string; automation_id: string | null; occurrence_id: string | null; kind: string; title: string; message: string;
   state: "delivered" | "read"; visible_at: string; read_at: string | null; created_at: string;
 };
+export type NotificationPreferences = {
+  in_app_enabled: boolean;
+  automation_updates_enabled: boolean;
+};
 export type AgentRun = {
   id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
   connector_read_grant_ids: string[];
@@ -475,6 +479,12 @@ export class CoworkerClient {
   }
   transitionAutomation(id: string, revision: number, action: "pause" | "resume" | "cancel") {
     return this.json<PersonalAutomation>(`/api/v1/automations/${identifier(id)}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }) });
+  }
+  notificationPreferences(signal?: AbortSignal) { return this.json<NotificationPreferences>("/api/v1/notification-preferences", { signal }); }
+  saveNotificationPreferences(value: NotificationPreferences) {
+    return this.json<NotificationPreferences>("/api/v1/notification-preferences", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value),
+    });
   }
   notifications(signal?: AbortSignal) { return this.json<{ enabled: boolean; notifications: AgentNotification[] }>("/api/v1/notifications", { signal }); }
   readNotification(id: string) { return this.json<{ id: string; state: "read"; read_at: string }>(`/api/v1/notifications/${identifier(id)}/read`, { method: "POST" }); }
