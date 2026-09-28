@@ -313,6 +313,62 @@ def test_runtime_v3_sandbox_tool_executes_only_user_supplied_python(container):
     assert receipt["summary"]["sandbox_destroyed"] is True
 
 
+
+def test_agent_cancel_scrubs_prepared_planner_sandbox_source(container, signed_client):
+    base = enable_sandbox(container)
+    settings = replace(base, agent_sandbox_tool_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.sandbox.settings = settings
+
+    owner = account(container)
+    source = "print('cancel me')"
+    goal = "Execute this exact code.\n\n```python\n" + source + "\n```"
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal=goal, output_language="en"),
+        "agent-sandbox-cancel",
+    )
+
+    class Planner:
+        async def decide(self, *_args, **_kwargs):
+            return AgentV3Decision(
+                decision="next_step",
+                tool="sandbox.execute_python",
+                objective="Execute the user-provided code.",
+            ), 10, 1, {
+                "model": "synthetic-v3",
+                "prompt_sha256": "e" * 64,
+                "tool_schema_sha256": "f" * 64,
+            }
+
+    runtime = AgentRuntime(container, None, planner=Planner())
+    assert asyncio.run(runtime.decide_v3(run["id"])) == {
+        "decision": "next_step",
+        "ordinal": 1,
+    }
+    assert asyncio.run(runtime.execute_step(run["id"], 1))["status"] == "executing"
+    resource = container.agent.step_resource(run["id"], 1)
+    assert resource["resource_type"] == "sandbox_session"
+    executions = container.sandbox.list_executions(owner, resource["resource_id"])
+    assert executions[0]["state"] == "prepared"
+
+    client, headers = signed_client
+    response = client.post(
+        f'/api/v1/agent-runs/{run["id"]}/cancel',
+        headers=headers(),
+    )
+    assert response.status_code == 200
+    assert response.json()["state"] == "cancelled"
+    assert container.sandbox.get(owner, resource["resource_id"])["state"] == "cancelled"
+    with container.repository.sessions() as db:
+        stored = db.get(SandboxExecution, executions[0]["id"])
+        assert stored.state == "cancelled"
+        assert stored.request_spec == {"source_scrubbed": True}
+
+
 def test_sandbox_cancel_and_expiry_scrub_unexecuted_source(container):
     enable_sandbox(container)
     owner = account(container)
