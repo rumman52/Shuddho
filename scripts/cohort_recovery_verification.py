@@ -48,6 +48,7 @@ CAPABILITY_ATTRS = {
     "connector_reads": "connector_reads_enabled",
     "browser": "browser_enabled",
     "code_execution": "code_execution_enabled",
+    "agent_sandbox_tool": "agent_sandbox_tool_enabled",
     "action_attachments": "action_attachments_enabled",
     "action_reminders": "action_reminders_enabled",
     "action_recipients": "action_recipients_enabled",
