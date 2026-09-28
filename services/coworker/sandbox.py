@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
+import time
 from datetime import timedelta
-from uuid import uuid4
+from urllib.parse import quote
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import func, or_, select
 
 from .errors import CoworkerError
-from .models import Account, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
+from .interactive_artifacts import (
+    create_preview_token,
+    validate_static_preview_html,
+    verify_preview_token,
+)
+from .models import Account, Artifact, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
@@ -33,9 +42,10 @@ class SandboxRepository:
     untrusted for downstream consumers.
     """
 
-    def __init__(self, sessions, settings):
+    def __init__(self, sessions, settings, storage):
         self.sessions = sessions
         self.settings = settings
+        self.storage = storage
 
     def _require_enabled(self) -> None:
         if not self.settings.code_execution_enabled:
@@ -62,6 +72,13 @@ class SandboxRepository:
                 "memory_mb": self.settings.sandbox_memory_mb,
                 "disk_mb": self.settings.sandbox_disk_mb,
                 "output_bytes": self.settings.sandbox_max_output_bytes,
+            },
+            "artifacts": {
+                "interactive_html": {
+                    "path": "/tmp/shuddho-preview.html",
+                    "content_type": "text/html; charset=utf-8",
+                    "max_bytes": self.settings.sandbox_artifact_max_bytes,
+                },
             },
             "executor": {
                 "contract": "bwrap-python311-v1",
@@ -291,6 +308,7 @@ class SandboxRepository:
                     "id": execution.id,
                     "sequence": execution.sequence,
                     "runtime": session.runtime,
+                    "purpose": session.purpose,
                     "source": source,
                     "source_sha256": execution.source_sha256,
                     "source_bytes": execution.source_bytes,
@@ -352,6 +370,57 @@ class SandboxRepository:
             execution.lease_until = now + timedelta(seconds=self.settings.sandbox_worker_lease_seconds)
             session.updated_at = now
             return {"action": "continue", "lease_until": iso(execution.lease_until)}
+
+    def _validated_artifact(self, session: SandboxSession, observation: dict, exit_code: int):
+        artifact = observation.get("artifact")
+        if exit_code != 0:
+            if artifact is not None:
+                raise CoworkerError(
+                    "sandbox_artifact_invalid",
+                    "Failed sandbox executions cannot publish artifacts.",
+                    409,
+                )
+            return None
+        if session.purpose != "interactive_artifact":
+            if artifact is not None:
+                raise CoworkerError(
+                    "sandbox_artifact_invalid",
+                    "This sandbox purpose cannot publish an interactive artifact.",
+                    409,
+                )
+            return None
+        if not isinstance(artifact, dict) or artifact.get("kind") != "interactive_html":
+            raise CoworkerError(
+                "sandbox_artifact_missing",
+                "Interactive sandbox execution did not produce its required preview artifact.",
+                409,
+            )
+        body_b64 = artifact.get("body_b64")
+        declared_sha = artifact.get("sha256")
+        declared_bytes = artifact.get("byte_size")
+        if (
+            not isinstance(body_b64, str)
+            or not isinstance(declared_sha, str)
+            or not isinstance(declared_bytes, int)
+            or isinstance(declared_bytes, bool)
+        ):
+            raise CoworkerError("sandbox_artifact_invalid", "Interactive artifact metadata is invalid.", 409)
+        try:
+            body = base64.b64decode(body_b64, validate=True)
+        except (binascii.Error, ValueError):
+            raise CoworkerError("sandbox_artifact_invalid", "Interactive artifact encoding is invalid.", 409) from None
+        if (
+            len(body) != declared_bytes
+            or len(body) > self.settings.sandbox_artifact_max_bytes
+            or hashlib.sha256(body).hexdigest() != declared_sha
+        ):
+            raise CoworkerError(
+                "sandbox_artifact_integrity_failed",
+                "Interactive artifact bytes did not match their verified manifest.",
+                409,
+            )
+        validate_static_preview_html(body, self.settings.sandbox_artifact_max_bytes)
+        return body, declared_sha
 
     def complete_execution(self, worker_id: str, execution_id: str, observation: dict) -> dict:
         self._require_enabled()
@@ -427,6 +496,69 @@ class SandboxRepository:
                 or not 0 <= elapsed_ms <= self.settings.sandbox_wall_seconds * 1000
             ):
                 raise CoworkerError("sandbox_result_invalid", "Sandbox result metadata is invalid.", 409)
+            validated_artifact = self._validated_artifact(session, observation, exit_code)
+            artifact_manifest = None
+            if validated_artifact is not None:
+                artifact_body, artifact_sha = validated_artifact
+                account = db.scalar(select(Account).where(
+                    Account.id == execution.owner_id,
+                ).with_for_update())
+                if account is None:
+                    raise not_found()
+                if account.storage_bytes + len(artifact_body) > self.settings.max_account_bytes:
+                    raise CoworkerError(
+                        "storage_limit",
+                        "Your workspace has reached its file storage limit.",
+                        429,
+                    )
+                artifact_id = str(uuid5(
+                    NAMESPACE_URL,
+                    "shuddho:sandbox-artifact:" + execution.id + ":" + artifact_sha,
+                ))
+                filename = "interactive-preview.html"
+                object_key = (
+                    f"{execution.owner_id}/outputs/sandbox/"
+                    f"{execution.id}/{artifact_sha}.html"
+                )
+                expires_at = now + timedelta(seconds=self.settings.sandbox_artifact_ttl_seconds)
+                try:
+                    self.storage.put(
+                        object_key,
+                        artifact_body,
+                        "text/html; charset=utf-8",
+                    )
+                except Exception:
+                    raise CoworkerError(
+                        "sandbox_artifact_storage",
+                        "The interactive artifact could not be stored privately.",
+                        503,
+                    ) from None
+                db.add(Artifact(
+                    id=artifact_id,
+                    task_id=None,
+                    sandbox_execution_id=execution.id,
+                    owner_id=execution.owner_id,
+                    artifact_class="sandbox_interactive",
+                    filename=filename,
+                    content_type="text/html; charset=utf-8",
+                    object_key=object_key,
+                    sha256=artifact_sha,
+                    byte_size=len(artifact_body),
+                    created_at=now,
+                    expires_at=expires_at,
+                ))
+                account.storage_bytes += len(artifact_body)
+                artifact_manifest = {
+                    "id": artifact_id,
+                    "filename": filename,
+                    "content_type": "text/html; charset=utf-8",
+                    "byte_size": len(artifact_body),
+                    "sha256": artifact_sha,
+                    "artifact_class": "sandbox_interactive",
+                    "preview_available": True,
+                    "expires_at": iso(expires_at),
+                }
+
             execution.result = {
                 "exit_code": exit_code,
                 "stdout": stdout,
@@ -441,6 +573,7 @@ class SandboxRepository:
                 "filesystem_isolated": True,
                 "environment_sanitized": True,
                 "output_trust": "untrusted",
+                "artifact": artifact_manifest,
             }
             execution.state = "succeeded" if exit_code == 0 else "failed"
             execution.error_code = None if exit_code == 0 else "sandbox_nonzero_exit"
@@ -470,6 +603,12 @@ class SandboxRepository:
             "sandbox_policy_invalid",
             "sandbox_source_integrity_failed",
             "sandbox_execution_failed",
+            "sandbox_artifact_missing",
+            "sandbox_artifact_invalid",
+            "sandbox_artifact_unsafe",
+            "sandbox_artifact_limit",
+            "sandbox_artifact_encoding",
+            "sandbox_artifact_integrity_failed",
             "worker_interrupted",
         }
         if error_code not in allowed or sandbox_destroyed is not True:
@@ -618,6 +757,101 @@ class SandboxRepository:
                 SandboxExecution.owner_id == owner,
             ).order_by(SandboxExecution.sequence.desc()).limit(50)).all()
             return [self._execution_dto(row) for row in rows]
+
+    def preview_url(self, owner: str, artifact_id: str) -> dict:
+        self._require_enabled()
+        now = utcnow()
+        with self.sessions.begin() as db:
+            artifact = db.scalar(select(Artifact).where(
+                Artifact.id == artifact_id,
+                Artifact.owner_id == owner,
+                Artifact.artifact_class == "sandbox_interactive",
+                Artifact.sandbox_execution_id.is_not(None),
+            ))
+            if artifact is None:
+                raise not_found()
+            if artifact.expires_at is None or aware(artifact.expires_at) <= now:
+                raise CoworkerError(
+                    "sandbox_artifact_expired",
+                    "This interactive artifact expired.",
+                    410,
+                )
+            remaining = max(1, int((aware(artifact.expires_at) - now).total_seconds()))
+            ttl = min(self.settings.sandbox_preview_url_ttl_seconds, remaining)
+            expires_epoch = int(time.time()) + ttl
+            token = create_preview_token(
+                self.settings.sandbox_preview_secret,
+                artifact.id,
+                artifact.sha256,
+                expires_epoch,
+            )
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=owner,
+                resource_id=artifact.id,
+                action="sandbox_artifact.preview_link_created",
+            ))
+            return {
+                "artifact_id": artifact.id,
+                "url": (
+                    self.settings.sandbox_preview_origin
+                    + f"/sandbox-preview/{artifact.id}?token={quote(token, safe='')}"
+                ),
+                "expires_at": expires_epoch,
+                "sandbox": {
+                    "scripts": False,
+                    "network": False,
+                    "forms": False,
+                    "privileged_api_bridge": False,
+                    "workspace_credentials": False,
+                },
+            }
+
+    def preview_content(self, artifact_id: str, token: str) -> bytes:
+        self._require_enabled()
+        now = utcnow()
+        with self.sessions.begin() as db:
+            artifact = db.scalar(select(Artifact).where(
+                Artifact.id == artifact_id,
+                Artifact.artifact_class == "sandbox_interactive",
+                Artifact.sandbox_execution_id.is_not(None),
+            ))
+            if artifact is None:
+                raise not_found()
+            if artifact.expires_at is None or aware(artifact.expires_at) <= now:
+                raise CoworkerError(
+                    "sandbox_artifact_expired",
+                    "This interactive artifact expired.",
+                    410,
+                )
+            verify_preview_token(
+                self.settings.sandbox_preview_secret,
+                artifact.id,
+                artifact.sha256,
+                token,
+                max_future_seconds=self.settings.sandbox_preview_url_ttl_seconds,
+            )
+            body = self.storage.get(
+                artifact.object_key,
+                min(artifact.byte_size, self.settings.sandbox_artifact_max_bytes),
+            )
+            if (
+                len(body) != artifact.byte_size
+                or hashlib.sha256(body).hexdigest() != artifact.sha256
+            ):
+                raise CoworkerError(
+                    "sandbox_artifact_integrity_failed",
+                    "This interactive artifact could not be verified.",
+                    503,
+                )
+            validate_static_preview_html(body, self.settings.sandbox_artifact_max_bytes)
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=artifact.owner_id,
+                resource_id=artifact.id,
+                action="sandbox_artifact.previewed",
+            ))
+            return body
 
     def cancel(self, owner: str, session_id: str) -> dict:
         self._require_enabled()

@@ -8,6 +8,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
@@ -39,6 +40,7 @@ from .sandbox_schemas import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
+preview_router = APIRouter(tags=["sandbox-preview"])
 
 
 def get_container(request: Request) -> Container:
@@ -536,6 +538,79 @@ def prepare_sandbox_execution(
 @router.delete("/sandbox-sessions/{session_id}")
 def cancel_sandbox_session(session_id: UUID, identity: Identity, services: Services):
     return services.sandbox.cancel(identity.account_id, str(session_id))
+
+
+@router.get("/sandbox-artifacts/{artifact_id}/preview-url")
+def sandbox_artifact_preview_url(
+    artifact_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return services.sandbox.preview_url(identity.account_id, str(artifact_id))
+
+
+@preview_router.get("/sandbox-preview/{artifact_id}")
+def sandbox_artifact_preview(
+    artifact_id: UUID,
+    request: Request,
+    services: Services,
+    token: str = Query(min_length=66, max_length=80),
+):
+    settings = services.settings
+    expected_host = urlparse(settings.sandbox_preview_origin).netloc.lower()
+    supplied_host = request.headers.get("host", "").lower()
+    if not expected_host or supplied_host != expected_host:
+        raise CoworkerError(
+            "sandbox_preview_origin",
+            "Interactive previews are available only on the isolated preview origin.",
+            404,
+        )
+    if (
+        request.headers.get("cookie")
+        or request.headers.get("authorization")
+        or request.headers.get("origin")
+    ):
+        raise CoworkerError(
+            "sandbox_preview_credentials",
+            "Workspace credentials and cross-origin API requests are not accepted by the isolated preview origin.",
+            400,
+        )
+    body = services.sandbox.preview_content(str(artifact_id), token)
+    return Response(
+        body,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Disposition": 'inline; filename="interactive-preview.html"',
+            "Cache-Control": "no-store, max-age=0",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": (
+                "default-src 'none'; "
+                "script-src 'none'; "
+                "style-src 'unsafe-inline'; "
+                "img-src data:; "
+                "font-src data:; "
+                "connect-src 'none'; "
+                "media-src 'none'; "
+                "object-src 'none'; "
+                "frame-src 'none'; "
+                "worker-src 'none'; "
+                "child-src 'none'; "
+                "form-action 'none'; "
+                "base-uri 'none'; "
+                "frame-ancestors 'none'"
+            ),
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "Origin-Agent-Cluster": "?1",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Permissions-Policy": (
+                "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
+                "microphone=(), payment=(), usb=(), clipboard-read=(), clipboard-write=()"
+            ),
+        },
+    )
 
 
 @router.post("/internal/sandbox-worker/claim")
@@ -1184,6 +1259,7 @@ def content(artifact_id: UUID, identity: Identity, services: Services):
 def mount(app, container: Container):
     app.state.coworker = container
     app.include_router(router)
+    app.include_router(preview_router)
 
     previous_validation_handler = app.exception_handlers.get(RequestValidationError)
 

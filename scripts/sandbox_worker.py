@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import re
 import resource
 import shutil
+import stat
 import signal
 import subprocess
 import sys
@@ -78,7 +80,20 @@ def validate_claim_policy(claim: dict) -> dict:
     ):
         raise WorkerError("sandbox_policy_invalid")
     required = {"wall_seconds", "cpu_seconds", "memory_mb", "disk_mb", "output_bytes"}
-    if set(limits) != required:
+    artifacts = policy.get("artifacts")
+    if (
+        set(limits) != required
+        or not isinstance(artifacts, dict)
+        or artifacts.get("interactive_html") != {
+            "path": "/tmp/shuddho-preview.html",
+            "content_type": "text/html; charset=utf-8",
+            "max_bytes": artifacts.get("interactive_html", {}).get("max_bytes")
+            if isinstance(artifacts.get("interactive_html"), dict)
+            else None,
+        }
+        or not isinstance(artifacts["interactive_html"]["max_bytes"], int)
+        or not 4096 <= artifacts["interactive_html"]["max_bytes"] <= 65536
+    ):
         raise WorkerError("sandbox_policy_invalid")
     wall = limits["wall_seconds"]
     cpu = limits["cpu_seconds"]
@@ -94,7 +109,7 @@ def validate_claim_policy(claim: dict) -> dict:
         and 1 <= cpu <= wall <= 120
         and 64 <= memory <= 1024
         and 16 <= disk <= 512
-        and 1024 <= output <= 262144
+        and 1024 <= output <= 65536
     ):
         raise WorkerError("sandbox_policy_invalid")
     return policy
@@ -263,6 +278,40 @@ def read_bounded(handle, limit: int) -> bytes:
     return value
 
 
+def read_artifact_file(path: Path, limit: int) -> bytes:
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise WorkerError("sandbox_runner_unavailable")
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        raise WorkerError("sandbox_artifact_missing") from None
+    except OSError:
+        raise WorkerError("sandbox_artifact_invalid") from None
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_size < 1
+            or metadata.st_size > limit
+        ):
+            raise WorkerError("sandbox_artifact_invalid")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > limit:
+                raise WorkerError("sandbox_artifact_limit")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
 def directory_size(path: Path, limit: int) -> int:
     total = 0
     for root, _dirs, files in os.walk(path):
@@ -283,12 +332,14 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
     expected_hash = claim.get("source_sha256")
     expected_bytes = claim.get("source_bytes")
     runtime = claim.get("runtime")
+    purpose = claim.get("purpose")
     if (
         not isinstance(execution_id, str)
         or not isinstance(source, str)
         or not isinstance(expected_hash, str)
         or not isinstance(expected_bytes, int)
         or runtime != "python311"
+        or purpose not in {"data_analysis", "code_task", "interactive_artifact"}
     ):
         raise WorkerError("sandbox_claim_invalid")
     source_bytes = source.encode("utf-8")
@@ -385,6 +436,19 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
 
             stdout = stdout_raw.decode("utf-8", errors="replace")
             stderr = stderr_raw.decode("utf-8", errors="replace")
+            artifact = None
+            if return_code == 0 and purpose == "interactive_artifact":
+                artifact_limit = int(policy["artifacts"]["interactive_html"]["max_bytes"])
+                artifact_body = read_artifact_file(
+                    scratch_path / "shuddho-preview.html",
+                    artifact_limit,
+                )
+                artifact = {
+                    "kind": "interactive_html",
+                    "body_b64": base64.b64encode(artifact_body).decode("ascii"),
+                    "sha256": hashlib.sha256(artifact_body).hexdigest(),
+                    "byte_size": len(artifact_body),
+                }
             client.post(
                 f"/api/v1/internal/sandbox-worker/executions/{execution_id}/complete",
                 {
@@ -399,6 +463,7 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
                     "network_isolated": True,
                     "filesystem_isolated": True,
                     "environment_sanitized": True,
+                    "artifact": artifact,
                 },
             )
 
@@ -444,6 +509,12 @@ def main() -> int:
                                     "sandbox_runner_unavailable",
                                     "sandbox_policy_invalid",
                                     "sandbox_source_integrity_failed",
+                                    "sandbox_artifact_missing",
+                                    "sandbox_artifact_invalid",
+                                    "sandbox_artifact_unsafe",
+                                    "sandbox_artifact_limit",
+                                    "sandbox_artifact_encoding",
+                                    "sandbox_artifact_integrity_failed",
                                     "worker_interrupted",
                                 }
                                 else "sandbox_execution_failed",

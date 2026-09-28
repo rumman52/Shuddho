@@ -287,7 +287,11 @@ class Repository:
         with self.sessions() as db:
             rows = db.scalars(
                 select(Artifact)
-                .where(Artifact.owner_id == owner)
+                .where(
+                    Artifact.owner_id == owner,
+                    Artifact.task_id.is_not(None),
+                    Artifact.artifact_class == "task_output",
+                )
                 .order_by(Artifact.created_at.desc())
                 .limit(limit)
             )

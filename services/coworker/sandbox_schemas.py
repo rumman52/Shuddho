@@ -30,17 +30,25 @@ class SandboxWorkerClaim(SandboxWorkerIdentity):
     limit: int = Field(default=1, ge=1, le=10)
 
 
+class SandboxWorkerArtifact(SandboxModel):
+    kind: Literal["interactive_html"]
+    body_b64: str = Field(min_length=4, max_length=90000, pattern=r"^[A-Za-z0-9+/]+={0,2}$")
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    byte_size: int = Field(ge=1, le=65536)
+
+
 class SandboxWorkerCompletion(SandboxWorkerIdentity):
     policy_version: Literal["sandbox-control-v1"]
     executor_contract: Literal["bwrap-python311-v1"]
     exit_code: int = Field(ge=-255, le=255)
-    stdout: str = Field(max_length=262144)
-    stderr: str = Field(max_length=262144)
+    stdout: str = Field(max_length=65536)
+    stderr: str = Field(max_length=65536)
     elapsed_ms: int = Field(ge=0, le=120000)
     sandbox_destroyed: Literal[True]
     network_isolated: Literal[True]
     filesystem_isolated: Literal[True]
     environment_sanitized: Literal[True]
+    artifact: SandboxWorkerArtifact | None = None
 
 
 class SandboxWorkerFailure(SandboxWorkerIdentity):
@@ -52,6 +60,12 @@ class SandboxWorkerFailure(SandboxWorkerIdentity):
         "sandbox_policy_invalid",
         "sandbox_source_integrity_failed",
         "sandbox_execution_failed",
+        "sandbox_artifact_missing",
+        "sandbox_artifact_invalid",
+        "sandbox_artifact_unsafe",
+        "sandbox_artifact_limit",
+        "sandbox_artifact_encoding",
+        "sandbox_artifact_integrity_failed",
         "worker_interrupted",
     ]
     sandbox_destroyed: Literal[True]

@@ -99,6 +99,11 @@ class Settings:
     sandbox_worker_lease_seconds: int = 30
     sandbox_execution_max_attempts: int = 2
     sandbox_worker_token: str = field(default="", repr=False)
+    sandbox_artifact_max_bytes: int = 65536
+    sandbox_artifact_ttl_seconds: int = 3600
+    sandbox_preview_url_ttl_seconds: int = 60
+    sandbox_preview_origin: str = ""
+    sandbox_preview_secret: str = field(default="", repr=False)
     agent_run_timeout_seconds: int = 1800
     max_personal_goals: int = 100
     max_automations: int = 100
@@ -239,6 +244,11 @@ class Settings:
             sandbox_worker_lease_seconds=int(os.getenv("SHUDDHO_SANDBOX_WORKER_LEASE_SECONDS", "30")),
             sandbox_execution_max_attempts=int(os.getenv("SHUDDHO_SANDBOX_EXECUTION_MAX_ATTEMPTS", "2")),
             sandbox_worker_token=os.getenv("SHUDDHO_SANDBOX_WORKER_TOKEN", ""),
+            sandbox_artifact_max_bytes=int(os.getenv("SHUDDHO_SANDBOX_ARTIFACT_MAX_BYTES", "65536")),
+            sandbox_artifact_ttl_seconds=int(os.getenv("SHUDDHO_SANDBOX_ARTIFACT_TTL_SECONDS", "3600")),
+            sandbox_preview_url_ttl_seconds=int(os.getenv("SHUDDHO_SANDBOX_PREVIEW_URL_TTL_SECONDS", "60")),
+            sandbox_preview_origin=os.getenv("SHUDDHO_SANDBOX_PREVIEW_ORIGIN", "").rstrip("/"),
+            sandbox_preview_secret=os.getenv("SHUDDHO_SANDBOX_PREVIEW_SECRET", ""),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
             max_personal_goals=int(os.getenv("SHUDDHO_PERSONAL_GOALS_MAX", "100")),
             max_automations=int(os.getenv("SHUDDHO_AUTOMATIONS_MAX", "100")),
@@ -375,14 +385,40 @@ class Settings:
                 raise ValueError("SHUDDHO_SANDBOX_MEMORY_MB must be between 64 and 1024")
             if not 16 <= self.sandbox_disk_mb <= 512:
                 raise ValueError("SHUDDHO_SANDBOX_DISK_MB must be between 16 and 512")
-            if not 1024 <= self.sandbox_max_output_bytes <= 262144:
-                raise ValueError("SHUDDHO_SANDBOX_MAX_OUTPUT_BYTES must be between 1024 and 262144")
+            if not 1024 <= self.sandbox_max_output_bytes <= 65536:
+                raise ValueError("SHUDDHO_SANDBOX_MAX_OUTPUT_BYTES must be between 1024 and 65536")
             if not 10 <= self.sandbox_worker_lease_seconds <= 120:
                 raise ValueError("SHUDDHO_SANDBOX_WORKER_LEASE_SECONDS must be between 10 and 120")
             if not 1 <= self.sandbox_execution_max_attempts <= 3:
                 raise ValueError("SHUDDHO_SANDBOX_EXECUTION_MAX_ATTEMPTS must be between 1 and 3")
             if len(self.sandbox_worker_token) < 32:
                 raise ValueError("SHUDDHO_SANDBOX_WORKER_TOKEN must contain at least 32 characters when sandbox execution is enabled")
+            if not 4096 <= self.sandbox_artifact_max_bytes <= 65536:
+                raise ValueError("SHUDDHO_SANDBOX_ARTIFACT_MAX_BYTES must be between 4096 and 65536")
+            if self.sandbox_artifact_max_bytes > self.sandbox_max_output_bytes:
+                raise ValueError("SHUDDHO_SANDBOX_ARTIFACT_MAX_BYTES cannot exceed SHUDDHO_SANDBOX_MAX_OUTPUT_BYTES")
+            if not 300 <= self.sandbox_artifact_ttl_seconds <= 86400:
+                raise ValueError("SHUDDHO_SANDBOX_ARTIFACT_TTL_SECONDS must be between 300 and 86400")
+            if not 30 <= self.sandbox_preview_url_ttl_seconds <= 300:
+                raise ValueError("SHUDDHO_SANDBOX_PREVIEW_URL_TTL_SECONDS must be between 30 and 300")
+            preview = urlparse(self.sandbox_preview_origin)
+            preview_local = (
+                self.environment == "development"
+                and preview.hostname in {"localhost", "127.0.0.1", "::1"}
+            )
+            if (
+                not preview.netloc
+                or preview.scheme != "https" and not (preview_local and preview.scheme == "http")
+                or preview.username
+                or preview.password
+                or preview.path not in {"", "/"}
+                or preview.params
+                or preview.query
+                or preview.fragment
+            ):
+                raise ValueError("SHUDDHO_SANDBOX_PREVIEW_ORIGIN must be a clean isolated HTTPS origin")
+            if len(self.sandbox_preview_secret) < 32:
+                raise ValueError("SHUDDHO_SANDBOX_PREVIEW_SECRET must contain at least 32 characters when sandbox execution is enabled")
         if self.agent_runtime_v3_enabled:
             if not self.agent_runtime_enabled or not self.intelligent_planner_enabled:
                 raise ValueError("Agent Runtime v3 requires SHUDDHO_AGENT_RUNTIME_ENABLED=true and SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
