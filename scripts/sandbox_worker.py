@@ -281,14 +281,21 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
     execution_id = claim.get("id")
     source = claim.get("source")
     expected_hash = claim.get("source_sha256")
+    expected_bytes = claim.get("source_bytes")
+    runtime = claim.get("runtime")
     if (
         not isinstance(execution_id, str)
         or not isinstance(source, str)
         or not isinstance(expected_hash, str)
+        or not isinstance(expected_bytes, int)
+        or runtime != "python311"
     ):
         raise WorkerError("sandbox_claim_invalid")
     source_bytes = source.encode("utf-8")
-    if hashlib.sha256(source_bytes).hexdigest() != expected_hash:
+    if (
+        len(source_bytes) != expected_bytes
+        or hashlib.sha256(source_bytes).hexdigest() != expected_hash
+    ):
         raise WorkerError("sandbox_source_integrity_failed")
     output_limit = int(policy["resource_limits"]["output_bytes"])
     wall_seconds = int(policy["resource_limits"]["wall_seconds"])
