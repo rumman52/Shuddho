@@ -1,5 +1,6 @@
 """PA-09 binding negotiation commitments through the existing consequential-action ledger."""
 import asyncio
+import json
 from copy import deepcopy
 from dataclasses import replace
 
@@ -15,6 +16,13 @@ from test_coworker import account, container
 from services.coworker.action_registry import action_spec, validate_approval_scope
 from services.coworker.action_schemas import ActionPrepare, NegotiationCommitmentEmail
 from services.coworker.errors import CoworkerError
+from services.coworker.google_actions import GoogleFailure
+from scripts.cohort_release_ledger import (
+    PERSONAL_TRANSACTIONS_ARTIFACT_KEYS,
+    PERSONAL_TRANSACTIONS_SCHEMA_VERSION,
+    sign_entry,
+    verify_entries,
+)
 
 
 def payload(**changes):
@@ -170,7 +178,24 @@ def test_transaction_kill_switch_and_idempotency_require_fresh_preview(container
     assert approval_disabled.value.code == "personal_transactions_disabled"
 
 
-def test_google_provider_accepts_exact_commitment_and_uncertain_outcome_is_not_reclaimed(container):
+def test_kill_switch_blocks_claim_before_provider_mutation(container):
+    enable_transactions(container)
+    owner = account(container)
+    action, _connection = prepare_transaction(container, owner, "pa09-kill-switch")
+    approved = container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+
+    off = replace(container.settings, personal_transactions_enabled=False)
+    container.settings = off
+    container.repository.settings = off
+    container.actions.repo.settings = off
+
+    assert container.actions.repo.claim_execution(approved["id"]) is None
+    result = container.actions.repo.get(owner, approved["id"])
+    assert result["state"] == "cancelled"
+    assert result["error_code"] == "personal_transactions_disabled"
+
+
+def test_google_provider_timeout_after_acceptance_is_never_reclaimed(container):
     provider = enable_transactions(container)
     owner = account(container)
     action, _connection = prepare_transaction(container, owner, "pa09-google")
@@ -178,11 +203,11 @@ def test_google_provider_accepts_exact_commitment_and_uncertain_outcome_is_not_r
     claimed = container.actions.repo.claim_execution(approved["id"])
     assert claimed is not None
 
-    receipt = asyncio.run(
-        container.actions.provider.execute(claimed, "simulated-access-token")
-    )
-    assert receipt["provider"] == "google"
-    assert receipt["status"] == "accepted_by_gmail"
+    provider.lose_reply = True
+    with pytest.raises(GoogleFailure):
+        asyncio.run(
+            container.actions.provider.execute(claimed, "simulated-access-token")
+        )
     assert len(provider.sent) == 1
 
     container.actions.repo.finish(
@@ -192,3 +217,31 @@ def test_google_provider_accepts_exact_commitment_and_uncertain_outcome_is_not_r
     )
     assert container.actions.repo.claim_execution(approved["id"]) is None
     assert len(provider.sent) == 1
+
+
+def test_release_ledger_accepts_exact_pa09_v26_attestation():
+    artifact_sha256 = {
+        key: str(index + 1) * 64
+        for index, key in enumerate(sorted(PERSONAL_TRANSACTIONS_ARTIFACT_KEYS))
+    }
+    core = {
+        "schema_version": PERSONAL_TRANSACTIONS_SCHEMA_VERSION,
+        "sequence": 1,
+        "created_at": "2026-09-28T10:00:00+00:00",
+        "release_id": "coworker-pa09-001",
+        "event_type": "personal_transactions_verified",
+        "actor_reference": "security-review",
+        "change_reference": "pa09-change",
+        "current_stage": "canary-5",
+        "next_stage": None,
+        "artifact_sha256": artifact_sha256,
+        "previous_entry_hash": "0" * 64,
+    }
+    key = b"k" * 32
+    entry_hash, tag = sign_entry(core, key)
+    result = verify_entries(
+        [{**core, "entry_hash": entry_hash, "hmac_sha256": tag}],
+        key,
+    )
+    assert result["verified"] is True
+    assert result["entries"] == 1
