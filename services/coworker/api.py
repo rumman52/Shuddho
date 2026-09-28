@@ -1069,6 +1069,7 @@ def connections(identity: Identity, services: Services):
         "threading_enabled": services.settings.action_email_threading_enabled,
         "social_publishing_enabled": services.settings.action_social_publishing_enabled,
         "personal_transactions_enabled": services.settings.personal_transactions_enabled,
+        "transaction_operations": sorted(services.settings.transaction_operations),
         "reads_enabled": services.settings.connector_reads_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }
