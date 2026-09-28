@@ -96,6 +96,41 @@ class EmailThreadReply(EmailSend):
         return self
 
 
+class NegotiationTerm(Strict):
+    name: Annotated[str, StringConstraints(min_length=1, max_length=100)]
+    value: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+
+    @field_validator("name", "value")
+    @classmethod
+    def safe_term(cls, value):
+        value = clean_text(value)
+        if not value.strip():
+            raise ValueError("Negotiation terms cannot be blank")
+        return value
+
+
+class NegotiationCommitmentEmail(EmailSend):
+    kind: Literal["negotiation_commitment_email"]
+    counterparty: Short
+    commitment_summary: Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+    terms: list[NegotiationTerm] = Field(min_length=1, max_length=20)
+
+    @field_validator("counterparty", "commitment_summary")
+    @classmethod
+    def safe_commitment_text(cls, value):
+        value = clean_text(value)
+        if not value.strip():
+            raise ValueError("Commitment details cannot be blank")
+        return value
+
+    @model_validator(mode="after")
+    def exact_terms(self):
+        names = [item.name.casefold() for item in self.terms]
+        if len(names) != len(set(names)):
+            raise ValueError("Negotiation term names must be unique")
+        return self
+
+
 class CalendarCreate(Strict):
     kind: Literal["calendar_create"]
     title: Short
@@ -169,7 +204,7 @@ class LinkedInSocialPublish(Strict):
 
 
 ActionPayload = Annotated[
-    EmailSend | EmailSendWithAttachments | EmailThreadReply | CalendarCreate | CalendarCreateWithReminder | DocumentShare | LinkedInSocialPublish,
+    EmailSend | EmailSendWithAttachments | EmailThreadReply | NegotiationCommitmentEmail | CalendarCreate | CalendarCreateWithReminder | DocumentShare | LinkedInSocialPublish,
     Field(discriminator="kind"),
 ]
 
