@@ -254,6 +254,25 @@ def promote_negotiation_proposal(
     )
 
 
+@router.post("/negotiations/{case_id}/proposals/{proposal_id}/record-confirmed-send")
+def record_confirmed_negotiation_send(
+    case_id: UUID,
+    proposal_id: UUID,
+    payload: NegotiationProposalReview,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value, created = services.negotiations.record_promoted_send(
+        identity.account_id,
+        str(case_id),
+        str(proposal_id),
+        payload,
+    )
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return value
+
+
 @router.post("/goals", status_code=201)
 def create_goal(
     payload: GoalCreate,
