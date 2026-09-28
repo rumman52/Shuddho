@@ -36,6 +36,7 @@ class Settings:
     connector_reads_enabled: bool = False
     browser_enabled: bool = False
     code_execution_enabled: bool = False
+    agent_sandbox_tool_enabled: bool = False
     action_attachments_enabled: bool = False
     action_reminders_enabled: bool = False
     action_recipients_enabled: bool = False
@@ -177,6 +178,7 @@ class Settings:
             connector_reads_enabled=os.getenv("SHUDDHO_CONNECTOR_READS_ENABLED", "false").lower() == "true",
             browser_enabled=os.getenv("SHUDDHO_BROWSER_ENABLED", "false").lower() == "true",
             code_execution_enabled=os.getenv("SHUDDHO_CODE_EXECUTION_ENABLED", "false").lower() == "true",
+            agent_sandbox_tool_enabled=os.getenv("SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED", "false").lower() == "true",
             action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
             action_reminders_enabled=os.getenv("SHUDDHO_ACTION_REMINDERS_ENABLED", "false").lower() == "true",
             action_recipients_enabled=os.getenv("SHUDDHO_ACTION_RECIPIENTS_ENABLED", "false").lower() == "true",
@@ -419,6 +421,11 @@ class Settings:
                 raise ValueError("SHUDDHO_SANDBOX_PREVIEW_ORIGIN must be a clean isolated HTTPS origin")
             if len(self.sandbox_preview_secret) < 32:
                 raise ValueError("SHUDDHO_SANDBOX_PREVIEW_SECRET must contain at least 32 characters when sandbox execution is enabled")
+        if self.agent_sandbox_tool_enabled:
+            if not self.code_execution_enabled:
+                raise ValueError("Agent sandbox planner tool requires SHUDDHO_CODE_EXECUTION_ENABLED=true")
+            if not self.agent_runtime_v3_enabled or not self.intelligent_planner_enabled:
+                raise ValueError("Agent sandbox planner tool requires Agent Runtime v3 and the intelligent planner")
         if self.agent_runtime_v3_enabled:
             if not self.agent_runtime_enabled or not self.intelligent_planner_enabled:
                 raise ValueError("Agent Runtime v3 requires SHUDDHO_AGENT_RUNTIME_ENABLED=true and SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
