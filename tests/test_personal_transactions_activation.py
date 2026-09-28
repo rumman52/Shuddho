@@ -36,11 +36,18 @@ def rollout():
 
 
 def staging():
+    verified_at = (NOW - timedelta(minutes=20)).isoformat()
     return {
         "personal_transactions": {
             "status": "passed",
-            "evidence": "live exact-term Google negotiation commitment passed",
-            "verified_at": (NOW - timedelta(minutes=20)).isoformat(),
+            "evidence": "qualified transaction operations: google:negotiation_commitment_email",
+            "verified_at": verified_at,
+            "operation_evidence": {
+                "google:negotiation_commitment_email": {
+                    "evidence": "live exact-term Google negotiation commitment passed",
+                    "verified_at": verified_at,
+                }
+            },
         }
     }
 
@@ -88,13 +95,36 @@ def test_reviewed_rollout_requires_pa09_prerequisites_and_exact_kill_switch():
 
 
 def test_staging_must_be_passed_timestamped_and_fresh():
-    verified = validate_staging(staging(), now=NOW, max_age_minutes=60)
+    verified = validate_staging(
+        staging(),
+        expected_operations=["google:negotiation_commitment_email"],
+        now=NOW,
+        max_age_minutes=60,
+    )
     assert verified == NOW - timedelta(minutes=20)
 
     stale = staging()
-    stale["personal_transactions"]["verified_at"] = (NOW - timedelta(hours=2)).isoformat()
+    stale_time = (NOW - timedelta(hours=2)).isoformat()
+    stale["personal_transactions"]["verified_at"] = stale_time
+    stale["personal_transactions"]["operation_evidence"]["google:negotiation_commitment_email"]["verified_at"] = stale_time
     with pytest.raises(PersonalTransactionsActivationError, match="stale"):
-        validate_staging(stale, now=NOW, max_age_minutes=60)
+        validate_staging(
+            stale,
+            expected_operations=["google:negotiation_commitment_email"],
+            now=NOW,
+            max_age_minutes=60,
+        )
+
+    with pytest.raises(PersonalTransactionsActivationError, match="allowlist"):
+        validate_staging(
+            staging(),
+            expected_operations=[
+                "google:negotiation_commitment_email",
+                "microsoft:negotiation_commitment_email",
+            ],
+            now=NOW,
+            max_age_minutes=60,
+        )
 
 
 def test_runtime_manifest_must_exactly_match_reviewed_pa09_rollout():
