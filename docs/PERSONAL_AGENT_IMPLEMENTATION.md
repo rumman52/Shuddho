@@ -1,6 +1,6 @@
 # Personal agent implementation and release plan
 
-**Scope and status.** This is the proposed delivery plan for the [architecture](PERSONAL_AGENT_ARCHITECTURE.md) and all 26 entries in the [service catalog](PERSONAL_AGENT_SERVICES.md). Baseline: PR #204, commit `9c658742ac38c6a1f3bcaf7f6c92869be47ab4f2`. This change updates design documentation only. No runtime feature, migration, deployed configuration, credential scope, customer account or production flag is changed.
+**Scope and status.** This is the delivery plan and implementation record for the [architecture](PERSONAL_AGENT_ARCHITECTURE.md) and all 26 entries in the [service catalog](PERSONAL_AGENT_SERVICES.md). Baseline: PR #204. Runtime reality is tracked incrementally below; documentation alone never qualifies a capability, and no production flag is enabled merely because code or a migration is merged.
 
 **Qualify the baseline while developing the next bounded slice.** Current release gates remain mandatory: identity and owner isolation, PostgreSQL, private storage, Temporal/recovery, model and multilingual quality, backup/restore, deletion, parallel restart/fan-in, rollback and enabled-provider proofs. The reviewed rollout, source/model identity, activation bundle and ledger must match. A successful design review or mocked CI run cannot replace live evidence.
 
