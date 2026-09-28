@@ -6,7 +6,7 @@ from sqlalchemy import delete, select
 
 from .errors import CoworkerError
 from .models import (
-    Account, ActionProposal, ActionRecipient, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession,
+    Account, ActionProposal, ActionRecipient, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, SandboxExecution, SandboxSession,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
@@ -96,6 +96,11 @@ class RetentionService:
                 BrowserSession.state.not_in({"cancelled", "completed", "expired", "failed"}),
                 BrowserSession.expires_at > utcnow(),
             ).limit(1))
+            active_sandbox = db.scalar(select(SandboxSession.id).where(
+                SandboxSession.owner_id == owner,
+                SandboxSession.state.not_in({"cancelled", "completed", "expired", "failed"}),
+                SandboxSession.expires_at > utcnow(),
+            ).limit(1))
             pending_automation = db.scalar(
                 select(Automation.id).outerjoin(
                     AutomationScheduleOutbox,
@@ -109,10 +114,10 @@ class RetentionService:
                     ),
                 ).limit(1)
             )
-            if active_tasks or active_runs or active_actions or active_browser or pending_automation:
+            if active_tasks or active_runs or active_actions or active_browser or active_sandbox or pending_automation:
                 raise CoworkerError(
                     "account_active",
-                    "Cancel or finish active work, close browser sessions, and reconcile automation schedule deletion before erasing this account.",
+                    "Cancel or finish active work, close browser/sandbox sessions, and reconcile automation schedule deletion before erasing this account.",
                     409,
                 )
 
@@ -138,6 +143,8 @@ class RetentionService:
                 db.execute(delete(AutomationRevision).where(AutomationRevision.automation_id.in_(automation_ids)))
             db.execute(delete(Automation).where(Automation.owner_id == owner))
 
+            db.execute(delete(SandboxExecution).where(SandboxExecution.owner_id == owner))
+            db.execute(delete(SandboxSession).where(SandboxSession.owner_id == owner))
             db.execute(delete(BrowserCommand).where(BrowserCommand.owner_id == owner))
             db.execute(delete(BrowserSession).where(BrowserSession.owner_id == owner))
             db.execute(delete(ActionProposal).where(ActionProposal.owner_id == owner))
