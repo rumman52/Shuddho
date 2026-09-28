@@ -33,7 +33,7 @@ SHUDDHO_ACTIONS_ENABLED=true
 SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true
 ```
 
-This flag does not grant generic transaction authority. The code-owned action registry remains authoritative and only individually registered action kinds may cross the mutation boundary.
+This flag does not grant generic transaction authority. The code-owned action registry remains authoritative, and a registered transaction may cross the mutation boundary only when its exact `provider:action_kind` is also present in the deployment's explicit operation allowlist.
 
 The current PA-09 slice is not registered as an Agent planner proposal or direct Agent tool. Browser and sandbox capabilities cannot create, approve or execute this action.
 
