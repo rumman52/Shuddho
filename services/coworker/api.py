@@ -565,10 +565,14 @@ def sandbox_artifact_preview(
             "Interactive previews are available only on the isolated preview origin.",
             404,
         )
-    if request.headers.get("cookie") or request.headers.get("authorization"):
+    if (
+        request.headers.get("cookie")
+        or request.headers.get("authorization")
+        or request.headers.get("origin")
+    ):
         raise CoworkerError(
             "sandbox_preview_credentials",
-            "Workspace credentials are not accepted by the isolated preview origin.",
+            "Workspace credentials and cross-origin API requests are not accepted by the isolated preview origin.",
             400,
         )
     body = services.sandbox.preview_content(str(artifact_id), token)
