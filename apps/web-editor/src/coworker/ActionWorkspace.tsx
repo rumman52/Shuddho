@@ -374,7 +374,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           <button type="button" className="cw-secondary" disabled={Boolean(busy) || !recipientName.trim() || !recipientEmail.trim()} onClick={() => void saveRecipient()}>{busy === "save-recipient" ? "Saving…" : "Save recipient"}</button></>}
           {savedRecipients.length > 0 ? <div className="cw-connection-grid">{savedRecipients.map(item => <div className="cw-connection" key={item.id}>
             <div><strong dir="auto">{item.name}</strong><small dir="ltr">{item.email}</small></div>
-            <div><button type="button" className="cw-text-button" disabled={Boolean(busy) || !recipientDirectoryEnabled} onClick={() => addSavedRecipient(item)}>{mode === "email" ? "Add to To" : mode === "calendar" ? "Add guest" : "Use recipient"}</button>
+            <div><button type="button" className="cw-text-button" disabled={Boolean(busy) || !recipientDirectoryEnabled} onClick={() => addSavedRecipient(item)}>{mode === "email" || mode === "negotiation" ? "Add to To" : mode === "calendar" ? "Add guest" : "Use recipient"}</button>
               <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void removeSavedRecipient(item)}>Remove</button></div>
           </div>)}</div> : recipientDirectoryEnabled && <small>No saved recipients yet.</small>}
           <small>Saved recipients are private Shuddho shortcuts. Selecting one only copies its exact email address into this draft; the final immutable preview is still what you approve. Agents cannot resolve or select saved recipients.</small>
