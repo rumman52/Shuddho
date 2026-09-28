@@ -33,7 +33,7 @@ from .negotiation_schemas import (
     NegotiationProposalRequest,
     NegotiationProposalReview,
 )
-from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
+from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition, NotificationPreferences
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
@@ -405,6 +405,23 @@ def resume_automation(automation_id: UUID, payload: AutomationTransition, identi
 @router.post("/automations/{automation_id}/cancel")
 def cancel_automation(automation_id: UUID, payload: AutomationTransition, identity: Identity, services: Services):
     return services.automations.cancel(identity.account_id, str(automation_id), payload.expected_revision)
+
+
+@router.get("/notification-preferences")
+def get_notification_preferences(identity: Identity, services: Services):
+    return services.automations.notification_preferences(identity.account_id)
+
+
+@router.put("/notification-preferences")
+def put_notification_preferences(
+    payload: NotificationPreferences,
+    identity: Identity,
+    services: Services,
+):
+    return services.automations.save_notification_preferences(
+        identity.account_id,
+        payload,
+    )
 
 
 @router.get("/notifications")
