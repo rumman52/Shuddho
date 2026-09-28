@@ -87,6 +87,10 @@
     "status": "pending",
     "evidence": ""
   },
+  "personal_transactions": {
+    "status": "pending",
+    "evidence": ""
+  },
   "microsoft_actions": {
     "status": "pending",
     "evidence": ""

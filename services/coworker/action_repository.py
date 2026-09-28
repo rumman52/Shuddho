@@ -98,6 +98,11 @@ class ActionRepository:
                 "action_social_publishing_disabled",
                 "Social publishing is not enabled in this deployment.",
             )
+        if spec.transaction_class is not None and not self.settings.personal_transactions_enabled:
+            return (
+                "personal_transactions_disabled",
+                "Binding personal transactions are not enabled in this deployment.",
+            )
         return None
 
     def _require_optional_feature(self, spec):
@@ -669,7 +674,7 @@ class ActionRepository:
             action_id = str(uuid4())
             expires = utcnow() + timedelta(seconds=spec.approval_ttl_seconds)
             preview = {
-                "version": 5 if spec.social_publish else 4 if spec.owned_artifact_required else 3 if spec.attachments_allowed else 2,
+                "version": 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.owned_artifact_required else 3 if spec.attachments_allowed else 2,
                 "provider": connection.provider,
                 "connection_id": connection.id,
                 "account": connection.email,

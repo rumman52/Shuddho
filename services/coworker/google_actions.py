@@ -627,7 +627,7 @@ class GoogleActions:
                 access_token,
                 attachments,
             )
-        if action["kind"] in {"email_send", "email_send_with_attachments", "email_thread_reply"}:
+        if action["kind"] in {"email_send", "email_send_with_attachments", "email_thread_reply", "negotiation_commitment_email"}:
             request_body = {"raw": email_raw(action, attachments)}
             expected_thread_id = None
             if action["kind"] == "email_thread_reply":

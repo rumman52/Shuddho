@@ -307,6 +307,7 @@ def runtime_manifest(
         "action_document_sharing": settings.action_document_sharing_enabled,
         "action_email_threading": settings.action_email_threading_enabled,
         "action_social_publishing": settings.action_social_publishing_enabled,
+        "personal_transactions": settings.personal_transactions_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
         "agent_linkedin_proposals": settings.agent_linkedin_proposals_enabled,
@@ -1042,6 +1043,7 @@ def connections(identity: Identity, services: Services):
         "document_sharing_enabled": services.settings.action_document_sharing_enabled,
         "threading_enabled": services.settings.action_email_threading_enabled,
         "social_publishing_enabled": services.settings.action_social_publishing_enabled,
+        "personal_transactions_enabled": services.settings.personal_transactions_enabled,
         "reads_enabled": services.settings.connector_reads_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }

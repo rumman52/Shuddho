@@ -9,7 +9,8 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Th
 const recipients = (text: string) => text.split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
 const isCalendar = (kind: ExternalAction["kind"]) => kind === "calendar_create" || kind === "calendar_create_with_reminder";
 const isDocumentShare = (kind: ExternalAction["kind"]) => kind === "document_share";
-const isEmail = (kind: ExternalAction["kind"]) => kind === "email_send" || kind === "email_send_with_attachments" || kind === "email_thread_reply";
+const isNegotiation = (kind: ExternalAction["kind"]) => kind === "negotiation_commitment_email";
+const isEmail = (kind: ExternalAction["kind"]) => kind === "email_send" || kind === "email_send_with_attachments" || kind === "email_thread_reply" || isNegotiation(kind);
 const isSocial = (kind: ExternalAction["kind"]) => kind === "social_publish_linkedin";
 const title = (item: ExternalAction) => item.preview.payload.kind === "document_share"
   ? item.preview.shared_artifact?.filename ?? "Shared document"
@@ -29,6 +30,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [documentSharingEnabled, setDocumentSharingEnabled] = useState(false);
   const [threadingEnabled, setThreadingEnabled] = useState(false);
   const [socialPublishingEnabled, setSocialPublishingEnabled] = useState(false);
+  const [personalTransactionsEnabled, setPersonalTransactionsEnabled] = useState(false);
   const [readsEnabled, setReadsEnabled] = useState(false);
   const [replyParentId, setReplyParentId] = useState<string | null>(null);
   const [savedRecipients, setSavedRecipients] = useState<ActionRecipient[]>([]);
@@ -39,12 +41,15 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [shareRecipient, setShareRecipient] = useState("");
   const selectedAttachmentsRef = useRef<string[]>([]);
   const [action, setAction] = useState<ExternalAction | null>(null);
-  const [mode, setMode] = useState<"email" | "calendar" | "drive" | "social">("email");
+  const [mode, setMode] = useState<"email" | "negotiation" | "calendar" | "drive" | "social">("email");
   const microsoftEnabled = import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED === "true";
   const [provider, setProvider] = useState<"google" | "microsoft" | "linkedin">("google");
   const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [bcc, setBcc] = useState("");
   const [subject, setSubject] = useState(emailDraft?.subject ?? ""); const [body, setBody] = useState(emailDraft?.body ?? "");
   const [socialText, setSocialText] = useState(socialDraft ?? "");
+  const [counterparty, setCounterparty] = useState("");
+  const [commitmentSummary, setCommitmentSummary] = useState("");
+  const [negotiationTerms, setNegotiationTerms] = useState("");
   const [eventTitle, setEventTitle] = useState(""); const [description, setDescription] = useState("");
   const [location, setLocation] = useState(""); const [attendees, setAttendees] = useState("");
   const [start, setStart] = useState(""); const [end, setEnd] = useState("");
@@ -55,8 +60,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false); const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
+  const currentCapability = mode === "negotiation" ? "email" : mode;
   const currentConnection = connections.find(
-    value => value.provider === provider && value.capability === mode,
+    value => value.provider === provider && value.capability === currentCapability,
   );
   const pending = action?.state === "queued" || action?.state === "executing";
 
@@ -78,7 +84,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
       });
       Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal), directory]).then(([value, recent, available, recipientDirectory]) => {
         if (!alive) return;
-        setEnabled(value.enabled); setReadsEnabled(value.reads_enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setSocialPublishingEnabled(value.social_publishing_enabled); setConnections(value.connections); setHistory(recent.actions);
+        setEnabled(value.enabled); setReadsEnabled(value.reads_enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setSocialPublishingEnabled(value.social_publishing_enabled); setPersonalTransactionsEnabled(value.personal_transactions_enabled); setConnections(value.connections); setHistory(recent.actions);
         setAttachmentsEnabled(available.attachments_enabled); setDocumentSharingEnabled(current => current || available.document_sharing_enabled); setArtifacts(available.artifacts);
         setRecipientDirectoryEnabled(recipientDirectory.enabled); setSavedRecipients(recipientDirectory.recipients); setLoaded(true);
       }).catch(failure => { if (alive) { setError(message(failure)); setLoaded(true); } });
@@ -158,11 +164,11 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   }
 
   function addSavedRecipient(value: ActionRecipient) {
-    const current = recipients(mode === "email" ? to : mode === "calendar" ? attendees : shareRecipient);
+    const current = recipients(mode === "email" || mode === "negotiation" ? to : mode === "calendar" ? attendees : shareRecipient);
     if (current.some(item => item.toLowerCase() === value.email.toLowerCase())) return;
     if (current.length >= 20) { setError("Remove a recipient before adding another one."); return; }
     const next = [...current, value.email].join(", ");
-    if (mode === "email") setTo(next);
+    if (mode === "email" || mode === "negotiation") setTo(next);
     else if (mode === "calendar") setAttendees(next);
     else setShareRecipient(value.email);
   }
@@ -211,6 +217,12 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
     // attachment email into a legacy plain email.
     const attachmentIds = mode === "email" ? [...selectedAttachmentsRef.current] : [];
     const artifactIds = mode === "drive" && selectedSharedArtifact ? [selectedSharedArtifact] : [];
+    const terms = negotiationTerms.split(/\n/).map(value => value.trim()).filter(Boolean).map(value => {
+      const index = value.indexOf("=");
+      return index > 0
+        ? { name: value.slice(0, index).trim(), value: value.slice(index + 1).trim() }
+        : { name: value, value: "" };
+    });
     const input: ActionInput = {
       connection_id: currentConnection.id,
       attachment_ids: attachmentIds,
@@ -219,6 +231,8 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
         ? replyParentId
           ? { kind: "email_thread_reply", parent_action_id: replyParentId, to: recipients(to), cc: recipients(cc), bcc: [], subject, body }
           : { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body }
+        : mode === "negotiation"
+          ? { kind: "negotiation_commitment_email", to: recipients(to), cc: recipients(cc), bcc: [], subject, body, counterparty, commitment_summary: commitmentSummary, terms }
         : mode === "calendar"
           ? reminderMinutes !== 0
             ? { kind: "calendar_create_with_reminder", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees), reminder_minutes_before_start: reminderMinutes }
@@ -243,7 +257,11 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
       } else if (p.kind === "document_share") {
         setMode("drive"); setAttachmentSelection([]); setSelectedSharedArtifact(action.preview.shared_artifact?.id ?? ""); setShareRecipient(p.recipients[0] ?? ""); setReminderMinutes(0);
       } else if (!("title" in p)) {
-        setMode("email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setSelectedSharedArtifact(""); setReminderMinutes(0);
+        const negotiation = p.kind === "negotiation_commitment_email";
+        setMode(negotiation ? "negotiation" : "email"); setTo(p.to.join(", ")); setCc(p.cc.join(", ")); setBcc(p.bcc.join(", ")); setSubject(p.subject); setBody(p.body); setAttachmentSelection((action.preview.attachments ?? []).map(item => item.id)); setSelectedSharedArtifact(""); setReminderMinutes(0);
+        if (negotiation) {
+          setCounterparty(p.counterparty); setCommitmentSummary(p.commitment_summary); setNegotiationTerms(p.terms.map(term => term.name + "=" + term.value).join("\n"));
+        }
         setReplyParentId(p.kind === "email_thread_reply" ? p.parent_action_id : null);
       } else {
         setMode("calendar"); setAttachmentSelection([]); setSelectedSharedArtifact(""); setEventTitle(p.title); setDescription(p.description); setLocation(p.location); setAttendees(p.attendees.join(", ")); setStart(p.start_at.slice(0, 16)); setEnd(p.end_at.slice(0, 16)); setTimeZone(p.time_zone); setReminderMinutes(p.kind === "calendar_create_with_reminder" && remindersEnabled ? p.reminder_minutes_before_start : 0);
@@ -341,12 +359,12 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
     <div className="cw-layout"><div className="cw-compose cw-action-compose">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>{composing ? "Prepare an action" : "Action details"}</h2><p>{composing ? "Nothing is sent when you prepare a preview." : "This preview is saved exactly as shown."}</p></div></div>
       {composing ? <form onSubmit={prepare}>
-        <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "calendar" | "drive" | "social")} disabled={Boolean(busy) || Boolean(replyParentId)}>
+        <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "negotiation" | "calendar" | "drive" | "social")} disabled={Boolean(busy) || Boolean(replyParentId)}>
           {provider === "linkedin" ? <option value="social">Publish a LinkedIn post</option> : <>
-            <option value="email">Send an email</option><option value="calendar">Create a calendar event</option>{provider === "google" && documentSharingEnabled && <option value="drive">Share a document</option>}
+            <option value="email">Send an email</option>{personalTransactionsEnabled && <option value="negotiation">Commit negotiated terms by email</option>}<option value="calendar">Create a calendar event</option>{provider === "google" && documentSharingEnabled && <option value="drive">Share a document</option>}
           </>}
         </select></label>
-        <p className="cw-action-account">{currentConnection ? <>{mode === "social" ? <strong>Connected LinkedIn personal member</strong> : <>From <strong>{currentConnection.email}</strong></>}{mode === "calendar" && " · Primary calendar"}{mode === "drive" && " · Google Drive"}</> : `Connect ${provider === "linkedin" ? "LinkedIn" : provider === "google" ? (mode === "email" ? "Gmail" : mode === "calendar" ? "Google Calendar" : "Google Drive") : (mode === "email" ? "Microsoft Mail" : "Microsoft Calendar")} above to continue.`}</p>
+        <p className="cw-action-account">{currentConnection ? <>{mode === "social" ? <strong>Connected LinkedIn personal member</strong> : <>From <strong>{currentConnection.email}</strong></>}{mode === "calendar" && " · Primary calendar"}{mode === "drive" && " · Google Drive"}</> : `Connect ${provider === "linkedin" ? "LinkedIn" : provider === "google" ? (mode === "email" || mode === "negotiation" ? "Gmail" : mode === "calendar" ? "Google Calendar" : "Google Drive") : (mode === "email" || mode === "negotiation" ? "Microsoft Mail" : "Microsoft Calendar")} above to continue.`}</p>
         {mode !== "social" && !replyParentId && (recipientDirectoryEnabled || savedRecipients.length > 0) && <fieldset className="cw-agent-files">
           <legend>Saved recipients</legend>
           {recipientDirectoryEnabled && <><div className="cw-action-row">
@@ -356,7 +374,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           <button type="button" className="cw-secondary" disabled={Boolean(busy) || !recipientName.trim() || !recipientEmail.trim()} onClick={() => void saveRecipient()}>{busy === "save-recipient" ? "Saving…" : "Save recipient"}</button></>}
           {savedRecipients.length > 0 ? <div className="cw-connection-grid">{savedRecipients.map(item => <div className="cw-connection" key={item.id}>
             <div><strong dir="auto">{item.name}</strong><small dir="ltr">{item.email}</small></div>
-            <div><button type="button" className="cw-text-button" disabled={Boolean(busy) || !recipientDirectoryEnabled} onClick={() => addSavedRecipient(item)}>{mode === "email" ? "Add to To" : mode === "calendar" ? "Add guest" : "Use recipient"}</button>
+            <div><button type="button" className="cw-text-button" disabled={Boolean(busy) || !recipientDirectoryEnabled} onClick={() => addSavedRecipient(item)}>{mode === "email" || mode === "negotiation" ? "Add to To" : mode === "calendar" ? "Add guest" : "Use recipient"}</button>
               <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void removeSavedRecipient(item)}>Remove</button></div>
           </div>)}</div> : recipientDirectoryEnabled && <small>No saved recipients yet.</small>}
           <small>Saved recipients are private Shuddho shortcuts. Selecting one only copies its exact email address into this draft; the final immutable preview is still what you approve. Agents cannot resolve or select saved recipients.</small>
@@ -388,6 +406,16 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
             <small>Up to 3 existing Shuddho artifacts, 2 MB total. The exact artifact hashes are bound to approval.</small>
           </fieldset>}
           <p className="cw-fineprint">Plain-text email, sent immediately after approval.{attachmentsEnabled ? " Attachments must already exist in this Shuddho workspace." : " Attachments are disabled in this deployment."}</p>
+        </> : mode === "negotiation" ? <>
+          <p className="cw-notice">This is a binding commitment action. A changed recipient, message, summary, or term requires a completely fresh approval preview.</p>
+          <label>Primary counterparty email<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required maxLength={254} placeholder="counterparty@example.com" /></label>
+          <label>Cc<input dir="ltr" value={cc} onChange={event => setCc(event.target.value)} maxLength={5100} /></label>
+          <label>Counterparty name or organization<input dir="auto" value={counterparty} onChange={event => setCounterparty(event.target.value)} required maxLength={300} /></label>
+          <label>Subject<input dir="auto" value={subject} onChange={event => setSubject(event.target.value)} required maxLength={300} /></label>
+          <label>Commitment summary<textarea dir="auto" rows={4} value={commitmentSummary} onChange={event => setCommitmentSummary(event.target.value)} required maxLength={2000} placeholder="Exact binding commitment being made" /></label>
+          <label>Final terms<textarea dir="auto" rows={6} value={negotiationTerms} onChange={event => setNegotiationTerms(event.target.value)} required maxLength={12000} placeholder={"Price=USD 5,000\nDelivery=30 days\nCancellation=Non-refundable after acceptance"} /><small>One exact term per line as Name=Value. Each name must be unique.</small></label>
+          <label>Message<textarea dir="auto" rows={9} value={body} onChange={event => setBody(event.target.value)} required maxLength={20000} /></label>
+          <p className="cw-fineprint">Exactly one primary counterparty; Bcc and attachments are disabled. The immutable approval binds the full message and every final term. If provider acceptance becomes uncertain, Shuddho will not resend blindly.</p>
         </> : mode === "calendar" ? <>
           <label>Event title<input dir="auto" required maxLength={300} value={eventTitle} onChange={event => setEventTitle(event.target.value)} /></label>
           <div className="cw-action-row"><label>Starts<input type="datetime-local" required value={start} onChange={event => setStart(event.target.value)} /></label><label>Ends<input type="datetime-local" required value={end} onChange={event => setEnd(event.target.value)} /></label></div>
@@ -415,10 +443,10 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           <span className="cw-field-meta">{socialText.length.toLocaleString()} / 3,000 characters</span>
           <p className="cw-fineprint">Personal LinkedIn profile only. Public text post only. The exact text and connected member are bound to your immutable approval preview. No media, organization page, feed read, scheduling, comments, reactions, edit, delete, or Agent publishing authority.</p>
         </>}
-        <button className="cw-primary" disabled={!enabled || !currentConnection || Boolean(busy) || (mode === "drive" && (!selectedSharedArtifact || recipients(shareRecipient).length !== 1))}>{busy === "prepare" ? "Preparing…" : "Review action"}<span aria-hidden="true">→</span></button>
+        <button className="cw-primary" disabled={!enabled || !currentConnection || Boolean(busy) || (mode === "drive" && (!selectedSharedArtifact || recipients(shareRecipient).length !== 1)) || (mode === "negotiation" && (!personalTransactionsEnabled || recipients(to).length !== 1 || !counterparty.trim() || !commitmentSummary.trim() || !negotiationTerms.trim()))}>{busy === "prepare" ? "Preparing…" : "Review action"}<span aria-hidden="true">→</span></button>
       </form> : action ? <>
         <dl className="cw-action-details"><dt>Account</dt><dd><bdi>{action.preview.account}</bdi></dd>
-          {payload?.kind === "social_publish_linkedin" ? <><dt>Provider</dt><dd>LinkedIn</dd><dt>Author</dt><dd>Connected personal member</dd><dt>Visibility</dt><dd>Public</dd><dt>Media</dt><dd>None</dd><dt>Timing</dt><dd>Publish immediately after approval</dd></> : payload?.kind === "document_share" ? <><dt>Document</dt><dd>{action.preview.shared_artifact?.filename}</dd><dt>Artifact SHA-256</dt><dd><code>{action.preview.shared_artifact?.sha256}</code></dd><dt>Recipient</dt><dd>{payload.recipients[0]}</dd><dt>Access</dt><dd>Reader only</dd><dt>Notification</dt><dd>Notify the recipient</dd><dt>Timing</dt><dd>Share immediately after approval</dd></> : payload && !("title" in payload) ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{(action.preview.attachments ?? []).length ? (action.preview.attachments ?? []).map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload && "title" in payload && <>
+          {payload?.kind === "social_publish_linkedin" ? <><dt>Provider</dt><dd>LinkedIn</dd><dt>Author</dt><dd>Connected personal member</dd><dt>Visibility</dt><dd>Public</dd><dt>Media</dt><dd>None</dd><dt>Timing</dt><dd>Publish immediately after approval</dd></> : payload?.kind === "document_share" ? <><dt>Document</dt><dd>{action.preview.shared_artifact?.filename}</dd><dt>Artifact SHA-256</dt><dd><code>{action.preview.shared_artifact?.sha256}</code></dd><dt>Recipient</dt><dd>{payload.recipients[0]}</dd><dt>Access</dt><dd>Reader only</dd><dt>Notification</dt><dd>Notify the recipient</dd><dt>Timing</dt><dd>Share immediately after approval</dd></> : payload?.kind === "negotiation_commitment_email" ? <><dt>Transaction class</dt><dd>Binding negotiation commitment</dd><dt>Counterparty</dt><dd>{payload.counterparty}</dd><dt>Primary recipient</dt><dd>{payload.to[0]}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Commitment</dt><dd dir="auto">{payload.commitment_summary}</dd><dt>Final terms</dt><dd><ul>{payload.terms.map(term => <li key={term.name}><strong>{term.name}:</strong> <span dir="auto">{term.value}</span></li>)}</ul></dd><dt>Change policy</dt><dd>Any change requires a fresh preview and approval</dd><dt>Uncertain provider result</dt><dd>Never resend blindly</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload && !("title" in payload) ? <><dt>To</dt><dd>{payload.to.join(", ")}</dd><dt>Cc</dt><dd>{payload.cc.join(", ") || "None"}</dd><dt>Bcc</dt><dd>{payload.bcc.join(", ") || "None"}</dd><dt>Attachments</dt><dd>{(action.preview.attachments ?? []).length ? (action.preview.attachments ?? []).map(item => item.filename).join(", ") : "None"}</dd><dt>Timing</dt><dd>Send immediately after approval</dd></> : payload && "title" in payload && <>
             <dt>Calendar</dt><dd>Primary calendar</dd><dt>Starts</dt><dd>{payload.start_at.replace("T", " ")}</dd><dt>Ends</dt><dd>{payload.end_at.replace("T", " ")}</dd><dt>Time zone</dt><dd>{payload.time_zone}</dd><dt>Guests</dt><dd>{payload.attendees.join(", ") || "None"}</dd><dt>Invitations</dt><dd>Notify all listed guests; guests can see each other</dd><dt>Location</dt><dd dir="auto">{payload.location || "None"}</dd><dt>Reminder</dt><dd>{payload.kind === "calendar_create_with_reminder" ? reminderLabel(payload.reminder_minutes_before_start) : "None"}</dd><dt>Video</dt><dd>None added</dd>
           </>}
         </dl>
@@ -431,19 +459,19 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
       {composing || !action ? <p>Your preview will appear here. Check the full message or event details before approving.</p> : <>
         <p role="status">{action.message}</p>
         {action.state === "awaiting_approval" && <>
-          <p className="cw-fineprint">Preview expires {new Date(action.preview.expires_at).toLocaleTimeString()}. Approval starts execution within five minutes.</p>
-          <label className="cw-approval-check"><input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />{isSocial(action.kind) ? "I reviewed the connected LinkedIn member, exact post text, public visibility and immediate publish timing." : isDocumentShare(action.kind) ? "I reviewed the account, exact document hash, recipient and reader access." : "I reviewed the account, recipients, content and timing."}</label>
-          <button className="cw-primary" disabled={!checked || !enabled || Boolean(busy)} onClick={() => void run("approve", async () => updateAction(await client.approveAction(action)))}>{busy === "approve" ? "Approving…" : isSocial(action.kind) ? "Approve & publish to LinkedIn" : isEmail(action.kind) ? "Approve & send email" : isDocumentShare(action.kind) ? "Approve & share document" : "Approve & create event"}</button>
+          <p className="cw-fineprint">Preview expires {new Date(action.preview.expires_at).toLocaleTimeString()}. Approval starts execution within {isNegotiation(action.kind) ? "three" : "five"} minutes.</p>
+          <label className="cw-approval-check"><input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />{isSocial(action.kind) ? "I reviewed the connected LinkedIn member, exact post text, public visibility and immediate publish timing." : isDocumentShare(action.kind) ? "I reviewed the account, exact document hash, recipient and reader access." : isNegotiation(action.kind) ? "I reviewed the exact counterparty, complete message, commitment summary and every final term. I understand any change requires a fresh approval." : "I reviewed the account, recipients, content and timing."}</label>
+          <button className="cw-primary" disabled={!checked || !enabled || Boolean(busy) || (isNegotiation(action.kind) && !personalTransactionsEnabled)} onClick={() => void run("approve", async () => updateAction(await client.approveAction(action)))}>{busy === "approve" ? "Approving…" : isSocial(action.kind) ? "Approve & publish to LinkedIn" : isNegotiation(action.kind) ? "Approve binding commitment & send" : isEmail(action.kind) ? "Approve & send email" : isDocumentShare(action.kind) ? "Approve & share document" : "Approve & create event"}</button>
         </>}
         {["awaiting_approval", "queued"].includes(action.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void run("cancel", async () => updateAction(await client.cancelAction(action.id)))}>Cancel action</button>}
         {action.state === "outcome_unknown" && (isCalendar(action.kind) || isDocumentShare(action.kind)) && action.preview.provider === "google" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => updateAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? (isDocumentShare(action.kind) ? "Checking Drive…" : "Checking calendar…") : (isDocumentShare(action.kind) ? "Check Drive result" : "Check calendar result")}</button>}
-        {threadingEnabled && action.state === "succeeded" && action.preview.provider === "google" && isEmail(action.kind) && action.receipt?.thread_id && <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => startThreadReply(action)}>Reply in this Gmail thread</button>}
+        {threadingEnabled && action.state === "succeeded" && action.preview.provider === "google" && isEmail(action.kind) && !isNegotiation(action.kind) && action.receipt?.thread_id && <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => startThreadReply(action)}>Reply in this Gmail thread</button>}
         {action.receipt && <div className="cw-receipt"><strong>{isSocial(action.kind) ? "Published on LinkedIn" : isDocumentShare(action.kind) ? "Shared in Google Drive" : action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "Accepted by Microsoft Graph" : "Created in Microsoft Calendar") : (isEmail(action.kind) ? "Accepted by Gmail" : "Created in Google Calendar")}</strong><p>{isSocial(action.kind) ? "LinkedIn confirmed creation of the approved public post. Shuddho does not read engagement, comments, reactions, or your feed." : isDocumentShare(action.kind) ? `Google Drive confirmed reader access for ${action.receipt.recipient ?? "the approved recipient"}. This does not mean the recipient opened the document.` : action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "This confirms Microsoft Graph accepted the send request. It does not confirm delivery or reading." : "Microsoft Graph confirmed the event. Guest attendance is not yet confirmed.") : (isEmail(action.kind) ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed.")}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small>{action.receipt.provider_id && <code>Receipt: {action.receipt.provider_id}</code>}</div>}
         {action.audit && <details className="cw-action-audit"><summary>Action history</summary><ol>{action.audit.map((item, index) => <li key={index}>{item.action.replace("action.", "").replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</li>)}</ol></details>}
       </>}
     </section>
     <section className="cw-history"><div className="cw-history-title"><h2>Recent actions</h2><button className="cw-text-button" onClick={() => { setReload(x => x + 1); if (action) void run("refresh", async () => updateAction(await client.action(action.id))); }}>Refresh actions</button></div>
-      {history.length ? <ul>{history.map(item => <li key={item.id}><button aria-pressed={action?.id === item.id} disabled={Boolean(busy)} onClick={() => void run("open", async () => openAction(await client.action(item.id)))}><div><strong dir="auto">{title(item)}</strong><small>{isSocial(item.kind) ? "LinkedIn post" : isEmail(item.kind) ? "Email" : isDocumentShare(item.kind) ? "Document" : "Calendar"} · {isSocial(item.kind) ? "personal member" : item.preview.account}</small></div><span className="cw-status">{labels[item.state]}</span></button></li>)}</ul> : <p className="cw-fineprint">Your approved actions and receipts will appear here.</p>}
+      {history.length ? <ul>{history.map(item => <li key={item.id}><button aria-pressed={action?.id === item.id} disabled={Boolean(busy)} onClick={() => void run("open", async () => openAction(await client.action(item.id)))}><div><strong dir="auto">{title(item)}</strong><small>{isSocial(item.kind) ? "LinkedIn post" : isNegotiation(item.kind) ? "Negotiation commitment" : isEmail(item.kind) ? "Email" : isDocumentShare(item.kind) ? "Document" : "Calendar"} · {isSocial(item.kind) ? "personal member" : item.preview.account}</small></div><span className="cw-status">{labels[item.state]}</span></button></li>)}</ul> : <p className="cw-fineprint">Your approved actions and receipts will appear here.</p>}
       {!composing && action && <button type="button" className="cw-secondary cw-new-action" disabled={Boolean(busy)} onClick={() => startNewAction()}>Prepare another action</button>}
     </section></div></div>
   </section>;

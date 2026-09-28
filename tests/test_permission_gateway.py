@@ -84,6 +84,11 @@ def test_connector_contracts_are_code_owned_and_operation_bounded():
     )
     assert google_email.destination_policy == "approval_scope"
     assert google_email.egress_policy == "fixed_provider_endpoints"
+    assert connector_capability(
+        "google",
+        "email",
+        action_kind="negotiation_commitment_email",
+    ).approval_class == "exact_preview"
     with pytest.raises(CoworkerError) as arbitrary_operation:
         connector_capability(
             "google",

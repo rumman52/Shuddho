@@ -14,11 +14,13 @@ export type ActionRecipient = { id: string; name: string; email: string; created
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type AttachmentEmailAction = { kind: "email_send_with_attachments"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type EmailThreadReplyAction = { kind: "email_thread_reply"; parent_action_id: string; to: string[]; cc: string[]; bcc: []; subject: string; body: string };
+export type NegotiationTerm = { name: string; value: string };
+export type NegotiationCommitmentAction = { kind: "negotiation_commitment_email"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string; counterparty: string; commitment_summary: string; terms: NegotiationTerm[] };
 export type CalendarAction = { kind: "calendar_create"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[] };
 export type CalendarReminderAction = { kind: "calendar_create_with_reminder"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[]; reminder_minutes_before_start: 5 | 10 | 15 | 30 | 60 | 120 | 1440 };
 export type DocumentShareAction = { kind: "document_share"; recipients: string[] };
 export type LinkedInSocialPublishAction = { kind: "social_publish_linkedin"; text: string };
-export type ActionPayload = EmailAction | AttachmentEmailAction | EmailThreadReplyAction | CalendarAction | CalendarReminderAction | DocumentShareAction | LinkedInSocialPublishAction;
+export type ActionPayload = EmailAction | AttachmentEmailAction | EmailThreadReplyAction | NegotiationCommitmentAction | CalendarAction | CalendarReminderAction | DocumentShareAction | LinkedInSocialPublishAction;
 export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[]; artifact_ids?: string[] };
 export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
 export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "needs_input" | "blocked" | "completed" | "failed" | "cancelled";
@@ -147,7 +149,7 @@ export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: 
 export type ExternalAction = {
   id: string; connection_id: string; kind: ActionPayload["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
-  preview: { account: string; provider: "google" | "microsoft" | "linkedin"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; reply_context?: { parent_action_id: string; root_action_id: string; thread_id: string; parent_message_id: string; parent_provider_id: string; references: string[] }; expires_at: string; calendar: string | null; guest_notifications: string | null };
+  preview: { account: string; provider: "google" | "microsoft" | "linkedin"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; reply_context?: { parent_action_id: string; root_action_id: string; thread_id: string; parent_message_id: string; parent_provider_id: string; references: string[] }; transaction?: { class: "binding_negotiation_commitment"; approval: "exact_final_terms"; changed_terms: "fresh_preview_required"; uncertain_outcome: "do_not_retry"; provider_idempotency: "provider_specific_only" }; expires_at: string; calendar: string | null; guest_notifications: string | null };
   preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
   approved_at: string | null; finished_at: string | null;
   receipt: { provider: string; provider_id?: string; thread_id?: string; status: string; confirmed_at: string; message_id?: string; recipient?: string; access?: string; artifact_sha256?: string; author?: string; visibility?: string } | null;
@@ -281,7 +283,7 @@ export class CoworkerClient {
   deleteDocument(id: string) { return this.json<{ message: string }>(`/api/v1/documents/${identifier(id)}`, { method: "DELETE" }); }
   task(id: string, signal?: AbortSignal) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}`, { signal }); }
   cancel(id: string) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}/cancel`, { method: "POST" }); }
-  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reads_enabled: boolean; reminders_enabled: boolean; document_sharing_enabled: boolean; threading_enabled: boolean; social_publishing_enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
+  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reads_enabled: boolean; reminders_enabled: boolean; document_sharing_enabled: boolean; threading_enabled: boolean; social_publishing_enabled: boolean; personal_transactions_enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
   connectGoogle(capability: "email" | "calendar" | "drive" | "email_read" | "calendar_read") {
     return this.json<{ authorization_url: string; state: string }>("/api/v1/connections/google/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capability }) });
   }

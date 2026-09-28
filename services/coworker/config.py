@@ -43,6 +43,7 @@ class Settings:
     action_document_sharing_enabled: bool = False
     action_email_threading_enabled: bool = False
     action_social_publishing_enabled: bool = False
+    personal_transactions_enabled: bool = False
     agent_runtime_enabled: bool = False
     agent_runtime_v3_enabled: bool = False
     personal_goals_enabled: bool = False
@@ -185,6 +186,7 @@ class Settings:
             action_document_sharing_enabled=os.getenv("SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED", "false").lower() == "true",
             action_email_threading_enabled=os.getenv("SHUDDHO_ACTION_EMAIL_THREADING_ENABLED", "false").lower() == "true",
             action_social_publishing_enabled=os.getenv("SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED", "false").lower() == "true",
+            personal_transactions_enabled=os.getenv("SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED", "false").lower() == "true",
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
             agent_runtime_v3_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_V3_ENABLED", "false").lower() == "true",
             personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",
@@ -453,6 +455,11 @@ class Settings:
                 raise ValueError("Action document sharing requires SHUDDHO_ARTIFACT_SERVICES_ENABLED=true")
         if self.action_email_threading_enabled and not self.actions_enabled:
             raise ValueError("Action email threading requires SHUDDHO_ACTIONS_ENABLED=true")
+        if self.personal_transactions_enabled:
+            if not self.actions_enabled:
+                raise ValueError("Personal transactions require SHUDDHO_ACTIONS_ENABLED=true")
+            if not self.connector_trust_boundary_enabled:
+                raise ValueError("Personal transactions require SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
         if self.action_social_publishing_enabled:
             if not self.actions_enabled:
                 raise ValueError("Action social publishing requires SHUDDHO_ACTIONS_ENABLED=true")

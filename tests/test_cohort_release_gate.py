@@ -274,6 +274,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "browser": False,
         "code_execution": False,
         "agent_sandbox_tool": False,
+        "personal_transactions": False,
     }
 
     passed = evaluate_release(

@@ -68,7 +68,7 @@ def bind(preview):
 
 
 def test_registry_declares_existing_consequential_actions():
-    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "email_thread_reply", "calendar_create", "calendar_create_with_reminder", "document_share", "social_publish_linkedin"}
+    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "email_thread_reply", "negotiation_commitment_email", "calendar_create", "calendar_create_with_reminder", "document_share", "social_publish_linkedin"}
     assert action_spec("email_send", "google").capability == "email"
     assert action_spec("calendar_create", "google").reconcile_supported
     assert action_spec("calendar_create_with_reminder", "google").reminders == "single_explicit"
@@ -80,6 +80,7 @@ def test_registry_declares_existing_consequential_actions():
     assert action_spec("email_thread_reply", "google").thread_reply
     assert action_spec("social_publish_linkedin", "linkedin").social_publish
     assert action_spec("social_publish_linkedin", "linkedin").capability == "social"
+    assert action_spec("negotiation_commitment_email", "google").transaction_class == "binding_negotiation_commitment"
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
 
 

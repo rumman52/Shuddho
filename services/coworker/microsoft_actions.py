@@ -612,7 +612,7 @@ class MicrosoftActions:
         )
 
     async def execute(self, action, access_token, attachments=None):
-        if action["kind"] in {"email_send", "email_send_with_attachments"}:
+        if action["kind"] in {"email_send", "email_send_with_attachments", "negotiation_commitment_email"}:
             await self.request(
                 "POST",
                 SEND_URL,

@@ -38,9 +38,10 @@ class ActionSpec:
     notification_policy: str | None = None
     thread_reply: bool = False
     social_publish: bool = False
+    transaction_class: str | None = None
 
     def public(self) -> dict:
-        return {
+        result = {
             "kind": self.kind,
             "version": self.version,
             "capability": self.capability,
@@ -52,6 +53,9 @@ class ActionSpec:
             "thread_reply": self.thread_reply,
             "social_publish": self.social_publish,
         }
+        if self.transaction_class is not None:
+            result["transaction_class"] = self.transaction_class
+        return result
 
     @property
     def reconcile_supported(self) -> bool:
@@ -93,6 +97,14 @@ class ActionSpec:
                 "social_read": "none",
                 "agent_authority": "none",
             }
+        if self.transaction_class is not None:
+            result["transaction"] = {
+                "class": self.transaction_class,
+                "approval": "exact_final_terms",
+                "changed_terms": "fresh_preview_required",
+                "uncertain_outcome": "do_not_retry",
+                "provider_idempotency": "provider_specific_only",
+            }
         return result
 
 
@@ -128,6 +140,17 @@ ACTION_SPECS = {
         reconcile_mode="none",
         destination_fields=("to", "cc", "bcc"),
         thread_reply=True,
+    ),
+    "negotiation_commitment_email": ActionSpec(
+        kind="negotiation_commitment_email",
+        version="1",
+        capability="email",
+        providers=frozenset({"google", "microsoft"}),
+        approval_ttl_seconds=10 * 60,
+        execution_ttl_seconds=3 * 60,
+        reconcile_mode="none",
+        destination_fields=("to", "cc", "bcc"),
+        transaction_class="binding_negotiation_commitment",
     ),
     "calendar_create": ActionSpec(
         kind="calendar_create",
@@ -395,7 +418,7 @@ def build_approval_scope(preview: dict) -> dict:
     reply_context = thread_context_manifest(preview, spec)
     result = {
         "contract": "shuddho.consequential-action",
-        "contract_version": 5 if spec.social_publish else 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
+        "contract_version": 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
         "action_kind": spec.kind,
         "action_version": spec.version,
         "provider": provider,
@@ -423,6 +446,9 @@ def build_approval_scope(preview: dict) -> dict:
             **({
                 "social_publishing": preview.get("social_publishing"),
             } if spec.social_publish else {}),
+            **({
+                "transaction": preview.get("transaction"),
+            } if spec.transaction_class is not None else {}),
         },
         "expires_at": preview.get("expires_at"),
     }

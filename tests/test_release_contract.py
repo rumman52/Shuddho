@@ -57,6 +57,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "browser",
         "code_execution",
         "agent_sandbox_tool",
+        "personal_transactions",
     } == covered
 
 
@@ -136,6 +137,20 @@ def test_agent_sandbox_tool_requires_code_execution_runtime_and_planner():
     )
     rollout["capabilities"]["code_execution"] = False
     assert "agent_sandbox_tool_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
+
+
+def test_personal_transactions_require_actions_trust_boundary_and_staging():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["actions"] = True
+    rollout["capabilities"]["connector_trust_boundary"] = True
+    rollout["capabilities"]["personal_transactions"] = True
+    assert "personal_transactions" in required_conditional_gate_ids(
+        rollout["capabilities"], {"google"}
+    )
+    rollout["capabilities"]["connector_trust_boundary"] = False
+    assert "personal_transactions_dependency" in validate_rollout(
         rollout, max_cohort_users=25
     )
 

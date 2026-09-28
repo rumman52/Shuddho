@@ -21,7 +21,7 @@ from services.coworker.connector_read_schemas import ConnectorReadGrantCreate
 from services.coworker.connector_reads import ConnectorReadRepository, ConnectorReadService
 from services.coworker.context import ContextService
 from services.coworker.credential_broker import CredentialBroker
-from services.coworker.action_schemas import OAuthFinish, OAuthStart
+from services.coworker.action_schemas import ActionPrepare, OAuthFinish, OAuthStart
 from services.coworker.actions import ActionService
 from services.coworker.errors import CoworkerError
 from services.coworker.google_actions import GoogleActions
@@ -301,6 +301,54 @@ def test_microsoft_actions_use_shared_approval_boundary(
         assert sent["transactionId"] == expected["transactionId"]
         assert sent["isReminderOn"] is False
         assert sent["start"]["timeZone"] == "UTC"
+
+
+
+
+def test_microsoft_executes_pa09_negotiation_email(container):
+    simulated = enable_microsoft(container)
+    owner = account(container)
+    connection = asyncio.run(connect_microsoft(container, owner, "email"))
+    settings = replace(
+        container.settings,
+        connector_trust_boundary_enabled=True,
+        personal_transactions_enabled=True,
+    )
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+    request = ActionPrepare.model_validate({
+        "connection_id": connection["id"],
+        "payload": {
+            "kind": "negotiation_commitment_email",
+            "to": ["counterparty@example.org"],
+            "cc": [],
+            "bcc": [],
+            "subject": "Final terms",
+            "body": "We confirm these final negotiated terms.",
+            "counterparty": "Example Supplier Ltd.",
+            "commitment_summary": "Accept the quoted supply agreement.",
+            "terms": [
+                {"name": "Price", "value": "USD 5,000"},
+                {"name": "Delivery", "value": "30 days"},
+            ],
+        },
+    })
+    action = container.actions.repo.prepare(owner, request, "ms-pa09-negotiation")
+    approved = container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+    claimed = container.actions.repo.claim_execution(approved["id"])
+    assert claimed is not None
+    receipt = asyncio.run(
+        container.actions.providers["microsoft"].execute(
+            claimed,
+            "simulated-ms-access",
+        )
+    )
+    assert receipt["provider"] == "microsoft"
+    assert receipt["status"] == "accepted_by_microsoft_graph"
+    assert len(simulated.sent) == 1
+    assert simulated.sent[0]["message"]["subject"] == "Final terms"
 
 
 def test_microsoft_unknown_email_outcome_never_posts_twice(container):

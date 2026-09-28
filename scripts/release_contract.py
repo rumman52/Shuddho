@@ -144,6 +144,18 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="personal_transactions",
+        rollback_key="personal_transactions_kill_switch",
+        kill_switch="SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false",
+        dependencies=("actions", "connector_trust_boundary"),
+        staging_gates=(
+            StagingGate(
+                "personal_transactions",
+                "Binding negotiation commitment email passed exact counterparty/message/final-term approval binding, changed-term invalidation, owner/connection checks, fixed provider egress, no blind retry after uncertain mutation, and confirmed provider acceptance receipts in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="connector_trust_boundary",
         rollback_key="connector_trust_boundary_kill_switch",
         kill_switch="SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false",
@@ -320,6 +332,14 @@ OPTIONAL_CAPABILITIES = (
 )
 
 ACTIVATION_REQUIREMENTS = (
+    ActivationRequirement(
+        key="personal_transactions",
+        status="personal_transactions_verified",
+        ledger_schema_version=26,
+        ledger_event_type="personal_transactions_verified",
+        ledger_artifact_key="personal_transactions_activation",
+        capability="personal_transactions",
+    ),
     ActivationRequirement(
         key="agent_sandbox_tool",
         status="agent_sandbox_tool_verified",

@@ -61,6 +61,7 @@ CONNECTOR_CAPABILITIES = {
             "email_send",
             "email_send_with_attachments",
             "email_thread_reply",
+            "negotiation_commitment_email",
         }),
     ),
     ("google", "calendar"): ConnectorCapabilitySpec(
@@ -88,6 +89,7 @@ CONNECTOR_CAPABILITIES = {
         action_kinds=frozenset({
             "email_send",
             "email_send_with_attachments",
+            "negotiation_commitment_email",
         }),
     ),
     ("microsoft", "calendar"): ConnectorCapabilitySpec(
