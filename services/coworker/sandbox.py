@@ -758,6 +758,24 @@ class SandboxRepository:
             ).order_by(SandboxExecution.sequence.desc()).limit(50)).all()
             return [self._execution_dto(row) for row in rows]
 
+    def get_execution(self, owner: str, execution_id: str) -> dict:
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            self._expire_stale_sessions(db, owner)
+            row = db.scalar(select(SandboxExecution).where(
+                SandboxExecution.id == execution_id,
+                SandboxExecution.owner_id == owner,
+            ))
+            if row is None:
+                raise not_found()
+            session = db.scalar(select(SandboxSession.id).where(
+                SandboxSession.id == row.session_id,
+                SandboxSession.owner_id == owner,
+            ))
+            if session is None:
+                raise not_found()
+            return self._execution_dto(row)
+
     def preview_url(self, owner: str, artifact_id: str) -> dict:
         self._require_enabled()
         now = utcnow()
