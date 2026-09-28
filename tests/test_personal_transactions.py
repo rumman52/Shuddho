@@ -51,6 +51,7 @@ def enable_transactions(container):
         container.settings,
         connector_trust_boundary_enabled=True,
         personal_transactions_enabled=True,
+        transaction_operations=frozenset({"google:negotiation_commitment_email"}),
     )
     settings.validate()
     container.settings = settings
@@ -149,6 +150,7 @@ def test_transaction_kill_switch_and_idempotency_require_fresh_preview(container
         container.settings,
         connector_trust_boundary_enabled=True,
         personal_transactions_enabled=True,
+        transaction_operations=frozenset({"google:negotiation_commitment_email"}),
     )
     settings.validate()
     container.settings = settings
