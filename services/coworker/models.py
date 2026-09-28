@@ -695,6 +695,49 @@ class BrowserCommand(Base):
     )
 
 
+class SandboxSession(Base):
+    __tablename__ = "cw_sandbox_sessions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    purpose: Mapped[str] = mapped_column(String(30))
+    runtime: Mapped[str] = mapped_column(String(20))
+    state: Mapped[str] = mapped_column(String(30), default="prepared")
+    execution_policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    cleanup_state: Mapped[str] = mapped_column(String(30), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_sandbox_sessions_owner_idempotency"),
+        Index("cw_sandbox_sessions_owner_created", "owner_id", "created_at"),
+        Index("cw_sandbox_sessions_state_expiry", "state", "expires_at"),
+    )
+
+
+class SandboxExecution(Base):
+    __tablename__ = "cw_sandbox_executions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("cw_sandbox_sessions.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(20))
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    source_bytes: Mapped[int] = mapped_column(Integer)
+    request_spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    state: Mapped[str] = mapped_column(String(30), default="prepared")
+    error_code: Mapped[str | None] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("session_id", "sequence", name="uq_cw_sandbox_executions_session_sequence"),
+        Index("cw_sandbox_executions_owner_session", "owner_id", "session_id"),
+    )
+
+
 class AgentRun(Base):
     __tablename__ = "cw_agent_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
