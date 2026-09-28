@@ -80,6 +80,7 @@ def test_registry_declares_existing_consequential_actions():
     assert action_spec("email_thread_reply", "google").thread_reply
     assert action_spec("social_publish_linkedin", "linkedin").social_publish
     assert action_spec("social_publish_linkedin", "linkedin").capability == "social"
+    assert action_spec("negotiation_commitment_email", "google").transaction_class == "binding_negotiation_commitment"
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
 
 
