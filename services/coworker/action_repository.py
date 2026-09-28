@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select, update
 
-from .action_registry import action_spec, build_approval_scope, validate_approval_scope
+from .action_registry import action_spec, build_approval_scope, transaction_operation_key, validate_approval_scope
 from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE, CONNECTOR_READ_AUDIENCE
@@ -72,7 +72,7 @@ class ActionRepository:
         if not self.settings.actions_enabled:
             raise CoworkerError("actions_disabled", "Email and calendar actions are not available in this deployment.", 503)
 
-    def _optional_feature_error(self, spec):
+    def _optional_feature_error(self, spec, provider: str | None = None):
         if spec.attachments_allowed and not self.settings.action_attachments_enabled:
             return (
                 "action_attachments_disabled",
@@ -98,15 +98,21 @@ class ActionRepository:
                 "action_social_publishing_disabled",
                 "Social publishing is not enabled in this deployment.",
             )
-        if spec.transaction_class is not None and not self.settings.personal_transactions_enabled:
-            return (
-                "personal_transactions_disabled",
-                "Binding personal transactions are not enabled in this deployment.",
-            )
+        if spec.transaction_class is not None:
+            if not self.settings.personal_transactions_enabled:
+                return (
+                    "personal_transactions_disabled",
+                    "Binding personal transactions are not enabled in this deployment.",
+                )
+            if provider is None or transaction_operation_key(provider, spec.kind) not in self.settings.transaction_operations:
+                return (
+                    "personal_transaction_operation_disabled",
+                    "This provider transaction operation has not been individually qualified for this deployment.",
+                )
         return None
 
-    def _require_optional_feature(self, spec):
-        failure = self._optional_feature_error(spec)
+    def _require_optional_feature(self, spec, provider: str | None = None):
+        failure = self._optional_feature_error(spec, provider)
         if failure is not None:
             raise CoworkerError(failure[0], failure[1], 503)
 
@@ -583,7 +589,7 @@ class ActionRepository:
                     503,
                 )
             spec = action_spec(request.payload.kind, connection.provider)
-            self._require_optional_feature(spec)
+            self._require_optional_feature(spec, connection.provider)
             reply_context = None
             if spec.thread_reply:
                 parent_id = str(request.payload.parent_action_id)
@@ -948,7 +954,7 @@ class ActionRepository:
             spec = validate_approval_scope(row.preview)
             if connection.provider not in spec.providers or connection.capability != spec.capability:
                 raise CoworkerError("approval_changed", "Action authorization no longer matches the connection.", 409)
-            optional_failure = self._optional_feature_error(spec)
+            optional_failure = self._optional_feature_error(spec, connection.provider)
             if optional_failure is not None:
                 row.state, row.finished_at, row.error_code = (
                     "cancelled",
