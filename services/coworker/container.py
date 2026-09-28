@@ -17,6 +17,8 @@ from .linkedin_actions import LinkedInActions
 from .agent_repository import AgentRepository
 from .goal_repository import GoalRepository
 from .negotiation_repository import NegotiationRepository
+from .negotiation_model import NegotiationProposalModel
+from .negotiation_service import NegotiationProposalService
 from .automation_repository import AutomationRepository
 from .memory_repository import MemoryRepository
 from .context import ContextService
@@ -39,6 +41,7 @@ class Container:
     agent: AgentRepository | None = None
     goals: GoalRepository | None = None
     negotiations: NegotiationRepository | None = None
+    negotiation_proposals: NegotiationProposalService | None = None
     automations: AutomationRepository | None = None
     memory: MemoryRepository | None = None
     context: ContextService | None = None
@@ -97,6 +100,11 @@ class Container:
             self.negotiations = NegotiationRepository(
                 self.repository.sessions,
                 self.settings,
+            )
+        if self.negotiation_proposals is None:
+            self.negotiation_proposals = NegotiationProposalService(
+                self.negotiations,
+                NegotiationProposalModel(self.settings),
             )
         if self.memory is None:
             self.memory = MemoryRepository(self.repository.sessions, self.settings)
