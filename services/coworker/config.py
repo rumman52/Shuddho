@@ -44,6 +44,7 @@ class Settings:
     action_email_threading_enabled: bool = False
     action_social_publishing_enabled: bool = False
     personal_transactions_enabled: bool = False
+    transaction_operations: frozenset[str] = field(default_factory=frozenset)
     agent_runtime_enabled: bool = False
     agent_runtime_v3_enabled: bool = False
     personal_goals_enabled: bool = False
@@ -187,6 +188,11 @@ class Settings:
             action_email_threading_enabled=os.getenv("SHUDDHO_ACTION_EMAIL_THREADING_ENABLED", "false").lower() == "true",
             action_social_publishing_enabled=os.getenv("SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED", "false").lower() == "true",
             personal_transactions_enabled=os.getenv("SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED", "false").lower() == "true",
+            transaction_operations=frozenset(
+                value.strip().lower()
+                for value in os.getenv("SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS", "").split(",")
+                if value.strip()
+            ),
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
             agent_runtime_v3_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_V3_ENABLED", "false").lower() == "true",
             personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",
@@ -455,11 +461,30 @@ class Settings:
                 raise ValueError("Action document sharing requires SHUDDHO_ARTIFACT_SERVICES_ENABLED=true")
         if self.action_email_threading_enabled and not self.actions_enabled:
             raise ValueError("Action email threading requires SHUDDHO_ACTIONS_ENABLED=true")
+        if self.transaction_operations:
+            from .action_registry import registered_transaction_operations
+            unknown = sorted(self.transaction_operations - registered_transaction_operations())
+            if unknown:
+                raise ValueError(
+                    "SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS contains unregistered operations: "
+                    + ", ".join(unknown)
+                )
+            if any(
+                item.startswith("microsoft:")
+                for item in self.transaction_operations
+            ) and not self.microsoft_actions_enabled:
+                raise ValueError(
+                    "Microsoft transaction operations require SHUDDHO_MICROSOFT_ACTIONS_ENABLED=true"
+                )
         if self.personal_transactions_enabled:
             if not self.actions_enabled:
                 raise ValueError("Personal transactions require SHUDDHO_ACTIONS_ENABLED=true")
             if not self.connector_trust_boundary_enabled:
                 raise ValueError("Personal transactions require SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
+            if not self.transaction_operations:
+                raise ValueError(
+                    "Personal transactions require at least one explicitly qualified SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS entry"
+                )
         if self.action_social_publishing_enabled:
             if not self.actions_enabled:
                 raise ValueError("Action social publishing requires SHUDDHO_ACTIONS_ENABLED=true")
