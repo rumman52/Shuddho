@@ -231,6 +231,8 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
         ? replyParentId
           ? { kind: "email_thread_reply", parent_action_id: replyParentId, to: recipients(to), cc: recipients(cc), bcc: [], subject, body }
           : { kind: attachmentIds.length ? "email_send_with_attachments" : "email_send", to: recipients(to), cc: recipients(cc), bcc: recipients(bcc), subject, body }
+        : mode === "negotiation"
+          ? { kind: "negotiation_commitment_email", to: recipients(to), cc: recipients(cc), bcc: [], subject, body, counterparty, commitment_summary: commitmentSummary, terms }
         : mode === "calendar"
           ? reminderMinutes !== 0
             ? { kind: "calendar_create_with_reminder", title: eventTitle, description, location, start_at: start, end_at: end, time_zone: timeZone, attendees: recipients(attendees), reminder_minutes_before_start: reminderMinutes }
