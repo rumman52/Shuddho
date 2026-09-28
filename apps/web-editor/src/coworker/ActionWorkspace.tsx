@@ -359,9 +359,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
     <div className="cw-layout"><div className="cw-compose cw-action-compose">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>{composing ? "Prepare an action" : "Action details"}</h2><p>{composing ? "Nothing is sent when you prepare a preview." : "This preview is saved exactly as shown."}</p></div></div>
       {composing ? <form onSubmit={prepare}>
-        <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "calendar" | "drive" | "social")} disabled={Boolean(busy) || Boolean(replyParentId)}>
+        <label>Action type<select aria-label="Action type" value={mode} onChange={event => setMode(event.target.value as "email" | "negotiation" | "calendar" | "drive" | "social")} disabled={Boolean(busy) || Boolean(replyParentId)}>
           {provider === "linkedin" ? <option value="social">Publish a LinkedIn post</option> : <>
-            <option value="email">Send an email</option><option value="calendar">Create a calendar event</option>{provider === "google" && documentSharingEnabled && <option value="drive">Share a document</option>}
+            <option value="email">Send an email</option>{personalTransactionsEnabled && <option value="negotiation">Commit negotiated terms by email</option>}<option value="calendar">Create a calendar event</option>{provider === "google" && documentSharingEnabled && <option value="drive">Share a document</option>}
           </>}
         </select></label>
         <p className="cw-action-account">{currentConnection ? <>{mode === "social" ? <strong>Connected LinkedIn personal member</strong> : <>From <strong>{currentConnection.email}</strong></>}{mode === "calendar" && " · Primary calendar"}{mode === "drive" && " · Google Drive"}</> : `Connect ${provider === "linkedin" ? "LinkedIn" : provider === "google" ? (mode === "email" ? "Gmail" : mode === "calendar" ? "Google Calendar" : "Google Drive") : (mode === "email" ? "Microsoft Mail" : "Microsoft Calendar")} above to continue.`}</p>
