@@ -656,6 +656,141 @@ def test_exact_proposal_promotion_creates_only_bound_unapproved_preview(containe
     assert replay["state"] == "awaiting_approval"
 
 
+def test_promoted_send_history_requires_success_and_is_idempotent(container):
+    enable_proposal_promotion(container)
+    owner = account(container, "proposal-record-send")
+    other = account(container, "proposal-record-send-other")
+    case, _connection = create_case(container, owner, "proposal-record-send-case")
+    proposal = generate_proposal(
+        container,
+        owner,
+        case,
+        "proposal-record-send-request",
+    )
+    action = container.negotiation_proposals.promote(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+
+    with pytest.raises(CoworkerError) as unconfirmed:
+        container.negotiations.record_promoted_send(
+            owner,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+        )
+    assert unconfirmed.value.code == "negotiation_promoted_send_unconfirmed"
+
+    with pytest.raises(CoworkerError) as wrong_hash:
+        container.negotiations.record_promoted_send(
+            owner,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash="0" * 64),
+        )
+    assert wrong_hash.value.code == "negotiation_proposal_changed"
+
+    with pytest.raises(CoworkerError) as cross_owner:
+        container.negotiations.record_promoted_send(
+            other,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+        )
+    assert cross_owner.value.code == "not_found"
+
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    claimed = container.actions.repo.claim_execution(approved["id"])
+    assert claimed is not None
+    finished_at = utcnow()
+    container.actions.repo.finish(
+        approved["id"],
+        "succeeded",
+        receipt={
+            "provider": "google",
+            "provider_id": "mail-promoted-1",
+            "thread_id": "thread-promoted-1",
+            "status": "accepted_by_gmail",
+            "confirmed_at": finished_at.isoformat(),
+        },
+    )
+
+    recorded, created = container.negotiations.record_promoted_send(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+    assert created is True
+    assert recorded["direction"] == "ours"
+    assert recorded["kind"] == "commitment"
+    assert recorded["summary"] == proposal["summary"]
+    assert recorded["terms"] == proposal["terms"]
+    assert recorded["external_action_id"] == action["id"]
+
+    replay, created = container.negotiations.record_promoted_send(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+    assert created is False
+    assert replay["id"] == recorded["id"]
+
+    saved = container.negotiations.get(owner, case["id"])
+    linked = [
+        offer for offer in saved["offers"]
+        if offer["external_action_id"] == action["id"]
+    ]
+    assert len(linked) == 1
+
+
+def test_failed_or_uncertain_promoted_action_never_records_confirmed_send(container):
+    enable_proposal_promotion(container)
+    owner = account(container, "proposal-record-failed")
+    case, _connection = create_case(container, owner, "proposal-record-failed-case")
+    proposal = generate_proposal(
+        container,
+        owner,
+        case,
+        "proposal-record-failed-request",
+    )
+    action = container.negotiation_proposals.promote(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    claimed = container.actions.repo.claim_execution(approved["id"])
+    assert claimed is not None
+    container.actions.repo.finish(
+        approved["id"],
+        "outcome_unknown",
+        error_code="provider_timeout",
+    )
+
+    with pytest.raises(CoworkerError) as denied:
+        container.negotiations.record_promoted_send(
+            owner,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+        )
+    assert denied.value.code == "negotiation_promoted_send_unconfirmed"
+    assert container.negotiations.get(owner, case["id"])["offers"] == []
+
+
 def test_stale_proposal_cannot_be_promoted(container):
     enable_proposal_promotion(container)
     owner = account(container, "proposal-promote-stale")

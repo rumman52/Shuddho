@@ -189,3 +189,13 @@ Generation and dismissal never prepare or execute a provider action. Promotion
 prepares only an `awaiting_approval` action through the shared PA-09 action
 ledger. It never approves or executes it and never treats provider acceptance as
 counterparty agreement.
+
+After that exact promoted action reaches `succeeded` with the existing verified
+provider receipt, the authenticated user may call
+`POST /api/v1/negotiations/{case_id}/proposals/{proposal_id}/record-confirmed-send`
+with the exact proposal hash. The server reuses the stored proposal, source
+binding, immutable action payload and provider receipt to append one outgoing
+`commitment` history item. Replays return the same linked history row. Failed,
+queued, executing or `outcome_unknown` actions are rejected. This endpoint does
+not send, retry, approve or infer delivery/counterparty acceptance; it records
+only the already-confirmed provider mutation in the existing case ledger.

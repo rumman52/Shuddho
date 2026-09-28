@@ -925,6 +925,166 @@ class NegotiationRepository:
                 current_history_sequence=history_sequence,
             )
 
+    def record_promoted_send(
+        self,
+        owner: str,
+        case_id: str,
+        proposal_id: str,
+        review: NegotiationProposalReview,
+    ) -> tuple[dict, bool]:
+        """Record one provider-confirmed promoted send as factual case history.
+
+        This is an internal ledger mutation only. It never dispatches or retries a
+        provider action and does not infer counterparty delivery or agreement.
+        """
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            case = self._case(db, owner, case_id, lock=True)
+            if case.state != "active":
+                raise CoworkerError(
+                    "negotiation_case_inactive",
+                    "Resume this negotiation case before recording confirmed send history.",
+                    409,
+                )
+            self._connection(db, owner, case.connection_id)
+            proposal = db.scalar(
+                select(NegotiationProposal).where(
+                    NegotiationProposal.id == proposal_id,
+                    NegotiationProposal.case_id == case.id,
+                    NegotiationProposal.owner_id == owner,
+                ).with_for_update()
+            )
+            if proposal is None:
+                raise not_found()
+            if not hmac.compare_digest(proposal.proposal_hash, review.proposal_hash):
+                raise CoworkerError(
+                    "negotiation_proposal_changed",
+                    "This negotiation proposal changed. Review the exact promoted proposal before recording its send.",
+                    409,
+                )
+            if proposal.state != "promoted" or not proposal.promoted_action_id:
+                raise CoworkerError(
+                    "negotiation_proposal_not_promoted",
+                    "Only a promoted negotiation proposal can record a provider-confirmed send.",
+                    409,
+                )
+            existing = db.scalar(
+                select(NegotiationOffer).where(
+                    NegotiationOffer.external_action_id == proposal.promoted_action_id,
+                    NegotiationOffer.owner_id == owner,
+                )
+            )
+            if existing is not None:
+                if existing.case_id != case.id:
+                    raise CoworkerError(
+                        "negotiation_action_changed",
+                        "The promoted action is already linked to a different negotiation case.",
+                        409,
+                    )
+                return self._offer_dto(existing), False
+
+            action = db.scalar(
+                select(ExternalAction).where(
+                    ExternalAction.id == proposal.promoted_action_id,
+                    ExternalAction.owner_id == owner,
+                )
+            )
+            binding = action.preview.get("source_binding") if action is not None else None
+            expected_binding = {
+                "type": "negotiation_proposal",
+                "proposal_id": proposal.id,
+                "proposal_hash": proposal.proposal_hash,
+                "case_id": case.id,
+                "case_revision": proposal.case_revision,
+                "history_sequence": proposal.history_sequence,
+            }
+            if (
+                action is None
+                or action.state != "succeeded"
+                or action.kind != "negotiation_commitment_email"
+                or action.connection_id != case.connection_id
+                or binding != expected_binding
+                or action.finished_at is None
+            ):
+                raise CoworkerError(
+                    "negotiation_promoted_send_unconfirmed",
+                    "The promoted action is not a provider-confirmed successful send.",
+                    409,
+                )
+            payload = action.preview.get("payload")
+            if (
+                not isinstance(payload, dict)
+                or payload.get("to") != [case.counterparty_address]
+                or payload.get("counterparty") != case.counterparty_name
+                or payload.get("commitment_summary") != proposal.summary
+                or payload.get("terms") != list(proposal.terms)
+                or payload.get("body") != proposal.message
+            ):
+                raise CoworkerError(
+                    "negotiation_action_changed",
+                    "The promoted action no longer matches the exact reviewed proposal.",
+                    409,
+                )
+            record = NegotiationOfferCreate.model_validate({
+                "direction": "ours",
+                "kind": "commitment",
+                "summary": proposal.summary,
+                "terms": list(proposal.terms),
+                "external_action_id": action.id,
+                "occurred_at": aware(action.finished_at),
+            })
+            self._confirmed_action(
+                db,
+                owner,
+                case,
+                action.id,
+                record,
+            )
+            count = int(
+                db.scalar(
+                    select(func.count())
+                    .select_from(NegotiationOffer)
+                    .where(NegotiationOffer.case_id == case.id)
+                )
+                or 0
+            )
+            if count >= OFFER_LIMIT:
+                raise CoworkerError(
+                    "negotiation_offer_limit",
+                    "This negotiation case reached its offer-history limit.",
+                    429,
+                )
+            fingerprint = self._fingerprint({
+                "case_id": case.id,
+                "external_action_id": action.id,
+                "proposal_hash": proposal.proposal_hash,
+            })
+            row = NegotiationOffer(
+                id=str(uuid4()),
+                case_id=case.id,
+                owner_id=owner,
+                idempotency_key=f"promoted-send:{action.id}",
+                fingerprint=fingerprint,
+                sequence=count + 1,
+                direction="ours",
+                kind="commitment",
+                summary=proposal.summary,
+                terms=list(proposal.terms),
+                external_action_id=action.id,
+                occurred_at=aware(action.finished_at),
+                created_at=utcnow(),
+            )
+            db.add(row)
+            case.updated_at = utcnow()
+            self._audit(
+                db,
+                owner,
+                case.id,
+                "negotiation_offer.promoted_send_recorded",
+            )
+            db.flush()
+            return self._offer_dto(row), True
+
     def append_offer(
         self,
         owner: str,
