@@ -730,11 +730,17 @@ class SandboxExecution(Base):
     request_spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     state: Mapped[str] = mapped_column(String(30), default="prepared")
     error_code: Mapped[str | None] = mapped_column(String(60))
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    claimed_by: Mapped[str | None] = mapped_column(String(64))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("session_id", "sequence", name="uq_cw_sandbox_executions_session_sequence"),
         Index("cw_sandbox_executions_owner_session", "owner_id", "session_id"),
+        Index("cw_sandbox_executions_state_lease", "state", "lease_until"),
     )
 
 
