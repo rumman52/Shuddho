@@ -871,8 +871,7 @@ class SandboxRepository:
             ))
             return body
 
-    def cancel(self, owner: str, session_id: str) -> dict:
-        self._require_enabled()
+    def _cancel_owned(self, owner: str, session_id: str) -> dict:
         with self.sessions.begin() as db:
             row = db.scalar(select(SandboxSession).where(
                 SandboxSession.id == session_id,
@@ -905,3 +904,11 @@ class SandboxRepository:
                     action="sandbox_session.cancelled",
                 ))
             return self._session_dto(row)
+
+    def cancel(self, owner: str, session_id: str) -> dict:
+        self._require_enabled()
+        return self._cancel_owned(owner, session_id)
+
+    def cancel_for_cleanup(self, owner: str, session_id: str) -> dict:
+        """Owner-scoped cleanup remains available after a kill-switch rollback."""
+        return self._cancel_owned(owner, session_id)
