@@ -546,6 +546,67 @@ class PersonalGoalRevision(Base):
     )
 
 
+class NegotiationCase(Base):
+    __tablename__ = "cw_negotiation_cases"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("cw_connections.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    provider: Mapped[str] = mapped_column(String(20))
+    counterparty_name: Mapped[str] = mapped_column(String(300))
+    counterparty_address: Mapped[str] = mapped_column(String(254))
+    subject: Mapped[str] = mapped_column(String(300))
+    objective: Mapped[str] = mapped_column(Text)
+    limits: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    state: Mapped[str] = mapped_column(String(30), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_negotiation_cases_owner_idempotency"),
+        Index("cw_negotiation_cases_owner_updated", "owner_id", "updated_at"),
+        Index("cw_negotiation_cases_connection_state", "connection_id", "state"),
+    )
+
+
+class NegotiationCaseRevision(Base):
+    __tablename__ = "cw_negotiation_case_revisions"
+    case_id: Mapped[str] = mapped_column(ForeignKey("cw_negotiation_cases.id"), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        Index("cw_negotiation_case_revisions_owner_case", "owner_id", "case_id"),
+    )
+
+
+class NegotiationOffer(Base):
+    __tablename__ = "cw_negotiation_offers"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("cw_negotiation_cases.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    sequence: Mapped[int] = mapped_column(Integer)
+    direction: Mapped[str] = mapped_column(String(20))
+    kind: Mapped[str] = mapped_column(String(30))
+    summary: Mapped[str] = mapped_column(Text)
+    terms: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    external_action_id: Mapped[str | None] = mapped_column(
+        ForeignKey("cw_external_actions.id"), unique=True, index=True
+    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_negotiation_offers_owner_idempotency"),
+        UniqueConstraint("case_id", "sequence", name="uq_cw_negotiation_offers_case_sequence"),
+        Index("cw_negotiation_offers_owner_case_sequence", "owner_id", "case_id", "sequence"),
+    )
+
+
 class Automation(Base):
     __tablename__ = "cw_automations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

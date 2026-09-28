@@ -155,6 +155,23 @@ export type ExternalAction = {
   receipt: { provider: string; provider_id?: string; thread_id?: string; status: string; confirmed_at: string; message_id?: string; recipient?: string; access?: string; artifact_sha256?: string; author?: string; visibility?: string } | null;
   audit?: { action: string; created_at: string }[];
 };
+export type NegotiationLimit = { name: string; comparison: "at_most" | "at_least" | "exact" | "avoid"; value: string };
+export type NegotiationOfferTerm = { name: string; value: string };
+export type NegotiationOffer = {
+  id: string; sequence: number; direction: "ours" | "theirs"; kind: "proposal" | "counteroffer" | "commitment" | "response";
+  summary: string; terms: NegotiationOfferTerm[]; external_action_id: string | null; occurred_at: string; created_at: string;
+};
+export type NegotiationCase = {
+  id: string; connection_id: string; provider: "google" | "microsoft";
+  counterparty_name: string; counterparty_address: string; subject: string; objective: string;
+  limits: NegotiationLimit[]; revision: number; state: "active" | "paused" | "closed" | "cancelled";
+  created_at: string; updated_at: string; offers: NegotiationOffer[];
+};
+export type NegotiationCaseCreate = {
+  connection_id: string; counterparty_name: string; counterparty_address: string;
+  subject: string; objective: string; limits: NegotiationLimit[];
+};
+
 export type CellFormat = "text" | "number" | "integer" | "percent";
 export type TablePreview = { columns: { id: string; label: string; format: CellFormat; aggregate: string; calculated: boolean }[]; rows: (string | number | null)[][]; totals: (number | null)[] };
 export type CoworkerDraft = DraftMetadata & (
@@ -383,6 +400,21 @@ export class CoworkerClient {
   }
   cancelAction(id: string) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}/cancel`, { method: "POST" }); }
   reconcileAction(id: string) { return this.response(`/api/v1/actions/${identifier(id)}/reconcile`, { method: "POST" }, 65000).then(response => response.json() as Promise<ExternalAction>); }
+  negotiations(signal?: AbortSignal) { return this.json<{ enabled: boolean; cases: NegotiationCase[] }>("/api/v1/negotiations", { signal }); }
+  negotiation(id: string, signal?: AbortSignal) { return this.json<NegotiationCase>(`/api/v1/negotiations/${identifier(id)}`, { signal }); }
+  createNegotiation(input: NegotiationCaseCreate, key: string) {
+    return this.json<NegotiationCase>("/api/v1/negotiations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+  updateNegotiation(id: string, revision: number, input: { subject?: string; objective?: string; limits?: NegotiationLimit[] }) {
+    return this.json<NegotiationCase>(`/api/v1/negotiations/${identifier(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision, ...input }) });
+  }
+  transitionNegotiation(id: string, revision: number, state: "active" | "paused" | "closed" | "cancelled") {
+    return this.json<NegotiationCase>(`/api/v1/negotiations/${identifier(id)}/transition`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision, state }) });
+  }
+  appendNegotiationOffer(id: string, input: { direction: "ours" | "theirs"; kind: "proposal" | "counteroffer" | "commitment" | "response"; summary: string; terms: NegotiationOfferTerm[]; external_action_id?: string | null; occurred_at: string }, key: string) {
+    return this.json<NegotiationOffer>(`/api/v1/negotiations/${identifier(id)}/offers`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+
   goals(signal?: AbortSignal) { return this.json<{ enabled: boolean; goals: PersonalGoal[] }>("/api/v1/goals", { signal }); }
   goal(id: string, signal?: AbortSignal) { return this.json<PersonalGoal>(`/api/v1/goals/${identifier(id)}`, { signal }); }
   createGoal(input: PersonalGoalCreate, key: string) {

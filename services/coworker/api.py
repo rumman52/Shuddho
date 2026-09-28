@@ -25,6 +25,12 @@ from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
 from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
+from .negotiation_schemas import (
+    NegotiationCaseCreate,
+    NegotiationCasePatch,
+    NegotiationCaseTransition,
+    NegotiationOfferCreate,
+)
 from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
@@ -75,6 +81,114 @@ def require_sandbox_worker(request: Request, services: Container) -> None:
     expected = services.settings.sandbox_worker_token
     if not expected or not hmac.compare_digest(supplied, expected):
         raise CoworkerError("sandbox_worker_unauthorized", "Sandbox worker authentication failed.", 403)
+
+
+@router.post("/negotiations", status_code=201)
+def create_negotiation_case(
+    payload: NegotiationCaseCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = services.negotiations.create(
+        identity.account_id,
+        payload,
+        idempotency_key,
+    )
+    response.headers["Location"] = f'/api/v1/negotiations/{value["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
+
+
+@router.get("/negotiations")
+def list_negotiation_cases(identity: Identity, services: Services):
+    if not services.settings.personal_transactions_enabled:
+        return {"enabled": False, "cases": []}
+    return {
+        "enabled": True,
+        "cases": services.negotiations.list(identity.account_id),
+    }
+
+
+@router.get("/negotiations/{case_id}")
+def get_negotiation_case(
+    case_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.negotiations.get(identity.account_id, str(case_id))
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
+
+
+@router.get("/negotiations/{case_id}/revisions")
+def negotiation_case_revisions(
+    case_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return {
+        "revisions": services.negotiations.revisions(
+            identity.account_id,
+            str(case_id),
+        )
+    }
+
+
+@router.patch("/negotiations/{case_id}")
+def patch_negotiation_case(
+    case_id: UUID,
+    payload: NegotiationCasePatch,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.negotiations.update(
+        identity.account_id,
+        str(case_id),
+        payload,
+    )
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
+
+
+@router.post("/negotiations/{case_id}/transition")
+def transition_negotiation_case(
+    case_id: UUID,
+    payload: NegotiationCaseTransition,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.negotiations.transition(
+        identity.account_id,
+        str(case_id),
+        payload,
+    )
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
+
+
+@router.post("/negotiations/{case_id}/offers", status_code=201)
+def append_negotiation_offer(
+    case_id: UUID,
+    payload: NegotiationOfferCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = services.negotiations.append_offer(
+        identity.account_id,
+        str(case_id),
+        payload,
+        idempotency_key,
+    )
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return value
 
 
 @router.post("/goals", status_code=201)
