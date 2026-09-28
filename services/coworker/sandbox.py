@@ -371,6 +371,57 @@ class SandboxRepository:
             session.updated_at = now
             return {"action": "continue", "lease_until": iso(execution.lease_until)}
 
+    def _validated_artifact(self, session: SandboxSession, observation: dict, exit_code: int):
+        artifact = observation.get("artifact")
+        if exit_code != 0:
+            if artifact is not None:
+                raise CoworkerError(
+                    "sandbox_artifact_invalid",
+                    "Failed sandbox executions cannot publish artifacts.",
+                    409,
+                )
+            return None
+        if session.purpose != "interactive_artifact":
+            if artifact is not None:
+                raise CoworkerError(
+                    "sandbox_artifact_invalid",
+                    "This sandbox purpose cannot publish an interactive artifact.",
+                    409,
+                )
+            return None
+        if not isinstance(artifact, dict) or artifact.get("kind") != "interactive_html":
+            raise CoworkerError(
+                "sandbox_artifact_missing",
+                "Interactive sandbox execution did not produce its required preview artifact.",
+                409,
+            )
+        body_b64 = artifact.get("body_b64")
+        declared_sha = artifact.get("sha256")
+        declared_bytes = artifact.get("byte_size")
+        if (
+            not isinstance(body_b64, str)
+            or not isinstance(declared_sha, str)
+            or not isinstance(declared_bytes, int)
+            or isinstance(declared_bytes, bool)
+        ):
+            raise CoworkerError("sandbox_artifact_invalid", "Interactive artifact metadata is invalid.", 409)
+        try:
+            body = base64.b64decode(body_b64, validate=True)
+        except (binascii.Error, ValueError):
+            raise CoworkerError("sandbox_artifact_invalid", "Interactive artifact encoding is invalid.", 409) from None
+        if (
+            len(body) != declared_bytes
+            or len(body) > self.settings.sandbox_artifact_max_bytes
+            or hashlib.sha256(body).hexdigest() != declared_sha
+        ):
+            raise CoworkerError(
+                "sandbox_artifact_integrity_failed",
+                "Interactive artifact bytes did not match their verified manifest.",
+                409,
+            )
+        validate_static_preview_html(body, self.settings.sandbox_artifact_max_bytes)
+        return body, declared_sha
+
     def complete_execution(self, worker_id: str, execution_id: str, observation: dict) -> dict:
         self._require_enabled()
         now = utcnow()
@@ -445,6 +496,69 @@ class SandboxRepository:
                 or not 0 <= elapsed_ms <= self.settings.sandbox_wall_seconds * 1000
             ):
                 raise CoworkerError("sandbox_result_invalid", "Sandbox result metadata is invalid.", 409)
+            validated_artifact = self._validated_artifact(session, observation, exit_code)
+            artifact_manifest = None
+            if validated_artifact is not None:
+                artifact_body, artifact_sha = validated_artifact
+                account = db.scalar(select(Account).where(
+                    Account.id == execution.owner_id,
+                ).with_for_update())
+                if account is None:
+                    raise not_found()
+                if account.storage_bytes + len(artifact_body) > self.settings.max_account_bytes:
+                    raise CoworkerError(
+                        "storage_limit",
+                        "Your workspace has reached its file storage limit.",
+                        429,
+                    )
+                artifact_id = str(uuid5(
+                    NAMESPACE_URL,
+                    "shuddho:sandbox-artifact:" + execution.id + ":" + artifact_sha,
+                ))
+                filename = "interactive-preview.html"
+                object_key = (
+                    f"{execution.owner_id}/outputs/sandbox/"
+                    f"{execution.id}/{artifact_sha}.html"
+                )
+                expires_at = now + timedelta(seconds=self.settings.sandbox_artifact_ttl_seconds)
+                try:
+                    self.storage.put(
+                        object_key,
+                        artifact_body,
+                        "text/html; charset=utf-8",
+                    )
+                except Exception:
+                    raise CoworkerError(
+                        "sandbox_artifact_storage",
+                        "The interactive artifact could not be stored privately.",
+                        503,
+                    ) from None
+                db.add(Artifact(
+                    id=artifact_id,
+                    task_id=None,
+                    sandbox_execution_id=execution.id,
+                    owner_id=execution.owner_id,
+                    artifact_class="sandbox_interactive",
+                    filename=filename,
+                    content_type="text/html; charset=utf-8",
+                    object_key=object_key,
+                    sha256=artifact_sha,
+                    byte_size=len(artifact_body),
+                    created_at=now,
+                    expires_at=expires_at,
+                ))
+                account.storage_bytes += len(artifact_body)
+                artifact_manifest = {
+                    "id": artifact_id,
+                    "filename": filename,
+                    "content_type": "text/html; charset=utf-8",
+                    "byte_size": len(artifact_body),
+                    "sha256": artifact_sha,
+                    "artifact_class": "sandbox_interactive",
+                    "preview_available": True,
+                    "expires_at": iso(expires_at),
+                }
+
             execution.result = {
                 "exit_code": exit_code,
                 "stdout": stdout,
@@ -459,6 +573,7 @@ class SandboxRepository:
                 "filesystem_isolated": True,
                 "environment_sanitized": True,
                 "output_trust": "untrusted",
+                "artifact": artifact_manifest,
             }
             execution.state = "succeeded" if exit_code == 0 else "failed"
             execution.error_code = None if exit_code == 0 else "sandbox_nonzero_exit"
@@ -488,6 +603,12 @@ class SandboxRepository:
             "sandbox_policy_invalid",
             "sandbox_source_integrity_failed",
             "sandbox_execution_failed",
+            "sandbox_artifact_missing",
+            "sandbox_artifact_invalid",
+            "sandbox_artifact_unsafe",
+            "sandbox_artifact_limit",
+            "sandbox_artifact_encoding",
+            "sandbox_artifact_integrity_failed",
             "worker_interrupted",
         }
         if error_code not in allowed or sandbox_destroyed is not True:
