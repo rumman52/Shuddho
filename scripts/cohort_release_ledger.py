@@ -5252,6 +5252,364 @@ def append_personal_transactions_event(
     return entry
 
 
+
+def append_negotiation_proposal_promotion_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    staging_evidence: Path,
+    rollout_manifest: Path,
+    deployment_change: Path,
+    operator_status: Path,
+    negotiation_proposal_promotion_activation: Path,
+    created_at: str | None = None,
+) -> dict:
+    if not actor_reference.strip() or len(actor_reference) > 500:
+        raise ReleaseLedgerError(
+            "actor_reference must be non-empty and at most 500 characters."
+        )
+    if not change_reference.strip() or len(change_reference) > 500:
+        raise ReleaseLedgerError(
+            "change_reference must be non-empty and at most 500 characters."
+        )
+    if not current_stage.strip() or len(current_stage) > 100:
+        raise ReleaseLedgerError(
+            "Negotiation-proposal-promotion ledger event requires a valid current_stage."
+        )
+
+    staging = load_json_object(
+        staging_evidence,
+        "negotiation-proposal-promotion live staging evidence",
+    )
+    rollout = load_json_object(
+        rollout_manifest,
+        "reviewed negotiation-proposal-promotion rollout manifest",
+    )
+    deployment = load_json_object(
+        deployment_change,
+        "negotiation-proposal-promotion deployment change",
+    )
+    status = load_json_object(
+        operator_status,
+        "post-negotiation-proposal-promotion operator status",
+    )
+    activation = load_json_object(
+        negotiation_proposal_promotion_activation,
+        "negotiation-proposal-promotion activation evidence",
+    )
+
+    for label, value in (
+        ("rollout manifest", rollout),
+        ("deployment change", deployment),
+        ("operator status", status),
+        ("promotion activation evidence", activation),
+    ):
+        if value.get("release_id") != release_id:
+            raise ReleaseLedgerError(
+                f"{label} release_id does not match {release_id!r}."
+            )
+
+    staged = staging.get("negotiation_proposal_promotion")
+    operations = rollout.get("transaction_operations", [])
+    if (
+        not isinstance(staged, dict)
+        or staged.get("status") != "passed"
+        or not isinstance(staged.get("evidence"), str)
+        or not staged["evidence"].strip()
+        or not isinstance(staged.get("verified_at"), str)
+        or not isinstance(staged.get("operation_evidence"), dict)
+        or set(staged["operation_evidence"]) != set(operations)
+        or any(
+            not isinstance(value, dict)
+            or set(value) != {"evidence", "verified_at"}
+            or not isinstance(value.get("evidence"), str)
+            or not value["evidence"].strip()
+            or not isinstance(value.get("verified_at"), str)
+            for value in staged["operation_evidence"].values()
+        )
+    ):
+        raise ReleaseLedgerError(
+            "negotiation_proposal_promotion_verified requires exact timestamped "
+            "per-operation staging evidence for the reviewed transaction allowlist."
+        )
+
+    if rollout.get("environment") != "production":
+        raise ReleaseLedgerError(
+            "negotiation_proposal_promotion_verified requires a production rollout."
+        )
+    incident = rollout.get("incident")
+    if (
+        not isinstance(incident, dict)
+        or incident.get("change_reference") != change_reference
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout change reference does not match."
+        )
+    rollout_cohort = rollout.get("cohort")
+    if (
+        not isinstance(rollout_cohort, dict)
+        or not isinstance(rollout_cohort.get("max_users"), int)
+        or isinstance(rollout_cohort.get("max_users"), bool)
+        or rollout_cohort["max_users"] < 1
+    ):
+        raise ReleaseLedgerError("Reviewed rollout has an invalid cohort ceiling.")
+    capabilities = rollout.get("capabilities")
+    required_capabilities = {
+        "coworker",
+        "actions",
+        "connector_trust_boundary",
+        "personal_transactions",
+        "agent_runtime",
+        "intelligent_planner",
+        "action_proposals",
+        "negotiation_proposal_promotion",
+    }
+    if (
+        not isinstance(capabilities, dict)
+        or any(not isinstance(value, bool) for value in capabilities.values())
+        or any(capabilities.get(key) is not True for key in required_capabilities)
+    ):
+        raise ReleaseLedgerError(
+            "negotiation_proposal_promotion_verified requires all reviewed "
+            "proposal/transaction runtime prerequisites."
+        )
+    rollback = rollout.get("rollback")
+    if (
+        not isinstance(rollback, dict)
+        or rollback.get("negotiation_proposal_promotion_kill_switch")
+        != "SHUDDHO_NEGOTIATION_PROPOSAL_PROMOTION_ENABLED=false"
+    ):
+        raise ReleaseLedgerError(
+            "Reviewed rollout has no exact negotiation-promotion rollback switch."
+        )
+
+    if (
+        deployment.get("change_reference") != change_reference
+        or deployment.get("current_stage") != current_stage
+    ):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion deployment identity does not match."
+        )
+    if deployment.get("staging_evidence_sha256") != file_sha256(staging_evidence):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion deployment does not bind this staging evidence."
+        )
+    if deployment.get("rollout_manifest_sha256") != file_sha256(rollout_manifest):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion deployment does not bind this rollout manifest."
+        )
+    revision = deployment.get("source_revision")
+    if (
+        not isinstance(revision, str)
+        or len(revision) != 40
+        or revision != revision.lower()
+        or any(char not in "0123456789abcdef" for char in revision)
+    ):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion deployment source_revision must be a full "
+            "lowercase Git SHA-1."
+        )
+    if status.get("decision") != "CONTINUE_COHORT" or status.get("breaches") != []:
+        raise ReleaseLedgerError(
+            "negotiation_proposal_promotion_verified requires clean post-deploy health."
+        )
+
+    if (
+        activation.get("schema_version") != 1
+        or activation.get("status") != "negotiation_proposal_promotion_verified"
+        or activation.get("change_reference") != change_reference
+        or activation.get("current_stage") != current_stage
+        or activation.get("deployed_at") != deployment.get("deployed_at")
+        or activation.get("source_revision") != revision
+        or activation.get("operator_status_generated_at") != status.get("generated_at")
+    ):
+        raise ReleaseLedgerError(
+            "Negotiation-proposal-promotion activation does not match the "
+            "reviewed deployment/stage/health evidence."
+        )
+
+    runtime = activation.get("runtime")
+    transaction_authority = activation.get("transaction_authority")
+    if (
+        not isinstance(runtime, dict)
+        or set(runtime) != {
+            "schema_version",
+            "source_revision",
+            "environment",
+            "capabilities",
+            "action_providers",
+            "cohort",
+        }
+        or runtime.get("schema_version") != 1
+    ):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion activation has no valid runtime proof."
+        )
+    if (
+        not isinstance(transaction_authority, dict)
+        or set(transaction_authority) != {
+            "schema_version",
+            "source_revision",
+            "personal_transactions_enabled",
+            "operations",
+        }
+        or transaction_authority.get("schema_version") != 1
+        or transaction_authority.get("source_revision") != revision
+        or transaction_authority.get("personal_transactions_enabled") is not True
+        or transaction_authority.get("operations") != sorted(operations)
+    ):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion activation does not prove exact transaction authority."
+        )
+
+    runtime_capabilities = runtime.get("capabilities")
+    expected_capabilities = normalize_capabilities(capabilities)
+    expected_providers = normalized_action_providers(rollout)
+    if (
+        not isinstance(runtime_capabilities, dict)
+        or normalize_capabilities(runtime_capabilities) != expected_capabilities
+        or runtime.get("source_revision") != revision
+        or runtime.get("environment") != rollout.get("environment")
+        or runtime.get("action_providers") != expected_providers
+        or any(
+            expected_capabilities.get(key) is not True
+            for key in required_capabilities
+        )
+    ):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion activation does not prove the exact reviewed runtime."
+        )
+    cohort = runtime.get("cohort")
+    members = cohort.get("configured_members") if isinstance(cohort, dict) else None
+    if (
+        not isinstance(cohort, dict)
+        or set(cohort) != {"enforced", "configured_members", "max_users"}
+        or cohort.get("enforced") is not True
+        or cohort.get("max_users") != rollout_cohort["max_users"]
+        or not isinstance(members, int)
+        or isinstance(members, bool)
+        or members < 1
+        or members > cohort["max_users"]
+    ):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion activation does not prove cohort enforcement."
+        )
+    if activation.get("runtime_manifest_sha256") != hashlib.sha256(
+        canonical(runtime)
+    ).hexdigest():
+        raise ReleaseLedgerError(
+            "Negotiation-promotion activation runtime hash does not match."
+        )
+    if activation.get("transaction_authority_manifest_sha256") != hashlib.sha256(
+        canonical(transaction_authority)
+    ).hexdigest():
+        raise ReleaseLedgerError(
+            "Negotiation-promotion activation transaction-authority hash does not match."
+        )
+
+    hashes = activation.get("artifact_sha256")
+    expected_bound = {
+        "staging_evidence": file_sha256(staging_evidence),
+        "rollout_manifest": file_sha256(rollout_manifest),
+        "deployment_change": file_sha256(deployment_change),
+        "operator_status": file_sha256(operator_status),
+    }
+    if (
+        not isinstance(hashes, dict)
+        or set(hashes) != set(expected_bound)
+        or any(hashes.get(name) != value for name, value in expected_bound.items())
+    ):
+        raise ReleaseLedgerError(
+            "Negotiation-promotion activation does not bind exact release artifacts."
+        )
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if state["release_id"] is not None and state["release_id"] != release_id:
+        raise ReleaseLedgerError(
+            "Ledger release_id does not match the negotiation-promotion event."
+        )
+    if not entries or not any(
+        item.get("current_stage") == current_stage
+        or item.get("next_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "negotiation_proposal_promotion_verified requires a ledger chain "
+            "that reached current_stage."
+        )
+    if not any(
+        item.get("schema_version") == ACTION_PROPOSALS_SCHEMA_VERSION
+        and item.get("event_type") == "action_proposals_verified"
+        and item.get("current_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "negotiation_proposal_promotion_verified requires current-stage "
+            "action_proposals_verified attestation."
+        )
+    if not any(
+        item.get("schema_version") == PERSONAL_TRANSACTIONS_SCHEMA_VERSION
+        and item.get("event_type") == "personal_transactions_verified"
+        and item.get("current_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "negotiation_proposal_promotion_verified requires current-stage "
+            "personal_transactions_verified attestation."
+        )
+
+    activation_hash = file_sha256(negotiation_proposal_promotion_activation)
+    if any(
+        item.get("schema_version") == NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION
+        and item.get("event_type") == "negotiation_proposal_promotion_verified"
+        and item.get("artifact_sha256", {}).get(
+            "negotiation_proposal_promotion_activation"
+        ) == activation_hash
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            "This negotiation-proposal-promotion activation is already recorded."
+        )
+
+    core = {
+        "schema_version": NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": "negotiation_proposal_promotion_verified",
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": None,
+        "artifact_sha256": {
+            "staging_evidence": expected_bound["staging_evidence"],
+            "rollout_manifest": expected_bound["rollout_manifest"],
+            "deployment_change": expected_bound["deployment_change"],
+            "operator_status": expected_bound["operator_status"],
+            "negotiation_proposal_promotion_activation": activation_hash,
+        },
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {**core, "entry_hash": entry_hash, "hmac_sha256": tag}
+    serialized = "".join(
+        json.dumps(
+            item,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
+
 def append_agent_linkedin_proposals_event(
     *,
     ledger: Path,
@@ -6018,6 +6376,30 @@ def main() -> None:
         required=True,
     )
 
+    negotiation_promotion_parser = sub.add_parser(
+        "append-negotiation-proposal-promotion"
+    )
+    negotiation_promotion_parser.add_argument("--ledger", type=Path, required=True)
+    negotiation_promotion_parser.add_argument("--release-id", required=True)
+    negotiation_promotion_parser.add_argument("--actor-reference", required=True)
+    negotiation_promotion_parser.add_argument("--change-reference", required=True)
+    negotiation_promotion_parser.add_argument("--current-stage", required=True)
+    negotiation_promotion_parser.add_argument(
+        "--staging-evidence", type=Path, required=True
+    )
+    negotiation_promotion_parser.add_argument("--rollout", type=Path, required=True)
+    negotiation_promotion_parser.add_argument(
+        "--deployment-change", type=Path, required=True
+    )
+    negotiation_promotion_parser.add_argument(
+        "--operator-status", type=Path, required=True
+    )
+    negotiation_promotion_parser.add_argument(
+        "--negotiation-proposal-promotion-activation",
+        type=Path,
+        required=True,
+    )
+
     linkedin_agent_proposals_parser = sub.add_parser("append-agent-linkedin-proposals")
     linkedin_agent_proposals_parser.add_argument("--ledger", type=Path, required=True)
     linkedin_agent_proposals_parser.add_argument("--release-id", required=True)
@@ -6321,6 +6703,29 @@ def main() -> None:
                 deployment_change=args.deployment_change,
                 operator_status=args.operator_status,
                 personal_transactions_activation=args.personal_transactions_activation,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        elif args.command == "append-negotiation-proposal-promotion":
+            entry = append_negotiation_proposal_promotion_event(
+                ledger=args.ledger,
+                key=key,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                staging_evidence=args.staging_evidence,
+                rollout_manifest=args.rollout,
+                deployment_change=args.deployment_change,
+                operator_status=args.operator_status,
+                negotiation_proposal_promotion_activation=(
+                    args.negotiation_proposal_promotion_activation
+                ),
             )
             result = {
                 "appended": True,
