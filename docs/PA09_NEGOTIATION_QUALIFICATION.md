@@ -40,7 +40,16 @@ uv run python -m scripts.staging_live_personal_transactions \
   --output /secure/release/staging-evidence-pa09.json
 ```
 
-If Microsoft Mail is part of the reviewed provider set, run the same guarded probe with `--provider microsoft` using the dedicated Microsoft staging connection before approving that provider for PA-09.
+If Microsoft Mail is also part of the reviewed PA-09 operation set, preserve the Google result and add Microsoft evidence by using the first output as the next base:
+
+```bash
+uv run python -m scripts.staging_live_personal_transactions \
+  --provider microsoft \
+  --base-evidence /secure/release/staging-evidence-pa09.json \
+  --output /secure/release/staging-evidence-pa09-google-microsoft.json
+```
+
+The `personal_transactions` evidence record keeps a separate timestamped proof for every qualified `provider:action_kind`. Production activation requires that evidence set to exactly match the reviewed `transaction_operations` allowlist, so one provider's successful probe cannot qualify another provider.
 
 The probe proves:
 
