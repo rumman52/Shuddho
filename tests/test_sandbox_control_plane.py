@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import os
@@ -15,6 +16,9 @@ from sqlalchemy import select
 
 from test_coworker import account, container, signed_client
 
+from services.coworker.agent_planner import exact_user_python_source, intelligent_tool_names
+from services.coworker.agent_runtime import AgentRuntime
+from services.coworker.agent_schemas import AgentRunCreate, AgentV3Decision
 from services.coworker.agent_tools import available_tools
 from services.coworker.errors import CoworkerError
 from services.coworker.interactive_artifacts import (
@@ -187,6 +191,126 @@ def test_sandbox_prepares_untrusted_source_without_executing_or_echoing_it(conta
 
     tool_names = {item["name"] for item in available_tools(settings)}
     assert all(not name.startswith("sandbox.") for name in tool_names)
+
+
+
+def test_planner_sandbox_gate_is_separate_and_exact_user_source_only(container):
+    base = enable_sandbox(container)
+    assert "sandbox.execute_python" not in {
+        item["name"] for item in available_tools(base)
+    }
+    with pytest.raises(ValueError, match="CODE_EXECUTION"):
+        replace(
+            container.settings,
+            code_execution_enabled=False,
+            agent_sandbox_tool_enabled=True,
+        ).validate()
+
+    settings = replace(base, agent_sandbox_tool_enabled=True)
+    settings.validate()
+    source = "values = [1, 2, 3]\nprint(sum(values))"
+    goal = "Run only my code and report the result.\n\n```python\n" + source + "\n```"
+    assert exact_user_python_source(goal, settings) == source
+    assert "sandbox.execute_python" in intelligent_tool_names(
+        settings, goal=goal, runtime_version=3
+    )
+    assert "sandbox.execute_python" not in intelligent_tool_names(
+        settings, goal=goal, runtime_version=2
+    )
+    assert "sandbox.execute_python" not in intelligent_tool_names(
+        settings,
+        goal=goal + "\n\n```python\nprint('second')\n```",
+        runtime_version=3,
+    )
+
+
+def test_runtime_v3_sandbox_tool_executes_only_user_supplied_python(container):
+    base = enable_sandbox(container)
+    settings = replace(base, agent_sandbox_tool_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.sandbox.settings = settings
+
+    owner = account(container)
+    source = "value = 20 + 22\nprint(value)"
+    goal = "Execute this exact Python and report its output.\n\n```python\n" + source + "\n```"
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal=goal, output_language="en"),
+        "agent-sandbox-exact-user-source",
+    )
+    assert run["runtime_version"] == 3
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+            self.tools = []
+
+        async def decide(self, _goal, tools, observations, *, remaining_budget, dependencies):
+            self.calls += 1
+            self.tools.append(list(tools))
+            if self.calls == 1:
+                return AgentV3Decision(
+                    decision="next_step",
+                    tool="sandbox.execute_python",
+                    objective="print('MODEL MUST NOT BECOME EXECUTABLE SOURCE')",
+                ), 25, 1, {
+                    "model": "synthetic-v3",
+                    "prompt_sha256": "a" * 64,
+                    "tool_schema_sha256": "b" * 64,
+                }
+            assert observations[0]["tool"] == "sandbox.execute_python"
+            assert observations[0]["summary"]["stdout_excerpt"] == "42\n"
+            assert observations[0]["summary"]["output_trust"] == "untrusted"
+            return AgentV3Decision(decision="complete"), 25, 1, {
+                "model": "synthetic-v3",
+                "prompt_sha256": "c" * 64,
+                "tool_schema_sha256": "d" * 64,
+            }
+
+    planner = Planner()
+    runtime = AgentRuntime(container, None, planner=planner)
+    decision = asyncio.run(runtime.decide_v3(run["id"]))
+    assert decision == {"decision": "next_step", "ordinal": 1}
+    assert "sandbox.execute_python" in planner.tools[0]
+
+    invocation = container.agent.invocation_for_step(run["id"], 1)
+    assert invocation["arguments"] == {"source": source}
+
+    first = asyncio.run(runtime.execute_step(run["id"], 1))
+    assert first["status"] == "executing"
+    claimed = container.sandbox.claim_executions("agent-sandbox-worker")
+    assert len(claimed) == 1
+    assert claimed[0]["source"] == source
+    assert "MODEL MUST NOT BECOME EXECUTABLE SOURCE" not in claimed[0]["source"]
+
+    completed = container.sandbox.complete_execution(
+        "agent-sandbox-worker",
+        claimed[0]["id"],
+        {
+            "policy_version": "sandbox-control-v1",
+            "executor_contract": "bwrap-python311-v1",
+            "exit_code": 0,
+            "stdout": "42\n",
+            "stderr": "",
+            "elapsed_ms": 5,
+            "sandbox_destroyed": True,
+            "network_isolated": True,
+            "filesystem_isolated": True,
+            "environment_sanitized": True,
+        },
+    )
+    assert completed["state"] == "succeeded"
+    assert asyncio.run(runtime.execute_step(run["id"], 1)) == {"status": "completed"}
+    assert asyncio.run(runtime.decide_v3(run["id"])) == {"decision": "complete"}
+
+    saved = container.agent.get(owner, run["id"])
+    receipt = saved["tool_invocations"][0]["receipt"]
+    assert receipt["resource_type"] == "sandbox_execution"
+    assert receipt["summary"]["stdout_excerpt"] == "42\n"
+    assert receipt["summary"]["sandbox_destroyed"] is True
 
 
 def test_sandbox_cancel_and_expiry_scrub_unexecuted_source(container):
