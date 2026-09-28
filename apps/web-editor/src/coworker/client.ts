@@ -443,6 +443,13 @@ export class CoworkerClient {
       body: JSON.stringify({ proposal_hash: proposal.proposal_hash }),
     });
   }
+  recordConfirmedNegotiationSend(caseId: string, proposal: NegotiationProposal) {
+    return this.json<NegotiationOffer>(`/api/v1/negotiations/${identifier(caseId)}/proposals/${identifier(proposal.id)}/record-confirmed-send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposal_hash: proposal.proposal_hash }),
+    });
+  }
 
   goals(signal?: AbortSignal) { return this.json<{ enabled: boolean; goals: PersonalGoal[] }>("/api/v1/goals", { signal }); }
   goal(id: string, signal?: AbortSignal) { return this.json<PersonalGoal>(`/api/v1/goals/${identifier(id)}`, { signal }); }
