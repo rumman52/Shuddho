@@ -395,6 +395,8 @@ class Settings:
                 raise ValueError("SHUDDHO_SANDBOX_WORKER_TOKEN must contain at least 32 characters when sandbox execution is enabled")
             if not 4096 <= self.sandbox_artifact_max_bytes <= 65536:
                 raise ValueError("SHUDDHO_SANDBOX_ARTIFACT_MAX_BYTES must be between 4096 and 65536")
+            if self.sandbox_artifact_max_bytes > self.sandbox_max_output_bytes:
+                raise ValueError("SHUDDHO_SANDBOX_ARTIFACT_MAX_BYTES cannot exceed SHUDDHO_SANDBOX_MAX_OUTPUT_BYTES")
             if not 300 <= self.sandbox_artifact_ttl_seconds <= 86400:
                 raise ValueError("SHUDDHO_SANDBOX_ARTIFACT_TTL_SECONDS must be between 300 and 86400")
             if not 30 <= self.sandbox_preview_url_ttl_seconds <= 300:
