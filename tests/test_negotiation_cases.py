@@ -400,6 +400,39 @@ def enable_proposals(container):
     container.negotiation_proposals.model = FakeNegotiationProposalModel(settings)
 
 
+def enable_proposal_promotion(container):
+    enable_proposals(container)
+    settings = replace(
+        container.settings,
+        agent_action_proposals_enabled=True,
+        negotiation_proposal_promotion_enabled=True,
+    )
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+    container.negotiations.settings = settings
+    container.negotiation_proposals.settings = settings
+    container.negotiation_proposals.model.settings = settings
+
+
+def generate_proposal(container, owner, case, key, kind="counteroffer"):
+    proposal, created = asyncio.run(
+        container.negotiation_proposals.generate(
+            owner,
+            case["id"],
+            NegotiationProposalRequest(
+                expected_revision=case["revision"],
+                kind=kind,
+                output_language="en",
+            ),
+            key,
+        )
+    )
+    assert created is True
+    return proposal
+
+
 def test_model_proposal_is_inert_idempotent_and_hash_reviewed(container):
     enable_proposals(container)
     owner = account(container, "proposal-owner")
@@ -519,6 +552,236 @@ def test_proposal_generation_rejects_stale_case_revision(container):
             )
         )
     assert stale.value.code == "negotiation_revision_conflict"
+
+
+def test_proposal_promotion_requires_independent_gate(container):
+    enable_proposals(container)
+    owner = account(container, "proposal-promotion-disabled")
+    case, _connection = create_case(container, owner, "proposal-promotion-disabled-case")
+    proposal = generate_proposal(
+        container,
+        owner,
+        case,
+        "proposal-promotion-disabled-request",
+    )
+
+    with pytest.raises(CoworkerError) as denied:
+        container.negotiation_proposals.promote(
+            owner,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+        )
+    assert denied.value.code == "negotiation_proposal_promotion_disabled"
+
+
+def test_exact_proposal_promotion_creates_only_bound_unapproved_preview(container):
+    enable_proposal_promotion(container)
+    owner = account(container, "proposal-promote")
+    other = account(container, "proposal-promote-other")
+    case, connection = create_case(container, owner, "proposal-promote-case")
+    proposal = generate_proposal(
+        container,
+        owner,
+        case,
+        "proposal-promote-request",
+    )
+
+    with pytest.raises(CoworkerError) as wrong_hash:
+        container.negotiation_proposals.promote(
+            owner,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash="0" * 64),
+        )
+    assert wrong_hash.value.code == "negotiation_proposal_changed"
+
+    with pytest.raises(CoworkerError) as cross_owner:
+        container.negotiation_proposals.promote(
+            other,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+        )
+    assert cross_owner.value.code == "not_found"
+
+    action = container.negotiation_proposals.promote(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+    assert action["state"] == "awaiting_approval"
+    assert action["approved_at"] is None
+    assert action["receipt"] is None
+    assert action["connection_id"] == connection["id"]
+    assert action["preview"]["payload"] == {
+        "kind": "negotiation_commitment_email",
+        "to": ["counterparty@example.org"],
+        "cc": [],
+        "bcc": [],
+        "subject": "Supply agreement",
+        "body": proposal["message"],
+        "counterparty": "Example Supplier Ltd.",
+        "commitment_summary": proposal["summary"],
+        "terms": proposal["terms"],
+    }
+    assert action["preview"]["source_binding"] == {
+        "type": "negotiation_proposal",
+        "proposal_id": proposal["id"],
+        "proposal_hash": proposal["proposal_hash"],
+        "case_id": case["id"],
+        "case_revision": case["revision"],
+        "history_sequence": proposal["history_sequence"],
+    }
+    refreshed = container.negotiations.get(owner, case["id"])
+    promoted = next(
+        item for item in refreshed["proposals"] if item["id"] == proposal["id"]
+    )
+    assert promoted["state"] == "promoted"
+    assert promoted["promoted_action_id"] == action["id"]
+    assert promoted["promoted_at"] is not None
+
+    replay = container.negotiation_proposals.promote(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+    assert replay["id"] == action["id"]
+    assert replay["state"] == "awaiting_approval"
+
+
+def test_stale_proposal_cannot_be_promoted(container):
+    enable_proposal_promotion(container)
+    owner = account(container, "proposal-promote-stale")
+    case, _connection = create_case(container, owner, "proposal-promote-stale-case")
+    proposal = generate_proposal(
+        container,
+        owner,
+        case,
+        "proposal-promote-stale-request",
+    )
+    container.negotiations.append_offer(
+        owner,
+        case["id"],
+        NegotiationOfferCreate(
+            direction="theirs",
+            kind="counteroffer",
+            summary="The counterparty changed price after the draft.",
+            terms=[{"name": "Price", "value": "USD 5,250"}],
+            occurred_at=utcnow(),
+        ),
+        "proposal-promote-stale-offer",
+    )
+
+    with pytest.raises(CoworkerError) as stale:
+        container.negotiation_proposals.promote(
+            owner,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+        )
+    assert stale.value.code == "negotiation_proposal_stale"
+
+
+def test_case_change_after_promotion_invalidates_approval(container):
+    enable_proposal_promotion(container)
+    owner = account(container, "proposal-approval-stale")
+    case, _connection = create_case(container, owner, "proposal-approval-stale-case")
+    proposal = generate_proposal(
+        container,
+        owner,
+        case,
+        "proposal-approval-stale-request",
+    )
+    action = container.negotiation_proposals.promote(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+    container.negotiations.update(
+        owner,
+        case["id"],
+        NegotiationCasePatch(
+            expected_revision=case["revision"],
+            objective="Require a new commercial position before any commitment.",
+        ),
+    )
+
+    with pytest.raises(CoworkerError) as stale:
+        container.actions.repo.approve(
+            owner,
+            action["id"],
+            action["preview_hash"],
+        )
+    assert stale.value.code == "negotiation_proposal_stale"
+    saved = container.actions.repo.get(owner, action["id"])
+    assert saved["state"] == "awaiting_approval"
+    assert saved["approved_at"] is None
+
+
+def test_offer_change_after_approval_cancels_before_provider_claim(container):
+    enable_proposal_promotion(container)
+    owner = account(container, "proposal-execution-stale")
+    case, _connection = create_case(container, owner, "proposal-execution-stale-case")
+    proposal = generate_proposal(
+        container,
+        owner,
+        case,
+        "proposal-execution-stale-request",
+    )
+    action = container.negotiation_proposals.promote(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    assert approved["state"] == "queued"
+
+    container.negotiations.append_offer(
+        owner,
+        case["id"],
+        NegotiationOfferCreate(
+            direction="theirs",
+            kind="counteroffer",
+            summary="New counterparty offer arrived after approval.",
+            terms=[{"name": "Price", "value": "USD 4,950"}],
+            occurred_at=utcnow(),
+        ),
+        "proposal-execution-stale-offer",
+    )
+    assert container.actions.repo.claim_execution(action["id"]) is None
+    saved = container.actions.repo.get(owner, action["id"])
+    assert saved["state"] == "cancelled"
+    assert saved["error_code"] == "negotiation_proposal_stale"
+
+
+def test_promotion_flag_dependencies_fail_closed(container):
+    enable_proposals(container)
+    missing_transactions = replace(
+        container.settings,
+        agent_action_proposals_enabled=True,
+        negotiation_proposal_promotion_enabled=True,
+        personal_transactions_enabled=False,
+        transaction_operations=frozenset(),
+    )
+    with pytest.raises(ValueError, match="SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED"):
+        missing_transactions.validate()
+
+    missing_action_proposals = replace(
+        container.settings,
+        negotiation_proposal_promotion_enabled=True,
+        agent_action_proposals_enabled=False,
+    )
+    with pytest.raises(ValueError, match="SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED"):
+        missing_action_proposals.validate()
 
 
 def test_account_erasure_removes_negotiation_case_history(container):
