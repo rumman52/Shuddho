@@ -77,7 +77,9 @@ class Repository:
     def save_preferences(self, owner, preferences):
         with self.sessions.begin() as db:
             account = self._account(db, owner)
-            account.preferences = preferences
+            current = dict(account.preferences or {})
+            current.update(preferences)
+            account.preferences = current
             self._audit(db, owner, owner, "preferences_updated")
         return preferences
 
