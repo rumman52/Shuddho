@@ -27,6 +27,19 @@ class NegotiationLimit(NegotiationModel):
         return value
 
 
+class NegotiationOfferTerm(NegotiationModel):
+    name: str = Field(min_length=1, max_length=100)
+    value: str = Field(min_length=1, max_length=500)
+
+    @field_validator("name", "value")
+    @classmethod
+    def safe_text(cls, value: str) -> str:
+        value = clean_text(value)
+        if not value.strip():
+            raise ValueError("Offer terms cannot be blank")
+        return value
+
+
 class NegotiationCaseCreate(NegotiationModel):
     connection_id: UUID
     counterparty_name: str = Field(min_length=1, max_length=300)
@@ -95,7 +108,7 @@ class NegotiationOfferCreate(NegotiationModel):
     direction: Literal["ours", "theirs"]
     kind: Literal["proposal", "counteroffer", "commitment", "response"]
     summary: str = Field(min_length=1, max_length=4000)
-    terms: list[NegotiationLimit] = Field(default_factory=list, max_length=20)
+    terms: list[NegotiationOfferTerm] = Field(default_factory=list, max_length=20)
     external_action_id: UUID | None = None
     occurred_at: datetime
 
