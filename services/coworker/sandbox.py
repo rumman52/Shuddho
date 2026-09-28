@@ -517,7 +517,7 @@ class SandboxRepository:
                 resource_id=session.id,
                 action="sandbox_execution.failed",
             ))
-            return self._execution_dto(execution), True
+            return self._execution_dto(execution)
 
     def list(self, owner: str) -> list[dict]:
         self._require_enabled()
