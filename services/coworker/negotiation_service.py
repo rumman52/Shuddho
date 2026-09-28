@@ -172,7 +172,7 @@ class NegotiationProposalService:
         proposal_id: str,
         review: NegotiationProposalReview,
     ) -> dict:
-        if not self.settings.agent_action_proposals_enabled:
+        if not self.settings.negotiation_proposal_promotion_enabled:
             raise CoworkerError(
                 "negotiation_proposal_promotion_disabled",
                 "Negotiation proposal promotion is disabled in this deployment.",
@@ -187,33 +187,22 @@ class NegotiationProposalService:
         existing_action_id = reservation.get("existing_action_id")
         if existing_action_id:
             return self.actions.get(owner, existing_action_id)
-        try:
-            request = ActionPrepare.model_validate({
-                "connection_id": reservation["connection_id"],
-                "payload": reservation["payload"],
-            })
-            action = self.actions.prepare(
-                owner,
-                request,
-                "negotiation-proposal:" + proposal_id,
-                source_binding=reservation["source_binding"],
-            )
-        except Exception:
-            self.repo.release_proposal_promotion(owner, case_id, proposal_id)
-            raise
-        try:
-            self.repo.finalize_proposal_promotion(
-                owner,
-                case_id,
-                proposal_id,
-                review.proposal_hash,
-                action["id"],
-                reservation["source_binding"],
-            )
-        except Exception:
-            try:
-                self.actions.cancel(owner, action["id"])
-            finally:
-                self.repo.release_proposal_promotion(owner, case_id, proposal_id)
-            raise
+        request = ActionPrepare.model_validate({
+            "connection_id": reservation["connection_id"],
+            "payload": reservation["payload"],
+        })
+        action = self.actions.prepare(
+            owner,
+            request,
+            "negotiation-proposal:" + proposal_id,
+            source_binding=reservation["source_binding"],
+        )
+        self.repo.finalize_proposal_promotion(
+            owner,
+            case_id,
+            proposal_id,
+            review.proposal_hash,
+            action["id"],
+            reservation["source_binding"],
+        )
         return action
