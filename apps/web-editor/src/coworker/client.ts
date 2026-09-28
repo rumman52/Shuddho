@@ -105,6 +105,29 @@ export type BrowserCommand = {
 };
 export type BrowserFormField = { by: "label" | "name"; field: string; value: string };
 
+export type SandboxPurpose = "data_analysis" | "code_task" | "interactive_artifact";
+export type SandboxArtifact = {
+  id: string; filename: string; content_type: "text/html; charset=utf-8"; byte_size: number; sha256: string;
+  artifact_class: "sandbox_interactive"; preview_available: true; expires_at: string;
+};
+export type SandboxExecution = {
+  id: string; sequence: number; kind: "python"; source_sha256: string; source_bytes: number;
+  state: "prepared" | "running" | "succeeded" | "failed" | "cancelled"; error_code: string | null; attempts: number;
+  result: { exit_code?: number; stdout?: string; stderr?: string; elapsed_ms?: number; output_trust?: "untrusted"; artifact?: SandboxArtifact | null };
+  created_at: string; started_at: string | null; finished_at: string | null;
+};
+export type SandboxSession = {
+  id: string; purpose: SandboxPurpose; runtime: "python311";
+  state: "prepared" | "queued" | "running" | "cancelled" | "completed" | "expired" | "failed";
+  cancel_requested: boolean; cleanup_state: string; created_at: string; updated_at: string; expires_at: string;
+  policy: { network: "none"; dependencies: []; mounts: []; resource_limits: { wall_seconds: number; cpu_seconds: number; memory_mb: number; disk_mb: number; output_bytes: number }; artifacts?: { interactive_html?: { path: string; content_type: string; max_bytes: number } } };
+  execution: { executor_attached: boolean; code_executed: boolean; planner_tool_registered: false; source_trust: "untrusted" };
+};
+export type SandboxPreview = {
+  artifact_id: string; url: string; expires_at: number;
+  sandbox: { scripts: false; network: false; forms: false; privileged_api_bridge: false; workspace_credentials: false };
+};
+
 export type AgentNotification = {
   id: string; automation_id: string | null; occurrence_id: string | null; kind: string; title: string; message: string;
   state: "delivered" | "read"; visible_at: string; read_at: string | null; created_at: string;
@@ -326,6 +349,18 @@ export class CoworkerClient {
   }
   resumeBrowser(id: string) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}/resume`, { method: "POST" }); }
   cancelBrowser(id: string) { return this.json<BrowserSession>(`/api/v1/browser-sessions/${identifier(id)}`, { method: "DELETE" }); }
+
+  sandboxSessions(signal?: AbortSignal) { return this.json<{ enabled: boolean; sessions: SandboxSession[] }>("/api/v1/sandbox-sessions", { signal }); }
+  sandboxSession(id: string, signal?: AbortSignal) { return this.json<SandboxSession>(`/api/v1/sandbox-sessions/${identifier(id)}`, { signal }); }
+  createSandboxSession(purpose: SandboxPurpose, key: string) {
+    return this.json<SandboxSession>("/api/v1/sandbox-sessions", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ purpose, runtime: "python311" }) });
+  }
+  sandboxExecutions(id: string, signal?: AbortSignal) { return this.json<{ executions: SandboxExecution[] }>(`/api/v1/sandbox-sessions/${identifier(id)}/executions`, { signal }); }
+  runSandbox(id: string, source: string) {
+    return this.json<SandboxExecution>(`/api/v1/sandbox-sessions/${identifier(id)}/executions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source }) });
+  }
+  cancelSandbox(id: string) { return this.json<SandboxSession>(`/api/v1/sandbox-sessions/${identifier(id)}`, { method: "DELETE" }); }
+  sandboxPreview(id: string) { return this.json<SandboxPreview>(`/api/v1/sandbox-artifacts/${identifier(id)}/preview-url`); }
 
   actionRecipients(signal?: AbortSignal) { return this.json<{ enabled: boolean; recipients: ActionRecipient[] }>("/api/v1/action-recipients", { signal }); }
   createActionRecipient(name: string, email: string) {
