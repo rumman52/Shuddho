@@ -13,6 +13,39 @@ def test_guard_is_explicit(monkeypatch):
     live.require_guard()
 
 
+def test_transaction_authority_requires_exact_provider_operation():
+    live.validate_transaction_authority({
+        "schema_version": 1,
+        "personal_transactions_enabled": True,
+        "operations": ["google:negotiation_commitment_email"],
+    }, "google")
+
+    with pytest.raises(live.PersonalTransactionsValidationFailure, match="does not allow"):
+        live.validate_transaction_authority({
+            "schema_version": 1,
+            "personal_transactions_enabled": True,
+            "operations": ["microsoft:negotiation_commitment_email"],
+        }, "google")
+
+
+def test_passed_accumulates_distinct_operation_evidence():
+    first = live.passed(
+        "google proof",
+        "google:negotiation_commitment_email",
+    )
+    second = live.passed(
+        "microsoft proof",
+        "microsoft:negotiation_commitment_email",
+        first,
+    )
+    assert list(second["operation_evidence"]) == [
+        "google:negotiation_commitment_email",
+        "microsoft:negotiation_commitment_email",
+    ]
+    assert second["operation_evidence"]["google:negotiation_commitment_email"]["evidence"] == "google proof"
+    assert second["operation_evidence"]["microsoft:negotiation_commitment_email"]["evidence"] == "microsoft proof"
+
+
 def test_connection_requires_one_active_email_account_for_provider():
     value = live.connection_for([{
         "id": "connection",

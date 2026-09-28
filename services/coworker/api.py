@@ -333,6 +333,31 @@ def runtime_manifest(
     }
 
 
+@router.get("/transaction-authority-manifest")
+def transaction_authority_manifest(
+    response: Response,
+    principal: Annotated[Principal, Depends(require_principal)],
+    services: Services,
+):
+    settings = services.settings
+    if (
+        settings.cohort_enforced
+        and principal.account_id not in settings.cohort_account_ids
+    ):
+        raise CoworkerError(
+            "cohort_not_enabled",
+            "Coworker access is not enabled for this account yet.",
+            403,
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "schema_version": 1,
+        "source_revision": settings.source_revision,
+        "personal_transactions_enabled": settings.personal_transactions_enabled,
+        "operations": sorted(settings.transaction_operations),
+    }
+
+
 @router.post("/browser-sessions", status_code=201)
 def create_browser_session(
     payload: BrowserSessionCreate,
@@ -1044,6 +1069,7 @@ def connections(identity: Identity, services: Services):
         "threading_enabled": services.settings.action_email_threading_enabled,
         "social_publishing_enabled": services.settings.action_social_publishing_enabled,
         "personal_transactions_enabled": services.settings.personal_transactions_enabled,
+        "transaction_operations": sorted(services.settings.transaction_operations),
         "reads_enabled": services.settings.connector_reads_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }

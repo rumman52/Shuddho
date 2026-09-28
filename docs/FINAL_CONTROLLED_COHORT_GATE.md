@@ -127,6 +127,7 @@ The manifest must contain the exact kill switches:
 - `SHUDDHO_ACTION_EMAIL_THREADING_ENABLED=false` when Gmail threading is declared;
 - `SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false` when LinkedIn publishing is declared;
 - `SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false` when PA-09 negotiation commitments are declared;
+- an explicit reviewed `transaction_operations` list matching the exact deployed `SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS` provider/action allowlist;
 - `SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false` when action selection is declared;
 - `SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false` when action proposals are declared;
 - `SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false` when LinkedIn Agent proposals are declared.

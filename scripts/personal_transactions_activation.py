@@ -100,6 +100,7 @@ def require_https_origin(value: str, label: str) -> str:
 def validate_staging(
     evidence: dict,
     *,
+    expected_operations: list[str],
     now: datetime,
     max_age_minutes: int,
 ) -> datetime:
@@ -116,22 +117,46 @@ def validate_staging(
         raise PersonalTransactionsActivationError(
             "Personal-transactions staging evidence text is missing."
         )
-    verified_at = item.get("verified_at")
-    if not isinstance(verified_at, str):
+    operation_evidence = item.get("operation_evidence")
+    if (
+        not isinstance(operation_evidence, dict)
+        or set(operation_evidence) != set(expected_operations)
+    ):
         raise PersonalTransactionsActivationError(
-            "Personal-transactions staging evidence has no verified_at timestamp."
+            "Personal-transactions staging evidence does not exactly match the reviewed operation allowlist."
         )
-    verified = parse_time(verified_at, "personal_transactions verified_at")
-    age = (now - verified).total_seconds() / 60
-    if age < -1:
+    verified_times: list[datetime] = []
+    for operation in sorted(expected_operations):
+        record = operation_evidence.get(operation)
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"evidence", "verified_at"}
+            or not isinstance(record.get("evidence"), str)
+            or not record["evidence"].strip()
+            or not isinstance(record.get("verified_at"), str)
+        ):
+            raise PersonalTransactionsActivationError(
+                f"Personal-transactions staging evidence for {operation} is invalid."
+            )
+        verified = parse_time(
+            record["verified_at"],
+            f"personal_transactions {operation} verified_at",
+        )
+        age = (now - verified).total_seconds() / 60
+        if age < -1:
+            raise PersonalTransactionsActivationError(
+                f"Personal-transactions staging evidence for {operation} is from the future."
+            )
+        if age > max_age_minutes:
+            raise PersonalTransactionsActivationError(
+                f"Personal-transactions staging evidence for {operation} is stale ({age:.1f} minutes old)."
+            )
+        verified_times.append(verified)
+    if not verified_times:
         raise PersonalTransactionsActivationError(
-            "Personal-transactions staging evidence is from the future."
+            "Personal-transactions staging evidence contains no qualified operations."
         )
-    if age > max_age_minutes:
-        raise PersonalTransactionsActivationError(
-            f"Personal-transactions staging evidence is stale ({age:.1f} minutes old)."
-        )
-    return verified
+    return max(verified_times)
 
 
 def validate_reviewed_rollout(
@@ -176,6 +201,7 @@ def validate_reviewed_rollout(
         "environment": rollout["environment"],
         "capabilities": normalized,
         "action_providers": providers,
+        "transaction_operations": sorted(rollout.get("transaction_operations", [])),
         "cohort_max_users": rollout["cohort"]["max_users"],
         "change_reference": rollout["incident"]["change_reference"],
     }
@@ -332,6 +358,94 @@ def fetch_runtime_manifest(
     return value
 
 
+def fetch_transaction_authority_manifest(
+    *,
+    base_url: str,
+    token: str,
+    timeout_seconds: int,
+    transport=None,
+) -> dict:
+    origin = require_https_origin(
+        base_url,
+        "Production API base URL",
+    )
+    try:
+        with httpx.Client(
+            base_url=origin,
+            timeout=max(1, timeout_seconds),
+            follow_redirects=False,
+            transport=transport,
+        ) as client:
+            response = client.get(
+                "/api/v1/transaction-authority-manifest",
+                headers={"Authorization": "Bearer " + token},
+            )
+    except httpx.HTTPError as error:
+        raise PersonalTransactionsActivationError(
+            "Could not read deployed transaction authority manifest: "
+            + type(error).__name__
+        ) from None
+    if response.status_code != 200:
+        raise PersonalTransactionsActivationError(
+            "Deployed transaction authority manifest returned HTTP "
+            f"{response.status_code}; expected 200."
+        )
+    try:
+        value = response.json()
+    except ValueError:
+        raise PersonalTransactionsActivationError(
+            "Deployed transaction authority manifest did not return JSON."
+        ) from None
+    if not isinstance(value, dict):
+        raise PersonalTransactionsActivationError(
+            "Deployed transaction authority manifest has an unexpected shape."
+        )
+    return value
+
+
+def validate_transaction_authority_manifest(
+    value: dict,
+    *,
+    deployment: dict,
+    rollout: dict,
+) -> dict:
+    if set(value) != {
+        "schema_version",
+        "source_revision",
+        "personal_transactions_enabled",
+        "operations",
+    }:
+        raise PersonalTransactionsActivationError(
+            "Deployed transaction authority manifest has an unexpected schema."
+        )
+    if value.get("schema_version") != 1:
+        raise PersonalTransactionsActivationError(
+            "Deployed transaction authority manifest schema version is unsupported."
+        )
+    if value.get("source_revision") != deployment["source_revision"]:
+        raise PersonalTransactionsActivationError(
+            "Deployed transaction authority revision does not match reviewed deployment."
+        )
+    if value.get("personal_transactions_enabled") is not True:
+        raise PersonalTransactionsActivationError(
+            "Deployed transaction authority has personal transactions disabled."
+        )
+    operations = value.get("operations")
+    if (
+        not isinstance(operations, list)
+        or operations != rollout["transaction_operations"]
+    ):
+        raise PersonalTransactionsActivationError(
+            "Deployed transaction operations do not exactly match reviewed rollout."
+        )
+    return {
+        "schema_version": value["schema_version"],
+        "source_revision": value["source_revision"],
+        "personal_transactions_enabled": True,
+        "operations": list(operations),
+    }
+
+
 def validate_runtime_manifest(
     value: dict,
     *,
@@ -424,6 +538,7 @@ def build_evidence(
     deployment_path: Path,
     operator_status_path: Path,
     runtime: dict,
+    transaction_authority: dict,
     operator_status: dict,
     now: datetime,
 ) -> dict:
@@ -439,6 +554,8 @@ def build_evidence(
         "operator_status_generated_at": operator_status["generated_at"],
         "runtime": runtime,
         "runtime_manifest_sha256": canonical_sha256(runtime),
+        "transaction_authority": transaction_authority,
+        "transaction_authority_manifest_sha256": canonical_sha256(transaction_authority),
         "artifact_sha256": {
             "staging_evidence": sha256_file(staging_path),
             "rollout_manifest": sha256_file(rollout_path),
@@ -527,6 +644,7 @@ def main() -> None:
         )
         staging_time = validate_staging(
             staging,
+            expected_operations=rollout["transaction_operations"],
             now=now,
             max_age_minutes=args.max_staging_age_minutes,
         )
@@ -570,6 +688,16 @@ def main() -> None:
             deployment=deployment,
             rollout=rollout,
         )
+        transaction_remote = fetch_transaction_authority_manifest(
+            base_url=args.api_base_url,
+            token=token,
+            timeout_seconds=args.timeout_seconds,
+        )
+        transaction_authority = validate_transaction_authority_manifest(
+            transaction_remote,
+            deployment=deployment,
+            rollout=rollout,
+        )
 
         evidence = build_evidence(
             deployment=deployment,
@@ -578,6 +706,7 @@ def main() -> None:
             deployment_path=args.deployment_change,
             operator_status_path=args.operator_status,
             runtime=runtime,
+            transaction_authority=transaction_authority,
             operator_status=operator_status,
             now=now,
         )

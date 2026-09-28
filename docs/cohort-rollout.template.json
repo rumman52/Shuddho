@@ -6,6 +6,7 @@
     "max_users": 25
   },
   "action_providers": [],
+  "transaction_operations": [],
   "capabilities": {
     "coworker": true,
     "work_services": true,

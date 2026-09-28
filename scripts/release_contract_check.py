@@ -77,6 +77,9 @@ def validate_rollout_template(value: dict) -> list[str]:
     providers = value.get("action_providers")
     if providers != []:
         failures.append("rollout_action_providers_default")
+    transaction_operations = value.get("transaction_operations")
+    if transaction_operations != []:
+        failures.append("rollout_transaction_operations_default")
     return sorted(set(failures))
 
 

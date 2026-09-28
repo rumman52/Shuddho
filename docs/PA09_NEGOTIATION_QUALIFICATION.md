@@ -12,9 +12,10 @@ The feature remains disabled by default:
 SHUDDHO_ACTIONS_ENABLED=false
 SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false
 SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false
+SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS=
 ```
 
-When reviewed for a controlled cohort, all three must be enabled together. The transaction action still requires a human-created immutable preview and a separate explicit approval. The Agent planner cannot create, promote, approve, or execute it.
+When reviewed for a controlled cohort, the three capability prerequisites must be enabled together **and** the exact provider/action pair must appear in `SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS`. For the Google negotiation slice that value is `google:negotiation_commitment_email`; Microsoft requires its own separately reviewed `microsoft:negotiation_commitment_email` entry. The broad PA-09 flag does not grant authority by itself. The transaction action still requires a human-created immutable preview and a separate explicit approval. The Agent planner cannot create, promote, approve, or execute it.
 
 ## Controlled staging
 
@@ -25,7 +26,10 @@ Required guard:
 ```text
 SHUDDHO_STAGING_ALLOW_LIVE_PERSONAL_TRANSACTIONS=true
 SHUDDHO_STAGING_TRANSACTION_COUNTERPARTY_EMAIL=<dedicated-test-mailbox>
+SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS=google:negotiation_commitment_email
 ```
+
+The staging probe first reads the authenticated `/api/v1/transaction-authority-manifest` and refuses to contact the provider unless that deployed manifest contains the exact requested `provider:action_kind`.
 
 Run the Google baseline probe:
 
@@ -36,7 +40,16 @@ uv run python -m scripts.staging_live_personal_transactions \
   --output /secure/release/staging-evidence-pa09.json
 ```
 
-If Microsoft Mail is part of the reviewed provider set, run the same guarded probe with `--provider microsoft` using the dedicated Microsoft staging connection before approving that provider for PA-09.
+If Microsoft Mail is also part of the reviewed PA-09 operation set, preserve the Google result and add Microsoft evidence by using the first output as the next base:
+
+```bash
+uv run python -m scripts.staging_live_personal_transactions \
+  --provider microsoft \
+  --base-evidence /secure/release/staging-evidence-pa09.json \
+  --output /secure/release/staging-evidence-pa09-google-microsoft.json
+```
+
+The `personal_transactions` evidence record keeps a separate timestamped proof for every qualified `provider:action_kind`. Production activation requires that evidence set to exactly match the reviewed `transaction_operations` allowlist, so one provider's successful probe cannot qualify another provider.
 
 The probe proves:
 
@@ -76,6 +89,7 @@ The verifier requires:
 - deployment SHA/time bindings to the exact staging and rollout files;
 - fresh clean `CONTINUE_COHORT` operator status;
 - an authenticated deployed runtime manifest whose normalized capabilities and action-provider set exactly match the reviewed rollout;
+- an authenticated transaction-authority manifest whose source revision and exact operation allowlist match the reviewed rollout;
 - enforced cohort admission with the reviewed ceiling.
 
 It emits `personal_transactions_verified`.
@@ -115,13 +129,13 @@ Add the exact artifact to the controlled release activation manifest when `perso
 
 ## Rollback
 
-The PA-09 kill switch is:
+The PA-09 broad kill switch is:
 
 ```text
 SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false
 ```
 
-Disabling it blocks new previews and cancels an approved-but-unclaimed PA-09 action before provider mutation. It does not claim that an already executing or uncertain provider mutation was undone. Preserve receipts and uncertain outcomes for operator/user review.
+Disabling it blocks new previews and cancels an approved-but-unclaimed PA-09 action before provider mutation. Removing a single operation from `SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS` also blocks that operation at preview time and is rechecked at the final execution claim before provider mutation. It does not claim that an already executing or uncertain provider mutation was undone. Preserve receipts and uncertain outcomes for operator/user review.
 
 ## Qualification status
 

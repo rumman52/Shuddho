@@ -123,6 +123,34 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
     return value
 
 
+def test_personal_transactions_require_reviewed_provider_operation_allowlist():
+    value = rollout(actions=True, providers=["google"])
+    value["capabilities"]["connector_trust_boundary"] = True
+    value["capabilities"]["personal_transactions"] = True
+    value["rollback"]["connector_trust_boundary_kill_switch"] = (
+        "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false"
+    )
+    value["rollback"]["personal_transactions_kill_switch"] = (
+        "SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false"
+    )
+
+    failures = validate_rollout(value, max_cohort_users=25)
+    assert "personal_transactions_operations_required" in failures
+
+    value["transaction_operations"] = ["google:negotiation_commitment_email"]
+    assert validate_rollout(value, max_cohort_users=25) == []
+
+    value["transaction_operations"] = ["google:not_registered"]
+    assert "transaction_operations" in validate_rollout(
+        value, max_cohort_users=25
+    )
+
+    value["transaction_operations"] = ["microsoft:negotiation_commitment_email"]
+    assert "transaction_operations_provider" in validate_rollout(
+        value, max_cohort_users=25
+    )
+
+
 def test_controlled_cohort_gate_go_without_optional_provider_capabilities():
     result = evaluate_release(evidence(), rollout())
     assert result["decision"] == "GO_CONTROLLED_COHORT"

@@ -283,7 +283,7 @@ export class CoworkerClient {
   deleteDocument(id: string) { return this.json<{ message: string }>(`/api/v1/documents/${identifier(id)}`, { method: "DELETE" }); }
   task(id: string, signal?: AbortSignal) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}`, { signal }); }
   cancel(id: string) { return this.json<CoworkerTask>(`/api/v1/tasks/${identifier(id)}/cancel`, { method: "POST" }); }
-  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reads_enabled: boolean; reminders_enabled: boolean; document_sharing_enabled: boolean; threading_enabled: boolean; social_publishing_enabled: boolean; personal_transactions_enabled: boolean; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
+  connections(signal?: AbortSignal) { return this.json<{ enabled: boolean; reads_enabled: boolean; reminders_enabled: boolean; document_sharing_enabled: boolean; threading_enabled: boolean; social_publishing_enabled: boolean; personal_transactions_enabled: boolean; transaction_operations?: string[]; connections: ConnectedAccount[] }>("/api/v1/connections", { signal }); }
   connectGoogle(capability: "email" | "calendar" | "drive" | "email_read" | "calendar_read") {
     return this.json<{ authorization_url: string; state: string }>("/api/v1/connections/google/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capability }) });
   }

@@ -33,11 +33,41 @@ def digest(value: dict) -> str:
     ).hexdigest()
 
 
-def passed(evidence: str) -> dict:
+def passed(
+    evidence: str,
+    operation: str,
+    existing: dict | None = None,
+) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    operation_evidence: dict[str, dict[str, str]] = {}
+    if isinstance(existing, dict):
+        prior = existing.get("operation_evidence")
+        if isinstance(prior, dict):
+            for key, value in prior.items():
+                if (
+                    isinstance(key, str)
+                    and isinstance(value, dict)
+                    and isinstance(value.get("evidence"), str)
+                    and value["evidence"].strip()
+                    and isinstance(value.get("verified_at"), str)
+                ):
+                    operation_evidence[key] = {
+                        "evidence": value["evidence"],
+                        "verified_at": value["verified_at"],
+                    }
+    operation_evidence[operation] = {
+        "evidence": evidence,
+        "verified_at": now,
+    }
     return {
         "status": "passed",
-        "evidence": evidence,
-        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "evidence": "qualified transaction operations: "
+        + ", ".join(sorted(operation_evidence)),
+        "verified_at": now,
+        "operation_evidence": {
+            key: operation_evidence[key]
+            for key in sorted(operation_evidence)
+        },
     }
 
 
@@ -52,6 +82,19 @@ def wrong_hash(value: str) -> str:
     if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
         raise PersonalTransactionsValidationFailure("Prepared preview hash is invalid.")
     return ("0" if value[0] != "0" else "1") + value[1:]
+
+
+def validate_transaction_authority(value: dict, provider: str) -> None:
+    expected = f"{provider}:negotiation_commitment_email"
+    if (
+        value.get("schema_version") != 1
+        or value.get("personal_transactions_enabled") is not True
+        or not isinstance(value.get("operations"), list)
+        or expected not in value["operations"]
+    ):
+        raise PersonalTransactionsValidationFailure(
+            f"Deployed PA-09 transaction authority does not allow {expected}."
+        )
 
 
 def connection_for(connections: list[dict], provider: str) -> dict:
@@ -212,6 +255,13 @@ def main() -> None:
     if args.provider == "microsoft" and not settings.microsoft_actions_enabled:
         raise SystemExit("Microsoft actions must be enabled to run the Microsoft PA-09 staging probe.")
 
+    expected_operation = f"{args.provider}:negotiation_commitment_email"
+    if expected_operation not in settings.transaction_operations:
+        raise SystemExit(
+            "Controlled staging requires the exact transaction operation in "
+            "SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS."
+        )
+
     base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
     token = env_secret("SHUDDHO_STAGING_TOKEN_A")
     counterparty = env_secret("SHUDDHO_STAGING_TRANSACTION_COUNTERPARTY_EMAIL")
@@ -220,6 +270,15 @@ def main() -> None:
 
     try:
         with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False) as client:
+            authority = request_json(
+                client.get(
+                    "/api/v1/transaction-authority-manifest",
+                    headers=auth(token),
+                ),
+                "read transaction authority manifest",
+            )
+            validate_transaction_authority(authority, args.provider)
+
             listed = request_json(
                 client.get("/api/v1/connections", headers=auth(token)),
                 "list staging connections",
@@ -277,10 +336,13 @@ def main() -> None:
             if not isinstance(loaded, dict):
                 raise PersonalTransactionsValidationFailure("Base evidence must be a JSON object.")
             evidence.update(loaded)
+        operation = f"{args.provider}:negotiation_commitment_email"
         evidence["personal_transactions"] = passed(
             f"live {args.provider} negotiation commitment passed exact counterparty/message/final-term binding, "
             "no auto-execution, wrong-hash denial, explicit approval, single execution audit, fixed connector path "
-            "and provider acceptance receipt; uncertain-outcome no-retry remains fault-injection tested in CI"
+            "and provider acceptance receipt; uncertain-outcome no-retry remains fault-injection tested in CI",
+            operation,
+            evidence.get("personal_transactions"),
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
         print(json.dumps({
