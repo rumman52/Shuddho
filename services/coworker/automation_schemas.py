@@ -117,5 +117,10 @@ class AutomationTransition(AutomationModel):
     expected_revision: int = Field(ge=1)
 
 
+class NotificationPreferences(AutomationModel):
+    in_app_enabled: bool = True
+    automation_updates_enabled: bool = True
+
+
 class NotificationRead(AutomationModel):
     notification_id: UUID

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type AgentNotification, type PersonalAutomation, type PersonalGoal } from "./client";
+import { CoworkerClient, type AgentNotification, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 const message = (error: unknown) => error instanceof Error ? error.message : "This automation action could not finish.";
@@ -9,6 +9,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [goals, setGoals] = useState<PersonalGoal[]>([]);
   const [automations, setAutomations] = useState<PersonalAutomation[]>([]);
   const [notifications, setNotifications] = useState<AgentNotification[]>([]);
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null);
   const [goalId, setGoalId] = useState("");
   const [kind, setKind] = useState<"daily" | "weekly">("daily");
   const [weekdays, setWeekdays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri"]);
@@ -23,8 +24,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
 
   async function reload(signal?: AbortSignal) {
-    const [goalResult, automationResult, notificationResult] = await Promise.all([
-      client.goals(signal), client.automations(signal), client.notifications(signal),
+    const [goalResult, automationResult, notificationResult, notificationPreferenceResult] = await Promise.all([
+      client.goals(signal), client.automations(signal), client.notifications(signal), client.notificationPreferences(signal),
     ]);
     const activeGoals = goalResult.goals.filter(item => item.state === "active");
     setGoals(activeGoals);
@@ -32,6 +33,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     setEnabled(automationResult.enabled);
     setAutomations(automationResult.automations);
     setNotifications(notificationResult.notifications);
+    setNotificationPreferences(notificationPreferenceResult);
   }
 
   useEffect(() => {
@@ -79,6 +81,20 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     } catch (error) { setError(message(error)); }
   }
 
+  async function saveNotificationPreference(next: NotificationPreferences) {
+    if (busy) return;
+    setBusy("notification-preferences"); setError(""); setNotice("");
+    try {
+      const saved = await client.saveNotificationPreferences(next);
+      setNotificationPreferences(saved);
+      if (!saved.in_app_enabled) setNotifications([]);
+      setNotice(saved.in_app_enabled
+        ? "In-app notification preferences saved."
+        : "In-app notifications are off. Scheduled work can still run.");
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
+  }
+
   if (enabled === null && !error) return <p className="cw-loading" role="status">Loading automations…</p>;
 
   return <section className="cw-agent cw-automations" aria-label="Automations and notifications">
@@ -123,6 +139,24 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             {item.state !== "cancelled" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => transition(item, "cancel")}>Cancel</button>}</div>
         </div></li>)}</ul></div>}
         <div className="cw-history-title"><h2>Notifications</h2></div>
+        {notificationPreferences && <div className="cw-agent-run">
+          <strong>In-app notification controls</strong>
+          <label><input type="checkbox"
+            checked={notificationPreferences.in_app_enabled}
+            disabled={Boolean(busy)}
+            onChange={event => saveNotificationPreference({
+              ...notificationPreferences,
+              in_app_enabled: event.target.checked,
+            })} /> Show personal-agent notifications in Shuddho</label>
+          <label><input type="checkbox"
+            checked={notificationPreferences.automation_updates_enabled}
+            disabled={Boolean(busy) || !notificationPreferences.in_app_enabled}
+            onChange={event => saveNotificationPreference({
+              ...notificationPreferences,
+              automation_updates_enabled: event.target.checked,
+            })} /> Scheduled-work updates</label>
+          <p className="cw-fineprint">Turning notifications off suppresses pending notices before delivery. It does not pause goals, automations, or grant any external-action authority.</p>
+        </div>}
         {notifications.length === 0 ? <p className="cw-fineprint">No delivered automation notifications yet.</p> :
         <div className="cw-history"><ul>{notifications.map(item => <li key={item.id}><button type="button" onClick={() => markRead(item)}><div><strong>{item.title}</strong><small>{item.message} · {new Date(item.created_at).toLocaleString()} · {item.state}</small></div></button></li>)}</ul></div>}
       </div>

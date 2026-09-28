@@ -23,7 +23,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, Notification, NotificationOutbox, PersonalGoal, utcnow
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -232,6 +232,154 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
 
     read = client.post(f'/api/v1/notifications/{notification_ids[0]}/read', headers=auth)
     assert read.status_code == 200 and read.json()["state"] == "read"
+
+
+def test_notification_preferences_are_owner_scoped_and_preserve_writing_preferences(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    alice, bob = headers(), headers("bob")
+
+    assert client.get("/api/v1/notification-preferences", headers=alice).json() == {
+        "in_app_enabled": True,
+        "automation_updates_enabled": True,
+    }
+    assert client.get("/api/v1/notification-preferences", headers=bob).json() == {
+        "in_app_enabled": True,
+        "automation_updates_enabled": True,
+    }
+
+    writing = client.put(
+        "/api/v1/preferences",
+        headers=alice,
+        json={"language": "bn"},
+    )
+    assert writing.status_code == 200
+
+    saved = client.put(
+        "/api/v1/notification-preferences",
+        headers=alice,
+        json={
+            "in_app_enabled": False,
+            "automation_updates_enabled": False,
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["in_app_enabled"] is False
+
+    with automation_container.repository.sessions() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        assert owner is not None
+        assert owner.preferences["language"] == "bn"
+        assert owner.preferences["notifications"] == {
+            "in_app_enabled": False,
+            "automation_updates_enabled": False,
+        }
+
+    rewritten = client.put(
+        "/api/v1/preferences",
+        headers=alice,
+        json={"language": "en", "tone_goal": "concise"},
+    )
+    assert rewritten.status_code == 200
+    assert client.get("/api/v1/notification-preferences", headers=alice).json() == {
+        "in_app_enabled": False,
+        "automation_updates_enabled": False,
+    }
+    assert client.get("/api/v1/notification-preferences", headers=bob).json() == {
+        "in_app_enabled": True,
+        "automation_updates_enabled": True,
+    }
+
+
+def test_notification_opt_out_suppresses_before_claim(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _, automation = create_goal_and_automation(client, auth)
+    accepted = automation_container.automations.accept_occurrence(
+        automation["id"],
+        1,
+        utcnow().replace(microsecond=0),
+    )
+    assert accepted["state"] == "accepted"
+
+    saved = client.put(
+        "/api/v1/notification-preferences",
+        headers=auth,
+        json={
+            "in_app_enabled": False,
+            "automation_updates_enabled": True,
+        },
+    )
+    assert saved.status_code == 200
+    assert automation_container.automations.claim_notifications() == []
+
+    with automation_container.repository.sessions() as db:
+        notification = db.scalar(
+            select(Notification).where(
+                Notification.occurrence_id == accepted["occurrence_id"]
+            )
+        )
+        assert notification is not None
+        outbox = db.get(NotificationOutbox, notification.id)
+        assert notification.state == "suppressed"
+        assert outbox is not None and outbox.delivered is True
+    assert client.get("/api/v1/notifications", headers=auth).json()["notifications"] == []
+
+
+def test_notification_revocation_after_claim_is_rechecked_at_delivery(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _, automation = create_goal_and_automation(client, auth)
+    accepted = automation_container.automations.accept_occurrence(
+        automation["id"],
+        1,
+        utcnow().replace(microsecond=0),
+    )
+    assert accepted["state"] == "accepted"
+
+    claimed = automation_container.automations.claim_notifications()
+    assert len(claimed) == 1
+
+    saved = client.put(
+        "/api/v1/notification-preferences",
+        headers=auth,
+        json={
+            "in_app_enabled": True,
+            "automation_updates_enabled": False,
+        },
+    )
+    assert saved.status_code == 200
+    automation_container.automations.deliver_notification(claimed[0])
+
+    with automation_container.repository.sessions() as db:
+        notification = db.get(Notification, claimed[0])
+        outbox = db.get(NotificationOutbox, claimed[0])
+        assert notification is not None and notification.state == "suppressed"
+        assert outbox is not None and outbox.delivered is True
+        assert outbox.lease_until is None
+    assert client.get("/api/v1/notifications", headers=auth).json()["notifications"] == []
+
+
+def test_notification_preferences_reject_unreviewed_fields(automation_client):
+    client, headers = automation_client
+    response = client.put(
+        "/api/v1/notification-preferences",
+        headers=headers(),
+        json={
+            "in_app_enabled": True,
+            "automation_updates_enabled": True,
+            "email_enabled": True,
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_buffer_one_keeps_only_one_waiting_occurrence(automation_client, automation_container):
