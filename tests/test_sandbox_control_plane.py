@@ -17,7 +17,11 @@ from test_coworker import account, container, signed_client
 
 from services.coworker.agent_tools import available_tools
 from services.coworker.errors import CoworkerError
-from services.coworker.interactive_artifacts import validate_static_preview_html
+from services.coworker.interactive_artifacts import (
+    create_preview_token,
+    validate_static_preview_html,
+    verify_preview_token,
+)
 from services.coworker.models import Artifact, SandboxExecution, SandboxSession, utcnow
 from services.coworker.sandbox import SandboxRepository
 from services.coworker.sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
@@ -577,6 +581,11 @@ def test_interactive_artifact_is_owner_scoped_private_and_previewed_without_cred
         headers=isolated_headers | {"Authorization": "Basic must-not-cross"},
     )
     assert auth_leak.status_code == 400
+    cors_leak = client.get(
+        f'/sandbox-preview/{manifest["id"]}?token={token}',
+        headers=isolated_headers | {"Origin": "https://shuddho-web-editor.vercel.app"},
+    )
+    assert cors_leak.status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -675,6 +684,26 @@ def test_expired_sandbox_artifact_is_purged_and_storage_accounting_released(cont
         assert db.get(Artifact, artifact_id) is None
     with pytest.raises(FileNotFoundError):
         container.storage.get(object_key, 65536)
+
+
+def test_preview_capability_is_sha_bound_tamper_evident_and_strictly_expires():
+    secret = "preview-secret-0123456789abcdef0123456789abcdef"
+    artifact_id = "11111111-1111-1111-1111-111111111111"
+    digest = "a" * 64
+    token = create_preview_token(secret, artifact_id, digest, 1060)
+    assert verify_preview_token(
+        secret, artifact_id, digest, token, now=1000, max_future_seconds=60
+    ) == 1060
+    with pytest.raises(CoworkerError) as tampered:
+        verify_preview_token(
+            secret, artifact_id, "b" * 64, token, now=1000, max_future_seconds=60
+        )
+    assert tampered.value.code == "sandbox_preview_invalid"
+    with pytest.raises(CoworkerError) as expired:
+        verify_preview_token(
+            secret, artifact_id, digest, token, now=1060, max_future_seconds=60
+        )
+    assert expired.value.code == "sandbox_preview_expired"
 
 
 def test_sandbox_preview_configuration_fails_closed(container):
