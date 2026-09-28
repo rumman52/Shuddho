@@ -39,6 +39,7 @@ ROLLBACK_MODES = {
     "browser": ("browser_kill_switch", "SHUDDHO_BROWSER_ENABLED"),
     "code_execution": ("code_execution_kill_switch", "SHUDDHO_CODE_EXECUTION_ENABLED"),
     "agent_sandbox_tool": ("agent_sandbox_tool_kill_switch", "SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED"),
+    "personal_transactions": ("personal_transactions_kill_switch", "SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED"),
 }
 
 
