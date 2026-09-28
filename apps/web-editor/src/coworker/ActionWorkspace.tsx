@@ -217,6 +217,12 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
     // attachment email into a legacy plain email.
     const attachmentIds = mode === "email" ? [...selectedAttachmentsRef.current] : [];
     const artifactIds = mode === "drive" && selectedSharedArtifact ? [selectedSharedArtifact] : [];
+    const terms = negotiationTerms.split(/\n/).map(value => value.trim()).filter(Boolean).map(value => {
+      const index = value.indexOf("=");
+      return index > 0
+        ? { name: value.slice(0, index).trim(), value: value.slice(index + 1).trim() }
+        : { name: value, value: "" };
+    });
     const input: ActionInput = {
       connection_id: currentConnection.id,
       attachment_ids: attachmentIds,
