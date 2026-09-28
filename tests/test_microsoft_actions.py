@@ -313,6 +313,7 @@ def test_microsoft_executes_pa09_negotiation_email(container):
         container.settings,
         connector_trust_boundary_enabled=True,
         personal_transactions_enabled=True,
+        transaction_operations=frozenset({"microsoft:negotiation_commitment_email"}),
     )
     settings.validate()
     container.settings = settings
