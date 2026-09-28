@@ -4916,6 +4916,24 @@ def append_personal_transactions_event(
         raise ReleaseLedgerError(
             "personal_transactions_verified requires passed timestamped personal-transactions staging evidence."
         )
+    operation_evidence = staged.get("operation_evidence")
+    if (
+        not isinstance(operation_evidence, dict)
+        or set(operation_evidence) != set(
+            rollout.get("transaction_operations", [])
+        )
+        or any(
+            not isinstance(value, dict)
+            or set(value) != {"evidence", "verified_at"}
+            or not isinstance(value.get("evidence"), str)
+            or not value["evidence"].strip()
+            or not isinstance(value.get("verified_at"), str)
+            for value in operation_evidence.values()
+        )
+    ):
+        raise ReleaseLedgerError(
+            "personal_transactions_verified requires exact per-operation staging evidence for the reviewed allowlist."
+        )
 
 
     if rollout.get("environment") != "production":
