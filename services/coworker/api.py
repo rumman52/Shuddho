@@ -29,6 +29,7 @@ from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
 from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserTakeoverInputCreate, BrowserTakeoverInteractionCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation, BrowserWorkerTakeoverHeartbeat
+from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -282,6 +283,7 @@ def runtime_manifest(
         "connector_trust_boundary": settings.connector_trust_boundary_enabled,
         "connector_reads": settings.connector_reads_enabled,
         "browser": settings.browser_enabled,
+        "code_execution": settings.code_execution_enabled,
         "action_attachments": settings.action_attachments_enabled,
         "action_reminders": settings.action_reminders_enabled,
         "action_recipients": settings.action_recipients_enabled,
@@ -465,6 +467,61 @@ def resume_browser_session(session_id: UUID, identity: Identity, services: Servi
 @router.delete("/browser-sessions/{session_id}")
 def cancel_browser_session(session_id: UUID, identity: Identity, services: Services):
     return services.browser.cancel(identity.account_id, str(session_id))
+
+
+@router.post("/sandbox-sessions", status_code=201)
+def create_sandbox_session(
+    payload: SandboxSessionCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = services.sandbox.create(identity.account_id, payload, idempotency_key)
+    response.headers["Location"] = f'/api/v1/sandbox-sessions/{value["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return value
+
+
+@router.get("/sandbox-sessions")
+def list_sandbox_sessions(identity: Identity, services: Services):
+    if not services.settings.code_execution_enabled:
+        return {"enabled": False, "sessions": []}
+    return {"enabled": True, "sessions": services.sandbox.list(identity.account_id)}
+
+
+@router.get("/sandbox-sessions/{session_id}")
+def get_sandbox_session(session_id: UUID, identity: Identity, services: Services):
+    return services.sandbox.get(identity.account_id, str(session_id))
+
+
+@router.get("/sandbox-sessions/{session_id}/executions")
+def list_sandbox_executions(session_id: UUID, identity: Identity, services: Services):
+    return {
+        "executions": services.sandbox.list_executions(
+            identity.account_id,
+            str(session_id),
+        )
+    }
+
+
+@router.post("/sandbox-sessions/{session_id}/executions", status_code=202)
+def prepare_sandbox_execution(
+    session_id: UUID,
+    payload: SandboxExecutionCreate,
+    identity: Identity,
+    services: Services,
+):
+    return services.sandbox.prepare_execution(
+        identity.account_id,
+        str(session_id),
+        payload,
+    )
+
+
+@router.delete("/sandbox-sessions/{session_id}")
+def cancel_sandbox_session(session_id: UUID, identity: Identity, services: Services):
+    return services.sandbox.cancel(identity.account_id, str(session_id))
 
 
 @router.post("/internal/browser-worker/takeover-heartbeat")

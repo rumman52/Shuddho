@@ -34,6 +34,7 @@ CONTEXT_RETRIEVAL_SCHEMA_VERSION = 20
 CONNECTOR_TRUST_BOUNDARY_SCHEMA_VERSION = 21
 CONNECTOR_READS_SCHEMA_VERSION = 22
 BROWSER_SCHEMA_VERSION = 23
+CODE_EXECUTION_SCHEMA_VERSION = 24
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -182,6 +183,13 @@ BROWSER_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "browser_activation",
+}
+CODE_EXECUTION_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "code_execution_activation",
 }
 
 
@@ -443,6 +451,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             CONNECTOR_TRUST_BOUNDARY_SCHEMA_VERSION,
             CONNECTOR_READS_SCHEMA_VERSION,
             BROWSER_SCHEMA_VERSION,
+            CODE_EXECUTION_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -558,6 +567,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v22 event type.")
         if version == BROWSER_SCHEMA_VERSION and event_type != "browser_verified":
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v23 event type.")
+        if version == CODE_EXECUTION_SCHEMA_VERSION and event_type != "code_execution_verified":
+            raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v24 event type.")
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -608,6 +619,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             if version == CONNECTOR_READS_SCHEMA_VERSION
             else BROWSER_ARTIFACT_KEYS
             if version == BROWSER_SCHEMA_VERSION
+            else CODE_EXECUTION_ARTIFACT_KEYS
+            if version == CODE_EXECUTION_SCHEMA_VERSION
             else RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:

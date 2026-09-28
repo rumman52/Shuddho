@@ -120,6 +120,18 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="code_execution",
+        rollback_key="code_execution_kill_switch",
+        kill_switch="SHUDDHO_CODE_EXECUTION_ENABLED=false",
+        dependencies=("runtime_v3", "artifact_services"),
+        staging_gates=(
+            StagingGate(
+                "code_execution",
+                "Isolated sandbox execution passed owner/session isolation, strict CPU/memory/disk/wall-time limits, no host/container socket or production-secret access, bounded dependency policy, constrained network policy, cancellation/expiry cleanup, verified exports and private interactive-artifact origin isolation in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="connector_trust_boundary",
         rollback_key="connector_trust_boundary_kill_switch",
         kill_switch="SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false",
@@ -296,6 +308,14 @@ OPTIONAL_CAPABILITIES = (
 )
 
 ACTIVATION_REQUIREMENTS = (
+    ActivationRequirement(
+        key="code_execution",
+        status="code_execution_verified",
+        ledger_schema_version=24,
+        ledger_event_type="code_execution_verified",
+        ledger_artifact_key="code_execution_activation",
+        capability="code_execution",
+    ),
     ActivationRequirement(
         key="browser",
         status="browser_verified",

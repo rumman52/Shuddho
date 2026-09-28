@@ -16,6 +16,7 @@ from services.coworker.models import (
     AgentOutbox,
     AgentRun,
     BrowserSession,
+    SandboxSession,
     ConnectorReadGrant,
     ExternalAction,
     Outbox,
@@ -36,6 +37,7 @@ ROLLBACK_MODES = {
     "connector_trust_boundary": ("connector_trust_boundary_kill_switch", "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED"),
     "connector_reads": ("connector_reads_kill_switch", "SHUDDHO_CONNECTOR_READS_ENABLED"),
     "browser": ("browser_kill_switch", "SHUDDHO_BROWSER_ENABLED"),
+    "code_execution": ("code_execution_kill_switch", "SHUDDHO_CODE_EXECUTION_ENABLED"),
 }
 
 
@@ -136,6 +138,13 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
                     BrowserSession.expires_at > datetime.now(timezone.utc),
                 )
             ) or 0
+            active_sandbox_sessions = db.scalar(
+                select(func.count()).select_from(SandboxSession).where(
+                    SandboxSession.owner_id.in_(owners),
+                    SandboxSession.state.not_in({"cancelled", "completed", "expired", "failed"}),
+                    SandboxSession.expires_at > datetime.now(timezone.utc),
+                )
+            ) or 0
             unknown_actions = db.scalar(
                 select(func.count()).select_from(ExternalAction).where(
                     ExternalAction.owner_id.in_(owners),
@@ -167,6 +176,7 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
         "active_provider_actions": int(active_actions),
         "active_connector_read_grants": int(active_read_grants),
         "active_browser_sessions": int(active_browser_sessions),
+        "active_sandbox_sessions": int(active_sandbox_sessions),
         "outcome_unknown_actions": int(unknown_actions),
         "undelivered_task_outbox": int(undelivered_task_outbox),
         "undelivered_agent_outbox": int(undelivered_agent_outbox),
@@ -188,6 +198,8 @@ def cohort_counts(settings: Settings, mode: str) -> dict:
         required_zero.update({"active_agent_runs", "undelivered_agent_outbox"})
     elif mode == "browser":
         required_zero.update({"active_browser_sessions"})
+    elif mode == "code_execution":
+        required_zero.update({"active_sandbox_sessions"})
     elif mode == "research":
         # Research runs on the durable task path. Require no active task work before
         # considering the research rollback fully drained.
