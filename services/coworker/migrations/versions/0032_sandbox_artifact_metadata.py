@@ -17,51 +17,46 @@ depends_on = None
 
 
 def upgrade():
-    op.alter_column(
-        "cw_artifacts",
-        "task_id",
-        existing_type=sa.String(length=36),
-        nullable=True,
-    )
-    op.add_column(
-        "cw_artifacts",
-        sa.Column("sandbox_execution_id", sa.String(length=36), nullable=True),
-    )
-    op.add_column(
-        "cw_artifacts",
-        sa.Column(
-            "artifact_class",
-            sa.String(length=30),
-            nullable=False,
-            server_default="task_output",
-        ),
-    )
-    op.add_column(
-        "cw_artifacts",
-        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_foreign_key(
-        "fk_cw_artifacts_sandbox_execution",
-        "cw_artifacts",
-        "cw_sandbox_executions",
-        ["sandbox_execution_id"],
-        ["id"],
-    )
-    op.create_index(
-        "ix_cw_artifacts_sandbox_execution_id",
-        "cw_artifacts",
-        ["sandbox_execution_id"],
-    )
-    op.create_index(
-        "cw_artifacts_owner_class_expiry",
-        "cw_artifacts",
-        ["owner_id", "artifact_class", "expires_at"],
-    )
-    op.create_unique_constraint(
-        "uq_cw_artifacts_sandbox_execution_filename",
-        "cw_artifacts",
-        ["sandbox_execution_id", "filename"],
-    )
+    # SQLite is used by the isolated Coworker test suite. Batch mode recreates
+    # the table there while emitting compatible ALTER operations on PostgreSQL.
+    with op.batch_alter_table("cw_artifacts") as batch_op:
+        batch_op.alter_column(
+            "task_id",
+            existing_type=sa.String(length=36),
+            nullable=True,
+        )
+        batch_op.add_column(
+            sa.Column("sandbox_execution_id", sa.String(length=36), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column(
+                "artifact_class",
+                sa.String(length=30),
+                nullable=False,
+                server_default="task_output",
+            )
+        )
+        batch_op.add_column(
+            sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True)
+        )
+        batch_op.create_foreign_key(
+            "fk_cw_artifacts_sandbox_execution",
+            "cw_sandbox_executions",
+            ["sandbox_execution_id"],
+            ["id"],
+        )
+        batch_op.create_index(
+            "ix_cw_artifacts_sandbox_execution_id",
+            ["sandbox_execution_id"],
+        )
+        batch_op.create_index(
+            "cw_artifacts_owner_class_expiry",
+            ["owner_id", "artifact_class", "expires_at"],
+        )
+        batch_op.create_unique_constraint(
+            "uq_cw_artifacts_sandbox_execution_filename",
+            ["sandbox_execution_id", "filename"],
+        )
 
 
 def downgrade():
