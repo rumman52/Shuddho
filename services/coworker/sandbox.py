@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
+import time
 from datetime import timedelta
-from uuid import uuid4
+from urllib.parse import quote
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import func, or_, select
 
 from .errors import CoworkerError
-from .models import Account, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
+from .interactive_artifacts import (
+    create_preview_token,
+    validate_static_preview_html,
+    verify_preview_token,
+)
+from .models import Account, Artifact, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
@@ -33,9 +42,10 @@ class SandboxRepository:
     untrusted for downstream consumers.
     """
 
-    def __init__(self, sessions, settings):
+    def __init__(self, sessions, settings, storage):
         self.sessions = sessions
         self.settings = settings
+        self.storage = storage
 
     def _require_enabled(self) -> None:
         if not self.settings.code_execution_enabled:
@@ -62,6 +72,13 @@ class SandboxRepository:
                 "memory_mb": self.settings.sandbox_memory_mb,
                 "disk_mb": self.settings.sandbox_disk_mb,
                 "output_bytes": self.settings.sandbox_max_output_bytes,
+            },
+            "artifacts": {
+                "interactive_html": {
+                    "path": "/tmp/shuddho-preview.html",
+                    "content_type": "text/html; charset=utf-8",
+                    "max_bytes": self.settings.sandbox_artifact_max_bytes,
+                },
             },
             "executor": {
                 "contract": "bwrap-python311-v1",
@@ -291,6 +308,7 @@ class SandboxRepository:
                     "id": execution.id,
                     "sequence": execution.sequence,
                     "runtime": session.runtime,
+                    "purpose": session.purpose,
                     "source": source,
                     "source_sha256": execution.source_sha256,
                     "source_bytes": execution.source_bytes,
