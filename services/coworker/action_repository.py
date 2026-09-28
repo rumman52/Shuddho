@@ -19,7 +19,7 @@ from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE, CONNECTOR_READ_AUDIENCE
 from .errors import CoworkerError
-from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, OAuthAttempt, utcnow
+from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, NegotiationCase, NegotiationOffer, NegotiationProposal, OAuthAttempt, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
@@ -163,6 +163,114 @@ class ActionRepository:
             raise not_found()
         return row
 
+
+    def _validate_negotiation_source_binding(
+        self,
+        db,
+        owner: str,
+        action_id: str,
+        preview: dict,
+    ) -> None:
+        binding = preview.get("source_binding")
+        if binding is None:
+            return
+        if not self.settings.agent_action_proposals_enabled:
+            raise CoworkerError(
+                "negotiation_proposal_promotion_disabled",
+                "Negotiation proposal promotion is disabled in this deployment.",
+                503,
+            )
+        required = {
+            "type",
+            "proposal_id",
+            "proposal_hash",
+            "case_id",
+            "case_revision",
+            "history_sequence",
+        }
+        if (
+            not isinstance(binding, dict)
+            or set(binding) != required
+            or binding.get("type") != "negotiation_proposal"
+            or not isinstance(binding.get("proposal_id"), str)
+            or not isinstance(binding.get("proposal_hash"), str)
+            or not isinstance(binding.get("case_id"), str)
+            or type(binding.get("case_revision")) is not int
+            or type(binding.get("history_sequence")) is not int
+        ):
+            raise CoworkerError(
+                "approval_changed",
+                "The negotiation proposal source binding is invalid.",
+                409,
+            )
+        proposal = db.scalar(
+            select(NegotiationProposal).where(
+                NegotiationProposal.id == binding["proposal_id"],
+                NegotiationProposal.owner_id == owner,
+            )
+        )
+        case = db.scalar(
+            select(NegotiationCase).where(
+                NegotiationCase.id == binding["case_id"],
+                NegotiationCase.owner_id == owner,
+            )
+        )
+        if (
+            proposal is None
+            or case is None
+            or proposal.case_id != case.id
+            or proposal.state != "promoted"
+            or proposal.promoted_action_id != action_id
+            or proposal.case_revision != binding["case_revision"]
+            or proposal.history_sequence != binding["history_sequence"]
+            or not hmac.compare_digest(proposal.proposal_hash, binding["proposal_hash"])
+        ):
+            raise CoworkerError(
+                "approval_changed",
+                "The negotiation proposal source could not be verified.",
+                409,
+            )
+        history_sequence = int(
+            db.scalar(
+                select(func.coalesce(func.max(NegotiationOffer.sequence), 0)).where(
+                    NegotiationOffer.case_id == case.id,
+                    NegotiationOffer.owner_id == owner,
+                )
+            )
+            or 0
+        )
+        if (
+            case.state != "active"
+            or case.revision != binding["case_revision"]
+            or history_sequence != binding["history_sequence"]
+        ):
+            raise CoworkerError(
+                "negotiation_proposal_stale",
+                "The negotiation changed after this preview was prepared. Review a fresh proposal.",
+                409,
+            )
+        payload = preview.get("payload")
+        expected_payload = {
+            "kind": "negotiation_commitment_email",
+            "to": [case.counterparty_address],
+            "cc": [],
+            "bcc": [],
+            "subject": case.subject,
+            "body": proposal.message,
+            "counterparty": case.counterparty_name,
+            "commitment_summary": proposal.summary,
+            "terms": list(proposal.terms),
+        }
+        if (
+            preview.get("provider") != case.provider
+            or preview.get("connection_id") != case.connection_id
+            or payload != expected_payload
+        ):
+            raise CoworkerError(
+                "approval_changed",
+                "The negotiation proposal preview no longer matches its bound source.",
+                409,
+            )
 
     @staticmethod
     def _attachment_manifest(db, owner, attachment_ids):
@@ -567,9 +675,20 @@ class ActionRepository:
                 current["refresh_token"] = refresh_token
                 row.token_ciphertext = self.vault().seal(current, row.owner_id + ":connection:" + row.id)
 
-    def prepare(self, owner, request: ActionPrepare, key):
+    def prepare(
+        self,
+        owner,
+        request: ActionPrepare,
+        key,
+        *,
+        source_binding: dict | None = None,
+    ):
         body = request.model_dump(mode="json")
-        fingerprint = digest(body)
+        fingerprint = digest(
+            body
+            if source_binding is None
+            else {"request": body, "source_binding": source_binding}
+        )
         with self.sessions.begin() as db:
             self._account(db, owner)
             old = db.scalar(select(ExternalAction).where(ExternalAction.owner_id == owner, ExternalAction.idempotency_key == key))
@@ -589,6 +708,16 @@ class ActionRepository:
                     503,
                 )
             spec = action_spec(request.payload.kind, connection.provider)
+            if source_binding is not None and (
+                spec.kind != "negotiation_commitment_email"
+                or not isinstance(source_binding, dict)
+                or source_binding.get("type") != "negotiation_proposal"
+            ):
+                raise CoworkerError(
+                    "approval_changed",
+                    "Only a negotiation commitment may carry a negotiation proposal source binding.",
+                    409,
+                )
             self._require_optional_feature(spec, connection.provider)
             reply_context = None
             if spec.thread_reply:
@@ -690,6 +819,7 @@ class ActionRepository:
                 "attachments": attachments,
                 **({"shared_artifact": shared_artifact} if spec.owned_artifact_required else {}),
                 **({"reply_context": reply_context} if spec.thread_reply else {}),
+                **({"source_binding": dict(source_binding)} if source_binding is not None else {}),
                 "expires_at": iso(expires),
             }
             preview["approval_scope"] = build_approval_scope(preview)
@@ -866,6 +996,7 @@ class ActionRepository:
             if not hmac.compare_digest(row.preview_hash, preview_hash) or digest(row.preview) != row.preview_hash:
                 raise CoworkerError("approval_changed", "The preview changed. Review it again before approving.", 409)
             spec = validate_approval_scope(row.preview)
+            self._validate_negotiation_source_binding(db, owner, row.id, row.preview)
             if row.approved_at:  # Replayed approval never dispatches a new action.
                 return action_dto(row)
             self.enabled()
@@ -952,6 +1083,21 @@ class ActionRepository:
                     row.preview["subject_id"] != connection.subject):
                 raise CoworkerError("approval_changed", "Action approval could not be verified.", 409)
             spec = validate_approval_scope(row.preview)
+            try:
+                self._validate_negotiation_source_binding(
+                    db,
+                    row.owner_id,
+                    row.id,
+                    row.preview,
+                )
+            except CoworkerError as error:
+                row.state, row.finished_at, row.error_code = (
+                    "cancelled",
+                    utcnow(),
+                    error.code,
+                )
+                self._audit(db, row.owner_id, row.id, "action.cancelled")
+                return None
             if connection.provider not in spec.providers or connection.capability != spec.capability:
                 raise CoworkerError("approval_changed", "Action authorization no longer matches the connection.", 409)
             optional_failure = self._optional_feature_error(spec, connection.provider)
