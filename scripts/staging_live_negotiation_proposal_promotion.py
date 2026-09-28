@@ -43,7 +43,6 @@ def proposal_digest(proposal: dict) -> str:
         "message",
         "rationale",
         "risk_notes",
-        "proposal_hash",
     }
     if any(key not in proposal for key in required):
         raise NegotiationProposalPromotionValidationFailure(
