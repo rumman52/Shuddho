@@ -469,13 +469,6 @@ class Settings:
                     "SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS contains unregistered operations: "
                     + ", ".join(unknown)
                 )
-            if any(
-                item.startswith("microsoft:")
-                for item in self.transaction_operations
-            ) and not self.microsoft_actions_enabled:
-                raise ValueError(
-                    "Microsoft transaction operations require SHUDDHO_MICROSOFT_ACTIONS_ENABLED=true"
-                )
         if self.personal_transactions_enabled:
             if not self.actions_enabled:
                 raise ValueError("Personal transactions require SHUDDHO_ACTIONS_ENABLED=true")
@@ -484,6 +477,13 @@ class Settings:
             if not self.transaction_operations:
                 raise ValueError(
                     "Personal transactions require at least one explicitly qualified SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS entry"
+                )
+            if any(
+                item.startswith("microsoft:")
+                for item in self.transaction_operations
+            ) and not self.microsoft_actions_enabled:
+                raise ValueError(
+                    "Microsoft transaction operations require SHUDDHO_MICROSOFT_ACTIONS_ENABLED=true"
                 )
         if self.action_social_publishing_enabled:
             if not self.actions_enabled:
