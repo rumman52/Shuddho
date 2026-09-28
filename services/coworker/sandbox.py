@@ -758,6 +758,101 @@ class SandboxRepository:
             ).order_by(SandboxExecution.sequence.desc()).limit(50)).all()
             return [self._execution_dto(row) for row in rows]
 
+    def preview_url(self, owner: str, artifact_id: str) -> dict:
+        self._require_enabled()
+        now = utcnow()
+        with self.sessions.begin() as db:
+            artifact = db.scalar(select(Artifact).where(
+                Artifact.id == artifact_id,
+                Artifact.owner_id == owner,
+                Artifact.artifact_class == "sandbox_interactive",
+                Artifact.sandbox_execution_id.is_not(None),
+            ))
+            if artifact is None:
+                raise not_found()
+            if artifact.expires_at is None or aware(artifact.expires_at) <= now:
+                raise CoworkerError(
+                    "sandbox_artifact_expired",
+                    "This interactive artifact expired.",
+                    410,
+                )
+            remaining = max(1, int((aware(artifact.expires_at) - now).total_seconds()))
+            ttl = min(self.settings.sandbox_preview_url_ttl_seconds, remaining)
+            expires_epoch = int(time.time()) + ttl
+            token = create_preview_token(
+                self.settings.sandbox_preview_secret,
+                artifact.id,
+                artifact.sha256,
+                expires_epoch,
+            )
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=owner,
+                resource_id=artifact.id,
+                action="sandbox_artifact.preview_link_created",
+            ))
+            return {
+                "artifact_id": artifact.id,
+                "url": (
+                    self.settings.sandbox_preview_origin
+                    + f"/sandbox-preview/{artifact.id}?token={quote(token, safe='')}"
+                ),
+                "expires_at": expires_epoch,
+                "sandbox": {
+                    "scripts": False,
+                    "network": False,
+                    "forms": False,
+                    "privileged_api_bridge": False,
+                    "workspace_credentials": False,
+                },
+            }
+
+    def preview_content(self, artifact_id: str, token: str) -> bytes:
+        self._require_enabled()
+        now = utcnow()
+        with self.sessions.begin() as db:
+            artifact = db.scalar(select(Artifact).where(
+                Artifact.id == artifact_id,
+                Artifact.artifact_class == "sandbox_interactive",
+                Artifact.sandbox_execution_id.is_not(None),
+            ))
+            if artifact is None:
+                raise not_found()
+            if artifact.expires_at is None or aware(artifact.expires_at) <= now:
+                raise CoworkerError(
+                    "sandbox_artifact_expired",
+                    "This interactive artifact expired.",
+                    410,
+                )
+            verify_preview_token(
+                self.settings.sandbox_preview_secret,
+                artifact.id,
+                artifact.sha256,
+                token,
+                max_future_seconds=self.settings.sandbox_preview_url_ttl_seconds,
+            )
+            body = self.storage.get(
+                artifact.object_key,
+                min(artifact.byte_size, self.settings.sandbox_artifact_max_bytes),
+            )
+            if (
+                len(body) != artifact.byte_size
+                or hashlib.sha256(body).hexdigest() != artifact.sha256
+            ):
+                raise CoworkerError(
+                    "sandbox_artifact_integrity_failed",
+                    "This interactive artifact could not be verified.",
+                    503,
+                )
+            validate_static_preview_html(body, self.settings.sandbox_artifact_max_bytes)
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=artifact.owner_id,
+                resource_id=artifact.id,
+                action="sandbox_artifact.previewed",
+            ))
+            return body
+
     def cancel(self, owner: str, session_id: str) -> dict:
         self._require_enabled()
         with self.sessions.begin() as db:
