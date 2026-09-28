@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import os
+
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
@@ -12,10 +16,16 @@ from test_coworker import account, container, signed_client
 
 from services.coworker.agent_tools import available_tools
 from services.coworker.errors import CoworkerError
-from services.coworker.models import SandboxExecution, SandboxSession, utcnow
+from services.coworker.interactive_artifacts import validate_static_preview_html
+from services.coworker.models import Artifact, SandboxExecution, SandboxSession, utcnow
 from services.coworker.sandbox import SandboxRepository
 from services.coworker.sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
-from scripts.sandbox_worker import WorkerError, build_bwrap_command, validate_claim_policy
+from scripts.sandbox_worker import (
+    WorkerError,
+    build_bwrap_command,
+    read_artifact_file,
+    validate_claim_policy,
+)
 
 
 def enable_sandbox(container):
@@ -38,12 +48,21 @@ def enable_sandbox(container):
         sandbox_worker_lease_seconds=30,
         sandbox_execution_max_attempts=2,
         sandbox_worker_token="test-sandbox-worker-token-0123456789abcdef",
+        sandbox_artifact_max_bytes=65536,
+        sandbox_artifact_ttl_seconds=3600,
+        sandbox_preview_url_ttl_seconds=60,
+        sandbox_preview_origin="https://sandbox-preview.example.test",
+        sandbox_preview_secret="test-sandbox-preview-secret-0123456789abcdef",
     )
     settings.validate()
     container.settings = settings
     container.repository.settings = settings
     container.agent.settings = settings
-    container.sandbox = SandboxRepository(container.repository.sessions, settings)
+    container.sandbox = SandboxRepository(
+        container.repository.sessions,
+        settings,
+        container.storage,
+    )
     return settings
 
 
@@ -315,6 +334,13 @@ def test_sandbox_worker_command_is_networkless_minimal_and_fail_closed(tmp_path)
             "memory_mb": 256,
             "disk_mb": 64,
             "output_bytes": 65536,
+        },
+        "artifacts": {
+            "interactive_html": {
+                "path": "/tmp/shuddho-preview.html",
+                "content_type": "text/html; charset=utf-8",
+                "max_bytes": 65536,
+            },
         },
         "executor": {
             "contract": "bwrap-python311-v1",
