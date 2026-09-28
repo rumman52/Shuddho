@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import uuid4
 
 from sqlalchemy import delete, select
 
@@ -222,8 +223,10 @@ class RetentionService:
                     Artifact.id == item["id"],
                     Artifact.owner_id == item["owner_id"],
                     Artifact.artifact_class == "sandbox_interactive",
+                    Artifact.expires_at.is_not(None),
+                    Artifact.expires_at <= utcnow(),
                 ).with_for_update())
-                if row is None or row.expires_at is None or row.expires_at > utcnow():
+                if row is None:
                     continue
                 account = db.scalar(select(Account).where(
                     Account.id == row.owner_id,
@@ -231,7 +234,7 @@ class RetentionService:
                 if account is not None:
                     account.storage_bytes = max(0, account.storage_bytes - row.byte_size)
                 db.add(AuditEvent(
-                    id=str(__import__("uuid").uuid4()),
+                    id=str(uuid4()),
                     owner_id=row.owner_id,
                     resource_id=row.id,
                     action="sandbox_artifact.expired",
