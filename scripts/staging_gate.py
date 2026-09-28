@@ -67,6 +67,7 @@ def evaluate(
     require_action_document_sharing: bool = False,
     require_action_email_threading: bool = False,
     require_action_social_publishing: bool = False,
+    require_personal_transactions: bool = False,
     require_action_selection: bool = False,
     require_action_proposals: bool = False,
     require_agent_linkedin_proposals: bool = False,
@@ -83,6 +84,7 @@ def evaluate(
         (require_action_document_sharing, "action_document_sharing"),
         (require_action_email_threading, "action_email_threading"),
         (require_action_social_publishing, "action_social_publishing"),
+        (require_personal_transactions, "personal_transactions"),
         (require_agent_linkedin_proposals, "agent_linkedin_proposals"),
         (require_action_selection, "action_selection"),
         (require_action_proposals, "action_proposals"),
@@ -105,6 +107,7 @@ def main() -> None:
     parser.add_argument("--require-action-document-sharing", action="store_true")
     parser.add_argument("--require-action-email-threading", action="store_true")
     parser.add_argument("--require-action-social-publishing", action="store_true")
+    parser.add_argument("--require-personal-transactions", action="store_true")
     parser.add_argument("--require-action-selection", action="store_true")
     parser.add_argument("--require-action-proposals", action="store_true")
     parser.add_argument("--require-agent-linkedin-proposals", action="store_true")
@@ -122,6 +125,7 @@ def main() -> None:
         require_action_document_sharing=args.require_action_document_sharing,
         require_action_email_threading=args.require_action_email_threading,
         require_action_social_publishing=args.require_action_social_publishing,
+        require_personal_transactions=args.require_personal_transactions,
         require_action_selection=args.require_action_selection,
         require_action_proposals=args.require_action_proposals,
         require_agent_linkedin_proposals=args.require_agent_linkedin_proposals,
