@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -133,8 +133,8 @@ class NegotiationOfferCreate(NegotiationModel):
     def aware_time(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
             raise ValueError("Offer time must include a timezone offset")
-        if value > datetime.now(timezone.utc).replace(microsecond=0):
-            raise ValueError("Offer time cannot be in the future")
+        if value > datetime.now(timezone.utc) + timedelta(minutes=5):
+            raise ValueError("Offer time cannot be more than five minutes in the future")
         return value
 
     @model_validator(mode="after")
