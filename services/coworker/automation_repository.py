@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, func, or_, select
 
 from .agent_schemas import AgentRunCreate
-from .automation_schemas import AutomationCreate, AutomationPatch
+from .automation_schemas import AutomationCreate, AutomationPatch, NotificationPreferences
 from .errors import CoworkerError
 from .models import (
     Account, AgentRun, AuditEvent, Automation, AutomationOccurrence, AutomationRevision,
@@ -21,10 +21,67 @@ from .repository import aware, iso, not_found
 class AutomationRepository:
     """Desired automation state, schedule reconciliation ledger and durable inbox."""
 
+    NOTIFICATION_PREFERENCES_KEY = "notifications"
+    DEFAULT_NOTIFICATION_PREFERENCES = {
+        "in_app_enabled": True,
+        "automation_updates_enabled": True,
+    }
+
     def __init__(self, sessions, settings, agent):
         self.sessions = sessions
         self.settings = settings
         self.agent = agent
+
+    @classmethod
+    def _normalized_notification_preferences(cls, value: dict | None) -> dict[str, bool]:
+        if not isinstance(value, dict):
+            return dict(cls.DEFAULT_NOTIFICATION_PREFERENCES)
+        raw = value.get(cls.NOTIFICATION_PREFERENCES_KEY)
+        if raw is None:
+            return dict(cls.DEFAULT_NOTIFICATION_PREFERENCES)
+        if not isinstance(raw, dict):
+            return {
+                "in_app_enabled": False,
+                "automation_updates_enabled": False,
+            }
+        return {
+            "in_app_enabled": raw.get("in_app_enabled") is True,
+            "automation_updates_enabled": raw.get("automation_updates_enabled") is True,
+        }
+
+    @classmethod
+    def _notification_allowed(cls, preferences: dict | None, kind: str) -> bool:
+        value = cls._normalized_notification_preferences(preferences)
+        if not value["in_app_enabled"]:
+            return False
+        if kind == "automation_started":
+            return value["automation_updates_enabled"]
+        return True
+
+    def notification_preferences(self, owner: str) -> dict[str, bool]:
+        with self.sessions() as db:
+            account = db.scalar(select(Account).where(Account.id == owner))
+            if account is None:
+                raise not_found()
+            return self._normalized_notification_preferences(account.preferences)
+
+    def save_notification_preferences(
+        self,
+        owner: str,
+        request: NotificationPreferences,
+    ) -> dict[str, bool]:
+        value = request.model_dump()
+        with self.sessions.begin() as db:
+            account = db.scalar(
+                select(Account).where(Account.id == owner).with_for_update()
+            )
+            if account is None:
+                raise not_found()
+            current = dict(account.preferences or {})
+            current[self.NOTIFICATION_PREFERENCES_KEY] = dict(value)
+            account.preferences = current
+            self._audit(db, owner, owner, "notification_preferences_updated")
+        return value
 
     def _require_enabled(self) -> None:
         if not self.settings.automations_enabled:
@@ -426,23 +483,64 @@ class AutomationRepository:
     def claim_notifications(self, limit: int = 20) -> list[str]:
         with self.sessions.begin() as db:
             now = utcnow()
-            rows = db.scalars(select(NotificationOutbox).join(
-                Notification, Notification.id == NotificationOutbox.notification_id,
-            ).where(
-                NotificationOutbox.delivered.is_(False), Notification.visible_at <= now,
-                Notification.expires_at > now,
-                or_(NotificationOutbox.lease_until.is_(None), NotificationOutbox.lease_until < now),
-            ).limit(limit).with_for_update(skip_locked=True)).all()
-            for row in rows:
-                row.lease_until = now + timedelta(seconds=30); row.attempts += 1
-            return [row.notification_id for row in rows]
+            rows = db.execute(
+                select(NotificationOutbox, Notification, Account)
+                .join(Notification, Notification.id == NotificationOutbox.notification_id)
+                .join(Account, Account.id == Notification.owner_id)
+                .where(
+                    NotificationOutbox.delivered.is_(False),
+                    Notification.visible_at <= now,
+                    Notification.expires_at > now,
+                    or_(
+                        NotificationOutbox.lease_until.is_(None),
+                        NotificationOutbox.lease_until < now,
+                    ),
+                )
+                .order_by(Notification.visible_at, Notification.created_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ).all()
+            claimed: list[str] = []
+            for outbox, notification, account in rows:
+                if not self._notification_allowed(
+                    account.preferences,
+                    notification.kind,
+                ):
+                    notification.state = "suppressed"
+                    outbox.delivered = True
+                    outbox.lease_until = None
+                    continue
+                outbox.lease_until = now + timedelta(seconds=30)
+                outbox.attempts += 1
+                claimed.append(outbox.notification_id)
+            return claimed
 
     def deliver_notification(self, notification_id: str) -> None:
         with self.sessions.begin() as db:
-            notification = db.get(Notification, notification_id)
-            outbox = db.get(NotificationOutbox, notification_id)
-            if notification is not None and outbox is not None:
-                notification.state = "delivered"; outbox.delivered = True; outbox.lease_until = None
+            result = db.execute(
+                select(Notification, NotificationOutbox, Account)
+                .join(
+                    NotificationOutbox,
+                    NotificationOutbox.notification_id == Notification.id,
+                )
+                .join(Account, Account.id == Notification.owner_id)
+                .where(Notification.id == notification_id)
+                .with_for_update()
+            ).first()
+            if result is None:
+                return
+            notification, outbox, account = result
+            if outbox.delivered:
+                return
+            if not self._notification_allowed(
+                account.preferences,
+                notification.kind,
+            ):
+                notification.state = "suppressed"
+            else:
+                notification.state = "delivered"
+            outbox.delivered = True
+            outbox.lease_until = None
 
     def notifications(self, owner: str, after: datetime | None = None) -> list[dict]:
         self._require_enabled()
