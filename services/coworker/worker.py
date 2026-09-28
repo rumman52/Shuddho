@@ -369,6 +369,9 @@ class Dispatcher:
                     for key in await asyncio.to_thread(self.container.repository.expired_uploads):
                         await asyncio.to_thread(self.container.storage.delete, key)
                         await asyncio.to_thread(self.container.repository.upload_cleaned, key)
+                    await asyncio.to_thread(
+                        self.container.retention.cleanup_expired_sandbox_artifacts
+                    )
                     cleanup_at = now + 300
             except Exception:
                 logger.error("Coworker dispatch unavailable; pending tasks remain queued.")
