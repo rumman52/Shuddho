@@ -56,6 +56,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "connector_reads_microsoft",
         "browser",
         "code_execution",
+        "agent_sandbox_tool",
     } == covered
 
 
@@ -118,6 +119,23 @@ def test_code_execution_requires_runtime_v3_artifacts_and_staging_evidence():
     )
     rollout["capabilities"]["artifact_services"] = False
     assert "code_execution_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
+
+
+def test_agent_sandbox_tool_requires_code_execution_runtime_and_planner():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["agent_runtime"] = True
+    rollout["capabilities"]["intelligent_planner"] = True
+    rollout["capabilities"]["runtime_v3"] = True
+    rollout["capabilities"]["artifact_services"] = True
+    rollout["capabilities"]["code_execution"] = True
+    rollout["capabilities"]["agent_sandbox_tool"] = True
+    assert "agent_sandbox_tool" in required_conditional_gate_ids(
+        rollout["capabilities"], set()
+    )
+    rollout["capabilities"]["code_execution"] = False
+    assert "agent_sandbox_tool_dependency" in validate_rollout(
         rollout, max_cohort_users=25
     )
 
