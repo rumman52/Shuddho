@@ -47,6 +47,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [bcc, setBcc] = useState("");
   const [subject, setSubject] = useState(emailDraft?.subject ?? ""); const [body, setBody] = useState(emailDraft?.body ?? "");
   const [socialText, setSocialText] = useState(socialDraft ?? "");
+  const [counterparty, setCounterparty] = useState("");
+  const [commitmentSummary, setCommitmentSummary] = useState("");
+  const [negotiationTerms, setNegotiationTerms] = useState("");
   const [eventTitle, setEventTitle] = useState(""); const [description, setDescription] = useState("");
   const [location, setLocation] = useState(""); const [attendees, setAttendees] = useState("");
   const [start, setStart] = useState(""); const [end, setEnd] = useState("");
