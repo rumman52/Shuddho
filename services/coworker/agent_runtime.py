@@ -405,7 +405,7 @@ class AgentRuntime:
                 self.container.repository.fail(step["resource_id"], code, message)
             if step and step.get("resource_type") == "sandbox_session":
                 try:
-                    self.container.sandbox.cancel(run["owner_id"], step["resource_id"])
+                    self.container.sandbox.cancel_for_cleanup(run["owner_id"], step["resource_id"])
                 except CoworkerError:
                     pass
         self.repo.fail_run(run_id, code, message)
