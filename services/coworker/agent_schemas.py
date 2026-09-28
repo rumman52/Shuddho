@@ -78,6 +78,14 @@ class ResearchToolInput(TaskToolInput):
         return _safe_text(value)
 
 
+class SandboxPythonToolInput(AgentModel):
+    # Source is copied by deterministic server code from one exact user-supplied
+    # fenced Python block. The planner never authors or edits these bytes.
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    source: str = Field(min_length=1, max_length=20000)
+
+
 class ApprovedActionToolInput(AgentModel):
     action_id: UUID
 
