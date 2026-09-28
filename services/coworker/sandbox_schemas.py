@@ -15,4 +15,8 @@ class SandboxSessionCreate(SandboxModel):
 
 
 class SandboxExecutionCreate(SandboxModel):
+    # Code is an exact input artifact: do not trim leading/trailing whitespace,
+    # because doing so changes program bytes and can change semantics.
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
     source: str = Field(min_length=1, max_length=20000)
