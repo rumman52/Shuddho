@@ -41,7 +41,7 @@ class ActionSpec:
     transaction_class: str | None = None
 
     def public(self) -> dict:
-        return {
+        result = {
             "kind": self.kind,
             "version": self.version,
             "capability": self.capability,
@@ -52,8 +52,10 @@ class ActionSpec:
             "attachments_allowed": self.attachments_allowed,
             "thread_reply": self.thread_reply,
             "social_publish": self.social_publish,
-            "transaction_class": self.transaction_class,
         }
+        if self.transaction_class is not None:
+            result["transaction_class"] = self.transaction_class
+        return result
 
     @property
     def reconcile_supported(self) -> bool:
