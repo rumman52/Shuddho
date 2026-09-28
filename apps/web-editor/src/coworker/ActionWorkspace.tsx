@@ -164,7 +164,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   }
 
   function addSavedRecipient(value: ActionRecipient) {
-    const current = recipients(mode === "email" ? to : mode === "calendar" ? attendees : shareRecipient);
+    const current = recipients(mode === "email" || mode === "negotiation" ? to : mode === "calendar" ? attendees : shareRecipient);
     if (current.some(item => item.toLowerCase() === value.email.toLowerCase())) return;
     if (current.length >= 20) { setError("Remove a recipient before adding another one."); return; }
     const next = [...current, value.email].join(", ");
