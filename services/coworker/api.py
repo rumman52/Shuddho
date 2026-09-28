@@ -821,7 +821,7 @@ def cancel_agent_run(run_id: UUID, identity: Identity, services: Services):
     cancelled = services.agent.cancel(owner, run_key)
     for session_id in sandbox_sessions:
         try:
-            services.sandbox.cancel(owner, session_id)
+            services.sandbox.cancel_for_cleanup(owner, session_id)
         except CoworkerError:
             # Agent cancellation remains authoritative even if a stale sandbox
             # session already reached a terminal state.
