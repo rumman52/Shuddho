@@ -146,6 +146,7 @@ def test_personal_transactions_require_actions_trust_boundary_and_staging():
     rollout["capabilities"]["actions"] = True
     rollout["capabilities"]["connector_trust_boundary"] = True
     rollout["capabilities"]["personal_transactions"] = True
+    rollout["transaction_operations"] = ["google:negotiation_commitment_email"]
     assert "personal_transactions" in required_conditional_gate_ids(
         rollout["capabilities"], {"google"}
     )
