@@ -398,6 +398,12 @@ class NegotiationRepository:
             or action.connection_id != case.connection_id
             or not isinstance(action.receipt, dict)
             or action.receipt.get("provider") != case.provider
+            or action.receipt.get("status")
+            != (
+                "accepted_by_gmail"
+                if case.provider == "google"
+                else "accepted_by_microsoft_graph"
+            )
         ):
             raise CoworkerError(
                 "negotiation_action_unverified",
@@ -437,13 +443,6 @@ class NegotiationRepository:
         )
         with self.sessions.begin() as db:
             case = self._case(db, owner, case_id, lock=True)
-            if case.state != "active":
-                raise CoworkerError(
-                    "negotiation_case_inactive",
-                    "Resume this negotiation case before adding an offer.",
-                    409,
-                )
-            self._connection(db, owner, case.connection_id)
             previous = db.scalar(
                 select(NegotiationOffer).where(
                     NegotiationOffer.owner_id == owner,
@@ -458,6 +457,13 @@ class NegotiationRepository:
                         409,
                     )
                 return self._offer_dto(previous), False
+            if case.state != "active":
+                raise CoworkerError(
+                    "negotiation_case_inactive",
+                    "Resume this negotiation case before adding an offer.",
+                    409,
+                )
+            self._connection(db, owner, case.connection_id)
             count = db.scalar(
                 select(func.count())
                 .select_from(NegotiationOffer)
