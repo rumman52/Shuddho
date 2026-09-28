@@ -28,6 +28,10 @@ from services.coworker.negotiation_schemas import (
 
 def enable_negotiations(container):
     enable_actions(container)
+    # enable_actions installs a simulated ActionService/ActionRepository for
+    # provider tests. Keep the proposal service bound to that same repository
+    # so its prepare path observes the enabled action settings and shared DB.
+    container.negotiation_proposals.actions = container.actions.repo
     settings = replace(
         container.settings,
         connector_trust_boundary_enabled=True,
