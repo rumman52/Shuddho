@@ -385,8 +385,8 @@ class Settings:
                 raise ValueError("SHUDDHO_SANDBOX_MEMORY_MB must be between 64 and 1024")
             if not 16 <= self.sandbox_disk_mb <= 512:
                 raise ValueError("SHUDDHO_SANDBOX_DISK_MB must be between 16 and 512")
-            if not 1024 <= self.sandbox_max_output_bytes <= 262144:
-                raise ValueError("SHUDDHO_SANDBOX_MAX_OUTPUT_BYTES must be between 1024 and 262144")
+            if not 1024 <= self.sandbox_max_output_bytes <= 65536:
+                raise ValueError("SHUDDHO_SANDBOX_MAX_OUTPUT_BYTES must be between 1024 and 65536")
             if not 10 <= self.sandbox_worker_lease_seconds <= 120:
                 raise ValueError("SHUDDHO_SANDBOX_WORKER_LEASE_SECONDS must be between 10 and 120")
             if not 1 <= self.sandbox_execution_max_attempts <= 3:
