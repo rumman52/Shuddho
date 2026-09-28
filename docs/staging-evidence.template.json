@@ -83,6 +83,10 @@
     "status": "pending",
     "evidence": ""
   },
+  "agent_sandbox_tool": {
+    "status": "pending",
+    "evidence": ""
+  },
   "microsoft_actions": {
     "status": "pending",
     "evidence": ""
