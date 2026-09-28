@@ -126,7 +126,7 @@ transaction-operation eligibility before preparing anything. The action payload
 is server-built from the immutable case identity plus the exact stored proposal;
 the client cannot substitute recipients, account, message, summary or terms.
 
-The immutable action preview carries a server-only source binding over proposal
+The immutable action preview carries a server-authored source binding over proposal
 ID/hash, case ID/revision and offer-history sequence. Approval revalidates that
 binding. Execution revalidates it again immediately before a provider mutation.
 A case edit, new offer, paused/closed case, changed connection authority, changed
