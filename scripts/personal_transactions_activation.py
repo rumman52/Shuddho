@@ -100,6 +100,7 @@ def require_https_origin(value: str, label: str) -> str:
 def validate_staging(
     evidence: dict,
     *,
+    expected_operations: list[str],
     now: datetime,
     max_age_minutes: int,
 ) -> datetime:
@@ -116,22 +117,46 @@ def validate_staging(
         raise PersonalTransactionsActivationError(
             "Personal-transactions staging evidence text is missing."
         )
-    verified_at = item.get("verified_at")
-    if not isinstance(verified_at, str):
+    operation_evidence = item.get("operation_evidence")
+    if (
+        not isinstance(operation_evidence, dict)
+        or set(operation_evidence) != set(expected_operations)
+    ):
         raise PersonalTransactionsActivationError(
-            "Personal-transactions staging evidence has no verified_at timestamp."
+            "Personal-transactions staging evidence does not exactly match the reviewed operation allowlist."
         )
-    verified = parse_time(verified_at, "personal_transactions verified_at")
-    age = (now - verified).total_seconds() / 60
-    if age < -1:
+    verified_times: list[datetime] = []
+    for operation in sorted(expected_operations):
+        record = operation_evidence.get(operation)
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"evidence", "verified_at"}
+            or not isinstance(record.get("evidence"), str)
+            or not record["evidence"].strip()
+            or not isinstance(record.get("verified_at"), str)
+        ):
+            raise PersonalTransactionsActivationError(
+                f"Personal-transactions staging evidence for {operation} is invalid."
+            )
+        verified = parse_time(
+            record["verified_at"],
+            f"personal_transactions {operation} verified_at",
+        )
+        age = (now - verified).total_seconds() / 60
+        if age < -1:
+            raise PersonalTransactionsActivationError(
+                f"Personal-transactions staging evidence for {operation} is from the future."
+            )
+        if age > max_age_minutes:
+            raise PersonalTransactionsActivationError(
+                f"Personal-transactions staging evidence for {operation} is stale ({age:.1f} minutes old)."
+            )
+        verified_times.append(verified)
+    if not verified_times:
         raise PersonalTransactionsActivationError(
-            "Personal-transactions staging evidence is from the future."
+            "Personal-transactions staging evidence contains no qualified operations."
         )
-    if age > max_age_minutes:
-        raise PersonalTransactionsActivationError(
-            f"Personal-transactions staging evidence is stale ({age:.1f} minutes old)."
-        )
-    return verified
+    return max(verified_times)
 
 
 def validate_reviewed_rollout(
@@ -619,6 +644,7 @@ def main() -> None:
         )
         staging_time = validate_staging(
             staging,
+            expected_operations=rollout["transaction_operations"],
             now=now,
             max_age_minutes=args.max_staging_age_minutes,
         )
