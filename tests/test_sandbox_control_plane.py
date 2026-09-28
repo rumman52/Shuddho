@@ -355,6 +355,19 @@ def test_agent_cancel_scrubs_prepared_planner_sandbox_source(container, signed_c
     executions = container.sandbox.list_executions(owner, resource["resource_id"])
     assert executions[0]["state"] == "prepared"
 
+    # Roll back both execution authorities before cancellation. Cleanup must
+    # still scrub the already-stored user source.
+    rolled_back = replace(
+        settings,
+        code_execution_enabled=False,
+        agent_sandbox_tool_enabled=False,
+    )
+    rolled_back.validate()
+    container.settings = rolled_back
+    container.repository.settings = rolled_back
+    container.agent.settings = rolled_back
+    container.sandbox.settings = rolled_back
+
     client, headers = signed_client
     response = client.post(
         f'/api/v1/agent-runs/{run["id"]}/cancel',
