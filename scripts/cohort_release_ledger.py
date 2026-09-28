@@ -5048,6 +5048,25 @@ def append_personal_transactions_event(
         raise ReleaseLedgerError(
             "Personal-transactions activation has no valid runtime proof."
         )
+    transaction_authority = activation.get("transaction_authority")
+    if (
+        not isinstance(transaction_authority, dict)
+        or set(transaction_authority) != {
+            "schema_version",
+            "source_revision",
+            "personal_transactions_enabled",
+            "operations",
+        }
+        or transaction_authority.get("schema_version") != 1
+        or transaction_authority.get("source_revision") != revision
+        or transaction_authority.get("personal_transactions_enabled") is not True
+        or transaction_authority.get("operations") != sorted(
+            rollout.get("transaction_operations", [])
+        )
+    ):
+        raise ReleaseLedgerError(
+            "Personal-transactions activation does not prove the exact reviewed transaction operation authority."
+        )
     runtime_capabilities = runtime.get("capabilities")
     if not isinstance(runtime_capabilities, dict):
         raise ReleaseLedgerError(
@@ -5093,6 +5112,17 @@ def append_personal_transactions_event(
     if runtime_hash != expected_runtime_hash:
         raise ReleaseLedgerError(
             "Personal-transactions activation runtime manifest hash does not match its runtime snapshot."
+        )
+
+    transaction_authority_hash = activation.get(
+        "transaction_authority_manifest_sha256"
+    )
+    expected_transaction_authority_hash = hashlib.sha256(
+        canonical(transaction_authority)
+    ).hexdigest()
+    if transaction_authority_hash != expected_transaction_authority_hash:
+        raise ReleaseLedgerError(
+            "Personal-transactions activation transaction authority hash does not match its snapshot."
         )
 
     hashes = activation.get("artifact_sha256")
