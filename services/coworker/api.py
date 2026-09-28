@@ -115,9 +115,7 @@ def list_negotiation_cases(identity: Identity, services: Services):
             and bool(services.settings.deepseek_api_key)
         ),
         "proposal_promotion_enabled": (
-            services.settings.intelligent_planner_enabled
-            and services.settings.agent_action_proposals_enabled
-            and bool(services.settings.deepseek_api_key)
+            services.settings.negotiation_proposal_promotion_enabled
         ),
         "cases": services.negotiations.list(identity.account_id),
     }
