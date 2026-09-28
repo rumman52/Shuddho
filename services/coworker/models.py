@@ -117,15 +117,27 @@ class TaskEvent(Base):
 class Artifact(Base):
     __tablename__ = "cw_artifacts"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    task_id: Mapped[str] = mapped_column(ForeignKey("cw_tasks.id"), index=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("cw_tasks.id"), index=True)
+    sandbox_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("cw_sandbox_executions.id"), index=True
+    )
     owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    artifact_class: Mapped[str] = mapped_column(String(30), default="task_output")
     filename: Mapped[str] = mapped_column(String(160))
     content_type: Mapped[str] = mapped_column(String(100))
     object_key: Mapped[str] = mapped_column(String(512))
     sha256: Mapped[str] = mapped_column(String(64))
     byte_size: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    __table_args__ = (UniqueConstraint("task_id", "filename"),)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("task_id", "filename"),
+        UniqueConstraint(
+            "sandbox_execution_id", "filename",
+            name="uq_cw_artifacts_sandbox_execution_filename",
+        ),
+        Index("cw_artifacts_owner_class_expiry", "owner_id", "artifact_class", "expires_at"),
+    )
 
 
 class DailyUsage(Base):
