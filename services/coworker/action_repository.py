@@ -174,7 +174,7 @@ class ActionRepository:
         binding = preview.get("source_binding")
         if binding is None:
             return
-        if not self.settings.agent_action_proposals_enabled:
+        if not self.settings.negotiation_proposal_promotion_enabled:
             raise CoworkerError(
                 "negotiation_proposal_promotion_disabled",
                 "Negotiation proposal promotion is disabled in this deployment.",
