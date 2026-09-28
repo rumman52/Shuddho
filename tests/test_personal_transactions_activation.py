@@ -71,7 +71,7 @@ def test_reviewed_rollout_requires_pa09_prerequisites_and_exact_kill_switch():
 
     broken = rollout()
     broken["rollback"]["personal_transactions_kill_switch"] = "wrong"
-    with pytest.raises(PersonalTransactionsActivationError, match="kill switch"):
+    with pytest.raises(PersonalTransactionsActivationError, match="personal_transactions_kill_switch"):
         validate_reviewed_rollout(broken, max_cohort_users=25)
 
 
