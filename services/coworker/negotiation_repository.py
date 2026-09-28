@@ -32,7 +32,7 @@ from .negotiation_schemas import (
     NegotiationProposalRequest,
     NegotiationProposalReview,
 )
-from .repository import iso, not_found
+from .repository import aware, iso, not_found
 
 CASE_LIMIT = 100
 OFFER_LIMIT = 200
@@ -205,7 +205,7 @@ class NegotiationRepository:
     ) -> dict:
         now = utcnow()
         state = row.state
-        if state == "suggested" and row.expires_at <= now:
+        if state == "suggested" and aware(row.expires_at) <= now:
             state = "expired"
         elif state == "suggested" and (
             row.case_revision != current_revision
@@ -230,7 +230,7 @@ class NegotiationRepository:
             "prompt_sha256": row.prompt_sha256,
             "created_at": iso(row.created_at),
             "expires_at": iso(row.expires_at),
-            "reviewed_at": iso(row.reviewed_at),
+            "reviewed_at": iso(row.reviewed_at) if row.reviewed_at is not None else None,
         }
 
     @staticmethod
