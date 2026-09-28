@@ -15,6 +15,7 @@ from services.coworker.errors import CoworkerError
 from services.coworker.models import SandboxExecution, SandboxSession, utcnow
 from services.coworker.sandbox import SandboxRepository
 from services.coworker.sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
+from scripts.sandbox_worker import WorkerError, build_bwrap_command, validate_claim_policy
 
 
 def enable_sandbox(container):
@@ -295,6 +296,57 @@ def test_sandbox_worker_lease_recovery_is_bounded(container):
         assert row.state == "failed"
         assert row.error_code == "sandbox_worker_lost"
         assert row.request_spec == {"source_scrubbed": True}
+
+
+def test_sandbox_worker_command_is_networkless_minimal_and_fail_closed(tmp_path):
+    policy = {
+        "version": "sandbox-control-v1",
+        "network": "none",
+        "dependencies": [],
+        "mounts": [],
+        "host_filesystem": False,
+        "docker_socket": False,
+        "production_secrets": False,
+        "connector_credentials": False,
+        "privileged_api_bridge": False,
+        "resource_limits": {
+            "wall_seconds": 30,
+            "cpu_seconds": 10,
+            "memory_mb": 256,
+            "disk_mb": 64,
+            "output_bytes": 65536,
+        },
+        "executor": {
+            "contract": "bwrap-python311-v1",
+            "network_namespace": "private_empty",
+            "filesystem": "minimal_readonly_runtime",
+            "environment": "cleared",
+            "packages": "stdlib_only",
+        },
+    }
+    source = tmp_path / "main.py"
+    source.write_text("print('isolated')\n", encoding="utf-8")
+    command = build_bwrap_command(
+        source,
+        policy,
+        bwrap_path="/usr/bin/bwrap",
+        python_executable="/usr/local/bin/python",
+    )
+    assert "--unshare-net" in command
+    assert "--clearenv" in command
+    assert "--cap-drop" in command
+    assert "/work/main.py" in command
+    assert "-I" in command
+    assert "-S" in command
+    assert str(source.resolve()) in command
+    assert "/app" not in command
+    assert "isolated" not in repr(command)
+
+    unsafe = dict(policy)
+    unsafe["network"] = "open"
+    with pytest.raises(WorkerError) as rejected:
+        validate_claim_policy({"policy": unsafe})
+    assert rejected.value.code == "sandbox_policy_invalid"
 
 
 def test_sandbox_completion_rejects_missing_isolation_evidence(container):
