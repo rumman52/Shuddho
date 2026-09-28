@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 pytest.importorskip("sqlalchemy")
+from sqlalchemy import select
 
 from test_coworker import account, container, signed_client
 
@@ -616,7 +617,7 @@ def test_interactive_completion_requires_safe_exact_artifact(container):
     assert unsafe.value.code == "sandbox_artifact_unsafe"
     with container.repository.sessions() as db:
         assert db.scalar(
-            __import__("sqlalchemy").select(Artifact).where(
+            select(Artifact).where(
                 Artifact.sandbox_execution_id == prepared["id"]
             )
         ) is None
