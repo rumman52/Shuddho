@@ -35,6 +35,7 @@ def reviewed_rollout(tmp_path: Path) -> Path:
     value["capabilities"]["actions"] = True
     value["capabilities"]["connector_trust_boundary"] = True
     value["capabilities"]["personal_transactions"] = True
+    value["transaction_operations"] = ["google:negotiation_commitment_email"]
     value["monitoring"]["actions"] = "actions-dashboard"
     value["incident"]["change_reference"] = CHANGE
     return write_json(tmp_path / "rollout.json", value)
@@ -108,6 +109,12 @@ def test_append_personal_transactions_event_binds_activation_and_verifies(tmp_pa
         "action_providers": ["google"],
         "cohort": {"enforced": True, "configured_members": 5, "max_users": 25},
     }
+    transaction_authority = {
+        "schema_version": 1,
+        "source_revision": REVISION,
+        "personal_transactions_enabled": True,
+        "operations": ["google:negotiation_commitment_email"],
+    }
     activation = write_json(tmp_path / "activation.json", {
         "schema_version": 1,
         "status": "personal_transactions_verified",
@@ -120,6 +127,10 @@ def test_append_personal_transactions_event_binds_activation_and_verifies(tmp_pa
         "operator_status_generated_at": "2026-09-28T10:25:00+00:00",
         "runtime": runtime,
         "runtime_manifest_sha256": hashlib.sha256(canonical(runtime)).hexdigest(),
+        "transaction_authority": transaction_authority,
+        "transaction_authority_manifest_sha256": hashlib.sha256(
+            canonical(transaction_authority)
+        ).hexdigest(),
         "artifact_sha256": {
             "staging_evidence": file_sha256(staging),
             "rollout_manifest": file_sha256(rollout),
