@@ -1043,6 +1043,7 @@ def connections(identity: Identity, services: Services):
         "document_sharing_enabled": services.settings.action_document_sharing_enabled,
         "threading_enabled": services.settings.action_email_threading_enabled,
         "social_publishing_enabled": services.settings.action_social_publishing_enabled,
+        "personal_transactions_enabled": services.settings.personal_transactions_enabled,
         "reads_enabled": services.settings.connector_reads_enabled,
         "connections": services.actions.repo.connections(identity.account_id),
     }
