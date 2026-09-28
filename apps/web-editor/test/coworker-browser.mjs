@@ -38,6 +38,10 @@ try {
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("heading", { name: "Good work starts here." }).waitFor();
+  await page.getByRole("button", { name: "Sandbox", exact: true }).click();
+  await page.getByRole("heading", { name: "Sandboxed computation", exact: true }).waitFor();
+  await page.getByText("Sandbox capability is disabled.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Drafts & files", exact: true }).click();
   await page.getByLabel("Your notes").fill("The team completed 12 reviews on 10 September 2026.");
   await page.getByLabel("Add source files").setInputFiles({ name: "meeting.txt", mimeType: "text/plain", buffer: Buffer.from("Meeting held on 10 September 2026. The team completed 12 reviews.") });
   await page.getByRole("button", { name: "Remove meeting.txt from this task" }).waitFor();
