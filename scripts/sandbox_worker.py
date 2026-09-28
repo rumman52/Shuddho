@@ -102,6 +102,7 @@ def validate_claim_policy(claim: dict) -> dict:
 
 def build_bwrap_command(
     source_path: Path,
+    scratch_path: Path,
     policy: dict,
     *,
     bwrap_path: str = "/usr/bin/bwrap",
@@ -109,8 +110,11 @@ def build_bwrap_command(
 ) -> list[str]:
     validate_claim_policy({"policy": policy})
     source = source_path.resolve()
+    scratch = scratch_path.resolve()
     if not source.is_file():
         raise WorkerError("sandbox_source_missing")
+    if not scratch.is_dir():
+        raise WorkerError("sandbox_scratch_missing")
     if not os.path.isabs(bwrap_path) or not os.path.isabs(python_executable):
         raise WorkerError("sandbox_runner_path_invalid")
     return [
@@ -128,16 +132,22 @@ def build_bwrap_command(
         "/proc",
         "--dev",
         "/dev",
+        "--dir",
+        "/usr",
         "--ro-bind",
-        "/usr",
-        "/usr",
+        "/usr/local",
+        "/usr/local",
+        "--ro-bind-try",
+        "/usr/lib",
+        "/usr/lib",
         "--ro-bind-try",
         "/lib",
         "/lib",
         "--ro-bind-try",
         "/lib64",
         "/lib64",
-        "--tmpfs",
+        "--bind",
+        str(scratch),
         "/tmp",
         "--dir",
         "/work",
@@ -152,7 +162,7 @@ def build_bwrap_command(
         "/tmp",
         "--setenv",
         "PATH",
-        "/usr/local/bin:/usr/bin",
+        "/usr/local/bin",
         "--setenv",
         "PYTHONNOUSERSITE",
         "1",
@@ -185,7 +195,7 @@ def resource_limiter(policy: dict):
         resource.setrlimit(resource.RLIMIT_FSIZE, (file_bytes, file_bytes))
         resource.setrlimit(resource.RLIMIT_NOFILE, (32, 32))
         if hasattr(resource, "RLIMIT_NPROC"):
-            resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
+            resource.setrlimit(resource.RLIMIT_NPROC, (1, 1))
         if hasattr(resource, "RLIMIT_CORE"):
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
@@ -253,6 +263,19 @@ def read_bounded(handle, limit: int) -> bytes:
     return value
 
 
+def directory_size(path: Path, limit: int) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += (Path(root) / name).stat().st_size
+            except FileNotFoundError:
+                continue
+            if total > limit:
+                return total
+    return total
+
+
 def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: str) -> None:
     policy = validate_claim_policy(claim)
     execution_id = claim.get("id")
@@ -269,13 +292,19 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
         raise WorkerError("sandbox_source_integrity_failed")
     output_limit = int(policy["resource_limits"]["output_bytes"])
     wall_seconds = int(policy["resource_limits"]["wall_seconds"])
+    disk_limit = int(policy["resource_limits"]["disk_mb"]) * 1024 * 1024
 
-    with tempfile.TemporaryDirectory(prefix="shuddho-sandbox-source-") as folder:
+    with (
+        tempfile.TemporaryDirectory(prefix="shuddho-sandbox-source-") as folder,
+        tempfile.TemporaryDirectory(prefix="shuddho-sandbox-scratch-") as scratch_folder,
+    ):
         source_path = Path(folder) / "main.py"
+        scratch_path = Path(scratch_folder)
         source_path.write_bytes(source_bytes)
         source_path.chmod(0o400)
         command = build_bwrap_command(
             source_path,
+            scratch_path,
             policy,
             bwrap_path=bwrap_path,
             python_executable=sys.executable,
@@ -305,6 +334,9 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
                     timed_out = True
                     terminate_group(process)
                     break
+                if directory_size(scratch_path, disk_limit) > disk_limit:
+                    terminate_group(process)
+                    raise WorkerError("sandbox_resource_limit")
                 if now >= next_control:
                     try:
                         control = client.post(
