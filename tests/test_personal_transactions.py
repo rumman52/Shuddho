@@ -102,6 +102,22 @@ def test_transaction_operation_allowlist_is_fail_closed(container):
             transaction_operations=frozenset({"google:not_registered"}),
         ).validate()
 
+    rollback_safe = replace(
+        container.settings,
+        personal_transactions_enabled=False,
+        microsoft_actions_enabled=False,
+        transaction_operations=frozenset({"microsoft:negotiation_commitment_email"}),
+    )
+    rollback_safe.validate()
+
+    with pytest.raises(ValueError, match="Microsoft transaction operations require"):
+        replace(
+            container.settings,
+            connector_trust_boundary_enabled=True,
+            personal_transactions_enabled=True,
+            transaction_operations=frozenset({"microsoft:negotiation_commitment_email"}),
+        ).validate()
+
     owner = account(container)
     connection = connected(container.actions.repo, owner, "email")
     request = ActionPrepare.model_validate({
