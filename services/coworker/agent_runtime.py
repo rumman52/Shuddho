@@ -150,7 +150,12 @@ class AgentRuntime:
             AgentObservation.model_validate(item).model_dump(mode="json")
             for item in self.repo.verified_observations(run["owner_id"], run_id)
         ]
-        tools = intelligent_tool_names(self.container.settings, run["actions"])
+        tools = intelligent_tool_names(
+            self.container.settings,
+            run["actions"],
+            goal=run["goal"],
+            runtime_version=run["runtime_version"],
+        )
         remaining = self.repo.v3_remaining_budget(run_id)
         context_payload, context_sources = self.container.context.planner_context(
             run["owner_id"], run_id
