@@ -406,6 +406,16 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
             <small>Up to 3 existing Shuddho artifacts, 2 MB total. The exact artifact hashes are bound to approval.</small>
           </fieldset>}
           <p className="cw-fineprint">Plain-text email, sent immediately after approval.{attachmentsEnabled ? " Attachments must already exist in this Shuddho workspace." : " Attachments are disabled in this deployment."}</p>
+        </> : mode === "negotiation" ? <>
+          <p className="cw-notice">This is a binding commitment action. A changed recipient, message, summary, or term requires a completely fresh approval preview.</p>
+          <label>Primary counterparty email<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required maxLength={254} placeholder="counterparty@example.com" /></label>
+          <label>Cc<input dir="ltr" value={cc} onChange={event => setCc(event.target.value)} maxLength={5100} /></label>
+          <label>Counterparty name or organization<input dir="auto" value={counterparty} onChange={event => setCounterparty(event.target.value)} required maxLength={300} /></label>
+          <label>Subject<input dir="auto" value={subject} onChange={event => setSubject(event.target.value)} required maxLength={300} /></label>
+          <label>Commitment summary<textarea dir="auto" rows={4} value={commitmentSummary} onChange={event => setCommitmentSummary(event.target.value)} required maxLength={2000} placeholder="Exact binding commitment being made" /></label>
+          <label>Final terms<textarea dir="auto" rows={6} value={negotiationTerms} onChange={event => setNegotiationTerms(event.target.value)} required maxLength={12000} placeholder={"Price=USD 5,000\nDelivery=30 days\nCancellation=Non-refundable after acceptance"} /><small>One exact term per line as Name=Value. Each name must be unique.</small></label>
+          <label>Message<textarea dir="auto" rows={9} value={body} onChange={event => setBody(event.target.value)} required maxLength={20000} /></label>
+          <p className="cw-fineprint">Exactly one primary counterparty; Bcc and attachments are disabled. The immutable approval binds the full message and every final term. If provider acceptance becomes uncertain, Shuddho will not resend blindly.</p>
         </> : mode === "calendar" ? <>
           <label>Event title<input dir="auto" required maxLength={300} value={eventTitle} onChange={event => setEventTitle(event.target.value)} /></label>
           <div className="cw-action-row"><label>Starts<input type="datetime-local" required value={start} onChange={event => setStart(event.target.value)} /></label><label>Ends<input type="datetime-local" required value={end} onChange={event => setEnd(event.target.value)} /></label></div>
