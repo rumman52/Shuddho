@@ -35,6 +35,7 @@ class Settings:
     connector_trust_boundary_enabled: bool = False
     connector_reads_enabled: bool = False
     browser_enabled: bool = False
+    code_execution_enabled: bool = False
     action_attachments_enabled: bool = False
     action_reminders_enabled: bool = False
     action_recipients_enabled: bool = False
@@ -86,6 +87,14 @@ class Settings:
     browser_takeover_affinity_seconds: int = 90
     browser_command_max_attempts: int = 2
     browser_worker_token: str = field(default="", repr=False)
+    max_active_sandbox_sessions: int = 2
+    sandbox_session_ttl_seconds: int = 900
+    sandbox_max_source_bytes: int = 20000
+    sandbox_max_executions_per_session: int = 4
+    sandbox_wall_seconds: int = 30
+    sandbox_cpu_seconds: int = 10
+    sandbox_memory_mb: int = 256
+    sandbox_disk_mb: int = 64
     agent_run_timeout_seconds: int = 1800
     max_personal_goals: int = 100
     max_automations: int = 100
@@ -158,6 +167,7 @@ class Settings:
             connector_trust_boundary_enabled=os.getenv("SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED", "false").lower() == "true",
             connector_reads_enabled=os.getenv("SHUDDHO_CONNECTOR_READS_ENABLED", "false").lower() == "true",
             browser_enabled=os.getenv("SHUDDHO_BROWSER_ENABLED", "false").lower() == "true",
+            code_execution_enabled=os.getenv("SHUDDHO_CODE_EXECUTION_ENABLED", "false").lower() == "true",
             action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
             action_reminders_enabled=os.getenv("SHUDDHO_ACTION_REMINDERS_ENABLED", "false").lower() == "true",
             action_recipients_enabled=os.getenv("SHUDDHO_ACTION_RECIPIENTS_ENABLED", "false").lower() == "true",
@@ -213,6 +223,14 @@ class Settings:
             browser_takeover_affinity_seconds=int(os.getenv("SHUDDHO_BROWSER_TAKEOVER_AFFINITY_SECONDS", "90")),
             browser_command_max_attempts=int(os.getenv("SHUDDHO_BROWSER_COMMAND_MAX_ATTEMPTS", "2")),
             browser_worker_token=os.getenv("SHUDDHO_BROWSER_WORKER_TOKEN", ""),
+            max_active_sandbox_sessions=int(os.getenv("SHUDDHO_SANDBOX_MAX_ACTIVE_SESSIONS", "2")),
+            sandbox_session_ttl_seconds=int(os.getenv("SHUDDHO_SANDBOX_SESSION_TTL_SECONDS", "900")),
+            sandbox_max_source_bytes=int(os.getenv("SHUDDHO_SANDBOX_MAX_SOURCE_BYTES", "20000")),
+            sandbox_max_executions_per_session=int(os.getenv("SHUDDHO_SANDBOX_MAX_EXECUTIONS", "4")),
+            sandbox_wall_seconds=int(os.getenv("SHUDDHO_SANDBOX_WALL_SECONDS", "30")),
+            sandbox_cpu_seconds=int(os.getenv("SHUDDHO_SANDBOX_CPU_SECONDS", "10")),
+            sandbox_memory_mb=int(os.getenv("SHUDDHO_SANDBOX_MEMORY_MB", "256")),
+            sandbox_disk_mb=int(os.getenv("SHUDDHO_SANDBOX_DISK_MB", "64")),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
             max_personal_goals=int(os.getenv("SHUDDHO_PERSONAL_GOALS_MAX", "100")),
             max_automations=int(os.getenv("SHUDDHO_AUTOMATIONS_MAX", "100")),
@@ -330,6 +348,25 @@ class Settings:
                 raise ValueError("SHUDDHO_BROWSER_COMMAND_MAX_ATTEMPTS must be between 1 and 3")
             if len(self.browser_worker_token) < 32:
                 raise ValueError("SHUDDHO_BROWSER_WORKER_TOKEN must contain at least 32 characters when browser execution is enabled")
+        if self.code_execution_enabled:
+            if not self.agent_runtime_v3_enabled:
+                raise ValueError("Sandboxed computation requires Agent Runtime v3 (SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true)")
+            if not self.artifact_services_enabled:
+                raise ValueError("Sandboxed computation requires SHUDDHO_ARTIFACT_SERVICES_ENABLED=true")
+            if not 1 <= self.max_active_sandbox_sessions <= 4:
+                raise ValueError("SHUDDHO_SANDBOX_MAX_ACTIVE_SESSIONS must be between 1 and 4")
+            if not 60 <= self.sandbox_session_ttl_seconds <= 1800:
+                raise ValueError("SHUDDHO_SANDBOX_SESSION_TTL_SECONDS must be between 60 and 1800")
+            if not 1024 <= self.sandbox_max_source_bytes <= 100000:
+                raise ValueError("SHUDDHO_SANDBOX_MAX_SOURCE_BYTES must be between 1024 and 100000")
+            if not 1 <= self.sandbox_max_executions_per_session <= 20:
+                raise ValueError("SHUDDHO_SANDBOX_MAX_EXECUTIONS must be between 1 and 20")
+            if not 1 <= self.sandbox_cpu_seconds <= self.sandbox_wall_seconds <= 120:
+                raise ValueError("Sandbox CPU/wall limits are invalid")
+            if not 64 <= self.sandbox_memory_mb <= 1024:
+                raise ValueError("SHUDDHO_SANDBOX_MEMORY_MB must be between 64 and 1024")
+            if not 16 <= self.sandbox_disk_mb <= 512:
+                raise ValueError("SHUDDHO_SANDBOX_DISK_MB must be between 16 and 512")
         if self.agent_runtime_v3_enabled:
             if not self.agent_runtime_enabled or not self.intelligent_planner_enabled:
                 raise ValueError("Agent Runtime v3 requires SHUDDHO_AGENT_RUNTIME_ENABLED=true and SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
