@@ -9,7 +9,8 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Th
 const recipients = (text: string) => text.split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
 const isCalendar = (kind: ExternalAction["kind"]) => kind === "calendar_create" || kind === "calendar_create_with_reminder";
 const isDocumentShare = (kind: ExternalAction["kind"]) => kind === "document_share";
-const isEmail = (kind: ExternalAction["kind"]) => kind === "email_send" || kind === "email_send_with_attachments" || kind === "email_thread_reply";
+const isNegotiation = (kind: ExternalAction["kind"]) => kind === "negotiation_commitment_email";
+const isEmail = (kind: ExternalAction["kind"]) => kind === "email_send" || kind === "email_send_with_attachments" || kind === "email_thread_reply" || isNegotiation(kind);
 const isSocial = (kind: ExternalAction["kind"]) => kind === "social_publish_linkedin";
 const title = (item: ExternalAction) => item.preview.payload.kind === "document_share"
   ? item.preview.shared_artifact?.filename ?? "Shared document"
