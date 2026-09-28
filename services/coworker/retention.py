@@ -10,7 +10,8 @@ from .models import (
     Account, ActionProposal, ActionRecipient, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, SandboxExecution, SandboxSession,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
-    ModelAttempt, Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
+    ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer,
+    Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
     PersonalGoalRevision, Step, Task, TaskEvent, ToolInvocation, ToolReceipt, Workspace, utcnow,
 )
 
@@ -151,6 +152,9 @@ class RetentionService:
             db.execute(delete(SandboxSession).where(SandboxSession.owner_id == owner))
             db.execute(delete(BrowserCommand).where(BrowserCommand.owner_id == owner))
             db.execute(delete(BrowserSession).where(BrowserSession.owner_id == owner))
+            db.execute(delete(NegotiationOffer).where(NegotiationOffer.owner_id == owner))
+            db.execute(delete(NegotiationCaseRevision).where(NegotiationCaseRevision.owner_id == owner))
+            db.execute(delete(NegotiationCase).where(NegotiationCase.owner_id == owner))
             db.execute(delete(ActionProposal).where(ActionProposal.owner_id == owner))
             db.execute(delete(ExecutionGrant).where(ExecutionGrant.owner_id == owner))
             db.execute(delete(ConnectorEvent).where(ConnectorEvent.owner_id == owner))
