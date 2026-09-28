@@ -4,6 +4,8 @@ import hashlib
 
 from sqlalchemy import select
 
+from .action_repository import ActionRepository
+from .action_schemas import ActionPrepare
 from .errors import CoworkerError
 from .models import Account, DailyUsage, utcnow
 from .negotiation_model import NegotiationProposalModel
@@ -23,9 +25,11 @@ class NegotiationProposalService:
         self,
         repository: NegotiationRepository,
         model: NegotiationProposalModel,
+        actions: ActionRepository,
     ):
         self.repo = repository
         self.model = model
+        self.actions = actions
         self.settings = repository.settings
         self.sessions = repository.sessions
 
@@ -160,3 +164,45 @@ class NegotiationProposalService:
             proposal_id,
             review,
         )
+
+    def promote(
+        self,
+        owner: str,
+        case_id: str,
+        proposal_id: str,
+        review: NegotiationProposalReview,
+    ) -> dict:
+        if not self.settings.negotiation_proposal_promotion_enabled:
+            raise CoworkerError(
+                "negotiation_proposal_promotion_disabled",
+                "Negotiation proposal promotion is disabled in this deployment.",
+                503,
+            )
+        reservation = self.repo.reserve_proposal_promotion(
+            owner,
+            case_id,
+            proposal_id,
+            review,
+        )
+        existing_action_id = reservation.get("existing_action_id")
+        if existing_action_id:
+            return self.actions.get(owner, existing_action_id)
+        request = ActionPrepare.model_validate({
+            "connection_id": reservation["connection_id"],
+            "payload": reservation["payload"],
+        })
+        action = self.actions.prepare(
+            owner,
+            request,
+            "negotiation-proposal:" + proposal_id,
+            source_binding=reservation["source_binding"],
+        )
+        self.repo.finalize_proposal_promotion(
+            owner,
+            case_id,
+            proposal_id,
+            review.proposal_hash,
+            action["id"],
+            reservation["source_binding"],
+        )
+        return action

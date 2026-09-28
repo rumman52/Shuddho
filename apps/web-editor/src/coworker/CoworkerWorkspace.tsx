@@ -206,7 +206,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
     {view === "sandbox" && workspace && <SandboxWorkspace client={client} />}
-    {view === "negotiations" && workspace && <NegotiationWorkspace client={client} />}
+    {view === "negotiations" && workspace && <NegotiationWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}
     {view === "agent" && workspace && <AgentWorkspace client={client} documents={documents} openActions={() => setView("actions")} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     <div className="cw-layout" hidden={view !== "drafts"}><section className="cw-compose" aria-label="Create a coworker task">

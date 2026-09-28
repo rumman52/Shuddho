@@ -226,6 +226,8 @@ class NegotiationRepository:
             "risk_notes": list(row.risk_notes),
             "proposal_hash": row.proposal_hash,
             "state": state,
+            "promoted_action_id": row.promoted_action_id,
+            "promoted_at": iso(row.promoted_at) if row.promoted_at is not None else None,
             "model": row.model,
             "prompt_sha256": row.prompt_sha256,
             "created_at": iso(row.created_at),
@@ -735,6 +737,188 @@ class NegotiationRepository:
                 row.reviewed_at = utcnow()
                 self._audit(db, owner, row.id, "negotiation_proposal.dismissed")
             history_sequence = self._history_sequence(db, case.id, owner)
+            return self._proposal_dto(
+                row,
+                current_revision=case.revision,
+                current_history_sequence=history_sequence,
+            )
+
+    def reserve_proposal_promotion(
+        self,
+        owner: str,
+        case_id: str,
+        proposal_id: str,
+        review: NegotiationProposalReview,
+    ) -> dict:
+        self._require_enabled()
+        if not self.settings.negotiation_proposal_promotion_enabled:
+            raise CoworkerError(
+                "negotiation_proposal_promotion_disabled",
+                "Negotiation proposal promotion is disabled in this deployment.",
+                503,
+            )
+        with self.sessions.begin() as db:
+            case = self._case(db, owner, case_id, lock=True)
+            self._connection(db, owner, case.connection_id)
+            row = db.scalar(
+                select(NegotiationProposal).where(
+                    NegotiationProposal.id == proposal_id,
+                    NegotiationProposal.case_id == case.id,
+                    NegotiationProposal.owner_id == owner,
+                ).with_for_update()
+            )
+            if row is None:
+                raise not_found()
+            if not hmac.compare_digest(row.proposal_hash, review.proposal_hash):
+                raise CoworkerError(
+                    "negotiation_proposal_changed",
+                    "This negotiation proposal changed. Review the latest proposal before promoting it.",
+                    409,
+                )
+            history_sequence = self._history_sequence(db, case.id, owner)
+            if (
+                case.state != "active"
+                or row.case_revision != case.revision
+                or row.history_sequence != history_sequence
+                or aware(row.expires_at) <= utcnow()
+            ):
+                raise CoworkerError(
+                    "negotiation_proposal_stale",
+                    "This negotiation changed or the draft expired. Generate a fresh proposal before promotion.",
+                    409,
+                )
+            if not row.terms:
+                raise CoworkerError(
+                    "negotiation_proposal_not_binding",
+                    "This draft has no explicit terms to bind into an approval preview.",
+                    409,
+                )
+            binding = {
+                "type": "negotiation_proposal",
+                "proposal_id": row.id,
+                "proposal_hash": row.proposal_hash,
+                "case_id": case.id,
+                "case_revision": row.case_revision,
+                "history_sequence": row.history_sequence,
+            }
+            if row.state == "promoted":
+                if not row.promoted_action_id:
+                    raise CoworkerError(
+                        "negotiation_proposal_promotion_conflict",
+                        "This promoted negotiation proposal is missing its action link.",
+                        409,
+                    )
+                return {
+                    "existing_action_id": row.promoted_action_id,
+                    "source_binding": binding,
+                }
+            if row.state != "suggested":
+                raise CoworkerError(
+                    "negotiation_proposal_unavailable",
+                    "This negotiation proposal is no longer available for promotion.",
+                    409,
+                )
+            return {
+                "existing_action_id": None,
+                "connection_id": case.connection_id,
+                "payload": {
+                    "kind": "negotiation_commitment_email",
+                    "to": [case.counterparty_address],
+                    "cc": [],
+                    "bcc": [],
+                    "subject": case.subject,
+                    "body": row.message,
+                    "counterparty": case.counterparty_name,
+                    "commitment_summary": row.summary,
+                    "terms": list(row.terms),
+                },
+                "source_binding": binding,
+            }
+
+    def finalize_proposal_promotion(
+        self,
+        owner: str,
+        case_id: str,
+        proposal_id: str,
+        proposal_hash: str,
+        action_id: str,
+        source_binding: dict,
+    ) -> dict:
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            case = self._case(db, owner, case_id, lock=True)
+            row = db.scalar(
+                select(NegotiationProposal).where(
+                    NegotiationProposal.id == proposal_id,
+                    NegotiationProposal.case_id == case.id,
+                    NegotiationProposal.owner_id == owner,
+                ).with_for_update()
+            )
+            if row is None:
+                raise not_found()
+            if not hmac.compare_digest(row.proposal_hash, proposal_hash):
+                raise CoworkerError(
+                    "negotiation_proposal_changed",
+                    "This negotiation proposal changed before promotion completed.",
+                    409,
+                )
+            history_sequence = self._history_sequence(db, case.id, owner)
+            if (
+                case.state != "active"
+                or row.case_revision != case.revision
+                or row.history_sequence != history_sequence
+            ):
+                raise CoworkerError(
+                    "negotiation_proposal_stale",
+                    "The negotiation changed while the action preview was being prepared.",
+                    409,
+                )
+            action = db.scalar(
+                select(ExternalAction).where(
+                    ExternalAction.id == action_id,
+                    ExternalAction.owner_id == owner,
+                )
+            )
+            if (
+                action is None
+                or action.state != "awaiting_approval"
+                or action.connection_id != case.connection_id
+                or action.kind != "negotiation_commitment_email"
+                or action.preview.get("source_binding") != source_binding
+            ):
+                raise CoworkerError(
+                    "negotiation_proposal_promotion_conflict",
+                    "The negotiation proposal action preview could not be reconciled.",
+                    409,
+                )
+            if row.state == "promoted":
+                if row.promoted_action_id != action.id:
+                    raise CoworkerError(
+                        "negotiation_proposal_promotion_conflict",
+                        "This proposal was already promoted to another preview.",
+                        409,
+                    )
+                return self._proposal_dto(
+                    row,
+                    current_revision=case.revision,
+                    current_history_sequence=history_sequence,
+                )
+            if row.state != "suggested":
+                raise CoworkerError(
+                    "negotiation_proposal_unavailable",
+                    "This negotiation proposal is not available for promotion.",
+                    409,
+                )
+            row.state = "promoted"
+            row.promoted_action_id = action.id
+            row.promoted_at = utcnow()
+            row.reviewed_at = row.promoted_at
+            self._audit(
+                db,
+                owner,
+                row.id,
+                "negotiation_proposal.promoted",
+            )
             return self._proposal_dto(
                 row,
                 current_revision=case.revision,

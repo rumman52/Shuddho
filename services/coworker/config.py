@@ -59,6 +59,7 @@ class Settings:
     agent_outcome_replan_enabled: bool = False
     agent_action_selection_enabled: bool = False
     agent_action_proposals_enabled: bool = False
+    negotiation_proposal_promotion_enabled: bool = False
     agent_linkedin_proposals_enabled: bool = False
     cohort_enforced: bool = False
     cohort_account_ids: frozenset[str] = field(default_factory=frozenset)
@@ -207,6 +208,7 @@ class Settings:
             agent_outcome_replan_enabled=os.getenv("SHUDDHO_AGENT_OUTCOME_REPLAN_ENABLED", "false").lower() == "true",
             agent_action_selection_enabled=os.getenv("SHUDDHO_AGENT_ACTION_SELECTION_ENABLED", "false").lower() == "true",
             agent_action_proposals_enabled=os.getenv("SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED", "false").lower() == "true",
+            negotiation_proposal_promotion_enabled=os.getenv("SHUDDHO_NEGOTIATION_PROPOSAL_PROMOTION_ENABLED", "false").lower() == "true",
             agent_linkedin_proposals_enabled=os.getenv("SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED", "false").lower() == "true",
             cohort_enforced=os.getenv("SHUDDHO_COWORKER_COHORT_ENFORCED", "false").lower() == "true",
             cohort_account_ids=frozenset(
@@ -541,6 +543,20 @@ class Settings:
                 raise ValueError("Agent action proposals require SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
             if not self.actions_enabled:
                 raise ValueError("Agent action proposals require SHUDDHO_ACTIONS_ENABLED=true")
+        if self.negotiation_proposal_promotion_enabled:
+            if not self.agent_action_proposals_enabled:
+                raise ValueError("Negotiation proposal promotion requires SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=true")
+            if not self.personal_transactions_enabled:
+                raise ValueError("Negotiation proposal promotion requires SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=true")
+            required_operations = {
+                item
+                for item in self.transaction_operations
+                if item.endswith(":negotiation_commitment_email")
+            }
+            if not required_operations:
+                raise ValueError(
+                    "Negotiation proposal promotion requires a qualified negotiation_commitment_email transaction operation"
+                )
         if self.agent_linkedin_proposals_enabled:
             if not self.agent_action_proposals_enabled:
                 raise ValueError("LinkedIn Agent proposals require SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=true")

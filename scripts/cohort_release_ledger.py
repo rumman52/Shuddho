@@ -37,6 +37,7 @@ BROWSER_SCHEMA_VERSION = 23
 CODE_EXECUTION_SCHEMA_VERSION = 24
 AGENT_SANDBOX_TOOL_SCHEMA_VERSION = 25
 PERSONAL_TRANSACTIONS_SCHEMA_VERSION = 26
+NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION = 27
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -206,6 +207,13 @@ PERSONAL_TRANSACTIONS_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "personal_transactions_activation",
+}
+NEGOTIATION_PROPOSAL_PROMOTION_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "negotiation_proposal_promotion_activation",
 }
 
 
@@ -470,6 +478,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             CODE_EXECUTION_SCHEMA_VERSION,
             AGENT_SANDBOX_TOOL_SCHEMA_VERSION,
             PERSONAL_TRANSACTIONS_SCHEMA_VERSION,
+            NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -591,6 +600,13 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v25 event type.")
         if version == PERSONAL_TRANSACTIONS_SCHEMA_VERSION and event_type != "personal_transactions_verified":
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema-v26 event type.")
+        if (
+            version == NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION
+            and event_type != "negotiation_proposal_promotion_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v27 event type."
+            )
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -647,6 +663,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             if version == AGENT_SANDBOX_TOOL_SCHEMA_VERSION
             else PERSONAL_TRANSACTIONS_ARTIFACT_KEYS
             if version == PERSONAL_TRANSACTIONS_SCHEMA_VERSION
+            else NEGOTIATION_PROPOSAL_PROMOTION_ARTIFACT_KEYS
+            if version == NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION
             else RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:

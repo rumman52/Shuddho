@@ -58,6 +58,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "code_execution",
         "agent_sandbox_tool",
         "personal_transactions",
+        "negotiation_proposal_promotion",
     } == covered
 
 
@@ -152,6 +153,25 @@ def test_personal_transactions_require_actions_trust_boundary_and_staging():
     )
     rollout["capabilities"]["connector_trust_boundary"] = False
     assert "personal_transactions_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
+
+
+def test_negotiation_proposal_promotion_requires_transactions_and_action_proposals():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["actions"] = True
+    rollout["capabilities"]["connector_trust_boundary"] = True
+    rollout["capabilities"]["personal_transactions"] = True
+    rollout["capabilities"]["agent_runtime"] = True
+    rollout["capabilities"]["intelligent_planner"] = True
+    rollout["capabilities"]["action_proposals"] = True
+    rollout["capabilities"]["negotiation_proposal_promotion"] = True
+    rollout["transaction_operations"] = ["google:negotiation_commitment_email"]
+    assert "negotiation_proposal_promotion" in required_conditional_gate_ids(
+        rollout["capabilities"], {"google"}
+    )
+    rollout["capabilities"]["action_proposals"] = False
+    assert "negotiation_proposal_promotion_dependency" in validate_rollout(
         rollout, max_cohort_users=25
     )
 

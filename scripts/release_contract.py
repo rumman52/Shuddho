@@ -156,6 +156,18 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="negotiation_proposal_promotion",
+        rollback_key="negotiation_proposal_promotion_kill_switch",
+        kill_switch="SHUDDHO_NEGOTIATION_PROPOSAL_PROMOTION_ENABLED=false",
+        dependencies=("personal_transactions", "action_proposals"),
+        staging_gates=(
+            StagingGate(
+                "negotiation_proposal_promotion",
+                "Exact-hash PA-09 proposal promotion passed owner isolation, current case-revision and offer-history binding, immutable source-bound commitment preview creation, wrong-hash/stale-change denial, separate approval, pre-execution revalidation, and zero provider mutation before approval in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="connector_trust_boundary",
         rollback_key="connector_trust_boundary_kill_switch",
         kill_switch="SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false",
@@ -339,6 +351,14 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="personal_transactions_verified",
         ledger_artifact_key="personal_transactions_activation",
         capability="personal_transactions",
+    ),
+    ActivationRequirement(
+        key="negotiation_proposal_promotion",
+        status="negotiation_proposal_promotion_verified",
+        ledger_schema_version=27,
+        ledger_event_type="negotiation_proposal_promotion_verified",
+        ledger_artifact_key="negotiation_proposal_promotion_activation",
+        capability="negotiation_proposal_promotion",
     ),
     ActivationRequirement(
         key="agent_sandbox_tool",

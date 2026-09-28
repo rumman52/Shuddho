@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   CoworkerClient,
   type ConnectedAccount,
+  type ExternalAction,
   type NegotiationCase,
   type NegotiationLimit,
   type NegotiationOfferTerm,
@@ -41,10 +42,11 @@ const parseTerms = (value: string): NegotiationOfferTerm[] => {
   });
 };
 
-export default function NegotiationWorkspace({ client }: { client: CoworkerClient }) {
+export default function NegotiationWorkspace({ client, reviewAction }: { client: CoworkerClient; reviewAction: (action: ExternalAction) => void }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [cases, setCases] = useState<NegotiationCase[]>([]);
   const [proposalsEnabled, setProposalsEnabled] = useState(false);
+  const [promotionEnabled, setPromotionEnabled] = useState(false);
   const [connections, setConnections] = useState<ConnectedAccount[]>([]);
   const [operations, setOperations] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -90,6 +92,7 @@ export default function NegotiationWorkspace({ client }: { client: CoworkerClien
       if (controller.signal.aborted) return;
       setEnabled(saved.enabled);
       setProposalsEnabled(Boolean(saved.proposals_enabled));
+      setPromotionEnabled(Boolean(saved.proposal_promotion_enabled));
       setCases(saved.cases);
       setConnections(connectionState.connections);
       setOperations(connectionState.transaction_operations ?? []);
@@ -216,6 +219,24 @@ export default function NegotiationWorkspace({ client }: { client: CoworkerClien
     });
   }
 
+  async function promoteProposal(proposalId: string) {
+    if (!selected) return;
+    const proposal = selected.proposals.find(item => item.id === proposalId);
+    if (!proposal) return;
+    await run(`promote-proposal-${proposalId}`, async () => {
+      const action = await client.promoteNegotiationProposal(selected.id, proposal);
+      replaceCase(await client.negotiation(selected.id));
+      setNotice("Immutable commitment preview prepared. It is not approved or sent.");
+      reviewAction(action);
+    });
+  }
+
+  async function reviewPromotedAction(actionId: string) {
+    await run(`review-promoted-${actionId}`, async () => {
+      reviewAction(await client.action(actionId));
+    });
+  }
+
   if (enabled === null) return <section className="cw-card"><p>Loading negotiation cases…</p></section>;
   if (!enabled) return <section className="cw-card"><h2>Negotiations</h2><p>Negotiation case tracking is not enabled in this deployment.</p>{error && <p className="cw-error">{error}</p>}</section>;
 
@@ -273,7 +294,7 @@ export default function NegotiationWorkspace({ client }: { client: CoworkerClien
         </select></label>
         <label>Language<input value={proposalLanguage} maxLength={35} onChange={event => setProposalLanguage(event.target.value)} /></label>
         <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={generateProposal}>Prepare draft</button>
-        <p className="cw-fineprint">Generated drafts are nonbinding suggestions. They cannot send email, accept terms, choose an account, or create an external action.</p>
+        <p className="cw-fineprint">Generated drafts are nonbinding suggestions. They cannot send email, accept terms, choose an account, or approve an external action. When separately enabled, you may explicitly promote the exact reviewed draft into an immutable commitment preview.</p>
       </div>}
       {selected.proposals.length === 0 ? <p>No reviewable drafts saved yet.</p> : <ol>
         {selected.proposals.map(item => <li key={item.id}>
@@ -283,10 +304,15 @@ export default function NegotiationWorkspace({ client }: { client: CoworkerClien
           <p dir="auto">{item.message}</p>
           <small>Case revision {item.case_revision} · history #{item.history_sequence} · expires {new Date(item.expires_at).toLocaleString()}</small>
           {item.risk_notes.length > 0 && <ul>{item.risk_notes.map(note => <li key={note}>{note}</li>)}</ul>}
-          {item.state === "suggested" && <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => dismissProposal(item.id)}>Dismiss draft</button>}
+          {item.state === "suggested" && <>
+            {promotionEnabled && item.terms.length > 0 && <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={() => promoteProposal(item.id)}>Prepare commitment preview</button>}
+            <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => dismissProposal(item.id)}>Dismiss draft</button>
+          </>}
+          {item.state === "promoted" && item.promoted_action_id && <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={() => reviewPromotedAction(item.promoted_action_id!)}>Review commitment preview</button>}
           {item.state === "stale" && <p className="cw-fineprint">This draft is stale because the case or offer history changed. Generate a fresh draft before relying on it.</p>}
         </li>)}
       </ol>}
+      {promotionEnabled && <p className="cw-fineprint">Promotion only prepares an exact immutable action preview bound to this proposal, case revision, and offer history. Sending still requires separate approval in Email & calendar, and execution rechecks that the negotiation has not changed.</p>}
 
       <h3>Offer history</h3>
       {selected.offers.length === 0 ? <p>No offers recorded yet.</p> : <ol>

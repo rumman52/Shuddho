@@ -13,6 +13,10 @@ owned negotiation case + append-only offer history
 → bounded DeepSeek draft
 → inert NegotiationProposal
 → human review or dismissal
+→ optional exact-hash human promotion
+→ source-bound immutable commitment preview
+→ separate exact approval
+→ fresh source/case/history revalidation before provider execution
 ```
 
 A `NegotiationProposal` cannot:
@@ -20,7 +24,7 @@ A `NegotiationProposal` cannot:
 - send email or call a provider;
 - choose a provider account or connection;
 - accept an agreement;
-- create, approve, promote, or execute an `ExternalAction`;
+- create, approve, or execute an `ExternalAction` by itself;
 - write a commitment into offer history;
 - mutate the negotiation case or its limits.
 
@@ -39,7 +43,13 @@ Proposal generation is available only when both of the existing controls are act
 The DeepSeek backend key must also be configured. PA-09 transaction enablement by
 itself therefore does not activate model-assisted drafting.
 
-No new production send authority is introduced by this increment.
+No new production send authority is introduced by proposal generation. The
+proposal-to-preview bridge is independently default-off under
+`SHUDDHO_NEGOTIATION_PROPOSAL_PROMOTION_ENABLED=false`. Enabling it also
+requires the existing action-proposal and personal-transaction controls, plus an
+individually qualified `negotiation_commitment_email` operation. Its canonical
+release-contract identity is `negotiation_proposal_promotion`; staging evidence
+and activation evidence are separate from implementation and repository CI.
 
 ## Context sent to the model
 
@@ -96,9 +106,11 @@ Proposal states are intentionally narrow:
 suggested → dismissed
 suggested → expired
 suggested → stale (derived when case/history changes)
+suggested → promoted (only after an exact immutable preview is prepared)
 ```
 
-There is no promotion or execution state.
+`promoted` does not mean approved, sent, accepted, or executed. It only records
+the durable link to one `awaiting_approval` action preview.
 
 ## Idempotency and review
 
@@ -107,6 +119,21 @@ returns the existing proposal instead of creating another stored draft.
 
 Dismissal requires the exact `proposal_hash`; stale UI state cannot dismiss a
 changed proposal silently.
+
+Promotion also requires the exact `proposal_hash`. The server rechecks owner,
+case state, case revision, current offer-history sequence, connection and
+transaction-operation eligibility before preparing anything. The action payload
+is server-built from the immutable case identity plus the exact stored proposal;
+the client cannot substitute recipients, account, message, summary or terms.
+
+The immutable action preview carries a server-authored source binding over proposal
+ID/hash, case ID/revision and offer-history sequence. Approval revalidates that
+binding. Execution revalidates it again immediately before a provider mutation.
+A case edit, new offer, paused/closed case, changed connection authority, changed
+operation allowlist or disabled promotion gate therefore blocks or cancels the
+pending action before provider execution. Promotion uses a stable
+proposal-scoped action idempotency key, so concurrent/retried promotion converges
+on the same preview rather than creating duplicate actions.
 
 ## Model capacity and cost boundary
 
@@ -147,4 +174,18 @@ Content-Type: application/json
 }
 ```
 
-Neither endpoint prepares or executes a provider action.
+Explicitly promote an exact reviewed draft into an unapproved immutable preview:
+
+```http
+POST /api/v1/negotiations/{case_id}/proposals/{proposal_id}/promote
+Content-Type: application/json
+
+{
+  "proposal_hash": "<exact-64-char-sha256>"
+}
+```
+
+Generation and dismissal never prepare or execute a provider action. Promotion
+prepares only an `awaiting_approval` action through the shared PA-09 action
+ledger. It never approves or executes it and never treats provider acceptance as
+counterparty agreement.

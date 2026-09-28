@@ -149,7 +149,7 @@ export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: 
 export type ExternalAction = {
   id: string; connection_id: string; kind: ActionPayload["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
-  preview: { account: string; provider: "google" | "microsoft" | "linkedin"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; reply_context?: { parent_action_id: string; root_action_id: string; thread_id: string; parent_message_id: string; parent_provider_id: string; references: string[] }; transaction?: { class: "binding_negotiation_commitment"; approval: "exact_final_terms"; changed_terms: "fresh_preview_required"; uncertain_outcome: "do_not_retry"; provider_idempotency: "provider_specific_only" }; expires_at: string; calendar: string | null; guest_notifications: string | null };
+  preview: { account: string; provider: "google" | "microsoft" | "linkedin"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; reply_context?: { parent_action_id: string; root_action_id: string; thread_id: string; parent_message_id: string; parent_provider_id: string; references: string[] }; source_binding?: { type: "negotiation_proposal"; proposal_id: string; proposal_hash: string; case_id: string; case_revision: number; history_sequence: number }; transaction?: { class: "binding_negotiation_commitment"; approval: "exact_final_terms"; changed_terms: "fresh_preview_required"; uncertain_outcome: "do_not_retry"; provider_idempotency: "provider_specific_only" }; expires_at: string; calendar: string | null; guest_notifications: string | null };
   preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
   approved_at: string | null; finished_at: string | null;
   receipt: { provider: string; provider_id?: string; thread_id?: string; status: string; confirmed_at: string; message_id?: string; recipient?: string; access?: string; artifact_sha256?: string; author?: string; visibility?: string } | null;
@@ -165,7 +165,8 @@ export type NegotiationProposal = {
   id: string; case_id: string; case_revision: number; history_sequence: number;
   kind: "proposal" | "counteroffer" | "response"; output_language: string;
   summary: string; terms: NegotiationOfferTerm[]; message: string; rationale: string; risk_notes: string[];
-  proposal_hash: string; state: "suggested" | "dismissed" | "expired" | "stale";
+  proposal_hash: string; state: "suggested" | "promoted" | "dismissed" | "expired" | "stale";
+  promoted_action_id: string | null; promoted_at: string | null;
   model: string; prompt_sha256: string; created_at: string; expires_at: string; reviewed_at: string | null;
 };
 export type NegotiationCase = {
@@ -407,7 +408,7 @@ export class CoworkerClient {
   }
   cancelAction(id: string) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}/cancel`, { method: "POST" }); }
   reconcileAction(id: string) { return this.response(`/api/v1/actions/${identifier(id)}/reconcile`, { method: "POST" }, 65000).then(response => response.json() as Promise<ExternalAction>); }
-  negotiations(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals_enabled?: boolean; cases: NegotiationCase[] }>("/api/v1/negotiations", { signal }); }
+  negotiations(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals_enabled?: boolean; proposal_promotion_enabled?: boolean; cases: NegotiationCase[] }>("/api/v1/negotiations", { signal }); }
   negotiation(id: string, signal?: AbortSignal) { return this.json<NegotiationCase>(`/api/v1/negotiations/${identifier(id)}`, { signal }); }
   createNegotiation(input: NegotiationCaseCreate, key: string) {
     return this.json<NegotiationCase>("/api/v1/negotiations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
@@ -430,6 +431,13 @@ export class CoworkerClient {
   }
   dismissNegotiationProposal(caseId: string, proposal: NegotiationProposal) {
     return this.json<NegotiationProposal>(`/api/v1/negotiations/${identifier(caseId)}/proposals/${identifier(proposal.id)}/dismiss`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposal_hash: proposal.proposal_hash }),
+    });
+  }
+  promoteNegotiationProposal(caseId: string, proposal: NegotiationProposal) {
+    return this.json<ExternalAction>(`/api/v1/negotiations/${identifier(caseId)}/proposals/${identifier(proposal.id)}/promote`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ proposal_hash: proposal.proposal_hash }),

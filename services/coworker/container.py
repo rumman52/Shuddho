@@ -105,6 +105,7 @@ class Container:
             self.negotiation_proposals = NegotiationProposalService(
                 self.negotiations,
                 NegotiationProposalModel(self.settings),
+                self.actions.repo,
             )
         if self.memory is None:
             self.memory = MemoryRepository(self.repository.sessions, self.settings)

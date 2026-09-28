@@ -429,6 +429,17 @@ def build_approval_scope(preview: dict) -> dict:
     attachments = attachment_manifest(preview, spec)
     shared_artifact = shared_artifact_manifest(preview, spec)
     reply_context = thread_context_manifest(preview, spec)
+    source_binding = preview.get("source_binding")
+    if source_binding is not None and (
+        spec.kind != "negotiation_commitment_email"
+        or not isinstance(source_binding, dict)
+        or source_binding.get("type") != "negotiation_proposal"
+    ):
+        raise CoworkerError(
+            "approval_changed",
+            "The action source binding could not be verified.",
+            409,
+        )
     result = {
         "contract": "shuddho.consequential-action",
         "contract_version": 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
@@ -465,6 +476,9 @@ def build_approval_scope(preview: dict) -> dict:
         },
         "expires_at": preview.get("expires_at"),
     }
+    if source_binding is not None:
+        result["source_binding"] = dict(source_binding)
+        result["source_binding_sha256"] = stable_digest(source_binding)
     if spec.attachments_allowed:
         result["attachments"] = attachments
         result["attachments_sha256"] = stable_digest(attachments)
