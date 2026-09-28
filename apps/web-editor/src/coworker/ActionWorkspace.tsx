@@ -30,6 +30,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [documentSharingEnabled, setDocumentSharingEnabled] = useState(false);
   const [threadingEnabled, setThreadingEnabled] = useState(false);
   const [socialPublishingEnabled, setSocialPublishingEnabled] = useState(false);
+  const [personalTransactionsEnabled, setPersonalTransactionsEnabled] = useState(false);
   const [readsEnabled, setReadsEnabled] = useState(false);
   const [replyParentId, setReplyParentId] = useState<string | null>(null);
   const [savedRecipients, setSavedRecipients] = useState<ActionRecipient[]>([]);
