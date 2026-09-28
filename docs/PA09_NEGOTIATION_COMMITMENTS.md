@@ -37,6 +37,21 @@ This flag does not grant generic transaction authority. The code-owned action re
 
 The current PA-09 slice is not registered as an Agent planner proposal or direct Agent tool. Browser and sandbox capabilities cannot create, approve or execute this action.
 
+## Durable negotiation cases
+
+The negotiation workspace also keeps durable user-owned context separate from execution authority:
+
+- one case is bound at creation to one owned email connection, provider and counterparty address;
+- the counterparty/connection/provider identity is immutable; changing scope requires a new case;
+- subject, objective and explicit user limits use optimistic revisions with immutable snapshots;
+- limits are structured as `at_most`, `at_least`, `exact` or `avoid` constraints;
+- offer/counteroffer history is append-only, sequenced and idempotent;
+- pausing a case blocks new history until resume; closing/cancelling is terminal;
+- a history item may link to a provider mutation only when it is an existing successful owned `negotiation_commitment_email` from the same case connection and its counterparty, summary and exact terms match;
+- recording a proposal/counteroffer does not send anything externally.
+
+The case ledger is therefore context and evidence, not a second action system. Provider mutation continues to use the existing immutable action preview, explicit user approval, execution grant and provider receipt path.
+
 ## Execution and uncertainty
 
 Execution reuses the existing fixed-provider Gmail or Microsoft Mail adapter. There are no arbitrary endpoints, provider selection by the model, or new credentials.
