@@ -35,7 +35,8 @@ UI work is part of each slice. PA-10 broadens channels and relevance; it does no
 | `SHUDDHO_CONNECTOR_READS_ENABLED` | Qualified revocable connected Gmail/Calendar reads and event synchronization |
 | `SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED` | Deterministic connector permission/credential boundary |
 | `SHUDDHO_BROWSER_ENABLED` | Brokered isolated browsing |
-| `SHUDDHO_CODE_EXECUTION_ENABLED` | Isolated computation |
+| `SHUDDHO_CODE_EXECUTION_ENABLED` | Manual/qualified isolated computation control plane and worker execution |
+| `SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED` | Separately qualified Runtime-v3 authority to select exact user-supplied Python for the sandbox |
 | `SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED` | Individually qualified transactional operations |
 
 Implemented flags add their dependencies, live evidence, activation/ledger identity and rollback controls to `scripts/release_contract.py`; recovery evidence remains a separate production qualification step. A broad transaction flag cannot replace per-provider/per-operation allowlisting. No new flag defaults on. Preserve current coworker and LinkedIn Agent proposal production restrictions.
