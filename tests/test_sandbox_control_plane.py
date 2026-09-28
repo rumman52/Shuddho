@@ -375,9 +375,10 @@ def test_agent_cancel_scrubs_prepared_planner_sandbox_source(container, signed_c
     )
     assert response.status_code == 200
     assert response.json()["state"] == "cancelled"
-    assert container.sandbox.get(owner, resource["resource_id"])["state"] == "cancelled"
     with container.repository.sessions() as db:
+        session = db.get(SandboxSession, resource["resource_id"])
         stored = db.get(SandboxExecution, executions[0]["id"])
+        assert session.state == "cancelled"
         assert stored.state == "cancelled"
         assert stored.request_spec == {"source_scrubbed": True}
 
