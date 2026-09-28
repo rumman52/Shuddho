@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
+import time
 from html.parser import HTMLParser
 
 from .errors import CoworkerError
@@ -154,6 +157,9 @@ class _PreviewParser(HTMLParser):
     def unknown_decl(self, data: str):
         raise CoworkerError("sandbox_artifact_unsafe", "Unsupported HTML declaration.", 422)
 
+    def handle_pi(self, data: str):
+        raise CoworkerError("sandbox_artifact_unsafe", "Processing instructions are not allowed.", 422)
+
     def close(self):
         super().close()
         if self.stack or not self.seen_html or not self.seen_body:
@@ -190,3 +196,52 @@ def validate_static_preview_html(body: bytes, max_bytes: int) -> str:
             422,
         ) from None
     return text
+
+
+
+def create_preview_token(
+    secret: str,
+    artifact_id: str,
+    sha256: str,
+    expires_at: int,
+) -> str:
+    payload = f"{artifact_id}:{sha256}:{expires_at}".encode("utf-8")
+    signature = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return f"{expires_at}.{signature}"
+
+
+def verify_preview_token(
+    secret: str,
+    artifact_id: str,
+    sha256: str,
+    token: str,
+    *,
+    now: int | None = None,
+    max_future_seconds: int = 300,
+) -> int:
+    try:
+        raw_expiry, signature = token.split(".", 1)
+        if not raw_expiry.isdecimal() or len(raw_expiry) > 12:
+            raise ValueError()
+        expires_at = int(raw_expiry)
+    except (TypeError, ValueError):
+        raise CoworkerError(
+            "sandbox_preview_invalid",
+            "This interactive preview link is invalid.",
+            404,
+        ) from None
+    current = int(time.time()) if now is None else now
+    if expires_at < current or expires_at > current + max_future_seconds:
+        raise CoworkerError(
+            "sandbox_preview_expired",
+            "This interactive preview link expired. Open it again from Shuddho.",
+            410,
+        )
+    expected = create_preview_token(secret, artifact_id, sha256, expires_at).split(".", 1)[1]
+    if len(signature) != 64 or not hmac.compare_digest(signature, expected):
+        raise CoworkerError(
+            "sandbox_preview_invalid",
+            "This interactive preview link is invalid.",
+            404,
+        )
+    return expires_at
