@@ -31,11 +31,12 @@ Example:
 {
   "action_proposals": "/secure/release/action-proposals-activation.json",
   "action_social_publishing": "/secure/release/action-social-publishing-activation.json",
-  "agent_linkedin_proposals": "/secure/release/linkedin-agent-proposals-activation.json"
+  "agent_linkedin_proposals": "/secure/release/linkedin-agent-proposals-activation.json",
+  "personal_transactions": "/secure/release/personal-transactions-activation.json"
 }
 ```
 
-Do not include disabled capabilities. Do not include extra stale activation files. The manifest must exactly match the reviewed rollout.
+Do not include disabled capabilities. Do not include extra stale activation files. The manifest must exactly match the reviewed rollout. When `personal_transactions=true`, the exact schema-v26-attested PA-09 activation artifact is required; see [PA-09 Negotiation Commitment Qualification](PA09_NEGOTIATION_QUALIFICATION.md).
 
 Microsoft-enabled action releases additionally use:
 
