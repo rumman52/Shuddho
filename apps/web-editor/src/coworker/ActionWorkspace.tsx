@@ -60,8 +60,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false); const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
+  const currentCapability = mode === "negotiation" ? "email" : mode;
   const currentConnection = connections.find(
-    value => value.provider === provider && value.capability === mode,
+    value => value.provider === provider && value.capability === currentCapability,
   );
   const pending = action?.state === "queued" || action?.state === "executing";
 
