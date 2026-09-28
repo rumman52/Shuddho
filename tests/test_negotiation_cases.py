@@ -1,6 +1,7 @@
 """PA-09 durable negotiation case ledger."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -13,12 +14,15 @@ from test_coworker import account, container
 
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
-from services.coworker.models import NegotiationCase, NegotiationCaseRevision, NegotiationOffer, utcnow
+from services.coworker.models import NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal, utcnow
 from services.coworker.negotiation_schemas import (
     NegotiationCaseCreate,
     NegotiationCasePatch,
     NegotiationCaseTransition,
     NegotiationOfferCreate,
+    NegotiationProposalDraft,
+    NegotiationProposalRequest,
+    NegotiationProposalReview,
 )
 
 
@@ -37,6 +41,8 @@ def enable_negotiations(container):
     container.repository.settings = settings
     container.actions.repo.settings = settings
     container.negotiations.settings = settings
+    container.negotiation_proposals.settings = settings
+    container.negotiation_proposals.model.settings = settings
 
 
 def case_request(connection_id):
@@ -350,6 +356,171 @@ def test_case_creation_requires_qualified_provider_operation(container):
 
 
 
+
+class FakeNegotiationProposalModel:
+    def __init__(self, settings):
+        self.settings = settings
+        self.calls = 0
+
+    async def propose(self, context, request):
+        self.calls += 1
+        return (
+            NegotiationProposalDraft.model_validate({
+                "summary": "Offer the approved ceiling with a shorter delivery target.",
+                "terms": [
+                    {"name": "Price", "value": "USD 5,000"},
+                    {"name": "Delivery", "value": "28 days"},
+                ],
+                "message": (
+                    "We would like to propose USD 5,000 with delivery in 28 days, "
+                    "subject to review and agreement by both parties."
+                ),
+                "rationale": "Matches the recorded price ceiling and remains a reviewable draft.",
+                "risk_notes": ["No counterparty acceptance has been recorded."],
+            }),
+            25,
+            {"model": "synthetic-proposal-model", "prompt_sha256": "a" * 64},
+        )
+
+
+def enable_proposals(container):
+    enable_negotiations(container)
+    settings = replace(
+        container.settings,
+        intelligent_planner_enabled=True,
+        agent_runtime_enabled=True,
+        deepseek_api_key="test-only",
+    )
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.actions.repo.settings = settings
+    container.negotiations.settings = settings
+    container.negotiation_proposals.settings = settings
+    container.negotiation_proposals.model = FakeNegotiationProposalModel(settings)
+
+
+def test_model_proposal_is_inert_idempotent_and_hash_reviewed(container):
+    enable_proposals(container)
+    owner = account(container, "proposal-owner")
+    case, _connection = create_case(container, owner, "proposal-case")
+    request = NegotiationProposalRequest(
+        expected_revision=case["revision"],
+        kind="counteroffer",
+        output_language="en",
+    )
+
+    proposal, created = asyncio.run(
+        container.negotiation_proposals.generate(
+            owner,
+            case["id"],
+            request,
+            "proposal-request-1",
+        )
+    )
+    assert created is True
+    assert proposal["state"] == "suggested"
+    assert proposal["case_revision"] == case["revision"]
+    assert proposal["history_sequence"] == 0
+    assert proposal["proposal_hash"]
+    assert container.negotiation_proposals.model.calls == 1
+
+    replay, created = asyncio.run(
+        container.negotiation_proposals.generate(
+            owner,
+            case["id"],
+            request,
+            "proposal-request-1",
+        )
+    )
+    assert created is False
+    assert replay["id"] == proposal["id"]
+    assert container.negotiation_proposals.model.calls == 1
+
+    with pytest.raises(CoworkerError) as changed:
+        container.negotiation_proposals.dismiss(
+            owner,
+            case["id"],
+            proposal["id"],
+            NegotiationProposalReview(proposal_hash="0" * 64),
+        )
+    assert changed.value.code == "negotiation_proposal_changed"
+
+    dismissed = container.negotiation_proposals.dismiss(
+        owner,
+        case["id"],
+        proposal["id"],
+        NegotiationProposalReview(proposal_hash=proposal["proposal_hash"]),
+    )
+    assert dismissed["state"] == "dismissed"
+
+
+def test_proposal_becomes_stale_when_offer_history_changes(container):
+    enable_proposals(container)
+    owner = account(container, "proposal-stale")
+    case, _connection = create_case(container, owner, "proposal-stale-case")
+    request = NegotiationProposalRequest(
+        expected_revision=case["revision"],
+        kind="proposal",
+        output_language="en",
+    )
+    proposal, _created = asyncio.run(
+        container.negotiation_proposals.generate(
+            owner,
+            case["id"],
+            request,
+            "proposal-stale-request",
+        )
+    )
+    assert proposal["state"] == "suggested"
+
+    container.negotiations.append_offer(
+        owner,
+        case["id"],
+        NegotiationOfferCreate(
+            direction="theirs",
+            kind="counteroffer",
+            summary="Counterparty changed the commercial terms.",
+            terms=[{"name": "Price", "value": "USD 5,100"}],
+            occurred_at=utcnow(),
+        ),
+        "proposal-stale-offer",
+    )
+    refreshed = container.negotiations.get(owner, case["id"])
+    saved = next(item for item in refreshed["proposals"] if item["id"] == proposal["id"])
+    assert saved["state"] == "stale"
+
+
+def test_proposal_generation_rejects_stale_case_revision(container):
+    enable_proposals(container)
+    owner = account(container, "proposal-revision")
+    case, _connection = create_case(container, owner, "proposal-revision-case")
+    updated = container.negotiations.update(
+        owner,
+        case["id"],
+        NegotiationCasePatch(
+            expected_revision=case["revision"],
+            objective="Protect margin and request a shorter delivery window.",
+        ),
+    )
+    assert updated["revision"] == case["revision"] + 1
+
+    with pytest.raises(CoworkerError) as stale:
+        asyncio.run(
+            container.negotiation_proposals.generate(
+                owner,
+                case["id"],
+                NegotiationProposalRequest(
+                    expected_revision=case["revision"],
+                    kind="response",
+                    output_language="en",
+                ),
+                "proposal-stale-revision",
+            )
+        )
+    assert stale.value.code == "negotiation_revision_conflict"
+
+
 def test_account_erasure_removes_negotiation_case_history(container):
     enable_negotiations(container)
     owner = account(container, "negotiation-erasure")
@@ -367,9 +538,37 @@ def test_account_erasure_removes_negotiation_case_history(container):
         "negotiation-erasure-offer",
     )
 
+    settings = replace(
+        container.settings,
+        intelligent_planner_enabled=True,
+        agent_runtime_enabled=True,
+        deepseek_api_key="test-only",
+    )
+    settings.validate()
+    container.settings = settings
+    container.negotiations.settings = settings
+    container.negotiation_proposals.settings = settings
+    container.negotiation_proposals.model = FakeNegotiationProposalModel(settings)
+    current = container.negotiations.get(owner, case["id"])
+    asyncio.run(
+        container.negotiation_proposals.generate(
+            owner,
+            case["id"],
+            NegotiationProposalRequest(
+                expected_revision=current["revision"],
+                kind="response",
+                output_language="en",
+            ),
+            "negotiation-erasure-proposal",
+        )
+    )
+
     result = container.retention.erase_account(owner)
     assert result["database_erased"] is True
     with container.repository.sessions() as db:
+        assert db.query(NegotiationProposal).filter(
+            NegotiationProposal.owner_id == owner
+        ).count() == 0
         assert db.query(NegotiationOffer).filter(
             NegotiationOffer.owner_id == owner
         ).count() == 0
