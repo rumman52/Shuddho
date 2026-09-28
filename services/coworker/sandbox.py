@@ -118,8 +118,8 @@ class SandboxRepository:
             "expires_at": iso(row.expires_at),
             "policy": dict(row.execution_policy or {}),
             "execution": {
-                "executor_attached": False,
-                "code_executed": False,
+                "executor_attached": state == "running",
+                "code_executed": row.cleanup_state == "verified_destroyed",
                 "planner_tool_registered": False,
                 "source_trust": "untrusted",
             },
