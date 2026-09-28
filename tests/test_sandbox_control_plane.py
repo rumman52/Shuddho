@@ -354,6 +354,33 @@ def test_sandbox_worker_command_is_networkless_minimal_and_fail_closed(tmp_path)
     assert rejected.value.code == "sandbox_policy_invalid"
 
 
+def test_sandbox_worker_failure_is_terminal_and_scrubs_source(container):
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner, "sandbox-worker-failure")
+    prepared = container.sandbox.prepare_execution(
+        owner,
+        session["id"],
+        SandboxExecutionCreate(source="raise RuntimeError('boom')"),
+    )
+    container.sandbox.claim_executions("sandbox-worker-failure")
+    failed = container.sandbox.fail_execution(
+        "sandbox-worker-failure",
+        prepared["id"],
+        "sandbox_execution_failed",
+        True,
+    )
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "sandbox_execution_failed"
+    assert failed["result"]["sandbox_destroyed"] is True
+    assert failed["result"]["output_trust"] == "untrusted"
+    with container.repository.sessions() as db:
+        stored = db.get(SandboxExecution, prepared["id"])
+        assert stored.request_spec == {"source_scrubbed": True}
+        assert stored.claimed_by is None
+        assert stored.lease_until is None
+
+
 def test_sandbox_completion_rejects_missing_isolation_evidence(container):
     enable_sandbox(container)
     owner = account(container)
