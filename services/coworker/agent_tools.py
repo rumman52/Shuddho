@@ -7,11 +7,11 @@ from typing import Literal, Type
 from pydantic import BaseModel
 
 from .action_registry import action_spec
-from .agent_schemas import ApprovedActionToolInput, ResearchToolInput, TaskToolInput
+from .agent_schemas import ApprovedActionToolInput, ResearchToolInput, SandboxPythonToolInput, TaskToolInput
 from .config import Settings
 from .errors import CoworkerError
 
-ToolKind = Literal["task", "approved_action"]
+ToolKind = Literal["task", "approved_action", "sandbox"]
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,13 @@ class ToolSpec:
         }
 
     def enabled(self, settings: Settings) -> bool:
+        if self.name == "sandbox.execute_python":
+            return (
+                settings.code_execution_enabled
+                and settings.agent_sandbox_tool_enabled
+                and settings.agent_runtime_v3_enabled
+                and settings.intelligent_planner_enabled
+            )
         if self.name == "research.search":
             return settings.research_services_enabled
         if self.name in {"presentation.create", "spreadsheet.create"}:
@@ -79,6 +86,7 @@ TOOLS = {
         ToolSpec("presentation.create", "1", "task", TaskToolInput, skill_id="presentation", timeout_seconds=240),
         ToolSpec("spreadsheet.create", "1", "task", TaskToolInput, skill_id="spreadsheet", timeout_seconds=240),
         ToolSpec("research.search", "1", "task", ResearchToolInput, skill_id="research", timeout_seconds=240),
+        ToolSpec("sandbox.execute_python", "1", "sandbox", SandboxPythonToolInput, timeout_seconds=120),
         ToolSpec("email.send", "1", "approved_action", ApprovedActionToolInput, capability="email",
                  consequential=True, approval_required=True, timeout_seconds=120),
         ToolSpec("calendar.create", "1", "approved_action", ApprovedActionToolInput, capability="calendar",

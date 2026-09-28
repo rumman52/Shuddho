@@ -758,6 +758,24 @@ class SandboxRepository:
             ).order_by(SandboxExecution.sequence.desc()).limit(50)).all()
             return [self._execution_dto(row) for row in rows]
 
+    def get_execution(self, owner: str, execution_id: str) -> dict:
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            self._expire_stale_sessions(db, owner)
+            row = db.scalar(select(SandboxExecution).where(
+                SandboxExecution.id == execution_id,
+                SandboxExecution.owner_id == owner,
+            ))
+            if row is None:
+                raise not_found()
+            session = db.scalar(select(SandboxSession.id).where(
+                SandboxSession.id == row.session_id,
+                SandboxSession.owner_id == owner,
+            ))
+            if session is None:
+                raise not_found()
+            return self._execution_dto(row)
+
     def preview_url(self, owner: str, artifact_id: str) -> dict:
         self._require_enabled()
         now = utcnow()
@@ -853,8 +871,7 @@ class SandboxRepository:
             ))
             return body
 
-    def cancel(self, owner: str, session_id: str) -> dict:
-        self._require_enabled()
+    def _cancel_owned(self, owner: str, session_id: str) -> dict:
         with self.sessions.begin() as db:
             row = db.scalar(select(SandboxSession).where(
                 SandboxSession.id == session_id,
@@ -887,3 +904,11 @@ class SandboxRepository:
                     action="sandbox_session.cancelled",
                 ))
             return self._session_dto(row)
+
+    def cancel(self, owner: str, session_id: str) -> dict:
+        self._require_enabled()
+        return self._cancel_owned(owner, session_id)
+
+    def cancel_for_cleanup(self, owner: str, session_id: str) -> dict:
+        """Owner-scoped cleanup remains available after a kill-switch rollback."""
+        return self._cancel_owned(owner, session_id)

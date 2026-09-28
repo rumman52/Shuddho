@@ -1,6 +1,8 @@
 """Deterministic bounded planner for Agent Runtime v1."""
 from __future__ import annotations
 
+import re
+
 from .agent_schemas import AgentPlanStep, AgentPlannerProposal
 from .agent_tools import TOOLS, tool
 from .config import Settings
@@ -73,11 +75,45 @@ def action_selection_candidates(actions: list[dict] | None) -> dict[str, dict]:
     return candidates
 
 
-def intelligent_tool_names(settings: Settings, actions: list[dict] | None = None) -> list[str]:
+_PYTHON_FENCE = re.compile(r"```(?:python|py)\r?\n([\s\S]*?)\r?\n```", re.IGNORECASE)
+
+
+def exact_user_python_source(goal: str, settings: Settings) -> str | None:
+    """Return one exact user-authored Python fence or no planner authority.
+
+    Extra prose around the fence is allowed, but a second fenced block is
+    rejected so the model cannot choose among ambiguous executable inputs.
+    """
+    matches = list(_PYTHON_FENCE.finditer(goal))
+    if len(matches) != 1 or goal.count("```") != 2:
+        return None
+    source = matches[0].group(1)
+    encoded = source.encode("utf-8")
+    if not source or len(encoded) > settings.sandbox_max_source_bytes:
+        return None
+    return source
+
+
+def intelligent_tool_names(
+    settings: Settings,
+    actions: list[dict] | None = None,
+    *,
+    goal: str | None = None,
+    runtime_version: int | None = None,
+) -> list[str]:
     names = [
         spec.name for spec in TOOLS.values()
         if spec.kind == "task" and not spec.consequential and not spec.approval_required and spec.enabled(settings)
     ]
+    sandbox = TOOLS.get("sandbox.execute_python")
+    if (
+        runtime_version == 3
+        and goal is not None
+        and sandbox is not None
+        and sandbox.enabled(settings)
+        and exact_user_python_source(goal, settings) is not None
+    ):
+        names.append(sandbox.name)
     if settings.agent_action_selection_enabled:
         names.extend(action_selection_candidates(actions))
     return names

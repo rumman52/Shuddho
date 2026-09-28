@@ -132,6 +132,18 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="agent_sandbox_tool",
+        rollback_key="agent_sandbox_tool_kill_switch",
+        kill_switch="SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED=false",
+        dependencies=("code_execution", "runtime_v3", "intelligent_planner"),
+        staging_gates=(
+            StagingGate(
+                "agent_sandbox_tool",
+                "Runtime v3 exposed sandbox execution only for one exact user-authored Python fence, rejected ambiguous/model-authored source, preserved owner isolation and cancellation, returned only verified sandbox receipts, and retained zero network/secrets/mount/provider authority.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="connector_trust_boundary",
         rollback_key="connector_trust_boundary_kill_switch",
         kill_switch="SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false",
@@ -308,6 +320,14 @@ OPTIONAL_CAPABILITIES = (
 )
 
 ACTIVATION_REQUIREMENTS = (
+    ActivationRequirement(
+        key="agent_sandbox_tool",
+        status="agent_sandbox_tool_verified",
+        ledger_schema_version=25,
+        ledger_event_type="agent_sandbox_tool_verified",
+        ledger_artifact_key="agent_sandbox_tool_activation",
+        capability="agent_sandbox_tool",
+    ),
     ActivationRequirement(
         key="code_execution",
         status="code_execution_verified",

@@ -38,6 +38,7 @@ ROLLBACK_MODES = {
     "connector_reads": ("connector_reads_kill_switch", "SHUDDHO_CONNECTOR_READS_ENABLED"),
     "browser": ("browser_kill_switch", "SHUDDHO_BROWSER_ENABLED"),
     "code_execution": ("code_execution_kill_switch", "SHUDDHO_CODE_EXECUTION_ENABLED"),
+    "agent_sandbox_tool": ("agent_sandbox_tool_kill_switch", "SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED"),
 }
 
 
