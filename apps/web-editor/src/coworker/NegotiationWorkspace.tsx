@@ -44,6 +44,7 @@ const parseTerms = (value: string): NegotiationOfferTerm[] => {
 export default function NegotiationWorkspace({ client }: { client: CoworkerClient }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [cases, setCases] = useState<NegotiationCase[]>([]);
+  const [proposalsEnabled, setProposalsEnabled] = useState(false);
   const [connections, setConnections] = useState<ConnectedAccount[]>([]);
   const [operations, setOperations] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -66,6 +67,8 @@ export default function NegotiationWorkspace({ client }: { client: CoworkerClien
   const [offerKind, setOfferKind] = useState<"proposal" | "counteroffer" | "commitment" | "response">("counteroffer");
   const [offerSummary, setOfferSummary] = useState("");
   const [offerTerms, setOfferTerms] = useState("");
+  const [proposalKind, setProposalKind] = useState<"proposal" | "counteroffer" | "response">("counteroffer");
+  const [proposalLanguage, setProposalLanguage] = useState("en");
 
   const selected = cases.find(item => item.id === selectedId) ?? cases[0] ?? null;
   const eligibleConnections = useMemo(
@@ -86,6 +89,7 @@ export default function NegotiationWorkspace({ client }: { client: CoworkerClien
     ]).then(([saved, connectionState]) => {
       if (controller.signal.aborted) return;
       setEnabled(saved.enabled);
+      setProposalsEnabled(Boolean(saved.proposals_enabled));
       setCases(saved.cases);
       setConnections(connectionState.connections);
       setOperations(connectionState.transaction_operations ?? []);
@@ -186,6 +190,32 @@ export default function NegotiationWorkspace({ client }: { client: CoworkerClien
     });
   }
 
+  async function generateProposal() {
+    if (!selected) return;
+    await run("proposal", async () => {
+      await client.generateNegotiationProposal(
+        selected.id,
+        selected.revision,
+        proposalKind,
+        proposalLanguage,
+        crypto.randomUUID(),
+      );
+      replaceCase(await client.negotiation(selected.id));
+      setNotice("Draft proposal prepared for review. Nothing was sent or committed.");
+    });
+  }
+
+  async function dismissProposal(proposalId: string) {
+    if (!selected) return;
+    const proposal = selected.proposals.find(item => item.id === proposalId);
+    if (!proposal) return;
+    await run(`dismiss-proposal-${proposalId}`, async () => {
+      await client.dismissNegotiationProposal(selected.id, proposal);
+      replaceCase(await client.negotiation(selected.id));
+      setNotice("Draft proposal dismissed. No external action occurred.");
+    });
+  }
+
   if (enabled === null) return <section className="cw-card"><p>Loading negotiation cases…</p></section>;
   if (!enabled) return <section className="cw-card"><h2>Negotiations</h2><p>Negotiation case tracking is not enabled in this deployment.</p>{error && <p className="cw-error">{error}</p>}</section>;
 
@@ -234,6 +264,29 @@ export default function NegotiationWorkspace({ client }: { client: CoworkerClien
         <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={() => transition("closed")}>Close</button>
         <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => transition("cancelled")}>Cancel case</button>
       </>}
+
+      <h3>Reviewable drafts</h3>
+      {!proposalsEnabled && <p className="cw-fineprint">Model-assisted negotiation drafts are disabled in this deployment.</p>}
+      {proposalsEnabled && selected.state === "active" && <div>
+        <label>Draft type<select value={proposalKind} onChange={event => setProposalKind(event.target.value as typeof proposalKind)}>
+          <option value="proposal">Proposal</option><option value="counteroffer">Counteroffer</option><option value="response">Response</option>
+        </select></label>
+        <label>Language<input value={proposalLanguage} maxLength={35} onChange={event => setProposalLanguage(event.target.value)} /></label>
+        <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={generateProposal}>Prepare draft</button>
+        <p className="cw-fineprint">Generated drafts are nonbinding suggestions. They cannot send email, accept terms, choose an account, or create an external action.</p>
+      </div>}
+      {selected.proposals.length === 0 ? <p>No reviewable drafts saved yet.</p> : <ol>
+        {selected.proposals.map(item => <li key={item.id}>
+          <strong>{item.kind} · {item.state}</strong>
+          <p>{item.summary}</p>
+          {item.terms.length > 0 && <ul>{item.terms.map(term => <li key={term.name}><strong>{term.name}:</strong> {term.value}</li>)}</ul>}
+          <p dir="auto">{item.message}</p>
+          <small>Case revision {item.case_revision} · history #{item.history_sequence} · expires {new Date(item.expires_at).toLocaleString()}</small>
+          {item.risk_notes.length > 0 && <ul>{item.risk_notes.map(note => <li key={note}>{note}</li>)}</ul>}
+          {item.state === "suggested" && <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => dismissProposal(item.id)}>Dismiss draft</button>}
+          {item.state === "stale" && <p className="cw-fineprint">This draft is stale because the case or offer history changed. Generate a fresh draft before relying on it.</p>}
+        </li>)}
+      </ol>}
 
       <h3>Offer history</h3>
       {selected.offers.length === 0 ? <p>No offers recorded yet.</p> : <ol>
