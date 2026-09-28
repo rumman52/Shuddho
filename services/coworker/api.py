@@ -325,12 +325,36 @@ def runtime_manifest(
         "environment": settings.environment,
         "capabilities": capabilities,
         "action_providers": providers,
-        "transaction_operations": sorted(settings.transaction_operations),
         "cohort": {
             "enforced": settings.cohort_enforced,
             "configured_members": len(settings.cohort_account_ids),
             "max_users": settings.cohort_max_users,
         },
+    }
+
+
+@router.get("/transaction-authority-manifest")
+def transaction_authority_manifest(
+    response: Response,
+    principal: Annotated[Principal, Depends(require_principal)],
+    services: Services,
+):
+    settings = services.settings
+    if (
+        settings.cohort_enforced
+        and principal.account_id not in settings.cohort_account_ids
+    ):
+        raise CoworkerError(
+            "cohort_not_enabled",
+            "Coworker access is not enabled for this account yet.",
+            403,
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "schema_version": 1,
+        "source_revision": settings.source_revision,
+        "personal_transactions_enabled": settings.personal_transactions_enabled,
+        "operations": sorted(settings.transaction_operations),
     }
 
 
