@@ -1046,6 +1046,9 @@ class AgentRepository:
                     for key in (
                         "task_state", "artifact_count", "has_missing_information",
                         "action_state", "provider_confirmed",
+                        "sandbox_state", "exit_code", "stdout_excerpt", "stderr_excerpt",
+                        "stdout_sha256", "stderr_sha256", "sandbox_destroyed", "output_trust",
+                        "artifact_id", "artifact_sha256",
                     )
                     if key in summary and isinstance(summary[key], (str, int, bool, type(None)))
                 }
@@ -1110,7 +1113,7 @@ class AgentRepository:
 
     def append_v3_step(self, owner: str, run_id: str, tool_name: str, objective: str) -> int:
         """Translate one model-selected registered tool into server-owned arguments."""
-        from .agent_planner import action_selection_candidates, intelligent_tool_names
+        from .agent_planner import action_selection_candidates, exact_user_python_source, intelligent_tool_names
 
         with self.sessions.begin() as db:
             run = self._run(db, owner, run_id, lock=True)
@@ -1137,7 +1140,12 @@ class AgentRepository:
                 "kind": action_rows[action_id].kind,
                 "state": action_rows[action_id].state,
             } for action_id in run.action_ids if action_id in action_rows]
-            allowed = set(intelligent_tool_names(self.settings, actions))
+            allowed = set(intelligent_tool_names(
+                self.settings,
+                actions,
+                goal=run.goal,
+                runtime_version=run.runtime_version,
+            ))
             if tool_name not in allowed:
                 raise CoworkerError("planner_tool_scope", "The planner selected a tool outside the allowed registry.", 409)
 
@@ -1148,16 +1156,26 @@ class AgentRepository:
                 arguments = {"action_id": selected["id"]}
             else:
                 actual_name = tool_name
-                run_docs = list(self._run_document_ids(db, run))
-                arguments = {
-                    "instruction": objective,
-                    "notes": run.goal if actual_name == "report.create" else "",
-                    "document_ids": run_docs,
-                    "output_language": run.output_language,
-                }
-                if actual_name == "research.search":
-                    arguments["query"] = objective[:400]
-                    arguments["time_range"] = "any"
+                if actual_name == "sandbox.execute_python":
+                    source = exact_user_python_source(run.goal, self.settings)
+                    if source is None:
+                        raise CoworkerError(
+                            "planner_tool_scope",
+                            "Sandbox execution requires one exact user-supplied fenced Python block.",
+                            409,
+                        )
+                    arguments = {"source": source}
+                else:
+                    run_docs = list(self._run_document_ids(db, run))
+                    arguments = {
+                        "instruction": objective,
+                        "notes": run.goal if actual_name == "report.create" else "",
+                        "document_ids": run_docs,
+                        "output_language": run.output_language,
+                    }
+                    if actual_name == "research.search":
+                        arguments["query"] = objective[:400]
+                        arguments["time_range"] = "any"
 
             spec = tool(actual_name)
             if not spec.enabled(self.settings):
