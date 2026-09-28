@@ -286,6 +286,8 @@ def test_api_account_isolation_approval_hash_and_no_implicit_execute(signed_clie
     body = action_request(connection).model_dump(mode="json")
     a, b = headers(), headers("bob")
     assert client.get("/api/v1/connections").status_code == 401
+    own_connections = client.get("/api/v1/connections", headers=a).json()
+    assert own_connections["transaction_operations"] == []
     assert client.get("/api/v1/connections", headers=b).json()["connections"] == []
     assert client.post("/api/v1/actions", json=body, headers=b | {"Idempotency-Key": "first-action"}).status_code == 404
     created = client.post("/api/v1/actions", json=body, headers=a | {"Idempotency-Key": "first-action"})
