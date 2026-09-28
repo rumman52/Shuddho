@@ -29,7 +29,14 @@ from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
 from .browser_schemas import BrowserFormPrepareCreate, BrowserNavigateCreate, BrowserSessionCreate, BrowserTakeoverCreate, BrowserTakeoverInputCreate, BrowserTakeoverInteractionCreate, BrowserWorkerClaim, BrowserWorkerFailure, BrowserWorkerIdentity, BrowserWorkerNetworkCheck, BrowserWorkerObservation, BrowserWorkerTakeoverHeartbeat
-from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
+from .sandbox_schemas import (
+    SandboxExecutionCreate,
+    SandboxSessionCreate,
+    SandboxWorkerClaim,
+    SandboxWorkerCompletion,
+    SandboxWorkerFailure,
+    SandboxWorkerIdentity,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["coworker"])
 
@@ -59,6 +66,13 @@ def require_browser_worker(request: Request, services: Container) -> None:
     expected = services.settings.browser_worker_token
     if not expected or not hmac.compare_digest(supplied, expected):
         raise CoworkerError("browser_worker_unauthorized", "Browser worker authentication failed.", 403)
+
+
+def require_sandbox_worker(request: Request, services: Container) -> None:
+    supplied = request.headers.get("X-Shuddho-Sandbox-Worker-Token", "")
+    expected = services.settings.sandbox_worker_token
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise CoworkerError("sandbox_worker_unauthorized", "Sandbox worker authentication failed.", 403)
 
 
 @router.post("/goals", status_code=201)
@@ -522,6 +536,63 @@ def prepare_sandbox_execution(
 @router.delete("/sandbox-sessions/{session_id}")
 def cancel_sandbox_session(session_id: UUID, identity: Identity, services: Services):
     return services.sandbox.cancel(identity.account_id, str(session_id))
+
+
+@router.post("/internal/sandbox-worker/claim")
+def claim_sandbox_executions(
+    payload: SandboxWorkerClaim,
+    request: Request,
+    services: Services,
+):
+    require_sandbox_worker(request, services)
+    return {
+        "executions": services.sandbox.claim_executions(
+            payload.worker_id,
+            payload.limit,
+        )
+    }
+
+
+@router.post("/internal/sandbox-worker/executions/{execution_id}/control")
+def sandbox_worker_control(
+    execution_id: UUID,
+    payload: SandboxWorkerIdentity,
+    request: Request,
+    services: Services,
+):
+    require_sandbox_worker(request, services)
+    return services.sandbox.worker_control(payload.worker_id, str(execution_id))
+
+
+@router.post("/internal/sandbox-worker/executions/{execution_id}/complete")
+def complete_sandbox_execution(
+    execution_id: UUID,
+    payload: SandboxWorkerCompletion,
+    request: Request,
+    services: Services,
+):
+    require_sandbox_worker(request, services)
+    return services.sandbox.complete_execution(
+        payload.worker_id,
+        str(execution_id),
+        payload.model_dump(),
+    )
+
+
+@router.post("/internal/sandbox-worker/executions/{execution_id}/fail")
+def fail_sandbox_execution(
+    execution_id: UUID,
+    payload: SandboxWorkerFailure,
+    request: Request,
+    services: Services,
+):
+    require_sandbox_worker(request, services)
+    return services.sandbox.fail_execution(
+        payload.worker_id,
+        str(execution_id),
+        payload.error_code,
+        payload.sandbox_destroyed,
+    )
 
 
 @router.post("/internal/browser-worker/takeover-heartbeat")

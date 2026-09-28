@@ -95,6 +95,10 @@ class Settings:
     sandbox_cpu_seconds: int = 10
     sandbox_memory_mb: int = 256
     sandbox_disk_mb: int = 64
+    sandbox_max_output_bytes: int = 65536
+    sandbox_worker_lease_seconds: int = 30
+    sandbox_execution_max_attempts: int = 2
+    sandbox_worker_token: str = field(default="", repr=False)
     agent_run_timeout_seconds: int = 1800
     max_personal_goals: int = 100
     max_automations: int = 100
@@ -231,6 +235,10 @@ class Settings:
             sandbox_cpu_seconds=int(os.getenv("SHUDDHO_SANDBOX_CPU_SECONDS", "10")),
             sandbox_memory_mb=int(os.getenv("SHUDDHO_SANDBOX_MEMORY_MB", "256")),
             sandbox_disk_mb=int(os.getenv("SHUDDHO_SANDBOX_DISK_MB", "64")),
+            sandbox_max_output_bytes=int(os.getenv("SHUDDHO_SANDBOX_MAX_OUTPUT_BYTES", "65536")),
+            sandbox_worker_lease_seconds=int(os.getenv("SHUDDHO_SANDBOX_WORKER_LEASE_SECONDS", "30")),
+            sandbox_execution_max_attempts=int(os.getenv("SHUDDHO_SANDBOX_EXECUTION_MAX_ATTEMPTS", "2")),
+            sandbox_worker_token=os.getenv("SHUDDHO_SANDBOX_WORKER_TOKEN", ""),
             agent_run_timeout_seconds=int(os.getenv("SHUDDHO_AGENT_RUN_TIMEOUT_SECONDS", "1800")),
             max_personal_goals=int(os.getenv("SHUDDHO_PERSONAL_GOALS_MAX", "100")),
             max_automations=int(os.getenv("SHUDDHO_AUTOMATIONS_MAX", "100")),
@@ -367,6 +375,14 @@ class Settings:
                 raise ValueError("SHUDDHO_SANDBOX_MEMORY_MB must be between 64 and 1024")
             if not 16 <= self.sandbox_disk_mb <= 512:
                 raise ValueError("SHUDDHO_SANDBOX_DISK_MB must be between 16 and 512")
+            if not 1024 <= self.sandbox_max_output_bytes <= 262144:
+                raise ValueError("SHUDDHO_SANDBOX_MAX_OUTPUT_BYTES must be between 1024 and 262144")
+            if not 10 <= self.sandbox_worker_lease_seconds <= 120:
+                raise ValueError("SHUDDHO_SANDBOX_WORKER_LEASE_SECONDS must be between 10 and 120")
+            if not 1 <= self.sandbox_execution_max_attempts <= 3:
+                raise ValueError("SHUDDHO_SANDBOX_EXECUTION_MAX_ATTEMPTS must be between 1 and 3")
+            if len(self.sandbox_worker_token) < 32:
+                raise ValueError("SHUDDHO_SANDBOX_WORKER_TOKEN must contain at least 32 characters when sandbox execution is enabled")
         if self.agent_runtime_v3_enabled:
             if not self.agent_runtime_enabled or not self.intelligent_planner_enabled:
                 raise ValueError("Agent Runtime v3 requires SHUDDHO_AGENT_RUNTIME_ENABLED=true and SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")

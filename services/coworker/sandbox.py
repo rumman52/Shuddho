@@ -5,7 +5,7 @@ import json
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from .errors import CoworkerError
 from .models import Account, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
@@ -25,11 +25,12 @@ def _digest(value: dict) -> str:
 
 
 class SandboxRepository:
-    """Durable PA-08 control plane.
+    """Durable PA-08 control plane for separately isolated execution.
 
-    This slice intentionally does not execute code in the API process. Source is
-    persisted as untrusted input for a future separately isolated executor and
-    is never returned through user-facing DTOs.
+    The API process never executes generated code. Source remains untrusted and
+    may be leased only to the separately authenticated sandbox worker. Results
+    are accepted only with the exact isolation contract and are still marked
+    untrusted for downstream consumers.
     """
 
     def __init__(self, sessions, settings):
@@ -60,6 +61,14 @@ class SandboxRepository:
                 "cpu_seconds": self.settings.sandbox_cpu_seconds,
                 "memory_mb": self.settings.sandbox_memory_mb,
                 "disk_mb": self.settings.sandbox_disk_mb,
+                "output_bytes": self.settings.sandbox_max_output_bytes,
+            },
+            "executor": {
+                "contract": "bwrap-python311-v1",
+                "network_namespace": "private_empty",
+                "filesystem": "minimal_readonly_runtime",
+                "environment": "cleared",
+                "packages": "stdlib_only",
             },
         }
 
@@ -79,12 +88,16 @@ class SandboxRepository:
             row.updated_at = now
             for execution in db.scalars(select(SandboxExecution).where(
                 SandboxExecution.session_id == row.id,
-                SandboxExecution.state == "prepared",
+                SandboxExecution.state.in_(("prepared", "running")),
             ).with_for_update()).all():
+                if execution.state == "running":
+                    row.cleanup_state = "required"
                 execution.state = "failed"
                 execution.error_code = "session_expired"
                 execution.request_spec = {"source_scrubbed": True}
                 execution.finished_at = now
+                execution.lease_until = None
+                execution.claimed_by = None
             db.add(AuditEvent(
                 id=str(uuid4()),
                 owner_id=row.owner_id,
@@ -108,8 +121,8 @@ class SandboxRepository:
             "expires_at": iso(row.expires_at),
             "policy": dict(row.execution_policy or {}),
             "execution": {
-                "executor_attached": False,
-                "code_executed": False,
+                "executor_attached": state == "running",
+                "code_executed": row.cleanup_state == "verified_destroyed",
                 "planner_tool_registered": False,
                 "source_trust": "untrusted",
             },
@@ -125,7 +138,10 @@ class SandboxRepository:
             "source_bytes": row.source_bytes,
             "state": row.state,
             "error_code": row.error_code,
+            "attempts": int(row.attempts or 0),
+            "result": dict(row.result or {}),
             "created_at": iso(row.created_at),
+            "started_at": iso(row.started_at) if row.started_at else None,
             "finished_at": iso(row.finished_at) if row.finished_at else None,
         }
 
@@ -187,6 +203,321 @@ class SandboxRepository:
             ))
             db.flush()
             return self._session_dto(row), True
+
+    def claim_executions(self, worker_id: str, limit: int = 1) -> list[dict]:
+        self._require_enabled()
+        if not worker_id or len(worker_id) > 64:
+            raise CoworkerError("sandbox_worker_invalid", "The sandbox worker identity is invalid.", 403)
+        now = utcnow()
+        with self.sessions.begin() as db:
+            self._expire_stale_sessions(db)
+            exhausted = db.scalars(
+                select(SandboxExecution)
+                .join(SandboxSession, SandboxSession.id == SandboxExecution.session_id)
+                .where(
+                    SandboxExecution.state == "running",
+                    SandboxExecution.lease_until.is_not(None),
+                    SandboxExecution.lease_until < now,
+                    SandboxExecution.attempts >= self.settings.sandbox_execution_max_attempts,
+                    SandboxSession.state.not_in(tuple(TERMINAL_SANDBOX_STATES)),
+                )
+                .with_for_update(skip_locked=True)
+            ).all()
+            for execution in exhausted:
+                session = db.get(SandboxSession, execution.session_id)
+                execution.state = "failed"
+                execution.error_code = "sandbox_worker_lost"
+                execution.request_spec = {"source_scrubbed": True}
+                execution.finished_at = now
+                execution.lease_until = None
+                execution.claimed_by = None
+                if session is not None:
+                    session.state = "failed"
+                    session.cleanup_state = "required"
+                    session.updated_at = now
+                    db.add(AuditEvent(
+                        id=str(uuid4()),
+                        owner_id=execution.owner_id,
+                        resource_id=session.id,
+                        action="sandbox_execution.worker_lost",
+                    ))
+            rows = db.scalars(
+                select(SandboxExecution)
+                .join(SandboxSession, SandboxSession.id == SandboxExecution.session_id)
+                .where(
+                    SandboxSession.cancel_requested.is_(False),
+                    SandboxSession.expires_at > now,
+                    SandboxSession.state.not_in(tuple(TERMINAL_SANDBOX_STATES)),
+                    SandboxExecution.attempts < self.settings.sandbox_execution_max_attempts,
+                    SandboxExecution.state.in_(("prepared", "running")),
+                    or_(SandboxExecution.lease_until.is_(None), SandboxExecution.lease_until < now),
+                )
+                .order_by(SandboxExecution.created_at)
+                .limit(max(1, min(limit, 10)))
+                .with_for_update(skip_locked=True)
+            ).all()
+            claimed: list[dict] = []
+            for execution in rows:
+                session = db.get(SandboxSession, execution.session_id)
+                if session is None:
+                    continue
+                if execution.state == "running" and execution.lease_until and aware(execution.lease_until) < now:
+                    db.add(AuditEvent(
+                        id=str(uuid4()),
+                        owner_id=execution.owner_id,
+                        resource_id=session.id,
+                        action="sandbox_execution.lease_recovered",
+                    ))
+                execution.state = "running"
+                execution.attempts = int(execution.attempts or 0) + 1
+                execution.claimed_by = worker_id
+                execution.lease_until = now + timedelta(seconds=self.settings.sandbox_worker_lease_seconds)
+                execution.started_at = execution.started_at or now
+                session.state = "running"
+                session.cleanup_state = "pending"
+                session.updated_at = now
+                source = (execution.request_spec or {}).get("source")
+                if not isinstance(source, str):
+                    execution.state = "failed"
+                    execution.error_code = "sandbox_source_missing"
+                    execution.finished_at = now
+                    execution.lease_until = None
+                    execution.claimed_by = None
+                    session.state = "prepared"
+                    session.cleanup_state = "not_required"
+                    session.updated_at = now
+                    continue
+                claimed.append({
+                    "id": execution.id,
+                    "sequence": execution.sequence,
+                    "runtime": session.runtime,
+                    "source": source,
+                    "source_sha256": execution.source_sha256,
+                    "source_bytes": execution.source_bytes,
+                    "attempt": execution.attempts,
+                    "expires_at": iso(session.expires_at),
+                    "policy": dict(session.execution_policy or {}),
+                })
+            return claimed
+
+    def worker_control(self, worker_id: str, execution_id: str) -> dict:
+        self._require_enabled()
+        now = utcnow()
+        with self.sessions.begin() as db:
+            execution = db.scalar(select(SandboxExecution).where(
+                SandboxExecution.id == execution_id,
+            ).with_for_update())
+            if execution is None:
+                raise not_found()
+            session = db.scalar(select(SandboxSession).where(
+                SandboxSession.id == execution.session_id,
+                SandboxSession.owner_id == execution.owner_id,
+            ).with_for_update())
+            if session is None:
+                raise not_found()
+            if session.cancel_requested or session.state == "cancelled":
+                if execution.state in {"prepared", "running"}:
+                    execution.state = "cancelled"
+                    execution.error_code = "session_cancelled"
+                    execution.request_spec = {"source_scrubbed": True}
+                    execution.finished_at = now
+                    execution.lease_until = None
+                    execution.claimed_by = None
+                session.cleanup_state = "required"
+                return {"action": "stop", "reason": "session_cancelled"}
+            if aware(session.expires_at) <= now:
+                session.state = "expired"
+                session.cancel_requested = True
+                session.cleanup_state = "required"
+                session.updated_at = now
+                if execution.state in {"prepared", "running"}:
+                    execution.state = "failed"
+                    execution.error_code = "session_expired"
+                    execution.request_spec = {"source_scrubbed": True}
+                    execution.finished_at = now
+                    execution.lease_until = None
+                    execution.claimed_by = None
+                return {"action": "stop", "reason": "session_expired"}
+            if (
+                execution.state != "running"
+                or execution.claimed_by != worker_id
+                or execution.lease_until is None
+                or aware(execution.lease_until) <= now
+            ):
+                raise CoworkerError(
+                    "sandbox_worker_claim_invalid",
+                    "This sandbox execution is not actively owned by this worker.",
+                    409,
+                )
+            execution.lease_until = now + timedelta(seconds=self.settings.sandbox_worker_lease_seconds)
+            session.updated_at = now
+            return {"action": "continue", "lease_until": iso(execution.lease_until)}
+
+    def complete_execution(self, worker_id: str, execution_id: str, observation: dict) -> dict:
+        self._require_enabled()
+        now = utcnow()
+        with self.sessions.begin() as db:
+            execution = db.scalar(select(SandboxExecution).where(
+                SandboxExecution.id == execution_id,
+            ).with_for_update())
+            if execution is None:
+                raise not_found()
+            session = db.scalar(select(SandboxSession).where(
+                SandboxSession.id == execution.session_id,
+                SandboxSession.owner_id == execution.owner_id,
+            ).with_for_update())
+            if session is None:
+                raise not_found()
+            if (
+                execution.state != "running"
+                or execution.claimed_by != worker_id
+                or execution.lease_until is None
+                or aware(execution.lease_until) <= now
+            ):
+                raise CoworkerError(
+                    "sandbox_worker_claim_invalid",
+                    "This sandbox execution is not actively owned by this worker.",
+                    409,
+                )
+            if session.cancel_requested or session.state == "cancelled" or aware(session.expires_at) <= now:
+                execution.state = "cancelled" if session.cancel_requested or session.state == "cancelled" else "failed"
+                execution.error_code = "session_cancelled" if execution.state == "cancelled" else "session_expired"
+                execution.request_spec = {"source_scrubbed": True}
+                execution.finished_at = now
+                execution.lease_until = None
+                execution.claimed_by = None
+                session.cleanup_state = "required"
+                if aware(session.expires_at) <= now:
+                    session.state = "expired"
+                    session.cancel_requested = True
+                session.updated_at = now
+                raise CoworkerError(
+                    "sandbox_session_closed",
+                    "The sandbox session closed before this result could be accepted.",
+                    409,
+                )
+            if (
+                observation.get("policy_version") != SANDBOX_POLICY_VERSION
+                or observation.get("executor_contract") != "bwrap-python311-v1"
+                or observation.get("sandbox_destroyed") is not True
+                or observation.get("network_isolated") is not True
+                or observation.get("filesystem_isolated") is not True
+                or observation.get("environment_sanitized") is not True
+            ):
+                raise CoworkerError(
+                    "sandbox_isolation_evidence_invalid",
+                    "Sandbox completion did not prove the required isolation contract.",
+                    409,
+                )
+            stdout = observation.get("stdout")
+            stderr = observation.get("stderr")
+            if not isinstance(stdout, str) or not isinstance(stderr, str):
+                raise CoworkerError("sandbox_result_invalid", "Sandbox output is invalid.", 409)
+            if (
+                len(stdout.encode("utf-8")) > self.settings.sandbox_max_output_bytes
+                or len(stderr.encode("utf-8")) > self.settings.sandbox_max_output_bytes
+            ):
+                raise CoworkerError("sandbox_output_limit", "Sandbox output exceeded the configured byte limit.", 409)
+            exit_code = observation.get("exit_code")
+            elapsed_ms = observation.get("elapsed_ms")
+            if (
+                not isinstance(exit_code, int)
+                or not -255 <= exit_code <= 255
+                or not isinstance(elapsed_ms, int)
+                or not 0 <= elapsed_ms <= self.settings.sandbox_wall_seconds * 1000
+            ):
+                raise CoworkerError("sandbox_result_invalid", "Sandbox result metadata is invalid.", 409)
+            execution.result = {
+                "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "stdout_sha256": hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
+                "stderr_sha256": hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
+                "elapsed_ms": elapsed_ms,
+                "policy_version": SANDBOX_POLICY_VERSION,
+                "executor_contract": "bwrap-python311-v1",
+                "sandbox_destroyed": True,
+                "network_isolated": True,
+                "filesystem_isolated": True,
+                "environment_sanitized": True,
+                "output_trust": "untrusted",
+            }
+            execution.state = "succeeded" if exit_code == 0 else "failed"
+            execution.error_code = None if exit_code == 0 else "sandbox_nonzero_exit"
+            execution.request_spec = {"source_scrubbed": True}
+            execution.finished_at = now
+            execution.lease_until = None
+            execution.claimed_by = None
+            session.state = "prepared"
+            session.cleanup_state = "verified_destroyed"
+            session.updated_at = now
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=execution.owner_id,
+                resource_id=session.id,
+                action="sandbox_execution.completed" if exit_code == 0 else "sandbox_execution.failed",
+            ))
+            return self._execution_dto(execution)
+
+    def fail_execution(self, worker_id: str, execution_id: str, error_code: str, sandbox_destroyed: bool) -> dict:
+        self._require_enabled()
+        now = utcnow()
+        allowed = {
+            "sandbox_timeout",
+            "sandbox_output_limit",
+            "sandbox_resource_limit",
+            "sandbox_runner_unavailable",
+            "sandbox_policy_invalid",
+            "sandbox_source_integrity_failed",
+            "sandbox_execution_failed",
+            "worker_interrupted",
+        }
+        if error_code not in allowed or sandbox_destroyed is not True:
+            raise CoworkerError("sandbox_failure_invalid", "Sandbox failure evidence is invalid.", 409)
+        with self.sessions.begin() as db:
+            execution = db.scalar(select(SandboxExecution).where(
+                SandboxExecution.id == execution_id,
+            ).with_for_update())
+            if execution is None:
+                raise not_found()
+            session = db.scalar(select(SandboxSession).where(
+                SandboxSession.id == execution.session_id,
+                SandboxSession.owner_id == execution.owner_id,
+            ).with_for_update())
+            if session is None:
+                raise not_found()
+            if (
+                execution.state != "running"
+                or execution.claimed_by != worker_id
+                or execution.lease_until is None
+                or aware(execution.lease_until) <= now
+            ):
+                raise CoworkerError(
+                    "sandbox_worker_claim_invalid",
+                    "This sandbox execution is not actively owned by this worker.",
+                    409,
+                )
+            execution.state = "failed"
+            execution.error_code = error_code
+            execution.request_spec = {"source_scrubbed": True}
+            execution.finished_at = now
+            execution.lease_until = None
+            execution.claimed_by = None
+            execution.result = {
+                "executor_contract": "bwrap-python311-v1",
+                "sandbox_destroyed": True,
+                "output_trust": "untrusted",
+            }
+            session.state = "prepared"
+            session.cleanup_state = "verified_destroyed"
+            session.updated_at = now
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=execution.owner_id,
+                resource_id=session.id,
+                action="sandbox_execution.failed",
+            ))
+            return self._execution_dto(execution)
 
     def list(self, owner: str) -> list[dict]:
         self._require_enabled()
@@ -305,11 +636,16 @@ class SandboxRepository:
                 row.updated_at = now
                 for execution in db.scalars(select(SandboxExecution).where(
                     SandboxExecution.session_id == row.id,
-                    SandboxExecution.state == "prepared",
+                    SandboxExecution.state.in_(("prepared", "running")),
                 ).with_for_update()).all():
+                    if execution.state == "running":
+                        row.cleanup_state = "required"
                     execution.state = "cancelled"
+                    execution.error_code = "session_cancelled"
                     execution.request_spec = {"source_scrubbed": True}
                     execution.finished_at = now
+                    execution.lease_until = None
+                    execution.claimed_by = None
                 db.add(AuditEvent(
                     id=str(uuid4()),
                     owner_id=owner,
