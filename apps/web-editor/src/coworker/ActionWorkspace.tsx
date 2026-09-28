@@ -41,7 +41,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
   const [shareRecipient, setShareRecipient] = useState("");
   const selectedAttachmentsRef = useRef<string[]>([]);
   const [action, setAction] = useState<ExternalAction | null>(null);
-  const [mode, setMode] = useState<"email" | "calendar" | "drive" | "social">("email");
+  const [mode, setMode] = useState<"email" | "negotiation" | "calendar" | "drive" | "social">("email");
   const microsoftEnabled = import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED === "true";
   const [provider, setProvider] = useState<"google" | "microsoft" | "linkedin">("google");
   const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [bcc, setBcc] = useState("");
