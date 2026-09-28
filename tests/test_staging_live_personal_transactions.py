@@ -28,6 +28,24 @@ def test_transaction_authority_requires_exact_provider_operation():
         }, "google")
 
 
+def test_passed_accumulates_distinct_operation_evidence():
+    first = live.passed(
+        "google proof",
+        "google:negotiation_commitment_email",
+    )
+    second = live.passed(
+        "microsoft proof",
+        "microsoft:negotiation_commitment_email",
+        first,
+    )
+    assert list(second["operation_evidence"]) == [
+        "google:negotiation_commitment_email",
+        "microsoft:negotiation_commitment_email",
+    ]
+    assert second["operation_evidence"]["google:negotiation_commitment_email"]["evidence"] == "google proof"
+    assert second["operation_evidence"]["microsoft:negotiation_commitment_email"]["evidence"] == "microsoft proof"
+
+
 def test_connection_requires_one_active_email_account_for_provider():
     value = live.connection_for([{
         "id": "connection",
