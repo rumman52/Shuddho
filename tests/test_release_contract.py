@@ -55,6 +55,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "connector_reads",
         "connector_reads_microsoft",
         "browser",
+        "code_execution",
     } == covered
 
 
@@ -101,6 +102,22 @@ def test_browser_requires_runtime_v3_trust_boundary_and_staging_evidence():
     )
     rollout["capabilities"]["runtime_v3"] = False
     assert "browser_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
+
+
+def test_code_execution_requires_runtime_v3_artifacts_and_staging_evidence():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["agent_runtime"] = True
+    rollout["capabilities"]["intelligent_planner"] = True
+    rollout["capabilities"]["runtime_v3"] = True
+    rollout["capabilities"]["artifact_services"] = True
+    rollout["capabilities"]["code_execution"] = True
+    assert "code_execution" in required_conditional_gate_ids(
+        rollout["capabilities"], set()
+    )
+    rollout["capabilities"]["artifact_services"] = False
+    assert "code_execution_dependency" in validate_rollout(
         rollout, max_cohort_users=25
     )
 
