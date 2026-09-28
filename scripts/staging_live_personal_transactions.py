@@ -54,6 +54,19 @@ def wrong_hash(value: str) -> str:
     return ("0" if value[0] != "0" else "1") + value[1:]
 
 
+def validate_transaction_authority(value: dict, provider: str) -> None:
+    expected = f"{provider}:negotiation_commitment_email"
+    if (
+        value.get("schema_version") != 1
+        or value.get("personal_transactions_enabled") is not True
+        or not isinstance(value.get("operations"), list)
+        or expected not in value["operations"]
+    ):
+        raise PersonalTransactionsValidationFailure(
+            f"Deployed PA-09 transaction authority does not allow {expected}."
+        )
+
+
 def connection_for(connections: list[dict], provider: str) -> dict:
     matches = [
         item
@@ -212,6 +225,13 @@ def main() -> None:
     if args.provider == "microsoft" and not settings.microsoft_actions_enabled:
         raise SystemExit("Microsoft actions must be enabled to run the Microsoft PA-09 staging probe.")
 
+    expected_operation = f"{args.provider}:negotiation_commitment_email"
+    if expected_operation not in settings.transaction_operations:
+        raise SystemExit(
+            "Controlled staging requires the exact transaction operation in "
+            "SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS."
+        )
+
     base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
     token = env_secret("SHUDDHO_STAGING_TOKEN_A")
     counterparty = env_secret("SHUDDHO_STAGING_TRANSACTION_COUNTERPARTY_EMAIL")
@@ -220,6 +240,15 @@ def main() -> None:
 
     try:
         with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False) as client:
+            authority = request_json(
+                client.get(
+                    "/api/v1/transaction-authority-manifest",
+                    headers=auth(token),
+                ),
+                "read transaction authority manifest",
+            )
+            validate_transaction_authority(authority, args.provider)
+
             listed = request_json(
                 client.get("/api/v1/connections", headers=auth(token)),
                 "list staging connections",
