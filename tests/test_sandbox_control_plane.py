@@ -326,8 +326,11 @@ def test_sandbox_worker_command_is_networkless_minimal_and_fail_closed(tmp_path)
     }
     source = tmp_path / "main.py"
     source.write_text("print('isolated')\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
     command = build_bwrap_command(
         source,
+        scratch,
         policy,
         bwrap_path="/usr/bin/bwrap",
         python_executable="/usr/local/bin/python",
@@ -336,6 +339,8 @@ def test_sandbox_worker_command_is_networkless_minimal_and_fail_closed(tmp_path)
     assert "--clearenv" in command
     assert "--cap-drop" in command
     assert "/work/main.py" in command
+    assert str(scratch.resolve()) in command
+    assert "/usr/bin" not in command
     assert "-I" in command
     assert "-S" in command
     assert str(source.resolve()) in command
