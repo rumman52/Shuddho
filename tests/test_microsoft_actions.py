@@ -21,7 +21,7 @@ from services.coworker.connector_read_schemas import ConnectorReadGrantCreate
 from services.coworker.connector_reads import ConnectorReadRepository, ConnectorReadService
 from services.coworker.context import ContextService
 from services.coworker.credential_broker import CredentialBroker
-from services.coworker.action_schemas import OAuthFinish, OAuthStart
+from services.coworker.action_schemas import ActionPrepare, OAuthFinish, OAuthStart
 from services.coworker.actions import ActionService
 from services.coworker.errors import CoworkerError
 from services.coworker.google_actions import GoogleActions
