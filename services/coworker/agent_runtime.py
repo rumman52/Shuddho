@@ -7,6 +7,7 @@ from .agent_schemas import AgentObservation
 from .errors import CoworkerError
 from .runner import DocumentRunner
 from .schemas import ResearchOptions, TaskCreate
+from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
 
 REPLAN_REASONS = {"capability_changed", "result_incomplete"}
@@ -282,6 +283,69 @@ class AgentRuntime:
             return {"status": "awaiting_approval" if state == "awaiting_approval" else "executing"}
         if spec.consequential or spec.approval_required:
             raise CoworkerError("approval_required", "This consequential tool must use the approved-action path.", 409)
+
+        if spec.kind == "sandbox":
+            if run["runtime_version"] != 3 or not self.container.settings.agent_sandbox_tool_enabled:
+                raise CoworkerError("tool_unavailable", "Planner sandbox execution is not enabled for this run.", 409)
+            self.repo.begin_invocation(run_id, ordinal)
+            resource = self.repo.step_resource(run_id, ordinal)
+            if resource is None:
+                session, _created = self.container.sandbox.create(
+                    run["owner_id"],
+                    SandboxSessionCreate(purpose="code_task", runtime="python311"),
+                    f"agent:{run_id}:{ordinal}",
+                )
+                self.repo.link_invocation_resource(
+                    run_id, ordinal, "sandbox_session", session["id"]
+                )
+                resource = {"resource_type": "sandbox_session", "resource_id": session["id"]}
+            if resource.get("resource_type") != "sandbox_session":
+                raise CoworkerError(
+                    "sandbox_agent_resource",
+                    "This agent step is not bound to the expected sandbox session.",
+                    409,
+                )
+            session_id = str(resource["resource_id"])
+            executions = self.container.sandbox.list_executions(run["owner_id"], session_id)
+            if not executions:
+                prepared = self.container.sandbox.prepare_execution(
+                    run["owner_id"],
+                    session_id,
+                    SandboxExecutionCreate(source=args.source),
+                )
+                return {"status": "executing", "execution_id": prepared["id"]}
+            execution = executions[0]
+            if execution["state"] in {"prepared", "running"}:
+                return {"status": "executing"}
+            if execution["state"] != "succeeded":
+                raise CoworkerError(
+                    execution.get("error_code") or "sandbox_execution_failed",
+                    "The isolated sandbox execution did not complete successfully.",
+                    409,
+                )
+            result = execution.get("result") if isinstance(execution.get("result"), dict) else {}
+            artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else {}
+            summary = {
+                "sandbox_state": "succeeded",
+                "exit_code": result.get("exit_code"),
+                "stdout_excerpt": str(result.get("stdout") or "")[:1800],
+                "stderr_excerpt": str(result.get("stderr") or "")[:800],
+                "stdout_sha256": result.get("stdout_sha256"),
+                "stderr_sha256": result.get("stderr_sha256"),
+                "sandbox_destroyed": result.get("sandbox_destroyed") is True,
+                "output_trust": "untrusted",
+                "artifact_id": artifact.get("id"),
+                "artifact_sha256": artifact.get("sha256"),
+            }
+            self.repo.finish_invocation(
+                run_id,
+                ordinal,
+                "sandbox_execution",
+                execution["id"],
+                summary,
+            )
+            return {"status": "completed"}
+
         if spec.kind != "task" or not spec.skill_id:
             raise CoworkerError("unsupported_agent_tool", "This agent tool is not executable in this runtime.", 409)
 
@@ -339,4 +403,9 @@ class AgentRuntime:
             step = self.repo.step_resource(run_id, ordinal)
             if step and step.get("resource_type") == "task":
                 self.container.repository.fail(step["resource_id"], code, message)
+            if step and step.get("resource_type") == "sandbox_session":
+                try:
+                    self.container.sandbox.cancel(run["owner_id"], step["resource_id"])
+                except CoworkerError:
+                    pass
         self.repo.fail_run(run_id, code, message)
