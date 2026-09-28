@@ -607,6 +607,49 @@ class NegotiationOffer(Base):
     )
 
 
+class NegotiationProposal(Base):
+    __tablename__ = "cw_negotiation_proposals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("cw_negotiation_cases.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    case_revision: Mapped[int] = mapped_column(Integer)
+    history_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String(30))
+    output_language: Mapped[str] = mapped_column(String(35))
+    summary: Mapped[str] = mapped_column(Text)
+    terms: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    message: Mapped[str] = mapped_column(Text)
+    rationale: Mapped[str] = mapped_column(Text)
+    risk_notes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    proposal_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(30), default="suggested")
+    model: Mapped[str] = mapped_column(String(100))
+    prompt_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_id",
+            "idempotency_key",
+            name="uq_cw_negotiation_proposals_owner_idempotency",
+        ),
+        Index(
+            "cw_negotiation_proposals_owner_case_created",
+            "owner_id",
+            "case_id",
+            "created_at",
+        ),
+        Index(
+            "cw_negotiation_proposals_case_state",
+            "case_id",
+            "state",
+        ),
+    )
+
+
 class Automation(Base):
     __tablename__ = "cw_automations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

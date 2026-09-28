@@ -149,3 +149,52 @@ class NegotiationOfferCreate(NegotiationModel):
         if len(names) != len(set(names)):
             raise ValueError("Offer term names must be unique")
         return self
+
+class NegotiationProposalRequest(NegotiationModel):
+    expected_revision: int = Field(ge=1)
+    kind: Literal["proposal", "counteroffer", "response"]
+    output_language: str = Field(
+        default="en",
+        min_length=2,
+        max_length=35,
+        pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$",
+    )
+
+
+class NegotiationProposalReview(NegotiationModel):
+    proposal_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class NegotiationProposalDraft(NegotiationModel):
+    summary: str = Field(min_length=1, max_length=4000)
+    terms: list[NegotiationOfferTerm] = Field(default_factory=list, max_length=20)
+    message: str = Field(min_length=1, max_length=6000)
+    rationale: str = Field(min_length=1, max_length=2000)
+    risk_notes: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("summary", "message", "rationale")
+    @classmethod
+    def safe_proposal_text(cls, value: str) -> str:
+        value = clean_text(value)
+        if not value.strip():
+            raise ValueError("Negotiation proposal text cannot be blank")
+        return value
+
+    @field_validator("risk_notes")
+    @classmethod
+    def safe_risk_notes(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            value = clean_text(value)
+            if not value.strip() or len(value) > 500:
+                raise ValueError("Proposal risk notes must be 1 to 500 characters")
+            cleaned.append(value)
+        return cleaned
+
+    @model_validator(mode="after")
+    def unique_terms(self):
+        names = [item.name.casefold() for item in self.terms]
+        if len(names) != len(set(names)):
+            raise ValueError("Proposal term names must be unique")
+        return self
+

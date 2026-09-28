@@ -161,11 +161,18 @@ export type NegotiationOffer = {
   id: string; sequence: number; direction: "ours" | "theirs"; kind: "proposal" | "counteroffer" | "commitment" | "response";
   summary: string; terms: NegotiationOfferTerm[]; external_action_id: string | null; occurred_at: string; created_at: string;
 };
+export type NegotiationProposal = {
+  id: string; case_id: string; case_revision: number; history_sequence: number;
+  kind: "proposal" | "counteroffer" | "response"; output_language: string;
+  summary: string; terms: NegotiationOfferTerm[]; message: string; rationale: string; risk_notes: string[];
+  proposal_hash: string; state: "suggested" | "dismissed" | "expired" | "stale";
+  model: string; prompt_sha256: string; created_at: string; expires_at: string; reviewed_at: string | null;
+};
 export type NegotiationCase = {
   id: string; connection_id: string; provider: "google" | "microsoft";
   counterparty_name: string; counterparty_address: string; subject: string; objective: string;
   limits: NegotiationLimit[]; revision: number; state: "active" | "paused" | "closed" | "cancelled";
-  created_at: string; updated_at: string; offers: NegotiationOffer[];
+  created_at: string; updated_at: string; offers: NegotiationOffer[]; proposals: NegotiationProposal[];
 };
 export type NegotiationCaseCreate = {
   connection_id: string; counterparty_name: string; counterparty_address: string;
@@ -400,7 +407,7 @@ export class CoworkerClient {
   }
   cancelAction(id: string) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}/cancel`, { method: "POST" }); }
   reconcileAction(id: string) { return this.response(`/api/v1/actions/${identifier(id)}/reconcile`, { method: "POST" }, 65000).then(response => response.json() as Promise<ExternalAction>); }
-  negotiations(signal?: AbortSignal) { return this.json<{ enabled: boolean; cases: NegotiationCase[] }>("/api/v1/negotiations", { signal }); }
+  negotiations(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals_enabled?: boolean; cases: NegotiationCase[] }>("/api/v1/negotiations", { signal }); }
   negotiation(id: string, signal?: AbortSignal) { return this.json<NegotiationCase>(`/api/v1/negotiations/${identifier(id)}`, { signal }); }
   createNegotiation(input: NegotiationCaseCreate, key: string) {
     return this.json<NegotiationCase>("/api/v1/negotiations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
@@ -413,6 +420,20 @@ export class CoworkerClient {
   }
   appendNegotiationOffer(id: string, input: { direction: "ours" | "theirs"; kind: "proposal" | "counteroffer" | "commitment" | "response"; summary: string; terms: NegotiationOfferTerm[]; external_action_id?: string | null; occurred_at: string }, key: string) {
     return this.json<NegotiationOffer>(`/api/v1/negotiations/${identifier(id)}/offers`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+  generateNegotiationProposal(id: string, revision: number, kind: "proposal" | "counteroffer" | "response", outputLanguage: string, key: string) {
+    return this.json<NegotiationProposal>(`/api/v1/negotiations/${identifier(id)}/proposals`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+      body: JSON.stringify({ expected_revision: revision, kind, output_language: outputLanguage }),
+    });
+  }
+  dismissNegotiationProposal(caseId: string, proposal: NegotiationProposal) {
+    return this.json<NegotiationProposal>(`/api/v1/negotiations/${identifier(caseId)}/proposals/${identifier(proposal.id)}/dismiss`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposal_hash: proposal.proposal_hash }),
+    });
   }
 
   goals(signal?: AbortSignal) { return this.json<{ enabled: boolean; goals: PersonalGoal[] }>("/api/v1/goals", { signal }); }

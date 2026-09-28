@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from datetime import timedelta
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -18,6 +19,7 @@ from .models import (
     NegotiationCase,
     NegotiationCaseRevision,
     NegotiationOffer,
+    NegotiationProposal,
     Workspace,
     utcnow,
 )
@@ -26,11 +28,16 @@ from .negotiation_schemas import (
     NegotiationCasePatch,
     NegotiationCaseTransition,
     NegotiationOfferCreate,
+    NegotiationProposalDraft,
+    NegotiationProposalRequest,
+    NegotiationProposalReview,
 )
-from .repository import iso, not_found
+from .repository import aware, iso, not_found
 
 CASE_LIMIT = 100
 OFFER_LIMIT = 200
+PROPOSAL_LIMIT = 100
+PROPOSAL_TTL_HOURS = 24
 
 
 class NegotiationRepository:
@@ -162,6 +169,82 @@ class NegotiationRepository:
             "created_at": iso(row.created_at),
         }
 
+    @staticmethod
+    def _proposal_hash(
+        case_id: str,
+        case_revision: int,
+        history_sequence: int,
+        kind: str,
+        output_language: str,
+        draft: dict,
+    ) -> str:
+        payload = {
+            "schema_version": 1,
+            "case_id": case_id,
+            "case_revision": case_revision,
+            "history_sequence": history_sequence,
+            "kind": kind,
+            "output_language": output_language,
+            "draft": draft,
+        }
+        return hashlib.sha256(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def _proposal_dto(
+        self,
+        row: NegotiationProposal,
+        *,
+        current_revision: int,
+        current_history_sequence: int,
+    ) -> dict:
+        now = utcnow()
+        state = row.state
+        if state == "suggested" and aware(row.expires_at) <= now:
+            state = "expired"
+        elif state == "suggested" and (
+            row.case_revision != current_revision
+            or row.history_sequence != current_history_sequence
+        ):
+            state = "stale"
+        return {
+            "id": row.id,
+            "case_id": row.case_id,
+            "case_revision": row.case_revision,
+            "history_sequence": row.history_sequence,
+            "kind": row.kind,
+            "output_language": row.output_language,
+            "summary": row.summary,
+            "terms": list(row.terms),
+            "message": row.message,
+            "rationale": row.rationale,
+            "risk_notes": list(row.risk_notes),
+            "proposal_hash": row.proposal_hash,
+            "state": state,
+            "model": row.model,
+            "prompt_sha256": row.prompt_sha256,
+            "created_at": iso(row.created_at),
+            "expires_at": iso(row.expires_at),
+            "reviewed_at": iso(row.reviewed_at) if row.reviewed_at is not None else None,
+        }
+
+    @staticmethod
+    def _history_sequence(db, case_id: str, owner: str) -> int:
+        return int(
+            db.scalar(
+                select(func.coalesce(func.max(NegotiationOffer.sequence), 0)).where(
+                    NegotiationOffer.case_id == case_id,
+                    NegotiationOffer.owner_id == owner,
+                )
+            )
+            or 0
+        )
+
     def _dto(self, db, row: NegotiationCase) -> dict:
         offers = db.scalars(
             select(NegotiationOffer)
@@ -171,6 +254,16 @@ class NegotiationRepository:
             )
             .order_by(NegotiationOffer.sequence)
             .limit(OFFER_LIMIT)
+        ).all()
+        history_sequence = offers[-1].sequence if offers else 0
+        proposals = db.scalars(
+            select(NegotiationProposal)
+            .where(
+                NegotiationProposal.case_id == row.id,
+                NegotiationProposal.owner_id == row.owner_id,
+            )
+            .order_by(NegotiationProposal.created_at.desc())
+            .limit(PROPOSAL_LIMIT)
         ).all()
         return {
             "id": row.id,
@@ -186,6 +279,14 @@ class NegotiationRepository:
             "created_at": iso(row.created_at),
             "updated_at": iso(row.updated_at),
             "offers": [self._offer_dto(item) for item in offers],
+            "proposals": [
+                self._proposal_dto(
+                    item,
+                    current_revision=row.revision,
+                    current_history_sequence=history_sequence,
+                )
+                for item in proposals
+            ],
         }
 
     @staticmethod
@@ -428,6 +529,217 @@ class NegotiationRepository:
                 409,
             )
         return action
+
+    def proposal_context(
+        self,
+        owner: str,
+        case_id: str,
+        request: NegotiationProposalRequest,
+        idempotency_key: str,
+    ) -> tuple[dict, dict | None]:
+        self._require_enabled()
+        with self.sessions() as db:
+            case = self._case(db, owner, case_id)
+            self._check_revision(case, request.expected_revision)
+            if case.state != "active":
+                raise CoworkerError(
+                    "negotiation_case_inactive",
+                    "Resume this negotiation case before generating a proposal.",
+                    409,
+                )
+            self._connection(db, owner, case.connection_id)
+            history_sequence = self._history_sequence(db, case.id, owner)
+            fingerprint = self._fingerprint({
+                "case_id": case.id,
+                "case_revision": case.revision,
+                "history_sequence": history_sequence,
+                "kind": request.kind,
+                "output_language": request.output_language,
+            })
+            previous = db.scalar(
+                select(NegotiationProposal).where(
+                    NegotiationProposal.owner_id == owner,
+                    NegotiationProposal.idempotency_key == idempotency_key,
+                )
+            )
+            if previous is not None:
+                if not hmac.compare_digest(previous.fingerprint, fingerprint):
+                    raise CoworkerError(
+                        "idempotency_conflict",
+                        "This request key belongs to a different negotiation proposal.",
+                        409,
+                    )
+                return {}, self._proposal_dto(
+                    previous,
+                    current_revision=case.revision,
+                    current_history_sequence=history_sequence,
+                )
+            if db.scalar(
+                select(func.count())
+                .select_from(NegotiationProposal)
+                .where(NegotiationProposal.owner_id == owner)
+            ) >= PROPOSAL_LIMIT:
+                raise CoworkerError(
+                    "negotiation_proposal_limit",
+                    "This workspace reached its saved negotiation proposal limit.",
+                    429,
+                )
+            offers = db.scalars(
+                select(NegotiationOffer)
+                .where(
+                    NegotiationOffer.case_id == case.id,
+                    NegotiationOffer.owner_id == owner,
+                )
+                .order_by(NegotiationOffer.sequence.desc())
+                .limit(40)
+            ).all()
+            context = {
+                "fingerprint": fingerprint,
+                "case_id": case.id,
+                "case_revision": case.revision,
+                "history_sequence": history_sequence,
+                "subject": case.subject,
+                "objective": case.objective,
+                "counterparty_name": case.counterparty_name,
+                "limits": list(case.limits),
+                "offers": [
+                    {
+                        "sequence": item.sequence,
+                        "direction": item.direction,
+                        "kind": item.kind,
+                        "summary": item.summary,
+                        "terms": list(item.terms),
+                        "occurred_at": iso(item.occurred_at),
+                    }
+                    for item in reversed(offers)
+                ],
+            }
+            return context, None
+
+    def save_proposal(
+        self,
+        owner: str,
+        case_id: str,
+        request: NegotiationProposalRequest,
+        idempotency_key: str,
+        context: dict,
+        draft: NegotiationProposalDraft,
+        *,
+        model: str,
+        prompt_sha256: str,
+    ) -> tuple[dict, bool]:
+        self._require_enabled()
+        draft_value = draft.model_dump(mode="json")
+        with self.sessions.begin() as db:
+            case = self._case(db, owner, case_id, lock=True)
+            self._check_revision(case, request.expected_revision)
+            history_sequence = self._history_sequence(db, case.id, owner)
+            if (
+                context.get("case_revision") != case.revision
+                or context.get("history_sequence") != history_sequence
+            ):
+                raise CoworkerError(
+                    "negotiation_proposal_stale",
+                    "This negotiation changed while the proposal was being prepared. Generate a fresh proposal.",
+                    409,
+                )
+            previous = db.scalar(
+                select(NegotiationProposal).where(
+                    NegotiationProposal.owner_id == owner,
+                    NegotiationProposal.idempotency_key == idempotency_key,
+                )
+            )
+            if previous is not None:
+                if not hmac.compare_digest(
+                    previous.fingerprint,
+                    str(context.get("fingerprint", "")),
+                ):
+                    raise CoworkerError(
+                        "idempotency_conflict",
+                        "This request key belongs to a different negotiation proposal.",
+                        409,
+                    )
+                return self._proposal_dto(
+                    previous,
+                    current_revision=case.revision,
+                    current_history_sequence=history_sequence,
+                ), False
+            proposal_hash = self._proposal_hash(
+                case.id,
+                case.revision,
+                history_sequence,
+                request.kind,
+                request.output_language,
+                draft_value,
+            )
+            now = utcnow()
+            row = NegotiationProposal(
+                id=str(uuid4()),
+                case_id=case.id,
+                owner_id=owner,
+                idempotency_key=idempotency_key,
+                fingerprint=str(context["fingerprint"]),
+                case_revision=case.revision,
+                history_sequence=history_sequence,
+                kind=request.kind,
+                output_language=request.output_language,
+                summary=draft.summary,
+                terms=[item.model_dump(mode="json") for item in draft.terms],
+                message=draft.message,
+                rationale=draft.rationale,
+                risk_notes=list(draft.risk_notes),
+                proposal_hash=proposal_hash,
+                state="suggested",
+                model=model,
+                prompt_sha256=prompt_sha256,
+                created_at=now,
+                expires_at=now + timedelta(hours=PROPOSAL_TTL_HOURS),
+                reviewed_at=None,
+            )
+            db.add(row)
+            self._audit(db, owner, row.id, "negotiation_proposal.generated")
+            db.flush()
+            return self._proposal_dto(
+                row,
+                current_revision=case.revision,
+                current_history_sequence=history_sequence,
+            ), True
+
+    def dismiss_proposal(
+        self,
+        owner: str,
+        case_id: str,
+        proposal_id: str,
+        review: NegotiationProposalReview,
+    ) -> dict:
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            case = self._case(db, owner, case_id)
+            row = db.scalar(
+                select(NegotiationProposal).where(
+                    NegotiationProposal.id == proposal_id,
+                    NegotiationProposal.case_id == case.id,
+                    NegotiationProposal.owner_id == owner,
+                ).with_for_update()
+            )
+            if row is None:
+                raise not_found()
+            if not hmac.compare_digest(row.proposal_hash, review.proposal_hash):
+                raise CoworkerError(
+                    "negotiation_proposal_changed",
+                    "This negotiation proposal changed. Review the latest proposal before acting on it.",
+                    409,
+                )
+            if row.state == "suggested":
+                row.state = "dismissed"
+                row.reviewed_at = utcnow()
+                self._audit(db, owner, row.id, "negotiation_proposal.dismissed")
+            history_sequence = self._history_sequence(db, case.id, owner)
+            return self._proposal_dto(
+                row,
+                current_revision=case.revision,
+                current_history_sequence=history_sequence,
+            )
 
     def append_offer(
         self,
