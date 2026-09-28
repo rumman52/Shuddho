@@ -33,11 +33,41 @@ def digest(value: dict) -> str:
     ).hexdigest()
 
 
-def passed(evidence: str) -> dict:
+def passed(
+    evidence: str,
+    operation: str,
+    existing: dict | None = None,
+) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    operation_evidence: dict[str, dict[str, str]] = {}
+    if isinstance(existing, dict):
+        prior = existing.get("operation_evidence")
+        if isinstance(prior, dict):
+            for key, value in prior.items():
+                if (
+                    isinstance(key, str)
+                    and isinstance(value, dict)
+                    and isinstance(value.get("evidence"), str)
+                    and value["evidence"].strip()
+                    and isinstance(value.get("verified_at"), str)
+                ):
+                    operation_evidence[key] = {
+                        "evidence": value["evidence"],
+                        "verified_at": value["verified_at"],
+                    }
+    operation_evidence[operation] = {
+        "evidence": evidence,
+        "verified_at": now,
+    }
     return {
         "status": "passed",
-        "evidence": evidence,
-        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "evidence": "qualified transaction operations: "
+        + ", ".join(sorted(operation_evidence)),
+        "verified_at": now,
+        "operation_evidence": {
+            key: operation_evidence[key]
+            for key in sorted(operation_evidence)
+        },
     }
 
 
@@ -306,10 +336,13 @@ def main() -> None:
             if not isinstance(loaded, dict):
                 raise PersonalTransactionsValidationFailure("Base evidence must be a JSON object.")
             evidence.update(loaded)
+        operation = f"{args.provider}:negotiation_commitment_email"
         evidence["personal_transactions"] = passed(
             f"live {args.provider} negotiation commitment passed exact counterparty/message/final-term binding, "
             "no auto-execution, wrong-hash denial, explicit approval, single execution audit, fixed connector path "
-            "and provider acceptance receipt; uncertain-outcome no-retry remains fault-injection tested in CI"
+            "and provider acceptance receipt; uncertain-outcome no-retry remains fault-injection tested in CI",
+            operation,
+            evidence.get("personal_transactions"),
         )
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
         print(json.dumps({
