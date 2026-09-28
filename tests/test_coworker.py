@@ -1890,3 +1890,53 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     ):
         if secret:
             assert secret not in encoded
+
+
+def test_transaction_authority_manifest_is_authenticated_scoped_and_exact(
+    signed_client,
+    container,
+    monkeypatch,
+):
+    client, headers = signed_client
+    monkeypatch.setenv("SHUDDHO_COWORKER_ENABLED", "true")
+    admitted = client.get("/api/v1/me", headers=headers()).json()["account_id"]
+    current = replace(
+        container.settings,
+        source_revision="b" * 40,
+        cohort_enforced=True,
+        cohort_account_ids=frozenset({admitted}),
+        personal_transactions_enabled=True,
+        transaction_operations=frozenset({"google:negotiation_commitment_email"}),
+    )
+    container.settings = current
+    container.repository.settings = current
+    container.agent.settings = current
+    container.actions.repo.settings = current
+
+    assert client.get("/api/v1/transaction-authority-manifest").status_code == 401
+    assert client.get(
+        "/api/v1/transaction-authority-manifest",
+        headers=headers("bob"),
+    ).status_code == 403
+
+    response = client.get(
+        "/api/v1/transaction-authority-manifest",
+        headers=headers(),
+    )
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.json() == {
+        "schema_version": 1,
+        "source_revision": "b" * 40,
+        "personal_transactions_enabled": True,
+        "operations": ["google:negotiation_commitment_email"],
+    }
+    encoded = response.text
+    for secret in (
+        current.database_url,
+        current.connector_encryption_key,
+        current.deepseek_api_key,
+        current.temporal_api_key,
+    ):
+        if secret:
+            assert secret not in encoded
