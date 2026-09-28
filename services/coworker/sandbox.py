@@ -25,11 +25,12 @@ def _digest(value: dict) -> str:
 
 
 class SandboxRepository:
-    """Durable PA-08 control plane.
+    """Durable PA-08 control plane for separately isolated execution.
 
-    This slice intentionally does not execute code in the API process. Source is
-    persisted as untrusted input for a future separately isolated executor and
-    is never returned through user-facing DTOs.
+    The API process never executes generated code. Source remains untrusted and
+    may be leased only to the separately authenticated sandbox worker. Results
+    are accepted only with the exact isolation contract and are still marked
+    untrusted for downstream consumers.
     """
 
     def __init__(self, sessions, settings):
