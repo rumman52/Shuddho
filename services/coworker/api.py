@@ -808,7 +808,25 @@ async def agent_run_events(run_id: UUID, request: Request, identity: Identity, s
 
 @router.post("/agent-runs/{run_id}/cancel")
 def cancel_agent_run(run_id: UUID, identity: Identity, services: Services):
-    return services.agent.cancel(identity.account_id, str(run_id))
+    owner = identity.account_id
+    run_key = str(run_id)
+    current = services.agent.get(owner, run_key)
+    sandbox_sessions: list[str] = []
+    for step in current["steps"]:
+        if step["tool"] != "sandbox.execute_python":
+            continue
+        resource = services.agent.step_resource(run_key, step["ordinal"])
+        if resource and resource.get("resource_type") == "sandbox_session":
+            sandbox_sessions.append(str(resource["resource_id"]))
+    cancelled = services.agent.cancel(owner, run_key)
+    for session_id in sandbox_sessions:
+        try:
+            services.sandbox.cancel(owner, session_id)
+        except CoworkerError:
+            # Agent cancellation remains authoritative even if a stale sandbox
+            # session already reached a terminal state.
+            pass
+    return cancelled
 
 
 @router.post(
