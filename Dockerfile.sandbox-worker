@@ -6,6 +6,7 @@ WORKDIR /worker
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bubblewrap ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
+    rm -rf /usr/local/lib/python3.11/site-packages/* /usr/local/bin/pip* && \
     groupadd --gid 10002 shuddho-sandbox && \
     useradd --uid 10002 --gid shuddho-sandbox --create-home shuddho-sandbox
 
