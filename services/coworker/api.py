@@ -487,6 +487,7 @@ def runtime_manifest(
         "personal_transactions": settings.personal_transactions_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
+        "negotiation_proposal_promotion": settings.negotiation_proposal_promotion_enabled,
         "agent_linkedin_proposals": settings.agent_linkedin_proposals_enabled,
     }
     providers = []
