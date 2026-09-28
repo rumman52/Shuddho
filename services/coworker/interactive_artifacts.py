@@ -120,6 +120,8 @@ class _PreviewParser(HTMLParser):
                 raise CoworkerError("sandbox_artifact_unsafe", "Invalid HTML structure.", 422)
             self.seen_html = True
         if tag == "body":
+            if self.seen_body:
+                raise CoworkerError("sandbox_artifact_unsafe", "Invalid HTML structure.", 422)
             self.seen_body = True
         if tag == "style":
             self.in_style = True
@@ -231,7 +233,7 @@ def verify_preview_token(
             404,
         ) from None
     current = int(time.time()) if now is None else now
-    if expires_at < current or expires_at > current + max_future_seconds:
+    if expires_at <= current or expires_at > current + max_future_seconds:
         raise CoworkerError(
             "sandbox_preview_expired",
             "This interactive preview link expired. Open it again from Shuddho.",
