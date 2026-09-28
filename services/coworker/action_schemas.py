@@ -128,6 +128,8 @@ class NegotiationCommitmentEmail(EmailSend):
         names = [item.name.casefold() for item in self.terms]
         if len(names) != len(set(names)):
             raise ValueError("Negotiation term names must be unique")
+        if len(self.to) != 1 or self.bcc:
+            raise ValueError("Binding negotiation commitments require exactly one primary counterparty and do not allow Bcc")
         return self
 
 
