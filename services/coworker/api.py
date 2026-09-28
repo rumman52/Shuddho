@@ -300,6 +300,7 @@ def runtime_manifest(
         "connector_reads": settings.connector_reads_enabled,
         "browser": settings.browser_enabled,
         "code_execution": settings.code_execution_enabled,
+        "agent_sandbox_tool": settings.agent_sandbox_tool_enabled,
         "action_attachments": settings.action_attachments_enabled,
         "action_reminders": settings.action_reminders_enabled,
         "action_recipients": settings.action_recipients_enabled,
