@@ -90,6 +90,8 @@ class SandboxRepository:
                 SandboxExecution.session_id == row.id,
                 SandboxExecution.state.in_(("prepared", "running")),
             ).with_for_update()).all():
+                if execution.state == "running":
+                    row.cleanup_state = "required"
                 execution.state = "failed"
                 execution.error_code = "session_expired"
                 execution.request_spec = {"source_scrubbed": True}
@@ -636,6 +638,8 @@ class SandboxRepository:
                     SandboxExecution.session_id == row.id,
                     SandboxExecution.state.in_(("prepared", "running")),
                 ).with_for_update()).all():
+                    if execution.state == "running":
+                        row.cleanup_state = "required"
                     execution.state = "cancelled"
                     execution.error_code = "session_cancelled"
                     execution.request_spec = {"source_scrubbed": True}
