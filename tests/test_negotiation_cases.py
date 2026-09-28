@@ -13,7 +13,7 @@ from test_coworker import account, container
 
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
-from services.coworker.models import utcnow
+from services.coworker.models import NegotiationCase, NegotiationCaseRevision, NegotiationOffer, utcnow
 from services.coworker.negotiation_schemas import (
     NegotiationCaseCreate,
     NegotiationCasePatch,
@@ -347,3 +347,35 @@ def test_case_creation_requires_qualified_provider_operation(container):
             "operation-gated-case",
         )
     assert denied.value.code == "personal_transaction_operation_disabled"
+
+
+
+def test_account_erasure_removes_negotiation_case_history(container):
+    enable_negotiations(container)
+    owner = account(container, "negotiation-erasure")
+    case, _connection = create_case(container, owner, "negotiation-erasure-case")
+    container.negotiations.append_offer(
+        owner,
+        case["id"],
+        NegotiationOfferCreate(
+            direction="theirs",
+            kind="proposal",
+            summary="Synthetic offer for retention coverage.",
+            terms=[{"name": "Price", "value": "USD 5,100"}],
+            occurred_at=utcnow(),
+        ),
+        "negotiation-erasure-offer",
+    )
+
+    result = container.retention.erase_account(owner)
+    assert result["database_erased"] is True
+    with container.repository.sessions() as db:
+        assert db.query(NegotiationOffer).filter(
+            NegotiationOffer.owner_id == owner
+        ).count() == 0
+        assert db.query(NegotiationCaseRevision).filter(
+            NegotiationCaseRevision.owner_id == owner
+        ).count() == 0
+        assert db.query(NegotiationCase).filter(
+            NegotiationCase.owner_id == owner
+        ).count() == 0
