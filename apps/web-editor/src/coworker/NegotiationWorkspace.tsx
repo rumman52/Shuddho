@@ -237,6 +237,17 @@ export default function NegotiationWorkspace({ client, reviewAction }: { client:
     });
   }
 
+  async function recordConfirmedSend(proposalId: string) {
+    if (!selected) return;
+    const proposal = selected.proposals.find(item => item.id === proposalId);
+    if (!proposal) return;
+    await run(`record-promoted-${proposalId}`, async () => {
+      await client.recordConfirmedNegotiationSend(selected.id, proposal);
+      replaceCase(await client.negotiation(selected.id));
+      setNotice("Provider-confirmed send recorded in offer history. This records delivery evidence only, not counterparty agreement.");
+    });
+  }
+
   if (enabled === null) return <section className="cw-card"><p>Loading negotiation cases…</p></section>;
   if (!enabled) return <section className="cw-card"><h2>Negotiations</h2><p>Negotiation case tracking is not enabled in this deployment.</p>{error && <p className="cw-error">{error}</p>}</section>;
 
@@ -308,11 +319,15 @@ export default function NegotiationWorkspace({ client, reviewAction }: { client:
             {promotionEnabled && item.terms.length > 0 && <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={() => promoteProposal(item.id)}>Prepare commitment preview</button>}
             <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => dismissProposal(item.id)}>Dismiss draft</button>
           </>}
-          {item.state === "promoted" && item.promoted_action_id && <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={() => reviewPromotedAction(item.promoted_action_id!)}>Review commitment preview</button>}
+          {item.state === "promoted" && item.promoted_action_id && <>
+            <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={() => reviewPromotedAction(item.promoted_action_id!)}>Review commitment preview</button>
+            {selected.state === "active" && !selected.offers.some(offer => offer.external_action_id === item.promoted_action_id) &&
+              <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={() => recordConfirmedSend(item.id)}>Record confirmed send</button>}
+          </>}
           {item.state === "stale" && <p className="cw-fineprint">This draft is stale because the case or offer history changed. Generate a fresh draft before relying on it.</p>}
         </li>)}
       </ol>}
-      {promotionEnabled && <p className="cw-fineprint">Promotion only prepares an exact immutable action preview bound to this proposal, case revision, and offer history. Sending still requires separate approval in Email & calendar, and execution rechecks that the negotiation has not changed.</p>}
+      {promotionEnabled && <p className="cw-fineprint">Promotion only prepares an exact immutable action preview bound to this proposal, case revision, and offer history. Sending still requires separate approval in Email & calendar, and execution rechecks that the negotiation has not changed. After the provider confirms a successful send, you can record that exact send in history; this does not mean the counterparty accepted the terms.</p>}
 
       <h3>Offer history</h3>
       {selected.offers.length === 0 ? <p>No offers recorded yet.</p> : <ol>
