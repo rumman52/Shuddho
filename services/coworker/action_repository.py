@@ -869,7 +869,7 @@ class ActionRepository:
             if row.approved_at:  # Replayed approval never dispatches a new action.
                 return action_dto(row)
             self.enabled()
-            self._require_optional_feature(spec)
+            self._require_optional_feature(spec, connection.provider)
             if row.state != "awaiting_approval" or aware(row.expires_at) <= utcnow() or not connection.active:
                 raise CoworkerError("approval_expired", "This preview is no longer available for approval. Prepare a new one.", 409)
             if spec.requires_future_start:
