@@ -218,20 +218,41 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
     matching = [item for item in goal_view["run_links"] if item["run_id"] == first["run_id"]]
     assert len(matching) == 1 and matching[0]["goal_revision"] == automation["goal_revision"]
 
-    notification_ids = automation_container.automations.claim_notifications()
+    notification_ids = automation_container.notifications.claim_notifications()
     assert len(notification_ids) == 1
-    assert automation_container.automations.claim_notifications() == []
+    assert automation_container.notifications.claim_notifications() == []
     with automation_container.repository.sessions.begin() as db:
         outbox = db.get(NotificationOutbox, notification_ids[0])
         outbox.lease_until = utcnow() - timedelta(seconds=1)
-    assert automation_container.automations.claim_notifications() == notification_ids
-    automation_container.automations.deliver_notification(notification_ids[0])
-    assert automation_container.automations.claim_notifications() == []
+    assert automation_container.notifications.claim_notifications() == notification_ids
+    automation_container.notifications.deliver_notification(notification_ids[0])
+    assert automation_container.notifications.claim_notifications() == []
     inbox = client.get("/api/v1/notifications", headers=auth).json()
     assert len(inbox["notifications"]) == 1
 
     read = client.post(f'/api/v1/notifications/{notification_ids[0]}/read', headers=auth)
     assert read.status_code == 200 and read.json()["state"] == "read"
+
+
+def test_notification_service_is_first_class_and_automation_keeps_compatibility(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    assert automation_container.notifications is not None
+    assert automation_container.automations.notifications is automation_container.notifications
+
+    direct = automation_container.notifications.notification_preferences(
+        client.get("/api/v1/me", headers=auth).json()["account_id"]
+    )
+    compat = automation_container.automations.notification_preferences(
+        client.get("/api/v1/me", headers=auth).json()["account_id"]
+    )
+    assert direct == compat == {
+        "in_app_enabled": True,
+        "automation_updates_enabled": True,
+    }
 
 
 def test_notification_preferences_are_owner_scoped_and_preserve_writing_preferences(
@@ -316,7 +337,7 @@ def test_notification_opt_out_suppresses_before_claim(
         },
     )
     assert saved.status_code == 200
-    assert automation_container.automations.claim_notifications() == []
+    assert automation_container.notifications.claim_notifications() == []
 
     with automation_container.repository.sessions() as db:
         notification = db.scalar(
@@ -345,7 +366,7 @@ def test_notification_revocation_after_claim_is_rechecked_at_delivery(
     )
     assert accepted["state"] == "accepted"
 
-    claimed = automation_container.automations.claim_notifications()
+    claimed = automation_container.notifications.claim_notifications()
     assert len(claimed) == 1
 
     saved = client.put(
@@ -357,7 +378,7 @@ def test_notification_revocation_after_claim_is_rechecked_at_delivery(
         },
     )
     assert saved.status_code == 200
-    automation_container.automations.deliver_notification(claimed[0])
+    automation_container.notifications.deliver_notification(claimed[0])
 
     with automation_container.repository.sessions() as db:
         notification = db.get(Notification, claimed[0])
