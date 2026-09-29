@@ -564,3 +564,108 @@ def test_account_erasure_removes_goals_and_automation_state(automation_client, a
         assert db.get(Automation, automation["id"]) is None
         assert db.get(PersonalGoal, goal["id"]) is None
 
+
+
+
+def test_personal_suggestion_delivery_is_separate_durable_deduped_and_inert(
+    automation_client, automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    body = goal_payload()
+    body["next_review_at"] = (utcnow() - timedelta(minutes=5)).isoformat()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "suggestion-delivery-goal"},
+        json=body,
+    ).json()
+    preferences = client.get("/api/v1/personal-suggestion-preferences", headers=auth).json()
+    assert preferences == {
+        "available": True, "enabled": False, "delivery_available": True,
+        "delivery_enabled": False, "dismissed_count": 0,
+    }
+    client.put("/api/v1/personal-suggestion-preferences", headers=auth,
+               json={"enabled": True, "delivery_enabled": False})
+    suggestion = client.get("/api/v1/personal-suggestions", headers=auth).json()["suggestions"][0]
+    with automation_container.repository.sessions() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        assert db.scalars(select(Notification).where(
+            Notification.owner_id == owner.id,
+            Notification.source_kind == "personal_suggestion",
+        )).all() == []
+
+    enabled = client.put("/api/v1/personal-suggestion-preferences", headers=auth,
+                         json={"enabled": True, "delivery_enabled": True})
+    assert enabled.status_code == 200 and enabled.json()["delivery_enabled"] is True
+    automation_container.suggestions.reconcile_delivery(owner.id)
+    with automation_container.repository.sessions.begin() as db:
+        rows = db.scalars(select(Notification).where(
+            Notification.owner_id == owner.id,
+            Notification.source_kind == "personal_suggestion",
+        )).all()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.source_id == suggestion["id"] and row.kind == "personal_suggestion"
+        row.visible_at = utcnow() - timedelta(seconds=1)
+
+    claimed = automation_container.notifications.claim_notifications()
+    assert len(claimed) == 1
+    automation_container.notifications.deliver_notification(claimed[0])
+    inbox = client.get("/api/v1/notifications", headers=auth).json()["notifications"]
+    assert len(inbox) == 1 and inbox[0]["kind"] == "personal_suggestion"
+    with automation_container.repository.sessions() as db:
+        assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner.id)).all() == []
+        assert db.scalars(select(Automation).where(Automation.owner_id == owner.id)).all() == []
+
+
+def test_personal_suggestion_delivery_revalidates_dismissal_revision_and_opt_out(
+    automation_client, automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    body = goal_payload()
+    body["next_review_at"] = (utcnow() - timedelta(minutes=5)).isoformat()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "suggestion-revalidation-goal"},
+        json=body,
+    ).json()
+    client.put("/api/v1/personal-suggestion-preferences", headers=auth,
+               json={"enabled": True, "delivery_enabled": True})
+    first = client.get("/api/v1/personal-suggestions", headers=auth).json()["suggestions"][0]
+    dismissed = client.post(f'/api/v1/personal-suggestions/{first["id"]}/dismiss', headers=auth)
+    assert dismissed.status_code == 200
+    with automation_container.repository.sessions() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        old_row = db.scalar(select(Notification).where(
+            Notification.owner_id == owner.id, Notification.source_id == first["id"]))
+        assert old_row is not None and old_row.state == "suppressed"
+
+    revised = client.patch(f'/api/v1/goals/{goal["id"]}', headers=auth, json={
+        "expected_revision": 1,
+        "next_review_at": (utcnow() - timedelta(minutes=1)).isoformat(),
+    })
+    assert revised.status_code == 200 and revised.json()["revision"] == 2
+    second = client.get("/api/v1/personal-suggestions", headers=auth).json()["suggestions"][0]
+    assert second["id"] != first["id"]
+    with automation_container.repository.sessions.begin() as db:
+        new_row = db.scalar(select(Notification).where(
+            Notification.owner_id == owner.id, Notification.source_id == second["id"]))
+        assert new_row is not None and new_row.state == "pending"
+        new_row.visible_at = utcnow() - timedelta(seconds=1)
+
+    claimed = automation_container.notifications.claim_notifications()
+    assert len(claimed) == 1
+    with automation_container.repository.sessions.begin() as db:
+        account = db.get(Account, owner.id)
+        current = dict(account.preferences or {})
+        prefs = dict(current["personal_suggestions"])
+        prefs["delivery_enabled"] = False
+        current["personal_suggestions"] = prefs
+        account.preferences = current
+    automation_container.notifications.deliver_notification(claimed[0])
+    with automation_container.repository.sessions() as db:
+        row = db.get(Notification, claimed[0]); outbox = db.get(NotificationOutbox, claimed[0])
+        assert row.state == "suppressed"
+        assert outbox.delivered is True and outbox.lease_until is None
+    assert client.get("/api/v1/notifications", headers=auth).json()["notifications"] == []
