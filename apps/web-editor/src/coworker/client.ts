@@ -46,6 +46,15 @@ export type PersonalGoalCreate = {
   timezone: string; state: "draft" | "active"; milestones: { label: string; due_at: string | null; completed: boolean }[];
   budget: { max_runs: number; max_planner_tokens: number | null }; authorized_resources: []; next_review_at: string | null;
 };
+export type PersonalSuggestionPreferences = {
+  available: boolean; enabled: boolean; dismissed_count: number;
+};
+export type PersonalSuggestion = {
+  id: string;
+  kind: "goal_review_due" | "goal_deadline_due" | "goal_schedule_due" | "goal_context_ready";
+  goal_id: string; goal_revision: number; relevance_score: number; reason: string;
+  due_at: string | null; action: "review_goal" | "open_automations"; context_resource_count: number;
+};
 export type AutomationSchedule = { kind: "daily" | "weekly"; hour: number; minute: number; weekdays: string[] };
 export type PersonalAutomation = {
   id: string; goal_id: string; goal_revision: number; revision: number; state: "active" | "paused" | "cancelled";
@@ -456,6 +465,14 @@ export class CoworkerClient {
   }
 
   goals(signal?: AbortSignal) { return this.json<{ enabled: boolean; goals: PersonalGoal[] }>("/api/v1/goals", { signal }); }
+  personalSuggestionPreferences(signal?: AbortSignal) { return this.json<PersonalSuggestionPreferences>("/api/v1/personal-suggestion-preferences", { signal }); }
+  savePersonalSuggestionPreferences(enabled: boolean) {
+    return this.json<PersonalSuggestionPreferences>("/api/v1/personal-suggestion-preferences", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }),
+    });
+  }
+  personalSuggestions(signal?: AbortSignal) { return this.json<{ available: boolean; enabled: boolean; suggestions: PersonalSuggestion[] }>("/api/v1/personal-suggestions", { signal }); }
+  dismissPersonalSuggestion(id: string) { return this.json<{ id: string; state: "dismissed" }>(`/api/v1/personal-suggestions/${identifier(id)}/dismiss`, { method: "POST" }); }
   goal(id: string, signal?: AbortSignal) { return this.json<PersonalGoal>(`/api/v1/goals/${identifier(id)}`, { signal }); }
   createGoal(input: PersonalGoalCreate, key: string) {
     return this.json<PersonalGoal>("/api/v1/goals", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
