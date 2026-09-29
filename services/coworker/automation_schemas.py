@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .notification_schemas import NotificationPreferences
+
 
 WEEKDAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
@@ -117,9 +119,7 @@ class AutomationTransition(AutomationModel):
     expected_revision: int = Field(ge=1)
 
 
-# Backward-compatible import for older callers. New code owns this schema in
-# notification_schemas alongside the first-class notification repository.
-from .notification_schemas import NotificationPreferences  # noqa: E402
+# NotificationPreferences remains importable from this module for compatibility.
 
 
 class NotificationRead(AutomationModel):
