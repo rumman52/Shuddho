@@ -315,10 +315,11 @@ class Dispatcher:
                     )
                 except Exception:
                     logger.exception("Buffered automation occurrence could not resume.")
-        # Accepted work remains visible even after the admission kill switch is
-        # disabled; notification delivery itself grants no new execution authority.
-        for notification_id in await asyncio.to_thread(automations.claim_notifications):
-            await asyncio.to_thread(automations.deliver_notification, notification_id)
+        # Accepted notification work remains visible even after the originating
+        # capability is disabled; delivery itself grants no new execution authority.
+        notifications = self.container.notifications
+        for notification_id in await asyncio.to_thread(notifications.claim_notifications):
+            await asyncio.to_thread(notifications.deliver_notification, notification_id)
         for action_id in await asyncio.to_thread(actions.claim_outbox):
             try:
                 await self.client.start_workflow(
