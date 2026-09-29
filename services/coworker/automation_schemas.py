@@ -117,9 +117,9 @@ class AutomationTransition(AutomationModel):
     expected_revision: int = Field(ge=1)
 
 
-class NotificationPreferences(AutomationModel):
-    in_app_enabled: bool = True
-    automation_updates_enabled: bool = True
+# Backward-compatible import for older callers. New code owns this schema in
+# notification_schemas alongside the first-class notification repository.
+from .notification_schemas import NotificationPreferences  # noqa: E402
 
 
 class NotificationRead(AutomationModel):
