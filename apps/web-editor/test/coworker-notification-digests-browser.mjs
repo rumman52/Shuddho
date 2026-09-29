@@ -17,6 +17,15 @@ export async function verifyNotificationDigests(page, folder) {
   // UI fixtures only; backend authorization and source revocation are exercised by Python integration tests.
   const handler = async route => {
     const request = route.request();
+    const headers = {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    };
+    if (request.method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers });
+      return;
+    }
     const path = new URL(request.url()).pathname;
     assert.match(request.headers().authorization ?? "", /^Bearer /);
     let body;
@@ -41,7 +50,7 @@ export async function verifyNotificationDigests(page, folder) {
       unread_count: notices.filter(item => item.state === "delivered").length,
       latest_at: notices[0].visible_at, notifications: notices,
     }] };
-    await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+    await route.fulfill({ status, headers, contentType: "application/json", body: JSON.stringify(body) });
   };
   await page.route(pattern, handler);
   try {
