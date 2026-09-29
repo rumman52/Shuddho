@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -10,6 +11,7 @@ jwt = pytest.importorskip("jwt")
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
@@ -19,6 +21,7 @@ from services.coworker.auth import JwtVerifier
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.migrate import upgrade
+from services.coworker.models import Account, AgentRun, Document, PersonalGoal, utcnow
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -110,6 +113,195 @@ def test_goal_run_budget_and_resource_metadata_do_not_expand_authority(goal_clie
     assert first.status_code == 202 and first.json()["memory_namespaces"] == []
     second = client.post(f'/api/v1/goals/{goal["id"]}/run', headers=auth | {"Idempotency-Key": "goal-budget-run-2"}, json={"expected_revision": 1, "output_language": "en"})
     assert second.status_code == 409 and second.json()["error"]["code"] == "goal_run_budget"
+
+def test_personal_suggestions_default_off_stable_owner_scoped_and_inert(
+    goal_client,
+    goal_container,
+):
+    client, headers = goal_client
+    alice, bob = headers(), headers("bob")
+    body = payload()
+    body["deadline_at"] = (utcnow() + timedelta(hours=20)).isoformat()
+    created = client.post(
+        "/api/v1/goals",
+        headers=alice | {"Idempotency-Key": "suggestion-goal"},
+        json=body,
+    )
+    assert created.status_code == 201
+    goal = created.json()
+
+    default_preferences = client.get(
+        "/api/v1/personal-suggestion-preferences",
+        headers=alice,
+    )
+    assert default_preferences.status_code == 200
+    assert default_preferences.json() == {
+        "available": True,
+        "enabled": False,
+        "dismissed_count": 0,
+    }
+    assert client.get(
+        "/api/v1/personal-suggestions",
+        headers=alice,
+    ).json()["suggestions"] == []
+
+    enabled = client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=alice,
+        json={"enabled": True},
+    )
+    assert enabled.status_code == 200 and enabled.json()["enabled"] is True
+
+    first = client.get("/api/v1/personal-suggestions", headers=alice).json()
+    second = client.get("/api/v1/personal-suggestions", headers=alice).json()
+    assert first == second
+    assert first["available"] is True and first["enabled"] is True
+    assert len(first["suggestions"]) == 1
+    suggestion = first["suggestions"][0]
+    assert suggestion["goal_id"] == goal["id"]
+    assert suggestion["goal_revision"] == 1
+    assert suggestion["kind"] == "goal_deadline_due"
+    assert suggestion["action"] == "review_goal"
+    assert suggestion["context_resource_count"] == 0
+    assert set(suggestion) == {
+        "id", "kind", "goal_id", "goal_revision", "relevance_score",
+        "reason", "due_at", "action", "context_resource_count",
+    }
+
+    assert client.get(
+        "/api/v1/personal-suggestions",
+        headers=bob,
+    ).json()["suggestions"] == []
+
+    with goal_container.repository.sessions() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        assert owner is not None
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.owner_id == owner.id)
+        ).all() == []
+
+
+def test_personal_suggestion_dismissal_is_stable_and_revision_bound(
+    goal_client,
+):
+    client, headers = goal_client
+    auth = headers()
+    body = payload()
+    body["next_review_at"] = (utcnow() - timedelta(minutes=5)).isoformat()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "suggestion-dismiss-goal"},
+        json=body,
+    ).json()
+    client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=auth,
+        json={"enabled": True},
+    )
+
+    item = client.get(
+        "/api/v1/personal-suggestions",
+        headers=auth,
+    ).json()["suggestions"][0]
+    assert item["kind"] == "goal_review_due"
+
+    dismissed = client.post(
+        f'/api/v1/personal-suggestions/{item["id"]}/dismiss',
+        headers=auth,
+    )
+    assert dismissed.status_code == 200
+    assert dismissed.json() == {"id": item["id"], "state": "dismissed"}
+    assert client.get(
+        "/api/v1/personal-suggestions",
+        headers=auth,
+    ).json()["suggestions"] == []
+
+    revised = client.patch(
+        f'/api/v1/goals/{goal["id"]}',
+        headers=auth,
+        json={
+            "expected_revision": 1,
+            "next_review_at": (utcnow() - timedelta(minutes=1)).isoformat(),
+        },
+    )
+    assert revised.status_code == 200
+    refreshed = client.get(
+        "/api/v1/personal-suggestions",
+        headers=auth,
+    ).json()["suggestions"]
+    assert len(refreshed) == 1
+    assert refreshed[0]["id"] != item["id"]
+    assert refreshed[0]["goal_revision"] == 2
+
+
+def test_personal_suggestion_context_uses_only_valid_authorized_metadata(
+    goal_client,
+    goal_container,
+):
+    client, headers = goal_client
+    auth = headers()
+    owner_response = client.get("/api/v1/me", headers=auth)
+    assert owner_response.status_code == 200
+
+    with goal_container.repository.sessions.begin() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        assert owner is not None
+        workspace_id = owner_response.json()["workspace_id"]
+        document = Document(
+            id="11111111-1111-1111-1111-111111111111",
+            owner_id=owner.id,
+            workspace_id=workspace_id,
+            filename="PRIVATE-SYLLABUS-NAME.txt",
+        )
+        db.add(document)
+
+    body = payload()
+    body["objective"] = "PRIVATE-GOAL-CONTENT that must not appear in a suggestion payload."
+    body["authorized_resources"] = [{
+        "kind": "document",
+        "reference": "11111111-1111-1111-1111-111111111111",
+    }]
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "suggestion-context-goal"},
+        json=body,
+    )
+    assert goal.status_code == 201
+    client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=auth,
+        json={"enabled": True},
+    )
+
+    response = client.get("/api/v1/personal-suggestions", headers=auth)
+    assert response.status_code == 200
+    payload_value = response.json()
+    assert len(payload_value["suggestions"]) == 1
+    suggestion = payload_value["suggestions"][0]
+    assert suggestion["kind"] == "goal_context_ready"
+    assert suggestion["context_resource_count"] == 1
+    assert "PRIVATE-GOAL-CONTENT" not in response.text
+    assert "PRIVATE-SYLLABUS-NAME" not in response.text
+    assert "11111111-1111-1111-1111-111111111111" not in response.text
+
+    with goal_container.repository.sessions.begin() as db:
+        db.get(Document, "11111111-1111-1111-1111-111111111111").deleted = True
+
+    assert client.get(
+        "/api/v1/personal-suggestions",
+        headers=auth,
+    ).json()["suggestions"] == []
+
+
+def test_personal_suggestion_preferences_reject_unreviewed_fields(goal_client):
+    client, headers = goal_client
+    response = client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=headers(),
+        json={"enabled": True, "external_push": True},
+    )
+    assert response.status_code == 422
+
 
 def test_goal_draft_activation_and_patch_null_contract(goal_client):
     client, headers = goal_client
