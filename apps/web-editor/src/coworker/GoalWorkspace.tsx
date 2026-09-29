@@ -30,7 +30,7 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
     const controller = new AbortController();
     const preferences = client.personalSuggestionPreferences(controller.signal).catch(error => {
       if (error instanceof WorkspaceError && error.status === 404) {
-        return { available: false, enabled: false, dismissed_count: 0 };
+        return { available: false, enabled: false, delivery_available: false, delivery_enabled: false, dismissed_count: 0 };
       }
       throw error;
     });
@@ -102,13 +102,29 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
     if (busy) return;
     setBusy("suggestion-preferences"); setError(""); setNotice("");
     try {
-      const saved = await client.savePersonalSuggestionPreferences(next);
+      const saved = await client.savePersonalSuggestionPreferences(
+        next,
+        next ? Boolean(suggestionPreferences?.delivery_enabled) : false,
+      );
       setSuggestionPreferences(saved);
       const refreshed = await client.personalSuggestions();
       setSuggestions(refreshed.suggestions);
       setNotice(next
         ? "Goal suggestions are on. They remain review-only until you choose an action."
         : "Goal suggestions are off.");
+    } catch (error) { setError(errorMessage(error)); }
+    finally { setBusy(""); }
+  }
+
+  async function setSuggestionDeliveryEnabled(next: boolean) {
+    if (busy || !suggestionPreferences?.enabled) return;
+    setBusy("suggestion-delivery"); setError(""); setNotice("");
+    try {
+      const saved = await client.savePersonalSuggestionPreferences(true, next);
+      setSuggestionPreferences(saved);
+      setNotice(next
+        ? "Eligible suggestions can now appear in the existing in-app Notifications inbox. Delivery remains review-only."
+        : "In-app suggestion delivery is off.");
     } catch (error) { setError(errorMessage(error)); }
     finally { setBusy(""); }
   }
@@ -177,7 +193,14 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
           <h2>Quiet goal suggestions</h2>
           <label><input type="checkbox" checked={suggestionPreferences.enabled} disabled={Boolean(busy)}
             onChange={event => void setSuggestionsEnabled(event.target.checked)} /> Show deterministic suggestions from my owned goal timing and authorized-resource metadata</label>
-          <p className="cw-fineprint">Off by default. Suggestions do not start runs, create automations, contact providers, or send anything. No model call is used for this preview.</p>
+          <p className="cw-fineprint">Off by default. Previewing a suggestion does not start runs, create automations, contact providers, or grant delivery authority. No model call is used.</p>
+          <label><input type="checkbox"
+            checked={suggestionPreferences.delivery_enabled}
+            disabled={Boolean(busy) || !suggestionPreferences.enabled || !suggestionPreferences.delivery_available}
+            onChange={event => void setSuggestionDeliveryEnabled(event.target.checked)} /> Deliver eligible deterministic suggestions to my existing in-app Notifications inbox</label>
+          <p className="cw-fineprint">{suggestionPreferences.delivery_available
+            ? "Delivery has a separate opt-in, uses the goal timezone with 22:00–07:00 quiet hours, and never starts work by itself."
+            : "In-app suggestion delivery is unavailable until the existing Automations/Notifications capability is enabled."}</p>
           {suggestionPreferences.enabled && (suggestions.length === 0
             ? <p className="cw-fineprint">No relevant bounded suggestion right now.</p>
             : <div className="cw-proposals">{suggestions.map(item => <div key={item.id} className="cw-agent-run">

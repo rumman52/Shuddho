@@ -729,6 +729,8 @@ class Notification(Base):
     workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"))
     automation_id: Mapped[str | None] = mapped_column(ForeignKey("cw_automations.id"), index=True)
     occurrence_id: Mapped[str | None] = mapped_column(ForeignKey("cw_automation_occurrences.id"), unique=True)
+    source_kind: Mapped[str | None] = mapped_column(String(30))
+    source_id: Mapped[str | None] = mapped_column(String(64))
     kind: Mapped[str] = mapped_column(String(30))
     title: Mapped[str] = mapped_column(String(160))
     message: Mapped[str] = mapped_column(String(300))
@@ -737,7 +739,10 @@ class Notification(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    __table_args__ = (Index("cw_notifications_owner_state_visible", "owner_id", "state", "visible_at"),)
+    __table_args__ = (
+        Index("cw_notifications_owner_state_visible", "owner_id", "state", "visible_at"),
+        UniqueConstraint("owner_id", "source_kind", "source_id", name="uq_cw_notifications_owner_source"),
+    )
 
 
 class NotificationOutbox(Base):
