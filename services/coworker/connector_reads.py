@@ -1102,12 +1102,10 @@ class ConnectorReadService:
             try:
                 await asyncio.to_thread(self.event_consumer, event)
             except Exception:
-                await asyncio.to_thread(
-                    self.repo.fail_event,
-                    event["id"],
-                    "connector_event_suggestion_failed",
-                )
-                return
+                # PA-10 notification delivery is secondary to the accepted
+                # PA-06 connector sync. A notification fault must not replay
+                # provider reads or change the connector event outcome.
+                pass
         await asyncio.to_thread(self.repo.finish_event, event["id"])
 
     async def renew_subscription(self, value: dict) -> None:
