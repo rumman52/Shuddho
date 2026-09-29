@@ -21,6 +21,7 @@ test("notification digest client uses authenticated bounded inbox routes and exa
     assert.equal(seen[1].options?.method, "POST");
     assert.deepEqual(JSON.parse(String(seen[1].options?.body)), { notification_ids: members });
     assert.equal(new Headers(seen[1].options?.headers).get("Authorization"), "Bearer digest-test-token");
+    assert.equal(new Headers(seen[1].options?.headers).get("Content-Type"), "application/json");
     assert.equal(seen[1].options?.credentials, "omit");
     assert.equal(seen[1].options?.redirect, "error");
     assert.throws(() => client.readNotificationDigest("../another-owner", members));

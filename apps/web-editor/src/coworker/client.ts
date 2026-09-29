@@ -528,7 +528,7 @@ export class CoworkerClient {
   notificationDigests(signal?: AbortSignal) { return this.json<{ enabled: boolean; digests: NotificationDigest[] }>("/api/v1/notification-digests", { signal }); }
   readNotificationDigest(id: string, notificationIds: string[]) {
     return this.json<{ id: string; notifications: { id: string; state: "read"; read_at: string | null }[] }>(`/api/v1/notification-digests/${digestIdentifier(id)}/read`, {
-      method: "POST", body: JSON.stringify({ notification_ids: notificationIds }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notification_ids: notificationIds }),
     });
   }
   readNotification(id: string) { return this.json<{ id: string; state: "read"; read_at: string }>(`/api/v1/notifications/${identifier(id)}/read`, { method: "POST" }); }
