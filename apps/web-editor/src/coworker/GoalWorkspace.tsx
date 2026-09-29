@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type PersonalGoal, type PersonalSuggestion, type PersonalSuggestionPreferences } from "./client";
+import { CoworkerClient, WorkspaceError, type PersonalGoal, type PersonalSuggestion, type PersonalSuggestionPreferences } from "./client";
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "This goal action could not finish.";
 
@@ -28,10 +28,22 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
 
   useEffect(() => {
     const controller = new AbortController();
+    const preferences = client.personalSuggestionPreferences(controller.signal).catch(error => {
+      if (error instanceof WorkspaceError && error.status === 404) {
+        return { available: false, enabled: false, dismissed_count: 0 };
+      }
+      throw error;
+    });
+    const suggestionList = client.personalSuggestions(controller.signal).catch(error => {
+      if (error instanceof WorkspaceError && error.status === 404) {
+        return { available: false, enabled: false, suggestions: [] as PersonalSuggestion[] };
+      }
+      throw error;
+    });
     Promise.all([
       client.goals(controller.signal),
-      client.personalSuggestionPreferences(controller.signal),
-      client.personalSuggestions(controller.signal),
+      preferences,
+      suggestionList,
     ]).then(([goalResult, preferenceResult, suggestionResult]) => {
       setEnabled(goalResult.enabled);
       setGoals(goalResult.goals);
