@@ -17,6 +17,7 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
   const [criteria, setCriteria] = useState("");
   const [constraints, setConstraints] = useState("");
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  const eventTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const [deadline, setDeadline] = useState("");
   const [maxRuns, setMaxRuns] = useState(20);
   const [busy, setBusy] = useState("");
@@ -30,7 +31,10 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
     const controller = new AbortController();
     const preferences = client.personalSuggestionPreferences(controller.signal).catch(error => {
       if (error instanceof WorkspaceError && error.status === 404) {
-        return { available: false, enabled: false, delivery_available: false, delivery_enabled: false, dismissed_count: 0 };
+        return {
+          available: false, enabled: false, delivery_available: false, delivery_enabled: false,
+          event_delivery_available: false, event_delivery_enabled: false, event_timezone: "UTC", dismissed_count: 0,
+        };
       }
       throw error;
     });
@@ -102,9 +106,12 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
     if (busy) return;
     setBusy("suggestion-preferences"); setError(""); setNotice("");
     try {
+      const deliveryEnabled = next ? Boolean(suggestionPreferences?.delivery_enabled) : false;
       const saved = await client.savePersonalSuggestionPreferences(
         next,
-        next ? Boolean(suggestionPreferences?.delivery_enabled) : false,
+        deliveryEnabled,
+        next && deliveryEnabled ? Boolean(suggestionPreferences?.event_delivery_enabled) : false,
+        suggestionPreferences?.event_timezone ?? eventTimezone,
       );
       setSuggestionPreferences(saved);
       const refreshed = await client.personalSuggestions();
@@ -120,11 +127,34 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
     if (busy || !suggestionPreferences?.enabled) return;
     setBusy("suggestion-delivery"); setError(""); setNotice("");
     try {
-      const saved = await client.savePersonalSuggestionPreferences(true, next);
+      const saved = await client.savePersonalSuggestionPreferences(
+        true,
+        next,
+        next ? Boolean(suggestionPreferences.event_delivery_enabled) : false,
+        suggestionPreferences.event_timezone || eventTimezone,
+      );
       setSuggestionPreferences(saved);
       setNotice(next
         ? "Eligible suggestions can now appear in the existing in-app Notifications inbox. Delivery remains review-only."
         : "In-app suggestion delivery is off.");
+    } catch (error) { setError(errorMessage(error)); }
+    finally { setBusy(""); }
+  }
+
+  async function setSuggestionEventDeliveryEnabled(next: boolean) {
+    if (busy || !suggestionPreferences?.enabled || !suggestionPreferences.delivery_enabled) return;
+    setBusy("suggestion-event-delivery"); setError(""); setNotice("");
+    try {
+      const saved = await client.savePersonalSuggestionPreferences(
+        true,
+        true,
+        next,
+        eventTimezone,
+      );
+      setSuggestionPreferences(saved);
+      setNotice(next
+        ? "Connected-context update notices are on. They remain review-only and do not start work."
+        : "Connected-context update notices are off.");
     } catch (error) { setError(errorMessage(error)); }
     finally { setBusy(""); }
   }
@@ -201,6 +231,13 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
           <p className="cw-fineprint">{suggestionPreferences.delivery_available
             ? "Delivery has a separate opt-in, uses the goal timezone with 22:00–07:00 quiet hours, and never starts work by itself."
             : "In-app suggestion delivery is unavailable until the existing Automations/Notifications capability is enabled."}</p>
+          <label><input type="checkbox"
+            checked={suggestionPreferences.event_delivery_enabled}
+            disabled={Boolean(busy) || !suggestionPreferences.enabled || !suggestionPreferences.delivery_enabled || !suggestionPreferences.event_delivery_available}
+            onChange={event => void setSuggestionEventDeliveryEnabled(event.target.checked)} /> Notify me in Shuddho when a subscribed connected email or calendar source reports an update</label>
+          <p className="cw-fineprint">{suggestionPreferences.event_delivery_available
+            ? `Separate opt-in. Update notices are coalesced, use 22:00–07:00 quiet hours in ${suggestionPreferences.event_timezone || eventTimezone}, and never inspect connected message/calendar bodies for relevance or start work.`
+            : "Connected-context update notices require the existing connected-reads capability."}</p>
           {suggestionPreferences.enabled && (suggestions.length === 0
             ? <p className="cw-fineprint">No relevant bounded suggestion right now.</p>
             : <div className="cw-proposals">{suggestions.map(item => <div key={item.id} className="cw-agent-run">

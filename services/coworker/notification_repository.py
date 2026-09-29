@@ -60,6 +60,14 @@ class NotificationRepository:
         if kind == "personal_suggestion":
             raw = preferences.get("personal_suggestions") if isinstance(preferences, dict) else None
             return isinstance(raw, dict) and raw.get("enabled") is True and raw.get("delivery_enabled") is True
+        if kind == "personal_suggestion_event":
+            raw = preferences.get("personal_suggestions") if isinstance(preferences, dict) else None
+            return (
+                isinstance(raw, dict)
+                and raw.get("enabled") is True
+                and raw.get("delivery_enabled") is True
+                and raw.get("event_delivery_enabled") is True
+            )
         return True
 
     def _source_allowed(self, db, notification: Notification, account: Account) -> bool:

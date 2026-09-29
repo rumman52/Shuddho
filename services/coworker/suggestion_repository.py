@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 
@@ -12,11 +13,14 @@ from .models import (
     AgentRun,
     AuditEvent,
     Automation,
+    ConnectorEvent,
+    ConnectorReadGrant,
     Document,
     DocumentVersion,
     MemoryFact,
     Notification,
     PersonalGoal,
+    Workspace,
     utcnow,
 )
 from .repository import aware, iso, not_found
@@ -28,12 +32,16 @@ class SuggestionRepository:
 
     PREFERENCES_KEY = "personal_suggestions"
     SOURCE_KIND = "personal_suggestion"
+    EVENT_SOURCE_KIND = "personal_suggestion_event"
     MAX_DISMISSED_IDS = 100
     MAX_SUGGESTIONS = 5
     ID_PATTERN = re.compile(r"^[a-f0-9]{64}$")
     DELIVERY_QUIET_HOURS = {"start": "22:00", "end": "07:00"}
     DELIVERY_TTL = timedelta(days=7)
     CONTEXT_DELIVERY_TTL = timedelta(days=14)
+    EVENT_DELIVERY_TTL = timedelta(hours=24)
+    EVENT_SOURCE_LOOKBACK = timedelta(hours=36)
+    EVENT_DEDUPE_WINDOW = timedelta(hours=6)
 
     def __init__(self, sessions, settings, notifications):
         self.sessions = sessions
@@ -48,10 +56,22 @@ class SuggestionRepository:
     @classmethod
     def _normalized_preferences(cls, value: dict | None) -> dict:
         if not isinstance(value, dict):
-            return {"enabled": False, "delivery_enabled": False, "dismissed_ids": []}
+            return {
+                "enabled": False,
+                "delivery_enabled": False,
+                "event_delivery_enabled": False,
+                "event_timezone": "UTC",
+                "dismissed_ids": [],
+            }
         raw = value.get(cls.PREFERENCES_KEY)
         if not isinstance(raw, dict):
-            return {"enabled": False, "delivery_enabled": False, "dismissed_ids": []}
+            return {
+                "enabled": False,
+                "delivery_enabled": False,
+                "event_delivery_enabled": False,
+                "event_timezone": "UTC",
+                "dismissed_ids": [],
+            }
         dismissed = raw.get("dismissed_ids")
         if not isinstance(dismissed, list):
             dismissed = []
@@ -61,10 +81,29 @@ class SuggestionRepository:
                 safe_ids.append(item)
             if len(safe_ids) >= cls.MAX_DISMISSED_IDS:
                 break
+
+        event_timezone = raw.get("event_timezone")
+        timezone_valid = isinstance(event_timezone, str) and 0 < len(event_timezone) <= 64
+        if timezone_valid:
+            try:
+                ZoneInfo(event_timezone)
+            except ZoneInfoNotFoundError:
+                timezone_valid = False
+        if not timezone_valid:
+            event_timezone = "UTC"
+
         enabled = raw.get("enabled") is True
+        delivery_enabled = enabled and raw.get("delivery_enabled") is True
+        event_delivery_enabled = (
+            delivery_enabled
+            and timezone_valid
+            and raw.get("event_delivery_enabled") is True
+        )
         return {
             "enabled": enabled,
-            "delivery_enabled": enabled and raw.get("delivery_enabled") is True,
+            "delivery_enabled": delivery_enabled,
+            "event_delivery_enabled": event_delivery_enabled,
+            "event_timezone": event_timezone,
             "dismissed_ids": safe_ids,
         }
 
@@ -79,6 +118,9 @@ class SuggestionRepository:
     def _delivery_available(self) -> bool:
         return self.settings.personal_goals_enabled and self.settings.automations_enabled
 
+    def _event_delivery_available(self) -> bool:
+        return self._delivery_available() and self.settings.connector_reads_enabled
+
     def preferences(self, owner: str) -> dict:
         with self.sessions() as db:
             account = db.scalar(select(Account).where(Account.id == owner))
@@ -87,15 +129,27 @@ class SuggestionRepository:
             value = self._normalized_preferences(account.preferences)
             available = self.settings.personal_goals_enabled
             delivery_available = self._delivery_available()
+            event_delivery_available = self._event_delivery_available()
             return {
                 "available": available,
                 "enabled": value["enabled"] if available else False,
                 "delivery_available": delivery_available,
                 "delivery_enabled": value["delivery_enabled"] if delivery_available else False,
+                "event_delivery_available": event_delivery_available,
+                "event_delivery_enabled": (
+                    value["event_delivery_enabled"]
+                    if event_delivery_available
+                    else False
+                ),
+                "event_timezone": value["event_timezone"],
                 "dismissed_count": len(value["dismissed_ids"]),
             }
 
-    def save_preferences(self, owner: str, request: PersonalSuggestionPreferences) -> dict:
+    def save_preferences(
+        self,
+        owner: str,
+        request: PersonalSuggestionPreferences,
+    ) -> dict:
         self._require_available()
         if request.delivery_enabled and not self.settings.automations_enabled:
             raise CoworkerError(
@@ -103,8 +157,16 @@ class SuggestionRepository:
                 "In-app suggestion delivery requires the existing Notifications inbox.",
                 409,
             )
+        if request.event_delivery_enabled and not self.settings.connector_reads_enabled:
+            raise CoworkerError(
+                "personal_suggestion_event_delivery_unavailable",
+                "Event-triggered suggestions require connected reads to be enabled.",
+                409,
+            )
         with self.sessions.begin() as db:
-            account = db.scalar(select(Account).where(Account.id == owner).with_for_update())
+            account = db.scalar(
+                select(Account).where(Account.id == owner).with_for_update()
+            )
             if account is None:
                 raise not_found()
             current = dict(account.preferences or {})
@@ -112,6 +174,8 @@ class SuggestionRepository:
             current[self.PREFERENCES_KEY] = {
                 "enabled": request.enabled,
                 "delivery_enabled": request.delivery_enabled,
+                "event_delivery_enabled": request.event_delivery_enabled,
+                "event_timezone": request.event_timezone,
                 "dismissed_ids": previous["dismissed_ids"],
             }
             account.preferences = current
@@ -339,18 +403,35 @@ class SuggestionRepository:
 
     def reconcile_delivery(self, owner: str) -> None:
         plans: list[dict] = []
+        suppress_event_sources = False
         with self.sessions() as db:
             account = db.scalar(select(Account).where(Account.id == owner))
             if account is None:
                 raise not_found()
             prefs = self._normalized_preferences(account.preferences)
+            in_app_enabled = self.notifications.in_app_enabled(account.preferences)
             allowed = (
-                self._delivery_available() and prefs["enabled"] and prefs["delivery_enabled"]
-                and self.notifications.in_app_enabled(account.preferences)
+                self._delivery_available()
+                and prefs["enabled"]
+                and prefs["delivery_enabled"]
+                and in_app_enabled
             )
             if allowed:
-                plans = self._delivery_plans(db, owner, set(prefs["dismissed_ids"]))
+                plans = self._delivery_plans(
+                    db,
+                    owner,
+                    set(prefs["dismissed_ids"]),
+                )
+            suppress_event_sources = not (
+                self._event_delivery_available()
+                and prefs["enabled"]
+                and prefs["delivery_enabled"]
+                and prefs["event_delivery_enabled"]
+                and in_app_enabled
+            )
         self.notifications.reconcile_sources(owner, self.SOURCE_KIND, plans)
+        if suppress_event_sources:
+            self.notifications.reconcile_sources(owner, self.EVENT_SOURCE_KIND, [])
 
     def notification_source_allowed(self, db, notification: Notification, account: Account) -> bool:
         source_id = notification.source_id
@@ -360,6 +441,157 @@ class SuggestionRepository:
         if not prefs["enabled"] or not prefs["delivery_enabled"] or source_id in set(prefs["dismissed_ids"]):
             return False
         return source_id in {item["id"] for item in self._candidates(db, notification.owner_id)}
+
+    @classmethod
+    def _event_source_id(
+        cls,
+        owner: str,
+        grant_id: str,
+        capability: str,
+        received_at,
+    ) -> str:
+        value = aware(received_at)
+        bucket_seconds = int(cls.EVENT_DEDUPE_WINDOW.total_seconds())
+        bucket = int(value.timestamp()) // bucket_seconds
+        raw = f"{owner}|{grant_id}|{capability}|{bucket}".encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    @staticmethod
+    def _event_copy(capability: str) -> tuple[str, str]:
+        if capability == "email_read":
+            return (
+                "Connected email context changed",
+                "A subscribed connected email source reported an update. Review your connected context before deciding whether to start new work.",
+            )
+        if capability == "calendar_read":
+            return (
+                "Connected calendar context changed",
+                "A subscribed connected calendar source reported an update. Review your connected context before deciding whether to start new work.",
+            )
+        return (
+            "Connected context changed",
+            "A subscribed connected source reported an update. Review it before deciding whether to start new work.",
+        )
+
+    def handle_connector_event(self, event: dict) -> None:
+        """Create one inert, coalesced in-app review notice from trusted event metadata only."""
+        if not self._event_delivery_available():
+            return
+        event_id = event.get("id")
+        owner = event.get("owner_id")
+        if not isinstance(event_id, str) or not isinstance(owner, str):
+            return
+        with self.sessions.begin() as db:
+            account = db.scalar(
+                select(Account).where(Account.id == owner).with_for_update()
+            )
+            row = db.scalar(
+                select(ConnectorEvent).where(
+                    ConnectorEvent.id == event_id,
+                    ConnectorEvent.owner_id == owner,
+                )
+            )
+            if account is None or row is None or row.state not in {"processing", "processed"}:
+                return
+            prefs = self._normalized_preferences(account.preferences)
+            if not (
+                prefs["enabled"]
+                and prefs["delivery_enabled"]
+                and prefs["event_delivery_enabled"]
+                and self.notifications.in_app_enabled(account.preferences)
+            ):
+                return
+            grant = db.scalar(
+                select(ConnectorReadGrant).where(
+                    ConnectorReadGrant.id == row.grant_id,
+                    ConnectorReadGrant.owner_id == owner,
+                    ConnectorReadGrant.state == "active",
+                )
+            )
+            now = utcnow()
+            if grant is None or aware(grant.expires_at) <= now:
+                return
+            workspace_id = db.scalar(
+                select(Workspace.id).where(Workspace.owner_id == owner)
+            )
+            if workspace_id is None:
+                return
+            source_id = self._event_source_id(
+                owner,
+                row.grant_id,
+                row.capability,
+                row.received_at,
+            )
+            title, message = self._event_copy(row.capability)
+            visible_at = self.notifications.visible_at_after_quiet_hours(
+                row.received_at,
+                prefs["event_timezone"],
+                self.DELIVERY_QUIET_HOURS,
+            )
+            self.notifications.enqueue_pending(
+                db,
+                owner=owner,
+                workspace_id=workspace_id,
+                source_kind=self.EVENT_SOURCE_KIND,
+                source_id=source_id,
+                kind=self.EVENT_SOURCE_KIND,
+                title=title,
+                message=message,
+                visible_at=visible_at,
+                expires_at=visible_at + self.EVENT_DELIVERY_TTL,
+            )
+
+    def event_notification_source_allowed(
+        self,
+        db,
+        notification: Notification,
+        account: Account,
+    ) -> bool:
+        source_id = notification.source_id
+        if (
+            source_id is None
+            or not self.ID_PATTERN.fullmatch(source_id)
+            or not self._event_delivery_available()
+        ):
+            return False
+        prefs = self._normalized_preferences(account.preferences)
+        if not (
+            prefs["enabled"]
+            and prefs["delivery_enabled"]
+            and prefs["event_delivery_enabled"]
+        ):
+            return False
+        now = utcnow()
+        grants = db.scalars(
+            select(ConnectorReadGrant).where(
+                ConnectorReadGrant.owner_id == notification.owner_id,
+                ConnectorReadGrant.state == "active",
+                ConnectorReadGrant.expires_at > now,
+            )
+        ).all()
+        grant_by_id = {grant.id: grant for grant in grants}
+        if not grant_by_id:
+            return False
+        rows = db.scalars(
+            select(ConnectorEvent).where(
+                ConnectorEvent.owner_id == notification.owner_id,
+                ConnectorEvent.grant_id.in_(list(grant_by_id)),
+                ConnectorEvent.state.in_(["processing", "processed"]),
+                ConnectorEvent.received_at >= now - self.EVENT_SOURCE_LOOKBACK,
+            )
+        ).all()
+        for row in rows:
+            grant = grant_by_id.get(row.grant_id)
+            if grant is None or grant.capability != row.capability:
+                continue
+            if self._event_source_id(
+                notification.owner_id,
+                row.grant_id,
+                row.capability,
+                row.received_at,
+            ) == source_id:
+                return True
+        return False
 
     def list_response(self, owner: str) -> dict:
         if not self.settings.personal_goals_enabled:
@@ -390,7 +622,10 @@ class SuggestionRepository:
                     raise not_found()
                 current = dict(account.preferences or {})
                 current[self.PREFERENCES_KEY] = {
-                    "enabled": prefs["enabled"], "delivery_enabled": prefs["delivery_enabled"],
+                    "enabled": prefs["enabled"],
+                    "delivery_enabled": prefs["delivery_enabled"],
+                    "event_delivery_enabled": prefs["event_delivery_enabled"],
+                    "event_timezone": prefs["event_timezone"],
                     "dismissed_ids": [suggestion_id, *prefs["dismissed_ids"]][:self.MAX_DISMISSED_IDS],
                 }
                 account.preferences = current

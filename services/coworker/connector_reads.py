@@ -816,10 +816,20 @@ class ConnectorReadRepository:
 
 
 class ConnectorReadService:
-    def __init__(self, repository: ConnectorReadRepository, credential_broker, push_verifier=None):
+    def __init__(
+        self,
+        repository: ConnectorReadRepository,
+        credential_broker,
+        push_verifier=None,
+        event_consumer=None,
+    ):
         self.repo = repository
         self.credential_broker = credential_broker
         self.push_verifier = push_verifier
+        self.event_consumer = event_consumer
+
+    def set_event_consumer(self, consumer) -> None:
+        self.event_consumer = consumer
 
     @staticmethod
     def _expiry(ms: int | None, fallback_hours: int = 24) -> datetime:
@@ -1088,6 +1098,16 @@ class ConnectorReadService:
                 self.repo.fail_event, event["id"], "connector_event_sync_failed"
             )
             return
+        if self.event_consumer is not None:
+            try:
+                await asyncio.to_thread(self.event_consumer, event)
+            except Exception:
+                await asyncio.to_thread(
+                    self.repo.fail_event,
+                    event["id"],
+                    "connector_event_suggestion_failed",
+                )
+                return
         await asyncio.to_thread(self.repo.finish_event, event["id"])
 
     async def renew_subscription(self, value: dict) -> None:
