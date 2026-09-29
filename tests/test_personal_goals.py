@@ -21,7 +21,7 @@ from services.coworker.auth import JwtVerifier
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.migrate import upgrade
-from services.coworker.models import Account, AgentRun, Document, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Document, DocumentVersion, PersonalGoal, utcnow
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -254,6 +254,19 @@ def test_personal_suggestion_context_uses_only_valid_authorized_metadata(
             filename="PRIVATE-SYLLABUS-NAME.txt",
         )
         db.add(document)
+        db.flush()
+        db.add(DocumentVersion(
+            id="22222222-2222-2222-2222-222222222222",
+            document_id=document.id,
+            owner_id=owner.id,
+            version=1,
+            kind="txt",
+            byte_size=10,
+            sha256="a" * 64,
+            object_key=f"{owner.id}/inputs/test/private.txt",
+            state="uploaded",
+            expires_at=utcnow() + timedelta(days=30),
+        ))
 
     body = payload()
     body["objective"] = "PRIVATE-GOAL-CONTENT that must not appear in a suggestion payload."
