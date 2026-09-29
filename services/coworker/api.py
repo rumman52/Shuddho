@@ -25,6 +25,7 @@ from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
 from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
+from .suggestion_schemas import PersonalSuggestionPreferences
 from .negotiation_schemas import (
     NegotiationCaseCreate,
     NegotiationCasePatch,
@@ -293,6 +294,34 @@ def list_goals(identity: Identity, services: Services):
     if not services.settings.personal_goals_enabled:
         return {"enabled": False, "goals": []}
     return {"enabled": True, "goals": services.goals.list(identity.account_id)}
+
+
+@router.get("/personal-suggestion-preferences")
+def get_personal_suggestion_preferences(identity: Identity, services: Services):
+    return services.suggestions.preferences(identity.account_id)
+
+
+@router.put("/personal-suggestion-preferences")
+def put_personal_suggestion_preferences(
+    payload: PersonalSuggestionPreferences,
+    identity: Identity,
+    services: Services,
+):
+    return services.suggestions.save_preferences(identity.account_id, payload)
+
+
+@router.get("/personal-suggestions")
+def list_personal_suggestions(identity: Identity, services: Services):
+    return services.suggestions.list_response(identity.account_id)
+
+
+@router.post("/personal-suggestions/{suggestion_id}/dismiss")
+def dismiss_personal_suggestion(
+    suggestion_id: str,
+    identity: Identity,
+    services: Services,
+):
+    return services.suggestions.dismiss(identity.account_id, suggestion_id)
 
 
 @router.get("/goals/{goal_id}")
