@@ -45,7 +45,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import AgentRun, Automation, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Notification, NotificationOutbox, utcnow
+from services.coworker.models import Account, AgentRun, Automation, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Notification, NotificationOutbox, utcnow
 
 
 class ReadGoogle:
@@ -576,7 +576,7 @@ def test_event_claim_recovers_after_expired_worker_lease(container):
 
 def _enable_event_suggestion_delivery(container, owner, timezone="UTC"):
     with container.repository.sessions.begin() as db:
-        account_row = db.get(__import__("services.coworker.models", fromlist=["Account"]).Account, owner)
+        account_row = db.get(Account, owner)
         current = dict(account_row.preferences or {})
         current["personal_suggestions"] = {
             "enabled": True,
@@ -712,7 +712,7 @@ def test_connector_event_notice_opt_out_rechecked_after_claim(container):
 
     assert container.notifications.claim_notifications() == [notice_id]
     with container.repository.sessions.begin() as db:
-        account_row = db.get(__import__("services.coworker.models", fromlist=["Account"]).Account, owner)
+        account_row = db.get(Account, owner)
         current = dict(account_row.preferences or {})
         prefs = dict(current["personal_suggestions"])
         prefs["event_delivery_enabled"] = False
