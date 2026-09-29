@@ -21,6 +21,7 @@ from .negotiation_repository import NegotiationRepository
 from .negotiation_model import NegotiationProposalModel
 from .negotiation_service import NegotiationProposalService
 from .automation_repository import AutomationRepository
+from .notification_repository import NotificationRepository
 from .memory_repository import MemoryRepository
 from .context import ContextService
 from .recipient_repository import RecipientRepository
@@ -45,6 +46,7 @@ class Container:
     negotiations: NegotiationRepository | None = None
     negotiation_proposals: NegotiationProposalService | None = None
     automations: AutomationRepository | None = None
+    notifications: NotificationRepository | None = None
     memory: MemoryRepository | None = None
     context: ContextService | None = None
     recipients: RecipientRepository | None = None
@@ -101,8 +103,18 @@ class Container:
                 self.repository.sessions,
                 self.settings,
             )
+        if self.notifications is None:
+            self.notifications = NotificationRepository(
+                self.repository.sessions,
+                self.settings,
+            )
         if self.automations is None:
-            self.automations = AutomationRepository(self.repository.sessions, self.settings, self.agent)
+            self.automations = AutomationRepository(
+                self.repository.sessions,
+                self.settings,
+                self.agent,
+                self.notifications,
+            )
         if self.negotiations is None:
             self.negotiations = NegotiationRepository(
                 self.repository.sessions,
