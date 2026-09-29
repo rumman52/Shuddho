@@ -13,6 +13,7 @@ from .models import (
     AuditEvent,
     Automation,
     Document,
+    DocumentVersion,
     MemoryFact,
     PersonalGoal,
     utcnow,
@@ -168,11 +169,19 @@ class SuggestionRepository:
         if document_ids:
             valid_documents = set(
                 db.scalars(
-                    select(Document.id).where(
+                    select(Document.id)
+                    .join(
+                        DocumentVersion,
+                        DocumentVersion.document_id == Document.id,
+                    )
+                    .where(
                         Document.owner_id == owner,
                         Document.id.in_(document_ids),
                         Document.deleted.is_(False),
+                        DocumentVersion.owner_id == owner,
+                        DocumentVersion.state == "uploaded",
                     )
+                    .distinct()
                 ).all()
             )
 
