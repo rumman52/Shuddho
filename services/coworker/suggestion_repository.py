@@ -236,14 +236,15 @@ class SuggestionRepository:
                 ).all()
             )
 
-        run_pairs = set(
-            db.execute(
+        run_pairs = {
+            (goal_id, goal_revision)
+            for goal_id, goal_revision in db.execute(
                 select(AgentRun.goal_id, AgentRun.goal_revision).where(
                     AgentRun.owner_id == owner,
                     AgentRun.goal_id.is_not(None),
                 )
             ).all()
-        )
+        }
         valid_documents, valid_namespaces = self._valid_resource_sets(
             db,
             owner,
@@ -358,14 +359,14 @@ class SuggestionRepository:
                 resource_count > 0
                 and (goal.id, goal.revision) not in run_pairs
             ):
-                noun = "resource is" if resource_count == 1 else "resources are"
+                noun = "resource" if resource_count == 1 else "resources"
                 goal_candidates.append(
                     self._candidate(
                         owner,
                         goal,
                         "goal_context_ready",
                         55,
-                        f"{resource_count} still-owned referenced {noun} available in this goal's metadata. Review the goal before choosing whether to start bounded work.",
+                        f"{resource_count} still-owned authorized {noun} available for this goal. Review the goal before choosing whether to start bounded work.",
                         None,
                         "review_goal",
                         resource_count,
