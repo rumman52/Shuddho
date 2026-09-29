@@ -73,6 +73,16 @@ Identity = Annotated[Principal, Depends(account)]
 Services = Annotated[Container, Depends(get_container)]
 
 
+def _reconcile_personal_suggestion_delivery(services: Container, owner: str) -> None:
+    try:
+        services.suggestions.reconcile_delivery(owner)
+    except Exception as error:
+        logging.getLogger("shuddho.coworker").error(
+            "Personal suggestion delivery reconciliation failed error_type=%s",
+            type(error).__name__,
+        )
+
+
 def require_browser_worker(request: Request, services: Container) -> None:
     supplied = request.headers.get("X-Shuddho-Browser-Worker-Token", "")
     expected = services.settings.browser_worker_token
@@ -284,6 +294,7 @@ def create_goal(
     idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
 ):
     goal, created = services.goals.create(identity.account_id, payload, idempotency_key)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
     response.headers["Location"] = f'/api/v1/goals/{goal["id"]}'
     response.headers["Idempotent-Replayed"] = "false" if created else "true"
     response.headers["ETag"] = f'"{goal["revision"]}"'
@@ -340,23 +351,30 @@ def goal_revisions(goal_id: UUID, identity: Identity, services: Services):
 @router.patch("/goals/{goal_id}")
 def patch_goal(goal_id: UUID, payload: GoalPatch, identity: Identity, services: Services, response: Response):
     goal = services.goals.update(identity.account_id, str(goal_id), payload)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
     response.headers["ETag"] = f'"{goal["revision"]}"'
     return goal
 
 
 @router.post("/goals/{goal_id}/pause")
 def pause_goal(goal_id: UUID, payload: GoalTransition, identity: Identity, services: Services):
-    return services.goals.pause(identity.account_id, str(goal_id), payload.expected_revision)
+    value = services.goals.pause(identity.account_id, str(goal_id), payload.expected_revision)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
+    return value
 
 
 @router.post("/goals/{goal_id}/resume")
 def resume_goal(goal_id: UUID, payload: GoalTransition, identity: Identity, services: Services):
-    return services.goals.resume(identity.account_id, str(goal_id), payload.expected_revision)
+    value = services.goals.resume(identity.account_id, str(goal_id), payload.expected_revision)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
+    return value
 
 
 @router.post("/goals/{goal_id}/cancel")
 def cancel_goal(goal_id: UUID, payload: GoalTransition, identity: Identity, services: Services):
-    return services.goals.cancel(identity.account_id, str(goal_id), payload.expected_revision)
+    value = services.goals.cancel(identity.account_id, str(goal_id), payload.expected_revision)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
+    return value
 
 
 @router.post("/goals/{goal_id}/run", status_code=202)
@@ -376,6 +394,7 @@ def run_goal(
         persistent_goal_id=str(goal_id),
         persistent_goal_revision=payload.expected_revision,
     )
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
     response.headers["Location"] = f'/api/v1/agent-runs/{run["id"]}'
     response.headers["Idempotent-Replayed"] = "false" if created else "true"
     return run
@@ -390,6 +409,7 @@ def create_automation(
     idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
 ):
     automation, created = services.automations.create(identity.account_id, payload, idempotency_key)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
     response.headers["Location"] = f'/api/v1/automations/{automation["id"]}'
     response.headers["Idempotent-Replayed"] = "false" if created else "true"
     response.headers["ETag"] = f'"{automation["revision"]}"'
@@ -418,23 +438,30 @@ def automation_revisions(automation_id: UUID, identity: Identity, services: Serv
 @router.patch("/automations/{automation_id}")
 def patch_automation(automation_id: UUID, payload: AutomationPatch, identity: Identity, services: Services, response: Response):
     value = services.automations.update(identity.account_id, str(automation_id), payload)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
     response.headers["ETag"] = f'"{value["revision"]}"'
     return value
 
 
 @router.post("/automations/{automation_id}/pause")
 def pause_automation(automation_id: UUID, payload: AutomationTransition, identity: Identity, services: Services):
-    return services.automations.pause(identity.account_id, str(automation_id), payload.expected_revision)
+    value = services.automations.pause(identity.account_id, str(automation_id), payload.expected_revision)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
+    return value
 
 
 @router.post("/automations/{automation_id}/resume")
 def resume_automation(automation_id: UUID, payload: AutomationTransition, identity: Identity, services: Services):
-    return services.automations.resume(identity.account_id, str(automation_id), payload.expected_revision)
+    value = services.automations.resume(identity.account_id, str(automation_id), payload.expected_revision)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
+    return value
 
 
 @router.post("/automations/{automation_id}/cancel")
 def cancel_automation(automation_id: UUID, payload: AutomationTransition, identity: Identity, services: Services):
-    return services.automations.cancel(identity.account_id, str(automation_id), payload.expected_revision)
+    value = services.automations.cancel(identity.account_id, str(automation_id), payload.expected_revision)
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
+    return value
 
 
 @router.get("/notification-preferences")
@@ -448,10 +475,12 @@ def put_notification_preferences(
     identity: Identity,
     services: Services,
 ):
-    return services.notifications.save_notification_preferences(
+    value = services.notifications.save_notification_preferences(
         identity.account_id,
         payload,
     )
+    _reconcile_personal_suggestion_delivery(services, identity.account_id)
+    return value
 
 
 @router.get("/notifications")

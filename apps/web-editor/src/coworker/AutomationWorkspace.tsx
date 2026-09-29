@@ -157,7 +157,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             })} /> Scheduled-work updates</label>
           <p className="cw-fineprint">Turning notifications off suppresses pending notices before delivery. It does not pause goals, automations, or grant any external-action authority.</p>
         </div>}
-        {notifications.length === 0 ? <p className="cw-fineprint">No delivered automation notifications yet.</p> :
+        {notifications.length === 0 ? <p className="cw-fineprint">No delivered in-app notifications yet.</p> :
         <div className="cw-history"><ul>{notifications.map(item => <li key={item.id}><button type="button" onClick={() => markRead(item)}><div><strong>{item.title}</strong><small>{item.message} · {new Date(item.created_at).toLocaleString()} · {item.state}</small></div></button></li>)}</ul></div>}
       </div>
     </div>}

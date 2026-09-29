@@ -98,16 +98,21 @@ class Container:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
         if self.goals is None:
             self.goals = GoalRepository(self.repository.sessions, self.settings)
-        if self.suggestions is None:
-            self.suggestions = SuggestionRepository(
-                self.repository.sessions,
-                self.settings,
-            )
         if self.notifications is None:
             self.notifications = NotificationRepository(
                 self.repository.sessions,
                 self.settings,
             )
+        if self.suggestions is None:
+            self.suggestions = SuggestionRepository(
+                self.repository.sessions,
+                self.settings,
+                self.notifications,
+            )
+        self.notifications.register_source_validator(
+            self.suggestions.SOURCE_KIND,
+            self.suggestions.notification_source_allowed,
+        )
         if self.automations is None:
             self.automations = AutomationRepository(
                 self.repository.sessions,
