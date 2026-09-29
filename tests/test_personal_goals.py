@@ -168,10 +168,20 @@ def test_personal_suggestions_default_off_stable_owner_scoped_and_inert(
         "reason", "due_at", "action", "context_resource_count",
     }
 
+    bob_enabled = client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=bob,
+        json={"enabled": True},
+    )
+    assert bob_enabled.status_code == 200
     assert client.get(
         "/api/v1/personal-suggestions",
         headers=bob,
     ).json()["suggestions"] == []
+    assert client.post(
+        f'/api/v1/personal-suggestions/{suggestion["id"]}/dismiss',
+        headers=bob,
+    ).status_code == 404
 
     with goal_container.repository.sessions() as db:
         owner = db.scalar(select(Account).where(Account.subject == "alice"))
