@@ -16,6 +16,7 @@ from .microsoft_actions import MicrosoftActions
 from .linkedin_actions import LinkedInActions
 from .agent_repository import AgentRepository
 from .goal_repository import GoalRepository
+from .suggestion_repository import SuggestionRepository
 from .negotiation_repository import NegotiationRepository
 from .negotiation_model import NegotiationProposalModel
 from .negotiation_service import NegotiationProposalService
@@ -40,6 +41,7 @@ class Container:
     connector_reads: ConnectorReadService | None = None
     agent: AgentRepository | None = None
     goals: GoalRepository | None = None
+    suggestions: SuggestionRepository | None = None
     negotiations: NegotiationRepository | None = None
     negotiation_proposals: NegotiationProposalService | None = None
     automations: AutomationRepository | None = None
@@ -94,6 +96,11 @@ class Container:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
         if self.goals is None:
             self.goals = GoalRepository(self.repository.sessions, self.settings)
+        if self.suggestions is None:
+            self.suggestions = SuggestionRepository(
+                self.repository.sessions,
+                self.settings,
+            )
         if self.automations is None:
             self.automations = AutomationRepository(self.repository.sessions, self.settings, self.agent)
         if self.negotiations is None:

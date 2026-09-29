@@ -202,7 +202,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     {error && <div className="cw-error cw-banner" role="alert">{error} {!workspace && <button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Try again</button>}</div>}
     {notice && <p className="cw-notice cw-banner" role="status">{notice}</p>}
     <nav className="cw-work-tabs" aria-label="Coworker services"><button aria-pressed={view === "drafts"} onClick={() => setView("drafts")}>Drafts & files</button><button aria-pressed={view === "goals"} onClick={() => setView("goals")}>Goals</button><button aria-pressed={view === "automations"} onClick={() => setView("automations")}>Automations</button><button aria-pressed={view === "browser"} onClick={() => setView("browser")}>Browser</button><button aria-pressed={view === "sandbox"} onClick={() => setView("sandbox")}>Sandbox</button><button aria-pressed={view === "negotiations"} onClick={() => setView("negotiations")}>Negotiations</button><button aria-pressed={view === "agent"} onClick={() => setView("agent")}>Agent</button><button aria-pressed={view === "actions"} onClick={() => setView("actions")}>Email & calendar</button></nav>
-    {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => setView("agent")} />}
+    {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => setView("agent")} openAutomations={() => setView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
     {view === "sandbox" && workspace && <SandboxWorkspace client={client} />}
