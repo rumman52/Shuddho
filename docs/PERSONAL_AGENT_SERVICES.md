@@ -42,6 +42,8 @@
 
 Email drafts map to S02, official documents to S11, and existing research to S05. None of these services bypass their existing implementation limits or feature gates. Production LinkedIn Agent proposal enablement remains independently gated and off unless separately qualified.
 
+The PA-10 [bounded in-app digest slice](PA10_NOTIFICATION_DIGESTS.md) adds an optional inbox view for already-delivered S15/S16 notices, preserving original items and exact-member read receipts. It does not produce a new briefing, change delivery consent or enable another channel. Final-head repository CI and separate controlled staging/production qualification remain required.
+
 **Operations within a service have different permissions.**
 
 | Automatic within a granted scope | Requires exact approval in the initial design |

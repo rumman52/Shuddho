@@ -11,7 +11,7 @@ from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.concurrency import run_in_threadpool
@@ -35,7 +35,7 @@ from .negotiation_schemas import (
     NegotiationProposalReview,
 )
 from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
-from .notification_schemas import NotificationPreferences
+from .notification_schemas import NotificationDigestRead, NotificationPreferences
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
@@ -493,6 +493,23 @@ def list_notifications(identity: Identity, services: Services):
 @router.post("/notifications/{notification_id}/read")
 def read_notification(notification_id: UUID, identity: Identity, services: Services):
     return services.notifications.mark_read(identity.account_id, str(notification_id))
+
+
+@router.get("/notification-digests")
+def list_notification_digests(identity: Identity, services: Services):
+    if not services.settings.automations_enabled:
+        return {"enabled": False, "digests": []}
+    return {"enabled": True, "digests": services.notifications.notification_digests(identity.account_id)}
+
+
+@router.post("/notification-digests/{digest_id}/read")
+def read_notification_digest(
+    digest_id: Annotated[str, Path(pattern=r"^[a-f0-9]{64}$")],
+    payload: NotificationDigestRead, identity: Identity, services: Services,
+):
+    return services.notifications.mark_digest_read(
+        identity.account_id, digest_id, [str(value) for value in payload.notification_ids],
+    )
 
 
 @router.get("/memory")

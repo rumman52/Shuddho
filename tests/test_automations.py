@@ -81,6 +81,130 @@ def goal_payload():
     }
 
 
+def create_delivered_digest(client, headers, container):
+    auth = headers()
+    for index in range(2):
+        body = goal_payload()
+        body["next_review_at"] = (utcnow() - timedelta(minutes=5)).isoformat()
+        response = client.post("/api/v1/goals", headers=auth | {"Idempotency-Key": f"digest-goal-{index}"}, json=body)
+        assert response.status_code == 201
+    response = client.put("/api/v1/personal-suggestion-preferences", headers=auth,
+                          json={"enabled": True, "delivery_enabled": True})
+    assert response.status_code == 200
+    with container.repository.sessions.begin() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice")).id
+        now = utcnow()
+        visible = now.replace(hour=now.hour // 6 * 6, minute=0, second=0, microsecond=0)
+        rows = db.scalars(select(Notification).where(Notification.owner_id == owner)).all()
+        assert len(rows) == 2
+        for row in rows:
+            row.visible_at = visible
+    claimed = container.notifications.claim_notifications()
+    assert len(claimed) == 2
+    for notification_id in claimed:
+        container.notifications.deliver_notification(notification_id)
+    response = client.get("/api/v1/notification-digests", headers=auth)
+    assert response.status_code == 200
+    assert len(response.json()["digests"]) == 1
+    return auth, owner, response.json()["digests"][0]
+
+
+def test_notification_digest_restart_exact_read_and_owner_isolation(automation_client, automation_container):
+    client, headers = automation_client
+    auth, owner, digest = create_delivered_digest(client, headers, automation_container)
+    ids = [item["id"] for item in digest["notifications"]]
+    assert digest["count"] == digest["unread_count"] == 2
+    assert len(client.get("/api/v1/notifications", headers=auth).json()["notifications"]) == 2
+    restarted = Container.create(automation_container.settings)
+    try:
+        assert restarted.notifications.notification_digests(owner) == [digest]
+    finally:
+        restarted.repository.sessions.kw["bind"].dispose()
+    bob = headers("bob")
+    assert client.get("/api/v1/notification-digests", headers=bob).json()["digests"] == []
+    route = f'/api/v1/notification-digests/{digest["id"]}/read'
+    assert client.post(route, headers=bob, json={"notification_ids": ids}).status_code == 404
+    # A previously read member retains its original read receipt when the group is read.
+    first = client.post(f"/api/v1/notifications/{ids[0]}/read", headers=auth).json()
+    result = client.post(route, headers=auth, json={"notification_ids": list(reversed(ids))})
+    assert result.status_code == 200
+    read_members = {item["id"]: item for item in result.json()["notifications"]}
+    assert read_members[ids[0]]["read_at"] == first["read_at"]
+    replay = client.post(route, headers=auth, json={"notification_ids": ids})
+    assert replay.json() == result.json()
+    assert client.get("/api/v1/notification-digests", headers=auth).json()["digests"][0]["unread_count"] == 0
+    with automation_container.repository.sessions() as db:
+        assert len(db.scalars(select(Notification).where(Notification.owner_id == owner)).all()) == 2
+        assert len(db.scalars(select(NotificationOutbox)).all()) == 2
+        assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all() == []
+        assert db.scalars(select(Automation).where(Automation.owner_id == owner)).all() == []
+
+
+@pytest.mark.parametrize("change", ["expired", "pending", "revised", "dismissed", "opt_out", "delivery_opt_out", "unknown_source", "missing_source"])
+def test_notification_digest_rechecks_every_member_atomically(automation_client, automation_container, change):
+    client, headers = automation_client
+    auth, owner, digest = create_delivered_digest(client, headers, automation_container)
+    ids = [item["id"] for item in digest["notifications"]]
+    if change == "opt_out":
+        response = client.put("/api/v1/notification-preferences", headers=auth,
+                              json={"in_app_enabled": False, "automation_updates_enabled": True})
+        assert response.status_code == 200
+    elif change == "delivery_opt_out":
+        response = client.put("/api/v1/personal-suggestion-preferences", headers=auth,
+                              json={"enabled": True, "delivery_enabled": False})
+        assert response.status_code == 200
+    else:
+        with automation_container.repository.sessions.begin() as db:
+            row = db.get(Notification, ids[0])
+            if change == "expired":
+                row.expires_at = utcnow() - timedelta(seconds=1)
+            elif change == "pending":
+                row.state = "pending"
+            elif change == "revised":
+                goal = db.scalar(select(PersonalGoal).where(PersonalGoal.owner_id == owner))
+                goal.revision += 1
+            elif change == "dismissed":
+                account = db.get(Account, owner)
+                prefs = dict(account.preferences)
+                prefs["personal_suggestions"] = dict(prefs["personal_suggestions"], dismissed_ids=[row.source_id])
+                account.preferences = prefs
+            elif change == "unknown_source":
+                row.source_kind = "unregistered_source"
+            elif change == "missing_source":
+                row.source_kind = None
+                row.source_id = None
+    route = f'/api/v1/notification-digests/{digest["id"]}/read'
+    response = client.post(route, headers=auth, json={"notification_ids": ids})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "notification_digest_changed"
+    with automation_container.repository.sessions() as db:
+        assert all(db.get(Notification, value).read_at is None for value in ids)
+        assert all(db.get(Notification, value).state != "read" for value in ids)
+    remaining = client.get("/api/v1/notification-digests", headers=auth).json()["digests"]
+    assert sum(item["count"] for item in remaining) < 2
+
+
+def test_notification_digest_requests_are_strict_bounded_and_identity_bound(automation_client, automation_container):
+    client, headers = automation_client
+    auth, _, digest = create_delivered_digest(client, headers, automation_container)
+    ids = [item["id"] for item in digest["notifications"]]
+    route = f'/api/v1/notification-digests/{digest["id"]}/read'
+    for payload in [{"notification_ids": []}, {"notification_ids": ids * 6},
+                    {"notification_ids": [ids[0], ids[0]]}, {"notification_ids": ["invalid"]},
+                    {"notification_ids": ids, "owner_id": "bob"}]:
+        assert client.post(route, headers=auth, json=payload).status_code == 422
+    assert client.post("/api/v1/notification-digests/not-a-digest/read", headers=auth,
+                       json={"notification_ids": ids}).status_code == 422
+    assert client.post(route, headers=auth, json={"notification_ids": ids[:1]}).status_code == 409
+    assert client.post(f'/api/v1/notification-digests/{"0" * 64}/read', headers=auth,
+                       json={"notification_ids": ids}).status_code == 409
+    disabled = replace(automation_container.settings, automations_enabled=False)
+    automation_container.settings = disabled
+    automation_container.notifications.settings = disabled
+    assert client.get("/api/v1/notification-digests", headers=auth).json() == {"enabled": False, "digests": []}
+    assert client.post(route, headers=auth, json={"notification_ids": ids}).status_code == 409
+
+
 def automation_payload(goal):
     return {
         "goal_id": goal["id"], "goal_revision": goal["revision"], "timezone": "Asia/Dhaka",

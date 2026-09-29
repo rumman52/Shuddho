@@ -640,6 +640,20 @@ def test_connector_event_creates_one_coalesced_inert_review_notice(container):
         delivered = db.get(Notification, notice.id)
         assert delivered.state == "delivered"
 
+    # The read-only digest uses the same real event/grant boundary after delivery.
+    digest = container.notifications.notification_digests(owner)[0]
+    assert digest["kind"] == "personal_suggestion_event"
+    assert digest["count"] == 1
+    assert "Project update" not in json.dumps(digest)
+    asyncio.run(container.connector_reads.revoke(owner, grant["id"]))
+    assert container.notifications.notification_digests(owner) == []
+    with pytest.raises(CoworkerError) as error:
+        container.notifications.mark_digest_read(owner, digest["id"], [notice.id])
+    assert error.value.code == "notification_digest_changed"
+    with container.repository.sessions() as db:
+        assert db.get(Notification, notice.id).state == "delivered"
+        assert db.get(Notification, notice.id).read_at is None
+
 
 def test_connector_event_notice_is_suppressed_after_read_grant_revocation(container):
     enable_reads(container)

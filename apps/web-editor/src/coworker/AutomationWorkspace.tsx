@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type AgentNotification, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
+import { CoworkerClient, type AgentNotification, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 const message = (error: unknown) => error instanceof Error ? error.message : "This automation action could not finish.";
@@ -9,6 +9,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [goals, setGoals] = useState<PersonalGoal[]>([]);
   const [automations, setAutomations] = useState<PersonalAutomation[]>([]);
   const [notifications, setNotifications] = useState<AgentNotification[]>([]);
+  const [digests, setDigests] = useState<NotificationDigest[]>([]);
+  const [groupNotices, setGroupNotices] = useState(false);
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null);
   const [goalId, setGoalId] = useState("");
   const [kind, setKind] = useState<"daily" | "weekly">("daily");
@@ -24,8 +26,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
 
   async function reload(signal?: AbortSignal) {
-    const [goalResult, automationResult, notificationResult, notificationPreferenceResult] = await Promise.all([
-      client.goals(signal), client.automations(signal), client.notifications(signal), client.notificationPreferences(signal),
+    const [goalResult, automationResult, notificationResult, notificationPreferenceResult, digestResult] = await Promise.all([
+      client.goals(signal), client.automations(signal), client.notifications(signal), client.notificationPreferences(signal), client.notificationDigests(signal),
     ]);
     const activeGoals = goalResult.goals.filter(item => item.state === "active");
     setGoals(activeGoals);
@@ -33,6 +35,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     setEnabled(automationResult.enabled);
     setAutomations(automationResult.automations);
     setNotifications(notificationResult.notifications);
+    setDigests(digestResult.digests);
     setNotificationPreferences(notificationPreferenceResult);
   }
 
@@ -74,11 +77,26 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   }
 
   async function markRead(item: AgentNotification) {
-    if (item.state === "read") return;
+    if (item.state === "read" || busy) return;
+    setBusy(item.id); setError("");
     try {
       await client.readNotification(item.id);
-      setNotifications(previous => previous.map(value => value.id === item.id ? { ...value, state: "read", read_at: new Date().toISOString() } : value));
+      await reload();
     } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
+  }
+
+  async function markDigestRead(item: NotificationDigest) {
+    if (!item.unread_count || busy) return;
+    setBusy(item.id); setError(""); setNotice("");
+    try {
+      await client.readNotificationDigest(item.id, item.notifications.map(value => value.id));
+      await reload();
+      setNotice("The notices in this digest are marked as read.");
+    } catch (error) {
+      setError(message(error));
+      try { await reload(); } catch { /* Keep the original action error visible. */ }
+    } finally { setBusy(""); }
   }
 
   async function saveNotificationPreference(next: NotificationPreferences) {
@@ -87,7 +105,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     try {
       const saved = await client.saveNotificationPreferences(next);
       setNotificationPreferences(saved);
-      if (!saved.in_app_enabled) setNotifications([]);
+      if (!saved.in_app_enabled) { setNotifications([]); setDigests([]); }
+      else await reload();
       setNotice(saved.in_app_enabled
         ? "In-app notification preferences saved."
         : "In-app notifications are off. Scheduled work can still run.");
@@ -157,8 +176,20 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             })} /> Scheduled-work updates</label>
           <p className="cw-fineprint">Turning notifications off suppresses pending notices before delivery. It does not pause goals, automations, or grant any external-action authority.</p>
         </div>}
-        {notifications.length === 0 ? <p className="cw-fineprint">No delivered in-app notifications yet.</p> :
-        <div className="cw-history"><ul>{notifications.map(item => <li key={item.id}><button type="button" onClick={() => markRead(item)}><div><strong>{item.title}</strong><small>{item.message} · {new Date(item.created_at).toLocaleString()} · {item.state}</small></div></button></li>)}</ul></div>}
+        <label className="cw-digest-toggle"><input type="checkbox" checked={groupNotices} onChange={event => setGroupNotices(event.target.checked)} /> Group suggestion notices into digests</label>
+        <p className="cw-fineprint">Groups contain up to ten delivered notices from the same six-hour period. Expand a group to review each notice.</p>
+        {groupNotices ? (digests.length === 0 ? <p className="cw-fineprint">No available digests. Notices may have expired or their source access may have changed.</p> :
+          <div className="cw-history"><ul>{digests.map(item => <li key={item.id}><div className="cw-agent-run cw-notification-digest">
+            <details><summary><strong>{item.title}</strong><small>{item.unread_count} unread · {new Date(item.latest_at).toLocaleString()}</small></summary>
+              <ul className="cw-digest-members">{item.notifications.map(member => <li key={member.id}>
+                <strong>{member.title}</strong><p>{member.message}</p>
+                <small>{new Date(member.visible_at).toLocaleString()} · {member.state}</small>
+                {member.state !== "read" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => markRead(member)}>Mark as read</button>}
+              </li>)}</ul>
+            </details>
+            <button className="cw-secondary" disabled={Boolean(busy) || item.unread_count === 0} onClick={() => markDigestRead(item)}>{item.unread_count === 0 ? "All read" : "Mark digest as read"}</button>
+          </div></li>)}</ul></div>) : (notifications.length === 0 ? <p className="cw-fineprint">No delivered in-app notifications yet.</p> :
+        <div className="cw-history"><ul>{notifications.map(item => <li key={item.id}><button type="button" disabled={Boolean(busy)} onClick={() => markRead(item)}><div><strong>{item.title}</strong><small>{item.message} · {new Date(item.created_at).toLocaleString()} · {item.state}</small></div></button></li>)}</ul></div>)}
       </div>
     </div>}
   </section>;
