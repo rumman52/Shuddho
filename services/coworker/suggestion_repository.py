@@ -400,7 +400,7 @@ class SuggestionRepository:
                 item["id"],
             )
         )
-        return candidates[: self.MAX_SUGGESTIONS]
+        return candidates
 
     def _candidate(
         self,
@@ -448,7 +448,7 @@ class SuggestionRepository:
                 item
                 for item in self._candidates(db, owner)
                 if item["id"] not in dismissed
-            ]
+            ][: self.MAX_SUGGESTIONS]
             return {
                 "available": True,
                 "enabled": True,
