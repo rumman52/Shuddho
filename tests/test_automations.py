@@ -581,8 +581,14 @@ def test_personal_suggestion_delivery_is_separate_durable_deduped_and_inert(
     ).json()
     preferences = client.get("/api/v1/personal-suggestion-preferences", headers=auth).json()
     assert preferences == {
-        "available": True, "enabled": False, "delivery_available": True,
-        "delivery_enabled": False, "dismissed_count": 0,
+        "available": True,
+        "enabled": False,
+        "delivery_available": True,
+        "delivery_enabled": False,
+        "event_delivery_available": False,
+        "event_delivery_enabled": False,
+        "event_timezone": "UTC",
+        "dismissed_count": 0,
     }
     client.put("/api/v1/personal-suggestion-preferences", headers=auth,
                json={"enabled": True, "delivery_enabled": False})

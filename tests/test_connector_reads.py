@@ -590,6 +590,7 @@ def _enable_event_suggestion_delivery(container, owner, timezone="UTC"):
 
 def test_connector_event_creates_one_coalesced_inert_review_notice(container):
     enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
     owner = account(container)
     _enable_event_suggestion_delivery(container, owner, "Asia/Dhaka")
     connection = connect_read(container, owner)
@@ -642,6 +643,7 @@ def test_connector_event_creates_one_coalesced_inert_review_notice(container):
 
 def test_connector_event_notice_is_suppressed_after_read_grant_revocation(container):
     enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
     owner = account(container)
     _enable_event_suggestion_delivery(container, owner)
     connection = connect_read(container, owner)
@@ -682,6 +684,7 @@ def test_connector_event_notice_is_suppressed_after_read_grant_revocation(contai
 
 def test_connector_event_notice_opt_out_rechecked_after_claim(container):
     enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
     owner = account(container)
     _enable_event_suggestion_delivery(container, owner)
     connection = connect_read(container, owner)
@@ -727,6 +730,7 @@ def test_connector_event_notice_opt_out_rechecked_after_claim(container):
 
 def test_optional_event_notice_failure_does_not_retry_successful_connector_sync(container):
     enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
     owner = account(container)
     connection = connect_read(container, owner)
     grant = create_grant(container, owner, connection)
