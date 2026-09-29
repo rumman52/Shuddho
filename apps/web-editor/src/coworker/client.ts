@@ -262,6 +262,11 @@ const identifier = (value: string) => {
   return value;
 };
 
+const digestIdentifier = (value: string) => {
+  if (!/^[a-f0-9]{64}$/.test(value)) throw new WorkspaceError("This suggestion is invalid.");
+  return value;
+};
+
 export function parseProgress(frame: string): ProgressEvent | null {
   const data = frame.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
   if (!data) return null;
@@ -472,7 +477,7 @@ export class CoworkerClient {
     });
   }
   personalSuggestions(signal?: AbortSignal) { return this.json<{ available: boolean; enabled: boolean; suggestions: PersonalSuggestion[] }>("/api/v1/personal-suggestions", { signal }); }
-  dismissPersonalSuggestion(id: string) { return this.json<{ id: string; state: "dismissed" }>(`/api/v1/personal-suggestions/${identifier(id)}/dismiss`, { method: "POST" }); }
+  dismissPersonalSuggestion(id: string) { return this.json<{ id: string; state: "dismissed" }>(`/api/v1/personal-suggestions/${digestIdentifier(id)}/dismiss`, { method: "POST" }); }
   goal(id: string, signal?: AbortSignal) { return this.json<PersonalGoal>(`/api/v1/goals/${identifier(id)}`, { signal }); }
   createGoal(input: PersonalGoalCreate, key: string) {
     return this.json<PersonalGoal>("/api/v1/goals", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
