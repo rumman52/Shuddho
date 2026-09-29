@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type PersonalGoal } from "./client";
+import { CoworkerClient, type PersonalGoal, type PersonalSuggestion, type PersonalSuggestionPreferences } from "./client";
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "This goal action could not finish.";
 
@@ -7,9 +7,11 @@ function lines(value: string) {
   return value.split("\n").map(item => item.trim()).filter(Boolean).slice(0, 10);
 }
 
-export default function GoalWorkspace({ client, openAgent }: { client: CoworkerClient; openAgent: () => void }) {
+export default function GoalWorkspace({ client, openAgent, openAutomations }: { client: CoworkerClient; openAgent: () => void; openAutomations: () => void }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [goals, setGoals] = useState<PersonalGoal[]>([]);
+  const [suggestionPreferences, setSuggestionPreferences] = useState<PersonalSuggestionPreferences | null>(null);
+  const [suggestions, setSuggestions] = useState<PersonalSuggestion[]>([]);
   const [selected, setSelected] = useState("");
   const [objective, setObjective] = useState("");
   const [criteria, setCriteria] = useState("");
@@ -26,10 +28,16 @@ export default function GoalWorkspace({ client, openAgent }: { client: CoworkerC
 
   useEffect(() => {
     const controller = new AbortController();
-    client.goals(controller.signal).then(result => {
-      setEnabled(result.enabled);
-      setGoals(result.goals);
-      setSelected(value => result.goals.some(goal => goal.id === value) ? value : result.goals[0]?.id ?? "");
+    Promise.all([
+      client.goals(controller.signal),
+      client.personalSuggestionPreferences(controller.signal),
+      client.personalSuggestions(controller.signal),
+    ]).then(([goalResult, preferenceResult, suggestionResult]) => {
+      setEnabled(goalResult.enabled);
+      setGoals(goalResult.goals);
+      setSuggestionPreferences(preferenceResult);
+      setSuggestions(suggestionResult.suggestions);
+      setSelected(value => goalResult.goals.some(goal => goal.id === value) ? value : goalResult.goals[0]?.id ?? "");
     }).catch(error => { if (!controller.signal.aborted) setError(errorMessage(error)); });
     return () => controller.abort();
   }, [client]);
@@ -78,6 +86,42 @@ export default function GoalWorkspace({ client, openAgent }: { client: CoworkerC
     finally { setBusy(""); }
   }
 
+  async function setSuggestionsEnabled(next: boolean) {
+    if (busy) return;
+    setBusy("suggestion-preferences"); setError(""); setNotice("");
+    try {
+      const saved = await client.savePersonalSuggestionPreferences(next);
+      setSuggestionPreferences(saved);
+      const refreshed = await client.personalSuggestions();
+      setSuggestions(refreshed.suggestions);
+      setNotice(next
+        ? "Goal suggestions are on. They remain review-only until you choose an action."
+        : "Goal suggestions are off.");
+    } catch (error) { setError(errorMessage(error)); }
+    finally { setBusy(""); }
+  }
+
+  async function dismissSuggestion(item: PersonalSuggestion) {
+    if (busy) return;
+    setBusy("dismiss:" + item.id); setError(""); setNotice("");
+    try {
+      await client.dismissPersonalSuggestion(item.id);
+      setSuggestions(previous => previous.filter(value => value.id !== item.id));
+      setSuggestionPreferences(previous => previous ? { ...previous, dismissed_count: previous.dismissed_count + 1 } : previous);
+      setNotice("Suggestion dismissed.");
+    } catch (error) { setError(errorMessage(error)); }
+    finally { setBusy(""); }
+  }
+
+  function reviewSuggestion(item: PersonalSuggestion) {
+    setSelected(item.goal_id);
+    if (item.action === "open_automations") {
+      openAutomations();
+      return;
+    }
+    setNotice("Goal selected for review. No work was started.");
+  }
+
   async function reviseObjective() {
     if (!current || busy) return;
     const revised = window.prompt("Revise the goal objective. Existing runs keep their accepted revision.", current.objective)?.trim();
@@ -116,6 +160,24 @@ export default function GoalWorkspace({ client, openAgent }: { client: CoworkerC
         </form>
       </section>
       <div className="cw-output-column">
+        {suggestionPreferences?.available && <section className="cw-agent-run" aria-label="Goal suggestions">
+          <span className="cw-eyebrow">Personal agent · PA-10 preview</span>
+          <h2>Quiet goal suggestions</h2>
+          <label><input type="checkbox" checked={suggestionPreferences.enabled} disabled={Boolean(busy)}
+            onChange={event => void setSuggestionsEnabled(event.target.checked)} /> Show deterministic suggestions from my owned goal timing and authorized-resource metadata</label>
+          <p className="cw-fineprint">Off by default. Suggestions do not start runs, create automations, contact providers, or send anything. No model call is used for this preview.</p>
+          {suggestionPreferences.enabled && (suggestions.length === 0
+            ? <p className="cw-fineprint">No relevant bounded suggestion right now.</p>
+            : <div className="cw-proposals">{suggestions.map(item => <div key={item.id} className="cw-agent-run">
+                <strong>{goals.find(goal => goal.id === item.goal_id)?.objective ?? "Owned goal"}</strong>
+                <p>{item.reason}</p>
+                <div className="cw-agent-meta"><span>Goal revision {item.goal_revision}</span>{item.due_at && <span>Due {new Date(item.due_at).toLocaleString()}</span>}{item.context_resource_count > 0 && <span>{item.context_resource_count} authorized resource{item.context_resource_count === 1 ? "" : "s"}</span>}</div>
+                <div className="cw-proposal-controls"><div>
+                  <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => reviewSuggestion(item)}>{item.action === "open_automations" ? "Review automations" : "Review goal"}</button>
+                  <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void dismissSuggestion(item)}>{busy === "dismiss:" + item.id ? "Dismissing…" : "Dismiss"}</button>
+                </div></div>
+              </div>)}</div>)}
+        </section>}
         {goals.length === 0 ? <section className="cw-empty"><span className="cw-empty-mark" aria-hidden="true">◎</span><span className="cw-eyebrow">Persistent goals</span><h2>No active goal yet.</h2><p>Create one to preserve an objective across bounded Agent runs.</p></section> :
         <>
           <div className="cw-history-title"><h2>Saved goals</h2></div>
