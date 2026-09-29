@@ -45,7 +45,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, utcnow
+from services.coworker.models import Account, AgentRun, Automation, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Notification, NotificationOutbox, utcnow
 
 
 class ReadGoogle:
@@ -141,6 +141,8 @@ def enable_reads(container):
         actions_enabled=True,
         connector_trust_boundary_enabled=True,
         connector_reads_enabled=True,
+        personal_goals_enabled=True,
+        automations_enabled=True,
         agent_runtime_enabled=True,
         intelligent_planner_enabled=True,
         agent_runtime_v3_enabled=True,
@@ -178,6 +180,11 @@ def enable_reads(container):
         gateway,
     )
     container.connector_reads = ConnectorReadService(read_repo, broker)
+    container.notifications.settings = settings
+    container.suggestions.settings = settings
+    container.connector_reads.set_event_consumer(
+        container.suggestions.handle_connector_event
+    )
     container.agent = AgentRepository(container.repository.sessions, settings)
     container.memory.settings = settings
     container.context = ContextService(
@@ -564,3 +571,186 @@ def test_event_claim_recovers_after_expired_worker_lease(container):
         row = db.get(ConnectorEvent, first["id"])
         assert row.attempts == 2
 
+
+
+
+def _enable_event_suggestion_delivery(container, owner, timezone="UTC"):
+    with container.repository.sessions.begin() as db:
+        account_row = db.get(Account, owner)
+        current = dict(account_row.preferences or {})
+        current["personal_suggestions"] = {
+            "enabled": True,
+            "delivery_enabled": True,
+            "event_delivery_enabled": True,
+            "event_timezone": timezone,
+            "dismissed_ids": [],
+        }
+        account_row.preferences = current
+
+
+def test_connector_event_creates_one_coalesced_inert_review_notice(container):
+    enable_reads(container)
+    owner = account(container)
+    _enable_event_suggestion_delivery(container, owner, "Asia/Dhaka")
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+
+    data = base64.urlsafe_b64encode(json.dumps({
+        "emailAddress": "reader@example.test",
+        "historyId": "102",
+    }).encode()).decode().rstrip("=")
+    for message_id in ("event-suggestion-1", "event-suggestion-2"):
+        asyncio.run(container.connector_reads.ingest_gmail_push(
+            "Bearer signed-google-token",
+            {
+                "subscription": "projects/test-project/subscriptions/shuddho-gmail",
+                "message": {"messageId": message_id, "data": data},
+            },
+        ))
+
+    events = container.connector_reads.repo.claim_events()
+    assert len(events) == 2
+    for event in events:
+        asyncio.run(container.connector_reads.process_event(event))
+
+    with container.repository.sessions() as db:
+        notices = db.query(Notification).filter_by(
+            owner_id=owner,
+            source_kind="personal_suggestion_event",
+        ).all()
+        assert len(notices) == 1
+        notice = notices[0]
+        assert notice.kind == "personal_suggestion_event"
+        assert notice.source_id is not None
+        assert "Project update" not in notice.message
+        assert db.query(AgentRun).filter_by(owner_id=owner).count() == 0
+        assert db.query(Automation).filter_by(owner_id=owner).count() == 0
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(Notification, notice.id)
+        row.visible_at = utcnow() - timedelta(seconds=1)
+
+    claimed = container.notifications.claim_notifications()
+    assert claimed == [notice.id]
+    container.notifications.deliver_notification(notice.id)
+    with container.repository.sessions() as db:
+        delivered = db.get(Notification, notice.id)
+        assert delivered.state == "delivered"
+
+
+def test_connector_event_notice_is_suppressed_after_read_grant_revocation(container):
+    enable_reads(container)
+    owner = account(container)
+    _enable_event_suggestion_delivery(container, owner)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+
+    data = base64.urlsafe_b64encode(json.dumps({
+        "emailAddress": "reader@example.test",
+        "historyId": "102",
+    }).encode()).decode().rstrip("=")
+    asyncio.run(container.connector_reads.ingest_gmail_push(
+        "Bearer signed-google-token",
+        {
+            "subscription": "projects/test-project/subscriptions/shuddho-gmail",
+            "message": {"messageId": "event-revoke", "data": data},
+        },
+    ))
+    event = container.connector_reads.repo.claim_events()[0]
+    asyncio.run(container.connector_reads.process_event(event))
+
+    with container.repository.sessions.begin() as db:
+        notice = db.query(Notification).filter_by(
+            owner_id=owner,
+            source_kind="personal_suggestion_event",
+        ).one()
+        notice.visible_at = utcnow() - timedelta(seconds=1)
+        notice_id = notice.id
+
+    asyncio.run(container.connector_reads.revoke(owner, grant["id"]))
+    assert container.notifications.claim_notifications() == []
+    with container.repository.sessions() as db:
+        notice = db.get(Notification, notice_id)
+        outbox = db.get(NotificationOutbox, notice_id)
+        assert notice.state == "suppressed"
+        assert outbox.delivered is True
+
+
+def test_connector_event_notice_opt_out_rechecked_after_claim(container):
+    enable_reads(container)
+    owner = account(container)
+    _enable_event_suggestion_delivery(container, owner)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+
+    data = base64.urlsafe_b64encode(json.dumps({
+        "emailAddress": "reader@example.test",
+        "historyId": "102",
+    }).encode()).decode().rstrip("=")
+    asyncio.run(container.connector_reads.ingest_gmail_push(
+        "Bearer signed-google-token",
+        {
+            "subscription": "projects/test-project/subscriptions/shuddho-gmail",
+            "message": {"messageId": "event-opt-out", "data": data},
+        },
+    ))
+    event = container.connector_reads.repo.claim_events()[0]
+    asyncio.run(container.connector_reads.process_event(event))
+    with container.repository.sessions.begin() as db:
+        notice = db.query(Notification).filter_by(
+            owner_id=owner,
+            source_kind="personal_suggestion_event",
+        ).one()
+        notice.visible_at = utcnow() - timedelta(seconds=1)
+        notice_id = notice.id
+
+    assert container.notifications.claim_notifications() == [notice_id]
+    with container.repository.sessions.begin() as db:
+        account_row = db.get(Account, owner)
+        current = dict(account_row.preferences or {})
+        prefs = dict(current["personal_suggestions"])
+        prefs["event_delivery_enabled"] = False
+        current["personal_suggestions"] = prefs
+        account_row.preferences = current
+
+    container.notifications.deliver_notification(notice_id)
+    with container.repository.sessions() as db:
+        notice = db.get(Notification, notice_id)
+        assert notice.state == "suppressed"
+
+
+def test_optional_event_notice_failure_does_not_retry_successful_connector_sync(container):
+    enable_reads(container)
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+
+    def fail_notice(_event):
+        raise RuntimeError("synthetic notice failure")
+
+    container.connector_reads.set_event_consumer(fail_notice)
+    data = base64.urlsafe_b64encode(json.dumps({
+        "emailAddress": "reader@example.test",
+        "historyId": "102",
+    }).encode()).decode().rstrip("=")
+    asyncio.run(container.connector_reads.ingest_gmail_push(
+        "Bearer signed-google-token",
+        {
+            "subscription": "projects/test-project/subscriptions/shuddho-gmail",
+            "message": {"messageId": "event-notice-failure", "data": data},
+        },
+    ))
+    event = container.connector_reads.repo.claim_events()[0]
+    asyncio.run(container.connector_reads.process_event(event))
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, event["id"])
+        assert row.state == "processed"
+        assert row.last_error_code is None

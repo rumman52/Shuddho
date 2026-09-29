@@ -47,7 +47,8 @@ export type PersonalGoalCreate = {
   budget: { max_runs: number; max_planner_tokens: number | null }; authorized_resources: []; next_review_at: string | null;
 };
 export type PersonalSuggestionPreferences = {
-  available: boolean; enabled: boolean; delivery_available: boolean; delivery_enabled: boolean; dismissed_count: number;
+  available: boolean; enabled: boolean; delivery_available: boolean; delivery_enabled: boolean;
+  event_delivery_available: boolean; event_delivery_enabled: boolean; event_timezone: string; dismissed_count: number;
 };
 export type PersonalSuggestion = {
   id: string;
@@ -471,10 +472,20 @@ export class CoworkerClient {
 
   goals(signal?: AbortSignal) { return this.json<{ enabled: boolean; goals: PersonalGoal[] }>("/api/v1/goals", { signal }); }
   personalSuggestionPreferences(signal?: AbortSignal) { return this.json<PersonalSuggestionPreferences>("/api/v1/personal-suggestion-preferences", { signal }); }
-  savePersonalSuggestionPreferences(enabled: boolean, deliveryEnabled = false) {
+  savePersonalSuggestionPreferences(
+    enabled: boolean,
+    deliveryEnabled = false,
+    eventDeliveryEnabled = false,
+    eventTimezone = "UTC",
+  ) {
     return this.json<PersonalSuggestionPreferences>("/api/v1/personal-suggestion-preferences", {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled, delivery_enabled: deliveryEnabled }),
+      body: JSON.stringify({
+        enabled,
+        delivery_enabled: deliveryEnabled,
+        event_delivery_enabled: eventDeliveryEnabled,
+        event_timezone: eventTimezone,
+      }),
     });
   }
   personalSuggestions(signal?: AbortSignal) { return this.json<{ available: boolean; enabled: boolean; suggestions: PersonalSuggestion[] }>("/api/v1/personal-suggestions", { signal }); }

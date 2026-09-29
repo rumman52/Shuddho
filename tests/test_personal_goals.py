@@ -140,6 +140,9 @@ def test_personal_suggestions_default_off_stable_owner_scoped_and_inert(
         "enabled": False,
         "delivery_available": False,
         "delivery_enabled": False,
+        "event_delivery_available": False,
+        "event_delivery_enabled": False,
+        "event_timezone": "UTC",
         "dismissed_count": 0,
     }
     assert client.get(
@@ -345,6 +348,30 @@ def test_personal_suggestion_delivery_requires_preview_and_existing_inbox(goal_c
     )
     assert unavailable.status_code == 409
     assert unavailable.json()["error"]["code"] == "personal_suggestion_delivery_unavailable"
+
+    event_without_delivery = client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=auth,
+        json={
+            "enabled": True,
+            "delivery_enabled": False,
+            "event_delivery_enabled": True,
+            "event_timezone": "Asia/Dhaka",
+        },
+    )
+    assert event_without_delivery.status_code == 422
+
+    invalid_timezone = client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=auth,
+        json={
+            "enabled": True,
+            "delivery_enabled": False,
+            "event_delivery_enabled": False,
+            "event_timezone": "Mars/Olympus",
+        },
+    )
+    assert invalid_timezone.status_code == 422
 
 
 def test_goal_draft_activation_and_patch_null_contract(goal_client):

@@ -113,6 +113,14 @@ class Container:
             self.suggestions.SOURCE_KIND,
             self.suggestions.notification_source_allowed,
         )
+        self.notifications.register_source_validator(
+            self.suggestions.EVENT_SOURCE_KIND,
+            self.suggestions.event_notification_source_allowed,
+        )
+        if hasattr(self.connector_reads, "set_event_consumer"):
+            self.connector_reads.set_event_consumer(
+                self.suggestions.handle_connector_event
+            )
         if self.automations is None:
             self.automations = AutomationRepository(
                 self.repository.sessions,
