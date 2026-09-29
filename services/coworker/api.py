@@ -34,7 +34,8 @@ from .negotiation_schemas import (
     NegotiationProposalRequest,
     NegotiationProposalReview,
 )
-from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition, NotificationPreferences
+from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
+from .notification_schemas import NotificationPreferences
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
@@ -438,7 +439,7 @@ def cancel_automation(automation_id: UUID, payload: AutomationTransition, identi
 
 @router.get("/notification-preferences")
 def get_notification_preferences(identity: Identity, services: Services):
-    return services.automations.notification_preferences(identity.account_id)
+    return services.notifications.notification_preferences(identity.account_id)
 
 
 @router.put("/notification-preferences")
@@ -447,7 +448,7 @@ def put_notification_preferences(
     identity: Identity,
     services: Services,
 ):
-    return services.automations.save_notification_preferences(
+    return services.notifications.save_notification_preferences(
         identity.account_id,
         payload,
     )
@@ -457,12 +458,12 @@ def put_notification_preferences(
 def list_notifications(identity: Identity, services: Services):
     if not services.settings.automations_enabled:
         return {"enabled": False, "notifications": []}
-    return {"enabled": True, "notifications": services.automations.notifications(identity.account_id)}
+    return {"enabled": True, "notifications": services.notifications.notifications(identity.account_id)}
 
 
 @router.post("/notifications/{notification_id}/read")
 def read_notification(notification_id: UUID, identity: Identity, services: Services):
-    return services.automations.mark_read(identity.account_id, str(notification_id))
+    return services.notifications.mark_read(identity.account_id, str(notification_id))
 
 
 @router.get("/memory")
