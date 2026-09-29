@@ -150,7 +150,7 @@ export type NotificationPreferences = {
 };
 export type NotificationDigest = {
   id: string; kind: string; title: string; count: number; unread_count: number;
-  latest_at: string; notifications: AgentNotification[];
+  latest_at: string; notifications: (AgentNotification & { read_digest_id: string })[];
 };
 export type AgentRun = {
   id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];

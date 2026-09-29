@@ -24,6 +24,14 @@ def _group_key(item: dict) -> tuple:
     return (item["workspace_id"], item["kind"], bucket)
 
 
+def _digest_id(owner: str, key: tuple, items: list[dict]) -> str:
+    identity = json.dumps(
+        ["notification_digest_v1", owner, key, sorted(item["id"] for item in items)],
+        ensure_ascii=False, separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 def digest_views(owner: str, items: list[dict]) -> list[dict]:
     """Group only the newest bounded inbox snapshot, preserving every input notice."""
     ordered = sorted(items, key=lambda item: (
@@ -36,19 +44,19 @@ def digest_views(owner: str, items: list[dict]) -> list[dict]:
     for key, members in groups.items():
         for offset in range(0, len(members), MAX_DIGEST_ITEMS):
             chunk = members[offset:offset + MAX_DIGEST_ITEMS]
-            identity = json.dumps(
-                ["notification_digest_v1", owner, key, sorted(item["id"] for item in chunk)],
-                ensure_ascii=False, separators=(",", ":"),
-            )
             count = len(chunk)
             label = "goal suggestions" if chunk[0]["kind"] == "personal_suggestion" else "connected-source updates"
             result.append({
-                "id": hashlib.sha256(identity.encode("utf-8")).hexdigest(),
+                "id": _digest_id(owner, key, chunk),
                 "kind": chunk[0]["kind"],
                 "title": chunk[0]["title"] if count == 1 else f"{count} {label}",
                 "count": count,
                 "unread_count": sum(item["state"] == "delivered" for item in chunk),
                 "latest_at": chunk[0]["visible_at"],
-                "notifications": [{name: value for name, value in item.items() if name != "workspace_id"} for item in chunk],
+                "notifications": [
+                    {**{name: value for name, value in item.items() if name != "workspace_id"},
+                     "read_digest_id": _digest_id(owner, key, [item])}
+                    for item in chunk
+                ],
             })
     return sorted(result, key=lambda item: (_instant(item["latest_at"]), item["id"]), reverse=True)

@@ -125,7 +125,11 @@ def test_notification_digest_restart_exact_read_and_owner_isolation(automation_c
     route = f'/api/v1/notification-digests/{digest["id"]}/read'
     assert client.post(route, headers=bob, json={"notification_ids": ids}).status_code == 404
     # A previously read member retains its original read receipt when the group is read.
-    first = client.post(f"/api/v1/notifications/{ids[0]}/read", headers=auth).json()
+    single = digest["notifications"][0]
+    first_response = client.post(f'/api/v1/notification-digests/{single["read_digest_id"]}/read',
+                                 headers=auth, json={"notification_ids": [single["id"]]})
+    assert first_response.status_code == 200
+    first = first_response.json()["notifications"][0]
     result = client.post(route, headers=auth, json={"notification_ids": list(reversed(ids))})
     assert result.status_code == 200
     read_members = {item["id"]: item for item in result.json()["notifications"]}
@@ -182,6 +186,11 @@ def test_notification_digest_rechecks_every_member_atomically(automation_client,
         assert all(db.get(Notification, value).state != "read" for value in ids)
     remaining = client.get("/api/v1/notification-digests", headers=auth).json()["digests"]
     assert sum(item["count"] for item in remaining) < 2
+    valid_ids = {member["id"] for item in remaining for member in item["notifications"]}
+    for item in digest["notifications"]:
+        member_response = client.post(f'/api/v1/notification-digests/{item["read_digest_id"]}/read',
+                                      headers=auth, json={"notification_ids": [item["id"]]})
+        assert member_response.status_code == (200 if item["id"] in valid_ids else 409)
 
 
 def test_notification_digest_requests_are_strict_bounded_and_identity_bound(automation_client, automation_container):

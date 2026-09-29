@@ -76,13 +76,17 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     finally { setBusy(""); }
   }
 
-  async function markRead(item: AgentNotification) {
+  async function markRead(item: AgentNotification, digestId?: string) {
     if (item.state === "read" || busy) return;
     setBusy(item.id); setError("");
     try {
-      await client.readNotification(item.id);
+      if (digestId) await client.readNotificationDigest(digestId, [item.id]);
+      else await client.readNotification(item.id);
       await reload();
-    } catch (error) { setError(message(error)); }
+    } catch (error) {
+      setError(message(error));
+      if (digestId) { try { await reload(); } catch { /* Keep the action error. */ } }
+    }
     finally { setBusy(""); }
   }
 
@@ -184,7 +188,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
               <ul className="cw-digest-members">{item.notifications.map(member => <li key={member.id}>
                 <strong>{member.title}</strong><p>{member.message}</p>
                 <small>{new Date(member.visible_at).toLocaleString()} · {member.state}</small>
-                {member.state !== "read" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => markRead(member)}>Mark as read</button>}
+                {member.state !== "read" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => markRead(member, member.read_digest_id)}>Mark as read</button>}
               </li>)}</ul>
             </details>
             <button className="cw-secondary" disabled={Boolean(busy) || item.unread_count === 0} onClick={() => markDigestRead(item)}>{item.unread_count === 0 ? "All read" : "Mark digest as read"}</button>

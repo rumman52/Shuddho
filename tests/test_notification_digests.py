@@ -26,6 +26,8 @@ class DigestViewsTest(unittest.TestCase):
         self.assertEqual({row["id"] for row in grouped[0]["notifications"]}, {row["id"] for row in items})
         self.assertEqual(grouped[0]["notifications"][0]["message"], items[0]["message"])
         self.assertNotIn("workspace_id", grouped[0]["notifications"][0])
+        self.assertEqual(grouped[0]["notifications"][0]["read_digest_id"],
+                         digest_views("alice", [items[1]])[0]["id"])
         self.assertNotEqual(grouped[0]["id"], digest_views("bob", items)[0]["id"])
         self.assertNotEqual(grouped[0]["id"], digest_views("alice", items[:1])[0]["id"])
         self.assertEqual(grouped[0]["id"], digest_views("alice", [dict(item, state="read") for item in items])[0]["id"])

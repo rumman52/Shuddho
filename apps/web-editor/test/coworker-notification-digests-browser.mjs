@@ -10,6 +10,7 @@ export async function verifyNotificationDigests(page, folder) {
     message: index === 1 ? "আপনার পড়াশোনার পরিকল্পনা পর্যালোচনা করুন।" : "Review the saved goal before starting work.",
     state: "delivered", visible_at: "2026-09-29T12:00:00+00:00",
     created_at: "2026-09-29T12:00:00+00:00", read_at: null,
+    read_digest_id: (index === 1 ? "b" : "c").repeat(64),
   }));
   let withdrawn = false;
   let readRequests = 0;
@@ -37,13 +38,16 @@ export async function verifyNotificationDigests(page, folder) {
     else if (path.endsWith("/read")) {
       readRequests++;
       assert.equal(request.method(), "POST");
-      assert.deepEqual(request.postDataJSON(), { notification_ids: notices.map(item => item.id) });
+      const scope = path.includes(digestId) ? notices : notices.filter(item => path.includes(item.read_digest_id));
+      assert.ok(scope.length > 0);
+      assert.deepEqual(request.postDataJSON(), { notification_ids: scope.map(item => item.id) });
       if (withdrawn) {
         status = 409;
         body = { error: { code: "notification_digest_changed", message: "This digest changed or is no longer available. Refresh your inbox." } };
       } else {
-        notices.forEach(item => { item.state = "read"; item.read_at = "2026-09-29T13:00:00+00:00"; });
-        body = { id: digestId, notifications: notices.map(({ id, state, read_at }) => ({ id, state, read_at })) };
+        scope.forEach(item => { item.state = "read"; item.read_at = "2026-09-29T13:00:00+00:00"; });
+        body = { id: scope.length === notices.length ? digestId : scope[0].read_digest_id,
+                 notifications: scope.map(({ id, state, read_at }) => ({ id, state, read_at })) };
       }
     } else body = { enabled: true, digests: withdrawn ? [] : [{
       id: digestId, kind: "personal_suggestion", title: "2 goal suggestions", count: 2,
@@ -67,10 +71,12 @@ export async function verifyNotificationDigests(page, folder) {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.screenshot({ path: join(folder, "screenshots/notification-digests-mobile.png"), fullPage: true });
     await page.setViewportSize({ width: 1365, height: 960 });
+    await workspace.getByRole("button", { name: "Mark as read", exact: true }).first().click();
+    await workspace.getByText("1 unread", { exact: false }).waitFor();
     await workspace.getByRole("button", { name: "Mark digest as read", exact: true }).click();
     await workspace.getByRole("button", { name: "All read", exact: true }).waitFor();
     assert.equal(await workspace.getByRole("button", { name: "All read", exact: true }).isDisabled(), true);
-    assert.equal(readRequests, 1);
+    assert.equal(readRequests, 2);
     // A source withdrawn after display must refresh away after the action returns a conflict.
     notices.forEach(item => { item.state = "delivered"; item.read_at = null; });
     await page.getByRole("button", { name: "Drafts & files", exact: true }).click();
@@ -81,7 +87,7 @@ export async function verifyNotificationDigests(page, folder) {
     await workspace.getByRole("button", { name: "Mark digest as read", exact: true }).click();
     await workspace.getByRole("alert").filter({ hasText: "This digest changed" }).waitFor();
     await workspace.getByText("No available digests.", { exact: false }).waitFor();
-    assert.equal(readRequests, 2);
+    assert.equal(readRequests, 3);
   } finally {
     await page.unroute(pattern, handler);
     await page.setViewportSize({ width: 1365, height: 960 });

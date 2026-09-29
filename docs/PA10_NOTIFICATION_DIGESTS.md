@@ -19,7 +19,7 @@ This is an inbox presentation and read-state slice. It does not generate a daily
 
 ## UI, compatibility and recovery
 
-The grouped view is off by default and is a local display choice, not a delivery-consent setting. Expand a digest to inspect original notices; mark the displayed group as read or read individual members. Successful reads reload server state. A conflicted group refreshes and shows the error without claiming a partial success. Concurrent new notices are not silently included in an earlier read request.
+The grouped view is off by default and is a local display choice, not a delivery-consent setting. Expand a digest to inspect original notices; mark the displayed group as read or read individual members. Each member carries a server-derived `read_digest_id` for its singleton scope: both grouped and member reads use the same validated digest-read API rather than the legacy individual-read shortcut. Successful reads reload server state. A conflicted group refreshes and shows the error without claiming a partial success. Concurrent new notices are not silently included in an earlier read request.
 
 The existing flat inbox endpoint and individual-read API remain compatible. No migration, new provider scope, release flag or worker path is needed: durable source records and delivery remain in `NotificationRepository`, `cw_notifications` and `cw_notification_outbox`. Restart reconstructs the view from these records. Roll back the API/UI slice to remove grouping while retaining all original notices and read receipts. Production gate values are not changed by this implementation.
 
