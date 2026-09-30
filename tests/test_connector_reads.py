@@ -886,41 +886,25 @@ def test_connected_event_automation_rechecks_revocation_and_goal_revision(contai
     grant = create_grant(container, owner, connection)
     asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
     asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
-    goal, automation = _create_event_automation(container, owner, grant)
+    _, automation = _create_event_automation(container, owner, grant)
+    changed_goal, changed_automation = _create_event_automation(container, owner, grant)
 
     event = _one_gmail_event(container, "event-automation-revoked")
+    with container.repository.sessions.begin() as db:
+        goal_row = db.get(PersonalGoal, changed_goal["id"])
+        goal_row.revision += 1
     asyncio.run(container.connector_reads.revoke(owner, grant["id"]))
+
     revoked = container.automations.accept_event_occurrence(
         automation["id"], automation["revision"], event["id"]
     )
     assert revoked["state"] == "skipped"
     assert revoked["reason"] == "grant_revoked"
 
-    # Goal revisions are also revalidated before any work begins.
-    # Use a fresh active grant/automation first, then revise only the goal.
-    connection2 = connect_read(container, owner, "calendar_read")
-    grant2 = create_grant(container, owner, connection2)
-    asyncio.run(container.connector_reads.sync(owner, grant2["id"], force_full=True))
-    automation2, _ = container.automations.create(
-        owner,
-        AutomationCreate(
-            goal_id=goal["id"],
-            goal_revision=goal["revision"],
-            timezone="UTC",
-            schedule={"kind": "event", "grant_id": grant2["id"]},
-            output_language="en",
-            overlap_policy="skip",
-            catchup_window_seconds=3600,
-        ),
-        "event-automation-goal-change-" + str(uuid4()),
-    )
-    with container.repository.sessions.begin() as db:
-        goal_row = db.get(PersonalGoal, goal["id"])
-        goal_row.revision += 1
-        event_row = db.get(ConnectorEvent, event["id"])
-        event_row.grant_id = grant2["id"]
+    # A goal revision wins as the more specific stale-authority reason for the
+    # automation bound to that historical goal snapshot.
     changed = container.automations.accept_event_occurrence(
-        automation2["id"], automation2["revision"], event["id"]
+        changed_automation["id"], changed_automation["revision"], event["id"]
     )
     assert changed["state"] == "skipped"
     assert changed["reason"] == "goal_changed"
