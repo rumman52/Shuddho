@@ -148,8 +148,17 @@ def test_task_economics_compiles_all_categories_and_retries(tmp_path):
 
 
 def test_task_economics_rejects_missing_required_category(tmp_path):
+    sample_path = samples(tmp_path, second_notification_attempts=0)
+    value = json.loads(sample_path.read_text(encoding="utf-8"))
+    value["tasks"][0]["usage"]["notification_attempts"] = 0
+    write_json(sample_path, value)
     with pytest.raises(TaskEconomicsEvidenceError, match="notification"):
-        compile_value(tmp_path, second_notification_attempts=0)
+        compile_task_economics_evidence(
+            rollout_path=rollout(tmp_path),
+            provider_policy_plan_path=provider_policy(tmp_path),
+            pricing_plan_path=pricing(tmp_path),
+            samples_path=sample_path,
+        )
 
 
 def test_task_economics_rejects_any_over_budget_task(tmp_path):
