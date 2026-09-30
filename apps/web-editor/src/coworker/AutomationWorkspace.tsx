@@ -25,6 +25,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [goalId, setGoalId] = useState("");
   const [kind, setKind] = useState<"daily" | "weekly" | "event">("daily");
   const [eventGrantId, setEventGrantId] = useState("");
+  const [briefing, setBriefing] = useState(false);
+  const [briefingGrantIds, setBriefingGrantIds] = useState<string[]>([]);
   const [weekdays, setWeekdays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri"]);
   const [at, setAt] = useState("08:00");
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
@@ -61,6 +63,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     const activeGrants = grantResult.enabled ? grantResult.grants.filter(item => item.state === "active") : [];
     setConnectorGrants(activeGrants);
     setEventGrantId(value => activeGrants.some(item => item.id === value) ? value : activeGrants[0]?.id ?? "");
+    setBriefingGrantIds(values => values.filter(id => activeGrants.some(item => item.id === id)));
     setNotifications(notificationResult.notifications);
     setDigests(digestResult.digests);
     setNotificationPreferences(notificationPreferenceResult);
@@ -87,6 +90,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         schedule: kind === "event"
           ? { kind: "event", grant_id: eventGrantId }
           : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
+        run_profile: briefing && kind !== "event" ? "briefing" : "goal",
+        connector_read_grant_ids: briefing && kind !== "event" ? briefingGrantIds : [],
         output_language: "en", overlap_policy: "skip", catchup_window_seconds: 3600,
         quiet_hours: quiet ? { start: "22:00", end: "07:00" } : null, expires_at: null,
       }, createKey.current);
@@ -94,7 +99,9 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
       await reload();
       setNotice(kind === "event"
         ? "Automation saved. An authorized connected update can wake one bounded Agent run."
-        : "Automation saved. Temporal will reconcile the durable schedule before it can fire.");
+        : briefing
+          ? "Briefing saved. Temporal will start one private bounded briefing at each due time."
+          : "Automation saved. Temporal will reconcile the durable schedule before it can fire.");
     } catch (error) { setError(message(error)); }
     finally { setBusy(""); }
   }
@@ -238,7 +245,12 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
           <label>Goal<select required value={goalId} onChange={event => { setGoalId(event.target.value); createKey.current = ""; }}>
             <option value="">Choose an active goal</option>{goals.map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
           </select></label>
-          <label>Trigger<select value={kind} onChange={event => { setKind(event.target.value as "daily" | "weekly" | "event"); createKey.current = ""; }}>
+          <label>Trigger<select value={kind} onChange={event => {
+            const nextKind = event.target.value as "daily" | "weekly" | "event";
+            setKind(nextKind);
+            if (nextKind === "event") setBriefing(false);
+            createKey.current = "";
+          }}>
             <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="event">Authorized connected update</option>
           </select></label>
           {kind === "event" && <label>Connected read authorization<select required value={eventGrantId} onChange={event => { setEventGrantId(event.target.value); createKey.current = ""; }}>
@@ -250,11 +262,27 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <label key={day}><input type="checkbox" checked={weekdays.includes(day)} onChange={event => {
               setWeekdays(previous => event.target.checked ? [...previous, day] : previous.filter(value => value !== day)); createKey.current = "";
             }} /> {day.toUpperCase()}</label>)}</div></fieldset>}
+          {kind !== "event" && <label><input type="checkbox" checked={briefing} onChange={event => {
+            setBriefing(event.target.checked); createKey.current = "";
+          }} /> Create a private daily/weekly briefing</label>}
+          {kind !== "event" && briefing && <fieldset><legend>Optional connected sources</legend>
+            <p className="cw-fineprint">Only selected, active read grants become briefing context. Provider content stays untrusted and cannot authorize writes.</p>
+            <div className="cw-agent-meta">{activeConnectorGrants.length === 0
+              ? <span>No active connected read grants</span>
+              : activeConnectorGrants.map(grant => <label key={grant.id}><input type="checkbox"
+                  checked={briefingGrantIds.includes(grant.id)}
+                  onChange={event => {
+                    setBriefingGrantIds(previous => event.target.checked
+                      ? [...new Set([...previous, grant.id])]
+                      : previous.filter(value => value !== grant.id));
+                    createKey.current = "";
+                  }} /> {grant.provider} · {grant.capability}</label>)}</div>
+          </fieldset>}
           {kind !== "event" && <label>Local time<input type="time" required value={at} onChange={event => { setAt(event.target.value); createKey.current = ""; }} /></label>}
           <label>Timezone<input required maxLength={64} value={timezone} onChange={event => { setTimezone(event.target.value); createKey.current = ""; }} /></label>
           <label><input type="checkbox" checked={quiet} onChange={event => { setQuiet(event.target.checked); createKey.current = ""; }} /> Delay in-app notifications during 22:00–07:00 quiet hours</label>
           <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
-          <p className="cw-fineprint">A schedule or connected event never grants email, calendar-write, purchase, or provider authority. Event content remains untrusted context; consequential actions still use the separate approval boundary.</p>
+          <p className="cw-fineprint">A schedule or connected event never grants email, calendar-write, purchase, or provider authority. Briefings are restricted to the existing daily-plan tool; selected provider content remains untrusted context. Consequential actions still use the separate approval boundary.</p>
         </form>
       </section>
       <div className="cw-output-column">
@@ -262,7 +290,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         {automations.length === 0 ? <section className="cw-empty"><h2>No automation yet.</h2><p>Create one from an active goal.</p></section> :
         <div className="cw-history"><ul>{automations.map(item => <li key={item.id}><div className="cw-agent-run">
           <strong>{goals.find(goal => goal.id === item.goal_id)?.objective ?? "Persistent goal"}</strong>
-          <p>{triggerSummary(item)}</p>
+          <p>{triggerSummary(item)}{item.run_profile === "briefing" ? " · private briefing" : ""}</p>
           <div className="cw-agent-meta"><span>{item.state}</span><span>revision {item.revision}</span><span>{item.schedule_applied_revision === item.revision ? (item.schedule.kind === "event" ? "event trigger reconciled" : "Temporal reconciled") : "reconciliation pending"}</span>{item.schedule_error_code && <span>{item.schedule_error_code}</span>}</div>
           <div>{item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}
             {item.state === "paused" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "resume")}>Resume</button>}
