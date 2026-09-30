@@ -493,7 +493,7 @@ def validate_task_economics_evidence(
         raise TaskEconomicsEvidenceError(
             "Task economics samples cannot be newer than the compiled evidence."
         )
-    return samples_generated
+    return generated
 
 
 def main() -> None:
