@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "release_id": "coworker-cohort-001",
+  "source_revision": "REPLACE_WITH_FULL_40_CHAR_COMMIT_SHA",
+  "generated_at": "REPLACE_WITH_ISO_8601_TIMESTAMP",
+  "tasks": [
+    {
+      "task_reference": "redacted-task-reference-001",
+      "task_kind": "research_report",
+      "language": "bn",
+      "state": "completed",
+      "usage": {
+        "model_tokens": 0,
+        "search_credits": 0,
+        "sandbox_milliseconds": 0,
+        "render_operations": 0,
+        "storage_byte_hours": 0,
+        "notification_attempts": 0,
+        "retry_count": 0
+      }
+    }
+  ]
+}

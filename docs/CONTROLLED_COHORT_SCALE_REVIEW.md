@@ -1,6 +1,6 @@
 # Controlled Cohort Bounded Scale Review
 
-PR #146 proves that the 25-user cohort has measured infrastructure/provider reserve. PR #147 adds objective multilingual output-quality evidence. Neither artifact should automatically expand Shuddho.
+PR #146 proves that the 25-user cohort has measured infrastructure/provider reserve. PR #147 adds objective multilingual output-quality evidence. PA-11 task-economics evidence adds measured per-completed-task cost across the operated resource categories. None of these artifacts should automatically expand Shuddho.
 
 This gate turns the human scale review into a machine-checkable, fail-closed artifact.
 
@@ -10,7 +10,8 @@ The review requires all of the following for the same release:
 
 - a fresh capacity qualification with `ELIGIBLE_FOR_CAPACITY_REVIEW`;
 - a fresh **live** Coworker multilingual quality evaluation with `PASS` that binds the exact reviewed rollout SHA-256;
-- a clean operator status generated after both of those artifacts;
+- fresh PA-11 task-economics evidence that binds the same rollout and source revision;
+- a clean operator status generated after capacity, quality, and task-economics evidence;
 - a human-proposed next cohort stage and size;
 - projected peak concurrency plus provider quota evidence;
 - estimated monthly cost plus an approved budget;
@@ -49,11 +50,12 @@ uv run python scripts/cohort_scale_review.py \
   --rollout /secure/release/cohort-rollout.json \
   --capacity-qualification /secure/release/capacity-qualification.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
+  --task-economics /secure/release/task-economics-evidence.json \
   --operator-status /secure/release/post-review-operator-status.json \
   --output /secure/release/bounded-scale-decision.json
 ```
 
-The scale review requires both the capacity qualification and live quality evaluation to bind the exact supplied rollout manifest, and carries that same SHA-256 into the bounded-scale decision.
+The scale review requires capacity qualification, live quality evaluation, and task-economics evidence to bind the exact supplied rollout manifest. Task economics must also bind the same source revision as live quality evidence. The bounded-scale decision carries the rollout SHA-256 and the exact task-economics evidence SHA-256.
 
 The only successful decision is `ELIGIBLE_FOR_BOUNDED_EXPANSION`. Any policy or evidence failure returns `HOLD_AT_CURRENT_COHORT` or fails closed on invalid evidence.
 

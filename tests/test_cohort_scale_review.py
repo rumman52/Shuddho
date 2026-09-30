@@ -6,6 +6,7 @@ from scripts.cohort_scale_review import (
     ScaleReviewError,
     evaluate_review,
     validate_capacity,
+    validate_economics,
     validate_operator_status,
     validate_quality,
 )
@@ -74,6 +75,47 @@ def quality():
     }
 
 
+
+
+def economics():
+    return {
+        "schema_version": 1,
+        "mode": "task_economics",
+        "release_id": "coworker-cohort-001",
+        "generated_at": "2026-09-22T11:35:00+00:00",
+        "samples_generated_at": "2026-09-22T11:34:00+00:00",
+        "source_revision": "1" * 40,
+        "rollout_manifest_sha256": "b" * 64,
+        "provider_policy_plan_sha256": "c" * 64,
+        "pricing_plan_sha256": "d" * 64,
+        "samples_sha256": "e" * 64,
+        "completed_tasks": 4,
+        "total_retries": 1,
+        "category_coverage": {
+            "model": True,
+            "search": True,
+            "sandbox": True,
+            "render": True,
+            "storage": True,
+            "notification": True,
+        },
+        "category_cost_microusd": {
+            "model": 4000,
+            "search": 200,
+            "sandbox": 50,
+            "render": 80,
+            "storage": 20,
+            "notification": 12,
+        },
+        "average_cost_microusd": 1091,
+        "p95_cost_microusd": 1400,
+        "max_cost_microusd": 1400,
+        "budget_microusd_per_completed_task": 2000,
+        "gate_decision": "PASS",
+        "failures": [],
+    }
+
+
 def operator():
     return {
         "release_id": "coworker-cohort-001",
@@ -86,10 +128,17 @@ def operator():
 def test_bounded_scale_review_qualifies_reviewed_growth():
     capacity_time = validate_capacity(capacity(), plan(), NOW)
     quality_time = validate_quality(quality(), plan(), NOW)
+    economics_time = validate_economics(
+        economics(),
+        plan(),
+        NOW,
+        rollout_sha256="b" * 64,
+        expected_source_revision="1" * 40,
+    )
     validate_operator_status(
         operator(),
         plan(),
-        not_before=max(capacity_time, quality_time),
+        not_before=max(capacity_time, quality_time, economics_time),
         now=NOW,
     )
     result = evaluate_review(plan(), review())
@@ -139,7 +188,7 @@ def test_scale_review_rejects_offline_or_unbound_quality():
 def test_scale_review_requires_post_evidence_operator_health():
     value = operator()
     value["generated_at"] = "2026-09-22T11:25:00+00:00"
-    with pytest.raises(ScaleReviewError, match="after capacity and quality"):
+    with pytest.raises(ScaleReviewError, match="after capacity, quality and task economics"):
         validate_operator_status(
             value,
             plan(),
@@ -204,3 +253,47 @@ def test_scale_review_accepts_rollout_bound_quality():
         rollout_sha256="b" * 64,
     )
     assert generated == datetime(2026, 9, 22, 11, 30, tzinfo=timezone.utc)
+
+
+
+def test_scale_review_rejects_economics_from_different_rollout():
+    value = economics()
+    value["rollout_manifest_sha256"] = "a" * 64
+    with pytest.raises(
+        ScaleReviewError,
+        match="does not bind the current rollout manifest",
+    ):
+        validate_economics(
+            value,
+            plan(),
+            NOW,
+            rollout_sha256="b" * 64,
+            expected_source_revision="1" * 40,
+        )
+
+
+def test_scale_review_rejects_economics_from_different_source_revision():
+    value = economics()
+    with pytest.raises(ScaleReviewError, match="source revision"):
+        validate_economics(
+            value,
+            plan(),
+            NOW,
+            rollout_sha256="b" * 64,
+            expected_source_revision="2" * 40,
+        )
+
+
+def test_scale_review_requires_operator_health_after_economics():
+    value = operator()
+    value["generated_at"] = "2026-09-22T11:32:00+00:00"
+    with pytest.raises(
+        ScaleReviewError,
+        match="after capacity, quality and task economics",
+    ):
+        validate_operator_status(
+            value,
+            plan(),
+            not_before=datetime(2026, 9, 22, 11, 35, tzinfo=timezone.utc),
+            now=NOW,
+        )
