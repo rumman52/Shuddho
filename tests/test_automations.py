@@ -1236,6 +1236,48 @@ def test_proactive_briefing_migration_adds_bounded_scope_columns(
     assert {"run_profile", "connector_read_grant_ids"} <= automation_columns
 
 
+def test_meeting_schedule_contract_is_temporal_bounded_and_timezone_aware():
+    from services.coworker.automation_scheduler import temporal_schedule
+
+    value = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "revision": 4,
+        "state": "active",
+        "timezone": "Asia/Dhaka",
+        "schedule": {
+            "kind": "meeting",
+            "grant_id": "00000000-0000-0000-0000-000000000002",
+            "preparation_minutes": 30,
+            "scan_interval_minutes": 15,
+        },
+        "overlap_policy": "skip",
+        "catchup_window_seconds": 3600,
+        "expires_at": None,
+    }
+    schedule = temporal_schedule(value, "test-queue")
+    assert schedule.spec.time_zone_name == "Asia/Dhaka"
+    assert schedule.spec.calendars[0].hour[0].start == 0
+    assert schedule.spec.calendars[0].hour[0].end == 23
+    assert schedule.spec.calendars[0].minute[0].step == 15
+    assert schedule.policy.catchup_window == timedelta(seconds=3600)
+
+
+def test_meeting_coworker_migration_adds_exact_source_recovery_fields(
+    automation_container,
+):
+    with automation_container.repository.sessions() as db:
+        run_columns = {
+            item["name"]
+            for item in inspect(db.bind).get_columns("cw_agent_runs")
+        }
+        occurrence_columns = {
+            item["name"]
+            for item in inspect(db.bind).get_columns("cw_automation_occurrences")
+        }
+    assert "connector_snapshot_ids" in run_columns
+    assert {"trigger_snapshot_id", "trigger_start_at"} <= occurrence_columns
+
+
 def test_temporal_schedule_contract_uses_timezone_overlap_and_expiry():
     from services.coworker.automation_scheduler import temporal_schedule
     value = {
