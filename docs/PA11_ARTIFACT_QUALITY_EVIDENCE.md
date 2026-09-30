@@ -42,10 +42,10 @@ The review checks:
 
 ## Controlled run
 
-Run native QA from the exact release revision. Release evidence requires a full source revision, supplied through `SHUDDHO_SOURCE_REVISION`, `RENDER_GIT_COMMIT`, or `GITHUB_SHA`. The native QA command now fails immediately if none is present; it never emits a successful release-evidence file with `source_revision: null`.
+Check out the exact release revision before running native QA. Release evidence requires a full source revision, supplied through `SHUDDHO_SOURCE_REVISION`, `RENDER_GIT_COMMIT`, or `GITHUB_SHA`. The command below derives the revision from the checked-out commit with `git rev-parse --verify HEAD`. The native QA command now fails immediately if none is present; it never emits a successful release-evidence file with `source_revision: null`.
 
 ```bash
-export SHUDDHO_SOURCE_REVISION=<full-40-character-release-commit-sha>
+export SHUDDHO_SOURCE_REVISION="$(git rev-parse --verify HEAD)"
 PYTHONPATH=.:tests uv run --extra coworker python tests/verify_office_native.py /secure/artifact-qa
 
 cp docs/artifact-quality-review.template.json /secure/artifact-qa/human-review.json
