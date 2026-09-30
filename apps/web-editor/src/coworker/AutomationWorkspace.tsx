@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type AgentNotification, type BrowserPushConfig, type ConnectorReadGrant, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
+import { CoworkerClient, type AgentNotification, type AutomationHistoryItem, type BrowserPushConfig, type ConnectorReadGrant, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 const PROACTIVE_TOOLS: { id: PersonalAutomation["tool_allowlist"][number]; label: string }[] = [
@@ -50,6 +50,11 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [automationHistory, setAutomationHistory] = useState<Record<string, AutomationHistoryItem[]>>({});
+  const [historyOpen, setHistoryOpen] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTime, setEditTime] = useState("08:00");
+  const [editPreparationMinutes, setEditPreparationMinutes] = useState(30);
   const createKey = useRef("");
 
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
@@ -163,6 +168,65 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
       return `meeting preparation · ${schedule.preparation_minutes} min before · ${item.timezone}`;
     }
     return `${schedule.kind} · ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")} · ${item.timezone}`;
+  }
+
+  async function showHistory(item: PersonalAutomation) {
+    if (busy) return;
+    if (historyOpen === item.id) { setHistoryOpen(null); return; }
+    setBusy("history-" + item.id); setError("");
+    try {
+      const result = await client.automationHistory(item.id);
+      setAutomationHistory(previous => ({ ...previous, [item.id]: result.history }));
+      setHistoryOpen(item.id);
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
+  }
+
+  function beginEdit(item: PersonalAutomation) {
+    const schedule = item.schedule;
+    if (schedule.kind === "daily" || schedule.kind === "weekly") {
+      setEditTime(`${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`);
+    } else if (schedule.kind === "meeting") {
+      setEditPreparationMinutes(schedule.preparation_minutes);
+    }
+    setEditingId(item.id);
+    setError(""); setNotice("");
+  }
+
+  async function saveEdit(item: PersonalAutomation) {
+    if (busy) return;
+    const schedule = item.schedule;
+    let nextSchedule = schedule;
+    if (schedule.kind === "daily" || schedule.kind === "weekly") {
+      const [hour, minute] = editTime.split(":").map(Number);
+      nextSchedule = { ...schedule, hour, minute };
+    } else if (schedule.kind === "meeting") {
+      nextSchedule = { ...schedule, preparation_minutes: editPreparationMinutes };
+    } else {
+      setError("Connected-event source changes require cancelling and creating a newly reviewed automation.");
+      return;
+    }
+    setBusy("edit-" + item.id); setError(""); setNotice("");
+    try {
+      await client.updateAutomation(item.id, item.revision, { schedule: nextSchedule });
+      setEditingId(null);
+      await reload();
+      setNotice("Automation settings updated and queued for reconciliation.");
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
+  }
+
+  async function toggleQuietHours(item: PersonalAutomation) {
+    if (busy) return;
+    setBusy("quiet-" + item.id); setError(""); setNotice("");
+    try {
+      await client.updateAutomation(item.id, item.revision, {
+        quiet_hours: item.quiet_hours ? null : { start: "22:00", end: "07:00" },
+      });
+      await reload();
+      setNotice(item.quiet_hours ? "Quiet hours disabled for this automation." : "Quiet hours enabled for this automation.");
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
   }
 
   async function transition(item: PersonalAutomation, action: "pause" | "resume" | "cancel") {
@@ -383,9 +447,30 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
           <strong>{goals.find(goal => goal.id === item.goal_id)?.objective ?? "Persistent goal"}</strong>
           <p>{triggerSummary(item)}{item.run_profile === "briefing" ? " · private briefing" : item.run_profile === "meeting" ? " · meeting coworker" : item.run_profile === "email" ? " · email coworker" : item.run_profile === "deadline" ? " · deadline coworker" : item.run_profile === "proactive" ? " · goal-driven coworker" : ""}</p>
           <div className="cw-agent-meta"><span>{item.state}</span><span>revision {item.revision}</span><span>{item.schedule_applied_revision === item.revision ? (item.schedule.kind === "event" ? "event trigger reconciled" : "Temporal reconciled") : "reconciliation pending"}</span>{item.schedule_error_code && <span>{item.schedule_error_code}</span>}</div>
-          <div>{item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}
+          <div>
+            {item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}
             {item.state === "paused" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "resume")}>Resume</button>}
-            {item.state !== "cancelled" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => transition(item, "cancel")}>Cancel</button>}</div>
+            {item.state !== "cancelled" && item.schedule.kind !== "event" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => beginEdit(item)}>Edit</button>}
+            {item.state !== "cancelled" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => toggleQuietHours(item)}>{item.quiet_hours ? "Quiet hours off" : "Quiet hours on"}</button>}
+            <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => showHistory(item)}>{historyOpen === item.id ? "Hide activity" : "Recent activity"}</button>
+            {item.state !== "cancelled" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => transition(item, "cancel")}>Cancel</button>}
+          </div>
+          {item.schedule.kind === "event" && item.state !== "cancelled" && <p className="cw-fineprint">To change this connected-event source, cancel it and create a newly reviewed automation so authority cannot change silently.</p>}
+          {editingId === item.id && <div className="cw-agent-run">
+            {(item.schedule.kind === "daily" || item.schedule.kind === "weekly") && <label>Local trigger time<input type="time" value={editTime} onChange={event => setEditTime(event.target.value)} /></label>}
+            {item.schedule.kind === "meeting" && <label>Prepare before meeting<select value={editPreparationMinutes} onChange={event => setEditPreparationMinutes(Number(event.target.value))}>
+              <option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={120}>2 hours</option><option value={1440}>1 day</option>
+            </select></label>}
+            <button className="cw-primary" type="button" disabled={Boolean(busy)} onClick={() => saveEdit(item)}>Save edit</button>
+            <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => setEditingId(null)}>Cancel edit</button>
+          </div>}
+          {historyOpen === item.id && <div className="cw-agent-run"><strong>Recent execution evidence</strong>
+            {(automationHistory[item.id] ?? []).length === 0 ? <p className="cw-fineprint">No occurrence has been admitted yet.</p> :
+              <ul>{(automationHistory[item.id] ?? []).map(entry => <li key={entry.occurrence_id}>
+                <small>{new Date(entry.due_at).toLocaleString()} · {entry.trigger_type} · {entry.occurrence_state}{entry.run_state ? ` · run ${entry.run_state}` : ""}</small>
+                <p>{entry.reason ? `Why: ${entry.reason}` : entry.run_message || "Accepted by the reviewed automation trigger."}</p>
+              </li>)}</ul>}
+          </div>}
         </div></li>)}</ul></div>}
         <div className="cw-history-title"><h2>Notifications</h2></div>
         {notificationPreferences && <div className="cw-agent-run">
