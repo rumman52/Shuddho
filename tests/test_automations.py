@@ -1278,6 +1278,165 @@ def test_meeting_coworker_migration_adds_exact_source_recovery_fields(
     assert {"trigger_snapshot_id", "trigger_start_at"} <= occurrence_columns
 
 
+def test_deadline_coworker_runs_once_per_meaningful_urgency_band(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+
+    body = goal_payload()
+    now = utcnow().replace(microsecond=0)
+    body["deadline_at"] = (now + timedelta(days=6)).isoformat()
+    body["milestones"] = [
+        {
+            "label": "Submit draft",
+            "due_at": (now + timedelta(days=5)).isoformat(),
+            "completed": False,
+        }
+    ]
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "deadline-coworker-goal"},
+        json=body,
+    ).json()
+
+    automation_body = automation_payload(goal)
+    automation_body["run_profile"] = "deadline"
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "deadline-coworker-automation"},
+        json=automation_body,
+    )
+    assert response.status_code == 201
+    automation = response.json()
+
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], now
+    )
+    same_band = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], now + timedelta(hours=12)
+    )
+    assert first["state"] == "accepted"
+    assert same_band["replayed"] is True
+    assert same_band["run_id"] == first["run_id"]
+
+    with automation_container.repository.sessions() as db:
+        run = db.get(AgentRun, first["run_id"])
+        assert run.runtime_version == 3
+        assert run.tool_allowlist == ["daily_plan.create"]
+        assert run.action_ids == []
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()
+        assert len(occurrences) == 1
+
+    with automation_container.repository.sessions.begin() as db:
+        db.get(AgentRun, first["run_id"]).state = "completed"
+    automation_container.automations.notify_run_completed(first["run_id"])
+
+    # The earliest incomplete milestone has now crossed into a more urgent band,
+    # so one new bounded recovery plan is allowed.
+    escalated = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], now + timedelta(days=3)
+    )
+    assert escalated["state"] == "accepted"
+    assert escalated["run_id"] != first["run_id"]
+
+    with automation_container.repository.sessions() as db:
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()
+        assert len(occurrences) == 2
+        assert len([item for item in occurrences if item.state == "accepted"]) == 2
+
+
+def test_deadline_coworker_suppresses_no_window_and_paused_goal(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+
+    body = goal_payload()
+    now = utcnow().replace(microsecond=0)
+    body["deadline_at"] = (now + timedelta(days=30)).isoformat()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "deadline-far-goal"},
+        json=body,
+    ).json()
+    automation_body = automation_payload(goal)
+    automation_body["run_profile"] = "deadline"
+    automation = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "deadline-far-automation"},
+        json=automation_body,
+    ).json()
+
+    no_action = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], now
+    )
+    assert no_action["state"] == "no_action"
+    assert no_action["reason"] == "deadline_not_in_window"
+
+    paused = client.post(
+        f"/api/v1/goals/{goal['id']}/pause",
+        headers=auth,
+        json={"expected_revision": goal["revision"]},
+    )
+    assert paused.status_code == 200
+    suppressed = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], now + timedelta(days=24)
+    )
+    assert suppressed["state"] == "suppressed"
+    assert suppressed["reason"] in {"goal_not_active", "goal_changed"}
+
+
+def test_deadline_coworker_completion_notice_is_deduplicated(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+
+    body = goal_payload()
+    now = utcnow().replace(microsecond=0)
+    body["deadline_at"] = (now + timedelta(hours=20)).isoformat()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "deadline-notice-goal"},
+        json=body,
+    ).json()
+    automation_body = automation_payload(goal)
+    automation_body["run_profile"] = "deadline"
+    automation = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "deadline-notice-automation"},
+        json=automation_body,
+    ).json()
+
+    result = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], now
+    )
+    assert result["state"] == "accepted"
+    with automation_container.repository.sessions.begin() as db:
+        db.get(AgentRun, result["run_id"]).state = "completed"
+
+    automation_container.automations.notify_run_completed(result["run_id"])
+    automation_container.automations.notify_run_completed(result["run_id"])
+    with automation_container.repository.sessions() as db:
+        completed = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_completed",
+        )).all()
+        assert len(completed) == 1
+        assert completed[0].title == "Deadline recovery plan ready"
+
+
 def test_temporal_schedule_contract_uses_timezone_overlap_and_expiry():
     from services.coworker.automation_scheduler import temporal_schedule
     value = {
