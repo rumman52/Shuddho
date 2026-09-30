@@ -960,3 +960,46 @@ def test_connected_event_occurrence_recovers_after_process_loss(container):
             AutomationOccurrence.automation_id == automation["id"],
         ))
         assert occurrence.run_id == runs[0].id
+
+
+def test_event_automation_consumer_failure_retries_after_cursor_advanced(container):
+    enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    _, automation = _create_event_automation(container, owner, grant)
+
+    original = container.connector_reads.automation_consumer
+
+    def fail_before_admission(_event):
+        raise RuntimeError("synthetic automation consumer outage")
+
+    container.connector_reads.set_automation_consumer(fail_before_admission)
+    event = _one_gmail_event(container, "event-automation-consumer-retry")
+    asyncio.run(container.connector_reads.process_event(event))
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorEvent, event["id"])
+        assert row.state == "retry"
+        assert row.last_error_code == "connector_event_automation_failed"
+        row.available_at = utcnow() - timedelta(seconds=1)
+
+    container.connector_reads.set_automation_consumer(original)
+    retried = container.connector_reads.repo.claim_events()
+    assert len(retried) == 1
+    assert retried[0]["attempts"] == 2
+    asyncio.run(container.connector_reads.process_event(retried[0]))
+
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, event["id"])
+        assert row.state == "processed"
+        runs = db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()
+        assert len(runs) == 1
+        assert len(occurrences) == 1
+        assert occurrences[0].trigger_event_id == event["id"]
