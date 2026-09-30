@@ -298,7 +298,14 @@ class NotificationRepository:
                 BrowserPushSubscription.owner_id == owner,
                 BrowserPushSubscription.endpoint_hash == fingerprint,
             ))
-            return {"active": bool(row is not None and row.active)}
+            now = utcnow()
+            return {
+                "active": bool(
+                    row is not None
+                    and row.active
+                    and (row.expires_at is None or aware(row.expires_at) > now)
+                )
+            }
 
     def deactivate_browser_push_subscription(
         self, owner: str, request: BrowserPushSubscriptionDeactivate
