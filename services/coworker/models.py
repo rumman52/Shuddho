@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -766,6 +766,13 @@ class BrowserPushSubscription(Base):
     __table_args__ = (
         UniqueConstraint("owner_id", "endpoint_hash", name="uq_cw_browser_push_owner_endpoint"),
         Index("ix_cw_browser_push_owner_active", "owner_id", "active"),
+        Index(
+            "uq_cw_browser_push_active_endpoint",
+            "endpoint_hash",
+            unique=True,
+            postgresql_where=text("active"),
+            sqlite_where=text("active"),
+        ),
     )
 
 
