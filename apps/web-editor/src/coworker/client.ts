@@ -48,7 +48,8 @@ export type PersonalGoalCreate = {
 };
 export type PersonalSuggestionPreferences = {
   available: boolean; enabled: boolean; delivery_available: boolean; delivery_enabled: boolean;
-  event_delivery_available: boolean; event_delivery_enabled: boolean; event_timezone: string; dismissed_count: number;
+  event_delivery_available: boolean; event_delivery_enabled: boolean; event_timezone: string;
+  model_relevance_available: boolean; dismissed_count: number;
 };
 export type PersonalSuggestion = {
   id: string;
@@ -493,6 +494,13 @@ export class CoworkerClient {
     });
   }
   personalSuggestions(signal?: AbortSignal) { return this.json<{ available: boolean; enabled: boolean; suggestions: PersonalSuggestion[] }>("/api/v1/personal-suggestions", { signal }); }
+  rankPersonalSuggestions() {
+    return this.json<{
+      available: boolean; enabled: boolean; mode: "deterministic" | "model";
+      model: string | null; prompt_sha256: string | null; latency_ms: number;
+      suggestions: PersonalSuggestion[];
+    }>("/api/v1/personal-suggestions/rank", { method: "POST" });
+  }
   dismissPersonalSuggestion(id: string) { return this.json<{ id: string; state: "dismissed" }>(`/api/v1/personal-suggestions/${digestIdentifier(id)}/dismiss`, { method: "POST" }); }
   goal(id: string, signal?: AbortSignal) { return this.json<PersonalGoal>(`/api/v1/goals/${identifier(id)}`, { signal }); }
   createGoal(input: PersonalGoalCreate, key: string) {
