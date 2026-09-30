@@ -25,7 +25,7 @@ from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
 from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, BrowserPushDelivery, BrowserPushSubscription, Notification, NotificationOutbox, PersonalGoal, utcnow
-from services.coworker.web_push import WebPushSender, WebPushSubscriptionVault, b64url_encode
+from services.coworker.web_push import WebPushSender, WebPushSubscriptionVault, b64url_encode, endpoint_fingerprint
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -705,6 +705,29 @@ def test_browser_push_is_explicit_durable_generic_and_rechecks_consent(
         assert delivery.state == "suppressed"
         assert delivery.error_code == "browser_push_opted_out"
     assert len(sent) == 1
+
+    bob_auth = headers("bob")
+    rebound = client.put(
+        "/api/v1/browser-push/subscriptions",
+        headers=bob_auth,
+        json={
+            "endpoint": endpoint,
+            "p256dh": b64url_encode(ua_public),
+            "auth": b64url_encode(b"a" * 16),
+            "expiration_time": None,
+        },
+    )
+    assert rebound.status_code == 200
+    with automation_container.repository.sessions() as db:
+        alice = db.scalar(select(Account).where(Account.subject == "alice"))
+        bob = db.scalar(select(Account).where(Account.subject == "bob"))
+        assert alice is not None and bob is not None
+        active = db.scalars(select(BrowserPushSubscription).where(
+            BrowserPushSubscription.endpoint_hash == endpoint_fingerprint(endpoint),
+            BrowserPushSubscription.active.is_(True),
+        )).all()
+        assert len(active) == 1
+        assert active[0].owner_id == bob.id
 
 
 def test_buffer_one_keeps_only_one_waiting_occurrence(automation_client, automation_container):
