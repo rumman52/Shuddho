@@ -752,6 +752,7 @@ def test_artifact_services_require_structured_rollout_bound_evidence():
         "source_revision": "1" * 40,
         "rollout_manifest_sha256": "a" * 64,
         "native_results_sha256": "b" * 64,
+        "artifact_set_sha256": "d" * 64,
         "human_review_sha256": "c" * 64,
         "languages": ["ar", "bn", "en", "zh"],
         "formats": ["pptx", "xlsx"],
