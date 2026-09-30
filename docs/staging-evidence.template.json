@@ -152,8 +152,7 @@
     "evidence": ""
   },
   "suggestion_model_relevance": {
-    "status": "not_run",
-    "evidence": "",
-    "verified_at": null
+    "status": "pending",
+    "evidence": ""
   }
 }
