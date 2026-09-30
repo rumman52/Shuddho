@@ -12,7 +12,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch
 from .errors import CoworkerError
 from .models import (
     Account, AgentRun, AuditEvent, Automation, AutomationOccurrence, AutomationRevision,
-    AutomationScheduleOutbox, PersonalGoal, Workspace, utcnow,
+    AutomationScheduleOutbox, ConnectorEvent, ConnectorReadGrant, PersonalGoal, Workspace, utcnow,
 )
 from .repository import aware, iso, not_found
 
@@ -41,6 +41,33 @@ class AutomationRepository:
     @staticmethod
     def _audit(db, owner: str, resource: str, action: str) -> None:
         db.add(AuditEvent(id=str(uuid4()), owner_id=owner, resource_id=resource, action=action))
+
+    def _validate_event_trigger(self, db, owner: str, schedule: dict) -> None:
+        if schedule.get("kind") != "event":
+            return
+        if not self.settings.connector_reads_enabled or not self.settings.agent_runtime_v3_enabled:
+            raise CoworkerError(
+                "event_automation_unavailable",
+                "Connected-event automations require qualified connected reads and Agent Runtime v3.",
+                409,
+            )
+        grant_id = str(schedule.get("grant_id") or "")
+        grant = db.scalar(select(ConnectorReadGrant).where(
+            ConnectorReadGrant.id == grant_id,
+            ConnectorReadGrant.owner_id == owner,
+        ))
+        if (
+            grant is None
+            or grant.state != "active"
+            or aware(grant.expires_at) <= utcnow()
+            or grant.destination != "planner_context"
+            or grant.purpose != "agent_context"
+        ):
+            raise CoworkerError(
+                "event_automation_grant_unavailable",
+                "The selected connected read authorization is not active for Agent context.",
+                409,
+            )
 
     @staticmethod
     def _automation(db, owner: str, automation_id: str, *, lock: bool = False) -> Automation:
@@ -124,6 +151,7 @@ class AutomationRepository:
                 raise CoworkerError("goal_not_active", "Only an active goal can be automated.", 409)
             if request.expires_at is not None and aware(request.expires_at) <= utcnow():
                 raise CoworkerError("automation_expired", "Automation expiry must be in the future.", 409)
+            self._validate_event_trigger(db, owner, payload["schedule"])
             now = utcnow()
             row = Automation(
                 id=str(uuid4()), owner_id=owner, workspace_id=goal.workspace_id,
@@ -181,6 +209,7 @@ class AutomationRepository:
                 row.schedule = request.schedule.model_dump(mode="json")
             if "quiet_hours" in fields:
                 row.quiet_hours = request.quiet_hours.model_dump(mode="json") if request.quiet_hours else None
+            self._validate_event_trigger(db, owner, dict(row.schedule))
             if row.expires_at is not None and aware(row.expires_at) <= utcnow():
                 raise CoworkerError("automation_expired", "Automation expiry must be in the future.", 409)
             row.revision += 1; row.updated_at = utcnow(); row.schedule_error_code = None
@@ -266,6 +295,193 @@ class AutomationRepository:
     def occurrence_key(owner: str, automation_id: str, revision: int, due_at: datetime) -> str:
         canonical = aware(due_at).astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         return hashlib.sha256(f"{owner}|{automation_id}|{revision}|{canonical}".encode()).hexdigest()
+
+    @staticmethod
+    def event_occurrence_key(owner: str, automation_id: str, revision: int, event_id: str) -> str:
+        return hashlib.sha256(f"{owner}|{automation_id}|{revision}|event|{event_id}".encode()).hexdigest()
+
+    def handle_connector_event(self, event: dict) -> None:
+        """Wake bounded runs for explicitly configured connected-event automations.
+
+        The connector event is already authenticated, persisted, deduplicated and
+        synchronized before this callback is invoked. Provider content remains
+        untrusted context; it never changes automation authority.
+        """
+        event_id = str(event.get("id") or "")
+        owner = str(event.get("owner_id") or "")
+        grant_id = str(event.get("grant_id") or "")
+        if not event_id or not owner or not grant_id:
+            return
+        with self.sessions() as db:
+            row = db.scalar(select(ConnectorEvent).where(
+                ConnectorEvent.id == event_id,
+                ConnectorEvent.owner_id == owner,
+                ConnectorEvent.grant_id == grant_id,
+            ))
+            if row is None:
+                return
+            candidates = db.scalars(select(Automation).where(
+                Automation.owner_id == owner,
+                Automation.state == "active",
+            ).order_by(Automation.created_at, Automation.id)).all()
+            matches = [
+                item for item in candidates
+                if isinstance(item.schedule, dict)
+                and item.schedule.get("kind") == "event"
+                and str(item.schedule.get("grant_id") or "") == grant_id
+            ]
+        for automation in matches:
+            self.accept_event_occurrence(automation.id, automation.revision, event_id)
+
+    def accept_event_occurrence(self, automation_id: str, revision: int, event_id: str) -> dict:
+        if not self.settings.automations_enabled:
+            return {"occurrence_id": None, "run_id": None, "state": "skipped", "reason": "kill_switch", "replayed": False}
+        with self.sessions.begin() as db:
+            automation = db.scalar(select(Automation).where(
+                Automation.id == automation_id,
+            ).with_for_update())
+            if automation is None:
+                raise CoworkerError("automation_missing", "The event automation no longer exists.", 404)
+            event = db.scalar(select(ConnectorEvent).where(
+                ConnectorEvent.id == event_id,
+                ConnectorEvent.owner_id == automation.owner_id,
+            ))
+            key = self.event_occurrence_key(
+                automation.owner_id, automation.id, revision, event_id
+            )
+            previous = db.scalar(select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == automation.id,
+                AutomationOccurrence.occurrence_key == key,
+            ))
+            if previous is not None:
+                if previous.run_id:
+                    return {"occurrence_id": previous.id, "run_id": previous.run_id, "state": previous.state, "replayed": True}
+                if previous.state in {"skipped", "blocked", "buffered"}:
+                    return {"occurrence_id": previous.id, "run_id": None, "state": previous.state, "reason": previous.reason, "replayed": True}
+
+            reason = None
+            if event is None or event.grant_id != str(automation.schedule.get("grant_id") or ""):
+                reason = "event_source_mismatch"
+            elif automation.revision != revision:
+                reason = "stale_revision"
+            elif automation.state != "active":
+                reason = "not_active"
+            elif automation.expires_at is not None and aware(automation.expires_at) <= utcnow():
+                reason = "expired"
+
+            goal = db.scalar(select(PersonalGoal).where(
+                PersonalGoal.id == automation.goal_id,
+                PersonalGoal.owner_id == automation.owner_id,
+            ))
+            grant = db.scalar(select(ConnectorReadGrant).where(
+                ConnectorReadGrant.id == str(automation.schedule.get("grant_id") or ""),
+                ConnectorReadGrant.owner_id == automation.owner_id,
+            ))
+            if goal is None or goal.state != "active" or goal.revision != automation.goal_revision:
+                reason = reason or "goal_changed"
+            if (
+                grant is None
+                or grant.state != "active"
+                or aware(grant.expires_at) <= utcnow()
+                or grant.destination != "planner_context"
+                or grant.purpose != "agent_context"
+            ):
+                reason = reason or "grant_revoked"
+
+            due_at = aware(event.received_at) if event is not None else utcnow()
+            if previous is None:
+                previous = AutomationOccurrence(
+                    id=str(uuid4()), owner_id=automation.owner_id, automation_id=automation.id,
+                    automation_revision=revision, occurrence_key=key, due_at=due_at,
+                    state="accepting", created_at=utcnow(), updated_at=utcnow(),
+                )
+                db.add(previous); db.flush()
+            if reason:
+                previous.state = "skipped"; previous.reason = reason; previous.updated_at = utcnow()
+                return {"occurrence_id": previous.id, "run_id": None, "state": "skipped", "reason": reason, "replayed": False}
+
+            active_run = db.scalar(select(AgentRun.id).join(
+                AutomationOccurrence, AutomationOccurrence.run_id == AgentRun.id,
+            ).where(
+                AutomationOccurrence.automation_id == automation.id,
+                AutomationOccurrence.id != previous.id,
+                AgentRun.state.not_in({"completed", "failed", "cancelled"}),
+            ).limit(1))
+            if active_run is not None:
+                if automation.overlap_policy == "skip":
+                    previous.state = "skipped"; previous.reason = "overlap"; previous.updated_at = utcnow()
+                    return {"occurrence_id": previous.id, "run_id": None, "state": "skipped", "reason": "overlap", "replayed": False}
+                buffered = db.scalar(select(AutomationOccurrence.id).where(
+                    AutomationOccurrence.automation_id == automation.id,
+                    AutomationOccurrence.state == "buffered",
+                    AutomationOccurrence.id != previous.id,
+                ).limit(1))
+                if buffered is not None:
+                    previous.state = "skipped"; previous.reason = "buffer_full"; previous.updated_at = utcnow()
+                    return {"occurrence_id": previous.id, "run_id": None, "state": "skipped", "reason": "buffer_full", "replayed": False}
+                previous.state = "buffered"; previous.reason = "overlap"; previous.updated_at = utcnow()
+                return {"occurrence_id": previous.id, "run_id": None, "state": "buffered", "reason": "overlap", "replayed": False}
+
+            owner = automation.owner_id
+            goal_id = automation.goal_id
+            goal_revision = automation.goal_revision
+            output_language = automation.output_language
+            objective = goal.objective
+            grant_id = grant.id
+            workspace_id = automation.workspace_id
+            timezone_name = automation.timezone
+            quiet_hours = automation.quiet_hours
+
+        idempotency_key = f"automation-event:{automation_id}:{revision}:{event_id}"
+        try:
+            run, _ = self.agent.create(
+                owner,
+                AgentRunCreate(
+                    goal=objective,
+                    document_ids=[],
+                    action_ids=[],
+                    memory_namespaces=[],
+                    connector_read_grant_ids=[grant_id],
+                    output_language=output_language,
+                ),
+                idempotency_key,
+                persistent_goal_id=goal_id,
+                persistent_goal_revision=goal_revision,
+            )
+        except CoworkerError as error:
+            with self.sessions.begin() as db:
+                occurrence = db.scalar(select(AutomationOccurrence).where(
+                    AutomationOccurrence.automation_id == automation_id,
+                    AutomationOccurrence.occurrence_key == key,
+                ).with_for_update())
+                if occurrence is not None:
+                    occurrence.state = "blocked"; occurrence.reason = error.code[:80]; occurrence.updated_at = utcnow()
+            return {"occurrence_id": occurrence.id if occurrence else None, "run_id": None, "state": "blocked", "reason": error.code, "replayed": False}
+
+        with self.sessions.begin() as db:
+            occurrence = db.scalar(select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == automation_id,
+                AutomationOccurrence.occurrence_key == key,
+            ).with_for_update())
+            if occurrence is None:
+                raise CoworkerError("automation_occurrence_lost", "Connected-event occurrence state was unavailable.", 503)
+            occurrence.run_id = run["id"]; occurrence.state = "accepted"; occurrence.reason = None; occurrence.updated_at = utcnow()
+            visible_at = self.notifications.visible_at_after_quiet_hours(
+                due_at, timezone_name, quiet_hours,
+            )
+            self.notifications.enqueue_pending(
+                db,
+                owner=owner,
+                workspace_id=workspace_id,
+                automation_id=automation_id,
+                occurrence_id=occurrence.id,
+                kind="automation_started",
+                title="Connected update started bounded work",
+                message="Your personal agent started one bounded run after an authorized connected update.",
+                visible_at=visible_at,
+                expires_at=visible_at + timedelta(days=30),
+            )
+            return {"occurrence_id": occurrence.id, "run_id": run["id"], "state": "accepted", "replayed": False}
 
     def accept_occurrence(self, automation_id: str, revision: int, due_at: datetime) -> dict:
         """Idempotently accept one Temporal Schedule occurrence and wake one bounded run."""
