@@ -710,6 +710,7 @@ class AutomationOccurrence(Base):
     automation_id: Mapped[str] = mapped_column(ForeignKey("cw_automations.id"), index=True)
     automation_revision: Mapped[int] = mapped_column(Integer)
     occurrence_key: Mapped[str] = mapped_column(String(255))
+    trigger_event_id: Mapped[str | None] = mapped_column(ForeignKey("cw_connector_events.id"), index=True)
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     run_id: Mapped[str | None] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
     state: Mapped[str] = mapped_column(String(40))
