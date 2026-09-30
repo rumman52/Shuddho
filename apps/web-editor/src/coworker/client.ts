@@ -57,7 +57,9 @@ export type PersonalSuggestion = {
   goal_id: string; goal_revision: number; relevance_score: number; reason: string;
   due_at: string | null; action: "review_goal" | "open_automations"; context_resource_count: number;
 };
-export type AutomationSchedule = { kind: "daily" | "weekly"; hour: number; minute: number; weekdays: string[] };
+export type AutomationSchedule =
+  | { kind: "daily" | "weekly"; hour: number; minute: number; weekdays: string[] }
+  | { kind: "event"; grant_id: string };
 export type PersonalAutomation = {
   id: string; goal_id: string; goal_revision: number; revision: number; state: "active" | "paused" | "cancelled";
   timezone: string; schedule: AutomationSchedule; output_language: string; overlap_policy: "skip" | "buffer_one";
