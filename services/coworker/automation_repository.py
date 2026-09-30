@@ -452,6 +452,87 @@ class AutomationRepository:
         )
         return hashlib.sha256(raw.encode()).hexdigest()
 
+    def _validate_proactive_profile(
+        self,
+        db,
+        owner: str,
+        schedule: dict,
+        run_profile: str,
+        connector_read_grant_ids: list[str],
+        tool_allowlist: list[str],
+    ) -> None:
+        if run_profile != "proactive":
+            if tool_allowlist:
+                raise CoworkerError(
+                    "automation_tool_scope",
+                    "Reviewed proactive tool scope is available only to the goal-driven proactive profile.",
+                    409,
+                )
+            return
+        if schedule.get("kind") not in {"daily", "weekly", "event"}:
+            raise CoworkerError(
+                "proactive_trigger_scope",
+                "Goal-driven proactivity requires a reviewed schedule or authenticated connected-event trigger.",
+                409,
+            )
+        if not 1 <= len(tool_allowlist) <= 4 or len(set(tool_allowlist)) != len(tool_allowlist):
+            raise CoworkerError(
+                "proactive_tool_scope",
+                "Choose one to four unique reviewed non-consequential tools.",
+                422,
+            )
+        if (
+            not self.settings.agent_runtime_v3_enabled
+            or not self.settings.intelligent_planner_enabled
+            or not self.settings.work_services_enabled
+            or not self.settings.context_retrieval_enabled
+        ):
+            raise CoworkerError(
+                "proactive_coworker_unavailable",
+                "Goal-driven proactivity requires Runtime v3, bounded context retrieval, the planner, and work services.",
+                409,
+            )
+        if schedule.get("kind") == "event" and connector_read_grant_ids:
+            raise CoworkerError(
+                "proactive_event_context_scope",
+                "Connected-event proactive runs freeze context from the authenticated trigger source; extra read grants are not accepted.",
+                409,
+            )
+        for grant_id in connector_read_grant_ids:
+            if not self.settings.connector_reads_enabled:
+                raise CoworkerError(
+                    "proactive_connected_reads_unavailable",
+                    "Selected proactive context requires qualified connected reads.",
+                    409,
+                )
+            grant = db.scalar(select(ConnectorReadGrant).where(
+                ConnectorReadGrant.id == grant_id,
+                ConnectorReadGrant.owner_id == owner,
+            ))
+            if (
+                grant is None
+                or grant.state != "active"
+                or aware(grant.expires_at) <= utcnow()
+                or grant.destination != "planner_context"
+                or grant.purpose != "agent_context"
+            ):
+                raise CoworkerError(
+                    "proactive_source_unavailable",
+                    "A selected proactive context authorization is no longer active.",
+                    409,
+                )
+            subscription = db.scalar(select(ConnectorSubscription.id).where(
+                ConnectorSubscription.owner_id == owner,
+                ConnectorSubscription.grant_id == grant_id,
+                ConnectorSubscription.state.in_(["pending", "active", "renewing"]),
+            ).limit(1))
+            if subscription is None:
+                raise CoworkerError(
+                    "proactive_source_subscription_unavailable",
+                    "Activate event synchronization for each selected proactive context source first.",
+                    409,
+                )
+
     @staticmethod
     def _automation(db, owner: str, automation_id: str, *, lock: bool = False) -> Automation:
         query = select(Automation).where(Automation.id == automation_id, Automation.owner_id == owner)
@@ -471,6 +552,7 @@ class AutomationRepository:
             "schedule": dict(row.schedule),
             "run_profile": row.run_profile,
             "connector_read_grant_ids": list(row.connector_read_grant_ids or []),
+            "tool_allowlist": list(row.tool_allowlist or []),
             "output_language": row.output_language,
             "overlap_policy": row.overlap_policy,
             "catchup_window_seconds": row.catchup_window_seconds,
@@ -486,6 +568,7 @@ class AutomationRepository:
             "revision": row.revision, "state": row.state, "timezone": row.timezone,
             "schedule": dict(row.schedule), "run_profile": row.run_profile,
             "connector_read_grant_ids": list(row.connector_read_grant_ids or []),
+            "tool_allowlist": list(row.tool_allowlist or []),
             "output_language": row.output_language,
             "overlap_policy": row.overlap_policy, "catchup_window_seconds": row.catchup_window_seconds,
             "quiet_hours": dict(row.quiet_hours) if row.quiet_hours else None,
@@ -513,9 +596,10 @@ class AutomationRepository:
         payload = request.model_dump(mode="json")
         # Preserve the pre-briefing idempotency fingerprint for ordinary
         # goal automations so old clients can safely replay an existing key.
-        if request.run_profile == "goal" and not request.connector_read_grant_ids:
+        if request.run_profile == "goal" and not request.connector_read_grant_ids and not request.tool_allowlist:
             payload.pop("run_profile", None)
             payload.pop("connector_read_grant_ids", None)
+            payload.pop("tool_allowlist", None)
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
             if db.scalar(select(Account.id).where(Account.id == owner).with_for_update()) is None:
@@ -557,13 +641,18 @@ class AutomationRepository:
             self._validate_deadline_profile(
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids, goal
             )
+            tool_allowlist = list(request.tool_allowlist)
+            self._validate_proactive_profile(
+                db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids, tool_allowlist
+            )
             now = utcnow()
             row = Automation(
                 id=str(uuid4()), owner_id=owner, workspace_id=goal.workspace_id,
                 goal_id=goal.id, goal_revision=goal.revision, idempotency_key=idempotency_key,
                 fingerprint=fingerprint, revision=1, state="active", timezone=request.timezone,
                 schedule=request.schedule.model_dump(mode="json"), run_profile=request.run_profile,
-                connector_read_grant_ids=connector_read_grant_ids, output_language=request.output_language,
+                connector_read_grant_ids=connector_read_grant_ids, tool_allowlist=tool_allowlist,
+                output_language=request.output_language,
                 overlap_policy=request.overlap_policy, catchup_window_seconds=request.catchup_window_seconds,
                 quiet_hours=request.quiet_hours.model_dump(mode="json") if request.quiet_hours else None,
                 expires_at=request.expires_at, created_at=now, updated_at=now,
@@ -613,6 +702,8 @@ class AutomationRepository:
                 setattr(row, field, getattr(request, field))
             if "connector_read_grant_ids" in fields:
                 row.connector_read_grant_ids = [str(value) for value in (request.connector_read_grant_ids or [])]
+            if "tool_allowlist" in fields:
+                row.tool_allowlist = list(request.tool_allowlist or [])
             if "schedule" in fields:
                 row.schedule = request.schedule.model_dump(mode="json")
             if "quiet_hours" in fields:
@@ -633,6 +724,10 @@ class AutomationRepository:
             ))
             self._validate_deadline_profile(
                 db, owner, dict(row.schedule), row.run_profile, list(row.connector_read_grant_ids or []), current_goal
+            )
+            self._validate_proactive_profile(
+                db, owner, dict(row.schedule), row.run_profile,
+                list(row.connector_read_grant_ids or []), list(row.tool_allowlist or [])
             )
             if row.expires_at is not None and aware(row.expires_at) <= utcnow():
                 raise CoworkerError("automation_expired", "Automation expiry must be in the future.", 409)
