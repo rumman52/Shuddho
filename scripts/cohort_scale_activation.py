@@ -6,6 +6,11 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.incident_restore_evidence import (
+    IncidentRestoreEvidenceError,
+    validate_incident_restore_evidence,
+)
+
 import httpx
 
 from scripts.cohort_release_gate import load_rollout, validate_rollout
@@ -92,6 +97,41 @@ def validate_scale_decision(value: dict) -> datetime:
     if not isinstance(generated_at, str):
         raise ScaleActivationError("Scale decision has no generated_at timestamp.")
     return parse_time(generated_at, "scale decision generated_at")
+
+
+def validate_incident_restore_binding(
+    path: Path,
+    decision: dict,
+    rollout_path: Path,
+    *,
+    decision_time: datetime,
+) -> dict:
+    value = load_json(path, "incident/restore evidence")
+    bound = decision.get("artifact_sha256")
+    expected = bound.get("incident_restore") if isinstance(bound, dict) else None
+    actual = sha256_file(path)
+    if expected != actual:
+        raise ScaleActivationError(
+            "Scale decision does not bind the supplied incident/restore evidence."
+        )
+    rollout_sha = sha256_file(rollout_path)
+    if decision.get("rollout_manifest_sha256") != rollout_sha:
+        raise ScaleActivationError(
+            "Scale decision does not bind the current rollout manifest."
+        )
+    try:
+        generated, _completed = validate_incident_restore_evidence(
+            value,
+            release_id=decision["release_id"],
+            rollout_sha256=rollout_sha,
+        )
+    except IncidentRestoreEvidenceError as error:
+        raise ScaleActivationError(str(error)) from None
+    if generated > decision_time:
+        raise ScaleActivationError(
+            "Incident/restore evidence must predate the scale decision."
+        )
+    return value
 
 
 def validate_deployment_change(value: dict, decision: dict, *, not_before: datetime) -> datetime:
@@ -1288,6 +1328,7 @@ def main() -> None:
     parser.add_argument("--deployment-change", type=Path, required=True)
     parser.add_argument("--operator-status", type=Path, required=True)
     parser.add_argument("--provider-policy-activation", type=Path, required=True)
+    parser.add_argument("--incident-restore", type=Path, required=True)
     parser.add_argument("--release-activation-bundle", type=Path, required=True)
     parser.add_argument("--microsoft-rollout-activation", type=Path)
     parser.add_argument("--action-selection-activation", type=Path)
@@ -1309,6 +1350,12 @@ def main() -> None:
     try:
         decision = load_json(args.scale_decision, "scale decision")
         decision_time = validate_scale_decision(decision)
+        validate_incident_restore_binding(
+            args.incident_restore,
+            decision,
+            args.rollout,
+            decision_time=decision_time,
+        )
         deployment = load_json(args.deployment_change, "deployment change")
         deployment_time = validate_deployment_change(
             deployment,
