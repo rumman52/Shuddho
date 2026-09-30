@@ -721,6 +721,7 @@ def test_personal_suggestion_delivery_is_separate_durable_deduped_and_inert(
         "event_delivery_available": False,
         "event_delivery_enabled": False,
         "event_timezone": "UTC",
+        "model_relevance_available": False,
         "dismissed_count": 0,
     }
     client.put("/api/v1/personal-suggestion-preferences", headers=auth,
