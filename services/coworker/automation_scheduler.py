@@ -34,13 +34,27 @@ def temporal_schedule(value: dict, task_queue: str):
     spec = value["schedule"]
     if spec.get("kind") == "event":
         raise ValueError("Connected-event automations do not use a Temporal Schedule.")
-    weekdays = [] if spec["kind"] == "daily" else [ScheduleRange(start=DAY[item]) for item in spec["weekdays"]]
-    calendar = ScheduleCalendarSpec(
-        day_of_week=weekdays or [ScheduleRange(start=0, end=6)],
-        hour=[ScheduleRange(start=int(spec["hour"]))],
-        minute=[ScheduleRange(start=int(spec["minute"]))],
-        second=[ScheduleRange(start=0)],
-    )
+    if spec["kind"] == "meeting":
+        # Temporal remains the sole durable wake-up authority. A bounded local-time
+        # scan discovers meetings inside their preparation window; PostgreSQL
+        # deduplicates each concrete calendar occurrence.
+        calendar = ScheduleCalendarSpec(
+            day_of_week=[ScheduleRange(start=0, end=6)],
+            hour=[ScheduleRange(start=0, end=23)],
+            minute=[
+                ScheduleRange(start=value)
+                for value in range(0, 60, int(spec["scan_interval_minutes"]))
+            ],
+            second=[ScheduleRange(start=0)],
+        )
+    else:
+        weekdays = [] if spec["kind"] == "daily" else [ScheduleRange(start=DAY[item]) for item in spec["weekdays"]]
+        calendar = ScheduleCalendarSpec(
+            day_of_week=weekdays or [ScheduleRange(start=0, end=6)],
+            hour=[ScheduleRange(start=int(spec["hour"]))],
+            minute=[ScheduleRange(start=int(spec["minute"]))],
+            second=[ScheduleRange(start=0)],
+        )
     overlap = ScheduleOverlapPolicy.BUFFER_ONE if value["overlap_policy"] == "buffer_one" else ScheduleOverlapPolicy.SKIP
     enabled = value["state"] == "active"
     return Schedule(

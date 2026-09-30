@@ -58,12 +58,21 @@ class AutomationEventTrigger(AutomationModel):
     grant_id: UUID
 
 
-AutomationTrigger = AutomationSchedule | AutomationEventTrigger
+class AutomationMeetingTrigger(AutomationModel):
+    """Periodically inspect one authorized calendar for upcoming meetings."""
+
+    kind: Literal["meeting"]
+    grant_id: UUID
+    preparation_minutes: int = Field(default=30, ge=5, le=2880)
+    scan_interval_minutes: Literal[5, 10, 15, 30, 60] = 15
+
+
+AutomationTrigger = AutomationSchedule | AutomationEventTrigger | AutomationMeetingTrigger
 
 
 class QuietHours(AutomationModel):
-    start: str = Field(pattern=r"^(?:[01]d|2[0-3]):[0-5]d$")
-    end: str = Field(pattern=r"^(?:[01]d|2[0-3]):[0-5]d$")
+    start: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
     @model_validator(mode="after")
     def not_empty(self):
@@ -77,7 +86,7 @@ class AutomationCreate(AutomationModel):
     goal_revision: int = Field(ge=1)
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
     schedule: AutomationTrigger
-    run_profile: Literal["goal", "briefing"] = "goal"
+    run_profile: Literal["goal", "briefing", "meeting"] = "goal"
     connector_read_grant_ids: list[UUID] = Field(default_factory=list, max_length=4)
     output_language: str = Field(default="en", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     overlap_policy: Literal["skip", "buffer_one"] = "skip"
@@ -100,7 +109,7 @@ class AutomationPatch(AutomationModel):
     expected_revision: int = Field(ge=1)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     schedule: AutomationTrigger | None = None
-    run_profile: Literal["goal", "briefing"] | None = None
+    run_profile: Literal["goal", "briefing", "meeting"] | None = None
     connector_read_grant_ids: list[UUID] | None = Field(default=None, max_length=4)
     output_language: str | None = Field(default=None, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     overlap_policy: Literal["skip", "buffer_one"] | None = None
