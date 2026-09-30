@@ -348,6 +348,110 @@ class AutomationRepository:
                 score = max(score, 20)
         return score
 
+    def _validate_deadline_profile(
+        self,
+        db,
+        owner: str,
+        schedule: dict,
+        run_profile: str,
+        connector_read_grant_ids: list[str],
+        goal: PersonalGoal | None = None,
+    ) -> None:
+        if run_profile != "deadline":
+            return
+        if schedule.get("kind") not in {"daily", "weekly"}:
+            raise CoworkerError(
+                "deadline_trigger_scope",
+                "Deadline Coworker requires a reviewed daily or weekly Temporal schedule.",
+                409,
+            )
+        if connector_read_grant_ids:
+            raise CoworkerError(
+                "deadline_source_scope",
+                "Deadline Coworker uses the bound goal and its authorized resources; extra connector grants are not accepted.",
+                409,
+            )
+        if (
+            not self.settings.agent_runtime_v3_enabled
+            or not self.settings.intelligent_planner_enabled
+            or not self.settings.work_services_enabled
+            or not self.settings.context_retrieval_enabled
+        ):
+            raise CoworkerError(
+                "deadline_coworker_unavailable",
+                "Deadline Coworker requires Runtime v3, bounded context retrieval, the planner, and work services.",
+                409,
+            )
+        if goal is not None and goal.deadline_at is None and not any(
+            isinstance(item, dict)
+            and not item.get("completed")
+            and item.get("due_at")
+            for item in list(goal.milestones or [])
+        ):
+            raise CoworkerError(
+                "deadline_missing",
+                "Deadline Coworker requires a goal or incomplete milestone deadline.",
+                409,
+            )
+
+    @staticmethod
+    def _deadline_target(goal: PersonalGoal, now: datetime) -> dict | None:
+        candidates: list[dict] = []
+        if goal.deadline_at is not None:
+            candidates.append({
+                "kind": "goal",
+                "label": "Goal deadline",
+                "due_at": aware(goal.deadline_at),
+            })
+        for index, item in enumerate(list(goal.milestones or [])):
+            if not isinstance(item, dict) or item.get("completed") is True:
+                continue
+            raw = item.get("due_at")
+            if not isinstance(raw, str) or not raw:
+                continue
+            try:
+                due = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if due.tzinfo is None:
+                    continue
+            except ValueError:
+                continue
+            candidates.append({
+                "kind": "milestone",
+                "label": str(item.get("label") or f"Milestone {index + 1}")[:160],
+                "due_at": aware(due),
+            })
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item["due_at"])
+        target = candidates[0]
+        delta = target["due_at"] - now
+        if delta <= timedelta(seconds=0):
+            band = "overdue"
+        elif delta <= timedelta(hours=24):
+            band = "24h"
+        elif delta <= timedelta(days=3):
+            band = "72h"
+        elif delta <= timedelta(days=7):
+            band = "7d"
+        else:
+            return None
+        return target | {"band": band}
+
+    @staticmethod
+    def deadline_occurrence_key(
+        owner: str,
+        automation_id: str,
+        automation_revision: int,
+        goal_revision: int,
+        target: dict,
+    ) -> str:
+        canonical = aware(target["due_at"]).astimezone(timezone.utc).isoformat(timespec="seconds")
+        raw = (
+            f"{owner}|{automation_id}|{automation_revision}|deadline|{goal_revision}|"
+            f"{target['kind']}|{target['label']}|{canonical}|{target['band']}"
+        )
+        return hashlib.sha256(raw.encode()).hexdigest()
+
     @staticmethod
     def _automation(db, owner: str, automation_id: str, *, lock: bool = False) -> Automation:
         query = select(Automation).where(Automation.id == automation_id, Automation.owner_id == owner)
@@ -450,6 +554,9 @@ class AutomationRepository:
             self._validate_email_profile(
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids
             )
+            self._validate_deadline_profile(
+                db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids, goal
+            )
             now = utcnow()
             row = Automation(
                 id=str(uuid4()), owner_id=owner, workspace_id=goal.workspace_id,
@@ -519,6 +626,13 @@ class AutomationRepository:
             )
             self._validate_email_profile(
                 db, owner, dict(row.schedule), row.run_profile, list(row.connector_read_grant_ids or [])
+            )
+            current_goal = db.scalar(select(PersonalGoal).where(
+                PersonalGoal.id == row.goal_id,
+                PersonalGoal.owner_id == owner,
+            ))
+            self._validate_deadline_profile(
+                db, owner, dict(row.schedule), row.run_profile, list(row.connector_read_grant_ids or []), current_goal
             )
             if row.expires_at is not None and aware(row.expires_at) <= utcnow():
                 raise CoworkerError("automation_expired", "Automation expiry must be in the future.", 409)
@@ -1251,6 +1365,196 @@ class AutomationRepository:
                 "replayed": False,
             }
 
+    def accept_deadline_scan(
+        self,
+        automation_id: str,
+        revision: int,
+        scan_at: datetime,
+    ) -> dict:
+        scan_at = aware(scan_at).astimezone(timezone.utc)
+        with self.sessions.begin() as db:
+            automation = db.scalar(select(Automation).where(
+                Automation.id == automation_id,
+            ).with_for_update())
+            if automation is None:
+                raise CoworkerError("automation_missing", "The Deadline Coworker automation no longer exists.", 404)
+            goal = db.scalar(select(PersonalGoal).where(
+                PersonalGoal.id == automation.goal_id,
+                PersonalGoal.owner_id == automation.owner_id,
+            ))
+            try:
+                self._validate_deadline_profile(
+                    db,
+                    automation.owner_id,
+                    dict(automation.schedule),
+                    automation.run_profile,
+                    list(automation.connector_read_grant_ids or []),
+                    goal,
+                )
+            except CoworkerError as error:
+                return {"state": "blocked", "reason": error.code, "run_id": None}
+            reason = None
+            if not self.settings.automations_enabled:
+                reason = "kill_switch"
+            elif automation.revision != revision:
+                reason = "stale_revision"
+            elif automation.state != "active":
+                reason = "not_active"
+            elif automation.expires_at is not None and aware(automation.expires_at) <= scan_at:
+                reason = "expired"
+            elif goal is None:
+                reason = "goal_missing"
+            elif goal.state != "active":
+                reason = "goal_not_active"
+            elif goal.revision != automation.goal_revision:
+                reason = "goal_changed"
+            if reason:
+                return {"state": "suppressed", "reason": reason, "run_id": None}
+
+            target = self._deadline_target(goal, scan_at)
+            if target is None:
+                return {"state": "no_action", "reason": "deadline_not_in_window", "run_id": None}
+
+            key = self.deadline_occurrence_key(
+                automation.owner_id,
+                automation.id,
+                revision,
+                goal.revision,
+                target,
+            )
+            previous = db.scalar(select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == automation.id,
+                AutomationOccurrence.occurrence_key == key,
+            ))
+            if previous is not None:
+                return {
+                    "occurrence_id": previous.id,
+                    "run_id": previous.run_id,
+                    "state": previous.state,
+                    "reason": previous.reason,
+                    "replayed": True,
+                }
+
+            active_run = db.scalar(select(AgentRun.id).join(
+                AutomationOccurrence, AutomationOccurrence.run_id == AgentRun.id,
+            ).where(
+                AutomationOccurrence.automation_id == automation.id,
+                AgentRun.state.not_in({"completed", "failed", "cancelled"}),
+            ).limit(1))
+            if active_run is not None:
+                return {"state": "no_action", "reason": "overlap", "run_id": None}
+
+            occurrence = AutomationOccurrence(
+                id=str(uuid4()),
+                owner_id=automation.owner_id,
+                automation_id=automation.id,
+                automation_revision=revision,
+                occurrence_key=key,
+                due_at=scan_at,
+                state="accepting",
+                reason=None,
+                created_at=utcnow(),
+                updated_at=utcnow(),
+            )
+            db.add(occurrence)
+            db.flush()
+
+            milestones = [
+                {
+                    "label": str(item.get("label") or "")[:160],
+                    "due_at": item.get("due_at"),
+                    "completed": item.get("completed") is True,
+                }
+                for item in list(goal.milestones or [])
+                if isinstance(item, dict)
+            ][:12]
+            objective = (
+                goal.objective
+                + "\n\nDeadline Coworker trigger: "
+                + target["label"]
+                + " is "
+                + target["band"]
+                + " with due time "
+                + iso(target["due_at"])
+                + ". Review remaining work, completed/incomplete milestones, blockers and risk. "
+                  "Prepare a prioritized recovery plan with realistic next steps. "
+                  "Do not send, publish, purchase, book, pay, or mutate any external service. "
+                  "Milestones: "
+                + json.dumps(milestones, ensure_ascii=False, sort_keys=True)
+            )
+            owner = automation.owner_id
+            goal_id = goal.id
+            goal_revision = goal.revision
+            output_language = automation.output_language
+            workspace_id = automation.workspace_id
+            timezone_name = automation.timezone
+            quiet_hours = automation.quiet_hours
+            document_ids = self._goal_document_ids(goal)
+            occurrence_id = occurrence.id
+
+        idempotency_key = f"automation-deadline:{automation_id}:{revision}:{key[:40]}"
+        try:
+            run, _ = self.agent.create(
+                owner,
+                AgentRunCreate(
+                    goal=objective,
+                    document_ids=document_ids,
+                    action_ids=[],
+                    memory_namespaces=[],
+                    connector_read_grant_ids=[],
+                    output_language=output_language,
+                ),
+                idempotency_key,
+                persistent_goal_id=goal_id,
+                persistent_goal_revision=goal_revision,
+                tool_allowlist=["daily_plan.create"],
+                derived_goal=True,
+            )
+        except CoworkerError as error:
+            with self.sessions.begin() as db:
+                occurrence = db.get(AutomationOccurrence, occurrence_id)
+                if occurrence is not None:
+                    occurrence.state = "blocked"
+                    occurrence.reason = error.code[:80]
+                    occurrence.updated_at = utcnow()
+            return {
+                "occurrence_id": occurrence_id,
+                "run_id": None,
+                "state": "blocked",
+                "reason": error.code,
+                "replayed": False,
+            }
+
+        with self.sessions.begin() as db:
+            occurrence = db.get(AutomationOccurrence, occurrence_id)
+            if occurrence is None:
+                raise CoworkerError("automation_occurrence_lost", "Deadline occurrence state was unavailable.", 503)
+            occurrence.run_id = run["id"]
+            occurrence.state = "accepted"
+            occurrence.updated_at = utcnow()
+            visible_at = self.notifications.visible_at_after_quiet_hours(
+                scan_at, timezone_name, quiet_hours,
+            )
+            self.notifications.enqueue_pending(
+                db,
+                owner=owner,
+                workspace_id=workspace_id,
+                automation_id=automation_id,
+                occurrence_id=occurrence.id,
+                kind="automation_started",
+                title="Deadline recovery plan started",
+                message="Your personal agent started one bounded deadline recovery-plan run.",
+                visible_at=visible_at,
+                expires_at=visible_at + timedelta(days=7),
+            )
+        return {
+            "occurrence_id": occurrence_id,
+            "run_id": run["id"],
+            "state": "accepted",
+            "reason": None,
+            "replayed": False,
+        }
+
     def accept_occurrence(self, automation_id: str, revision: int, due_at: datetime) -> dict:
         """Idempotently accept one Temporal Schedule occurrence and wake one bounded run."""
         due_at = aware(due_at).astimezone(timezone.utc)
@@ -1260,6 +1564,8 @@ class AutomationRepository:
             ))
         if run_profile == "meeting":
             return self.accept_meeting_scan(automation_id, revision, due_at)
+        if run_profile == "deadline":
+            return self.accept_deadline_scan(automation_id, revision, due_at)
         with self.sessions.begin() as db:
             row = db.scalar(select(Automation).where(Automation.id == automation_id).with_for_update())
             if row is None:
@@ -1422,7 +1728,7 @@ class AutomationRepository:
             if (
                 automation is None
                 or run is None
-                or automation.run_profile not in {"briefing", "meeting", "email"}
+                or automation.run_profile not in {"briefing", "meeting", "email", "deadline"}
                 or run.state != "completed"
             ):
                 return
@@ -1445,6 +1751,8 @@ class AutomationRepository:
                     if profile == "meeting"
                     else "Email review ready"
                     if profile == "email"
+                    else "Deadline recovery plan ready"
+                    if profile == "deadline"
                     else "Briefing ready"
                 ),
                 message=(
@@ -1452,6 +1760,8 @@ class AutomationRepository:
                     if profile == "meeting"
                     else "Your private email review and any draft are ready to review in Shuddho. Nothing was sent."
                     if profile == "email"
+                    else "Your private deadline recovery plan is ready to review in Shuddho."
+                    if profile == "deadline"
                     else "Your private daily/weekly briefing is ready to review in Shuddho."
                 ),
                 visible_at=visible_at,
