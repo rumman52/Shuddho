@@ -45,6 +45,32 @@ The [bounded inbox digest contract](PA10_NOTIFICATION_DIGESTS.md) adds only opti
 
 ## Current continuation checkpoint
 
+Updated at: 2026-09-30T18:48:02Z / 2026-10-01T00:48:02+06:00 Asia/Dhaka  
+Task ID and outcome: PA-10 bounded connected-event automations — add one explicit authenticated connector-event wake-up path that reuses PA-02 automation state, PA-06 event intake, Runtime v3, persistent goals and the shared notification service without adding a second scheduler or provider-write authority.  
+Stage: implementation complete / PR #266 open / exact implementation-head CI green / final checkpoint commit pending verification.  
+Base branch and SHA: `main` at `212c99ab694529b9ab3dabd694e8b8f6a5a2020b` (merge of PR #265).  
+Work branch and implementation SHA: `pa10-event-triggered-automation` at `23ea212cfc4ac1c2f64c4f4310762e07fe757774`.  
+PR and merge status: PR #266, https://github.com/rumman52/Shuddho/pull/266, is OPEN and mergeable; not merged.  
+Last completed action: exact implementation-head CI #1012 / run `36759984438` passed both required jobs. `test-and-build` passed Python tests, controlled-release contract verification, JavaScript tests, workspace build and frontend rollout-manifest verification. Heavyweight `coworker` passed PostgreSQL races/real exports/Temporal recovery, bounded Agent routing, multilingual quality, Office rendering/recalculation, research export preview, isolated browser policy and browser workflow. The slice adds explicit event-trigger schema/UI, exact owner/grant/subscription/goal-revision admission checks, stable event occurrence identity, crash-recoverable `trigger_event_id`, connector-event retry after cursor advancement, one Runtime-v3 run per accepted event, shared notification delivery and no ExternalAction/provider-write authority.  
+Unfinished work: this checkpoint-only documentation commit will change the PR head, so both required CI jobs must pass again on the resulting exact final head before PR #266 can be called repository-verified. If clean, merge only under the normal authorized PR process and then verify merged-main CI.  
+Local work: no complete local clone is available in this execution environment; no local test pass is claimed. All recoverable work is pushed to GitHub.  
+Saved recovery location: branch `pa10-event-triggered-automation`; implementation head `23ea212cfc4ac1c2f64c4f4310762e07fe757774`; PR #266.  
+Tests: repository CI #1012 passed the full lightweight and heavyweight suites on the exact implementation head. New coverage includes Runtime-v3 event wake-up, source-event/run dedupe, no ExternalAction creation, grant revocation, stale goal revision, process-loss recovery, consumer-failure retry after connector cursor advancement, event-trigger dependency gating, Temporal-scheduler isolation and migration 0039.  
+CI: exact implementation-head CI #1012 / run `36759984438` — `test-and-build` SUCCESS; `coworker` SUCCESS. Earlier #1004/#1009/#1010/#1011 failures exposed and then closed a TypeScript union-narrowing error and test-fixture/import/reason-order regressions. Automated Codex code review is unavailable because the linked review bot reported its usage limit; no automated review result is claimed.  
+Deployment: no production deployment or activation is claimed by this slice. Preview/build status is not treated as production qualification.  
+Live provider evidence: NOT VERIFIED. No live Google/Microsoft provider event was exercised here.  
+Staging evidence: NOT VERIFIED. Controlled event-delivery, process-loss, revocation and rollback qualification remains a separate phase.  
+Production qualification: NOT VERIFIED.  
+Feature flags and authority: unchanged/default-off unless separately qualified. `SHUDDHO_AUTOMATIONS_ENABLED=false`, connected reads and Runtime-v3 activation remain separate release boundaries. No send, calendar-write, purchase, booking, payment, publishing, transaction, new provider operation or approval bypass is introduced. Temporal Schedules remain the only due-time authority; authenticated connector events are only an event wake-up authority for explicitly bound automations.  
+Blocker: no known code blocker remains on implementation SHA `23ea212c...`. Final-head CI is required after this checkpoint update. Automated Codex review is externally unavailable due usage limit. Live/staging/production qualification also remains unverified by design.  
+Next action: verify exact-final-head CI after this checkpoint commit. If both required jobs pass, PR #266 is ready for normal authorized merge; after merge verify merged-main CI before starting the next proactive slice.  
+Next three steps: (1) verify checkpoint-head `test-and-build` and `coworker`; (2) merge #266 through the authorized PR flow and verify merged-main CI; (3) rerun the Automation/Proactive evidence matrix and select the next smallest genuine P4/P5 gap, with a bounded Daily/Weekly Coworker briefing currently ahead of transaction expansion.  
+Do not redo: PA-02 schedules/occurrence dedupe/restart recovery; PA-10 notification consent/service, deterministic suggestions, connected review notices, digests, model relevance, Browser Push; PR #265 repair; or the connected-event automation implementation already present in PR #266.  
+Acceptance remaining: exact checkpoint-head CI, merge-revision CI after integration, and separate controlled staging/live-provider/production qualification. Daily/Weekly briefing, meeting preparation, email coworker and deadline coworker remain broader proactive-phase work and are not claimed complete by this slice.  
+Checkpoint identity: implementation head before this documentation-only checkpoint commit is `23ea212cfc4ac1c2f64c4f4310762e07fe757774`; report the resulting checkpoint commit separately.
+
+**Historical continuation checkpoint (30 September 2026; superseded by PA-10 connected-event automation checkpoint).**
+
 Updated at: 2026-09-30T16:34:00Z / 2026-09-30T22:34:00+06:00 Asia/Dhaka  
 Task ID and outcome: PA-11 Incident/Restore Evidence Chain Repair — close three post-merge P1 evidence-chain bypasses after PR #263.  
 Stage: repair PR open / exact-final-head CI and automated review pending.  
