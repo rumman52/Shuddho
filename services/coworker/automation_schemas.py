@@ -71,8 +71,8 @@ AutomationTrigger = AutomationSchedule | AutomationEventTrigger | AutomationMeet
 
 
 class QuietHours(AutomationModel):
-    start: str = Field(pattern=r"^(?:[01]d|2[0-3]):[0-5]d$")
-    end: str = Field(pattern=r"^(?:[01]d|2[0-3]):[0-5]d$")
+    start: str = Field(pattern=r"^(?:[01]\\d|2[0-3]):[0-5]\\d$")
+    end: str = Field(pattern=r"^(?:[01]\\d|2[0-3]):[0-5]\\d$")
 
     @model_validator(mode="after")
     def not_empty(self):
