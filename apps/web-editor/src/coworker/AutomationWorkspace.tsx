@@ -23,8 +23,9 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [browserPushConfig, setBrowserPushConfig] = useState<BrowserPushConfig | null>(null);
   const [browserPushDeviceActive, setBrowserPushDeviceActive] = useState(false);
   const [goalId, setGoalId] = useState("");
-  const [kind, setKind] = useState<"daily" | "weekly" | "event" | "meeting">("daily");
+  const [kind, setKind] = useState<"daily" | "weekly" | "event" | "meeting" | "email">("daily");
   const [eventGrantId, setEventGrantId] = useState("");
+  const [emailGrantId, setEmailGrantId] = useState("");
   const [meetingGrantId, setMeetingGrantId] = useState("");
   const [meetingEmailGrantIds, setMeetingEmailGrantIds] = useState<string[]>([]);
   const [meetingPreparationMinutes, setMeetingPreparationMinutes] = useState(30);
@@ -74,6 +75,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     const activeGrants = grantResult.enabled ? grantResult.grants.filter(item => item.state === "active") : [];
     setConnectorGrants(activeGrants);
     setEventGrantId(value => activeGrants.some(item => item.id === value) ? value : activeGrants[0]?.id ?? "");
+    const emailGrant = activeGrants.find(item => item.capability === "email_read");
+    setEmailGrantId(value => activeGrants.some(item => item.id === value && item.capability === "email_read") ? value : emailGrant?.id ?? "");
     const calendarGrant = activeGrants.find(item => item.capability === "calendar_read");
     setMeetingGrantId(value => activeGrants.some(item => item.id === value && item.capability === "calendar_read") ? value : calendarGrant?.id ?? "");
     setMeetingEmailGrantIds(values => values.filter(id => activeGrants.some(item => item.id === id && item.capability === "email_read")));
@@ -99,16 +102,19 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     setBusy("create"); setError(""); setNotice("");
     try {
       if (kind === "event" && !eventGrantId) throw new Error("Choose an active connected read authorization.");
+      if (kind === "email" && !emailGrantId) throw new Error("Choose an active email read authorization.");
       if (kind === "meeting" && !meetingGrantId) throw new Error("Choose an active calendar read authorization.");
       await client.createAutomation({
         goal_id: selectedGoal.id, goal_revision: selectedGoal.revision, timezone,
         schedule: kind === "event"
           ? { kind: "event", grant_id: eventGrantId }
-          : kind === "meeting"
-            ? { kind: "meeting", grant_id: meetingGrantId, preparation_minutes: meetingPreparationMinutes, scan_interval_minutes: 15 }
-            : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
-        run_profile: kind === "meeting" ? "meeting" : briefing && kind !== "event" ? "briefing" : "goal",
-        connector_read_grant_ids: kind === "meeting" ? meetingEmailGrantIds : briefing && kind !== "event" ? briefingGrantIds : [],
+          : kind === "email"
+            ? { kind: "event", grant_id: emailGrantId }
+            : kind === "meeting"
+              ? { kind: "meeting", grant_id: meetingGrantId, preparation_minutes: meetingPreparationMinutes, scan_interval_minutes: 15 }
+              : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
+        run_profile: kind === "email" ? "email" : kind === "meeting" ? "meeting" : briefing && kind !== "event" ? "briefing" : "goal",
+        connector_read_grant_ids: kind === "meeting" ? meetingEmailGrantIds : briefing && kind !== "event" && kind !== "email" ? briefingGrantIds : [],
         output_language: "en", overlap_policy: "skip", catchup_window_seconds: 3600,
         quiet_hours: quiet ? { start: "22:00", end: "07:00" } : null, expires_at: null,
       }, createKey.current);
@@ -116,6 +122,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
       await reload();
       setNotice(kind === "event"
         ? "Automation saved. An authorized connected update can wake one bounded Agent run."
+        : kind === "email"
+          ? "Email Coworker saved. Authenticated email updates can start one bounded private review; sending still requires explicit approval."
         : kind === "meeting"
           ? "Meeting Coworker saved. Temporal will scan the authorized calendar and prepare upcoming meetings inside the selected window."
         : briefing
@@ -268,18 +276,23 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <option value="">Choose an active goal</option>{goals.map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
           </select></label>
           <label>Trigger<select value={kind} onChange={event => {
-            const nextKind = event.target.value as "daily" | "weekly" | "event" | "meeting";
+            const nextKind = event.target.value as "daily" | "weekly" | "event" | "meeting" | "email";
             setKind(nextKind);
-            if (nextKind === "event" || nextKind === "meeting") setBriefing(false);
+            if (nextKind === "event" || nextKind === "meeting" || nextKind === "email") setBriefing(false);
             createKey.current = "";
           }}>
-            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="event">Authorized connected update</option><option value="meeting">Upcoming meeting preparation</option>
+            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="event">Authorized connected update</option><option value="email">Important email coworker</option><option value="meeting">Upcoming meeting preparation</option>
           </select></label>
           {kind === "event" && <label>Connected read authorization<select required value={eventGrantId} onChange={event => { setEventGrantId(event.target.value); createKey.current = ""; }}>
             <option value="">Choose an active connection grant</option>
             {activeConnectorGrants.map(grant => <option key={grant.id} value={grant.id}>{grant.provider} · {grant.capability}</option>)}
           </select></label>}
           {kind === "event" && activeConnectorGrants.length === 0 && <p className="cw-fineprint">Create an active Gmail/Calendar read authorization before enabling an event-triggered automation.</p>}
+          {kind === "email" && <label>Email read authorization<select required value={emailGrantId} onChange={event => { setEmailGrantId(event.target.value); createKey.current = ""; }}>
+            <option value="">Choose an active email connection</option>
+            {activeEmailGrants.map(grant => <option key={grant.id} value={grant.id}>{grant.provider} · email</option>)}
+          </select></label>}
+          {kind === "email" && activeEmailGrants.length === 0 && <p className="cw-fineprint">Create an active Gmail/Outlook read authorization before enabling Email Coworker.</p>}
           {kind === "meeting" && <><label>Calendar read authorization<select required value={meetingGrantId} onChange={event => { setMeetingGrantId(event.target.value); createKey.current = ""; }}>
             <option value="">Choose an active calendar connection</option>
             {activeCalendarGrants.map(grant => <option key={grant.id} value={grant.id}>{grant.provider} · calendar</option>)}
@@ -296,10 +309,10 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <label key={day}><input type="checkbox" checked={weekdays.includes(day)} onChange={event => {
               setWeekdays(previous => event.target.checked ? [...previous, day] : previous.filter(value => value !== day)); createKey.current = "";
             }} /> {day.toUpperCase()}</label>)}</div></fieldset>}
-          {kind !== "event" && kind !== "meeting" && <label><input type="checkbox" checked={briefing} onChange={event => {
+          {kind !== "event" && kind !== "meeting" && kind !== "email" && <label><input type="checkbox" checked={briefing} onChange={event => {
             setBriefing(event.target.checked); createKey.current = "";
           }} /> Create a private daily/weekly briefing</label>}
-          {kind !== "event" && kind !== "meeting" && briefing && <fieldset><legend>Optional connected sources</legend>
+          {kind !== "event" && kind !== "meeting" && kind !== "email" && briefing && <fieldset><legend>Optional connected sources</legend>
             <p className="cw-fineprint">Only selected, active read grants become briefing context. Provider content stays untrusted and cannot authorize writes.</p>
             <div className="cw-agent-meta">{activeConnectorGrants.length === 0
               ? <span>No active connected read grants</span>
@@ -312,10 +325,10 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
                     createKey.current = "";
                   }} /> {grant.provider} · {grant.capability}</label>)}</div>
           </fieldset>}
-          {kind !== "event" && kind !== "meeting" && <label>Local time<input type="time" required value={at} onChange={event => { setAt(event.target.value); createKey.current = ""; }} /></label>}
+          {kind !== "event" && kind !== "meeting" && kind !== "email" && <label>Local time<input type="time" required value={at} onChange={event => { setAt(event.target.value); createKey.current = ""; }} /></label>}
           <label>Timezone<input required maxLength={64} value={timezone} onChange={event => { setTimezone(event.target.value); createKey.current = ""; }} /></label>
           <label><input type="checkbox" checked={quiet} onChange={event => { setQuiet(event.target.checked); createKey.current = ""; }} /> Delay in-app notifications during 22:00–07:00 quiet hours</label>
-          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "meeting" && !meetingGrantId)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
+          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "email" && !emailGrantId) || (kind === "meeting" && !meetingGrantId)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
           <p className="cw-fineprint">A schedule or connected event never grants email, calendar-write, purchase, or provider authority. Briefings are restricted to the existing daily-plan tool; selected provider content remains untrusted context. Consequential actions still use the separate approval boundary.</p>
         </form>
       </section>
@@ -324,7 +337,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         {automations.length === 0 ? <section className="cw-empty"><h2>No automation yet.</h2><p>Create one from an active goal.</p></section> :
         <div className="cw-history"><ul>{automations.map(item => <li key={item.id}><div className="cw-agent-run">
           <strong>{goals.find(goal => goal.id === item.goal_id)?.objective ?? "Persistent goal"}</strong>
-          <p>{triggerSummary(item)}{item.run_profile === "briefing" ? " · private briefing" : item.run_profile === "meeting" ? " · meeting coworker" : ""}</p>
+          <p>{triggerSummary(item)}{item.run_profile === "briefing" ? " · private briefing" : item.run_profile === "meeting" ? " · meeting coworker" : item.run_profile === "email" ? " · email coworker" : ""}</p>
           <div className="cw-agent-meta"><span>{item.state}</span><span>revision {item.revision}</span><span>{item.schedule_applied_revision === item.revision ? (item.schedule.kind === "event" ? "event trigger reconciled" : "Temporal reconciled") : "reconciliation pending"}</span>{item.schedule_error_code && <span>{item.schedule_error_code}</span>}</div>
           <div>{item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}
             {item.state === "paused" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "resume")}>Resume</button>}

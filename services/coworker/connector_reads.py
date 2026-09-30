@@ -294,6 +294,7 @@ class ConnectorReadRepository:
                     409,
                 )
             inserted = updated = deleted = ignored = 0
+            changed_snapshot_ids: list[str] = []
             for change in changes:
                 if not isinstance(change, dict):
                     ignored += 1
@@ -334,6 +335,7 @@ class ConnectorReadRepository:
                         state=state,
                     )
                     db.add(current)
+                    changed_snapshot_ids.append(current.id)
                     inserted += 1
                     if state == "deleted":
                         deleted += 1
@@ -354,6 +356,7 @@ class ConnectorReadRepository:
                 current.state = state
                 current.observed_at = utcnow()
                 current.updated_at = utcnow()
+                changed_snapshot_ids.append(current.id)
                 updated += 1
                 if state == "deleted":
                     deleted += 1
@@ -374,6 +377,7 @@ class ConnectorReadRepository:
                 "updated": updated,
                 "deleted": deleted,
                 "ignored": ignored,
+                "snapshot_ids": changed_snapshot_ids[:30],
                 "synced_at": iso(cursor.last_sync_at),
             }
 
@@ -743,6 +747,37 @@ class ConnectorReadRepository:
                 })
             return result
 
+    def bind_event_snapshots(
+        self,
+        event_id: str,
+        owner: str,
+        grant_id: str,
+        snapshot_ids: list[str],
+    ) -> None:
+        bounded = list(dict.fromkeys(snapshot_ids))[:30]
+        with self.sessions.begin() as db:
+            row = db.scalar(select(ConnectorEvent).where(
+                ConnectorEvent.id == event_id,
+                ConnectorEvent.owner_id == owner,
+                ConnectorEvent.grant_id == grant_id,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if bounded:
+                found = set(db.scalars(select(ConnectorSnapshot.id).where(
+                    ConnectorSnapshot.owner_id == owner,
+                    ConnectorSnapshot.grant_id == grant_id,
+                    ConnectorSnapshot.id.in_(bounded),
+                )).all())
+                if found != set(bounded):
+                    raise CoworkerError(
+                        "connector_event_snapshot_scope",
+                        "Connected event snapshot evidence is outside the authorized source.",
+                        409,
+                    )
+            if bounded or not list(row.synced_snapshot_ids or []):
+                row.synced_snapshot_ids = bounded
+
     def event_is_stale(self, event: dict) -> bool:
         with self.sessions() as db:
             sub = db.get(ConnectorSubscription, event["subscription_id"])
@@ -1095,7 +1130,14 @@ class ConnectorReadService:
             await asyncio.to_thread(self.repo.finish_event, event["id"], ignored=True)
             return
         try:
-            await self.sync(event["owner_id"], event["grant_id"])
+            sync_summary = await self.sync(event["owner_id"], event["grant_id"])
+            await asyncio.to_thread(
+                self.repo.bind_event_snapshots,
+                event["id"],
+                event["owner_id"],
+                event["grant_id"],
+                list(sync_summary.get("snapshot_ids") or []),
+            )
         except CoworkerError as error:
             if error.code in {
                 "connector_read_revoked", "connector_read_expired",
