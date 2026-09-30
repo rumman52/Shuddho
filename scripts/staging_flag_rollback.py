@@ -139,11 +139,6 @@ async def wait_for_completion(client: Client, workflow_id: str) -> None:
 async def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
     require_guard()
     require_prepare_flags(settings)
-    context = validate_prepared_release_context(
-        state["release_context"],
-        settings,
-        rollout_path,
-    )
     owner = resolve_owner()
     container = Container.create(settings)
     client = await temporal_client(settings)
@@ -192,6 +187,11 @@ async def verify(
     if not required.issubset(state):
         raise RollbackFailure("Rollback state file is incomplete.")
 
+    context = validate_prepared_release_context(
+        state["release_context"],
+        settings,
+        rollout_path,
+    )
     owner = resolve_owner()
     if owner != state["owner_id"]:
         raise RollbackFailure("Rollback verification must use the same disposable staging account.")
