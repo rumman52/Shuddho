@@ -68,6 +68,7 @@ REFERENCE_KEYS = {
 STAGING_RECORD_KEYS = {
     "status",
     "evidence",
+    "exercise_started_at",
     "verified_at",
     "release_id",
     "source_revision",
@@ -207,13 +208,17 @@ def validate_staging_evidence(
             raise IncidentRestoreEvidenceError(
                 f"Staging evidence check {key!r} source revision does not match the incident/restore review."
             )
+        prepared_at = parse_time(
+            item.get("exercise_started_at"),
+            f"staging.{key}.exercise_started_at",
+        )
         verified_at = parse_time(
             item.get("verified_at"),
             f"staging.{key}.verified_at",
         )
-        if not exercise_started_at <= verified_at <= exercise_completed_at:
+        if not exercise_started_at <= prepared_at <= verified_at <= exercise_completed_at:
             raise IncidentRestoreEvidenceError(
-                f"Staging evidence check {key!r} was not verified inside the claimed recovery exercise window."
+                f"Staging evidence check {key!r} was not prepared and verified inside the claimed recovery exercise window."
             )
         checks[key] = True
     return checks
