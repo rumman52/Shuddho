@@ -34,7 +34,12 @@ def test_every_optional_capability_has_a_registered_staging_gate():
     covered = {
         key
         for key in CONDITIONAL_GATES
-        if key not in {"research", "actions", "microsoft_actions"}
+        if key not in {
+            "artifact_quality",
+            "research",
+            "actions",
+            "microsoft_actions",
+        }
     }
     assert {
         "action_attachments",
@@ -63,6 +68,20 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "negotiation_proposal_promotion",
     } == covered
 
+
+
+def test_artifact_services_require_artifact_quality_staging_evidence():
+    rollout = load("docs/cohort-rollout.template.json")
+    assert rollout["capabilities"]["artifact_services"] is True
+    assert "artifact_quality" in required_conditional_gate_ids(
+        rollout["capabilities"],
+        set(),
+    )
+    rollout["capabilities"]["artifact_services"] = False
+    assert "artifact_quality" not in required_conditional_gate_ids(
+        rollout["capabilities"],
+        set(),
+    )
 
 
 def test_connector_reads_require_pa05_context_runtime_google_and_staging_evidence():

@@ -39,7 +39,7 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
     return {key: {"status": "passed", "evidence": "staging-proof"} for key in keys}
 
 
-def rollout(*, research=False, actions=False, users=25, providers=None, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, action_selection=False, action_proposals=False):
+def rollout(*, research=False, actions=False, users=25, providers=None, artifacts=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, action_selection=False, action_proposals=False):
     monitoring = {
         "queue_age": "queue-dashboard",
         "task_success": "task-dashboard",
@@ -60,7 +60,11 @@ def rollout(*, research=False, actions=False, users=25, providers=None, action_a
         "capabilities": {
             "coworker": True,
             "work_services": True,
-            "artifact_services": True,
+            "artifact_services": (
+                artifacts
+                or action_attachments
+                or action_document_sharing
+            ),
             "agent_runtime": True,
             "intelligent_planner": True,
             "memory": False,
@@ -704,3 +708,52 @@ def test_final_gate_accepts_matching_model_and_quality_runtime_identity():
         rollout_sha256=rollout_hash,
     )
     assert result["decision"] == "GO_CONTROLLED_COHORT"
+
+
+def test_artifact_services_require_structured_rollout_bound_evidence():
+    value = rollout(artifacts=True)
+    staged = evidence()
+    staged["artifact_quality"] = {
+        "status": "passed",
+        "evidence": "string-alone-must-not-qualify",
+    }
+
+    missing = evaluate_release(staged, value)
+    assert missing["decision"] == "NO-GO"
+    assert "artifact_quality" in missing["staging"]["missing"]
+
+    artifact = {
+        "schema_version": 1,
+        "mode": "artifact_quality",
+        "release_id": value["release_id"],
+        "generated_at": "2026-09-30T08:10:00+00:00",
+        "source_revision": "1" * 40,
+        "rollout_manifest_sha256": "a" * 64,
+        "native_results_sha256": "b" * 64,
+        "human_review_sha256": "c" * 64,
+        "languages": ["ar", "bn", "en", "zh"],
+        "formats": ["pptx", "xlsx"],
+        "gate_decision": "PASS",
+        "failures": [],
+    }
+    passed = evaluate_release(
+        staged,
+        value,
+        artifact_quality_evidence=artifact,
+        rollout_sha256="a" * 64,
+    )
+    assert passed["decision"] == "GO_CONTROLLED_COHORT"
+
+    artifact["gate_decision"] = "FAIL"
+    artifact["failures"] = ["human_review"]
+    failed = evaluate_release(
+        staged,
+        value,
+        artifact_quality_evidence=artifact,
+        rollout_sha256="a" * 64,
+    )
+    assert failed["decision"] == "NO-GO"
+    assert "artifact_quality" in failed["staging"]["missing"]
+
+    no_artifacts = rollout(artifacts=False)
+    assert evaluate_release(evidence(), no_artifacts)["decision"] == "GO_CONTROLLED_COHORT"

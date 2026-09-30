@@ -17,6 +17,10 @@ from scripts.release_contract import (
     required_feature_flags,
     validate_optional_rollback,
 )
+from scripts.artifact_quality_evidence import (
+    ArtifactQualityEvidenceError,
+    validate_artifact_quality_evidence,
+)
 from scripts.coworker_model_evidence import (
     ModelEvidenceError,
     validate_live_model_evidence,
@@ -264,6 +268,7 @@ def evaluate_release(
     max_cohort_users: int = 25,
     quality_evidence: dict | None = None,
     model_evidence: dict | None = None,
+    artifact_quality_evidence: dict | None = None,
     rollout_sha256: str | None = None,
 ) -> dict:
     capabilities = rollout.get("capabilities") if isinstance(rollout, dict) else {}
@@ -301,6 +306,37 @@ def evaluate_release(
         for check in staging["checks"]:
             if check["id"] == "model":
                 check["passed"] = model_passed
+                break
+        staging["missing"] = [
+            item["id"] for item in staging["checks"] if not item["passed"]
+        ]
+        staging["passed"] = len(staging["checks"]) - len(staging["missing"])
+        staging["decision"] = "GO" if not staging["missing"] else "NO-GO"
+    if capabilities.get("artifact_services") is True:
+        artifact_quality_passed = False
+        try:
+            if artifact_quality_evidence is None:
+                raise ArtifactQualityEvidenceError(
+                    "Artifact-enabled rollout requires structured artifact quality evidence."
+                )
+            if rollout_sha256 is None:
+                raise ArtifactQualityEvidenceError(
+                    "Rollout SHA-256 is required for artifact quality evidence verification."
+                )
+            validate_artifact_quality_evidence(
+                artifact_quality_evidence,
+                release_id=rollout.get("release_id"),
+                rollout_sha256=rollout_sha256,
+                expected_source_revision=(
+                    model_identity[1] if model_identity is not None else None
+                ),
+            )
+            artifact_quality_passed = True
+        except ArtifactQualityEvidenceError:
+            artifact_quality_passed = False
+        for check in staging["checks"]:
+            if check["id"] == "artifact_quality":
+                check["passed"] = artifact_quality_passed
                 break
         staging["missing"] = [
             item["id"] for item in staging["checks"] if not item["passed"]
@@ -390,18 +426,37 @@ def main() -> None:
     parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--quality-eval", type=Path, required=True)
     parser.add_argument("--model-eval", type=Path, required=True)
+    parser.add_argument("--artifact-quality-eval", type=Path)
     parser.add_argument("--max-cohort-users", type=int, default=25)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.max_cohort_users < 1:
         raise SystemExit("--max-cohort-users must be positive")
 
+    rollout = load_rollout(args.rollout)
+    artifact_enabled = (
+        isinstance(rollout.get("capabilities"), dict)
+        and rollout["capabilities"].get("artifact_services") is True
+    )
+    if artifact_enabled and args.artifact_quality_eval is None:
+        raise SystemExit(
+            "--artifact-quality-eval is required when artifact_services=true"
+        )
+    if not artifact_enabled and args.artifact_quality_eval is not None:
+        raise SystemExit(
+            "--artifact-quality-eval is only valid when artifact_services=true"
+        )
     result = evaluate_release(
         load_evidence(args.evidence),
-        load_rollout(args.rollout),
+        rollout,
         max_cohort_users=args.max_cohort_users,
         quality_evidence=load_evidence(args.quality_eval),
         model_evidence=load_evidence(args.model_eval),
+        artifact_quality_evidence=(
+            load_evidence(args.artifact_quality_eval)
+            if args.artifact_quality_eval is not None
+            else None
+        ),
         rollout_sha256=file_sha256(args.rollout),
     )
     encoded = json.dumps(result, indent=2)

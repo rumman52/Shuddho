@@ -52,6 +52,10 @@ BASE_KILL_SWITCHES = {
 }
 
 BASE_CONDITIONAL_GATES = {
+    "artifact_quality": (
+        "Rollout-bound native editable-artifact render/recalculation evidence "
+        "and explicit human review passed for Artifact Services."
+    ),
     "research": "Live search provider retrieval/citation validation passed.",
     "actions": "Live Google approval/execution/receipt validation passed without auto-approval.",
     "microsoft_actions": "Live Microsoft Graph approval/execution/receipt validation passed without auto-approval.",
@@ -589,6 +593,8 @@ def required_conditional_gate_ids(
     action_providers: set[str] | frozenset[str],
 ) -> tuple[str, ...]:
     required: list[str] = []
+    if capabilities.get("artifact_services") is True:
+        required.append("artifact_quality")
     if capabilities.get("research") is True:
         required.append("research")
     if capabilities.get("actions") is True:

@@ -27,6 +27,10 @@
     "status": "pending",
     "evidence": ""
   },
+  "artifact_quality": {
+    "status": "pending",
+    "evidence": ""
+  },
   "backup_restore": {
     "status": "pending",
     "evidence": ""
