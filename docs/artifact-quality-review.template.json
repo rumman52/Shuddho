@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "release_id": "replace-with-reviewed-release-id",
+  "generated_at": "2026-09-30T00:00:00+00:00",
+  "source_revision": "0000000000000000000000000000000000000000",
+  "native_results_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "reviewer_reference": "replace-with-review-ticket-or-reviewer-reference",
+  "languages": ["ar", "bn", "en", "zh"],
+  "formats": ["pptx", "xlsx"],
+  "checks": {
+    "editable_open": false,
+    "text_visible": false,
+    "rtl_layout": false,
+    "chart_pagination": false,
+    "spreadsheet_recalculation": false,
+    "visual_overflow": false,
+    "human_semantic_review": false
+  },
+  "failures": [
+    "replace-with-empty-array-after-every-check-passes"
+  ]
+}
