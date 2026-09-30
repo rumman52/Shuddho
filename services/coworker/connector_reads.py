@@ -739,6 +739,7 @@ class ConnectorReadRepository:
                     "capability": row.capability,
                     "provider_sequence": row.provider_sequence,
                     "provider_cursor_hint": row.provider_cursor_hint,
+                    "attempts": row.attempts,
                 })
             return result
 
@@ -1084,7 +1085,13 @@ class ConnectorReadService:
         return await asyncio.to_thread(self.repo.revoke, owner, grant_id)
 
     async def process_event(self, event: dict) -> None:
-        if await asyncio.to_thread(self.repo.event_is_stale, event):
+        # Only the first processing attempt may classify a provider event as
+        # stale/out-of-order. Later attempts are recovery after a worker or
+        # downstream-consumer failure; the connector cursor may already have
+        # advanced, but the same event still needs durable automation admission.
+        if int(event.get("attempts", 1)) <= 1 and await asyncio.to_thread(
+            self.repo.event_is_stale, event
+        ):
             await asyncio.to_thread(self.repo.finish_event, event["id"], ignored=True)
             return
         try:
