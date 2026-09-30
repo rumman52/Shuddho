@@ -12,7 +12,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch
 from .errors import CoworkerError
 from .models import (
     Account, AgentRun, AuditEvent, Automation, AutomationOccurrence, AutomationRevision,
-    AutomationScheduleOutbox, ConnectorEvent, ConnectorReadGrant, PersonalGoal, Workspace, utcnow,
+    AutomationScheduleOutbox, ConnectorEvent, ConnectorReadGrant, ConnectorSubscription, PersonalGoal, Workspace, utcnow,
 )
 from .repository import aware, iso, not_found
 
@@ -66,6 +66,17 @@ class AutomationRepository:
             raise CoworkerError(
                 "event_automation_grant_unavailable",
                 "The selected connected read authorization is not active for Agent context.",
+                409,
+            )
+        subscription = db.scalar(select(ConnectorSubscription.id).where(
+            ConnectorSubscription.owner_id == owner,
+            ConnectorSubscription.grant_id == grant_id,
+            ConnectorSubscription.state.in_(["pending", "active", "renewing"]),
+        ).limit(1))
+        if subscription is None:
+            raise CoworkerError(
+                "event_automation_subscription_unavailable",
+                "Activate event synchronization for this connected read before automating it.",
                 409,
             )
 
@@ -373,12 +384,19 @@ class AutomationRepository:
                 PersonalGoal.id == automation.goal_id,
                 PersonalGoal.owner_id == automation.owner_id,
             ))
+            subscription = db.scalar(select(ConnectorSubscription).where(
+                ConnectorSubscription.id == event.subscription_id if event is not None else "",
+                ConnectorSubscription.owner_id == automation.owner_id,
+                ConnectorSubscription.grant_id == str(automation.schedule.get("grant_id") or ""),
+            ))
             grant = db.scalar(select(ConnectorReadGrant).where(
                 ConnectorReadGrant.id == str(automation.schedule.get("grant_id") or ""),
                 ConnectorReadGrant.owner_id == automation.owner_id,
             ))
             if goal is None or goal.state != "active" or goal.revision != automation.goal_revision:
                 reason = reason or "goal_changed"
+            if subscription is None or subscription.state not in {"pending", "active", "renewing"}:
+                reason = reason or "event_source_inactive"
             if (
                 grant is None
                 or grant.state != "active"
