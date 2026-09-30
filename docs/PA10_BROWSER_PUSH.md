@@ -21,7 +21,7 @@ Browser Push requires all of the following:
 - browser notification permission; and
 - an active owner-scoped browser Push subscription registered through the authenticated Shuddho API.
 
-Enabling personal suggestions, event notices, model relevance or in-app delivery does not enable Browser Push. Turning Browser Push off suppresses pending channel receipts without pausing goals, automations or the in-app inbox. Turning the in-app inbox off also requires Browser Push off.
+Enabling personal suggestions, event notices, model relevance or in-app delivery does not enable Browser Push. Turning Browser Push off suppresses pending channel receipts and deactivates the account's registered Push subscriptions without pausing goals, automations or the in-app inbox. Re-enabling requires an explicit device registration again. Turning the in-app inbox off also requires Browser Push off.
 
 Browser Push does not create an Agent run, automation, ExternalAction, provider mutation, model call or new notification candidate.
 
