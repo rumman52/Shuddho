@@ -988,6 +988,94 @@ def test_automations_are_fail_closed_without_dependencies(tmp_path):
             local_storage_path=tmp_path / "objects", automations_enabled=True,
         ).validate()
 
+def test_event_automation_requires_connected_reads_and_runtime_v3(
+    automation_client,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "event-dependency-goal"},
+        json=goal_payload(),
+    ).json()
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "event-dependency-automation"},
+        json={
+            **automation_payload(goal),
+            "schedule": {
+                "kind": "event",
+                "grant_id": "00000000-0000-0000-0000-000000000001",
+            },
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "event_automation_unavailable"
+
+
+def test_event_automation_reconciliation_never_creates_temporal_schedule():
+    from services.coworker.automation_scheduler import AutomationScheduleReconciler, temporal_schedule
+
+    value = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "revision": 3,
+        "state": "active",
+        "timezone": "UTC",
+        "schedule": {
+            "kind": "event",
+            "grant_id": "00000000-0000-0000-0000-000000000002",
+        },
+        "overlap_policy": "skip",
+        "catchup_window_seconds": 1800,
+        "expires_at": None,
+    }
+    with pytest.raises(ValueError, match="do not use a Temporal Schedule"):
+        temporal_schedule(value, "test-queue")
+
+    class Handle:
+        def __init__(self):
+            self.deleted = False
+
+        async def delete(self):
+            self.deleted = True
+
+    class Client:
+        def __init__(self):
+            self.handle = Handle()
+            self.created = False
+
+        def get_schedule_handle(self, _schedule_id):
+            return self.handle
+
+        async def create_schedule(self, *_args, **_kwargs):
+            self.created = True
+            raise AssertionError("event automation must not create a Temporal Schedule")
+
+    fake = Client()
+    enabled = __import__("asyncio").run(
+        AutomationScheduleReconciler(fake, "test-queue").apply(value)
+    )
+    assert enabled is True
+    assert fake.handle.deleted is True
+    assert fake.created is False
+
+
+def test_event_automation_migration_adds_recoverable_event_reference(
+    automation_container,
+):
+    with automation_container.repository.sessions() as db:
+        columns = {
+            item["name"]
+            for item in inspect(db.bind).get_columns("cw_automation_occurrences")
+        }
+        indexes = {
+            item["name"]
+            for item in inspect(db.bind).get_indexes("cw_automation_occurrences")
+        }
+    assert "trigger_event_id" in columns
+    assert "ix_cw_automation_occurrences_trigger_event" in indexes
+
+
 def test_temporal_schedule_contract_uses_timezone_overlap_and_expiry():
     from services.coworker.automation_scheduler import temporal_schedule
     value = {
