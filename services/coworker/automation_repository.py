@@ -392,8 +392,8 @@ class AutomationRepository:
             if previous is None:
                 previous = AutomationOccurrence(
                     id=str(uuid4()), owner_id=automation.owner_id, automation_id=automation.id,
-                    automation_revision=revision, occurrence_key=key, due_at=due_at,
-                    state="accepting", created_at=utcnow(), updated_at=utcnow(),
+                    automation_revision=revision, occurrence_key=key, trigger_event_id=event_id,
+                    due_at=due_at, state="accepting", created_at=utcnow(), updated_at=utcnow(),
                 )
                 db.add(previous); db.flush()
             if reason:
@@ -644,6 +644,7 @@ class AutomationRepository:
                     "automation_id": occurrence.automation_id,
                     "revision": occurrence.automation_revision,
                     "due_at": iso(occurrence.due_at),
+                    "event_id": occurrence.trigger_event_id,
                 })
             return result
 
