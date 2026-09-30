@@ -51,6 +51,16 @@ class AutomationSchedule(AutomationModel):
         return self
 
 
+class AutomationEventTrigger(AutomationModel):
+    """One explicit connected-read event source for bounded Agent wake-up."""
+
+    kind: Literal["event"]
+    grant_id: UUID
+
+
+AutomationTrigger = AutomationSchedule | AutomationEventTrigger
+
+
 class QuietHours(AutomationModel):
     start: str = Field(pattern=r"^(?:[01]d|2[0-3]):[0-5]d$")
     end: str = Field(pattern=r"^(?:[01]d|2[0-3]):[0-5]d$")
@@ -66,7 +76,7 @@ class AutomationCreate(AutomationModel):
     goal_id: UUID
     goal_revision: int = Field(ge=1)
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
-    schedule: AutomationSchedule
+    schedule: AutomationTrigger
     output_language: str = Field(default="en", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     overlap_policy: Literal["skip", "buffer_one"] = "skip"
     catchup_window_seconds: int = Field(default=3600, ge=60, le=86400)
@@ -87,7 +97,7 @@ class AutomationCreate(AutomationModel):
 class AutomationPatch(AutomationModel):
     expected_revision: int = Field(ge=1)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
-    schedule: AutomationSchedule | None = None
+    schedule: AutomationTrigger | None = None
     output_language: str | None = Field(default=None, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     overlap_policy: Literal["skip", "buffer_one"] | None = None
     catchup_window_seconds: int | None = Field(default=None, ge=60, le=86400)
