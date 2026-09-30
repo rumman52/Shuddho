@@ -334,8 +334,6 @@ class AutomationRepository:
             self.accept_event_occurrence(automation.id, automation.revision, event_id)
 
     def accept_event_occurrence(self, automation_id: str, revision: int, event_id: str) -> dict:
-        if not self.settings.automations_enabled:
-            return {"occurrence_id": None, "run_id": None, "state": "skipped", "reason": "kill_switch", "replayed": False}
         with self.sessions.begin() as db:
             automation = db.scalar(select(Automation).where(
                 Automation.id == automation_id,
@@ -360,7 +358,9 @@ class AutomationRepository:
                     return {"occurrence_id": previous.id, "run_id": None, "state": previous.state, "reason": previous.reason, "replayed": True}
 
             reason = None
-            if event is None or event.grant_id != str(automation.schedule.get("grant_id") or ""):
+            if not self.settings.automations_enabled:
+                reason = "kill_switch"
+            elif event is None or event.grant_id != str(automation.schedule.get("grant_id") or ""):
                 reason = "event_source_mismatch"
             elif automation.revision != revision:
                 reason = "stale_revision"
