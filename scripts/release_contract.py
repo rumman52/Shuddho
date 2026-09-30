@@ -357,6 +357,14 @@ OPTIONAL_CAPABILITIES = (
 
 ACTIVATION_REQUIREMENTS = (
     ActivationRequirement(
+        key="suggestion_model_relevance",
+        status="suggestion_model_relevance_verified",
+        ledger_schema_version=28,
+        ledger_event_type="suggestion_model_relevance_verified",
+        ledger_artifact_key="suggestion_model_relevance_activation",
+        capability="suggestion_model_relevance",
+    ),
+    ActivationRequirement(
         key="personal_transactions",
         status="personal_transactions_verified",
         ledger_schema_version=26,
