@@ -114,7 +114,9 @@ uv run python scripts/cohort_scale_review.py \
   --output /secure/release/bounded-scale-decision.json
 ```
 
-The scale review requires task economics to bind the exact rollout and the same source revision as live quality evidence. The final operator-health snapshot must be generated after capacity, quality and task-economics evidence. The bounded-scale decision then binds the exact task-economics artifact SHA-256.
+The scale review requires task economics to bind the exact rollout and the same source revision as live quality evidence. Both the compiled economics artifact and its underlying measured sample timestamp must satisfy the scale-review freshness window; recompiling stale samples does not refresh the measurement. The final operator-health snapshot must be generated after capacity, quality and task-economics evidence. The bounded-scale decision then binds the exact task-economics artifact SHA-256.
+
+The downstream provider-policy compiler must receive that same task-economics artifact and the same reviewed provider-policy plan used for economics measurement. It verifies the decision's task-economics SHA and the economics artifact's `provider_policy_plan_sha256` before producing a policy proposal.
 
 This prevents a cohort expansion decision from relying only on a manually estimated monthly budget while ignoring measured per-task economics.
 

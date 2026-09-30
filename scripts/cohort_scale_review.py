@@ -277,6 +277,18 @@ def validate_economics(
         raise ScaleReviewError(
             f"task economics evidence is stale ({age_minutes:.1f} minutes old)."
         )
+    samples_generated = parse_time(
+        value["samples_generated_at"],
+        "task economics samples_generated_at",
+    )
+    samples_age_minutes = (now - samples_generated).total_seconds() / 60
+    if samples_age_minutes < -1:
+        raise ScaleReviewError("task economics samples are from the future.")
+    if samples_age_minutes > plan["freshness_minutes"]:
+        raise ScaleReviewError(
+            "task economics samples are stale "
+            f"({samples_age_minutes:.1f} minutes old)."
+        )
     return generated
 
 

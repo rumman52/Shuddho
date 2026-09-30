@@ -297,3 +297,18 @@ def test_scale_review_requires_operator_health_after_economics():
             not_before=datetime(2026, 9, 22, 11, 35, tzinfo=timezone.utc),
             now=NOW,
         )
+
+
+
+def test_scale_review_rejects_stale_economics_samples_even_if_recompiled():
+    value = economics()
+    value["generated_at"] = "2026-09-22T11:50:00+00:00"
+    value["samples_generated_at"] = "2026-09-20T11:34:00+00:00"
+    with pytest.raises(ScaleReviewError, match="samples are stale"):
+        validate_economics(
+            value,
+            plan(),
+            NOW,
+            rollout_sha256="b" * 64,
+            expected_source_revision="1" * 40,
+        )

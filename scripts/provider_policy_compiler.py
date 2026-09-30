@@ -154,6 +154,31 @@ def validate_inputs(plan: dict, decision: dict, review: dict, capacity: dict) ->
         raise ProviderPolicyError("Scale decision is missing artifact hashes.")
 
 
+def validate_task_economics_binding(
+    *,
+    release_id: str,
+    plan_sha256: str,
+    task_economics_sha256: str,
+    decision: dict,
+    economics: dict,
+) -> None:
+    if economics.get("release_id") != release_id:
+        raise ProviderPolicyError(
+            "Task economics evidence release_id does not match the provider policy plan."
+        )
+    bound = decision.get("artifact_sha256")
+    if not isinstance(bound, dict):
+        raise ProviderPolicyError("Scale decision is missing artifact hashes.")
+    if bound.get("task_economics") != task_economics_sha256:
+        raise ProviderPolicyError(
+            "Scale decision does not bind this task economics evidence."
+        )
+    if economics.get("provider_policy_plan_sha256") != plan_sha256:
+        raise ProviderPolicyError(
+            "Task economics evidence does not bind this provider policy plan."
+        )
+
+
 def compile_policy(plan: dict, decision: dict, review: dict, capacity: dict) -> dict:
     validate_inputs(plan, decision, review, capacity)
 
@@ -393,6 +418,7 @@ def main() -> None:
     parser.add_argument("--scale-decision", type=Path, required=True)
     parser.add_argument("--scale-review", type=Path, required=True)
     parser.add_argument("--capacity-qualification", type=Path, required=True)
+    parser.add_argument("--task-economics", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -403,6 +429,10 @@ def main() -> None:
         capacity = load_json(
             args.capacity_qualification,
             "capacity qualification",
+        )
+        economics = load_json(
+            args.task_economics,
+            "task economics evidence",
         )
         validate_inputs(plan, decision, review, capacity)
         bound = decision["artifact_sha256"]
@@ -416,6 +446,13 @@ def main() -> None:
             raise ProviderPolicyError(
                 "Scale decision does not bind this capacity qualification."
             )
+        validate_task_economics_binding(
+            release_id=plan["release_id"],
+            plan_sha256=sha256_file(args.plan),
+            task_economics_sha256=sha256_file(args.task_economics),
+            decision=decision,
+            economics=economics,
+        )
         result = compile_policy(plan, decision, review, capacity)
         result["generated_at"] = datetime.now(timezone.utc).isoformat()
         result["artifact_sha256"] = {
@@ -425,6 +462,7 @@ def main() -> None:
             "capacity_qualification": sha256_file(
                 args.capacity_qualification
             ),
+            "task_economics": sha256_file(args.task_economics),
         }
         args.output.write_text(
             json.dumps(result, indent=2) + "\n",
