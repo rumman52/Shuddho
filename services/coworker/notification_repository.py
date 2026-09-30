@@ -167,6 +167,13 @@ class NotificationRepository:
                     row.state = "suppressed"
                     row.lease_until = None
                     row.error_code = "browser_push_opted_out"
+                subscriptions = db.scalars(select(BrowserPushSubscription).where(
+                    BrowserPushSubscription.owner_id == owner,
+                    BrowserPushSubscription.active.is_(True),
+                ).with_for_update()).all()
+                for subscription in subscriptions:
+                    subscription.active = False
+                    subscription.updated_at = utcnow()
             self._audit(db, owner, owner, "notification_preferences_updated")
         return value
 
