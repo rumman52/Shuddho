@@ -546,7 +546,7 @@ class AutomationRepository:
                 owner,
                 AgentRunCreate(
                     goal=objective,
-                    document_ids=briefing_document_ids if run_profile == "briefing" else [],
+                    document_ids=[],
                     action_ids=[],
                     memory_namespaces=[],
                     connector_read_grant_ids=[grant_id],
@@ -690,7 +690,7 @@ class AutomationRepository:
                 owner,
                 AgentRunCreate(
                     goal=objective,
-                    document_ids=[],
+                    document_ids=briefing_document_ids if run_profile == "briefing" else [],
                     action_ids=[],
                     memory_namespaces=[],
                     connector_read_grant_ids=connector_read_grant_ids,
