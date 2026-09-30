@@ -1214,6 +1214,7 @@ def test_briefing_profile_is_time_based_and_run_tool_scope_is_fail_closed(
     # Event-trigger validation may fail before briefing validation when no grant
     # exists; either way, a briefing can never gain event-trigger authority.
     assert response.json()["error"]["code"] in {
+        "event_automation_unavailable",
         "event_automation_grant_unavailable",
         "briefing_trigger_scope",
     }
