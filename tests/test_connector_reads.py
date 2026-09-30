@@ -835,6 +835,116 @@ def _one_gmail_event(container, message_id):
     return events[0]
 
 
+def test_meeting_coworker_prepares_one_exact_upcoming_calendar_snapshot(container):
+    fake = enable_reads(container)
+    settings = replace(container.settings, work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+    container.notifications.settings = settings
+    container.context.settings = settings
+
+    owner = account(container)
+    calendar_connection = connect_read(container, owner, "calendar_read")
+    calendar_grant = create_grant(container, owner, calendar_connection)
+    asyncio.run(container.connector_reads.sync(owner, calendar_grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, calendar_grant["id"]))
+
+    goal, created = container.goals.create(
+        owner,
+        GoalCreate(
+            objective="Prepare me for upcoming planning meetings.",
+            success_criteria=["Create one private meeting preparation artifact."],
+            constraints=["Do not send or edit anything externally."],
+            timezone="UTC",
+            state="active",
+            budget={"max_runs": 10, "max_planner_tokens": 50000},
+        ),
+        "meeting-coworker-goal-" + str(uuid4()),
+    )
+    assert created is True
+
+    snapshot = container.connector_reads.repo.snapshots(owner, calendar_grant["id"])[0]
+    start_at = utcnow().replace(microsecond=0) + timedelta(minutes=20)
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorSnapshot, snapshot["id"])
+        payload = dict(row.payload)
+        payload["start"] = {"dateTime": start_at.isoformat()}
+        payload["end"] = {"dateTime": (start_at + timedelta(hours=1)).isoformat()}
+        row.payload = payload
+        row.content_sha256 = __import__("hashlib").sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+
+    automation, created = container.automations.create(
+        owner,
+        AutomationCreate(
+            goal_id=goal["id"],
+            goal_revision=goal["revision"],
+            timezone="UTC",
+            schedule={
+                "kind": "meeting",
+                "grant_id": calendar_grant["id"],
+                "preparation_minutes": 30,
+                "scan_interval_minutes": 15,
+            },
+            run_profile="meeting",
+            connector_read_grant_ids=[],
+            output_language="en",
+            overlap_policy="skip",
+            catchup_window_seconds=3600,
+            quiet_hours=None,
+            expires_at=None,
+        ),
+        "meeting-coworker-automation-" + str(uuid4()),
+    )
+    assert created is True
+
+    scan_at = start_at - timedelta(minutes=20)
+    first = container.automations.accept_occurrence(
+        automation["id"], automation["revision"], scan_at
+    )
+    replay = container.automations.accept_occurrence(
+        automation["id"], automation["revision"], scan_at
+    )
+    assert first["state"] == "accepted"
+    assert len(first["meetings"]) == 1
+    assert replay["meetings"][0]["run_id"] == first["meetings"][0]["run_id"]
+
+    run_id = first["meetings"][0]["run_id"]
+    with container.repository.sessions() as db:
+        run = db.get(AgentRun, run_id)
+        occurrence = db.scalar(select(AutomationOccurrence).where(
+            AutomationOccurrence.run_id == run_id,
+        ))
+        assert run.runtime_version == 3
+        assert run.tool_allowlist == ["meeting.prepare"]
+        assert run.connector_read_grant_ids == [calendar_grant["id"]]
+        assert run.connector_snapshot_ids == [snapshot["id"]]
+        assert run.action_ids == []
+        assert occurrence.trigger_snapshot_id == snapshot["id"]
+        assert occurrence.trigger_start_at.replace(tzinfo=start_at.tzinfo) == start_at
+
+    context = container.context.for_run(owner, run_id)
+    connected = [item for item in context["items"] if item["provenance"].get("snapshot_id")]
+    assert len(connected) == 1
+    assert connected[0]["provenance"]["snapshot_id"] == snapshot["id"]
+
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run_id).state = "completed"
+    container.automations.notify_run_completed(run_id)
+    container.automations.notify_run_completed(run_id)
+    with container.repository.sessions() as db:
+        completed = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_completed",
+        )).all()
+        assert len(completed) == 1
+        assert completed[0].title == "Meeting preparation ready"
+
+
 def test_scheduled_briefing_uses_only_selected_connected_read_context(container):
     enable_reads(container)
     settings = replace(container.settings, work_services_enabled=True)
