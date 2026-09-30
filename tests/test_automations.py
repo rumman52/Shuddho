@@ -1082,6 +1082,7 @@ def _enable_briefings(container):
         work_services_enabled=True,
         intelligent_planner_enabled=True,
         agent_runtime_v3_enabled=True,
+        context_retrieval_enabled=True,
     )
     settings.validate()
     container.settings = settings
