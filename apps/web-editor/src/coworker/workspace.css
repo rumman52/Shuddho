@@ -254,6 +254,7 @@
 .cw-agent-run pre { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 8px; background: #f7f5fa; padding: 12px; font-size: 11px; line-height: 1.6; }
 .cw-compose code, .cw-agent-run code { overflow-wrap: anywhere; }
 .cw-digest-toggle { display: flex; align-items: center; gap: .6rem; margin-top: 1rem; }
+.cw-automations .cw-digest-toggle input[type="checkbox"] { width: 16px; height: 16px; padding: 0; flex: 0 0 16px; }
 .cw-notification-digest { min-width: 0; }
 .cw-notification-digest summary { cursor: pointer; overflow-wrap: anywhere; }
 .cw-notification-digest summary small { display: block; margin-top: .4rem; }

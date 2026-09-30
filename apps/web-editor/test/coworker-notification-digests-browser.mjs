@@ -66,10 +66,14 @@ export async function verifyNotificationDigests(page, folder) {
     await toggle.check();
     await workspace.getByText("2 goal suggestions", { exact: true }).click();
     await workspace.getByText(notices[0].message, { exact: true }).waitFor();
-    await page.screenshot({ path: join(folder, "screenshots/notification-digests-desktop.png"), fullPage: true });
+    assert.ok((await toggle.boundingBox()).width <= 20, "Digest checkbox must keep its compact width.");
+    await toggle.evaluate(element => element.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: join(folder, "screenshots/notification-digests-desktop.png") });
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.screenshot({ path: join(folder, "screenshots/notification-digests-mobile.png"), fullPage: true });
+    assert.ok((await toggle.boundingBox()).width <= 20, "Mobile digest checkbox must keep its compact width.");
+    await toggle.evaluate(element => element.scrollIntoView({ block: "start" }));
+    await page.screenshot({ path: join(folder, "screenshots/notification-digests-mobile.png") });
     await page.setViewportSize({ width: 1365, height: 960 });
     await workspace.getByRole("button", { name: "Mark as read", exact: true }).first().click();
     await workspace.getByText("1 unread", { exact: false }).waitFor();
