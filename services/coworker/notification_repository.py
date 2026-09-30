@@ -91,7 +91,7 @@ class NotificationRepository:
         value = cls._normalized_notification_preferences(preferences)
         if not value["in_app_enabled"]:
             return False
-        if kind == "automation_started":
+        if kind in {"automation_started", "automation_completed"}:
             return value["automation_updates_enabled"]
         if kind == "personal_suggestion":
             raw = preferences.get("personal_suggestions") if isinstance(preferences, dict) else None
