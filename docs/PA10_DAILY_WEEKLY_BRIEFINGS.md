@@ -30,7 +30,7 @@ A briefing automation is accepted only when:
 
 1. the normal automation, personal-goal and Agent Runtime gates are enabled;
 2. the trigger is `daily` or `weekly`, never a connector event;
-3. Runtime v3, the bounded intelligent planner and Work Services are enabled;
+3. Runtime v3, bounded context retrieval, the intelligent planner and Work Services are enabled;
 4. every optional connector grant belongs to the owner, is active and unexpired, and is scoped to `agent_context -> planner_context`;
 5. every selected connector grant has an active/pending/renewing provider event subscription; and
 6. the selected source count is at most four.
@@ -62,7 +62,7 @@ Browser Push, when separately qualified and consented, can only mirror the alrea
 No new production flag is introduced. Rollback uses the existing boundaries:
 
 - `SHUDDHO_AUTOMATIONS_ENABLED=false` stops new automation admission and reconciles schedules off;
-- Runtime-v3 / planner / Work Services gates independently prevent briefing admission;
+- Runtime-v3 / context-retrieval / planner / Work Services gates independently prevent briefing admission;
 - connector-read revocation causes a selected connected source to fail closed before a new occurrence can start;
 - changing an automation or goal revision causes stale occurrences to fail closed.
 
