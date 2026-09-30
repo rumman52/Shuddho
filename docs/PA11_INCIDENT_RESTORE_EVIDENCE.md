@@ -14,9 +14,9 @@ Use the exact release rollout plus the staging-evidence file produced by the exi
 - `fan_in`;
 - `flag_rollback`.
 
-The operator review is copied from `docs/pa11-incident-restore-review.template.json` and records the exact source revision, drill start/completion timestamps, reviewed RTO and data-loss limits, durable incident/backup/restore/restart/rollback references, reviewer reference and any unresolved failures.
+Each of the five staging recovery records must itself carry the exact release ID, rollout-manifest SHA-256, deployed 40-character source revision and verification timestamp. The operator review is copied from `docs/pa11-incident-restore-review.template.json` and records the same source revision, drill start/completion timestamps, reviewed RTO and data-loss limits, durable incident/backup/restore/restart/rollback references, reviewer reference and any unresolved failures.
 
-The compiler fails closed when a required recovery gate is not passed, the exercise exceeds its RTO, observed data loss exceeds the reviewed limit, timestamps are invalid/future, source revision is malformed, or the operator review has unresolved failures.
+The compiler fails closed when a required recovery gate is not passed, a staging record belongs to another rollout/revision, a staging verification timestamp falls outside the claimed drill window, the exercise exceeds its RTO, observed data loss exceeds the reviewed limit, timestamps are invalid/future, source revision is malformed, or the operator review has unresolved failures. The validator recomputes restore duration from the exercise timestamps instead of trusting the stored duration field.
 
 ## Compile evidence
 
@@ -56,3 +56,8 @@ The final operator-health snapshot must be newer than capacity, quality, task-ec
 ## Qualification boundary
 
 Repository tests validate the evidence contract. Production readiness still requires a real managed PostgreSQL/private-object restore, real Temporal worker replacement/recovery, reviewed rollback practice, and durable operator references for the exact release. Synthetic or mocked repository fixtures are not staging/production qualification.
+
+
+## Downstream enforcement
+
+A scale decision created before this gate, or any hand-authored decision that omits the exact `artifact_sha256.incident_restore` binding, is rejected by both cohort-scale activation and downstream provider-policy compilation. The incident/restore gate cannot be bypassed by reusing a pre-gate decision.

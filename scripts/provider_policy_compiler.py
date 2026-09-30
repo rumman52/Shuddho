@@ -152,6 +152,15 @@ def validate_inputs(plan: dict, decision: dict, review: dict, capacity: dict) ->
     bound = decision.get("artifact_sha256")
     if not isinstance(bound, dict):
         raise ProviderPolicyError("Scale decision is missing artifact hashes.")
+    incident_restore = bound.get("incident_restore")
+    if (
+        not isinstance(incident_restore, str)
+        or len(incident_restore) != 64
+        or any(char not in "0123456789abcdef" for char in incident_restore)
+    ):
+        raise ProviderPolicyError(
+            "Scale decision does not contain a valid incident/restore evidence binding."
+        )
 
 
 def validate_task_economics_binding(

@@ -68,6 +68,20 @@ def validate_scale_decision(value: dict) -> datetime:
         raise ScaleActivationError("Scale decision proposed_max_users must exceed current_max_users.")
     if value.get("failures") != []:
         raise ScaleActivationError("Scale decision contains review failures.")
+    artifact_sha256 = value.get("artifact_sha256")
+    incident_restore = (
+        artifact_sha256.get("incident_restore")
+        if isinstance(artifact_sha256, dict)
+        else None
+    )
+    if (
+        not isinstance(incident_restore, str)
+        or len(incident_restore) != 64
+        or any(char not in "0123456789abcdef" for char in incident_restore)
+    ):
+        raise ScaleActivationError(
+            "Scale decision does not contain a valid incident/restore evidence binding."
+        )
     references = value.get("references")
     if not isinstance(references, dict):
         raise ScaleActivationError("Scale decision is missing references.")

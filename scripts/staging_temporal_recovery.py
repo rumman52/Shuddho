@@ -16,6 +16,11 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from scripts.staging_api_exercise import env_secret, require_https_base
+from scripts.staging_release_evidence import (
+    StagingReleaseEvidenceError,
+    passed,
+    release_context,
+)
 from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.config import Settings
 from services.coworker.container import Container
@@ -33,10 +38,6 @@ REQUIRED_FLAGS = (
 
 class RecoveryFailure(RuntimeError):
     pass
-
-
-def passed(evidence: str) -> dict:
-    return {"status": "passed", "evidence": evidence}
 
 
 def parse_utc(value: str) -> datetime:
@@ -211,6 +212,7 @@ async def verify(
     state_path: Path,
     restart_at: datetime,
     restart_reference: str,
+    rollout_path: Path,
     evidence_path: Path,
     base_evidence: Path | None,
 ) -> dict:
@@ -258,15 +260,23 @@ async def verify(
                 raise RecoveryFailure("Base staging evidence must be a JSON object.")
             base.update(value)
         concise_ref = restart_reference.strip()[:240]
+        context = release_context(settings, rollout_path)
+        verified_at = datetime.now(timezone.utc)
         base.update({
             "temporal": passed(
-                f"AgentWorkflow v2 completed across controlled worker restart; restart_ref={concise_ref}; workflow={workflow_id}"
+                f"AgentWorkflow v2 completed across controlled worker restart; restart_ref={concise_ref}; workflow={workflow_id}",
+                context,
+                now=verified_at,
             ),
             "parallel_restart": passed(
-                f"post-restart run completed with exactly {facts['child_tasks']} server-idempotent child tasks and {artifact_count} persisted artifacts; restart_ref={concise_ref}"
+                f"post-restart run completed with exactly {facts['child_tasks']} server-idempotent child tasks and {artifact_count} persisted artifacts; restart_ref={concise_ref}",
+                context,
+                now=verified_at,
             ),
             "fan_in": passed(
-                "persisted step 3 depended on [1,2] and started only after both branch steps finished"
+                "persisted step 3 depended on [1,2] and started only after both branch steps finished",
+                context,
+                now=verified_at,
             ),
         })
         evidence_path.write_text(json.dumps(base, indent=2) + "\n", encoding="utf-8")
@@ -286,6 +296,7 @@ def main() -> None:
     verify_parser.add_argument("--state", type=Path, required=True)
     verify_parser.add_argument("--restart-at", required=True, help="ISO-8601 timestamp from the staging worker restart/deployment event.")
     verify_parser.add_argument("--restart-reference", required=True, help="Deployment event, pod UID transition, or platform run reference.")
+    verify_parser.add_argument("--rollout", type=Path, required=True)
     verify_parser.add_argument("--base-evidence", type=Path)
     verify_parser.add_argument("--output", type=Path, required=True)
 
@@ -306,11 +317,18 @@ def main() -> None:
                 args.state,
                 parse_utc(args.restart_at),
                 args.restart_reference,
+                args.rollout,
                 args.output,
                 args.base_evidence,
             ))
             print(json.dumps({"written": str(args.output), **result}, indent=2))
-    except (RecoveryFailure, httpx.HTTPError, OSError, ValueError) as error:
+    except (
+        RecoveryFailure,
+        StagingReleaseEvidenceError,
+        httpx.HTTPError,
+        OSError,
+        ValueError,
+    ) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))
         raise SystemExit(1) from None
 
