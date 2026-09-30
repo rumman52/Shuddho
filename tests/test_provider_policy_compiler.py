@@ -1,4 +1,10 @@
-from scripts.provider_policy_compiler import compile_policy
+import pytest
+
+from scripts.provider_policy_compiler import (
+    ProviderPolicyError,
+    compile_policy,
+    validate_task_economics_binding,
+)
 
 
 def plan():
@@ -36,7 +42,11 @@ def decision():
         "proposed_stage": "cohort-40",
         "proposed_max_users": 40,
         "failures": [],
-        "artifact_sha256": {"review": "a" * 64, "capacity_qualification": "b" * 64},
+        "artifact_sha256": {
+            "review": "a" * 64,
+            "capacity_qualification": "b" * 64,
+            "task_economics": "c" * 64,
+        },
     }
 
 
@@ -113,3 +123,43 @@ def test_policy_compiler_preserves_workspace_fairness():
     assert value["proposed_policy"]["daily_token_budget"] <= (
         value["proposed_policy"]["provider_daily_token_budget"] * 0.05
     )
+
+
+
+def economics():
+    return {
+        "release_id": "coworker-cohort-001",
+        "provider_policy_plan_sha256": "d" * 64,
+    }
+
+
+def test_provider_policy_compiler_accepts_exact_economics_plan_binding():
+    validate_task_economics_binding(
+        release_id="coworker-cohort-001",
+        plan_sha256="d" * 64,
+        task_economics_sha256="c" * 64,
+        decision=decision(),
+        economics=economics(),
+    )
+
+
+def test_provider_policy_compiler_rejects_different_economics_artifact():
+    with pytest.raises(ProviderPolicyError, match="does not bind this task economics"):
+        validate_task_economics_binding(
+            release_id="coworker-cohort-001",
+            plan_sha256="d" * 64,
+            task_economics_sha256="e" * 64,
+            decision=decision(),
+            economics=economics(),
+        )
+
+
+def test_provider_policy_compiler_rejects_different_pricing_plan():
+    with pytest.raises(ProviderPolicyError, match="does not bind this provider policy plan"):
+        validate_task_economics_binding(
+            release_id="coworker-cohort-001",
+            plan_sha256="e" * 64,
+            task_economics_sha256="c" * 64,
+            decision=decision(),
+            economics=economics(),
+        )
