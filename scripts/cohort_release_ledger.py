@@ -5985,6 +5985,7 @@ def append_release_activation_bundle_event(
     release_activation_bundle: Path,
     quality_evidence: Path | None = None,
     model_evidence: Path | None = None,
+    artifact_quality_evidence: Path | None = None,
     created_at: str | None = None,
 ) -> dict:
     rollout = load_json_object(rollout_manifest, "rollout manifest")
@@ -6033,6 +6034,26 @@ def append_release_activation_bundle_event(
             raise ReleaseLedgerError(
                 "Release activation bundle does not bind this planner evidence."
             )
+
+    capabilities = rollout.get("capabilities")
+    artifact_enabled = (
+        isinstance(capabilities, dict)
+        and capabilities.get("artifact_services") is True
+    )
+    bundle_artifact_hash = bundle.get("artifact_quality_evidence_sha256")
+    if artifact_enabled:
+        if artifact_quality_evidence is None or bundle_artifact_hash is None:
+            raise ReleaseLedgerError(
+                "Artifact-enabled release activation bundle requires artifact-quality evidence."
+            )
+        if bundle_artifact_hash != file_sha256(artifact_quality_evidence):
+            raise ReleaseLedgerError(
+                "Release activation bundle does not bind this artifact-quality evidence."
+            )
+    elif bundle_artifact_hash is not None or artifact_quality_evidence is not None:
+        raise ReleaseLedgerError(
+            "Artifact-quality evidence is not valid when artifact services are disabled."
+        )
 
     entries = read_entries(ledger)
     state = verify_entries(entries, key)
@@ -6426,6 +6447,7 @@ def main() -> None:
     activation_bundle_parser.add_argument("--staging-evidence", type=Path, required=True)
     activation_bundle_parser.add_argument("--quality-eval", type=Path, required=True)
     activation_bundle_parser.add_argument("--model-eval", type=Path, required=True)
+    activation_bundle_parser.add_argument("--artifact-quality-eval", type=Path)
     activation_bundle_parser.add_argument(
         "--release-activation-bundle",
         type=Path,
@@ -6515,6 +6537,7 @@ def main() -> None:
                 release_activation_bundle=args.release_activation_bundle,
                 quality_evidence=args.quality_eval,
                 model_evidence=args.model_eval,
+                artifact_quality_evidence=args.artifact_quality_eval,
             )
             result = {
                 "appended": True,

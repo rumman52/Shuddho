@@ -58,6 +58,7 @@ def verify_activation_bundle(
     staging_evidence_path: Path,
     quality_evidence_path: Path | None = None,
     model_evidence_path: Path | None = None,
+    artifact_quality_evidence_path: Path | None = None,
     ledger_path: Path,
     activation_paths: dict[str, Path],
     current_stage: str,
@@ -68,6 +69,20 @@ def verify_activation_bundle(
             "current_stage must be a non-empty string of at most 100 characters."
         )
     rollout = load_rollout(rollout_path)
+    capabilities = rollout.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raise ReleaseActivationBundleError(
+            "Reviewed rollout has no valid capabilities map."
+        )
+    artifact_enabled = capabilities.get("artifact_services") is True
+    if artifact_enabled and artifact_quality_evidence_path is None:
+        raise ReleaseActivationBundleError(
+            "Artifact-enabled rollout requires artifact-quality evidence."
+        )
+    if not artifact_enabled and artifact_quality_evidence_path is not None:
+        raise ReleaseActivationBundleError(
+            "Artifact-quality evidence is not valid when artifact services are disabled."
+        )
     evidence = load_evidence(staging_evidence_path)
     quality_evidence = (
         load_evidence(quality_evidence_path)
@@ -79,12 +94,18 @@ def verify_activation_bundle(
         if model_evidence_path is not None
         else None
     )
+    artifact_quality_evidence = (
+        load_evidence(artifact_quality_evidence_path)
+        if artifact_quality_evidence_path is not None
+        else None
+    )
     decision = evaluate_release(
         evidence,
         rollout,
         max_cohort_users=max_cohort_users,
         quality_evidence=quality_evidence,
         model_evidence=model_evidence,
+        artifact_quality_evidence=artifact_quality_evidence,
         rollout_sha256=file_sha256(rollout_path),
     )
     if decision["decision"] != "GO_CONTROLLED_COHORT":
@@ -101,11 +122,6 @@ def verify_activation_bundle(
     if not isinstance(release_id, str) or not release_id.strip():
         raise ReleaseActivationBundleError(
             "Reviewed rollout has no valid release_id."
-        )
-    capabilities = rollout.get("capabilities")
-    if not isinstance(capabilities, dict):
-        raise ReleaseActivationBundleError(
-            "Reviewed rollout has no valid capabilities map."
         )
     providers = declared_action_providers(rollout)
     requirements = required_activation_requirements(
@@ -227,6 +243,11 @@ def verify_activation_bundle(
         **({
             "model_evidence_sha256": file_sha256(model_evidence_path),
         } if model_evidence_path is not None else {}),
+        **({
+            "artifact_quality_evidence_sha256": file_sha256(
+                artifact_quality_evidence_path
+            ),
+        } if artifact_quality_evidence_path is not None else {}),
         "required_activation_keys": [
             item.key for item in requirements
         ],
@@ -249,6 +270,7 @@ def main() -> None:
     parser.add_argument("--staging-evidence", type=Path, required=True)
     parser.add_argument("--quality-eval", type=Path, required=True)
     parser.add_argument("--model-eval", type=Path, required=True)
+    parser.add_argument("--artifact-quality-eval", type=Path)
     parser.add_argument("--release-ledger", type=Path, required=True)
     parser.add_argument("--activations", type=Path, required=True)
     parser.add_argument("--current-stage", required=True)
@@ -264,6 +286,7 @@ def main() -> None:
             staging_evidence_path=args.staging_evidence,
             quality_evidence_path=args.quality_eval,
             model_evidence_path=args.model_eval,
+            artifact_quality_evidence_path=args.artifact_quality_eval,
             ledger_path=args.release_ledger,
             activation_paths=load_activation_manifest(args.activations),
             current_stage=args.current_stage,

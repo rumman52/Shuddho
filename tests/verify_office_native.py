@@ -4,9 +4,11 @@ Run with PYTHONPATH=.:tests python tests/verify_office_native.py /tmp/office-qa
 The production image does not require an Office process or this fixture.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -107,7 +109,32 @@ def main(folder):
             assert float(chart.numCache.pt[0].v) == expected_cost
         formulas.close()
         outcomes[path.stem] = {"cost": expected_cost, "total": expected_total, "recalculated": True}
-    (folder / "native-results.json").write_text(json.dumps({"rendered": [path.name for path in pdfs], "formula_edits": outcomes}, indent=2))
+    revision = (
+        os.environ.get("SHUDDHO_SOURCE_REVISION")
+        or os.environ.get("RENDER_GIT_COMMIT")
+        or os.environ.get("GITHUB_SHA")
+        or ""
+    ).strip().lower() or None
+    if revision is not None and (
+        len(revision) != 40
+        or any(char not in "0123456789abcdef" for char in revision)
+    ):
+        raise RuntimeError(
+            "Native Office QA source revision must be a full lowercase Git SHA-1."
+        )
+    native_results = {
+        "schema_version": 2,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source_revision": revision,
+        "languages": ["ar", "bn", "en", "zh"],
+        "formats": ["pptx", "xlsx"],
+        "rendered": sorted(path.name for path in pdfs),
+        "formula_edits": outcomes,
+    }
+    (folder / "native-results.json").write_text(
+        json.dumps(native_results, indent=2) + "\n",
+        encoding="utf-8",
+    )
     shutil.rmtree(profile, ignore_errors=True)
     print("Native Office QA passed: 4 PPTX decks and 4 XLSX workbooks rendered; changed, zero, missing, and negative inputs recalculated; formula cells and live chart references preserved.")
 
