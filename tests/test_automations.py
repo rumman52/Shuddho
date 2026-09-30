@@ -650,6 +650,31 @@ def test_browser_push_is_explicit_durable_generic_and_rechecks_consent(
         workspace_id = delivered.workspace_id
         owner_id = delivered.owner_id
     with automation_container.repository.sessions.begin() as db:
+        expired_id = automation_container.notifications.enqueue_pending(
+            db,
+            owner=owner_id,
+            workspace_id=workspace_id,
+            kind="automation_update",
+            title="Expiring update",
+            message="Do not push this after expiry.",
+            visible_at=utcnow(),
+            expires_at=utcnow() + timedelta(hours=1),
+        )
+    assert expired_id in automation_container.notifications.claim_notifications()
+    automation_container.notifications.deliver_notification(expired_id)
+    with automation_container.repository.sessions.begin() as db:
+        expired_notice = db.get(Notification, expired_id)
+        assert expired_notice is not None
+        expired_notice.expires_at = utcnow() - timedelta(seconds=1)
+    assert automation_container.notifications.claim_browser_push_deliveries() == []
+    with automation_container.repository.sessions() as db:
+        expired_delivery = db.scalar(select(BrowserPushDelivery).where(
+            BrowserPushDelivery.notification_id == expired_id
+        ))
+        assert expired_delivery is not None
+        assert expired_delivery.state == "suppressed"
+
+    with automation_container.repository.sessions.begin() as db:
         second_id = automation_container.notifications.enqueue_pending(
             db,
             owner=owner_id,
