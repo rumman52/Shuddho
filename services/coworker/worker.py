@@ -17,6 +17,7 @@ from .container import Container
 from .drafting import DraftFailure
 from .errors import CoworkerError
 from .repository import TERMINAL
+from .models import utcnow
 from .agent_runtime import AgentRuntime
 from .automation_scheduler import AutomationScheduleReconciler
 from .runner import DocumentRunner
