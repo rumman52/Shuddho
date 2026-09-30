@@ -94,13 +94,13 @@ Verify connector callbacks and durably record owner/connection, stable event/ver
 
 Check goal pause/cancel and grant revocation at admission, before paid work and before mutation claim. Already-claimed actions can finish or become uncertain, which the UI must explain. Kill switches block new admissions even while schedule-disable reconciliation is pending.
 
-**Extend storage additively.** No migrations are introduced by this design.
+**Extend storage additively.** The implemented personal-agent program uses expand-only/additive migrations for durable goals, automations, connector evidence, exact context scope and reviewed tool authority; runtime rollback must not delete recovery evidence required by older workers.
 
 | Proposed record | Fields and invariants |
 | --- | --- |
 | `cw_goals` | Owner/workspace, objective reference, constraints, success criteria, revision, state, timezone and expiry |
 | `cw_goal_run_links` | Goal/run, goal revision, occurrence; unique accepted run per occurrence |
-| `cw_automations` | Desired trigger/revision, Temporal schedule ID, applied revision, enabled/expiry |
+| `cw_automations` | Owner-bound desired trigger/revision, run profile, selected read scope, reviewed safe tool allowlist, timezone/quiet-hours/expiry and applied Temporal reconciliation state |
 | `cw_trigger_deliveries` | Owned connection, stable event/occurrence key, cursor, intake/result state and dedupe constraint |
 | `cw_execution_grants` | Read/internal-work scope, resources, purpose, processing destinations, limits, expiry/revocation |
 | `cw_context_items` | Source/version references, trust labels, provenance, retention/deletion linkage |
@@ -112,7 +112,7 @@ Reuse existing tasks/artifacts, agent runs/steps/events, invocations/receipts, e
 
 Raw source text, provider reasoning and secrets stay out of Temporal history and normal audit logs. Private context storage has explicit retention and deletion linkage. Schema additions follow expand/migrate/contract; a rollback never drops data required by old workers.
 
-**Add APIs while preserving current routes.** These routes are proposed, not available endpoints.
+**Add APIs while preserving current routes.** The core goal/automation/notification families below are now implemented; later capabilities must extend them rather than creating parallel authority paths.
 
 | Route family | Contract |
 | --- | --- |
@@ -120,7 +120,9 @@ Raw source text, provider reasoning and secrets stay out of Temporal history and
 | `GET/PATCH /api/v1/goals/{id}` | Owned inspection and revision-checked edits; stale writes conflict |
 | `POST /api/v1/goals/{id}/run` | Bounded run under current capabilities and budget |
 | `POST /api/v1/goals/{id}/pause`, `resume`, `cancel` | Durable state and trigger reconciliation |
-| `POST /api/v1/automations` | Explicit activation of reviewed schedule/event rules and grants |
+| `POST /api/v1/automations` | Explicit activation of reviewed schedule/event/Meeting/Email/Deadline/goal-driven profiles and bounded grants/tool scope |
+| `GET/PATCH /api/v1/automations/{id}` | Owner-scoped inspection and revision-checked reviewed edits |
+| `GET /api/v1/automations/{id}/history` | Owner-scoped recent occurrence/run evidence without a second history store |
 | `GET /api/v1/notifications` | Durable notification inbox with resumable cursor |
 | `POST /api/v1/execution-grants/{id}/revoke` | Invalidate future use and dependent pending work |
 
