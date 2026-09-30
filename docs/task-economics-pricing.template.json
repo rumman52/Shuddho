@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "release_id": "coworker-cohort-001",
+  "min_completed_tasks": 10,
+  "max_cost_microusd_per_completed_task": 500000,
+  "search_microusd_per_credit": 1000,
+  "sandbox_microusd_per_second": 100,
+  "render_microusd_per_operation": 500,
+  "storage_microusd_per_gib_hour": 10,
+  "notification_microusd_per_attempt": 50,
+  "review_reference": "replace-with-reviewed-cost-record"
+}
