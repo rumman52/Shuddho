@@ -106,10 +106,11 @@ class AutomationRepository:
             not self.settings.agent_runtime_v3_enabled
             or not self.settings.intelligent_planner_enabled
             or not self.settings.work_services_enabled
+            or not self.settings.context_retrieval_enabled
         ):
             raise CoworkerError(
                 "briefing_unavailable",
-                "Daily/weekly briefings require Agent Runtime v3, the bounded planner, and work services.",
+                "Daily/weekly briefings require Agent Runtime v3, bounded context retrieval, the planner, and work services.",
                 409,
             )
         if len(connector_read_grant_ids) > 4:
@@ -545,7 +546,7 @@ class AutomationRepository:
                 owner,
                 AgentRunCreate(
                     goal=objective,
-                    document_ids=[],
+                    document_ids=briefing_document_ids if run_profile == "briefing" else [],
                     action_ids=[],
                     memory_namespaces=[],
                     connector_read_grant_ids=[grant_id],
@@ -629,9 +630,22 @@ class AutomationRepository:
                         "occurrence_id": previous.id, "run_id": None, "state": "blocked",
                         "reason": error.code, "replayed": False,
                     }
-            objective = db.scalar(select(PersonalGoal.objective).where(
+            goal = db.scalar(select(PersonalGoal).where(
                 PersonalGoal.id == goal_id, PersonalGoal.owner_id == owner,
             ))
+            objective = goal.objective if goal is not None else None
+            briefing_document_ids: list[str] = []
+            if run_profile == "briefing" and goal is not None:
+                for resource in list(goal.authorized_resources or []):
+                    if (
+                        isinstance(resource, dict)
+                        and resource.get("kind") == "document"
+                        and isinstance(resource.get("reference"), str)
+                        and resource["reference"] not in briefing_document_ids
+                    ):
+                        briefing_document_ids.append(resource["reference"])
+                    if len(briefing_document_ids) >= 5:
+                        break
             reason = None
             if not self.settings.automations_enabled:
                 reason = "kill_switch"
