@@ -4,10 +4,11 @@ import { CoworkerClient, type AgentNotification, type BrowserPushConfig, type No
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 const message = (error: unknown) => error instanceof Error ? error.message : "This automation action could not finish.";
 
-function applicationServerKey(value: string): Uint8Array {
+function applicationServerKey(value: string): ArrayBuffer {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const decoded = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
-  return Uint8Array.from(decoded, char => char.charCodeAt(0));
+  const bytes = Uint8Array.from(decoded, char => char.charCodeAt(0));
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 export default function AutomationWorkspace({ client }: { client: CoworkerClient }) {
