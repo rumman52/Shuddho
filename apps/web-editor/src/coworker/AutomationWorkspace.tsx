@@ -99,6 +99,15 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     finally { setBusy(""); }
   }
 
+  function triggerSummary(item: PersonalAutomation) {
+    const schedule = item.schedule;
+    if (schedule.kind === "event") {
+      const grant = connectorGrants.find(value => value.id === schedule.grant_id);
+      return `connected update · ${grant?.capability ?? "authorized read"} · ${item.timezone}`;
+    }
+    return `${schedule.kind} · ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")} · ${item.timezone}`;
+  }
+
   async function transition(item: PersonalAutomation, action: "pause" | "resume" | "cancel") {
     if (busy) return;
     setBusy(item.id); setError(""); setNotice("");
@@ -253,9 +262,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         {automations.length === 0 ? <section className="cw-empty"><h2>No automation yet.</h2><p>Create one from an active goal.</p></section> :
         <div className="cw-history"><ul>{automations.map(item => <li key={item.id}><div className="cw-agent-run">
           <strong>{goals.find(goal => goal.id === item.goal_id)?.objective ?? "Persistent goal"}</strong>
-          <p>{item.schedule.kind === "event"
-            ? `connected update · ${connectorGrants.find(grant => grant.id === item.schedule.grant_id)?.capability ?? "authorized read"} · ${item.timezone}`
-            : `${item.schedule.kind} · ${String(item.schedule.hour).padStart(2, "0")}:${String(item.schedule.minute).padStart(2, "0")} · ${item.timezone}`}</p>
+          <p>{triggerSummary(item)}</p>
           <div className="cw-agent-meta"><span>{item.state}</span><span>revision {item.revision}</span><span>{item.schedule_applied_revision === item.revision ? (item.schedule.kind === "event" ? "event trigger reconciled" : "Temporal reconciled") : "reconciliation pending"}</span>{item.schedule_error_code && <span>{item.schedule_error_code}</span>}</div>
           <div>{item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}
             {item.state === "paused" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "resume")}>Resume</button>}
