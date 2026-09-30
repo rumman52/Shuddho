@@ -7,12 +7,14 @@ It does **not** increase slide, row, file, model, provider, cohort, or execution
 ## Evidence layers
 
 1. **Native machine QA** — `tests/verify_office_native.py` renders and recalculates the existing editable Office fixtures and writes `native-results.json`.
-2. **Explicit human review** — a reviewer starts from `docs/artifact-quality-review.template.json`, inspects the exact generated files/screenshots, and binds the review to the native-results SHA-256 and source revision.
+2. **Explicit human review** — a reviewer starts from `docs/artifact-quality-review.template.json`, inspects the exact generated files/screenshots, and binds the review to the native-results SHA-256, source revision, and canonical SHA-256 digest of the editable/rendered/recalculated artifact bytes.
 3. **Rollout-bound compiler** — `scripts/artifact_quality_evidence.py` validates both layers and emits an `artifact_quality` evidence object bound to the exact reviewed rollout SHA-256.
 4. **Final cohort gate** — when `artifact_services=true`, the structured evidence is mandatory; a passed staging-evidence string by itself cannot qualify artifacts.
 5. **Activation handoff** — the release activation bundle records the exact artifact-quality evidence SHA-256, and schema-v16 append independently rechecks that exact file before ledger-attesting the bundle.
 
 ## Required native coverage
+
+The native result uses schema v3 and records content hashes for the editable PPTX/XLSX files, rendered PDFs and PNGs, and recalculated XLSX workbooks. The compiler re-reads those files and refuses substituted or missing bytes.
 
 The native result must contain exactly:
 
@@ -26,7 +28,7 @@ This is bounded regression evidence. It is **not** a universal language-quality 
 
 ## Human review
 
-Copy the template and replace every placeholder. All checks must be `true`, `failures` must be empty, and the review timestamp must not predate the native QA results.
+Copy the template and replace every placeholder. Copy both `native_results_sha256` and `artifact_set_sha256` from the exact reviewed run. All checks must be `true`, `failures` must be empty, and the review timestamp must not predate the native QA results or be more than five minutes in the future.
 
 The review checks:
 
@@ -40,7 +42,7 @@ The review checks:
 
 ## Controlled run
 
-Run native QA from the exact release revision. Release evidence requires a full source revision, supplied through `SHUDDHO_SOURCE_REVISION`, `RENDER_GIT_COMMIT`, or `GITHUB_SHA`.
+Run native QA from the exact release revision. Release evidence requires a full source revision, supplied through `SHUDDHO_SOURCE_REVISION`, `RENDER_GIT_COMMIT`, or `GITHUB_SHA`. The native QA command now fails immediately if none is present; it never emits a successful release-evidence file with `source_revision: null`.
 
 ```bash
 PYTHONPATH=.:tests uv run --extra coworker python tests/verify_office_native.py /secure/artifact-qa

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -29,6 +29,23 @@ EXPECTED_FORMULA_OUTCOMES = {
     "missing": {"cost": None, "total": None},
     "negative": {"cost": -37.5, "total": -21.5},
 }
+MAX_CLOCK_SKEW = timedelta(minutes=5)
+EXPECTED_EDITABLE = {
+    "originals/presentation-en.pptx",
+    "originals/spreadsheet-en.xlsx",
+    "originals/presentation-bn.pptx",
+    "originals/spreadsheet-bn.xlsx",
+    "originals/presentation-ar.pptx",
+    "originals/spreadsheet-ar.xlsx",
+    "originals/presentation-zh-dense.pptx",
+    "originals/spreadsheet-zh-long.xlsx",
+}
+EXPECTED_RECALCULATED = {
+    "recalculated/changed.xlsx",
+    "recalculated/zero.xlsx",
+    "recalculated/missing.xlsx",
+    "recalculated/negative.xlsx",
+}
 REVIEW_CHECKS = {
     "editable_open",
     "text_visible",
@@ -46,6 +63,7 @@ EVIDENCE_KEYS = {
     "source_revision",
     "rollout_manifest_sha256",
     "native_results_sha256",
+    "artifact_set_sha256",
     "human_review_sha256",
     "languages",
     "formats",
@@ -86,6 +104,29 @@ def parse_time(value: object, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def reject_future(
+    value: datetime,
+    label: str,
+    *,
+    now: datetime | None = None,
+) -> None:
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if value > current + MAX_CLOCK_SKEW:
+        raise ArtifactQualityEvidenceError(
+            f"{label} cannot be more than five minutes in the future."
+        )
+
+
+def artifact_set_sha256(artifacts: dict[str, str]) -> str:
+    encoded = json.dumps(
+        artifacts,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def require_sha256(value: object, label: str) -> str:
     if (
         not isinstance(value, str)
@@ -120,6 +161,8 @@ def validate_native_results(
     value: dict,
     *,
     expected_source_revision: str | None = None,
+    artifact_root: Path | None = None,
+    now: datetime | None = None,
 ) -> datetime:
     expected_keys = {
         "schema_version",
@@ -128,17 +171,20 @@ def validate_native_results(
         "languages",
         "formats",
         "rendered",
+        "artifacts_sha256",
+        "artifact_set_sha256",
         "formula_edits",
     }
     if set(value) != expected_keys:
         raise ArtifactQualityEvidenceError(
             "Native Office results have an unexpected schema."
         )
-    if value["schema_version"] != 2:
+    if value["schema_version"] != 3:
         raise ArtifactQualityEvidenceError(
-            "Native Office results must use schema_version=2."
+            "Native Office results must use schema_version=3."
         )
     generated = parse_time(value["generated_at"], "native.generated_at")
+    reject_future(generated, "native.generated_at", now=now)
     revision = require_revision(value["source_revision"], "native.source_revision")
     if expected_source_revision is not None and revision != expected_source_revision:
         raise ArtifactQualityEvidenceError(
@@ -155,6 +201,60 @@ def validate_native_results(
         raise ArtifactQualityEvidenceError(
             "Native Office results do not contain the exact required render set."
         )
+
+    artifacts = value["artifacts_sha256"]
+    if not isinstance(artifacts, dict) or not artifacts:
+        raise ArtifactQualityEvidenceError(
+            "Native Office results must contain artifact content hashes."
+        )
+    allowed_roots = {"originals", "rendered", "recalculated"}
+    for name, digest in artifacts.items():
+        path = Path(name)
+        if (
+            not isinstance(name, str)
+            or not name
+            or path.is_absolute()
+            or ".." in path.parts
+            or path.parts[0] not in allowed_roots
+        ):
+            raise ArtifactQualityEvidenceError(
+                "Native Office artifact paths must be safe relative paths."
+            )
+        require_sha256(digest, f"native.artifacts_sha256[{name!r}]")
+    required = {
+        *EXPECTED_EDITABLE,
+        *(f"rendered/{name}" for name in EXPECTED_RENDERED),
+        *EXPECTED_RECALCULATED,
+    }
+    if not required.issubset(artifacts):
+        raise ArtifactQualityEvidenceError(
+            "Native Office artifact hashes are missing required editable, rendered, or recalculated files."
+        )
+    for pdf_name in EXPECTED_RENDERED:
+        stem = Path(pdf_name).stem
+        if not any(
+            key.startswith(f"rendered/{stem}-") and key.endswith(".png")
+            for key in artifacts
+        ):
+            raise ArtifactQualityEvidenceError(
+                f"Native Office artifact hashes are missing a reviewed PNG for {pdf_name}."
+            )
+    expected_set_hash = artifact_set_sha256(artifacts)
+    if (
+        require_sha256(value["artifact_set_sha256"], "native.artifact_set_sha256")
+        != expected_set_hash
+    ):
+        raise ArtifactQualityEvidenceError(
+            "Native Office artifact-set digest does not match its content hashes."
+        )
+    if artifact_root is not None:
+        for name, expected_digest in artifacts.items():
+            path = artifact_root / name
+            if not path.is_file() or sha256_file(path) != expected_digest:
+                raise ArtifactQualityEvidenceError(
+                    f"Native Office artifact bytes do not match recorded hash: {name}."
+                )
+
     formula_edits = value["formula_edits"]
     if (
         not isinstance(formula_edits, dict)
@@ -183,8 +283,10 @@ def validate_human_review(
     *,
     release_id: str,
     native_results_sha256: str,
+    artifact_set_digest: str,
     source_revision: str,
     native_generated_at: datetime,
+    now: datetime | None = None,
 ) -> datetime:
     expected_keys = {
         "schema_version",
@@ -192,6 +294,7 @@ def validate_human_review(
         "generated_at",
         "source_revision",
         "native_results_sha256",
+        "artifact_set_sha256",
         "reviewer_reference",
         "languages",
         "formats",
@@ -211,6 +314,7 @@ def validate_human_review(
             "Artifact human review release_id does not match."
         )
     review_time = parse_time(value["generated_at"], "review.generated_at")
+    reject_future(review_time, "review.generated_at", now=now)
     if review_time < native_generated_at:
         raise ArtifactQualityEvidenceError(
             "Artifact human review cannot predate the native Office results."
@@ -228,6 +332,16 @@ def validate_human_review(
     ):
         raise ArtifactQualityEvidenceError(
             "Artifact human review does not bind the supplied native results."
+        )
+    if (
+        require_sha256(
+            value["artifact_set_sha256"],
+            "review.artifact_set_sha256",
+        )
+        != artifact_set_digest
+    ):
+        raise ArtifactQualityEvidenceError(
+            "Artifact human review does not bind the native artifact bytes."
         )
     reviewer = value["reviewer_reference"]
     if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 500:
@@ -272,8 +386,13 @@ def compile_artifact_quality_evidence(
         raise ArtifactQualityEvidenceError(
             "Artifact quality evidence is valid only for a rollout with artifact_services=true."
         )
+    now = datetime.now(timezone.utc)
     native = load_json(native_results_path, "native Office results")
-    native_time = validate_native_results(native)
+    native_time = validate_native_results(
+        native,
+        artifact_root=native_results_path.parent,
+        now=now,
+    )
     source_revision = require_revision(
         native["source_revision"],
         "native.source_revision",
@@ -284,17 +403,20 @@ def compile_artifact_quality_evidence(
         review,
         release_id=release_id,
         native_results_sha256=native_hash,
+        artifact_set_digest=native["artifact_set_sha256"],
         source_revision=source_revision,
         native_generated_at=native_time,
+        now=now,
     )
     return {
         "schema_version": 1,
         "mode": "artifact_quality",
         "release_id": release_id,
-        "generated_at": max(datetime.now(timezone.utc), review_time).isoformat(),
+        "generated_at": now.isoformat(),
         "source_revision": source_revision,
         "rollout_manifest_sha256": sha256_file(rollout_path),
         "native_results_sha256": native_hash,
+        "artifact_set_sha256": native["artifact_set_sha256"],
         "human_review_sha256": sha256_file(human_review_path),
         "languages": list(EXPECTED_LANGUAGES),
         "formats": list(EXPECTED_FORMATS),
@@ -337,6 +459,10 @@ def validate_artifact_quality_evidence(
         "artifact.native_results_sha256",
     )
     require_sha256(
+        value["artifact_set_sha256"],
+        "artifact.artifact_set_sha256",
+    )
+    require_sha256(
         value["human_review_sha256"],
         "artifact.human_review_sha256",
     )
@@ -346,7 +472,9 @@ def validate_artifact_quality_evidence(
         raise ArtifactQualityEvidenceError(
             "Artifact quality evidence did not pass cleanly."
         )
-    return parse_time(value["generated_at"], "artifact.generated_at")
+    generated = parse_time(value["generated_at"], "artifact.generated_at")
+    reject_future(generated, "artifact.generated_at")
+    return generated
 
 
 def main() -> None:

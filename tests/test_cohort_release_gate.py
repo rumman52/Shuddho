@@ -48,6 +48,7 @@ def artifact_quality_evidence(rollout_sha256: str = "a" * 64) -> dict:
         "source_revision": "1" * 40,
         "rollout_manifest_sha256": rollout_sha256,
         "native_results_sha256": "b" * 64,
+        "artifact_set_sha256": "d" * 64,
         "human_review_sha256": "c" * 64,
         "languages": ["ar", "bn", "en", "zh"],
         "formats": ["pptx", "xlsx"],
