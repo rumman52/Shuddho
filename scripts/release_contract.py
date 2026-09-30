@@ -341,7 +341,7 @@ OPTIONAL_CAPABILITIES = (
         staging_gates=(
             StagingGate(
                 "automations",
-                "Temporal Schedule reconciliation plus explicitly bound authenticated connector-event wake-up passed canonical occurrence dedupe, owner/grant/subscription/goal-revision revalidation, restart recovery, quiet hours, expiry, revocation blocking and durable in-app notification delivery in controlled staging without adding provider-write authority or a second scheduler.",
+                "Temporal Schedule reconciliation plus explicitly bound authenticated connector-event wake-up and bounded daily/weekly briefing profiles passed canonical occurrence dedupe, owner/grant/subscription/goal-revision revalidation, Runtime-v3 daily-plan-only tool scoping, restart recovery, quiet hours, expiry, revocation blocking, completion notification dedupe and durable in-app delivery in controlled staging without adding provider-write authority or a second scheduler.",
             ),
         ),
     ),
