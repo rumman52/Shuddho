@@ -312,9 +312,13 @@ def evaluate_release(
         ]
         staging["passed"] = len(staging["checks"]) - len(staging["missing"])
         staging["decision"] = "GO" if not staging["missing"] else "NO-GO"
-    if artifact_quality_evidence is not None:
+    if capabilities.get("artifact_services") is True:
         artifact_quality_passed = False
         try:
+            if artifact_quality_evidence is None:
+                raise ArtifactQualityEvidenceError(
+                    "Artifact-enabled rollout requires structured artifact quality evidence."
+                )
             if rollout_sha256 is None:
                 raise ArtifactQualityEvidenceError(
                     "Rollout SHA-256 is required for artifact quality evidence verification."
