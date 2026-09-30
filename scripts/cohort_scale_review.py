@@ -16,6 +16,10 @@ from scripts.task_economics_evidence import (
     TaskEconomicsEvidenceError,
     validate_task_economics_evidence,
 )
+from scripts.incident_restore_evidence import (
+    IncidentRestoreEvidenceError,
+    validate_incident_restore_evidence,
+)
 
 PLAN_KEYS = {
     "release_id",
@@ -292,6 +296,41 @@ def validate_economics(
     return generated
 
 
+def validate_incident_restore(
+    value: dict,
+    plan: dict,
+    now: datetime,
+    *,
+    rollout_sha256: str,
+    expected_source_revision: str | None = None,
+) -> datetime:
+    try:
+        generated, exercise_completed = validate_incident_restore_evidence(
+            value,
+            release_id=plan["release_id"],
+            rollout_sha256=rollout_sha256,
+            expected_source_revision=expected_source_revision,
+        )
+    except IncidentRestoreEvidenceError as error:
+        raise ScaleReviewError(str(error)) from None
+    generated_age_minutes = (now - generated).total_seconds() / 60
+    if generated_age_minutes < -1:
+        raise ScaleReviewError("incident/restore evidence is from the future.")
+    if generated_age_minutes > plan["freshness_minutes"]:
+        raise ScaleReviewError(
+            f"incident/restore evidence is stale ({generated_age_minutes:.1f} minutes old)."
+        )
+    exercise_age_minutes = (now - exercise_completed).total_seconds() / 60
+    if exercise_age_minutes < -1:
+        raise ScaleReviewError("incident/restore exercise is from the future.")
+    if exercise_age_minutes > plan["freshness_minutes"]:
+        raise ScaleReviewError(
+            "incident/restore exercise is stale "
+            f"({exercise_age_minutes:.1f} minutes old)."
+        )
+    return generated
+
+
 def validate_operator_status(value: dict, plan: dict, *, not_before: datetime, now: datetime) -> datetime:
     if value.get("release_id") != plan["release_id"]:
         raise ScaleReviewError("Operator status release_id does not match.")
@@ -305,7 +344,7 @@ def validate_operator_status(value: dict, plan: dict, *, not_before: datetime, n
     )
     if generated < not_before:
         raise ScaleReviewError(
-            "Operator status must be generated after capacity, quality and task economics evidence."
+            "Operator status must be generated after capacity, quality, task economics and incident/restore evidence."
         )
     return generated
 
@@ -404,7 +443,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Review a human-proposed next Shuddho Coworker cohort after the "
-            "25-user capacity, quality and task-economics gates."
+            "25-user capacity, quality, task-economics and incident/restore gates."
         )
     )
     parser.add_argument("--plan", type=Path, required=True)
@@ -413,6 +452,7 @@ def main() -> None:
     parser.add_argument("--capacity-qualification", type=Path, required=True)
     parser.add_argument("--quality-eval", type=Path, required=True)
     parser.add_argument("--task-economics", type=Path, required=True)
+    parser.add_argument("--incident-restore", type=Path, required=True)
     parser.add_argument("--operator-status", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -429,6 +469,10 @@ def main() -> None:
         capacity = load_json(args.capacity_qualification, "capacity qualification")
         quality = load_json(args.quality_eval, "quality evaluation")
         economics = load_json(args.task_economics, "task economics evidence")
+        incident_restore = load_json(
+            args.incident_restore,
+            "incident/restore evidence",
+        )
         operator = load_json(args.operator_status, "operator status")
         now = datetime.now(timezone.utc)
         capacity_time = validate_capacity(
@@ -450,10 +494,22 @@ def main() -> None:
             rollout_sha256=rollout_sha256,
             expected_source_revision=quality.get("source_revision"),
         )
+        incident_restore_time = validate_incident_restore(
+            incident_restore,
+            plan,
+            now,
+            rollout_sha256=rollout_sha256,
+            expected_source_revision=quality.get("source_revision"),
+        )
         operator_time = validate_operator_status(
             operator,
             plan,
-            not_before=max(capacity_time, quality_time, economics_time),
+            not_before=max(
+                capacity_time,
+                quality_time,
+                economics_time,
+                incident_restore_time,
+            ),
             now=now,
         )
         result = evaluate_review(
@@ -470,6 +526,7 @@ def main() -> None:
             "capacity_qualification": sha256_file(args.capacity_qualification),
             "quality_eval": sha256_file(args.quality_eval),
             "task_economics": sha256_file(args.task_economics),
+            "incident_restore": sha256_file(args.incident_restore),
             "operator_status": sha256_file(args.operator_status),
         }
         args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

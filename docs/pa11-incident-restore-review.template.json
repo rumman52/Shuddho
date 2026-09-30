@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "release_id": "coworker-cohort-001",
+  "source_revision": "replace-with-full-40-character-release-git-sha",
+  "exercise_started_at": "2026-09-30T10:00:00+00:00",
+  "exercise_completed_at": "2026-09-30T10:30:00+00:00",
+  "rto_target_minutes": 60,
+  "max_data_loss_seconds": 300,
+  "observed_data_loss_seconds": 0,
+  "incident_reference": "incident-drill-001",
+  "backup_reference": "managed-backup-001",
+  "restore_reference": "isolated-restore-001",
+  "temporal_restart_reference": "worker-restart-001",
+  "rollback_reference": "rollback-drill-001",
+  "reviewer_reference": "oncall-review-001",
+  "failures": []
+}

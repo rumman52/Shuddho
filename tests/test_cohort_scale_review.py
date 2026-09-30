@@ -7,6 +7,7 @@ from scripts.cohort_scale_review import (
     evaluate_review,
     validate_capacity,
     validate_economics,
+    validate_incident_restore,
     validate_operator_status,
     validate_quality,
 )
@@ -116,6 +117,42 @@ def economics():
     }
 
 
+def incident_restore():
+    return {
+        "schema_version": 1,
+        "mode": "incident_restore",
+        "release_id": "coworker-cohort-001",
+        "generated_at": "2026-09-22T11:37:00+00:00",
+        "exercise_started_at": "2026-09-22T11:00:00+00:00",
+        "exercise_completed_at": "2026-09-22T11:36:00+00:00",
+        "source_revision": "1" * 40,
+        "rollout_manifest_sha256": "b" * 64,
+        "staging_evidence_sha256": "f" * 64,
+        "review_sha256": "0" * 64,
+        "checks": {
+            "backup_restore": True,
+            "temporal": True,
+            "parallel_restart": True,
+            "fan_in": True,
+            "flag_rollback": True,
+        },
+        "rto_target_minutes": 60.0,
+        "observed_restore_minutes": 36.0,
+        "max_data_loss_seconds": 300.0,
+        "observed_data_loss_seconds": 0.0,
+        "references": {
+            "incident": "incident-drill-001",
+            "backup": "backup-001",
+            "restore": "restore-001",
+            "temporal_restart": "restart-001",
+            "rollback": "rollback-001",
+            "reviewer": "reviewer-001",
+        },
+        "gate_decision": "PASS",
+        "failures": [],
+    }
+
+
 def operator():
     return {
         "release_id": "coworker-cohort-001",
@@ -135,10 +172,22 @@ def test_bounded_scale_review_qualifies_reviewed_growth():
         rollout_sha256="b" * 64,
         expected_source_revision="1" * 40,
     )
+    incident_time = validate_incident_restore(
+        incident_restore(),
+        plan(),
+        NOW,
+        rollout_sha256="b" * 64,
+        expected_source_revision="1" * 40,
+    )
     validate_operator_status(
         operator(),
         plan(),
-        not_before=max(capacity_time, quality_time, economics_time),
+        not_before=max(
+            capacity_time,
+            quality_time,
+            economics_time,
+            incident_time,
+        ),
         now=NOW,
     )
     result = evaluate_review(plan(), review())
@@ -188,7 +237,7 @@ def test_scale_review_rejects_offline_or_unbound_quality():
 def test_scale_review_requires_post_evidence_operator_health():
     value = operator()
     value["generated_at"] = "2026-09-22T11:25:00+00:00"
-    with pytest.raises(ScaleReviewError, match="after capacity, quality and task economics"):
+    with pytest.raises(ScaleReviewError, match="after capacity, quality, task economics and incident/restore"):
         validate_operator_status(
             value,
             plan(),
@@ -289,7 +338,7 @@ def test_scale_review_requires_operator_health_after_economics():
     value["generated_at"] = "2026-09-22T11:32:00+00:00"
     with pytest.raises(
         ScaleReviewError,
-        match="after capacity, quality and task economics",
+        match="after capacity, quality, task economics and incident/restore",
     ):
         validate_operator_status(
             value,
@@ -306,6 +355,32 @@ def test_scale_review_rejects_stale_economics_samples_even_if_recompiled():
     value["samples_generated_at"] = "2026-09-20T11:34:00+00:00"
     with pytest.raises(ScaleReviewError, match="samples are stale"):
         validate_economics(
+            value,
+            plan(),
+            NOW,
+            rollout_sha256="b" * 64,
+            expected_source_revision="1" * 40,
+        )
+
+
+def test_scale_review_rejects_incident_restore_from_different_source_revision():
+    with pytest.raises(ScaleReviewError, match="source revision"):
+        validate_incident_restore(
+            incident_restore(),
+            plan(),
+            NOW,
+            rollout_sha256="b" * 64,
+            expected_source_revision="2" * 40,
+        )
+
+
+def test_scale_review_rejects_stale_incident_restore_exercise_even_if_recompiled():
+    value = incident_restore()
+    value["generated_at"] = "2026-09-22T11:50:00+00:00"
+    value["exercise_started_at"] = "2026-09-20T10:00:00+00:00"
+    value["exercise_completed_at"] = "2026-09-20T10:30:00+00:00"
+    with pytest.raises(ScaleReviewError, match="exercise is stale"):
+        validate_incident_restore(
             value,
             plan(),
             NOW,
