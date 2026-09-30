@@ -101,6 +101,14 @@ class PushSendResult:
     status_code: int
 
 
+class WebPushPreparationError(RuntimeError):
+    """Deterministic failure before any provider request was attempted."""
+
+
+class WebPushTransportError(RuntimeError):
+    """Provider request may have been attempted but no HTTP response was obtained."""
+
+
 class WebPushSubscriptionVault:
     def __init__(self, settings):
         self._key: bytes | None = None
@@ -218,34 +226,41 @@ class WebPushSender:
         return body
 
     def send(self, subscription: dict[str, str], payload: dict, *, ttl: int) -> PushSendResult:
-        if self._private_key is None:
-            raise ValueError("Browser Push is unavailable.")
-        endpoint = validate_push_endpoint(subscription["endpoint"])
-        validate_subscription_material(subscription["p256dh"], subscription["auth"])
-        parsed = urlparse(endpoint)
-        origin = "https://" + (parsed.hostname or "")
-        if parsed.port not in {None, 443}:
-            origin += ":" + str(parsed.port)
-        claims = {
-            "aud": origin,
-            "exp": int(time.time()) + 12 * 60 * 60,
-            "sub": self.settings.web_push_vapid_subject,
-        }
-        token = jwt.encode(claims, self._private_key, algorithm="ES256")
-        cleartext = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        body = self._encrypt_payload(subscription["p256dh"], subscription["auth"], cleartext)
-        response = self.requester(
-            endpoint,
-            content=body,
-            headers={
+        try:
+            if self._private_key is None:
+                raise ValueError("Browser Push is unavailable.")
+            endpoint = validate_push_endpoint(subscription["endpoint"])
+            validate_subscription_material(subscription["p256dh"], subscription["auth"])
+            parsed = urlparse(endpoint)
+            origin = "https://" + (parsed.hostname or "")
+            if parsed.port not in {None, 443}:
+                origin += ":" + str(parsed.port)
+            claims = {
+                "aud": origin,
+                "exp": int(time.time()) + 12 * 60 * 60,
+                "sub": self.settings.web_push_vapid_subject,
+            }
+            token = jwt.encode(claims, self._private_key, algorithm="ES256")
+            cleartext = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            body = self._encrypt_payload(subscription["p256dh"], subscription["auth"], cleartext)
+            headers = {
                 "Authorization": "vapid t=" + token + ", k=" + self._public_key,
                 "Content-Encoding": "aes128gcm",
                 "Content-Type": "application/octet-stream",
                 "TTL": str(max(0, min(int(ttl), 3600))),
-            },
-            timeout=8.0,
-            follow_redirects=False,
-        )
+            }
+        except Exception as exc:
+            raise WebPushPreparationError("Browser Push payload preparation failed.") from exc
+        try:
+            response = self.requester(
+                endpoint,
+                content=body,
+                headers=headers,
+                timeout=8.0,
+                follow_redirects=False,
+            )
+        except Exception as exc:
+            raise WebPushTransportError("Browser Push transport outcome is unknown.") from exc
         return PushSendResult(status_code=int(response.status_code))
 
 

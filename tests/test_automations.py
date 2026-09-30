@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
@@ -728,6 +728,149 @@ def test_browser_push_is_explicit_durable_generic_and_rechecks_consent(
         )).all()
         assert len(active) == 1
         assert active[0].owner_id == bob.id
+
+
+def test_browser_push_device_status_limit_and_pending_index(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    settings = replace(
+        automation_container.settings,
+        browser_push_enabled=True,
+        max_browser_push_subscriptions=2,
+        web_push_vapid_private_key=b64url_encode((1).to_bytes(32, "big")),
+        web_push_vapid_subject="mailto:ops@example.test",
+        web_push_encryption_key=b64url_encode(b"4" * 32),
+    )
+    automation_container.settings = settings
+    automation_container.notifications.settings = settings
+    automation_container.notifications.web_push_sender = WebPushSender(settings, requester=lambda *_args, **_kwargs: None)
+    automation_container.notifications.web_push_vault = WebPushSubscriptionVault(settings)
+
+    ua_private = ec.generate_private_key(ec.SECP256R1())
+    ua_public = b64url_encode(ua_private.public_key().public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    ))
+    auth_secret = b64url_encode(b"b" * 16)
+
+    endpoints = [
+        f"https://fcm.googleapis.com/fcm/send/device-{index}"
+        for index in range(3)
+    ]
+    for endpoint in endpoints[:2]:
+        response = client.put(
+            "/api/v1/browser-push/subscriptions",
+            headers=auth,
+            json={"endpoint": endpoint, "p256dh": ua_public, "auth": auth_secret, "expiration_time": None},
+        )
+        assert response.status_code == 200
+        status = client.post(
+            "/api/v1/browser-push/subscriptions/status",
+            headers=auth,
+            json={"endpoint": endpoint},
+        )
+        assert status.status_code == 200 and status.json() == {"active": True}
+        other_owner_status = client.post(
+            "/api/v1/browser-push/subscriptions/status",
+            headers=headers("bob"),
+            json={"endpoint": endpoint},
+        )
+        assert other_owner_status.status_code == 200
+        assert other_owner_status.json() == {"active": False}
+
+    limited = client.put(
+        "/api/v1/browser-push/subscriptions",
+        headers=auth,
+        json={"endpoint": endpoints[2], "p256dh": ua_public, "auth": auth_secret, "expiration_time": None},
+    )
+    assert limited.status_code == 409
+    assert limited.json()["detail"]["code"] == "browser_push_subscription_limit"
+
+    # Updating an existing device remains allowed at the active-device limit.
+    replay = client.put(
+        "/api/v1/browser-push/subscriptions",
+        headers=auth,
+        json={"endpoint": endpoints[0], "p256dh": ua_public, "auth": auth_secret, "expiration_time": None},
+    )
+    assert replay.status_code == 200
+
+    with automation_container.repository.sessions() as db:
+        indexes = {item["name"] for item in inspect(db.bind).get_indexes("cw_browser_push_deliveries")}
+        assert "ix_cw_browser_push_delivery_pending_created" in indexes
+
+
+def test_browser_push_local_secret_failure_is_not_unknown_transport(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    settings = replace(
+        automation_container.settings,
+        browser_push_enabled=True,
+        web_push_vapid_private_key=b64url_encode((1).to_bytes(32, "big")),
+        web_push_vapid_subject="mailto:ops@example.test",
+        web_push_encryption_key=b64url_encode(b"5" * 32),
+    )
+
+    class Response:
+        status_code = 201
+
+    automation_container.settings = settings
+    automation_container.notifications.settings = settings
+    automation_container.notifications.web_push_sender = WebPushSender(
+        settings, requester=lambda *_args, **_kwargs: Response()
+    )
+    automation_container.notifications.web_push_vault = WebPushSubscriptionVault(settings)
+
+    ua_private = ec.generate_private_key(ec.SECP256R1())
+    endpoint = "https://fcm.googleapis.com/fcm/send/unreadable-device"
+    registered = client.put(
+        "/api/v1/browser-push/subscriptions",
+        headers=auth,
+        json={
+            "endpoint": endpoint,
+            "p256dh": b64url_encode(ua_private.public_key().public_bytes(
+                serialization.Encoding.X962,
+                serialization.PublicFormat.UncompressedPoint,
+            )),
+            "auth": b64url_encode(b"c" * 16),
+            "expiration_time": None,
+        },
+    )
+    assert registered.status_code == 200
+    assert client.put(
+        "/api/v1/notification-preferences",
+        headers=auth,
+        json={"in_app_enabled": True, "automation_updates_enabled": True, "browser_push_enabled": True},
+    ).status_code == 200
+
+    _, automation = create_goal_and_automation(client, auth)
+    automation_container.automations.accept_occurrence(
+        automation["id"], 1, utcnow().replace(microsecond=0)
+    )
+    notice_id = automation_container.notifications.claim_notifications()[0]
+    automation_container.notifications.deliver_notification(notice_id)
+    delivery_id = automation_container.notifications.claim_browser_push_deliveries()[0]
+    with automation_container.repository.sessions.begin() as db:
+        subscription = db.scalar(select(BrowserPushSubscription).where(
+            BrowserPushSubscription.endpoint_hash == endpoint_fingerprint(endpoint)
+        ))
+        assert subscription is not None
+        subscription.subscription_ciphertext = "corrupted"
+
+    automation_container.notifications.deliver_browser_push(delivery_id)
+    with automation_container.repository.sessions() as db:
+        delivery = db.get(BrowserPushDelivery, delivery_id)
+        subscription = db.scalar(select(BrowserPushSubscription).where(
+            BrowserPushSubscription.endpoint_hash == endpoint_fingerprint(endpoint)
+        ))
+        assert delivery is not None and delivery.state == "failed"
+        assert delivery.error_code == "browser_push_subscription_unreadable"
+        assert subscription is not None and subscription.active is False
 
 
 def test_buffer_one_keeps_only_one_waiting_occurrence(automation_client, automation_container):

@@ -20,6 +20,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [groupNotices, setGroupNotices] = useState(false);
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null);
   const [browserPushConfig, setBrowserPushConfig] = useState<BrowserPushConfig | null>(null);
+  const [browserPushDeviceActive, setBrowserPushDeviceActive] = useState(false);
   const [goalId, setGoalId] = useState("");
   const [kind, setKind] = useState<"daily" | "weekly">("daily");
   const [weekdays, setWeekdays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri"]);
@@ -32,6 +33,14 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const createKey = useRef("");
 
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
+
+  async function currentBrowserPushDevice(signal?: AbortSignal) {
+    if (!("serviceWorker" in navigator)) return false;
+    const registration = await navigator.serviceWorker.getRegistration("/");
+    const subscription = registration ? await registration.pushManager.getSubscription() : null;
+    if (!subscription) return false;
+    return (await client.browserPushSubscriptionStatus(subscription.endpoint, signal)).active;
+  }
 
   async function reload(signal?: AbortSignal) {
     const [goalResult, automationResult, notificationResult, notificationPreferenceResult, digestResult, pushConfigResult] = await Promise.all([
@@ -46,6 +55,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     setDigests(digestResult.digests);
     setNotificationPreferences(notificationPreferenceResult);
     setBrowserPushConfig(pushConfigResult);
+    setBrowserPushDeviceActive(await currentBrowserPushDevice(signal));
   }
 
   useEffect(() => {
@@ -129,6 +139,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
           browser_push_enabled: false,
         });
         setNotificationPreferences(saved);
+        setBrowserPushDeviceActive(false);
         setNotice("Browser notifications are off for this account.");
         return;
       }
@@ -164,6 +175,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         browser_push_enabled: true,
       });
       setNotificationPreferences(saved);
+      setBrowserPushDeviceActive(true);
       setNotice("Browser notifications are enabled for this account and device.");
     } catch (error) { setError(message(error)); }
     finally { setBusy(""); }
@@ -246,10 +258,17 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
               automation_updates_enabled: event.target.checked,
             })} /> Scheduled-work updates</label>
           <label><input type="checkbox"
-            checked={notificationPreferences.browser_push_enabled}
-            disabled={Boolean(busy) || !notificationPreferences.in_app_enabled || !browserPushConfig?.enabled}
+            checked={notificationPreferences.browser_push_enabled && browserPushDeviceActive}
+            disabled={Boolean(busy) || !notificationPreferences.in_app_enabled || (!browserPushConfig?.enabled && !browserPushDeviceActive)}
             onChange={event => setBrowserPush(event.target.checked)} /> Browser notifications on this account and device</label>
-          {!browserPushConfig?.enabled && <p className="cw-fineprint">Browser Push is deployment-gated and currently unavailable here.</p>}
+          {!browserPushConfig?.enabled && <p className="cw-fineprint">Browser Push delivery is currently disabled by deployment policy. Existing consent can still be revoked.</p>}
+          {notificationPreferences.browser_push_enabled && !browserPushConfig?.enabled && !browserPushDeviceActive &&
+            <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => saveNotificationPreference({
+              ...notificationPreferences,
+              browser_push_enabled: false,
+            })}>Turn off Browser Push for this account</button>}
+          {notificationPreferences.browser_push_enabled && browserPushConfig?.enabled && !browserPushDeviceActive &&
+            <p className="cw-fineprint">Browser Push is allowed for this account, but this browser is not registered yet. Enable the checkbox to add this device.</p>}
           <p className="cw-fineprint">Browser Push requires separate account consent plus browser permission. Push messages use generic text; open Shuddho to review the actual notice. Turning notifications off never pauses goals or automations.</p>
         </div>}
         <label className="cw-digest-toggle"><input type="checkbox" checked={groupNotices} onChange={event => setGroupNotices(event.target.checked)} /> Group suggestion notices into digests</label>

@@ -404,3 +404,56 @@ def test_known_usage_reduces_global_daily_reservation(repository):
             "SELECT allocated_tokens FROM cw_provider_daily_usage WHERE day = to_char(now() at time zone 'utc', 'YYYY-MM-DD')"
         ))
     assert total == int(baseline) + 250
+
+
+def test_browser_push_active_device_limit_is_atomic(repository):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from services.coworker.notification_repository import NotificationRepository
+    from services.coworker.notification_schemas import BrowserPushSubscriptionUpsert
+    from services.coworker.web_push import b64url_encode
+
+    settings = replace(
+        repository.settings,
+        agent_runtime_enabled=True,
+        personal_goals_enabled=True,
+        automations_enabled=True,
+        browser_push_enabled=True,
+        max_browser_push_subscriptions=2,
+        web_push_vapid_private_key=b64url_encode((1).to_bytes(32, "big")),
+        web_push_vapid_subject="mailto:ops@example.test",
+        web_push_encryption_key=b64url_encode(b"p" * 32),
+    )
+    identity = owner(repository)
+    notifications = NotificationRepository(repository.sessions, settings)
+    ua = ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+    p256dh = b64url_encode(ua)
+    auth = b64url_encode(b"a" * 16)
+
+    def register(index):
+        try:
+            notifications.register_browser_push_subscription(
+                identity,
+                BrowserPushSubscriptionUpsert(
+                    endpoint=f"https://fcm.googleapis.com/fcm/send/postgres-{index}",
+                    p256dh=p256dh,
+                    auth=auth,
+                    expiration_time=None,
+                ),
+            )
+            return "active"
+        except CoworkerError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(register, range(6)))
+
+    assert results.count("active") == 2
+    assert results.count("browser_push_subscription_limit") == 4
+    with repository.sessions() as db:
+        assert db.scalar(text(
+            "SELECT count(*) FROM cw_browser_push_subscriptions WHERE owner_id=:owner AND active"
+        ), {"owner": identity}) == 2

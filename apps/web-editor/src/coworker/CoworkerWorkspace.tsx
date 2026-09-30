@@ -11,6 +11,7 @@ import NegotiationWorkspace from "./NegotiationWorkspace";
 import { hasPendingGoogleCallback } from "./googleCallback";
 import { hasPendingMicrosoftCallback } from "./microsoftCallback";
 import { hasPendingLinkedInCallback } from "./linkedinCallback";
+import { requestedNotificationView } from "./pushNavigation";
 
 const originalService: WorkSkill = {
   id: "report_email", name: "Report & email", description: "Turn your sources into a report and an email draft.",
@@ -61,7 +62,11 @@ export function TaskResult({ task, client, revise, prepareEmail, prepareSocial }
 }
 
 export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
-  const [view, setView] = useState<"drafts" | "goals" | "automations" | "browser" | "sandbox" | "negotiations" | "actions" | "agent">(() => hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback() ? "actions" : "drafts");
+  const [view, setView] = useState<"drafts" | "goals" | "automations" | "browser" | "sandbox" | "negotiations" | "actions" | "agent">(() => {
+    if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
+    if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? "drafts";
+    return "drafts";
+  });
   const [actionDraft, setActionDraft] = useState<EmailDraft | null>(null);
   const [socialActionDraft, setSocialActionDraft] = useState<string | null>(null);
   const [focusActionId, setFocusActionId] = useState<string | null>(null);
