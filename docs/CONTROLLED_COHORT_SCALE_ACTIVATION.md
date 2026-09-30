@@ -9,6 +9,7 @@ This increment closes that gap.
 After a human-approved deployment change, the verifier requires:
 
 - the exact scale-review artifact to say `ELIGIBLE_FOR_BOUNDED_EXPANSION`;
+- the exact incident/restore artifact SHA-256 to match the scale decision, with the artifact itself validating against the current rollout before any cohort verification proceeds;
 - the exact provider-policy activation for this current → proposed stage to already be recorded as schema-v5 `provider_policy_verified` in the release ledger;
 - when deployed Microsoft actions are enabled, the exact `microsoft_rollout_verified` activation artifact to already be recorded as one matching schema-v6 event for the current stage;
 - a deployment-change record for the same release, stage, reviewed max users, and change reference;
