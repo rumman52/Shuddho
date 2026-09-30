@@ -3,6 +3,7 @@ import pytest
 from scripts.provider_policy_compiler import (
     ProviderPolicyError,
     compile_policy,
+    validate_incident_restore_binding,
     validate_task_economics_binding,
 )
 
@@ -42,6 +43,7 @@ def decision():
         "proposed_stage": "cohort-40",
         "proposed_max_users": 40,
         "failures": [],
+        "rollout_manifest_sha256": "d" * 64,
         "artifact_sha256": {
             "review": "a" * 64,
             "capacity_qualification": "b" * 64,
@@ -171,3 +173,59 @@ def test_policy_compiler_rejects_scale_decision_without_incident_restore_binding
     value["artifact_sha256"].pop("incident_restore")
     with pytest.raises(ProviderPolicyError, match="incident/restore"):
         compile_policy(plan(), value, review(), capacity())
+
+
+def incident_restore():
+    return {
+        "schema_version": 1,
+        "mode": "incident_restore",
+        "release_id": "coworker-cohort-001",
+        "generated_at": "2026-09-22T11:50:00+00:00",
+        "exercise_started_at": "2026-09-22T11:00:00+00:00",
+        "exercise_completed_at": "2026-09-22T11:30:00+00:00",
+        "source_revision": "1" * 40,
+        "rollout_manifest_sha256": "d" * 64,
+        "staging_evidence_sha256": "e" * 64,
+        "review_sha256": "a" * 64,
+        "checks": {
+            "backup_restore": True,
+            "temporal": True,
+            "parallel_restart": True,
+            "fan_in": True,
+            "flag_rollback": True,
+        },
+        "rto_target_minutes": 60.0,
+        "observed_restore_minutes": 30.0,
+        "max_data_loss_seconds": 300.0,
+        "observed_data_loss_seconds": 0.0,
+        "references": {
+            "incident": "incident-1",
+            "backup": "backup-1",
+            "restore": "restore-1",
+            "temporal_restart": "restart-1",
+            "rollback": "rollback-1",
+            "reviewer": "reviewer-1",
+        },
+        "gate_decision": "PASS",
+        "failures": [],
+    }
+
+
+def test_provider_policy_requires_exact_incident_restore_artifact():
+    value = decision()
+    evidence = incident_restore()
+    with pytest.raises(ProviderPolicyError, match="does not bind this incident/restore"):
+        validate_incident_restore_binding(
+            release_id="coworker-cohort-001",
+            incident_restore_sha256="0" * 64,
+            decision=value,
+            incident_restore=evidence,
+        )
+
+    value["artifact_sha256"]["incident_restore"] = "0" * 64
+    validate_incident_restore_binding(
+        release_id="coworker-cohort-001",
+        incident_restore_sha256="0" * 64,
+        decision=value,
+        incident_restore=evidence,
+    )

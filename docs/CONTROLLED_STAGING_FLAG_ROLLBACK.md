@@ -40,7 +40,8 @@ Then run:
 
 ```bash
 uv run --extra coworker python scripts/staging_flag_rollback.py prepare \
-  --state /secure/path/agent-rollback-state.json
+  --state /secure/path/agent-rollback-state.json \
+  --rollout /secure/release/cohort-rollout.json
 ```
 
 The script creates a synthetic Agent run, pre-validates one safe document task, dispatches it through the real `Dispatcher`, checks Temporal visibility reports `shuddho_agent_run_v2`, and waits for completion.

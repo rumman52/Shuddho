@@ -9,6 +9,7 @@ This increment closes that gap.
 After a human-approved deployment change, the verifier requires:
 
 - the exact scale-review artifact to say `ELIGIBLE_FOR_BOUNDED_EXPANSION`;
+- the exact incident/restore artifact SHA-256 to match the scale decision, with the artifact itself validating against the current rollout before any cohort verification proceeds;
 - the exact provider-policy activation for this current → proposed stage to already be recorded as schema-v5 `provider_policy_verified` in the release ledger;
 - when deployed Microsoft actions are enabled, the exact `microsoft_rollout_verified` activation artifact to already be recorded as one matching schema-v6 event for the current stage;
 - a deployment-change record for the same release, stage, reviewed max users, and change reference;
@@ -36,6 +37,7 @@ uv run --extra coworker python scripts/cohort_scale_activation.py \
   --deployment-change /secure/release/cohort-scale-deployment.json \
   --operator-status /secure/release/post-scale-operator-status.json \
   --provider-policy-activation /secure/release/provider-policy-activation.json \
+  --incident-restore /secure/release/incident-restore-evidence.json \
   --release-activation-bundle /secure/release/release-activation-bundle.json \
   --microsoft-rollout-activation /secure/release/microsoft-rollout-activation.json \
   --action-selection-activation /secure/release/action-selection-activation.json \

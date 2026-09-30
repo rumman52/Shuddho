@@ -33,7 +33,8 @@ Run:
 
 ```bash
 uv run --extra coworker python scripts/staging_temporal_recovery.py prepare \
-  --state /secure/path/temporal-recovery-state.json
+  --state /secure/path/temporal-recovery-state.json \
+  --rollout /secure/release/cohort-rollout.json
 ```
 
 The script:

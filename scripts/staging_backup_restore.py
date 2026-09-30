@@ -13,7 +13,8 @@ from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_release_evidence import (
     StagingReleaseEvidenceError,
     passed,
-    release_context,
+    prepared_release_context,
+    validate_prepared_release_context,
 )
 from services.coworker.config import Settings
 from services.coworker.container import Container
@@ -79,7 +80,7 @@ def environment_fingerprints(container: Container) -> dict:
     }
 
 
-def prepare(settings: Settings, state_path: Path) -> dict:
+def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
     require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
     owner = resolve_owner()
     container = Container.create(settings)
@@ -113,6 +114,7 @@ def prepare(settings: Settings, state_path: Path) -> dict:
         container.repository.cancel(owner, task["id"])
 
         state = {
+            "release_context": prepared_release_context(settings, rollout_path),
             "owner_id": owner,
             "document_id": upload["id"],
             "version_id": upload["version_id"],
@@ -146,10 +148,15 @@ def verify(
     state = json.loads(state_path.read_text(encoding="utf-8"))
     if not isinstance(state, dict):
         raise BackupRestoreFailure("Backup/restore state file must be a JSON object.")
-    required = {"owner_id", "document_id", "version_id", "task_id", "sha256", "byte_size", "source_fingerprints"}
+    required = {"release_context", "owner_id", "document_id", "version_id", "task_id", "sha256", "byte_size", "source_fingerprints"}
     if not required.issubset(state):
         raise BackupRestoreFailure("Backup/restore state file is incomplete.")
 
+    context = validate_prepared_release_context(
+        state["release_context"],
+        settings,
+        rollout_path,
+    )
     container = Container.create(settings)
     try:
         target = environment_fingerprints(container)
@@ -202,7 +209,6 @@ def verify(
             base.update(value)
         backup_ref = backup_reference.strip()[:200]
         restore_ref = restore_reference.strip()[:200]
-        context = release_context(settings, rollout_path)
         base["backup_restore"] = passed(
             f"isolated PostgreSQL + private object restore matched synthetic manifest and SHA-256; backup_ref={backup_ref}; restore_ref={restore_ref}",
             context,
@@ -219,6 +225,7 @@ def main() -> None:
 
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--state", type=Path, required=True)
+    prepare_parser.add_argument("--rollout", type=Path, required=True)
 
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--state", type=Path, required=True)
@@ -232,7 +239,7 @@ def main() -> None:
     settings = Settings.from_env()
     try:
         if args.command == "prepare":
-            result = prepare(settings, args.state)
+            result = prepare(settings, args.state, args.rollout)
             print(json.dumps({"status": "prepared", **result}, indent=2))
         else:
             result = verify(

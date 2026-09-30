@@ -15,7 +15,8 @@ from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_release_evidence import (
     StagingReleaseEvidenceError,
     passed,
-    release_context,
+    prepared_release_context,
+    validate_prepared_release_context,
 )
 from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.config import Settings
@@ -135,7 +136,7 @@ async def wait_for_completion(client: Client, workflow_id: str) -> None:
         raise RollbackFailure(f"Workflow {workflow_id} did not complete within the staging timeout.") from None
 
 
-async def prepare(settings: Settings, state_path: Path) -> dict:
+async def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
     require_guard()
     require_prepare_flags(settings)
     owner = resolve_owner()
@@ -151,6 +152,7 @@ async def prepare(settings: Settings, state_path: Path) -> dict:
         if saved["state"] != "completed":
             raise RollbackFailure(f"Pre-rollback v2 Agent run ended in state {saved['state']!r}.")
         state = {
+            "release_context": prepared_release_context(settings, rollout_path),
             "owner_id": owner,
             "v2_run_id": value["run_id"],
             "v2_workflow_id": value["workflow_id"],
@@ -181,10 +183,15 @@ async def verify(
     state = json.loads(state_path.read_text(encoding="utf-8"))
     if not isinstance(state, dict):
         raise RollbackFailure("Rollback state file must be a JSON object.")
-    required = {"owner_id", "v2_run_id", "v2_workflow_id", "v2_workflow_type"}
+    required = {"release_context", "owner_id", "v2_run_id", "v2_workflow_id", "v2_workflow_type"}
     if not required.issubset(state):
         raise RollbackFailure("Rollback state file is incomplete.")
 
+    context = validate_prepared_release_context(
+        state["release_context"],
+        settings,
+        rollout_path,
+    )
     owner = resolve_owner()
     if owner != state["owner_id"]:
         raise RollbackFailure("Rollback verification must use the same disposable staging account.")
@@ -215,7 +222,6 @@ async def verify(
                 raise RollbackFailure("Base staging evidence must be a JSON object.")
             base.update(value)
         ref = rollout_reference.strip()[:240]
-        context = release_context(settings, rollout_path)
         base["flag_rollback"] = passed(
             f"existing v2 workflow remained valid and a newly dispatched Agent run used shuddho_agent_run_v1 after parallel flag disable; rollout_ref={ref}",
             context,
@@ -239,6 +245,7 @@ def main() -> None:
 
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--state", type=Path, required=True)
+    prepare_parser.add_argument("--rollout", type=Path, required=True)
 
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--state", type=Path, required=True)
@@ -251,7 +258,7 @@ def main() -> None:
     settings = Settings.from_env()
     try:
         if args.command == "prepare":
-            result = asyncio.run(prepare(settings, args.state))
+            result = asyncio.run(prepare(settings, args.state, args.rollout))
             print(json.dumps({"status": "prepared", **result}, indent=2))
         else:
             result = asyncio.run(verify(

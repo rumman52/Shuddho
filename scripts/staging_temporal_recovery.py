@@ -19,7 +19,8 @@ from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_release_evidence import (
     StagingReleaseEvidenceError,
     passed,
-    release_context,
+    prepared_release_context,
+    validate_prepared_release_context,
 )
 from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.config import Settings
@@ -116,7 +117,7 @@ async def temporal_client(settings: Settings) -> Client:
     )
 
 
-async def prepare(settings: Settings, state_path: Path) -> dict:
+async def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
     require_exercise_guard()
     require_runtime(settings)
     owner = staging_owner()
@@ -150,6 +151,7 @@ async def prepare(settings: Settings, state_path: Path) -> dict:
             pass
         container.agent.delivered(run["id"])
         state = {
+            "release_context": prepared_release_context(settings, rollout_path),
             "run_id": run["id"],
             "workflow_id": workflow_id,
             "owner_id": owner,
@@ -223,6 +225,11 @@ async def verify(
     state = json.loads(state_path.read_text(encoding="utf-8"))
     if not isinstance(state, dict):
         raise RecoveryFailure("Recovery state file must be a JSON object.")
+    context = validate_prepared_release_context(
+        state.get("release_context"),
+        settings,
+        rollout_path,
+    )
     run_id = str(state.get("run_id") or "")
     owner = str(state.get("owner_id") or "")
     workflow_id = str(state.get("workflow_id") or "")
@@ -260,7 +267,6 @@ async def verify(
                 raise RecoveryFailure("Base staging evidence must be a JSON object.")
             base.update(value)
         concise_ref = restart_reference.strip()[:240]
-        context = release_context(settings, rollout_path)
         verified_at = datetime.now(timezone.utc)
         base.update({
             "temporal": passed(
@@ -291,6 +297,7 @@ def main() -> None:
 
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--state", type=Path, required=True)
+    prepare_parser.add_argument("--rollout", type=Path, required=True)
 
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--state", type=Path, required=True)
@@ -304,7 +311,7 @@ def main() -> None:
     settings = Settings.from_env()
     try:
         if args.command == "prepare":
-            result = asyncio.run(prepare(settings, args.state))
+            result = asyncio.run(prepare(settings, args.state, args.rollout))
             print(json.dumps({
                 "status": "prepared",
                 "run_id": result["run_id"],

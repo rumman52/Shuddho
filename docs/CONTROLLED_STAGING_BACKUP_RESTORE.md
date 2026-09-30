@@ -21,7 +21,8 @@ Run:
 
 ```bash
 uv run --extra coworker python scripts/staging_backup_restore.py prepare \
-  --state /secure/path/backup-restore-state.json
+  --state /secure/path/backup-restore-state.json \
+  --rollout /secure/release/cohort-rollout.json
 ```
 
 The prepare step:
