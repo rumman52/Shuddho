@@ -22,6 +22,7 @@ Before changing provider limits for a reviewed cohort expansion, compile a propo
 - the exact scale-review request bound by that decision;
 - the exact capacity qualification bound by that decision;
 - the exact task-economics evidence bound by that decision;
+- the exact incident/restore evidence bound by that decision;
 - a checked/reviewed policy plan containing pricing and policy constraints.
 
 The compiler considers:
@@ -55,10 +56,11 @@ uv run python scripts/provider_policy_compiler.py \
   --scale-review /secure/release/cohort-scale-review.json \
   --capacity-qualification /secure/release/capacity-qualification.json \
   --task-economics /secure/release/task-economics-evidence.json \
+  --incident-restore /secure/release/incident-restore-evidence.json \
   --output /secure/release/provider-policy-proposal.json
 ```
 
-The compiler requires the supplied task-economics file to be the exact artifact already bound by the scale decision and requires its recorded `provider_policy_plan_sha256` to match the exact `--plan` file. This prevents a fresh policy proposal from silently changing the blended model rate after economics measurement.
+The compiler requires both the supplied task-economics file and the supplied incident/restore file to be the exact artifacts already bound by the scale decision. It validates the incident/restore artifact against the decision's rollout binding and requires task economics to bind the exact `--plan` file. A syntactically valid but invented incident/restore digest is not sufficient.
 
 The proposal should be reviewed with the same change process used for cohort expansion. A later activation check must compare the deployed environment to the exact approved proposal before it is treated as production evidence.
 
