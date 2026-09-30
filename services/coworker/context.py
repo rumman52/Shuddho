@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from .errors import CoworkerError
 from .extraction import extract_in_subprocess
-from .models import AgentRun, Document, DocumentVersion
+from .models import AgentRun, ConnectorSnapshot, Document, DocumentVersion
 from .repository import not_found
 
 
@@ -141,6 +141,31 @@ class ContextService:
             "type": "goal",
             "run_id": run.id,
         }}
+        selected_snapshot_ids = set(run.connector_snapshot_ids or [])
+        selected_by_grant: dict[str, set[str]] = {}
+        if selected_snapshot_ids:
+            with self.sessions() as db:
+                rows = list(db.scalars(select(ConnectorSnapshot).where(
+                    ConnectorSnapshot.owner_id == owner,
+                    ConnectorSnapshot.id.in_(selected_snapshot_ids),
+                )).all())
+            found = {row.id for row in rows}
+            for missing in sorted(selected_snapshot_ids - found):
+                invalidated.append({
+                    "source_id": "conn-" + missing[:12],
+                    "label": "Connected source",
+                    "reason": "snapshot_missing",
+                })
+            for row in rows:
+                if row.state != "active":
+                    invalidated.append({
+                        "source_id": "conn-" + row.id[:12],
+                        "label": "Connected source",
+                        "reason": "snapshot_inactive",
+                    })
+                    continue
+                selected_by_grant.setdefault(row.grant_id, set()).add(row.id)
+
         for source in sources:
             if source["state"] != "active":
                 invalidated.append({
@@ -206,6 +231,19 @@ class ContextService:
                         "reason": error.code,
                     })
                     continue
+                if selected_snapshot_ids:
+                    allowed_snapshot_ids = selected_by_grant.get(grant_id, set())
+                    present_snapshot_ids = {item["id"] for item in snapshots}
+                    for missing in sorted(allowed_snapshot_ids - present_snapshot_ids):
+                        invalidated.append({
+                            "source_id": "conn-" + missing[:12],
+                            "label": "Connected source",
+                            "reason": "snapshot_inactive",
+                        })
+                    snapshots = [
+                        item for item in snapshots
+                        if item["id"] in allowed_snapshot_ids
+                    ]
                 for snapshot in snapshots:
                     if len(items) >= self.settings.max_agent_context_items or remaining <= 0:
                         break
