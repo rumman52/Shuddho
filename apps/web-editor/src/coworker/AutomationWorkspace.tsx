@@ -125,7 +125,9 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             ? { kind: "event", grant_id: emailGrantId }
             : kind === "meeting"
               ? { kind: "meeting", grant_id: meetingGrantId, preparation_minutes: meetingPreparationMinutes, scan_interval_minutes: 15 }
-              : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
+              : kind === "deadline" || kind === "proactive"
+                ? { kind: "daily", hour, minute, weekdays: [] }
+                : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
         run_profile: kind === "email" ? "email" : kind === "meeting" ? "meeting" : kind === "deadline" ? "deadline" : kind === "proactive" ? "proactive" : briefing && kind !== "event" ? "briefing" : "goal",
         connector_read_grant_ids: kind === "meeting" ? meetingEmailGrantIds : kind === "proactive" ? proactiveGrantIds : briefing && kind !== "event" && kind !== "email" && kind !== "deadline" ? briefingGrantIds : [],
         tool_allowlist: kind === "proactive" ? proactiveTools : [],
