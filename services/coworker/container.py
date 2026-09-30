@@ -17,6 +17,8 @@ from .linkedin_actions import LinkedInActions
 from .agent_repository import AgentRepository
 from .goal_repository import GoalRepository
 from .suggestion_repository import SuggestionRepository
+from .suggestion_relevance_model import SuggestionRelevanceModel
+from .suggestion_relevance_service import SuggestionRelevanceService
 from .negotiation_repository import NegotiationRepository
 from .negotiation_model import NegotiationProposalModel
 from .negotiation_service import NegotiationProposalService
@@ -43,6 +45,7 @@ class Container:
     agent: AgentRepository | None = None
     goals: GoalRepository | None = None
     suggestions: SuggestionRepository | None = None
+    suggestion_relevance: SuggestionRelevanceService | None = None
     negotiations: NegotiationRepository | None = None
     negotiation_proposals: NegotiationProposalService | None = None
     automations: AutomationRepository | None = None
@@ -108,6 +111,11 @@ class Container:
                 self.repository.sessions,
                 self.settings,
                 self.notifications,
+            )
+        if self.suggestion_relevance is None:
+            self.suggestion_relevance = SuggestionRelevanceService(
+                self.suggestions,
+                SuggestionRelevanceModel(self.settings),
             )
         self.notifications.register_source_validator(
             self.suggestions.SOURCE_KIND,
