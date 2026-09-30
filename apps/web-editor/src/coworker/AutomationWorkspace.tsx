@@ -112,7 +112,9 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             ? { kind: "event", grant_id: emailGrantId }
             : kind === "meeting"
               ? { kind: "meeting", grant_id: meetingGrantId, preparation_minutes: meetingPreparationMinutes, scan_interval_minutes: 15 }
-              : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
+              : kind === "deadline"
+                ? { kind: "daily", hour, minute, weekdays: [] }
+                : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
         run_profile: kind === "email" ? "email" : kind === "meeting" ? "meeting" : kind === "deadline" ? "deadline" : briefing && kind !== "event" ? "briefing" : "goal",
         connector_read_grant_ids: kind === "meeting" ? meetingEmailGrantIds : briefing && kind !== "event" && kind !== "email" && kind !== "deadline" ? briefingGrantIds : [],
         output_language: "en", overlap_policy: "skip", catchup_window_seconds: 3600,
