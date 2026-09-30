@@ -25,6 +25,14 @@ def upgrade() -> None:
         "cw_browser_push_subscriptions",
         ["owner_id", "active"],
     )
+    op.create_index(
+        "uq_cw_browser_push_active_endpoint",
+        "cw_browser_push_subscriptions",
+        ["endpoint_hash"],
+        unique=True,
+        postgresql_where=sa.text("active"),
+        sqlite_where=sa.text("active"),
+    )
     op.create_table(
         "cw_browser_push_deliveries",
         sa.Column("id", sa.String(length=36), primary_key=True),
@@ -50,5 +58,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_cw_browser_push_delivery_owner_state", table_name="cw_browser_push_deliveries")
     op.drop_table("cw_browser_push_deliveries")
+    op.drop_index("uq_cw_browser_push_active_endpoint", table_name="cw_browser_push_subscriptions")
     op.drop_index("ix_cw_browser_push_owner_active", table_name="cw_browser_push_subscriptions")
     op.drop_table("cw_browser_push_subscriptions")
