@@ -46,6 +46,7 @@ def decision():
             "review": "a" * 64,
             "capacity_qualification": "b" * 64,
             "task_economics": "c" * 64,
+            "incident_restore": "f" * 64,
         },
     }
 
@@ -163,3 +164,10 @@ def test_provider_policy_compiler_rejects_different_pricing_plan():
             decision=decision(),
             economics=economics(),
         )
+
+
+def test_policy_compiler_rejects_scale_decision_without_incident_restore_binding():
+    value = decision()
+    value["artifact_sha256"].pop("incident_restore")
+    with pytest.raises(ProviderPolicyError, match="incident/restore"):
+        compile_policy(plan(), value, review(), capacity())

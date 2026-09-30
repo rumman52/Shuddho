@@ -12,6 +12,7 @@ Use the normal staging backend credentials for the prepare phase and set:
 SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE=true
 SHUDDHO_STAGING_API_BASE_URL=https://staging-api.example.com
 SHUDDHO_STAGING_TOKEN_A=<short-lived disposable staging account token>
+SHUDDHO_SOURCE_REVISION=<full-40-character-deployed-git-sha>
 ```
 
 ## Phase 1 — prepare synthetic restore evidence
@@ -58,6 +59,7 @@ uv run --extra coworker python scripts/staging_backup_restore.py verify \
   --state /secure/path/backup-restore-state.json \
   --backup-reference postgres-snapshot-123/object-backup-456 \
   --restore-reference isolated-restore-run-789 \
+  --rollout /secure/release/cohort-rollout.json \
   --base-evidence /secure/path/staging-evidence.json \
   --output /secure/path/staging-evidence.restore.json
 ```
@@ -79,3 +81,6 @@ The gate becomes `passed` only if:
 The evidence file contains no JWTs, database URLs, storage endpoints, object keys, source bytes, or provider credentials.
 
 A successful drill promotes only `backup_restore`. Retention/deletion, orphan cleanup, v2→v1 rollback, and live provider checks remain separate production gates.
+
+
+A passing `backup_restore` record includes its verification timestamp, release ID, deployed source revision, and exact rollout-manifest SHA-256. PA-11 incident/restore compilation requires those values to match the reviewed release.

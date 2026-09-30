@@ -379,6 +379,7 @@ def test_scale_review_rejects_stale_incident_restore_exercise_even_if_recompiled
     value["generated_at"] = "2026-09-22T11:50:00+00:00"
     value["exercise_started_at"] = "2026-09-20T10:00:00+00:00"
     value["exercise_completed_at"] = "2026-09-20T10:30:00+00:00"
+    value["observed_restore_minutes"] = 30.0
     with pytest.raises(ScaleReviewError, match="exercise is stale"):
         validate_incident_restore(
             value,

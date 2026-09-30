@@ -25,10 +25,6 @@ def test_require_guard_is_fail_closed(monkeypatch):
     backup.require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
 
 
-def test_passed_evidence_shape():
-    assert backup.passed("restore drill") == {"status": "passed", "evidence": "restore drill"}
-
-
 def test_verify_rejects_same_environment_fingerprints(monkeypatch, tmp_path):
     state = {
         "owner_id": "owner",
@@ -56,6 +52,7 @@ def test_verify_rejects_same_environment_fingerprints(monkeypatch, tmp_path):
             state_path,
             "backup-run-1",
             "restore-run-1",
+            tmp_path / "rollout.json",
             tmp_path / "evidence.json",
             None,
         )
@@ -69,6 +66,7 @@ def test_verify_requires_non_empty_backup_and_restore_references(monkeypatch, tm
             tmp_path / "unused.json",
             "",
             "restore-run-1",
+            tmp_path / "rollout.json",
             tmp_path / "evidence.json",
             None,
         )

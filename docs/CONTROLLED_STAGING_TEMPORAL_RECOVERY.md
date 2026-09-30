@@ -24,6 +24,7 @@ Set this explicit operator guard only for the exercise:
 
 ```bash
 SHUDDHO_STAGING_ALLOW_RECOVERY_EXERCISE=true
+SHUDDHO_SOURCE_REVISION=<full-40-character-deployed-git-sha>
 ```
 
 ## Phase 1 — prepare
@@ -68,6 +69,7 @@ uv run --extra coworker python scripts/staging_temporal_recovery.py verify \
   --state /secure/path/temporal-recovery-state.json \
   --restart-at 2026-09-22T08:30:00+06:00 \
   --restart-reference render-deploy-12345 \
+  --rollout /secure/release/cohort-rollout.json \
   --base-evidence /secure/path/staging-evidence.json \
   --output /secure/path/staging-evidence.recovery.json
 ```
@@ -102,3 +104,6 @@ It does not prove backup/restore, deletion/retention, provider approval safety, 
 If prepare or verify fails, do not manually mark these gates as passed.
 
 Retain the run ID, workflow ID, platform restart reference, and sanitized deployment logs for diagnosis. Never add JWTs, database URLs, provider credentials, source text, model reasoning, or object keys to the evidence file.
+
+
+The `temporal`, `parallel_restart`, and `fan_in` records bind their verification timestamp, release ID, deployed source revision, and exact rollout-manifest SHA-256.

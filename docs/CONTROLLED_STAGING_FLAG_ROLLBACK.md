@@ -33,6 +33,7 @@ SHUDDHO_AGENT_RUNTIME_ENABLED=true
 SHUDDHO_AGENT_DEPENDENCY_GRAPH_ENABLED=true
 SHUDDHO_AGENT_PARALLEL_EXECUTION_ENABLED=true
 SHUDDHO_WORK_SERVICES_ENABLED=true
+SHUDDHO_SOURCE_REVISION=<full-40-character-deployed-git-sha>
 ```
 
 Then run:
@@ -70,6 +71,7 @@ Run:
 uv run --extra coworker python scripts/staging_flag_rollback.py verify \
   --state /secure/path/agent-rollback-state.json \
   --rollout-reference deploy-rollback-12345 \
+  --rollout /secure/release/cohort-rollout.json \
   --base-evidence /secure/path/staging-evidence.json \
   --output /secure/path/staging-evidence.rollback.json
 ```
@@ -90,3 +92,6 @@ Only then is `flag_rollback` promoted to `passed`.
 ## Roll-forward
 
 Re-enabling parallel execution is the inverse configuration change: set the parallel flag true only after the same current code is deployed everywhere and the normal staging gates remain green. Existing v1 histories remain supported because current workers register both workflow identities.
+
+
+The passing `flag_rollback` record binds its verification timestamp, release ID, deployed source revision, and exact rollout-manifest SHA-256.

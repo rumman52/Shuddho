@@ -10,6 +10,11 @@ from pathlib import Path
 from sqlalchemy import select, text
 
 from scripts.staging_api_exercise import env_secret, require_https_base
+from scripts.staging_release_evidence import (
+    StagingReleaseEvidenceError,
+    passed,
+    release_context,
+)
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.models import Account, Document, DocumentVersion, Task, TaskEvent, Workspace
@@ -20,10 +25,6 @@ import httpx
 
 class BackupRestoreFailure(RuntimeError):
     pass
-
-
-def passed(evidence: str) -> dict:
-    return {"status": "passed", "evidence": evidence}
 
 
 def require_guard(name: str) -> None:
@@ -135,6 +136,7 @@ def verify(
     state_path: Path,
     backup_reference: str,
     restore_reference: str,
+    rollout_path: Path,
     evidence_path: Path,
     base_evidence: Path | None,
 ) -> dict:
@@ -200,8 +202,10 @@ def verify(
             base.update(value)
         backup_ref = backup_reference.strip()[:200]
         restore_ref = restore_reference.strip()[:200]
+        context = release_context(settings, rollout_path)
         base["backup_restore"] = passed(
-            f"isolated PostgreSQL + private object restore matched synthetic manifest and SHA-256; backup_ref={backup_ref}; restore_ref={restore_ref}"
+            f"isolated PostgreSQL + private object restore matched synthetic manifest and SHA-256; backup_ref={backup_ref}; restore_ref={restore_ref}",
+            context,
         )
         evidence_path.write_text(json.dumps(base, indent=2) + "\n", encoding="utf-8")
         return {"checks": {"backup_restore": "passed"}}
@@ -220,6 +224,7 @@ def main() -> None:
     verify_parser.add_argument("--state", type=Path, required=True)
     verify_parser.add_argument("--backup-reference", required=True)
     verify_parser.add_argument("--restore-reference", required=True)
+    verify_parser.add_argument("--rollout", type=Path, required=True)
     verify_parser.add_argument("--base-evidence", type=Path)
     verify_parser.add_argument("--output", type=Path, required=True)
 
@@ -235,11 +240,18 @@ def main() -> None:
                 args.state,
                 args.backup_reference,
                 args.restore_reference,
+                args.rollout,
                 args.output,
                 args.base_evidence,
             )
             print(json.dumps({"written": str(args.output), **result}, indent=2))
-    except (BackupRestoreFailure, httpx.HTTPError, OSError, ValueError) as error:
+    except (
+        BackupRestoreFailure,
+        StagingReleaseEvidenceError,
+        httpx.HTTPError,
+        OSError,
+        ValueError,
+    ) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))
         raise SystemExit(1) from None
 

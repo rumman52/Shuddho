@@ -43,6 +43,7 @@ def decision():
         "proposed_max_users": 40,
         "failures": [],
         "generated_at": "2026-09-22T12:00:00+00:00",
+        "artifact_sha256": {"incident_restore": "f" * 64},
         "references": {"change_reference": "change-42"},
     }
 
@@ -1576,3 +1577,10 @@ def test_scale_rejects_decision_from_different_rollout(tmp_path):
             decision_value,
             rollout_path,
         )
+
+
+def test_scale_activation_rejects_pre_incident_restore_scale_decision():
+    value = decision()
+    value["artifact_sha256"].pop("incident_restore")
+    with pytest.raises(ScaleActivationError, match="incident/restore"):
+        validate_scale_decision(value)

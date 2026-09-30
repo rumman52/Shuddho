@@ -65,6 +65,14 @@ REFERENCE_KEYS = {
     "rollback",
     "reviewer",
 }
+STAGING_RECORD_KEYS = {
+    "status",
+    "evidence",
+    "verified_at",
+    "release_id",
+    "source_revision",
+    "rollout_manifest_sha256",
+}
 
 
 def load_json(path: Path, label: str) -> dict:
@@ -163,7 +171,15 @@ def nonnegative_number(value: object, label: str) -> float:
     return number
 
 
-def validate_staging_evidence(value: dict) -> dict[str, bool]:
+def validate_staging_evidence(
+    value: dict,
+    *,
+    release_id: str,
+    rollout_sha256: str,
+    source_revision: str,
+    exercise_started_at: datetime,
+    exercise_completed_at: datetime,
+) -> dict[str, bool]:
     checks: dict[str, bool] = {}
     for key in REQUIRED_STAGING_CHECKS:
         item = value.get(key)
@@ -171,7 +187,34 @@ def validate_staging_evidence(value: dict) -> dict[str, bool]:
             raise IncidentRestoreEvidenceError(
                 f"Staging evidence check {key!r} must be passed."
             )
+        if set(item) != STAGING_RECORD_KEYS:
+            raise IncidentRestoreEvidenceError(
+                f"Staging evidence check {key!r} has an unexpected release-evidence schema."
+            )
         text_ref(item.get("evidence"), f"staging.{key}.evidence")
+        if item.get("release_id") != release_id:
+            raise IncidentRestoreEvidenceError(
+                f"Staging evidence check {key!r} release_id does not match."
+            )
+        if item.get("rollout_manifest_sha256") != rollout_sha256:
+            raise IncidentRestoreEvidenceError(
+                f"Staging evidence check {key!r} does not bind the current rollout manifest."
+            )
+        if require_revision(
+            item.get("source_revision"),
+            f"staging.{key}.source_revision",
+        ) != source_revision:
+            raise IncidentRestoreEvidenceError(
+                f"Staging evidence check {key!r} source revision does not match the incident/restore review."
+            )
+        verified_at = parse_time(
+            item.get("verified_at"),
+            f"staging.{key}.verified_at",
+        )
+        if not exercise_started_at <= verified_at <= exercise_completed_at:
+            raise IncidentRestoreEvidenceError(
+                f"Staging evidence check {key!r} was not verified inside the claimed recovery exercise window."
+            )
         checks[key] = True
     return checks
 
@@ -201,7 +244,10 @@ def validate_review(
         "review.exercise_completed_at",
     )
     reject_future(started, "review.exercise_started_at", now=now)
-    reject_future(completed, "review.exercise_completed_at", now=now)
+    if completed > now:
+        raise IncidentRestoreEvidenceError(
+            "review.exercise_completed_at cannot be later than the compilation timestamp."
+        )
     if completed < started:
         raise IncidentRestoreEvidenceError(
             "Incident/restore exercise must complete after it starts."
@@ -260,7 +306,6 @@ def compile_incident_restore_evidence(
     rollout = load_json(rollout_path, "rollout manifest")
     release_id = text_ref(rollout.get("release_id"), "rollout.release_id")
     staging = load_json(staging_evidence_path, "staging evidence")
-    checks = validate_staging_evidence(staging)
     review = load_json(review_path, "incident/restore review")
     (
         source_revision,
@@ -270,6 +315,15 @@ def compile_incident_restore_evidence(
         max_data_loss,
         observed_data_loss,
     ) = validate_review(review, release_id=release_id, now=now)
+    rollout_sha256 = sha256_file(rollout_path)
+    checks = validate_staging_evidence(
+        staging,
+        release_id=release_id,
+        rollout_sha256=rollout_sha256,
+        source_revision=source_revision,
+        exercise_started_at=started,
+        exercise_completed_at=completed,
+    )
     observed_restore = (completed - started).total_seconds() / 60
 
     return {
@@ -280,7 +334,7 @@ def compile_incident_restore_evidence(
         "exercise_started_at": started.isoformat(),
         "exercise_completed_at": completed.isoformat(),
         "source_revision": source_revision,
-        "rollout_manifest_sha256": sha256_file(rollout_path),
+        "rollout_manifest_sha256": rollout_sha256,
         "staging_evidence_sha256": sha256_file(staging_evidence_path),
         "review_sha256": sha256_file(review_path),
         "checks": checks,
@@ -362,7 +416,24 @@ def validate_incident_restore_evidence(
         value["observed_restore_minutes"],
         "incident_restore.observed_restore_minutes",
     )
-    if observed_restore > rto_target:
+    started = parse_time(
+        value["exercise_started_at"],
+        "incident_restore.exercise_started_at",
+    )
+    completed = parse_time(
+        value["exercise_completed_at"],
+        "incident_restore.exercise_completed_at",
+    )
+    recomputed_restore = (completed - started).total_seconds() / 60
+    if recomputed_restore < 0:
+        raise IncidentRestoreEvidenceError(
+            "Incident/restore evidence timestamp ordering is invalid."
+        )
+    if abs(observed_restore - round(recomputed_restore, 3)) > 0.001:
+        raise IncidentRestoreEvidenceError(
+            "Incident/restore observed restore duration does not match its timestamps."
+        )
+    if recomputed_restore > rto_target:
         raise IncidentRestoreEvidenceError(
             "Incident/restore evidence exceeds the reviewed RTO target."
         )
@@ -389,14 +460,6 @@ def validate_incident_restore_evidence(
             "Incident/restore evidence did not pass cleanly."
         )
     generated = parse_time(value["generated_at"], "incident_restore.generated_at")
-    started = parse_time(
-        value["exercise_started_at"],
-        "incident_restore.exercise_started_at",
-    )
-    completed = parse_time(
-        value["exercise_completed_at"],
-        "incident_restore.exercise_completed_at",
-    )
     now = datetime.now(timezone.utc)
     reject_future(generated, "incident_restore.generated_at", now=now)
     reject_future(started, "incident_restore.exercise_started_at", now=now)

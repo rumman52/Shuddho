@@ -5,12 +5,18 @@ import asyncio
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 from temporalio.client import Client
 
 from scripts.staging_api_exercise import env_secret, require_https_base
+from scripts.staging_release_evidence import (
+    StagingReleaseEvidenceError,
+    passed,
+    release_context,
+)
 from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.config import Settings
 from services.coworker.container import Container
@@ -19,10 +25,6 @@ from services.coworker.worker import Dispatcher
 
 class RollbackFailure(RuntimeError):
     pass
-
-
-def passed(evidence: str) -> dict:
-    return {"status": "passed", "evidence": evidence}
 
 
 def require_guard() -> None:
@@ -168,6 +170,7 @@ async def verify(
     settings: Settings,
     state_path: Path,
     rollout_reference: str,
+    rollout_path: Path,
     evidence_path: Path,
     base_evidence: Path | None,
 ) -> dict:
@@ -212,8 +215,11 @@ async def verify(
                 raise RollbackFailure("Base staging evidence must be a JSON object.")
             base.update(value)
         ref = rollout_reference.strip()[:240]
+        context = release_context(settings, rollout_path)
         base["flag_rollback"] = passed(
-            f"existing v2 workflow remained valid and a newly dispatched Agent run used shuddho_agent_run_v1 after parallel flag disable; rollout_ref={ref}"
+            f"existing v2 workflow remained valid and a newly dispatched Agent run used shuddho_agent_run_v1 after parallel flag disable; rollout_ref={ref}",
+            context,
+            now=datetime.now(timezone.utc),
         )
         evidence_path.write_text(json.dumps(base, indent=2) + "\n", encoding="utf-8")
         return {
@@ -237,6 +243,7 @@ def main() -> None:
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--state", type=Path, required=True)
     verify_parser.add_argument("--rollout-reference", required=True)
+    verify_parser.add_argument("--rollout", type=Path, required=True)
     verify_parser.add_argument("--base-evidence", type=Path)
     verify_parser.add_argument("--output", type=Path, required=True)
 
@@ -251,11 +258,18 @@ def main() -> None:
                 settings,
                 args.state,
                 args.rollout_reference,
+                args.rollout,
                 args.output,
                 args.base_evidence,
             ))
             print(json.dumps({"written": str(args.output), **result}, indent=2))
-    except (RollbackFailure, httpx.HTTPError, OSError, ValueError) as error:
+    except (
+        RollbackFailure,
+        StagingReleaseEvidenceError,
+        httpx.HTTPError,
+        OSError,
+        ValueError,
+    ) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))
         raise SystemExit(1) from None
 
