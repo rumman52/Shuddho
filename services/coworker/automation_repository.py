@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import NAMESPACE_URL, uuid4, uuid5
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import and_, func, or_, select
 
@@ -12,7 +14,7 @@ from .automation_schemas import AutomationCreate, AutomationPatch
 from .errors import CoworkerError
 from .models import (
     Account, AgentRun, AuditEvent, Automation, AutomationOccurrence, AutomationRevision,
-    AutomationScheduleOutbox, ConnectorEvent, ConnectorReadGrant, ConnectorSubscription, PersonalGoal, Workspace, utcnow,
+    AutomationScheduleOutbox, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, PersonalGoal, Workspace, utcnow,
 )
 from .repository import aware, iso, not_found
 
@@ -89,10 +91,10 @@ class AutomationRepository:
         connector_read_grant_ids: list[str],
     ) -> None:
         if run_profile != "briefing":
-            if connector_read_grant_ids:
+            if run_profile == "goal" and connector_read_grant_ids:
                 raise CoworkerError(
                     "automation_context_scope",
-                    "Connected read sources on scheduled automations are available only to the bounded briefing profile.",
+                    "Connected read sources on scheduled automations are available only to bounded proactive profiles.",
                     409,
                 )
             return
@@ -147,6 +149,111 @@ class AutomationRepository:
                 raise CoworkerError(
                     "briefing_source_subscription_unavailable",
                     "Activate event synchronization for each connected briefing source first.",
+                    409,
+                )
+
+    def _validate_meeting_profile(
+        self,
+        db,
+        owner: str,
+        schedule: dict,
+        run_profile: str,
+        connector_read_grant_ids: list[str],
+    ) -> None:
+        if run_profile != "meeting":
+            if schedule.get("kind") == "meeting":
+                raise CoworkerError(
+                    "meeting_profile_required",
+                    "Upcoming-meeting triggers require the bounded Meeting Coworker profile.",
+                    409,
+                )
+            return
+        if schedule.get("kind") != "meeting":
+            raise CoworkerError(
+                "meeting_trigger_scope",
+                "Meeting Coworker requires an upcoming-meeting calendar trigger.",
+                409,
+            )
+        if (
+            not self.settings.connector_reads_enabled
+            or not self.settings.agent_runtime_v3_enabled
+            or not self.settings.intelligent_planner_enabled
+            or not self.settings.work_services_enabled
+            or not self.settings.context_retrieval_enabled
+        ):
+            raise CoworkerError(
+                "meeting_coworker_unavailable",
+                "Meeting Coworker requires connected reads, Agent Runtime v3, bounded context retrieval, the planner, and work services.",
+                409,
+            )
+        if len(connector_read_grant_ids) > 3:
+            raise CoworkerError(
+                "meeting_source_limit",
+                "Meeting Coworker can use at most three optional email read authorizations.",
+                422,
+            )
+        calendar_grant_id = str(schedule.get("grant_id") or "")
+        calendar_grant = db.scalar(select(ConnectorReadGrant).where(
+            ConnectorReadGrant.id == calendar_grant_id,
+            ConnectorReadGrant.owner_id == owner,
+        ))
+        if (
+            calendar_grant is None
+            or calendar_grant.capability != "calendar_read"
+            or calendar_grant.state != "active"
+            or aware(calendar_grant.expires_at) <= utcnow()
+            or calendar_grant.destination != "planner_context"
+            or calendar_grant.purpose != "agent_context"
+        ):
+            raise CoworkerError(
+                "meeting_calendar_unavailable",
+                "The selected calendar read authorization is not active for Meeting Coworker.",
+                409,
+            )
+        subscription = db.scalar(select(ConnectorSubscription.id).where(
+            ConnectorSubscription.owner_id == owner,
+            ConnectorSubscription.grant_id == calendar_grant_id,
+            ConnectorSubscription.state.in_(["pending", "active", "renewing"]),
+        ).limit(1))
+        if subscription is None:
+            raise CoworkerError(
+                "meeting_calendar_subscription_unavailable",
+                "Activate calendar synchronization before enabling Meeting Coworker.",
+                409,
+            )
+        for grant_id in connector_read_grant_ids:
+            if grant_id == calendar_grant_id:
+                raise CoworkerError(
+                    "meeting_source_scope",
+                    "The meeting calendar is already bound by the trigger and cannot be added as an email source.",
+                    409,
+                )
+            grant = db.scalar(select(ConnectorReadGrant).where(
+                ConnectorReadGrant.id == grant_id,
+                ConnectorReadGrant.owner_id == owner,
+            ))
+            if (
+                grant is None
+                or grant.capability != "email_read"
+                or grant.state != "active"
+                or aware(grant.expires_at) <= utcnow()
+                or grant.destination != "planner_context"
+                or grant.purpose != "agent_context"
+            ):
+                raise CoworkerError(
+                    "meeting_source_unavailable",
+                    "A selected Meeting Coworker email source is no longer active.",
+                    409,
+                )
+            subscription = db.scalar(select(ConnectorSubscription.id).where(
+                ConnectorSubscription.owner_id == owner,
+                ConnectorSubscription.grant_id == grant_id,
+                ConnectorSubscription.state.in_(["pending", "active", "renewing"]),
+            ).limit(1))
+            if subscription is None:
+                raise CoworkerError(
+                    "meeting_source_subscription_unavailable",
+                    "Activate event synchronization for each Meeting Coworker email source first.",
                     409,
                 )
 
@@ -246,6 +353,9 @@ class AutomationRepository:
             self._validate_briefing_profile(
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids
             )
+            self._validate_meeting_profile(
+                db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids
+            )
             now = utcnow()
             row = Automation(
                 id=str(uuid4()), owner_id=owner, workspace_id=goal.workspace_id,
@@ -308,6 +418,9 @@ class AutomationRepository:
                 row.quiet_hours = request.quiet_hours.model_dump(mode="json") if request.quiet_hours else None
             self._validate_event_trigger(db, owner, dict(row.schedule))
             self._validate_briefing_profile(
+                db, owner, dict(row.schedule), row.run_profile, list(row.connector_read_grant_ids or [])
+            )
+            self._validate_meeting_profile(
                 db, owner, dict(row.schedule), row.run_profile, list(row.connector_read_grant_ids or [])
             )
             if row.expires_at is not None and aware(row.expires_at) <= utcnow():
