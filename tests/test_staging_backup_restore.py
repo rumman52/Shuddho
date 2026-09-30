@@ -26,7 +26,14 @@ def test_require_guard_is_fail_closed(monkeypatch):
 
 
 def test_verify_rejects_same_environment_fingerprints(monkeypatch, tmp_path):
+    settings = SimpleNamespace(source_revision="a" * 40)
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(
+        __import__("json").dumps({"release_id": "backup-restore-test-release"}),
+        encoding="utf-8",
+    )
     state = {
+        "release_context": backup.prepared_release_context(settings, rollout_path),
         "owner_id": "owner",
         "document_id": "doc",
         "version_id": "ver",
@@ -48,11 +55,11 @@ def test_verify_rejects_same_environment_fingerprints(monkeypatch, tmp_path):
 
     with pytest.raises(backup.BackupRestoreFailure, match="isolated restored PostgreSQL"):
         backup.verify(
-            SimpleNamespace(),
+            settings,
             state_path,
             "backup-run-1",
             "restore-run-1",
-            tmp_path / "rollout.json",
+            rollout_path,
             tmp_path / "evidence.json",
             None,
         )
