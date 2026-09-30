@@ -47,7 +47,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
 
 
 class ReadGoogle:
@@ -189,11 +189,12 @@ def enable_reads(container):
     container.automations.settings = settings
     container.automations.agent = container.agent
 
-    def consume_event(event):
-        container.suggestions.handle_connector_event(event)
-        container.automations.handle_connector_event(event)
-
-    container.connector_reads.set_event_consumer(consume_event)
+    container.connector_reads.set_automation_consumer(
+        container.automations.handle_connector_event
+    )
+    container.connector_reads.set_event_consumer(
+        container.suggestions.handle_connector_event
+    )
     container.memory.settings = settings
     container.context = ContextService(
         container.repository.sessions,
@@ -895,8 +896,9 @@ def test_connected_event_automation_rechecks_revocation_and_goal_revision(contai
     assert revoked["state"] == "skipped"
     assert revoked["reason"] == "grant_revoked"
 
-    # A fresh source cannot reuse an automation after its bound goal revision changes.
-    connection2 = connect_read(container, owner)
+    # Goal revisions are also revalidated before any work begins.
+    # Use a fresh active grant/automation first, then revise only the goal.
+    connection2 = connect_read(container, owner, "calendar_read")
     grant2 = create_grant(container, owner, connection2)
     asyncio.run(container.connector_reads.sync(owner, grant2["id"], force_full=True))
     automation2, _ = container.automations.create(
@@ -913,9 +915,8 @@ def test_connected_event_automation_rechecks_revocation_and_goal_revision(contai
         "event-automation-goal-change-" + str(uuid4()),
     )
     with container.repository.sessions.begin() as db:
-        goal_row = db.get(__import__("services.coworker.models", fromlist=["PersonalGoal"]).PersonalGoal, goal["id"])
+        goal_row = db.get(PersonalGoal, goal["id"])
         goal_row.revision += 1
-    with container.repository.sessions.begin() as db:
         event_row = db.get(ConnectorEvent, event["id"])
         event_row.grant_id = grant2["id"]
     changed = container.automations.accept_event_occurrence(
