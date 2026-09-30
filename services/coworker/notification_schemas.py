@@ -14,6 +14,18 @@ class NotificationModel(BaseModel):
 class NotificationPreferences(NotificationModel):
     in_app_enabled: bool = True
     automation_updates_enabled: bool = True
+    browser_push_enabled: bool = False
+
+
+class BrowserPushSubscriptionUpsert(NotificationModel):
+    endpoint: str = Field(min_length=16, max_length=2048)
+    p256dh: str = Field(min_length=80, max_length=120)
+    auth: str = Field(min_length=20, max_length=40)
+    expiration_time: int | None = Field(default=None, ge=1, le=4102444800000)
+
+
+class BrowserPushSubscriptionDeactivate(NotificationModel):
+    endpoint: str = Field(min_length=16, max_length=2048)
 
 
 class NotificationDigestRead(NotificationModel):

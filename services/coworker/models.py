@@ -753,6 +753,41 @@ class NotificationOutbox(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class BrowserPushSubscription(Base):
+    __tablename__ = "cw_browser_push_subscriptions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    endpoint_hash: Mapped[str] = mapped_column(String(64))
+    subscription_ciphertext: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "endpoint_hash", name="uq_cw_browser_push_owner_endpoint"),
+        Index("ix_cw_browser_push_owner_active", "owner_id", "active"),
+    )
+
+
+class BrowserPushDelivery(Base):
+    __tablename__ = "cw_browser_push_deliveries"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    notification_id: Mapped[str] = mapped_column(ForeignKey("cw_notifications.id"), index=True)
+    subscription_id: Mapped[str] = mapped_column(ForeignKey("cw_browser_push_subscriptions.id"), index=True)
+    state: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    provider_status: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(60))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("notification_id", "subscription_id", name="uq_cw_browser_push_notice_subscription"),
+        Index("ix_cw_browser_push_delivery_owner_state", "owner_id", "state"),
+    )
+
+
 class BrowserSession(Base):
     __tablename__ = "cw_browser_sessions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

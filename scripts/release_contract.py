@@ -306,6 +306,18 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="browser_push",
+        rollback_key="browser_push_kill_switch",
+        kill_switch="SHUDDHO_BROWSER_PUSH_ENABLED=false",
+        dependencies=("automations",),
+        staging_gates=(
+            StagingGate(
+                "browser_push",
+                "PA-10 Browser Push passed explicit per-account opt-in and browser permission, owner-scoped encrypted subscription storage, allowed push-service egress only, generic-content delivery, durable per-subscription dedupe/receipts, quiet-hour inheritance from the in-app notice, opt-out and source-revocation races, 404/410 endpoint retirement, bounded 429/503 retry, restart recovery, and rollback without creating runs/actions.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="personal_goals",
         rollback_key="personal_goals_kill_switch",
         kill_switch="SHUDDHO_PERSONAL_GOALS_ENABLED=false",
@@ -363,6 +375,14 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="suggestion_model_relevance_verified",
         ledger_artifact_key="suggestion_model_relevance_activation",
         capability="suggestion_model_relevance",
+    ),
+    ActivationRequirement(
+        key="browser_push",
+        status="browser_push_verified",
+        ledger_schema_version=29,
+        ledger_event_type="browser_push_verified",
+        ledger_artifact_key="browser_push_activation",
+        capability="browser_push",
     ),
     ActivationRequirement(
         key="personal_transactions",

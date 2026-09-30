@@ -9,7 +9,8 @@ import httpx
 import pytest
 
 jwt = pytest.importorskip("jwt")
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -23,7 +24,8 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, BrowserPushDelivery, BrowserPushSubscription, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.web_push import WebPushSender, WebPushSubscriptionVault, b64url_encode
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -385,6 +387,7 @@ def test_notification_service_is_first_class_and_automation_keeps_compatibility(
     assert direct == compat == {
         "in_app_enabled": True,
         "automation_updates_enabled": True,
+        "browser_push_enabled": False,
     }
 
 
@@ -398,10 +401,12 @@ def test_notification_preferences_are_owner_scoped_and_preserve_writing_preferen
     assert client.get("/api/v1/notification-preferences", headers=alice).json() == {
         "in_app_enabled": True,
         "automation_updates_enabled": True,
+        "browser_push_enabled": False,
     }
     assert client.get("/api/v1/notification-preferences", headers=bob).json() == {
         "in_app_enabled": True,
         "automation_updates_enabled": True,
+        "browser_push_enabled": False,
     }
 
     writing = client.put(
@@ -417,6 +422,7 @@ def test_notification_preferences_are_owner_scoped_and_preserve_writing_preferen
         json={
             "in_app_enabled": False,
             "automation_updates_enabled": False,
+        "browser_push_enabled": False,
         },
     )
     assert saved.status_code == 200
@@ -429,6 +435,7 @@ def test_notification_preferences_are_owner_scoped_and_preserve_writing_preferen
         assert owner.preferences["notifications"] == {
             "in_app_enabled": False,
             "automation_updates_enabled": False,
+        "browser_push_enabled": False,
         }
 
     rewritten = client.put(
@@ -440,10 +447,12 @@ def test_notification_preferences_are_owner_scoped_and_preserve_writing_preferen
     assert client.get("/api/v1/notification-preferences", headers=alice).json() == {
         "in_app_enabled": False,
         "automation_updates_enabled": False,
+        "browser_push_enabled": False,
     }
     assert client.get("/api/v1/notification-preferences", headers=bob).json() == {
         "in_app_enabled": True,
         "automation_updates_enabled": True,
+        "browser_push_enabled": False,
     }
 
 
@@ -467,6 +476,7 @@ def test_notification_opt_out_suppresses_before_claim(
         json={
             "in_app_enabled": False,
             "automation_updates_enabled": True,
+        "browser_push_enabled": False,
         },
     )
     assert saved.status_code == 200
@@ -508,6 +518,7 @@ def test_notification_revocation_after_claim_is_rechecked_at_delivery(
         json={
             "in_app_enabled": True,
             "automation_updates_enabled": False,
+        "browser_push_enabled": False,
         },
     )
     assert saved.status_code == 200
@@ -530,10 +541,145 @@ def test_notification_preferences_reject_unreviewed_fields(automation_client):
         json={
             "in_app_enabled": True,
             "automation_updates_enabled": True,
+        "browser_push_enabled": False,
             "email_enabled": True,
         },
     )
     assert response.status_code == 422
+
+
+def test_browser_push_is_explicit_durable_generic_and_rechecks_consent(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    settings = replace(
+        automation_container.settings,
+        browser_push_enabled=True,
+        web_push_vapid_private_key=b64url_encode((1).to_bytes(32, "big")),
+        web_push_vapid_subject="mailto:ops@example.test",
+        web_push_encryption_key=b64url_encode(b"3" * 32),
+    )
+    sent = []
+
+    class Response:
+        status_code = 201
+
+    def requester(url, **kwargs):
+        sent.append((url, kwargs))
+        return Response()
+
+    automation_container.settings = settings
+    automation_container.notifications.settings = settings
+    automation_container.notifications.web_push_sender = WebPushSender(
+        settings, requester=requester
+    )
+    automation_container.notifications.web_push_vault = WebPushSubscriptionVault(settings)
+
+    config = client.get("/api/v1/browser-push/config", headers=auth)
+    assert config.status_code == 200
+    assert config.json()["enabled"] is True
+    assert config.json()["application_server_key"]
+
+    ua_private = ec.generate_private_key(ec.SECP256R1())
+    ua_public = ua_private.public_key().public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+    endpoint = "https://fcm.googleapis.com/fcm/send/test-subscription"
+    subscription = client.put(
+        "/api/v1/browser-push/subscriptions",
+        headers=auth,
+        json={
+            "endpoint": endpoint,
+            "p256dh": b64url_encode(ua_public),
+            "auth": b64url_encode(b"a" * 16),
+            "expiration_time": None,
+        },
+    )
+    assert subscription.status_code == 200
+    assert subscription.json()["active"] is True
+
+    preferences = client.put(
+        "/api/v1/notification-preferences",
+        headers=auth,
+        json={
+            "in_app_enabled": True,
+            "automation_updates_enabled": True,
+            "browser_push_enabled": True,
+        },
+    )
+    assert preferences.status_code == 200
+
+    _, automation = create_goal_and_automation(client, auth)
+    automation_container.automations.accept_occurrence(
+        automation["id"], 1, utcnow().replace(microsecond=0)
+    )
+    notice_id = automation_container.notifications.claim_notifications()[0]
+    automation_container.notifications.deliver_notification(notice_id)
+    assert client.post(f"/api/v1/notifications/{notice_id}/read", headers=auth).status_code == 200
+
+    with automation_container.repository.sessions() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        assert owner is not None
+        before_runs = len(db.scalars(select(AgentRun).where(AgentRun.owner_id == owner.id)).all())
+
+    claimed = automation_container.notifications.claim_browser_push_deliveries()
+    assert len(claimed) == 1
+    automation_container.notifications.deliver_browser_push(claimed[0])
+    assert len(sent) == 1
+    assert sent[0][0] == endpoint
+    assert b"You have a new Shuddho update." not in sent[0][1]["content"]
+    assert sent[0][1]["headers"]["Content-Encoding"] == "aes128gcm"
+
+    with automation_container.repository.sessions() as db:
+        delivery = db.get(BrowserPushDelivery, claimed[0])
+        assert delivery is not None
+        assert delivery.state == "provider_accepted"
+        assert delivery.provider_status == 201
+        subscription_row = db.scalar(select(BrowserPushSubscription).where(
+            BrowserPushSubscription.owner_id == delivery.owner_id
+        ))
+        assert subscription_row is not None and subscription_row.active is True
+        assert len(db.scalars(select(AgentRun).where(AgentRun.owner_id == delivery.owner_id)).all()) == before_runs
+
+    with automation_container.repository.sessions() as db:
+        delivered = db.get(Notification, notice_id)
+        assert delivered is not None
+        workspace_id = delivered.workspace_id
+        owner_id = delivered.owner_id
+    with automation_container.repository.sessions.begin() as db:
+        second_id = automation_container.notifications.enqueue_pending(
+            db,
+            owner=owner_id,
+            workspace_id=workspace_id,
+            kind="automation_update",
+            title="Private schedule detail",
+            message="This content must stay inside Shuddho.",
+            visible_at=utcnow(),
+            expires_at=utcnow() + timedelta(hours=1),
+        )
+    assert second_id in automation_container.notifications.claim_notifications()
+    automation_container.notifications.deliver_notification(second_id)
+    push_id = automation_container.notifications.claim_browser_push_deliveries()[0]
+    opted_out = client.put(
+        "/api/v1/notification-preferences",
+        headers=auth,
+        json={
+            "in_app_enabled": True,
+            "automation_updates_enabled": True,
+            "browser_push_enabled": False,
+        },
+    )
+    assert opted_out.status_code == 200
+    automation_container.notifications.deliver_browser_push(push_id)
+    with automation_container.repository.sessions() as db:
+        delivery = db.get(BrowserPushDelivery, push_id)
+        assert delivery is not None
+        assert delivery.state == "suppressed"
+        assert delivery.error_code == "browser_push_opted_out"
+    assert len(sent) == 1
 
 
 def test_buffer_one_keeps_only_one_waiting_occurrence(automation_client, automation_container):

@@ -148,6 +148,17 @@ export type AgentNotification = {
 export type NotificationPreferences = {
   in_app_enabled: boolean;
   automation_updates_enabled: boolean;
+  browser_push_enabled: boolean;
+};
+export type BrowserPushConfig = {
+  enabled: boolean;
+  application_server_key: string;
+};
+export type BrowserPushSubscriptionInput = {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  expiration_time: number | null;
 };
 export type NotificationDigest = {
   id: string; kind: string; title: string; count: number; unread_count: number;
@@ -530,6 +541,17 @@ export class CoworkerClient {
   saveNotificationPreferences(value: NotificationPreferences) {
     return this.json<NotificationPreferences>("/api/v1/notification-preferences", {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value),
+    });
+  }
+  browserPushConfig(signal?: AbortSignal) { return this.json<BrowserPushConfig>("/api/v1/browser-push/config", { signal }); }
+  saveBrowserPushSubscription(value: BrowserPushSubscriptionInput) {
+    return this.json<{ id: string; active: boolean; expires_at: string | null }>("/api/v1/browser-push/subscriptions", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value),
+    });
+  }
+  deactivateBrowserPushSubscription(endpoint: string) {
+    return this.json<{ id: string; active: false }>("/api/v1/browser-push/subscriptions/deactivate", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint }),
     });
   }
   notifications(signal?: AbortSignal) { return this.json<{ enabled: boolean; notifications: AgentNotification[] }>("/api/v1/notifications", { signal }); }

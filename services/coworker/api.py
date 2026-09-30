@@ -35,7 +35,12 @@ from .negotiation_schemas import (
     NegotiationProposalReview,
 )
 from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
-from .notification_schemas import NotificationDigestRead, NotificationPreferences
+from .notification_schemas import (
+    BrowserPushSubscriptionDeactivate,
+    BrowserPushSubscriptionUpsert,
+    NotificationDigestRead,
+    NotificationPreferences,
+)
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .recipient_schemas import RecipientUpsert
 from .connector_read_schemas import ConnectorReadGrantCreate, ConnectorReadSyncRequest
@@ -488,6 +493,33 @@ def put_notification_preferences(
     return value
 
 
+@router.get("/browser-push/config")
+def browser_push_config(identity: Identity, services: Services):
+    return services.notifications.browser_push_config()
+
+
+@router.put("/browser-push/subscriptions")
+def put_browser_push_subscription(
+    payload: BrowserPushSubscriptionUpsert,
+    identity: Identity,
+    services: Services,
+):
+    return services.notifications.register_browser_push_subscription(
+        identity.account_id, payload
+    )
+
+
+@router.post("/browser-push/subscriptions/deactivate")
+def deactivate_browser_push_subscription(
+    payload: BrowserPushSubscriptionDeactivate,
+    identity: Identity,
+    services: Services,
+):
+    return services.notifications.deactivate_browser_push_subscription(
+        identity.account_id, payload
+    )
+
+
 @router.get("/notifications")
 def list_notifications(identity: Identity, services: Services):
     if not services.settings.automations_enabled:
@@ -606,6 +638,7 @@ def runtime_manifest(
         "action_proposals": settings.agent_action_proposals_enabled,
         "negotiation_proposal_promotion": settings.negotiation_proposal_promotion_enabled,
         "agent_linkedin_proposals": settings.agent_linkedin_proposals_enabled,
+        "browser_push": settings.browser_push_enabled,
     }
     providers = []
     if settings.actions_enabled:

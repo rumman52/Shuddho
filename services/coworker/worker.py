@@ -320,6 +320,11 @@ class Dispatcher:
         notifications = self.container.notifications
         for notification_id in await asyncio.to_thread(notifications.claim_notifications):
             await asyncio.to_thread(notifications.deliver_notification, notification_id)
+        if self.container.settings.browser_push_enabled:
+            for delivery_id in await asyncio.to_thread(
+                notifications.claim_browser_push_deliveries
+            ):
+                await asyncio.to_thread(notifications.deliver_browser_push, delivery_id)
         for action_id in await asyncio.to_thread(actions.claim_outbox):
             try:
                 await self.client.start_workflow(

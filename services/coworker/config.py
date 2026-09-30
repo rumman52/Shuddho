@@ -53,6 +53,10 @@ class Settings:
     context_retrieval_enabled: bool = False
     intelligent_planner_enabled: bool = False
     suggestion_model_relevance_enabled: bool = False
+    browser_push_enabled: bool = False
+    web_push_vapid_private_key: str = field(default="", repr=False)
+    web_push_vapid_subject: str = ""
+    web_push_encryption_key: str = field(default="", repr=False)
     agent_handoffs_enabled: bool = False
     agent_multi_handoffs_enabled: bool = False
     agent_dependency_graph_enabled: bool = False
@@ -203,6 +207,10 @@ class Settings:
             context_retrieval_enabled=os.getenv("SHUDDHO_CONTEXT_RETRIEVAL_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
             suggestion_model_relevance_enabled=os.getenv("SHUDDHO_SUGGESTION_MODEL_RELEVANCE_ENABLED", "false").lower() == "true",
+            browser_push_enabled=os.getenv("SHUDDHO_BROWSER_PUSH_ENABLED", "false").lower() == "true",
+            web_push_vapid_private_key=os.getenv("SHUDDHO_WEB_PUSH_VAPID_PRIVATE_KEY", ""),
+            web_push_vapid_subject=os.getenv("SHUDDHO_WEB_PUSH_VAPID_SUBJECT", ""),
+            web_push_encryption_key=os.getenv("SHUDDHO_WEB_PUSH_ENCRYPTION_KEY", ""),
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_multi_handoffs_enabled=os.getenv("SHUDDHO_AGENT_MULTI_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_dependency_graph_enabled=os.getenv("SHUDDHO_AGENT_DEPENDENCY_GRAPH_ENABLED", "false").lower() == "true",
@@ -452,6 +460,15 @@ class Settings:
                 raise ValueError("Automations require SHUDDHO_PERSONAL_GOALS_ENABLED=true and SHUDDHO_AGENT_RUNTIME_ENABLED=true")
             if self.max_automations < 1 or self.max_automations > 1000:
                 raise ValueError("SHUDDHO_AUTOMATIONS_MAX must be between 1 and 1000")
+        if self.browser_push_enabled:
+            if not self.automations_enabled:
+                raise ValueError("Browser Push requires SHUDDHO_AUTOMATIONS_ENABLED=true")
+            from .web_push import validate_web_push_configuration
+            validate_web_push_configuration(
+                self.web_push_vapid_private_key,
+                self.web_push_encryption_key,
+                self.web_push_vapid_subject,
+            )
         if self.action_attachments_enabled and not self.actions_enabled:
             raise ValueError("Action attachments require SHUDDHO_ACTIONS_ENABLED=true")
         if self.action_reminders_enabled and not self.actions_enabled:

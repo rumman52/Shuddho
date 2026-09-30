@@ -154,5 +154,9 @@
   "suggestion_model_relevance": {
     "status": "pending",
     "evidence": ""
+  },
+  "browser_push": {
+    "status": "pending",
+    "evidence": ""
   }
 }
