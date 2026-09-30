@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import time
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -143,6 +145,7 @@ def test_personal_suggestions_default_off_stable_owner_scoped_and_inert(
         "event_delivery_available": False,
         "event_delivery_enabled": False,
         "event_timezone": "UTC",
+        "model_relevance_available": False,
         "dismissed_count": 0,
     }
     assert client.get(
@@ -425,3 +428,180 @@ def test_goal_draft_activation_and_patch_null_contract(goal_client):
     assert cleared.status_code == 200
     assert cleared.json()["revision"] == 3
 
+
+
+def test_model_assisted_relevance_is_explicit_exact_set_and_inert(
+    goal_client,
+    goal_container,
+):
+    client, headers = goal_client
+    auth = headers()
+    enabled_settings = replace(
+        goal_container.settings,
+        intelligent_planner_enabled=True,
+        suggestion_model_relevance_enabled=True,
+        deepseek_api_key="test-deepseek-key",
+    )
+    enabled_settings.validate()
+    goal_container.settings = enabled_settings
+    goal_container.repository.settings = enabled_settings
+    goal_container.suggestions.settings = enabled_settings
+    goal_container.suggestion_relevance.settings = enabled_settings
+    goal_container.suggestion_relevance.model.settings = enabled_settings
+
+    first_body = payload()
+    first_body["next_review_at"] = (utcnow() + timedelta(hours=12)).isoformat()
+    first = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "relevance-goal-one"},
+        json=first_body,
+    )
+    assert first.status_code == 201
+
+    second_body = payload()
+    second_body["objective"] = "Prepare a concise project review before tomorrow."
+    second_body["deadline_at"] = (utcnow() + timedelta(hours=18)).isoformat()
+    second = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "relevance-goal-two"},
+        json=second_body,
+    )
+    assert second.status_code == 201
+
+    enabled = client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=auth,
+        json={"enabled": True},
+    )
+    assert enabled.status_code == 200
+    assert enabled.json()["model_relevance_available"] is True
+
+    deterministic = client.get(
+        "/api/v1/personal-suggestions",
+        headers=auth,
+    ).json()["suggestions"]
+    assert len(deterministic) == 2
+    deterministic_ids = [item["id"] for item in deterministic]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload_value = json.loads(request.content.decode("utf-8"))
+        user_payload = json.loads(payload_value["messages"][1]["content"])
+        candidate_ids = [item["id"] for item in user_payload["candidates"]]
+        assert candidate_ids == deterministic_ids
+        assert all(set(item) == {
+            "id", "kind", "deterministic_score", "due_at", "action",
+            "context_resource_count", "goal_revision", "goal_objective", "reason",
+        } for item in user_payload["candidates"])
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"total_tokens": 123},
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": json.dumps({"ranked_ids": list(reversed(candidate_ids))}),
+                    },
+                }],
+            },
+        )
+
+    goal_container.suggestion_relevance.model.transport = httpx.MockTransport(handler)
+    ranked = client.post("/api/v1/personal-suggestions/rank", headers=auth)
+    assert ranked.status_code == 200
+    value = ranked.json()
+    assert value["mode"] == "model"
+    assert [item["id"] for item in value["suggestions"]] == list(reversed(deterministic_ids))
+    assert set(item["id"] for item in value["suggestions"]) == set(deterministic_ids)
+    assert value["model"] == enabled_settings.deepseek_model
+    assert len(value["prompt_sha256"]) == 64
+    assert value["latency_ms"] >= 0
+
+    after = client.get(
+        "/api/v1/personal-suggestions",
+        headers=auth,
+    ).json()["suggestions"]
+    assert [item["id"] for item in after] == deterministic_ids
+    with goal_container.repository.sessions() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        assert owner is not None
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.owner_id == owner.id)
+        ).all() == []
+
+
+def test_model_assisted_relevance_rejects_changed_candidate_set_and_preserves_fallback(
+    goal_client,
+    goal_container,
+):
+    client, headers = goal_client
+    auth = headers()
+    enabled_settings = replace(
+        goal_container.settings,
+        intelligent_planner_enabled=True,
+        suggestion_model_relevance_enabled=True,
+        deepseek_api_key="test-deepseek-key",
+    )
+    goal_container.settings = enabled_settings
+    goal_container.repository.settings = enabled_settings
+    goal_container.suggestions.settings = enabled_settings
+    goal_container.suggestion_relevance.settings = enabled_settings
+    goal_container.suggestion_relevance.model.settings = enabled_settings
+
+    for index in range(2):
+        body = payload()
+        body["objective"] = f"Review bounded goal {index}."
+        body["next_review_at"] = (utcnow() + timedelta(hours=8 + index)).isoformat()
+        response = client.post(
+            "/api/v1/goals",
+            headers=auth | {"Idempotency-Key": f"relevance-invalid-{index}"},
+            json=body,
+        )
+        assert response.status_code == 201
+    client.put(
+        "/api/v1/personal-suggestion-preferences",
+        headers=auth,
+        json={"enabled": True},
+    )
+    before = client.get(
+        "/api/v1/personal-suggestions",
+        headers=auth,
+    ).json()["suggestions"]
+    assert len(before) == 2
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"total_tokens": 77},
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"content": json.dumps({"ranked_ids": ["0" * 64, before[0]["id"]]})},
+                }],
+            },
+        )
+
+    goal_container.suggestion_relevance.model.transport = httpx.MockTransport(handler)
+    ranked = client.post("/api/v1/personal-suggestions/rank", headers=auth)
+    assert ranked.status_code == 502
+    assert ranked.json()["error"]["code"] == "invalid_suggestion_relevance"
+    fallback = client.get(
+        "/api/v1/personal-suggestions",
+        headers=auth,
+    ).json()["suggestions"]
+    assert fallback == before
+
+
+def test_model_relevance_flag_requires_goal_and_intelligent_planner(goal_container):
+    with pytest.raises(ValueError, match="PERSONAL_GOALS_ENABLED"):
+        replace(
+            goal_container.settings,
+            personal_goals_enabled=False,
+            intelligent_planner_enabled=True,
+            suggestion_model_relevance_enabled=True,
+        ).validate()
+    with pytest.raises(ValueError, match="INTELLIGENT_PLANNER_ENABLED"):
+        replace(
+            goal_container.settings,
+            intelligent_planner_enabled=False,
+            suggestion_model_relevance_enabled=True,
+        ).validate()
