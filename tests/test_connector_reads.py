@@ -1011,6 +1011,218 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
     )
 
 
+def _create_email_coworker(container, owner, grant):
+    goal, created = container.goals.create(
+        owner,
+        GoalCreate(
+            objective="Review important project update emails and prepare safe follow-up drafts.",
+            success_criteria=["Summarize relevant email and prepare a draft only when useful."],
+            constraints=["Never send email without explicit user approval."],
+            timezone="UTC",
+            state="active",
+            budget={"max_runs": 10, "max_planner_tokens": 50000},
+        ),
+        "email-coworker-goal-" + str(uuid4()),
+    )
+    assert created is True
+    automation, created = container.automations.create(
+        owner,
+        AutomationCreate(
+            goal_id=goal["id"],
+            goal_revision=goal["revision"],
+            timezone="UTC",
+            schedule={"kind": "event", "grant_id": grant["id"]},
+            run_profile="email",
+            connector_read_grant_ids=[],
+            output_language="en",
+            overlap_policy="skip",
+            catchup_window_seconds=3600,
+            quiet_hours=None,
+            expires_at=None,
+        ),
+        "email-coworker-automation-" + str(uuid4()),
+    )
+    assert created is True
+    return goal, automation
+
+
+def test_email_coworker_uses_exact_changed_message_and_never_gains_send_authority(container):
+    fake = enable_reads(container)
+    settings = replace(container.settings, work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+    container.notifications.settings = settings
+    container.context.settings = settings
+    container.connector_reads.push_verifier = AllowPush()
+
+    owner = account(container)
+    connection = connect_read(container, owner, "email_read")
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    _, automation = _create_email_coworker(container, owner, grant)
+
+    # Force the next authenticated provider event to carry a newer version of
+    # the same synchronized message, preserving the existing malicious snippet
+    # as untrusted provider data.
+    snapshot = container.connector_reads.repo.snapshots(owner, grant["id"])[0]
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorSnapshot, snapshot["id"])
+        row.provider_version = "100"
+    fake.message_subject = "Project update — action required"
+
+    event = _one_gmail_event(container, "email-coworker-event")
+    asyncio.run(container.connector_reads.process_event(event))
+
+    with container.repository.sessions() as db:
+        event_row = db.get(ConnectorEvent, event["id"])
+        runs = db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()
+        assert len(runs) == 1
+        run = runs[0]
+        assert event_row.synced_snapshot_ids == [snapshot["id"]]
+        assert run.runtime_version == 3
+        assert run.tool_allowlist == ["report.create", "email.draft"]
+        assert run.connector_read_grant_ids == [grant["id"]]
+        assert run.connector_snapshot_ids == [snapshot["id"]]
+        assert run.action_ids == []
+        assert len(occurrences) == 1
+        assert occurrences[0].trigger_event_id == event["id"]
+        assert occurrences[0].run_id == run.id
+        assert db.scalars(select(ExternalAction).where(
+            ExternalAction.owner_id == owner,
+        )).all() == []
+
+    context = container.context.for_run(owner, run.id)
+    connected = [
+        item for item in context["items"]
+        if item["provenance"].get("snapshot_id") == snapshot["id"]
+    ]
+    assert len(connected) == 1
+    assert "UNTRUSTED CONNECTED PROVIDER DATA" in connected[0]["excerpt"]
+    assert "evil.example" not in connected[0]["excerpt"]
+
+    replay = container.automations.accept_event_occurrence(
+        automation["id"], automation["revision"], event["id"]
+    )
+    assert replay["replayed"] is True
+
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run.id).state = "completed"
+    container.automations.notify_run_completed(run.id)
+    container.automations.notify_run_completed(run.id)
+    with container.repository.sessions() as db:
+        completed = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_completed",
+        )).all()
+        assert len(completed) == 1
+        assert completed[0].title == "Email review ready"
+        assert "Nothing was sent" in completed[0].message
+
+
+def test_email_coworker_deleted_or_irrelevant_event_is_safely_suppressed(container):
+    enable_reads(container)
+    settings = replace(container.settings, work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+    container.notifications.settings = settings
+    container.context.settings = settings
+
+    owner = account(container)
+    connection = connect_read(container, owner, "email_read")
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    _, automation = _create_email_coworker(container, owner, grant)
+    snapshot = container.connector_reads.repo.snapshots(owner, grant["id"])[0]
+
+    with container.repository.sessions.begin() as db:
+        subscription = db.scalar(select(ConnectorSubscription).where(
+            ConnectorSubscription.grant_id == grant["id"],
+            ConnectorSubscription.state == "active",
+        ))
+        row = ConnectorEvent(
+            id=str(uuid4()),
+            owner_id=owner,
+            grant_id=grant["id"],
+            subscription_id=subscription.id,
+            provider="google",
+            capability="email_read",
+            provider_event_id="deleted-email-event",
+            payload_sha256="0" * 64,
+            synced_snapshot_ids=[snapshot["id"]],
+            state="processing",
+        )
+        db.add(row)
+        db.get(ConnectorSnapshot, snapshot["id"]).state = "deleted"
+        event_id = row.id
+
+    result = container.automations.accept_event_occurrence(
+        automation["id"], automation["revision"], event_id
+    )
+    assert result["state"] == "skipped"
+    assert result["reason"] == "email_deleted_or_unchanged"
+    with container.repository.sessions() as db:
+        assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all() == []
+
+
+def test_email_coworker_rejects_non_email_trigger_grant(container):
+    enable_reads(container)
+    settings = replace(container.settings, work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+
+    owner = account(container)
+    connection = connect_read(container, owner, "calendar_read")
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    goal, created = container.goals.create(
+        owner,
+        GoalCreate(
+            objective="Review important emails.",
+            success_criteria=["Prepare a safe email review."],
+            constraints=["Never send automatically."],
+            timezone="UTC",
+            state="active",
+            budget={"max_runs": 10, "max_planner_tokens": 50000},
+        ),
+        "email-coworker-calendar-goal-" + str(uuid4()),
+    )
+    assert created is True
+    with pytest.raises(CoworkerError) as rejected:
+        container.automations.create(
+            owner,
+            AutomationCreate(
+                goal_id=goal["id"],
+                goal_revision=goal["revision"],
+                timezone="UTC",
+                schedule={"kind": "event", "grant_id": grant["id"]},
+                run_profile="email",
+                connector_read_grant_ids=[],
+                output_language="en",
+                overlap_policy="skip",
+                catchup_window_seconds=3600,
+                quiet_hours=None,
+                expires_at=None,
+            ),
+            "email-coworker-calendar-automation-" + str(uuid4()),
+        )
+    assert rejected.value.code == "email_source_unavailable"
+
+
 def test_connected_event_automation_wakes_exactly_one_bounded_runtime_v3_run(container):
     enable_reads(container)
     container.connector_reads.push_verifier = AllowPush()
