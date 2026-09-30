@@ -32,6 +32,8 @@ def workflow_base_id(automation_id: str, revision: int) -> str:
 
 def temporal_schedule(value: dict, task_queue: str):
     spec = value["schedule"]
+    if spec.get("kind") == "event":
+        raise ValueError("Connected-event automations do not use a Temporal Schedule.")
     weekdays = [] if spec["kind"] == "daily" else [ScheduleRange(start=DAY[item]) for item in spec["weekdays"]]
     calendar = ScheduleCalendarSpec(
         day_of_week=weekdays or [ScheduleRange(start=0, end=6)],
@@ -75,13 +77,16 @@ class AutomationScheduleReconciler:
     async def apply(self, value: dict) -> bool:
         sid = schedule_id(value["id"])
         handle = self.client.get_schedule_handle(sid)
-        if value["state"] == "cancelled":
+        # Event-triggered automations reuse the PA-02 automation ledger but never
+        # create a second due-time authority. Delete any old Temporal Schedule
+        # when a time trigger is revised into a connected-event trigger.
+        if value["state"] == "cancelled" or value["schedule"].get("kind") == "event":
             try:
                 await handle.delete()
             except RPCError as error:
                 if error.status != RPCStatusCode.NOT_FOUND:
                     raise
-            return False
+            return value["state"] == "active" and value["schedule"].get("kind") == "event"
 
         desired = temporal_schedule(value, self.task_queue)
         try:
