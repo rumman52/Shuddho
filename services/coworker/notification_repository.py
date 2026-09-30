@@ -6,6 +6,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 
 from .errors import CoworkerError
 from .models import (
@@ -209,54 +210,62 @@ class NotificationRepository:
             raise CoworkerError("browser_push_expired", "This browser push subscription has expired.", 409)
         fingerprint = endpoint_fingerprint(endpoint)
         ciphertext = self.web_push_vault.seal(endpoint, request.p256dh, request.auth)
-        with self.sessions.begin() as db:
-            account = db.scalar(select(Account).where(Account.id == owner).with_for_update())
-            if account is None:
-                raise not_found()
-            other_rows = db.scalars(select(BrowserPushSubscription).where(
-                BrowserPushSubscription.endpoint_hash == fingerprint,
-                BrowserPushSubscription.owner_id != owner,
-                BrowserPushSubscription.active.is_(True),
-            ).with_for_update()).all()
-            for other in other_rows:
-                other.active = False
-                other.updated_at = utcnow()
-                pending = db.scalars(select(BrowserPushDelivery).where(
-                    BrowserPushDelivery.subscription_id == other.id,
-                    BrowserPushDelivery.state == "pending",
+        try:
+            with self.sessions.begin() as db:
+                account = db.scalar(select(Account).where(Account.id == owner).with_for_update())
+                if account is None:
+                    raise not_found()
+                other_rows = db.scalars(select(BrowserPushSubscription).where(
+                    BrowserPushSubscription.endpoint_hash == fingerprint,
+                    BrowserPushSubscription.owner_id != owner,
+                    BrowserPushSubscription.active.is_(True),
                 ).with_for_update()).all()
-                for delivery in pending:
-                    delivery.state = "suppressed"
-                    delivery.lease_until = None
-                    delivery.error_code = "browser_push_subscription_rebound"
-            row = db.scalar(select(BrowserPushSubscription).where(
-                BrowserPushSubscription.owner_id == owner,
-                BrowserPushSubscription.endpoint_hash == fingerprint,
-            ).with_for_update())
-            if row is None:
-                row = BrowserPushSubscription(
-                    id=str(uuid4()),
-                    owner_id=owner,
-                    endpoint_hash=fingerprint,
-                    subscription_ciphertext=ciphertext,
-                    expires_at=expires_at,
-                    active=True,
-                    created_at=utcnow(),
-                    updated_at=utcnow(),
-                )
-                db.add(row)
-            else:
-                row.subscription_ciphertext = ciphertext
-                row.expires_at = expires_at
-                row.active = True
-                row.updated_at = utcnow()
-            self._audit(db, owner, row.id, "browser_push_subscription_saved")
-            db.flush()
-            return {
-                "id": row.id,
-                "active": row.active,
-                "expires_at": iso(row.expires_at) if row.expires_at else None,
-            }
+                for other in other_rows:
+                    other.active = False
+                    other.updated_at = utcnow()
+                    pending = db.scalars(select(BrowserPushDelivery).where(
+                        BrowserPushDelivery.subscription_id == other.id,
+                        BrowserPushDelivery.state == "pending",
+                    ).with_for_update()).all()
+                    for delivery in pending:
+                        delivery.state = "suppressed"
+                        delivery.lease_until = None
+                        delivery.error_code = "browser_push_subscription_rebound"
+                row = db.scalar(select(BrowserPushSubscription).where(
+                    BrowserPushSubscription.owner_id == owner,
+                    BrowserPushSubscription.endpoint_hash == fingerprint,
+                ).with_for_update())
+                if row is None:
+                    row = BrowserPushSubscription(
+                        id=str(uuid4()),
+                        owner_id=owner,
+                        endpoint_hash=fingerprint,
+                        subscription_ciphertext=ciphertext,
+                        expires_at=expires_at,
+                        active=True,
+                        created_at=utcnow(),
+                        updated_at=utcnow(),
+                    )
+                    db.add(row)
+                else:
+                    row.subscription_ciphertext = ciphertext
+                    row.expires_at = expires_at
+                    row.active = True
+                    row.updated_at = utcnow()
+                self._audit(db, owner, row.id, "browser_push_subscription_saved")
+                db.flush()
+                result = {
+                    "id": row.id,
+                    "active": row.active,
+                    "expires_at": iso(row.expires_at) if row.expires_at else None,
+                }
+            return result
+        except IntegrityError as exc:
+            raise CoworkerError(
+                "browser_push_endpoint_conflict",
+                "This browser push endpoint changed ownership concurrently. Refresh and try again.",
+                409,
+            ) from exc
 
     def deactivate_browser_push_subscription(
         self, owner: str, request: BrowserPushSubscriptionDeactivate
