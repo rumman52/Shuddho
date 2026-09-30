@@ -1657,3 +1657,82 @@ def test_scale_activation_requires_exact_incident_restore_artifact(tmp_path):
             rollout_path,
             decision_time=datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc),
         )
+
+
+def _incident_restore_artifact(rollout_sha):
+    return {
+        "schema_version": 1,
+        "mode": "incident_restore",
+        "release_id": "coworker-cohort-001",
+        "generated_at": "2026-09-22T11:50:00+00:00",
+        "exercise_started_at": "2026-09-22T11:00:00+00:00",
+        "exercise_completed_at": "2026-09-22T11:30:00+00:00",
+        "source_revision": "1" * 40,
+        "rollout_manifest_sha256": rollout_sha,
+        "staging_evidence_sha256": "a" * 64,
+        "review_sha256": "b" * 64,
+        "checks": {
+            "backup_restore": True,
+            "temporal": True,
+            "parallel_restart": True,
+            "fan_in": True,
+            "flag_rollback": True,
+        },
+        "rto_target_minutes": 60.0,
+        "observed_restore_minutes": 30.0,
+        "max_data_loss_seconds": 300.0,
+        "observed_data_loss_seconds": 0.0,
+        "references": {
+            "incident": "incident",
+            "backup": "backup",
+            "restore": "restore",
+            "temporal_restart": "restart",
+            "rollback": "rollback",
+            "reviewer": "reviewer",
+        },
+        "gate_decision": "PASS",
+        "failures": [],
+    }
+
+
+def test_scale_activation_requires_actual_incident_restore_artifact(tmp_path):
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(json.dumps(_valid_scale_rollout()), encoding="utf-8")
+    rollout_sha = sha256_file(rollout_path)
+    incident_path = tmp_path / "incident.json"
+    incident_path.write_text(
+        json.dumps(_incident_restore_artifact(rollout_sha)),
+        encoding="utf-8",
+    )
+    value = decision()
+    value["rollout_manifest_sha256"] = rollout_sha
+    value["artifact_sha256"]["incident_restore"] = "0" * 64
+
+    with pytest.raises(ScaleActivationError, match="does not bind the supplied"):
+        validate_incident_restore_binding(
+            incident_path,
+            value,
+            rollout_path,
+            decision_time=datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc),
+        )
+
+
+def test_scale_activation_accepts_exact_incident_restore_artifact(tmp_path):
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(json.dumps(_valid_scale_rollout()), encoding="utf-8")
+    rollout_sha = sha256_file(rollout_path)
+    incident_path = tmp_path / "incident.json"
+    incident_path.write_text(
+        json.dumps(_incident_restore_artifact(rollout_sha)),
+        encoding="utf-8",
+    )
+    value = decision()
+    value["rollout_manifest_sha256"] = rollout_sha
+    value["artifact_sha256"]["incident_restore"] = sha256_file(incident_path)
+
+    validate_incident_restore_binding(
+        incident_path,
+        value,
+        rollout_path,
+        decision_time=datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc),
+    )
