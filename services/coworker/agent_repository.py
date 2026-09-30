@@ -11,7 +11,7 @@ from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, A
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -73,6 +73,8 @@ class AgentRepository:
         persistent_goal_id: str | None = None,
         persistent_goal_revision: int | None = None,
         tool_allowlist: list[str] | None = None,
+        connector_snapshot_ids: list[str] | None = None,
+        derived_goal: bool = False,
     ) -> tuple[dict, bool]:
         if not self.settings.agent_runtime_enabled:
             raise CoworkerError("agent_runtime_unavailable", "Agent runs are not enabled in this workspace yet.", 409)
@@ -80,6 +82,21 @@ class AgentRepository:
             raise CoworkerError("agent_memory_unavailable", "Structured memory is not enabled in this workspace yet.", 409)
         payload = request.model_dump(mode="json")
         normalized_tool_allowlist = list(dict.fromkeys(tool_allowlist or []))
+        normalized_snapshot_ids = list(dict.fromkeys(connector_snapshot_ids or []))
+        if len(normalized_snapshot_ids) > 8:
+            raise CoworkerError(
+                "agent_context_scope",
+                "A bounded Agent run may freeze at most eight connected snapshots.",
+                422,
+            )
+        if normalized_snapshot_ids:
+            payload = payload | {"connector_snapshot_ids": normalized_snapshot_ids}
+        if derived_goal and not normalized_tool_allowlist:
+            raise CoworkerError(
+                "agent_goal_scope",
+                "A server-derived Agent objective requires an explicit non-consequential tool scope.",
+                409,
+            )
         if len(normalized_tool_allowlist) > 4:
             raise CoworkerError("agent_tool_scope", "A bounded Agent run may restrict at most four tools.", 422)
         if normalized_tool_allowlist:
@@ -134,7 +151,7 @@ class AgentRepository:
                     raise CoworkerError("goal_revision_conflict", "This goal changed. Review the latest revision before starting more work.", 409)
                 if goal_row.state != "active":
                     raise CoworkerError("goal_not_active", "Only an active goal can start a new bounded run.", 409)
-                if request.goal != goal_row.objective:
+                if request.goal != goal_row.objective and not derived_goal:
                     raise CoworkerError("goal_revision_conflict", "The run objective no longer matches this goal revision.", 409)
                 max_runs = int((goal_row.budget if isinstance(goal_row.budget, dict) else {}).get("max_runs", 20))
                 used_runs = db.scalar(select(func.count()).select_from(AgentRun).where(
@@ -192,6 +209,22 @@ class AgentRepository:
                     )
                 connector_read_grant_ids.append(grant.id)
 
+            if normalized_snapshot_ids:
+                snapshots = list(db.scalars(select(ConnectorSnapshot).where(
+                    ConnectorSnapshot.id.in_(normalized_snapshot_ids),
+                    ConnectorSnapshot.owner_id == owner,
+                    ConnectorSnapshot.state == "active",
+                )).all())
+                if (
+                    len(snapshots) != len(normalized_snapshot_ids)
+                    or any(item.grant_id not in connector_read_grant_ids for item in snapshots)
+                ):
+                    raise CoworkerError(
+                        "connector_snapshot_unavailable",
+                        "A selected connected snapshot is unavailable or outside the run's authorized read scope.",
+                        409,
+                    )
+
             run_id = str(uuid4())
             action_ids: list[str] = []
             if request.action_ids and not self.settings.actions_enabled:
@@ -231,6 +264,7 @@ class AgentRepository:
                 action_ids=action_ids,
                 memory_namespaces=list(request.memory_namespaces),
                 connector_read_grant_ids=connector_read_grant_ids,
+                connector_snapshot_ids=normalized_snapshot_ids,
                 tool_allowlist=normalized_tool_allowlist,
                 state="queued",
                 phase="planning",
@@ -312,6 +346,7 @@ class AgentRepository:
             "action_proposals": [self._proposal_dto(item) for item in proposals],
             "memory_namespaces": list(run.memory_namespaces),
             "connector_read_grant_ids": list(run.connector_read_grant_ids or []),
+            "connector_snapshot_ids": list(run.connector_snapshot_ids or []),
             "tool_allowlist": list(run.tool_allowlist or []),
             "state": run.state,
             "phase": run.phase,
