@@ -792,6 +792,12 @@ class BrowserPushDelivery(Base):
     __table_args__ = (
         UniqueConstraint("notification_id", "subscription_id", name="uq_cw_browser_push_notice_subscription"),
         Index("ix_cw_browser_push_delivery_owner_state", "owner_id", "state"),
+        Index(
+            "ix_cw_browser_push_delivery_pending_created",
+            "created_at",
+            postgresql_where=text("state = 'pending'"),
+            sqlite_where=text("state = 'pending'"),
+        ),
     )
 
 

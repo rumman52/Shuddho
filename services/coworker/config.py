@@ -57,6 +57,8 @@ class Settings:
     web_push_vapid_private_key: str = field(default="", repr=False)
     web_push_vapid_subject: str = ""
     web_push_encryption_key: str = field(default="", repr=False)
+    max_browser_push_subscriptions: int = 5
+    browser_push_max_in_flight: int = 4
     agent_handoffs_enabled: bool = False
     agent_multi_handoffs_enabled: bool = False
     agent_dependency_graph_enabled: bool = False
@@ -211,6 +213,8 @@ class Settings:
             web_push_vapid_private_key=os.getenv("SHUDDHO_WEB_PUSH_VAPID_PRIVATE_KEY", ""),
             web_push_vapid_subject=os.getenv("SHUDDHO_WEB_PUSH_VAPID_SUBJECT", ""),
             web_push_encryption_key=os.getenv("SHUDDHO_WEB_PUSH_ENCRYPTION_KEY", ""),
+            max_browser_push_subscriptions=int(os.getenv("SHUDDHO_BROWSER_PUSH_MAX_SUBSCRIPTIONS", "5")),
+            browser_push_max_in_flight=int(os.getenv("SHUDDHO_BROWSER_PUSH_MAX_IN_FLIGHT", "4")),
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_multi_handoffs_enabled=os.getenv("SHUDDHO_AGENT_MULTI_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_dependency_graph_enabled=os.getenv("SHUDDHO_AGENT_DEPENDENCY_GRAPH_ENABLED", "false").lower() == "true",
@@ -469,6 +473,10 @@ class Settings:
                 self.web_push_encryption_key,
                 self.web_push_vapid_subject,
             )
+            if not 1 <= self.max_browser_push_subscriptions <= 10:
+                raise ValueError("SHUDDHO_BROWSER_PUSH_MAX_SUBSCRIPTIONS must be between 1 and 10")
+            if not 1 <= self.browser_push_max_in_flight <= 8:
+                raise ValueError("SHUDDHO_BROWSER_PUSH_MAX_IN_FLIGHT must be between 1 and 8")
         if self.action_attachments_enabled and not self.actions_enabled:
             raise ValueError("Action attachments require SHUDDHO_ACTIONS_ENABLED=true")
         if self.action_reminders_enabled and not self.actions_enabled:

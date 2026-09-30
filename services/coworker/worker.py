@@ -280,6 +280,20 @@ class Dispatcher:
                 pass
         await asyncio.to_thread(agent.delivered, run_id)
 
+    async def dispatch_browser_push(self, notifications):
+        if not self.container.settings.browser_push_enabled:
+            return
+        delivery_ids = await asyncio.to_thread(
+            notifications.claim_browser_push_deliveries,
+            self.container.settings.browser_push_max_in_flight,
+        )
+        if not delivery_ids:
+            return
+        await asyncio.gather(*(
+            asyncio.to_thread(notifications.deliver_browser_push, delivery_id)
+            for delivery_id in delivery_ids
+        ))
+
     async def tick(self):
         repo = self.container.repository
         actions = self.container.actions.repo
@@ -320,11 +334,6 @@ class Dispatcher:
         notifications = self.container.notifications
         for notification_id in await asyncio.to_thread(notifications.claim_notifications):
             await asyncio.to_thread(notifications.deliver_notification, notification_id)
-        if self.container.settings.browser_push_enabled:
-            for delivery_id in await asyncio.to_thread(
-                notifications.claim_browser_push_deliveries
-            ):
-                await asyncio.to_thread(notifications.deliver_browser_push, delivery_id)
         for action_id in await asyncio.to_thread(actions.claim_outbox):
             try:
                 await self.client.start_workflow(
@@ -364,6 +373,9 @@ class Dispatcher:
                 except WorkflowAlreadyStartedError:
                     pass  # Crash after engine acceptance, before outbox acknowledgement.
             await asyncio.to_thread(repo.delivered, task_id)
+        # Optional browser push runs after core dispatch and is bounded/concurrent,
+        # so slow push providers cannot starve actions, connector work, Agent runs, or tasks.
+        await self.dispatch_browser_push(notifications)
 
     async def run(self, stop: asyncio.Event):
         cleanup_at = 0

@@ -26,8 +26,10 @@ from .notification_schemas import (
 )
 from .repository import aware, iso, not_found
 from .web_push import (
+    WebPushPreparationError,
     WebPushSender,
     WebPushSubscriptionVault,
+    WebPushTransportError,
     endpoint_fingerprint,
     validate_push_endpoint,
     validate_subscription_material,
@@ -215,6 +217,22 @@ class NotificationRepository:
                 account = db.scalar(select(Account).where(Account.id == owner).with_for_update())
                 if account is None:
                     raise not_found()
+                row = db.scalar(select(BrowserPushSubscription).where(
+                    BrowserPushSubscription.owner_id == owner,
+                    BrowserPushSubscription.endpoint_hash == fingerprint,
+                ).with_for_update())
+                needs_activation = row is None or not row.active
+                if needs_activation:
+                    active_count = len(db.scalars(select(BrowserPushSubscription.id).where(
+                        BrowserPushSubscription.owner_id == owner,
+                        BrowserPushSubscription.active.is_(True),
+                    ).with_for_update()).all())
+                    if active_count >= self.settings.max_browser_push_subscriptions:
+                        raise CoworkerError(
+                            "browser_push_subscription_limit",
+                            "This account already has the maximum number of active browser notification devices.",
+                            409,
+                        )
                 other_rows = db.scalars(select(BrowserPushSubscription).where(
                     BrowserPushSubscription.endpoint_hash == fingerprint,
                     BrowserPushSubscription.owner_id != owner,
@@ -231,10 +249,6 @@ class NotificationRepository:
                         delivery.state = "suppressed"
                         delivery.lease_until = None
                         delivery.error_code = "browser_push_subscription_rebound"
-                row = db.scalar(select(BrowserPushSubscription).where(
-                    BrowserPushSubscription.owner_id == owner,
-                    BrowserPushSubscription.endpoint_hash == fingerprint,
-                ).with_for_update())
                 if row is None:
                     row = BrowserPushSubscription(
                         id=str(uuid4()),
@@ -266,6 +280,25 @@ class NotificationRepository:
                 "This browser push endpoint changed ownership concurrently. Refresh and try again.",
                 409,
             ) from exc
+
+    def browser_push_subscription_status(
+        self, owner: str, request: BrowserPushSubscriptionDeactivate
+    ) -> dict:
+        try:
+            endpoint = validate_push_endpoint(request.endpoint)
+        except ValueError as exc:
+            raise CoworkerError(
+                "invalid_browser_push_subscription",
+                "The browser push subscription is invalid.",
+                422,
+            ) from exc
+        fingerprint = endpoint_fingerprint(endpoint)
+        with self.sessions() as db:
+            row = db.scalar(select(BrowserPushSubscription).where(
+                BrowserPushSubscription.owner_id == owner,
+                BrowserPushSubscription.endpoint_hash == fingerprint,
+            ))
+            return {"active": bool(row is not None and row.active)}
 
     def deactivate_browser_push_subscription(
         self, owner: str, request: BrowserPushSubscriptionDeactivate
@@ -416,6 +449,14 @@ class NotificationRepository:
                 return
             try:
                 material = self.web_push_vault.open(subscription.subscription_ciphertext)
+            except Exception:
+                delivery.state = "failed"
+                delivery.lease_until = None
+                delivery.error_code = "browser_push_subscription_unreadable"
+                subscription.active = False
+                subscription.updated_at = utcnow()
+                return
+            try:
                 result = self.web_push_sender.send(
                     material,
                     {
@@ -426,7 +467,12 @@ class NotificationRepository:
                     },
                     ttl=max(0, int((aware(notification.expires_at) - now).total_seconds())),
                 )
-            except Exception:
+            except WebPushPreparationError:
+                delivery.state = "failed"
+                delivery.lease_until = None
+                delivery.error_code = "browser_push_preparation_failed"
+                return
+            except WebPushTransportError:
                 delivery.state = "outcome_unknown"
                 delivery.lease_until = None
                 delivery.error_code = "browser_push_transport_unknown"

@@ -549,6 +549,11 @@ export class CoworkerClient {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value),
     });
   }
+  browserPushSubscriptionStatus(endpoint: string, signal?: AbortSignal) {
+    return this.json<{ active: boolean }>("/api/v1/browser-push/subscriptions/status", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint }), signal,
+    });
+  }
   deactivateBrowserPushSubscription(endpoint: string) {
     return this.json<{ id: string; active: false }>("/api/v1/browser-push/subscriptions/deactivate", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint }),

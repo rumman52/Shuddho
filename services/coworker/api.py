@@ -509,6 +509,17 @@ def put_browser_push_subscription(
     )
 
 
+@router.post("/browser-push/subscriptions/status")
+def browser_push_subscription_status(
+    payload: BrowserPushSubscriptionDeactivate,
+    identity: Identity,
+    services: Services,
+):
+    return services.notifications.browser_push_subscription_status(
+        identity.account_id, payload
+    )
+
+
 @router.post("/browser-push/subscriptions/deactivate")
 def deactivate_browser_push_subscription(
     payload: BrowserPushSubscriptionDeactivate,

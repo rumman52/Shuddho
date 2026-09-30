@@ -50,12 +50,15 @@ A unique `notification_id + subscription_id` constraint makes channel projection
 5. HTTP 2xx is recorded only as `provider_accepted`. It does not prove device display, user reading or task completion.
 6. 404/410 retires the subscription. 429/503 is retried with a bounded attempt count. A transport exception after dispatch becomes `outcome_unknown` and is not blindly resent.
 7. Opt-out or source revocation before send suppresses the pending receipt.
+8. Active devices are bounded per account and the global pending-delivery claim uses a dedicated pending index.
+9. Push claims are capped by `SHUDDHO_BROWSER_PUSH_MAX_IN_FLIGHT`, delivered concurrently, and run only after core action/connector/Agent/task dispatch in each worker tick.
+10. Deterministic subscription decryption/payload-preparation failures are recorded as local failures; only transport failures after dispatch begins become `outcome_unknown`.
 
 A notice marked `read` in the Shuddho inbox is still an already-delivered notice; read state does not by itself revoke a separately consented pending push.
 
 ## Web client
 
-The Automations/Notifications workspace exposes a separate **Browser notifications on this account and device** control. Enabling it:
+The Automations/Notifications workspace derives its device checkbox from both account consent and the current browser's server-owned subscription. A new device therefore does not appear enabled merely because another device opted in. Deployment rollback never prevents the user from revoking existing consent. The **Browser notifications on this account and device** control enables the current browser by:
 
 - checks deployment availability;
 - requests browser permission;
@@ -64,7 +67,7 @@ The Automations/Notifications workspace exposes a separate **Browser notificatio
 - registers that subscription with the authenticated API; and
 - then persists the separate account opt-in.
 
-The service worker accepts only the generic encrypted payload and constrains notification-click navigation to the Shuddho origin.
+The service worker accepts only the generic encrypted payload and constrains notification-click navigation to the Shuddho origin. The app recognizes only the bounded `?view=automations` push destination and opens the coworker Automations/Notifications surface rather than silently falling back to Drafts.
 
 ## Release and rollback
 
