@@ -1168,6 +1168,7 @@ class AgentRepository:
                 actions,
                 goal=run.goal,
                 runtime_version=run.runtime_version,
+                tool_allowlist=list(run.tool_allowlist or []),
             ))
             if tool_name not in allowed:
                 raise CoworkerError("planner_tool_scope", "The planner selected a tool outside the allowed registry.", 409)
