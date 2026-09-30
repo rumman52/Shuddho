@@ -294,6 +294,18 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="suggestion_model_relevance",
+        rollback_key="suggestion_model_relevance_kill_switch",
+        kill_switch="SHUDDHO_SUGGESTION_MODEL_RELEVANCE_ENABLED=false",
+        dependencies=("personal_goals", "intelligent_planner"),
+        staging_gates=(
+            StagingGate(
+                "suggestion_model_relevance",
+                "Explicit PA-10 model ranking used only the exact already-authorized deterministic suggestion set, preserved every candidate unchanged, consumed shared provider/workspace budget, failed closed to deterministic order, created no runs/automations/actions, and left background notification delivery deterministic in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="personal_goals",
         rollback_key="personal_goals_kill_switch",
         kill_switch="SHUDDHO_PERSONAL_GOALS_ENABLED=false",
