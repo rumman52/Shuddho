@@ -12,6 +12,10 @@ from scripts.coworker_quality_evidence import (
     QualityEvidenceError,
     validate_live_quality_evidence,
 )
+from scripts.task_economics_evidence import (
+    TaskEconomicsEvidenceError,
+    validate_task_economics_evidence,
+)
 
 PLAN_KEYS = {
     "release_id",
@@ -249,6 +253,33 @@ def validate_quality(
     return generated
 
 
+def validate_economics(
+    value: dict,
+    plan: dict,
+    now: datetime,
+    *,
+    rollout_sha256: str,
+    expected_source_revision: str | None = None,
+) -> datetime:
+    try:
+        generated = validate_task_economics_evidence(
+            value,
+            release_id=plan["release_id"],
+            rollout_sha256=rollout_sha256,
+            expected_source_revision=expected_source_revision,
+        )
+    except TaskEconomicsEvidenceError as error:
+        raise ScaleReviewError(str(error)) from None
+    age_minutes = (now - generated).total_seconds() / 60
+    if age_minutes < -1:
+        raise ScaleReviewError("task economics evidence is from the future.")
+    if age_minutes > plan["freshness_minutes"]:
+        raise ScaleReviewError(
+            f"task economics evidence is stale ({age_minutes:.1f} minutes old)."
+        )
+    return generated
+
+
 def validate_operator_status(value: dict, plan: dict, *, not_before: datetime, now: datetime) -> datetime:
     if value.get("release_id") != plan["release_id"]:
         raise ScaleReviewError("Operator status release_id does not match.")
@@ -261,7 +292,9 @@ def validate_operator_status(value: dict, plan: dict, *, not_before: datetime, n
         now=now,
     )
     if generated < not_before:
-        raise ScaleReviewError("Operator status must be generated after capacity and quality evidence.")
+        raise ScaleReviewError(
+            "Operator status must be generated after capacity, quality and task economics evidence."
+        )
     return generated
 
 
@@ -357,13 +390,17 @@ def evaluate_review(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Review a human-proposed next Shuddho Coworker cohort after the 25-user capacity and quality gates."
+        description=(
+            "Review a human-proposed next Shuddho Coworker cohort after the "
+            "25-user capacity, quality and task-economics gates."
+        )
     )
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--capacity-qualification", type=Path, required=True)
     parser.add_argument("--quality-eval", type=Path, required=True)
+    parser.add_argument("--task-economics", type=Path, required=True)
     parser.add_argument("--operator-status", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -379,6 +416,7 @@ def main() -> None:
         rollout_sha256 = sha256_file(args.rollout)
         capacity = load_json(args.capacity_qualification, "capacity qualification")
         quality = load_json(args.quality_eval, "quality evaluation")
+        economics = load_json(args.task_economics, "task economics evidence")
         operator = load_json(args.operator_status, "operator status")
         now = datetime.now(timezone.utc)
         capacity_time = validate_capacity(
@@ -393,10 +431,17 @@ def main() -> None:
             now,
             rollout_sha256=rollout_sha256,
         )
+        economics_time = validate_economics(
+            economics,
+            plan,
+            now,
+            rollout_sha256=rollout_sha256,
+            expected_source_revision=quality.get("source_revision"),
+        )
         operator_time = validate_operator_status(
             operator,
             plan,
-            not_before=max(capacity_time, quality_time),
+            not_before=max(capacity_time, quality_time, economics_time),
             now=now,
         )
         result = evaluate_review(
@@ -412,6 +457,7 @@ def main() -> None:
             "rollout_manifest": rollout_sha256,
             "capacity_qualification": sha256_file(args.capacity_qualification),
             "quality_eval": sha256_file(args.quality_eval),
+            "task_economics": sha256_file(args.task_economics),
             "operator_status": sha256_file(args.operator_status),
         }
         args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
