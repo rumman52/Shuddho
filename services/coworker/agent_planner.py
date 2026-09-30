@@ -121,7 +121,7 @@ def intelligent_tool_names(
         and (not allowed or sandbox.name in allowed)
     ):
         names.append(sandbox.name)
-    if settings.agent_action_selection_enabled:
+    if settings.agent_action_selection_enabled and not allowed:
         names.extend(action_selection_candidates(actions))
     return names
 
