@@ -513,6 +513,108 @@ class AutomationRepository:
     def event_occurrence_key(owner: str, automation_id: str, revision: int, event_id: str) -> str:
         return hashlib.sha256(f"{owner}|{automation_id}|{revision}|event|{event_id}".encode()).hexdigest()
 
+    @staticmethod
+    def meeting_occurrence_key(
+        owner: str,
+        automation_id: str,
+        revision: int,
+        snapshot_id: str,
+        start_at: datetime,
+    ) -> str:
+        canonical = aware(start_at).astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return hashlib.sha256(
+            f"{owner}|{automation_id}|{revision}|meeting|{snapshot_id}|{canonical}".encode()
+        ).hexdigest()
+
+    @staticmethod
+    def _calendar_start_at(payload: dict, fallback_timezone: str) -> datetime | None:
+        start = payload.get("start")
+        if not isinstance(start, dict):
+            return None
+        raw = start.get("dateTime")
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        try:
+            value = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if value.tzinfo is None:
+            zone_name = start.get("timeZone") if isinstance(start.get("timeZone"), str) else fallback_timezone
+            try:
+                zone = ZoneInfo(zone_name)
+            except ZoneInfoNotFoundError:
+                try:
+                    zone = ZoneInfo(fallback_timezone)
+                except ZoneInfoNotFoundError:
+                    return None
+            value = value.replace(tzinfo=zone)
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
+    def _goal_document_ids(goal: PersonalGoal | None) -> list[str]:
+        result: list[str] = []
+        if goal is None:
+            return result
+        for resource in list(goal.authorized_resources or []):
+            if (
+                isinstance(resource, dict)
+                and resource.get("kind") == "document"
+                and isinstance(resource.get("reference"), str)
+                and resource["reference"] not in result
+            ):
+                result.append(resource["reference"])
+            if len(result) >= 5:
+                break
+        return result
+
+    @staticmethod
+    def _related_email_snapshots(
+        db,
+        owner: str,
+        grant_ids: list[str],
+        meeting_payload: dict,
+    ) -> tuple[list[str], list[str]]:
+        summary = str(meeting_payload.get("summary") or "")
+        terms = {
+            item.casefold()
+            for item in re.findall(r"[A-Za-z0-9_@.-]{3,}", summary)
+        }
+        attendees = {
+            str(item).strip().casefold()
+            for item in meeting_payload.get("attendees", [])
+            if isinstance(item, str) and item.strip()
+        }
+        snapshot_ids: list[str] = []
+        used_grants: list[str] = []
+        for grant_id in grant_ids:
+            rows = list(db.scalars(select(ConnectorSnapshot).where(
+                ConnectorSnapshot.owner_id == owner,
+                ConnectorSnapshot.grant_id == grant_id,
+                ConnectorSnapshot.state == "active",
+                ConnectorSnapshot.capability == "email_read",
+            ).order_by(ConnectorSnapshot.updated_at.desc()).limit(20)).all())
+            scored: list[tuple[int, str]] = []
+            for row in rows:
+                payload = row.payload if isinstance(row.payload, dict) else {}
+                if payload.get("kind") != "email":
+                    continue
+                haystack = " ".join(
+                    str(payload.get(key) or "")
+                    for key in ("from", "to", "cc", "subject", "snippet")
+                ).casefold()
+                score = 10 * sum(1 for attendee in attendees if attendee and attendee in haystack)
+                score += sum(1 for term in terms if term in haystack)
+                if score > 0:
+                    scored.append((score, row.id))
+            selected = [
+                snapshot_id
+                for _score, snapshot_id in sorted(scored, key=lambda item: (-item[0], item[1]))[:2]
+            ]
+            if selected:
+                used_grants.append(grant_id)
+                snapshot_ids.extend(selected)
+        return used_grants, snapshot_ids
+
     def handle_connector_event(self, event: dict) -> None:
         """Wake bounded runs for explicitly configured connected-event automations.
 
