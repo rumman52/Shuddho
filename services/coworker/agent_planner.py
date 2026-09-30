@@ -100,10 +100,16 @@ def intelligent_tool_names(
     *,
     goal: str | None = None,
     runtime_version: int | None = None,
+    tool_allowlist: list[str] | None = None,
 ) -> list[str]:
+    allowed = set(tool_allowlist or [])
     names = [
         spec.name for spec in TOOLS.values()
-        if spec.kind == "task" and not spec.consequential and not spec.approval_required and spec.enabled(settings)
+        if spec.kind == "task"
+        and not spec.consequential
+        and not spec.approval_required
+        and spec.enabled(settings)
+        and (not allowed or spec.name in allowed)
     ]
     sandbox = TOOLS.get("sandbox.execute_python")
     if (
@@ -112,6 +118,7 @@ def intelligent_tool_names(
         and sandbox is not None
         and sandbox.enabled(settings)
         and exact_user_python_source(goal, settings) is not None
+        and (not allowed or sandbox.name in allowed)
     ):
         names.append(sandbox.name)
     if settings.agent_action_selection_enabled:
