@@ -1223,6 +1223,92 @@ def test_email_coworker_rejects_non_email_trigger_grant(container):
     assert rejected.value.code == "email_source_unavailable"
 
 
+def test_goal_driven_proactive_event_uses_only_exact_changed_snapshot(container):
+    fake = enable_reads(container)
+    settings = replace(container.settings, work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+    container.notifications.settings = settings
+    container.context.settings = settings
+    container.connector_reads.push_verifier = AllowPush()
+
+    owner = account(container)
+    connection = connect_read(container, owner, "email_read")
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    snapshot = container.connector_reads.repo.snapshots(owner, grant["id"])[0]
+
+    goal, created = container.goals.create(
+        owner,
+        GoalCreate(
+            objective="Keep my project communication organized and prepare useful internal summaries.",
+            success_criteria=["Choose only useful bounded next steps."],
+            constraints=["Never send or mutate external services automatically."],
+            timezone="UTC",
+            state="active",
+            budget={"max_runs": 10, "max_planner_tokens": 50000},
+        ),
+        "proactive-event-goal-" + str(uuid4()),
+    )
+    assert created is True
+    automation, created = container.automations.create(
+        owner,
+        AutomationCreate(
+            goal_id=goal["id"],
+            goal_revision=goal["revision"],
+            timezone="UTC",
+            schedule={"kind": "event", "grant_id": grant["id"]},
+            run_profile="proactive",
+            connector_read_grant_ids=[],
+            tool_allowlist=["report.create"],
+            output_language="en",
+            overlap_policy="skip",
+            catchup_window_seconds=3600,
+            quiet_hours=None,
+            expires_at=None,
+        ),
+        "proactive-event-automation-" + str(uuid4()),
+    )
+    assert created is True
+
+    with container.repository.sessions.begin() as db:
+        db.get(ConnectorSnapshot, snapshot["id"]).provider_version = "100"
+    fake.message_subject = "Project update for planning"
+    event = _one_gmail_event(container, "proactive-event-one")
+    asyncio.run(container.connector_reads.process_event(event))
+
+    with container.repository.sessions() as db:
+        event_row = db.get(ConnectorEvent, event["id"])
+        runs = db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()
+        assert event_row.synced_snapshot_ids == [snapshot["id"]]
+        assert len(runs) == 1
+        run = runs[0]
+        assert run.runtime_version == 3
+        assert run.tool_allowlist == ["report.create"]
+        assert run.connector_read_grant_ids == [grant["id"]]
+        assert run.connector_snapshot_ids == [snapshot["id"]]
+        assert run.action_ids == []
+        assert db.scalars(select(ExternalAction).where(
+            ExternalAction.owner_id == owner,
+        )).all() == []
+
+    context = container.context.for_run(owner, run.id)
+    connected = [
+        item for item in context["items"]
+        if item["provenance"].get("snapshot_id") == snapshot["id"]
+    ]
+    assert len(connected) == 1
+
+    replay = container.automations.accept_event_occurrence(
+        automation["id"], automation["revision"], event["id"]
+    )
+    assert replay["replayed"] is True
+
+
 def test_connected_event_automation_wakes_exactly_one_bounded_runtime_v3_run(container):
     enable_reads(container)
     container.connector_reads.push_verifier = AllowPush()

@@ -70,6 +70,23 @@ def test_every_optional_capability_has_a_registered_staging_gate():
 
 
 
+def test_automations_staging_gate_covers_full_proactive_program():
+    description = CONDITIONAL_GATES["automations"]
+    for phrase in (
+        "Daily/Weekly",
+        "Meeting Coworker",
+        "Email Coworker",
+        "Deadline Coworker",
+        "goal-driven proactivity",
+        "exact connected snapshot scoping",
+        "prompt-injection containment",
+        "restart and process-loss recovery",
+        "revocation blocking",
+        "without adding provider-write authority",
+    ):
+        assert phrase in description
+
+
 def test_artifact_services_require_artifact_quality_staging_evidence():
     rollout = load("docs/cohort-rollout.template.json")
     assert rollout["capabilities"]["artifact_services"] is True
