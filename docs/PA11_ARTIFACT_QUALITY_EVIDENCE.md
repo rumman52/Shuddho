@@ -45,6 +45,7 @@ The review checks:
 Run native QA from the exact release revision. Release evidence requires a full source revision, supplied through `SHUDDHO_SOURCE_REVISION`, `RENDER_GIT_COMMIT`, or `GITHUB_SHA`. The native QA command now fails immediately if none is present; it never emits a successful release-evidence file with `source_revision: null`.
 
 ```bash
+export SHUDDHO_SOURCE_REVISION=<full-40-character-release-commit-sha>
 PYTHONPATH=.:tests uv run --extra coworker python tests/verify_office_native.py /secure/artifact-qa
 
 cp docs/artifact-quality-review.template.json /secure/artifact-qa/human-review.json

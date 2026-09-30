@@ -32,10 +32,17 @@ uv run python scripts/cohort_release_gate.py \
   --rollout /secure/path/cohort-rollout.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
   --model-eval /secure/release/agent-eval.json \
-  --artifact-quality-eval /secure/release/artifact-quality-evidence.json \
   --max-cohort-users 25 \
   --output /secure/path/cohort-decision.json
 ```
+
+If the reviewed rollout has `artifact_services=true`, add:
+
+```bash
+  --artifact-quality-eval /secure/release/artifact-quality-evidence.json \
+```
+
+Omit that argument when `artifact_services=false`; the CLI deliberately rejects artifact-quality evidence for an artifact-disabled rollout.
 
 A successful decision is exactly:
 
