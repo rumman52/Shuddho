@@ -933,6 +933,7 @@ class AgentRun(Base):
     action_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     memory_namespaces: Mapped[list[str]] = mapped_column(JSON, default=list)
     connector_read_grant_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    tool_allowlist: Mapped[list[str]] = mapped_column(JSON, default=list)
     state: Mapped[str] = mapped_column(String(30), default="queued")
     phase: Mapped[str] = mapped_column(String(30), default="planning")
     message: Mapped[str] = mapped_column(String(300), default="Queued for planning.")
