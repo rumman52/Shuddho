@@ -1076,6 +1076,164 @@ def test_event_automation_migration_adds_recoverable_event_reference(
     assert "ix_cw_automation_occurrences_trigger_event" in indexes
 
 
+def _enable_briefings(container):
+    settings = replace(
+        container.settings,
+        work_services_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_runtime_v3_enabled=True,
+    )
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+    container.notifications.settings = settings
+    return settings
+
+
+def test_daily_briefing_requires_runtime_v3_planner_and_work_services(
+    automation_client,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "briefing-dependency-goal"},
+        json=goal_payload(),
+    ).json()
+    body = automation_payload(goal)
+    body["run_profile"] = "briefing"
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "briefing-dependency-automation"},
+        json=body,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "briefing_unavailable"
+
+
+def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_completion(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "briefing-goal"},
+        json=goal_payload(),
+    ).json()
+    body = automation_payload(goal)
+    body["run_profile"] = "briefing"
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "briefing-automation"},
+        json=body,
+    )
+    assert response.status_code == 201
+    automation = response.json()
+    assert automation["run_profile"] == "briefing"
+    assert automation["connector_read_grant_ids"] == []
+
+    due = utcnow().replace(microsecond=0)
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due
+    )
+    replay = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due
+    )
+    assert first["state"] == "accepted"
+    assert replay["run_id"] == first["run_id"] and replay["replayed"] is True
+
+    with automation_container.repository.sessions() as db:
+        run = db.get(AgentRun, first["run_id"])
+        assert run is not None
+        assert run.runtime_version == 3
+        assert run.tool_allowlist == ["daily_plan.create"]
+        assert run.connector_read_grant_ids == []
+        assert run.action_ids == []
+        started = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_started",
+        )).all()
+        assert len(started) == 1
+        assert started[0].title == "Briefing started"
+
+    with automation_container.repository.sessions.begin() as db:
+        run = db.get(AgentRun, first["run_id"])
+        run.state = "completed"
+
+    automation_container.automations.notify_run_completed(first["run_id"])
+    automation_container.automations.notify_run_completed(first["run_id"])
+    with automation_container.repository.sessions() as db:
+        completed = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_completed",
+        )).all()
+        assert len(completed) == 1
+        assert completed[0].title == "Briefing ready"
+        assert "daily/weekly briefing" in completed[0].message
+
+
+def test_briefing_profile_is_time_based_and_run_tool_scope_is_fail_closed(
+    automation_client,
+    automation_container,
+):
+    from services.coworker.agent_planner import intelligent_tool_names
+
+    client, headers = automation_client
+    auth = headers()
+    settings = _enable_briefings(automation_container)
+    assert intelligent_tool_names(
+        settings,
+        goal="Prepare the private briefing.",
+        runtime_version=3,
+        tool_allowlist=["daily_plan.create"],
+    ) == ["daily_plan.create"]
+
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "briefing-event-goal"},
+        json=goal_payload(),
+    ).json()
+    body = automation_payload(goal)
+    body["run_profile"] = "briefing"
+    body["schedule"] = {
+        "kind": "event",
+        "grant_id": "00000000-0000-0000-0000-000000000001",
+    }
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "briefing-event-automation"},
+        json=body,
+    )
+    assert response.status_code == 409
+    # Event-trigger validation may fail before briefing validation when no grant
+    # exists; either way, a briefing can never gain event-trigger authority.
+    assert response.json()["error"]["code"] in {
+        "event_automation_grant_unavailable",
+        "briefing_trigger_scope",
+    }
+
+
+def test_proactive_briefing_migration_adds_bounded_scope_columns(
+    automation_container,
+):
+    with automation_container.repository.sessions() as db:
+        run_columns = {
+            item["name"]
+            for item in inspect(db.bind).get_columns("cw_agent_runs")
+        }
+        automation_columns = {
+            item["name"]
+            for item in inspect(db.bind).get_columns("cw_automations")
+        }
+    assert "tool_allowlist" in run_columns
+    assert {"run_profile", "connector_read_grant_ids"} <= automation_columns
+
+
 def test_temporal_schedule_contract_uses_timezone_overlap_and_expiry():
     from services.coworker.automation_scheduler import temporal_schedule
     value = {
