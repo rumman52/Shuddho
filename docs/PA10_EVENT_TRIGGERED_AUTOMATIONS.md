@@ -29,7 +29,8 @@ At admission the server revalidates:
 - the goal still exists, is active and has the exact bound revision;
 - the connector read grant still belongs to the same owner;
 - the grant is active, unexpired, for `agent_context` and `planner_context`;
-- the persisted connector event belongs to the same owner and bound grant;
+- event synchronization has an active/pending/renewing subscription for that grant;
+- the persisted connector event belongs to the same owner, bound grant and still-valid subscription;
 - overlap policy and the persistent-goal bounded-run budget.
 
 Provider event content remains untrusted context. It cannot grant tools, widen scopes,
