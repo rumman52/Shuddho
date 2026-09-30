@@ -822,14 +822,19 @@ class ConnectorReadService:
         credential_broker,
         push_verifier=None,
         event_consumer=None,
+        automation_consumer=None,
     ):
         self.repo = repository
         self.credential_broker = credential_broker
         self.push_verifier = push_verifier
         self.event_consumer = event_consumer
+        self.automation_consumer = automation_consumer
 
     def set_event_consumer(self, consumer) -> None:
         self.event_consumer = consumer
+
+    def set_automation_consumer(self, consumer) -> None:
+        self.automation_consumer = consumer
 
     @staticmethod
     def _expiry(ms: int | None, fallback_hours: int = 24) -> datetime:
@@ -1098,13 +1103,26 @@ class ConnectorReadService:
                 self.repo.fail_event, event["id"], "connector_event_sync_failed"
             )
             return
+        if self.automation_consumer is not None:
+            try:
+                await asyncio.to_thread(self.automation_consumer, event)
+            except Exception:
+                # Event-triggered execution is durable work, not a best-effort
+                # presentation side effect. Leave the provider event retryable
+                # until occurrence admission has been durably recorded.
+                await asyncio.to_thread(
+                    self.repo.fail_event,
+                    event["id"],
+                    "connector_event_automation_failed",
+                )
+                return
         if self.event_consumer is not None:
             try:
                 await asyncio.to_thread(self.event_consumer, event)
             except Exception:
-                # PA-10 notification delivery is secondary to the accepted
-                # PA-06 connector sync. A notification fault must not replay
-                # provider reads or change the connector event outcome.
+                # PA-10 review-notice delivery is secondary to the accepted
+                # PA-06 connector sync. A notice fault must not replay an
+                # otherwise successful automation admission.
                 pass
         await asyncio.to_thread(self.repo.finish_event, event["id"])
 
