@@ -38,34 +38,34 @@ Design contracts for PA-01–PA-11 are recorded in the architecture, service cat
 | PA-07 | Contract recorded | Supervised research/form preparation and takeover | Browser policy/workflow checks | #215–#229 merged | Main #938 passed | Not verified | Not verified | Not verified | Browser default-off | Containment/recovery staging; submissions separate |
 | PA-08 | Contract recorded | Isolated executor, private previews, gated planner tool | Sandbox and artifact tests | #230–#233 merged | Main #938 passed | Not verified here | Not verified | Not verified | Manual/planner gates separately off | Resource/preview isolation, cleanup and rollback |
 | PA-09 | Contract recorded | Approved negotiation commitment, cases, proposals, human promotion and qualification tooling | Transaction/source binding tests | #234–#241 merged | Main #938 passed | Not verified | Not verified | Not verified | Transaction/promotion off; operation allowlist empty by default | Live promotion evidence; booking/reservation/checkout/payment adapters remain |
-| PA-10 | Contract recorded | Consent, deterministic suggestions, shared service, inbox delivery, event notices and bounded digests are merged; exact-set model-assisted relevance is the current bounded slice | #250 final-head #944 and merged-main #945 passed both required jobs; current relevance slice needs exact-head CI | #242–#250 merged; relevance branch active | Main #945 passed; current relevance head not yet verified | Not verified | Not verified | Not verified | Existing delivery gates plus model-relevance gate default-off | Exact-set relevance CI/staging evidence, external channels and controlled delivery evidence |
+| PA-10 | Contract recorded | Consent, deterministic suggestions, shared service, inbox delivery, event notices, bounded digests and exact-set model-assisted relevance are merged | #250 final-head #944 and merged-main #945 passed; #251 heavyweight head CI exposed one stale preference assertion now repaired in #252 | #242–#251 merged; #252 open repair | #251 head coworker failed one compatibility assertion; #252 exact-head CI pending | Not verified | Not verified | Not verified | Existing delivery gates plus model-relevance gate default-off | Verify #252 exact head and merged-main repair; then staging relevance evidence and external channels remain |
 | PA-11 | Contract recorded | Existing bounded Office/render/evaluation foundations | Current native rendering/recalculation checks | Expansion program unfinished | Main #938 passed for current limits | Not verified | Not verified | Not verified | No expanded capacity activated here | Artifact limits, cost/capacity, restore/incident and cohort evidence |
 
 The [bounded inbox digest contract](PA10_NOTIFICATION_DIGESTS.md) adds only optional presentation and exact-member read state over delivered notices. It does not authorize a daily briefing, external delivery, model relevance or execution. The next capability must be selected from the remaining PA-10 gaps only after its final-head repository checks pass; live PA-09 and other qualification blockers remain independently tracked.
 
 ## Current continuation checkpoint
 
-Updated at: 2026-09-30T04:45:00Z / 2026-09-30T10:45:00+06:00 Asia/Dhaka  
-Task ID and outcome: PA-10 bounded model-assisted relevance — explicit user-invoked ranking of the exact already-authorized deterministic suggestion set, with no candidate, delivery or action-authority expansion.  
-Stage: implementing; branch pushed, focused tests and release boundary added; PR and exact-head CI still required.  
-Base branch and SHA: `main` at `56273aed963aee81d1a6f5b704798bd715a54a47` (merged #250), refreshed on 30 September.  
-Work branch and implementation SHA: `codex/pa10-model-assisted-relevance`; latest recoverable branch head must be refreshed after the final checkpoint commit.  
-PR and merge status: not yet created for this slice. PR #250 is merged.  
-Last completed action: verified #250 final-head CI #944 and merged-main CI #945 both passed `test-and-build` and `coworker`; inspected #945 desktop/mobile digest screenshots. Implemented the new relevance model/service, explicit `POST /api/v1/personal-suggestions/rank` API, UI action, default-off release flag, release templates and focused exact-set/inertness tests.  
-Unfinished work: review the complete branch diff; run repository CI on the exact final branch head; fix any confirmed failures; create/update the PR; inspect UI/browser evidence if the affected Goals workspace is captured. Controlled live DeepSeek staging and production activation remain separate.  
-Local work: no complete local clone is available because workspace outbound DNS to GitHub is blocked. Repository code was inspected and changed through the GitHub connector; no inherited workstation edits were available.  
-Saved recovery location: pushed branch `codex/pa10-model-assisted-relevance`; GitHub commits on that branch are the durable recovery source.  
-Tests: focused repository tests were added for exact-set ranking, changed-set rejection, deterministic fallback, zero Agent-run creation and flag dependency validation. Local dependency-based execution is unavailable; repository CI is required.  
-CI: merged main #945 / run 36669368491 passed both required jobs on `56273aed963aee81d1a6f5b704798bd715a54a47`. Current relevance branch CI is not yet verified.  
-Deployment: no production deployment was performed or inspected.  
-Live/staging/production qualification: NOT VERIFIED. No live model call, controlled staging artifact or deployed flag value was exercised in this slice.  
-Flags and authority: `SHUDDHO_SUGGESTION_MODEL_RELEVANCE_ENABLED=false` by default; it requires persistent goals and the existing intelligent-model boundary. Ranking is explicit, preserves the exact deterministic candidate set and never participates in background notification reconciliation. Existing coworker, transaction, promotion, browser, sandbox and external-channel defaults are unchanged.  
-Blocker: no external blocker to repository implementation is known. Local network/dependency execution is unavailable, so exact-head repository CI is the verification path.  
-Next action: finish diff review, create the relevance PR, and verify both required CI jobs on its exact final head before considering merge.  
-Next three steps: (1) inspect/fix exact-head CI and any Goals UI/browser regression; (2) leave the PR ready for review with tested SHA/run recorded; (3) after applicable merge authorization, merge and verify main before selecting browser/mobile push or another PA-10 gap.  
-Do not redo: #242–#250 consent, deterministic suggestion generation/delivery, event notices, notification service or digest grouping. Do not connect model ranking to notification delivery or event intake.  
-Acceptance remaining: exact-head repository CI and code/UI review; separate controlled live model/budget/fallback evidence before production activation.  
-Checkpoint identity: record the final implementation SHA and any subsequent checkpoint-only commit separately after CI; do not attempt to embed a commit's own hash inside itself.
+Updated at: 2026-09-30T05:18:00Z / 2026-09-30T11:18:00+06:00 Asia/Dhaka  
+Task ID and outcome: PA-10 bounded model-assisted relevance post-merge verification repair. The feature remains an explicit exact-set review reorder with no new delivery or action authority.  
+Stage: CI repair; PR #251 merged externally before its final heavyweight check completed, that check failed one stale response-shape assertion, and PR #252 now carries the minimal repair from merged main.  
+Base branch and SHA: `main` at `844dec8afe979a6bacd5ae9300d48042aea2a0fd` (merge of #251).  
+Work branch and implementation SHA: `codex/pa10-relevance-ci-repair`; runtime implementation is the merged #251 code. Repair commit before this checkpoint: `4b9c80eccf0bb46694c9926471b3e9dbb412fa90`.  
+PR and merge status: #251 merged at 2026-09-30T05:14:11Z without this session invoking merge. PR #252 is open against current main and contains only the post-merge compatibility-test repair plus this checkpoint update.  
+Last completed action: diagnosed #251 head CI #948: `test-and-build` passed; `coworker` ran 870 tests and failed only `test_personal_suggestion_delivery_is_separate_durable_deduped_and_inert` because the exact expected preferences object omitted the new default-false `model_relevance_available` field. Updated that assertion on a branch from merged main.  
+Unfinished work: verify both required CI jobs on PR #252's exact final head; inspect merged-main run #949 independently; if #252 passes, leave it ready for review/merge authorization and do not start another PA-10 capability first.  
+Local work: no complete local clone is available because workspace outbound DNS to GitHub is blocked. GitHub connector state is authoritative.  
+Saved recovery location: pushed branch `codex/pa10-relevance-ci-repair`, PR #252. The older `codex/pa10-model-assisted-relevance` branch also contains a post-merge copy of the same one-line test repair but is not the repair base.  
+Tests: #251 head fast suite passed after release-contract fixes. Its heavyweight suite passed 869 and failed 1 stale exact-response assertion; the repair changes only that expected response shape. Focused model-relevance tests had no independent failure.  
+CI: #251 head run #948 — `test-and-build` PASS, `coworker` FAIL (one stale preference assertion). Main merge run #949 is separately in progress/needs final observation. PR #252 exact-head CI pending.  
+Deployment: no production deployment or production flag value was performed or inspected by this session.  
+Live/staging/production qualification: NOT VERIFIED. No controlled live DeepSeek relevance evidence exists yet.  
+Flags and authority: `SHUDDHO_SUGGESTION_MODEL_RELEVANCE_ENABLED=false` by default; requires persistent goals and intelligent planner. Ranking preserves exact deterministic candidate membership and is not called from notification delivery/event intake. Existing transaction, promotion, browser, sandbox and external-channel defaults remain unchanged.  
+Blocker: repository verification only; no code/runtime blocker is currently known beyond completing exact-head CI.  
+Next action: verify PR #252's exact final head on both `test-and-build` and `coworker`; if either fails, repair the first confirmed error only.  
+Next three steps: (1) verify #252 exact-head CI and record run/SHA; (2) after applicable merge authorization, merge #252 and verify its main merge revision; (3) only then select the next dependency-ready PA-10 gap or controlled live relevance qualification.  
+Do not redo: #242–#251 foundations or model relevance implementation. Do not connect relevance ranking to background delivery or autonomous execution.  
+Acceptance remaining: green exact-head #252 CI, then green merged-main repair CI; controlled live model/budget/fallback evidence remains a separate production qualification gate.  
+Checkpoint identity: this checkpoint commit is separate from repair implementation `4b9c80eccf0bb46694c9926471b3e9dbb412fa90`; record its resulting SHA externally rather than embedding its own hash here.
 
 **Historical continuation checkpoint (29 September 2026; pre-#249 handoff superseded).**
 
