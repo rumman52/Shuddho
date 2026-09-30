@@ -12,6 +12,7 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
   const [goals, setGoals] = useState<PersonalGoal[]>([]);
   const [suggestionPreferences, setSuggestionPreferences] = useState<PersonalSuggestionPreferences | null>(null);
   const [suggestions, setSuggestions] = useState<PersonalSuggestion[]>([]);
+  const [suggestionRankingMode, setSuggestionRankingMode] = useState<"deterministic" | "model">("deterministic");
   const [selected, setSelected] = useState("");
   const [objective, setObjective] = useState("");
   const [criteria, setCriteria] = useState("");
@@ -33,7 +34,8 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
       if (error instanceof WorkspaceError && error.status === 404) {
         return {
           available: false, enabled: false, delivery_available: false, delivery_enabled: false,
-          event_delivery_available: false, event_delivery_enabled: false, event_timezone: "UTC", dismissed_count: 0,
+          event_delivery_available: false, event_delivery_enabled: false, event_timezone: "UTC",
+          model_relevance_available: false, dismissed_count: 0,
         };
       }
       throw error;
@@ -53,6 +55,7 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
       setGoals(goalResult.goals);
       setSuggestionPreferences(preferenceResult);
       setSuggestions(suggestionResult.suggestions);
+      setSuggestionRankingMode("deterministic");
       setSelected(value => goalResult.goals.some(goal => goal.id === value) ? value : goalResult.goals[0]?.id ?? "");
     }).catch(error => { if (!controller.signal.aborted) setError(errorMessage(error)); });
     return () => controller.abort();
@@ -116,6 +119,7 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
       setSuggestionPreferences(saved);
       const refreshed = await client.personalSuggestions();
       setSuggestions(refreshed.suggestions);
+      setSuggestionRankingMode("deterministic");
       setNotice(next
         ? "Goal suggestions are on. They remain review-only until you choose an action."
         : "Goal suggestions are off.");
@@ -157,6 +161,22 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
         : "Connected-context update notices are off.");
     } catch (error) { setError(errorMessage(error)); }
     finally { setBusy(""); }
+  }
+
+  async function rankSuggestions() {
+    if (busy || !suggestionPreferences?.model_relevance_available || suggestions.length < 2) return;
+    setBusy("suggestion-ranking"); setError(""); setNotice("");
+    try {
+      const ranked = await client.rankPersonalSuggestions();
+      setSuggestions(ranked.suggestions);
+      setSuggestionRankingMode(ranked.mode);
+      setNotice(ranked.mode === "model"
+        ? "AI reordered only these existing bounded suggestions for review. It did not create work, change delivery, or add authority."
+        : "The deterministic suggestion order is already sufficient.");
+    } catch (error) {
+      setError(errorMessage(error));
+      setNotice("The deterministic suggestion order is unchanged.");
+    } finally { setBusy(""); }
   }
 
   async function dismissSuggestion(item: PersonalSuggestion) {
@@ -238,6 +258,16 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
           <p className="cw-fineprint">{suggestionPreferences.event_delivery_available
             ? `Separate opt-in. Update notices are coalesced, use 22:00–07:00 quiet hours in ${suggestionPreferences.event_timezone || eventTimezone}, and never inspect connected message/calendar bodies for relevance or start work.`
             : "Connected-context update notices require the existing connected-reads capability."}</p>
+          {suggestionPreferences.enabled && suggestions.length > 1 && <div className="cw-proposal-controls"><div>
+            <button type="button" className="cw-secondary"
+              disabled={Boolean(busy) || !suggestionPreferences.model_relevance_available}
+              onClick={() => void rankSuggestions()}>
+              {busy === "suggestion-ranking" ? "Ranking…" : "Rank these suggestions with AI"}
+            </button>
+            <span className="cw-fineprint">{suggestionPreferences.model_relevance_available
+              ? `Explicit review only · current order: ${suggestionRankingMode === "model" ? "AI-ranked" : "deterministic"} · the candidate set and delivery state cannot change.`
+              : "AI ranking is unavailable until its separately reviewed model-relevance gate is enabled."}</span>
+          </div></div>}
           {suggestionPreferences.enabled && (suggestions.length === 0
             ? <p className="cw-fineprint">No relevant bounded suggestion right now.</p>
             : <div className="cw-proposals">{suggestions.map(item => <div key={item.id} className="cw-agent-run">

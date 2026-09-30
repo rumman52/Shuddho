@@ -142,6 +142,12 @@ class SuggestionRepository:
                     else False
                 ),
                 "event_timezone": value["event_timezone"],
+                "model_relevance_available": (
+                    available
+                    and self.settings.suggestion_model_relevance_enabled
+                    and self.settings.intelligent_planner_enabled
+                    and bool(self.settings.deepseek_api_key)
+                ),
                 "dismissed_count": len(value["dismissed_ids"]),
             }
 
@@ -606,6 +612,57 @@ class SuggestionRepository:
             dismissed = set(prefs["dismissed_ids"])
             return {"available": True, "enabled": True,
                     "suggestions": [item for item in self._candidates(db, owner) if item["id"] not in dismissed][:self.MAX_SUGGESTIONS]}
+
+    def relevance_context(self, owner: str) -> dict:
+        if not self.settings.suggestion_model_relevance_enabled:
+            raise CoworkerError(
+                "suggestion_model_relevance_disabled",
+                "Model-assisted suggestion ranking is disabled in this deployment.",
+                503,
+            )
+        if not self.settings.intelligent_planner_enabled:
+            raise CoworkerError(
+                "suggestion_model_relevance_unavailable",
+                "Model-assisted suggestion ranking requires the intelligent model boundary.",
+                503,
+            )
+        if not self.settings.deepseek_api_key:
+            raise CoworkerError(
+                "suggestion_relevance_not_configured",
+                "Model-assisted suggestion ranking is not configured.",
+                503,
+            )
+        response = self.list_response(owner)
+        if not response["enabled"]:
+            raise CoworkerError(
+                "personal_suggestions_disabled",
+                "Enable deterministic personal suggestions before requesting model ranking.",
+                409,
+            )
+        suggestions = list(response["suggestions"])
+        if not suggestions:
+            return {"suggestions": [], "model_candidates": []}
+        with self.sessions() as db:
+            goal_ids = {item["goal_id"] for item in suggestions}
+            rows = db.scalars(select(PersonalGoal).where(
+                PersonalGoal.owner_id == owner,
+                PersonalGoal.id.in_(goal_ids),
+                PersonalGoal.state == "active",
+            )).all()
+            objective_by_id = {row.id: row.objective for row in rows}
+        if set(objective_by_id) != goal_ids:
+            raise CoworkerError(
+                "suggestion_relevance_changed",
+                "The bounded suggestion set changed. Refresh before ranking.",
+                409,
+            )
+        return {
+            "suggestions": suggestions,
+            "model_candidates": [
+                {**item, "goal_objective": objective_by_id[item["goal_id"]]}
+                for item in suggestions
+            ],
+        }
 
     def dismiss(self, owner: str, suggestion_id: str) -> dict:
         self._require_available()

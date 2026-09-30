@@ -47,6 +47,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "agent_linkedin_proposals",
         "action_selection",
         "action_proposals",
+        "suggestion_model_relevance",
         "personal_goals",
         "automations",
         "runtime_v3",
@@ -188,6 +189,21 @@ def test_connector_trust_boundary_requires_actions_and_staging_evidence():
     assert "connector_trust_boundary_dependency" in validate_rollout(
         rollout, max_cohort_users=25
     )
+
+def test_suggestion_model_relevance_requires_goals_planner_and_staging_evidence():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["agent_runtime"] = True
+    rollout["capabilities"]["intelligent_planner"] = True
+    rollout["capabilities"]["personal_goals"] = True
+    rollout["capabilities"]["suggestion_model_relevance"] = True
+    assert "suggestion_model_relevance" in required_conditional_gate_ids(
+        rollout["capabilities"], set()
+    )
+    rollout["capabilities"]["intelligent_planner"] = False
+    assert "suggestion_model_relevance_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
+
 
 def test_personal_goals_require_agent_runtime_and_staging_evidence():
     rollout = load("docs/cohort-rollout.template.json")

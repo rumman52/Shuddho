@@ -150,5 +150,9 @@
   "negotiation_proposal_promotion": {
     "status": "pending",
     "evidence": ""
+  },
+  "suggestion_model_relevance": {
+    "status": "pending",
+    "evidence": ""
   }
 }

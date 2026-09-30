@@ -327,6 +327,11 @@ def list_personal_suggestions(identity: Identity, services: Services):
     return services.suggestions.list_response(identity.account_id)
 
 
+@router.post("/personal-suggestions/rank")
+async def rank_personal_suggestions(identity: Identity, services: Services):
+    return await services.suggestion_relevance.rank(identity.account_id)
+
+
 @router.post("/personal-suggestions/{suggestion_id}/dismiss")
 def dismiss_personal_suggestion(
     suggestion_id: str,
