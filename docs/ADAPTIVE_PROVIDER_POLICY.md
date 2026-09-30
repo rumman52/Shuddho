@@ -43,7 +43,7 @@ A successful artifact contains exact proposed environment values, but it never c
 
 ## Pricing input
 
-`blended_token_cost_usd_per_million` is an operator-supplied contract/accounting input. The checked-in template is an example only and is not a claim about current DeepSeek pricing. Use the effective blended rate for the model/account and review it whenever provider pricing changes.
+`blended_token_cost_usd_per_million` is an operator-supplied contract/accounting input. The checked-in template is an example only and is not a claim about current DeepSeek pricing. Use the effective blended rate for the model/account and review it whenever provider pricing changes. PA-11 task-economics evidence reuses this reviewed model rate instead of defining a second model-price source; non-model resource rates live in the separate reviewed task-economics pricing plan.
 
 ## Run
 
