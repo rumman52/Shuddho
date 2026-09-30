@@ -13,6 +13,17 @@ from .notification_schemas import NotificationPreferences
 
 WEEKDAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
+AutomationSafeTool = Literal[
+    "report.create",
+    "document.create",
+    "career.create",
+    "social.draft",
+    "daily_plan.create",
+    "personal_plan.create",
+    "email.draft",
+    "meeting.prepare",
+]
+
 
 class AutomationModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -86,8 +97,9 @@ class AutomationCreate(AutomationModel):
     goal_revision: int = Field(ge=1)
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
     schedule: AutomationTrigger
-    run_profile: Literal["goal", "briefing", "meeting", "email", "deadline"] = "goal"
+    run_profile: Literal["goal", "briefing", "meeting", "email", "deadline", "proactive"] = "goal"
     connector_read_grant_ids: list[UUID] = Field(default_factory=list, max_length=4)
+    tool_allowlist: list[AutomationSafeTool] = Field(default_factory=list, max_length=4)
     output_language: str = Field(default="en", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     overlap_policy: Literal["skip", "buffer_one"] = "skip"
     catchup_window_seconds: int = Field(default=3600, ge=60, le=86400)
@@ -109,8 +121,9 @@ class AutomationPatch(AutomationModel):
     expected_revision: int = Field(ge=1)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     schedule: AutomationTrigger | None = None
-    run_profile: Literal["goal", "briefing", "meeting", "email", "deadline"] | None = None
+    run_profile: Literal["goal", "briefing", "meeting", "email", "deadline", "proactive"] | None = None
     connector_read_grant_ids: list[UUID] | None = Field(default=None, max_length=4)
+    tool_allowlist: list[AutomationSafeTool] | None = Field(default=None, max_length=4)
     output_language: str | None = Field(default=None, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     overlap_policy: Literal["skip", "buffer_one"] | None = None
     catchup_window_seconds: int | None = Field(default=None, ge=60, le=86400)
@@ -132,7 +145,7 @@ class AutomationPatch(AutomationModel):
         fields = self.model_fields_set - {"expected_revision"}
         if not fields:
             raise ValueError("Patch at least one automation field")
-        required = {"timezone", "schedule", "run_profile", "connector_read_grant_ids", "output_language", "overlap_policy", "catchup_window_seconds"}
+        required = {"timezone", "schedule", "run_profile", "connector_read_grant_ids", "tool_allowlist", "output_language", "overlap_policy", "catchup_window_seconds"}
         if any(field in fields and getattr(self, field) is None for field in required):
             raise ValueError("Required automation fields cannot be null")
         return self
