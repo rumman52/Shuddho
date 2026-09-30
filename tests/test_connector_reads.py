@@ -835,6 +835,72 @@ def _one_gmail_event(container, message_id):
     return events[0]
 
 
+def test_scheduled_briefing_uses_only_selected_connected_read_context(container):
+    enable_reads(container)
+    settings = replace(container.settings, work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+    container.notifications.settings = settings
+    container.context.settings = settings
+
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+
+    goal, created = container.goals.create(
+        owner,
+        GoalCreate(
+            objective="Prepare my private daily briefing from this approved inbox context.",
+            success_criteria=["Create one concise private briefing."],
+            constraints=["Do not send, publish, or mutate anything externally."],
+            timezone="UTC",
+            state="active",
+            budget={"max_runs": 10, "max_planner_tokens": 50000},
+        ),
+        "briefing-connected-goal-" + str(uuid4()),
+    )
+    assert created is True
+    automation, created = container.automations.create(
+        owner,
+        AutomationCreate(
+            goal_id=goal["id"],
+            goal_revision=goal["revision"],
+            timezone="UTC",
+            schedule={"kind": "daily", "hour": 8, "minute": 0, "weekdays": []},
+            run_profile="briefing",
+            connector_read_grant_ids=[grant["id"]],
+            output_language="en",
+            overlap_policy="skip",
+            catchup_window_seconds=3600,
+            quiet_hours=None,
+            expires_at=None,
+        ),
+        "briefing-connected-automation-" + str(uuid4()),
+    )
+    assert created is True
+
+    result = container.automations.accept_occurrence(
+        automation["id"], automation["revision"], utcnow().replace(microsecond=0)
+    )
+    assert result["state"] == "accepted"
+    with container.repository.sessions() as db:
+        run = db.get(AgentRun, result["run_id"])
+        assert run is not None
+        assert run.connector_read_grant_ids == [grant["id"]]
+        assert run.tool_allowlist == ["daily_plan.create"]
+        assert run.action_ids == []
+    context = container.context.for_run(owner, result["run_id"])
+    assert any(
+        item["provenance"].get("grant_id") == grant["id"]
+        for item in context["items"]
+    )
+
+
 def test_connected_event_automation_wakes_exactly_one_bounded_runtime_v3_run(container):
     enable_reads(container)
     container.connector_reads.push_verifier = AllowPush()
