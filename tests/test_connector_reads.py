@@ -11,9 +11,9 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from sqlalchemy import select
 
 pytest.importorskip("sqlalchemy")
+from sqlalchemy import select
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
