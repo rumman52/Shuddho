@@ -36,6 +36,7 @@ def staging(tmp_path, rollout_path, *, failed_check=None, revision=REVISION):
         key: {
             "status": "passed",
             "evidence": f"{key}-evidence",
+            "exercise_started_at": "2026-09-30T11:00:00+00:00",
             "verified_at": "2026-09-30T11:20:00+00:00",
             "release_id": RELEASE_ID,
             "source_revision": revision,
