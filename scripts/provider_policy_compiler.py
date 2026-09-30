@@ -7,6 +7,11 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.incident_restore_evidence import (
+    IncidentRestoreEvidenceError,
+    validate_incident_restore_evidence,
+)
+
 
 PLAN_KEYS = {
     "release_id",
@@ -161,6 +166,35 @@ def validate_inputs(plan: dict, decision: dict, review: dict, capacity: dict) ->
         raise ProviderPolicyError(
             "Scale decision does not contain a valid incident/restore evidence binding."
         )
+
+
+def validate_incident_restore_binding(
+    *,
+    release_id: str,
+    incident_restore_sha256: str,
+    decision: dict,
+    incident_restore: dict,
+) -> None:
+    bound = decision.get("artifact_sha256")
+    if not isinstance(bound, dict):
+        raise ProviderPolicyError("Scale decision is missing artifact hashes.")
+    if bound.get("incident_restore") != incident_restore_sha256:
+        raise ProviderPolicyError(
+            "Scale decision does not bind this incident/restore evidence."
+        )
+    rollout_sha256 = decision.get("rollout_manifest_sha256")
+    if not isinstance(rollout_sha256, str):
+        raise ProviderPolicyError(
+            "Scale decision is missing rollout_manifest_sha256."
+        )
+    try:
+        validate_incident_restore_evidence(
+            incident_restore,
+            release_id=release_id,
+            rollout_sha256=rollout_sha256,
+        )
+    except IncidentRestoreEvidenceError as error:
+        raise ProviderPolicyError(str(error)) from None
 
 
 def validate_task_economics_binding(
@@ -428,6 +462,7 @@ def main() -> None:
     parser.add_argument("--scale-review", type=Path, required=True)
     parser.add_argument("--capacity-qualification", type=Path, required=True)
     parser.add_argument("--task-economics", type=Path, required=True)
+    parser.add_argument("--incident-restore", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -443,6 +478,10 @@ def main() -> None:
             args.task_economics,
             "task economics evidence",
         )
+        incident_restore = load_json(
+            args.incident_restore,
+            "incident/restore evidence",
+        )
         validate_inputs(plan, decision, review, capacity)
         bound = decision["artifact_sha256"]
         if bound.get("review") != sha256_file(args.scale_review):
@@ -455,6 +494,12 @@ def main() -> None:
             raise ProviderPolicyError(
                 "Scale decision does not bind this capacity qualification."
             )
+        validate_incident_restore_binding(
+            release_id=plan["release_id"],
+            incident_restore_sha256=sha256_file(args.incident_restore),
+            decision=decision,
+            incident_restore=incident_restore,
+        )
         validate_task_economics_binding(
             release_id=plan["release_id"],
             plan_sha256=sha256_file(args.plan),
@@ -472,6 +517,7 @@ def main() -> None:
                 args.capacity_qualification
             ),
             "task_economics": sha256_file(args.task_economics),
+            "incident_restore": sha256_file(args.incident_restore),
         }
         args.output.write_text(
             json.dumps(result, indent=2) + "\n",
