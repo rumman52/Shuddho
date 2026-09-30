@@ -704,6 +704,10 @@ def test_browser_push_is_explicit_durable_generic_and_rechecks_consent(
         assert delivery is not None
         assert delivery.state == "suppressed"
         assert delivery.error_code == "browser_push_opted_out"
+        alice_subscription = db.scalar(select(BrowserPushSubscription).where(
+            BrowserPushSubscription.owner_id == delivery.owner_id
+        ))
+        assert alice_subscription is not None and alice_subscription.active is False
     assert len(sent) == 1
 
     bob_auth = headers("bob")
