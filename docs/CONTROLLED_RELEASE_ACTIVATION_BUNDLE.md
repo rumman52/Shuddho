@@ -58,12 +58,19 @@ uv run python -m scripts.release_activation_bundle \
   --staging-evidence /secure/release/staging-evidence.final.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
   --model-eval /secure/release/agent-eval.json \
-  --artifact-quality-eval /secure/release/artifact-quality-evidence.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --activations /secure/release/activation-manifest.json \
   --current-stage canary-5 \
   --output /secure/release/release-activation-bundle.json
 ```
+
+When the reviewed rollout has `artifact_services=true`, add:
+
+```bash
+  --artifact-quality-eval /secure/release/artifact-quality-evidence.json \
+```
+
+Omit that argument when `artifact_services=false`; the verifier intentionally rejects artifact-quality evidence for an artifact-disabled rollout.
 
 Passing output has:
 
@@ -88,9 +95,10 @@ uv run python scripts/cohort_release_ledger.py append-release-activation-bundle 
   --staging-evidence /secure/release/staging-evidence.final.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
   --model-eval /secure/release/agent-eval.json \
-  --artifact-quality-eval /secure/release/artifact-quality-evidence.json \
   --release-activation-bundle /secure/release/release-activation-bundle.json
 ```
+
+For an artifact-enabled rollout, add the same conditional `--artifact-quality-eval /secure/release/artifact-quality-evidence.json` argument to the append command. Omit it when Artifact Services are disabled.
 
 Schema v16 refuses to append if the release ledger changed after bundle verification. For quality-bound bundles it independently requires the exact supplied quality artifact SHA-256 to match the bundle before signing. Artifact-enabled bundles likewise require the exact supplied PA-11 artifact-quality evidence SHA-256. This prevents recording stale ledger handoff or substituted quality proof.
 
