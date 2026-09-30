@@ -667,6 +667,8 @@ class Automation(Base):
     state: Mapped[str] = mapped_column(String(30), default="active")
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     schedule: Mapped[dict[str, Any]] = mapped_column(JSON)
+    run_profile: Mapped[str] = mapped_column(String(30), default="goal")
+    connector_read_grant_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     output_language: Mapped[str] = mapped_column(String(35), default="en")
     overlap_policy: Mapped[str] = mapped_column(String(30), default="skip")
     catchup_window_seconds: Mapped[int] = mapped_column(Integer, default=3600)
