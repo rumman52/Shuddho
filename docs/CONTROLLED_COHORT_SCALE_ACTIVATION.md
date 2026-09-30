@@ -36,6 +36,7 @@ uv run --extra coworker python scripts/cohort_scale_activation.py \
   --deployment-change /secure/release/cohort-scale-deployment.json \
   --operator-status /secure/release/post-scale-operator-status.json \
   --provider-policy-activation /secure/release/provider-policy-activation.json \
+  --incident-restore /secure/release/incident-restore-evidence.json \
   --release-activation-bundle /secure/release/release-activation-bundle.json \
   --microsoft-rollout-activation /secure/release/microsoft-rollout-activation.json \
   --action-selection-activation /secure/release/action-selection-activation.json \
