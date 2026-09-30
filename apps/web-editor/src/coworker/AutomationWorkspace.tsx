@@ -117,19 +117,19 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     setBusy("browser-push"); setError(""); setNotice("");
     try {
       if (!nextEnabled) {
-        const registration = "serviceWorker" in navigator
-          ? await navigator.serviceWorker.getRegistration("/") : undefined;
-        const subscription = registration ? await registration.pushManager.getSubscription() : null;
-        if (subscription) {
-          await client.deactivateBrowserPushSubscription(subscription.endpoint);
-          await subscription.unsubscribe();
-        }
         const saved = await client.saveNotificationPreferences({
           ...notificationPreferences,
           browser_push_enabled: false,
         });
         setNotificationPreferences(saved);
-        setNotice("Browser notifications are off for this account.");
+        const registration = "serviceWorker" in navigator
+          ? await navigator.serviceWorker.getRegistration("/") : undefined;
+        const subscription = registration ? await registration.pushManager.getSubscription() : null;
+        if (subscription) {
+          try { await client.deactivateBrowserPushSubscription(subscription.endpoint); } catch { /* account opt-out already blocks delivery */ }
+          await subscription.unsubscribe();
+        }
+        setNotice("Browser notifications are off for this account. Re-enabling requires registering a device again.");
         return;
       }
       if (!browserPushConfig?.enabled || !browserPushConfig.application_server_key) {
