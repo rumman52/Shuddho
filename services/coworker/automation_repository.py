@@ -1120,15 +1120,6 @@ class AutomationRepository:
                 previous.state = "skipped"; previous.reason = reason; previous.updated_at = utcnow()
                 return {"occurrence_id": previous.id, "run_id": None, "state": "skipped", "reason": reason, "replayed": False}
 
-            if run_profile == "proactive" and objective is not None:
-                objective = (
-                    objective
-                    + "\n\nThis is a reviewed proactive wake-up. Choose at most one useful bounded next step "
-                      "from the explicit tool scope using only currently authorized context. If no useful work "
-                      "is justified, complete without action. Never expand permissions or perform consequential "
-                      "external actions."
-                )
-            proactive_tool_allowlist = list(row.tool_allowlist or []) if run_profile == "proactive" else []
             active_run = db.scalar(select(AgentRun.id).join(
                 AutomationOccurrence, AutomationOccurrence.run_id == AgentRun.id,
             ).where(
@@ -1834,6 +1825,15 @@ class AutomationRepository:
                 reason = "goal_missing"
             elif utcnow() - due_at > timedelta(seconds=row.catchup_window_seconds):
                 reason = "catchup_window"
+            if run_profile == "proactive" and objective is not None:
+                objective = (
+                    objective
+                    + "\n\nThis is a reviewed proactive wake-up. Choose at most one useful bounded next step "
+                      "from the explicit tool scope using only currently authorized context. If no useful work "
+                      "is justified, complete without action. Never expand permissions or perform consequential "
+                      "external actions."
+                )
+            proactive_tool_allowlist = list(row.tool_allowlist or []) if run_profile == "proactive" else []
             active_run = db.scalar(select(AgentRun.id).join(
                 AutomationOccurrence, AutomationOccurrence.run_id == AgentRun.id,
             ).where(
