@@ -1437,6 +1437,115 @@ def test_deadline_coworker_completion_notice_is_deduplicated(
         assert completed[0].title == "Deadline recovery plan ready"
 
 
+def test_goal_driven_proactive_schedule_freezes_reviewed_tool_scope(
+    automation_client,
+    automation_container,
+):
+    from services.coworker.agent_planner import intelligent_tool_names
+
+    client, headers = automation_client
+    auth = headers()
+    settings = _enable_briefings(automation_container)
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "proactive-goal"},
+        json=goal_payload(),
+    ).json()
+    body = automation_payload(goal)
+    body["run_profile"] = "proactive"
+    body["tool_allowlist"] = ["daily_plan.create", "email.draft"]
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "proactive-automation"},
+        json=body,
+    )
+    assert response.status_code == 201
+    automation = response.json()
+    assert automation["tool_allowlist"] == ["daily_plan.create", "email.draft"]
+
+    assert intelligent_tool_names(
+        settings,
+        goal="Choose one bounded useful next step.",
+        runtime_version=3,
+        tool_allowlist=automation["tool_allowlist"],
+    ) == ["daily_plan.create", "email.draft"]
+
+    due = utcnow().replace(microsecond=0)
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due
+    )
+    replay = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due
+    )
+    assert first["state"] == "accepted"
+    assert replay["replayed"] is True
+    assert replay["run_id"] == first["run_id"]
+
+    with automation_container.repository.sessions() as db:
+        run = db.get(AgentRun, first["run_id"])
+        assert run.runtime_version == 3
+        assert run.tool_allowlist == ["daily_plan.create", "email.draft"]
+        assert run.action_ids == []
+
+    with automation_container.repository.sessions.begin() as db:
+        db.get(AgentRun, first["run_id"]).state = "completed"
+    automation_container.automations.notify_run_completed(first["run_id"])
+    automation_container.automations.notify_run_completed(first["run_id"])
+    with automation_container.repository.sessions() as db:
+        completed = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_completed",
+        )).all()
+        assert len(completed) == 1
+        assert completed[0].title == "Goal-driven coworker update ready"
+
+
+def test_goal_driven_proactive_scope_rejects_consequential_or_empty_tools(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "proactive-scope-goal"},
+        json=goal_payload(),
+    ).json()
+
+    empty = automation_payload(goal)
+    empty["run_profile"] = "proactive"
+    empty["tool_allowlist"] = []
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "proactive-empty-tools"},
+        json=empty,
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "proactive_tool_scope"
+
+    consequential = automation_payload(goal)
+    consequential["run_profile"] = "proactive"
+    consequential["tool_allowlist"] = ["email.send"]
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "proactive-consequential-tool"},
+        json=consequential,
+    )
+    assert response.status_code == 422
+
+
+def test_goal_driven_proactivity_migration_persists_reviewed_tool_scope(
+    automation_container,
+):
+    with automation_container.repository.sessions() as db:
+        columns = {
+            item["name"]
+            for item in inspect(db.bind).get_columns("cw_automations")
+        }
+    assert "tool_allowlist" in columns
+
+
 def test_temporal_schedule_contract_uses_timezone_overlap_and_expiry():
     from services.coworker.automation_scheduler import temporal_schedule
     value = {
