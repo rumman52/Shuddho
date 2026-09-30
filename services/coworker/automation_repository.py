@@ -208,6 +208,11 @@ class AutomationRepository:
         if not self.settings.personal_goals_enabled or not self.settings.agent_runtime_enabled:
             raise CoworkerError("automation_dependency", "Automations require persistent goals and Agent Runtime.", 409)
         payload = request.model_dump(mode="json")
+        # Preserve the pre-briefing idempotency fingerprint for ordinary
+        # goal automations so old clients can safely replay an existing key.
+        if request.run_profile == "goal" and not request.connector_read_grant_ids:
+            payload.pop("run_profile", None)
+            payload.pop("connector_read_grant_ids", None)
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
             if db.scalar(select(Account.id).where(Account.id == owner).with_for_update()) is None:
