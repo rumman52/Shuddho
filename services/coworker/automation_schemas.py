@@ -86,7 +86,7 @@ class AutomationCreate(AutomationModel):
     goal_revision: int = Field(ge=1)
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
     schedule: AutomationTrigger
-    run_profile: Literal["goal", "briefing", "meeting"] = "goal"
+    run_profile: Literal["goal", "briefing", "meeting", "email"] = "goal"
     connector_read_grant_ids: list[UUID] = Field(default_factory=list, max_length=4)
     output_language: str = Field(default="en", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     overlap_policy: Literal["skip", "buffer_one"] = "skip"
@@ -109,7 +109,7 @@ class AutomationPatch(AutomationModel):
     expected_revision: int = Field(ge=1)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     schedule: AutomationTrigger | None = None
-    run_profile: Literal["goal", "briefing", "meeting"] | None = None
+    run_profile: Literal["goal", "briefing", "meeting", "email"] | None = None
     connector_read_grant_ids: list[UUID] | None = Field(default=None, max_length=4)
     output_language: str | None = Field(default=None, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     overlap_policy: Literal["skip", "buffer_one"] | None = None
