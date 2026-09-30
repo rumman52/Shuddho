@@ -40,7 +40,8 @@
     "automations": false,
     "runtime_v3": false,
     "context_retrieval": false,
-    "negotiation_proposal_promotion": false
+    "negotiation_proposal_promotion": false,
+    "suggestion_model_relevance": false
   },
   "rollback": {
     "runbook_reference": "deployment-runbook-or-ticket",
@@ -68,7 +69,8 @@
     "automations_kill_switch": "SHUDDHO_AUTOMATIONS_ENABLED=false",
     "runtime_v3_kill_switch": "SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false",
     "context_retrieval_kill_switch": "SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false",
-    "negotiation_proposal_promotion_kill_switch": "SHUDDHO_NEGOTIATION_PROPOSAL_PROMOTION_ENABLED=false"
+    "negotiation_proposal_promotion_kill_switch": "SHUDDHO_NEGOTIATION_PROPOSAL_PROMOTION_ENABLED=false",
+    "suggestion_model_relevance_kill_switch": "SHUDDHO_SUGGESTION_MODEL_RELEVANCE_ENABLED=false"
   },
   "monitoring": {
     "queue_age": "dashboard-or-alert-reference",
