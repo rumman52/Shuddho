@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import and_, func, or_, select
 
@@ -80,6 +80,76 @@ class AutomationRepository:
                 409,
             )
 
+    def _validate_briefing_profile(
+        self,
+        db,
+        owner: str,
+        schedule: dict,
+        run_profile: str,
+        connector_read_grant_ids: list[str],
+    ) -> None:
+        if run_profile != "briefing":
+            if connector_read_grant_ids:
+                raise CoworkerError(
+                    "automation_context_scope",
+                    "Connected read sources on scheduled automations are available only to the bounded briefing profile.",
+                    409,
+                )
+            return
+        if schedule.get("kind") not in {"daily", "weekly"}:
+            raise CoworkerError(
+                "briefing_trigger_scope",
+                "Daily/weekly briefings require a time-based schedule.",
+                409,
+            )
+        if (
+            not self.settings.agent_runtime_v3_enabled
+            or not self.settings.intelligent_planner_enabled
+            or not self.settings.work_services_enabled
+            or not self.settings.context_retrieval_enabled
+        ):
+            raise CoworkerError(
+                "briefing_unavailable",
+                "Daily/weekly briefings require Agent Runtime v3, bounded context retrieval, the planner, and work services.",
+                409,
+            )
+        if len(connector_read_grant_ids) > 4:
+            raise CoworkerError("briefing_source_limit", "A briefing can use at most four connected read authorizations.", 422)
+        for grant_id in connector_read_grant_ids:
+            if not self.settings.connector_reads_enabled:
+                raise CoworkerError(
+                    "briefing_connected_reads_unavailable",
+                    "Connected briefing sources require qualified connected reads.",
+                    409,
+                )
+            grant = db.scalar(select(ConnectorReadGrant).where(
+                ConnectorReadGrant.id == grant_id,
+                ConnectorReadGrant.owner_id == owner,
+            ))
+            if (
+                grant is None
+                or grant.state != "active"
+                or aware(grant.expires_at) <= utcnow()
+                or grant.destination != "planner_context"
+                or grant.purpose != "agent_context"
+            ):
+                raise CoworkerError(
+                    "briefing_source_unavailable",
+                    "A selected connected read authorization is no longer active for Agent context.",
+                    409,
+                )
+            subscription = db.scalar(select(ConnectorSubscription.id).where(
+                ConnectorSubscription.owner_id == owner,
+                ConnectorSubscription.grant_id == grant_id,
+                ConnectorSubscription.state.in_(["pending", "active", "renewing"]),
+            ).limit(1))
+            if subscription is None:
+                raise CoworkerError(
+                    "briefing_source_subscription_unavailable",
+                    "Activate event synchronization for each connected briefing source first.",
+                    409,
+                )
+
     @staticmethod
     def _automation(db, owner: str, automation_id: str, *, lock: bool = False) -> Automation:
         query = select(Automation).where(Automation.id == automation_id, Automation.owner_id == owner)
@@ -97,6 +167,8 @@ class AutomationRepository:
             "goal_revision": row.goal_revision,
             "timezone": row.timezone,
             "schedule": dict(row.schedule),
+            "run_profile": row.run_profile,
+            "connector_read_grant_ids": list(row.connector_read_grant_ids or []),
             "output_language": row.output_language,
             "overlap_policy": row.overlap_policy,
             "catchup_window_seconds": row.catchup_window_seconds,
@@ -110,7 +182,9 @@ class AutomationRepository:
         return {
             "id": row.id, "goal_id": row.goal_id, "goal_revision": row.goal_revision,
             "revision": row.revision, "state": row.state, "timezone": row.timezone,
-            "schedule": dict(row.schedule), "output_language": row.output_language,
+            "schedule": dict(row.schedule), "run_profile": row.run_profile,
+            "connector_read_grant_ids": list(row.connector_read_grant_ids or []),
+            "output_language": row.output_language,
             "overlap_policy": row.overlap_policy, "catchup_window_seconds": row.catchup_window_seconds,
             "quiet_hours": dict(row.quiet_hours) if row.quiet_hours else None,
             "expires_at": iso(row.expires_at) if row.expires_at else None,
@@ -135,6 +209,11 @@ class AutomationRepository:
         if not self.settings.personal_goals_enabled or not self.settings.agent_runtime_enabled:
             raise CoworkerError("automation_dependency", "Automations require persistent goals and Agent Runtime.", 409)
         payload = request.model_dump(mode="json")
+        # Preserve the pre-briefing idempotency fingerprint for ordinary
+        # goal automations so old clients can safely replay an existing key.
+        if request.run_profile == "goal" and not request.connector_read_grant_ids:
+            payload.pop("run_profile", None)
+            payload.pop("connector_read_grant_ids", None)
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
             if db.scalar(select(Account.id).where(Account.id == owner).with_for_update()) is None:
@@ -163,12 +242,17 @@ class AutomationRepository:
             if request.expires_at is not None and aware(request.expires_at) <= utcnow():
                 raise CoworkerError("automation_expired", "Automation expiry must be in the future.", 409)
             self._validate_event_trigger(db, owner, payload["schedule"])
+            connector_read_grant_ids = [str(value) for value in request.connector_read_grant_ids]
+            self._validate_briefing_profile(
+                db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids
+            )
             now = utcnow()
             row = Automation(
                 id=str(uuid4()), owner_id=owner, workspace_id=goal.workspace_id,
                 goal_id=goal.id, goal_revision=goal.revision, idempotency_key=idempotency_key,
                 fingerprint=fingerprint, revision=1, state="active", timezone=request.timezone,
-                schedule=request.schedule.model_dump(mode="json"), output_language=request.output_language,
+                schedule=request.schedule.model_dump(mode="json"), run_profile=request.run_profile,
+                connector_read_grant_ids=connector_read_grant_ids, output_language=request.output_language,
                 overlap_policy=request.overlap_policy, catchup_window_seconds=request.catchup_window_seconds,
                 quiet_hours=request.quiet_hours.model_dump(mode="json") if request.quiet_hours else None,
                 expires_at=request.expires_at, created_at=now, updated_at=now,
@@ -214,13 +298,18 @@ class AutomationRepository:
             if row.state == "cancelled":
                 raise CoworkerError("automation_not_editable", "Cancelled automations cannot be edited.", 409)
             fields = request.model_fields_set - {"expected_revision"}
-            for field in {"timezone", "output_language", "overlap_policy", "catchup_window_seconds", "expires_at"} & fields:
+            for field in {"timezone", "run_profile", "output_language", "overlap_policy", "catchup_window_seconds", "expires_at"} & fields:
                 setattr(row, field, getattr(request, field))
+            if "connector_read_grant_ids" in fields:
+                row.connector_read_grant_ids = [str(value) for value in (request.connector_read_grant_ids or [])]
             if "schedule" in fields:
                 row.schedule = request.schedule.model_dump(mode="json")
             if "quiet_hours" in fields:
                 row.quiet_hours = request.quiet_hours.model_dump(mode="json") if request.quiet_hours else None
             self._validate_event_trigger(db, owner, dict(row.schedule))
+            self._validate_briefing_profile(
+                db, owner, dict(row.schedule), row.run_profile, list(row.connector_read_grant_ids or [])
+            )
             if row.expires_at is not None and aware(row.expires_at) <= utcnow():
                 raise CoworkerError("automation_expired", "Automation expiry must be in the future.", 409)
             row.revision += 1; row.updated_at = utcnow(); row.schedule_error_code = None
@@ -528,9 +617,35 @@ class AutomationRepository:
                 )
                 db.add(previous); db.flush()
             owner, goal_id, goal_revision, output_language = row.owner_id, row.goal_id, row.goal_revision, row.output_language
-            objective = db.scalar(select(PersonalGoal.objective).where(
+            run_profile = row.run_profile
+            connector_read_grant_ids = list(row.connector_read_grant_ids or [])
+            if run_profile == "briefing":
+                try:
+                    self._validate_briefing_profile(
+                        db, owner, dict(row.schedule), run_profile, connector_read_grant_ids
+                    )
+                except CoworkerError as error:
+                    previous.state = "blocked"; previous.reason = error.code[:80]; previous.updated_at = utcnow()
+                    return {
+                        "occurrence_id": previous.id, "run_id": None, "state": "blocked",
+                        "reason": error.code, "replayed": False,
+                    }
+            goal = db.scalar(select(PersonalGoal).where(
                 PersonalGoal.id == goal_id, PersonalGoal.owner_id == owner,
             ))
+            objective = goal.objective if goal is not None else None
+            briefing_document_ids: list[str] = []
+            if run_profile == "briefing" and goal is not None:
+                for resource in list(goal.authorized_resources or []):
+                    if (
+                        isinstance(resource, dict)
+                        and resource.get("kind") == "document"
+                        and isinstance(resource.get("reference"), str)
+                        and resource["reference"] not in briefing_document_ids
+                    ):
+                        briefing_document_ids.append(resource["reference"])
+                    if len(briefing_document_ids) >= 5:
+                        break
             reason = None
             if not self.settings.automations_enabled:
                 reason = "kill_switch"
@@ -573,10 +688,18 @@ class AutomationRepository:
         try:
             run, _ = self.agent.create(
                 owner,
-                AgentRunCreate(goal=objective, document_ids=[], action_ids=[], memory_namespaces=[], output_language=output_language),
+                AgentRunCreate(
+                    goal=objective,
+                    document_ids=briefing_document_ids if run_profile == "briefing" else [],
+                    action_ids=[],
+                    memory_namespaces=[],
+                    connector_read_grant_ids=connector_read_grant_ids,
+                    output_language=output_language,
+                ),
                 idempotency_key,
                 persistent_goal_id=goal_id,
                 persistent_goal_revision=goal_revision,
+                tool_allowlist=["daily_plan.create"] if run_profile == "briefing" else None,
             )
         except CoworkerError as error:
             with self.sessions.begin() as db:
@@ -609,12 +732,50 @@ class AutomationRepository:
                 automation_id=automation_id,
                 occurrence_id=occurrence.id,
                 kind="automation_started",
-                title="Scheduled work started",
-                message="Your personal agent started the scheduled bounded run.",
+                title="Briefing started" if run_profile == "briefing" else "Scheduled work started",
+                message=(
+                    "Your personal agent started one bounded briefing run."
+                    if run_profile == "briefing"
+                    else "Your personal agent started the scheduled bounded run."
+                ),
                 visible_at=visible_at,
                 expires_at=visible_at + timedelta(days=30),
             )
             return {"occurrence_id": occurrence.id, "run_id": run["id"], "state": "accepted", "replayed": False}
+
+    def notify_run_completed(self, run_id: str) -> None:
+        """Create one privacy-safe completion notice for a scheduled briefing run."""
+        with self.sessions.begin() as db:
+            occurrence = db.scalar(select(AutomationOccurrence).where(
+                AutomationOccurrence.run_id == run_id,
+            ).order_by(AutomationOccurrence.created_at.desc()).limit(1))
+            if occurrence is None:
+                return
+            automation = db.get(Automation, occurrence.automation_id)
+            run = db.get(AgentRun, run_id)
+            if (
+                automation is None
+                or run is None
+                or automation.run_profile != "briefing"
+                or run.state != "completed"
+            ):
+                return
+            notice_id = str(uuid5(NAMESPACE_URL, f"shuddho:briefing-complete:{occurrence.id}:{run_id}"))
+            visible_at = self.notifications.visible_at_after_quiet_hours(
+                utcnow(), automation.timezone, automation.quiet_hours,
+            )
+            self.notifications.enqueue_pending(
+                db,
+                owner=automation.owner_id,
+                workspace_id=automation.workspace_id,
+                automation_id=automation.id,
+                kind="automation_completed",
+                title="Briefing ready",
+                message="Your private daily/weekly briefing is ready to review in Shuddho.",
+                visible_at=visible_at,
+                expires_at=visible_at + timedelta(days=7),
+                notification_id=notice_id,
+            )
 
     @staticmethod
     def _notification_visible_at(

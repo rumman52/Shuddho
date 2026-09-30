@@ -62,7 +62,8 @@ export type AutomationSchedule =
   | { kind: "event"; grant_id: string };
 export type PersonalAutomation = {
   id: string; goal_id: string; goal_revision: number; revision: number; state: "active" | "paused" | "cancelled";
-  timezone: string; schedule: AutomationSchedule; output_language: string; overlap_policy: "skip" | "buffer_one";
+  timezone: string; schedule: AutomationSchedule; run_profile: "goal" | "briefing"; connector_read_grant_ids: string[];
+  output_language: string; overlap_policy: "skip" | "buffer_one";
   catchup_window_seconds: number; quiet_hours: { start: string; end: string } | null; expires_at: string | null;
   schedule_applied_revision: number | null; schedule_applied_enabled: boolean; schedule_error_code: string | null;
   created_at: string; updated_at: string;
@@ -530,7 +531,8 @@ export class CoworkerClient {
   }
   automations(signal?: AbortSignal) { return this.json<{ enabled: boolean; automations: PersonalAutomation[] }>("/api/v1/automations", { signal }); }
   createAutomation(input: {
-    goal_id: string; goal_revision: number; timezone: string; schedule: AutomationSchedule; output_language: string;
+    goal_id: string; goal_revision: number; timezone: string; schedule: AutomationSchedule;
+    run_profile: "goal" | "briefing"; connector_read_grant_ids: string[]; output_language: string;
     overlap_policy: "skip" | "buffer_one"; catchup_window_seconds: number;
     quiet_hours: { start: string; end: string } | null; expires_at: string | null;
   }, key: string) {
