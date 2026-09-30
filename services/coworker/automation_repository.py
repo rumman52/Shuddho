@@ -322,6 +322,49 @@ class AutomationRepository:
             )
 
     @staticmethod
+    def _email_thread_snapshot_ids(
+        db,
+        owner: str,
+        grant_id: str,
+        changed: list[ConnectorSnapshot],
+        *,
+        max_total: int = 8,
+    ) -> list[str]:
+        """Freeze changed messages plus bounded active snapshots from the same provider thread."""
+        selected: list[str] = [item.id for item in changed]
+        identities: set[tuple[str, str]] = set()
+        for item in changed:
+            payload = item.payload if isinstance(item.payload, dict) else {}
+            if item.provider == "google" and isinstance(payload.get("thread_id"), str) and payload["thread_id"]:
+                identities.add(("google", payload["thread_id"]))
+            elif item.provider == "microsoft" and isinstance(payload.get("conversation_id"), str) and payload["conversation_id"]:
+                identities.add(("microsoft", payload["conversation_id"]))
+        if not identities or len(selected) >= max_total:
+            return selected[:max_total]
+
+        candidates = list(db.scalars(select(ConnectorSnapshot).where(
+            ConnectorSnapshot.owner_id == owner,
+            ConnectorSnapshot.grant_id == grant_id,
+            ConnectorSnapshot.capability == "email_read",
+            ConnectorSnapshot.state == "active",
+        ).order_by(ConnectorSnapshot.updated_at.desc()).limit(40)).all())
+        for item in candidates:
+            if item.id in selected:
+                continue
+            payload = item.payload if isinstance(item.payload, dict) else {}
+            identity: tuple[str, str] | None = None
+            if item.provider == "google" and isinstance(payload.get("thread_id"), str) and payload["thread_id"]:
+                identity = ("google", payload["thread_id"])
+            elif item.provider == "microsoft" and isinstance(payload.get("conversation_id"), str) and payload["conversation_id"]:
+                identity = ("microsoft", payload["conversation_id"])
+            if identity not in identities:
+                continue
+            selected.append(item.id)
+            if len(selected) >= max_total:
+                break
+        return selected
+
+    @staticmethod
     def _email_relevance_score(goal: PersonalGoal, snapshots: list[ConnectorSnapshot]) -> int:
         goal_terms = {
             token.casefold()
@@ -1153,7 +1196,12 @@ class AutomationRepository:
             quiet_hours = automation.quiet_hours
             document_ids = self._goal_document_ids(goal) if run_profile in {"email", "proactive"} else []
             snapshot_ids = (
-                [item.id for item in email_snapshots]
+                self._email_thread_snapshot_ids(
+                    db,
+                    automation.owner_id,
+                    grant.id,
+                    email_snapshots,
+                )
                 if run_profile == "email"
                 else [item.id for item in active_event_snapshots]
                 if run_profile == "proactive"
