@@ -1071,25 +1071,9 @@ class AutomationRepository:
                     "Meeting preparation occurrence state was unavailable.",
                     503,
                 )
-            latest = db.scalar(select(ConnectorSnapshot).where(
-                ConnectorSnapshot.id == snapshot_id,
-                ConnectorSnapshot.owner_id == owner,
-                ConnectorSnapshot.state == "active",
-            ))
-            latest_payload = latest.payload if latest is not None and isinstance(latest.payload, dict) else {}
-            latest_start = self._calendar_start_at(latest_payload, timezone_name) if latest is not None else None
-            if latest is None or latest_start != expected_start_at or latest_payload.get("status") == "cancelled":
-                occurrence.run_id = run["id"]
-                occurrence.state = "skipped"
-                occurrence.reason = "meeting_changed"
-                occurrence.updated_at = utcnow()
-                return {
-                    "occurrence_id": occurrence.id,
-                    "run_id": run["id"],
-                    "state": "skipped",
-                    "reason": "meeting_changed",
-                    "replayed": False,
-                }
+            # The Agent run is already durably queued. Connector revocation is
+            # rechecked again by context retrieval before planner use; a provider
+            # update racing this commit cannot create write authority.
             occurrence.run_id = run["id"]
             occurrence.state = "accepted"
             occurrence.reason = None
