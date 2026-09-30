@@ -685,6 +685,43 @@ class AutomationRepository:
             ).order_by(AutomationRevision.revision)).all()
             return [{"revision": row.revision, "snapshot": row.snapshot, "created_at": iso(row.created_at)} for row in rows]
 
+    def history(self, owner: str, automation_id: str, limit: int = 10) -> list[dict]:
+        """Owner-scoped recent execution evidence from the existing occurrence/run ledgers."""
+        self._require_enabled()
+        with self.sessions() as db:
+            self._automation(db, owner, automation_id)
+            rows = db.execute(
+                select(AutomationOccurrence, AgentRun)
+                .outerjoin(AgentRun, AgentRun.id == AutomationOccurrence.run_id)
+                .where(
+                    AutomationOccurrence.automation_id == automation_id,
+                    AutomationOccurrence.owner_id == owner,
+                )
+                .order_by(AutomationOccurrence.due_at.desc(), AutomationOccurrence.created_at.desc())
+                .limit(max(1, min(limit, 25)))
+            ).all()
+            result: list[dict] = []
+            for occurrence, run in rows:
+                trigger_type = (
+                    "event"
+                    if occurrence.trigger_event_id
+                    else "meeting"
+                    if occurrence.trigger_snapshot_id
+                    else "schedule"
+                )
+                result.append({
+                    "occurrence_id": occurrence.id,
+                    "trigger_type": trigger_type,
+                    "due_at": iso(occurrence.due_at),
+                    "occurrence_state": occurrence.state,
+                    "reason": occurrence.reason,
+                    "run_id": run.id if run is not None else None,
+                    "run_state": run.state if run is not None else None,
+                    "run_message": run.message if run is not None else None,
+                    "run_updated_at": iso(run.updated_at) if run is not None else None,
+                })
+            return result
+
     @staticmethod
     def _check_revision(row: Automation, expected: int) -> None:
         if row.revision != expected:

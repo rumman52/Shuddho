@@ -294,6 +294,62 @@ def test_automation_crud_is_owner_scoped_revisioned_and_reconciled(automation_cl
     assert limited.json()["error"]["code"] == "automation_limit"
 
 
+def test_automation_edit_and_history_are_revisioned_and_owner_scoped(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    alice, bob = headers(), headers("bob")
+    _goal, automation = create_goal_and_automation(client, alice)
+
+    edited = client.patch(
+        f'/api/v1/automations/{automation["id"]}',
+        headers=alice,
+        json={
+            "expected_revision": automation["revision"],
+            "schedule": {"kind": "daily", "hour": 9, "minute": 15, "weekdays": []},
+        },
+    )
+    assert edited.status_code == 200
+    value = edited.json()
+    assert value["revision"] == 2
+    assert value["schedule"]["hour"] == 9
+    assert value["schedule"]["minute"] == 15
+
+    stale = client.patch(
+        f'/api/v1/automations/{automation["id"]}',
+        headers=alice,
+        json={
+            "expected_revision": automation["revision"],
+            "quiet_hours": {"start": "22:00", "end": "07:00"},
+        },
+    )
+    assert stale.status_code == 409
+
+    due = utcnow().replace(microsecond=0)
+    result = automation_container.automations.accept_occurrence(
+        automation["id"], value["revision"], due
+    )
+    assert result["state"] == "accepted"
+
+    history = client.get(
+        f'/api/v1/automations/{automation["id"]}/history',
+        headers=alice,
+    )
+    assert history.status_code == 200
+    items = history.json()["history"]
+    assert len(items) == 1
+    assert items[0]["occurrence_id"] == result["occurrence_id"]
+    assert items[0]["run_id"] == result["run_id"]
+    assert items[0]["trigger_type"] == "schedule"
+    assert items[0]["occurrence_state"] == "accepted"
+
+    assert client.get(
+        f'/api/v1/automations/{automation["id"]}/history',
+        headers=bob,
+    ).status_code == 404
+
+
 def test_kill_switch_reconciliation_pauses_and_restores_persisted_desired_state(automation_client, automation_container):
     client, headers = automation_client
     auth = headers()

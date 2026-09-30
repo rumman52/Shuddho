@@ -70,6 +70,11 @@ export type PersonalAutomation = {
   schedule_applied_revision: number | null; schedule_applied_enabled: boolean; schedule_error_code: string | null;
   created_at: string; updated_at: string;
 };
+export type AutomationHistoryItem = {
+  occurrence_id: string; trigger_type: "schedule" | "event" | "meeting"; due_at: string;
+  occurrence_state: string; reason: string | null; run_id: string | null; run_state: AgentRunState | null;
+  run_message: string | null; run_updated_at: string | null;
+};
 export type MemoryFact = {
   id: string; namespace: "profile" | "preferences" | "project" | "organization" | "writing";
   key: string; value: string; language: string; version: number; active: boolean;
@@ -540,6 +545,19 @@ export class CoworkerClient {
     quiet_hours: { start: string; end: string } | null; expires_at: string | null;
   }, key: string) {
     return this.json<PersonalAutomation>("/api/v1/automations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+  updateAutomation(id: string, revision: number, input: {
+    schedule?: AutomationSchedule; quiet_hours?: { start: string; end: string } | null;
+    timezone?: string; tool_allowlist?: PersonalAutomation["tool_allowlist"];
+    connector_read_grant_ids?: string[];
+  }) {
+    return this.json<PersonalAutomation>(`/api/v1/automations/${identifier(id)}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expected_revision: revision, ...input }),
+    });
+  }
+  automationHistory(id: string, signal?: AbortSignal) {
+    return this.json<{ history: AutomationHistoryItem[] }>(`/api/v1/automations/${identifier(id)}/history`, { signal });
   }
   transitionAutomation(id: string, revision: number, action: "pause" | "resume" | "cancel") {
     return this.json<PersonalAutomation>(`/api/v1/automations/${identifier(id)}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }) });
