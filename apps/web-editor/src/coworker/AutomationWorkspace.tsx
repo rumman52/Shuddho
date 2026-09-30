@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type AgentNotification, type BrowserPushConfig, type ConnectorReadGrant, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
+import { CoworkerClient, type AgentNotification, type AutomationHistoryItem, type BrowserPushConfig, type ConnectorReadGrant, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+const PROACTIVE_TOOLS: { id: PersonalAutomation["tool_allowlist"][number]; label: string }[] = [
+  { id: "daily_plan.create", label: "Plans" },
+  { id: "report.create", label: "Reports" },
+  { id: "email.draft", label: "Email drafts" },
+  { id: "meeting.prepare", label: "Meeting prep" },
+  { id: "document.create", label: "Documents" },
+  { id: "career.create", label: "Career documents" },
+  { id: "social.draft", label: "Social drafts" },
+  { id: "personal_plan.create", label: "Personal plans" },
+];
 const message = (error: unknown) => error instanceof Error ? error.message : "This automation action could not finish.";
 
 function applicationServerKey(value: string): ArrayBuffer {
@@ -23,7 +33,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [browserPushConfig, setBrowserPushConfig] = useState<BrowserPushConfig | null>(null);
   const [browserPushDeviceActive, setBrowserPushDeviceActive] = useState(false);
   const [goalId, setGoalId] = useState("");
-  const [kind, setKind] = useState<"daily" | "weekly" | "event" | "meeting" | "email" | "deadline">("daily");
+  const [kind, setKind] = useState<"daily" | "weekly" | "event" | "meeting" | "email" | "deadline" | "proactive">("daily");
   const [eventGrantId, setEventGrantId] = useState("");
   const [emailGrantId, setEmailGrantId] = useState("");
   const [meetingGrantId, setMeetingGrantId] = useState("");
@@ -31,6 +41,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [meetingPreparationMinutes, setMeetingPreparationMinutes] = useState(30);
   const [briefing, setBriefing] = useState(false);
   const [briefingGrantIds, setBriefingGrantIds] = useState<string[]>([]);
+  const [proactiveGrantIds, setProactiveGrantIds] = useState<string[]>([]);
+  const [proactiveTools, setProactiveTools] = useState<PersonalAutomation["tool_allowlist"]>(["daily_plan.create"]);
   const [weekdays, setWeekdays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri"]);
   const [at, setAt] = useState("08:00");
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
@@ -38,6 +50,11 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [automationHistory, setAutomationHistory] = useState<Record<string, AutomationHistoryItem[]>>({});
+  const [historyOpen, setHistoryOpen] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTime, setEditTime] = useState("08:00");
+  const [editPreparationMinutes, setEditPreparationMinutes] = useState(30);
   const createKey = useRef("");
 
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
@@ -81,6 +98,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     setMeetingGrantId(value => activeGrants.some(item => item.id === value && item.capability === "calendar_read") ? value : calendarGrant?.id ?? "");
     setMeetingEmailGrantIds(values => values.filter(id => activeGrants.some(item => item.id === id && item.capability === "email_read")));
     setBriefingGrantIds(values => values.filter(id => activeGrants.some(item => item.id === id)));
+    setProactiveGrantIds(values => values.filter(id => activeGrants.some(item => item.id === id)));
     setNotifications(notificationResult.notifications);
     setDigests(digestResult.digests);
     setNotificationPreferences(notificationPreferenceResult);
@@ -112,11 +130,12 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             ? { kind: "event", grant_id: emailGrantId }
             : kind === "meeting"
               ? { kind: "meeting", grant_id: meetingGrantId, preparation_minutes: meetingPreparationMinutes, scan_interval_minutes: 15 }
-              : kind === "deadline"
+              : kind === "deadline" || kind === "proactive"
                 ? { kind: "daily", hour, minute, weekdays: [] }
                 : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
-        run_profile: kind === "email" ? "email" : kind === "meeting" ? "meeting" : kind === "deadline" ? "deadline" : briefing && kind !== "event" ? "briefing" : "goal",
-        connector_read_grant_ids: kind === "meeting" ? meetingEmailGrantIds : briefing && kind !== "event" && kind !== "email" && kind !== "deadline" ? briefingGrantIds : [],
+        run_profile: kind === "email" ? "email" : kind === "meeting" ? "meeting" : kind === "deadline" ? "deadline" : kind === "proactive" ? "proactive" : briefing && kind !== "event" ? "briefing" : "goal",
+        connector_read_grant_ids: kind === "meeting" ? meetingEmailGrantIds : kind === "proactive" ? proactiveGrantIds : briefing && kind !== "event" && kind !== "email" && kind !== "deadline" ? briefingGrantIds : [],
+        tool_allowlist: kind === "proactive" ? proactiveTools : [],
         output_language: "en", overlap_policy: "skip", catchup_window_seconds: 3600,
         quiet_hours: quiet ? { start: "22:00", end: "07:00" } : null, expires_at: null,
       }, createKey.current);
@@ -130,6 +149,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
           ? "Meeting Coworker saved. Temporal will scan the authorized calendar and prepare upcoming meetings inside the selected window."
         : kind === "deadline"
           ? "Deadline Coworker saved. Temporal will check the reviewed goal at this time and start a recovery plan only when urgency meaningfully changes."
+        : kind === "proactive"
+          ? "Goal-driven coworker saved. Each reviewed wake-up is finite and can use only the tools and context you selected."
         : briefing
           ? "Briefing saved. Temporal will start one private bounded briefing at each due time."
           : "Automation saved. Temporal will reconcile the durable schedule before it can fire.");
@@ -147,6 +168,65 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
       return `meeting preparation · ${schedule.preparation_minutes} min before · ${item.timezone}`;
     }
     return `${schedule.kind} · ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")} · ${item.timezone}`;
+  }
+
+  async function showHistory(item: PersonalAutomation) {
+    if (busy) return;
+    if (historyOpen === item.id) { setHistoryOpen(null); return; }
+    setBusy("history-" + item.id); setError("");
+    try {
+      const result = await client.automationHistory(item.id);
+      setAutomationHistory(previous => ({ ...previous, [item.id]: result.history }));
+      setHistoryOpen(item.id);
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
+  }
+
+  function beginEdit(item: PersonalAutomation) {
+    const schedule = item.schedule;
+    if (schedule.kind === "daily" || schedule.kind === "weekly") {
+      setEditTime(`${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`);
+    } else if (schedule.kind === "meeting") {
+      setEditPreparationMinutes(schedule.preparation_minutes);
+    }
+    setEditingId(item.id);
+    setError(""); setNotice("");
+  }
+
+  async function saveEdit(item: PersonalAutomation) {
+    if (busy) return;
+    const schedule = item.schedule;
+    let nextSchedule = schedule;
+    if (schedule.kind === "daily" || schedule.kind === "weekly") {
+      const [hour, minute] = editTime.split(":").map(Number);
+      nextSchedule = { ...schedule, hour, minute };
+    } else if (schedule.kind === "meeting") {
+      nextSchedule = { ...schedule, preparation_minutes: editPreparationMinutes };
+    } else {
+      setError("Connected-event source changes require cancelling and creating a newly reviewed automation.");
+      return;
+    }
+    setBusy("edit-" + item.id); setError(""); setNotice("");
+    try {
+      await client.updateAutomation(item.id, item.revision, { schedule: nextSchedule });
+      setEditingId(null);
+      await reload();
+      setNotice("Automation settings updated and queued for reconciliation.");
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
+  }
+
+  async function toggleQuietHours(item: PersonalAutomation) {
+    if (busy) return;
+    setBusy("quiet-" + item.id); setError(""); setNotice("");
+    try {
+      await client.updateAutomation(item.id, item.revision, {
+        quiet_hours: item.quiet_hours ? null : { start: "22:00", end: "07:00" },
+      });
+      await reload();
+      setNotice(item.quiet_hours ? "Quiet hours disabled for this automation." : "Quiet hours enabled for this automation.");
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
   }
 
   async function transition(item: PersonalAutomation, action: "pause" | "resume" | "cancel") {
@@ -280,12 +360,12 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <option value="">Choose an active goal</option>{goals.map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
           </select></label>
           <label>Trigger<select value={kind} onChange={event => {
-            const nextKind = event.target.value as "daily" | "weekly" | "event" | "meeting" | "email" | "deadline";
+            const nextKind = event.target.value as "daily" | "weekly" | "event" | "meeting" | "email" | "deadline" | "proactive";
             setKind(nextKind);
-            if (nextKind === "event" || nextKind === "meeting" || nextKind === "email" || nextKind === "deadline") setBriefing(false);
+            if (nextKind === "event" || nextKind === "meeting" || nextKind === "email" || nextKind === "deadline" || nextKind === "proactive") setBriefing(false);
             createKey.current = "";
           }}>
-            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="event">Authorized connected update</option><option value="email">Important email coworker</option><option value="meeting">Upcoming meeting preparation</option><option value="deadline">Deadline coworker</option>
+            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="event">Authorized connected update</option><option value="email">Important email coworker</option><option value="meeting">Upcoming meeting preparation</option><option value="deadline">Deadline coworker</option><option value="proactive">Goal-driven coworker</option>
           </select></label>
           {kind === "event" && <label>Connected read authorization<select required value={eventGrantId} onChange={event => { setEventGrantId(event.target.value); createKey.current = ""; }}>
             <option value="">Choose an active connection grant</option>
@@ -309,14 +389,38 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             : activeEmailGrants.map(grant => <label key={grant.id}><input type="checkbox" checked={meetingEmailGrantIds.includes(grant.id)} onChange={event => {
                 setMeetingEmailGrantIds(previous => event.target.checked ? [...new Set([...previous, grant.id])] : previous.filter(value => value !== grant.id)); createKey.current = "";
               }} /> {grant.provider} · email</label>)}</div></fieldset></>}
+          {kind === "proactive" && <><fieldset><legend>Allowed work</legend>
+            <p className="cw-fineprint">Choose up to four private, non-consequential tools. Sending, publishing, purchases, calendar writes, research and sandbox execution are unavailable here.</p>
+            <div className="cw-agent-meta">{PROACTIVE_TOOLS.map(tool => <label key={tool.id}><input type="checkbox"
+              checked={proactiveTools.includes(tool.id)}
+              onChange={event => {
+                setProactiveTools(previous => event.target.checked
+                  ? previous.length < 4 ? [...previous, tool.id] : previous
+                  : previous.filter(value => value !== tool.id));
+                createKey.current = "";
+              }} /> {tool.label}</label>)}</div>
+          </fieldset>
+          <fieldset><legend>Optional connected context</legend>
+            <p className="cw-fineprint">Only selected active read grants can become context. Provider content stays untrusted data.</p>
+            <div className="cw-agent-meta">{activeConnectorGrants.length === 0
+              ? <span>No active connected read grants</span>
+              : activeConnectorGrants.map(grant => <label key={grant.id}><input type="checkbox"
+                  checked={proactiveGrantIds.includes(grant.id)}
+                  onChange={event => {
+                    setProactiveGrantIds(previous => event.target.checked
+                      ? previous.length < 4 ? [...previous, grant.id] : previous
+                      : previous.filter(value => value !== grant.id));
+                    createKey.current = "";
+                  }} /> {grant.provider} · {grant.capability}</label>)}</div>
+          </fieldset></>}
           {kind === "weekly" && <fieldset><legend>Weekdays</legend><div className="cw-agent-meta">{DAYS.map(day =>
             <label key={day}><input type="checkbox" checked={weekdays.includes(day)} onChange={event => {
               setWeekdays(previous => event.target.checked ? [...previous, day] : previous.filter(value => value !== day)); createKey.current = "";
             }} /> {day.toUpperCase()}</label>)}</div></fieldset>}
-          {kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && <label><input type="checkbox" checked={briefing} onChange={event => {
+          {kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && kind !== "proactive" && <label><input type="checkbox" checked={briefing} onChange={event => {
             setBriefing(event.target.checked); createKey.current = "";
           }} /> Create a private daily/weekly briefing</label>}
-          {kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && briefing && <fieldset><legend>Optional connected sources</legend>
+          {kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && kind !== "proactive" && briefing && <fieldset><legend>Optional connected sources</legend>
             <p className="cw-fineprint">Only selected, active read grants become briefing context. Provider content stays untrusted and cannot authorize writes.</p>
             <div className="cw-agent-meta">{activeConnectorGrants.length === 0
               ? <span>No active connected read grants</span>
@@ -332,7 +436,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
           {kind !== "event" && kind !== "meeting" && kind !== "email" && <label>Local time<input type="time" required value={at} onChange={event => { setAt(event.target.value); createKey.current = ""; }} /></label>}
           <label>Timezone<input required maxLength={64} value={timezone} onChange={event => { setTimezone(event.target.value); createKey.current = ""; }} /></label>
           <label><input type="checkbox" checked={quiet} onChange={event => { setQuiet(event.target.checked); createKey.current = ""; }} /> Delay in-app notifications during 22:00–07:00 quiet hours</label>
-          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "email" && !emailGrantId) || (kind === "meeting" && !meetingGrantId)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
+          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "email" && !emailGrantId) || (kind === "meeting" && !meetingGrantId) || (kind === "proactive" && proactiveTools.length === 0)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
           <p className="cw-fineprint">A schedule or connected event never grants email, calendar-write, purchase, or provider authority. Briefings are restricted to the existing daily-plan tool; selected provider content remains untrusted context. Consequential actions still use the separate approval boundary.</p>
         </form>
       </section>
@@ -341,11 +445,32 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         {automations.length === 0 ? <section className="cw-empty"><h2>No automation yet.</h2><p>Create one from an active goal.</p></section> :
         <div className="cw-history"><ul>{automations.map(item => <li key={item.id}><div className="cw-agent-run">
           <strong>{goals.find(goal => goal.id === item.goal_id)?.objective ?? "Persistent goal"}</strong>
-          <p>{triggerSummary(item)}{item.run_profile === "briefing" ? " · private briefing" : item.run_profile === "meeting" ? " · meeting coworker" : item.run_profile === "email" ? " · email coworker" : item.run_profile === "deadline" ? " · deadline coworker" : ""}</p>
+          <p>{triggerSummary(item)}{item.run_profile === "briefing" ? " · private briefing" : item.run_profile === "meeting" ? " · meeting coworker" : item.run_profile === "email" ? " · email coworker" : item.run_profile === "deadline" ? " · deadline coworker" : item.run_profile === "proactive" ? " · goal-driven coworker" : ""}</p>
           <div className="cw-agent-meta"><span>{item.state}</span><span>revision {item.revision}</span><span>{item.schedule_applied_revision === item.revision ? (item.schedule.kind === "event" ? "event trigger reconciled" : "Temporal reconciled") : "reconciliation pending"}</span>{item.schedule_error_code && <span>{item.schedule_error_code}</span>}</div>
-          <div>{item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}
+          <div>
+            {item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}
             {item.state === "paused" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "resume")}>Resume</button>}
-            {item.state !== "cancelled" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => transition(item, "cancel")}>Cancel</button>}</div>
+            {item.state !== "cancelled" && item.schedule.kind !== "event" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => beginEdit(item)}>Edit</button>}
+            {item.state !== "cancelled" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => toggleQuietHours(item)}>{item.quiet_hours ? "Quiet hours off" : "Quiet hours on"}</button>}
+            <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => showHistory(item)}>{historyOpen === item.id ? "Hide activity" : "Recent activity"}</button>
+            {item.state !== "cancelled" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => transition(item, "cancel")}>Cancel</button>}
+          </div>
+          {item.schedule.kind === "event" && item.state !== "cancelled" && <p className="cw-fineprint">To change this connected-event source, cancel it and create a newly reviewed automation so authority cannot change silently.</p>}
+          {editingId === item.id && <div className="cw-agent-run">
+            {(item.schedule.kind === "daily" || item.schedule.kind === "weekly") && <label>Local trigger time<input type="time" value={editTime} onChange={event => setEditTime(event.target.value)} /></label>}
+            {item.schedule.kind === "meeting" && <label>Prepare before meeting<select value={editPreparationMinutes} onChange={event => setEditPreparationMinutes(Number(event.target.value))}>
+              <option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={120}>2 hours</option><option value={1440}>1 day</option>
+            </select></label>}
+            <button className="cw-primary" type="button" disabled={Boolean(busy)} onClick={() => saveEdit(item)}>Save edit</button>
+            <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => setEditingId(null)}>Cancel edit</button>
+          </div>}
+          {historyOpen === item.id && <div className="cw-agent-run"><strong>Recent execution evidence</strong>
+            {(automationHistory[item.id] ?? []).length === 0 ? <p className="cw-fineprint">No occurrence has been admitted yet.</p> :
+              <ul>{(automationHistory[item.id] ?? []).map(entry => <li key={entry.occurrence_id}>
+                <small>{new Date(entry.due_at).toLocaleString()} · {entry.trigger_type} · {entry.occurrence_state}{entry.run_state ? ` · run ${entry.run_state}` : ""}</small>
+                <p>{entry.reason ? `Why: ${entry.reason}` : entry.run_message || "Accepted by the reviewed automation trigger."}</p>
+              </li>)}</ul>}
+          </div>}
         </div></li>)}</ul></div>}
         <div className="cw-history-title"><h2>Notifications</h2></div>
         {notificationPreferences && <div className="cw-agent-run">
