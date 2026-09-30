@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type AgentNotification, type BrowserPushConfig, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
+import { CoworkerClient, type AgentNotification, type BrowserPushConfig, type ConnectorReadGrant, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 const message = (error: unknown) => error instanceof Error ? error.message : "This automation action could not finish.";
@@ -15,6 +15,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [goals, setGoals] = useState<PersonalGoal[]>([]);
   const [automations, setAutomations] = useState<PersonalAutomation[]>([]);
+  const [connectorGrants, setConnectorGrants] = useState<ConnectorReadGrant[]>([]);
   const [notifications, setNotifications] = useState<AgentNotification[]>([]);
   const [digests, setDigests] = useState<NotificationDigest[]>([]);
   const [groupNotices, setGroupNotices] = useState(false);
@@ -22,7 +23,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [browserPushConfig, setBrowserPushConfig] = useState<BrowserPushConfig | null>(null);
   const [browserPushDeviceActive, setBrowserPushDeviceActive] = useState(false);
   const [goalId, setGoalId] = useState("");
-  const [kind, setKind] = useState<"daily" | "weekly">("daily");
+  const [kind, setKind] = useState<"daily" | "weekly" | "event">("daily");
+  const [eventGrantId, setEventGrantId] = useState("");
   const [weekdays, setWeekdays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri"]);
   const [at, setAt] = useState("08:00");
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
@@ -33,6 +35,10 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const createKey = useRef("");
 
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
+  const activeConnectorGrants = useMemo(
+    () => connectorGrants.filter(item => item.state === "active"),
+    [connectorGrants],
+  );
 
   async function currentBrowserPushDevice(signal?: AbortSignal) {
     if (!("serviceWorker" in navigator)) return false;
@@ -43,14 +49,18 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   }
 
   async function reload(signal?: AbortSignal) {
-    const [goalResult, automationResult, notificationResult, notificationPreferenceResult, digestResult, pushConfigResult] = await Promise.all([
-      client.goals(signal), client.automations(signal), client.notifications(signal), client.notificationPreferences(signal), client.notificationDigests(signal), client.browserPushConfig(signal),
+    const [goalResult, automationResult, grantResult, notificationResult, notificationPreferenceResult, digestResult, pushConfigResult] = await Promise.all([
+      client.goals(signal), client.automations(signal), client.connectorReadGrants(signal),
+      client.notifications(signal), client.notificationPreferences(signal), client.notificationDigests(signal), client.browserPushConfig(signal),
     ]);
     const activeGoals = goalResult.goals.filter(item => item.state === "active");
     setGoals(activeGoals);
     setGoalId(value => activeGoals.some(item => item.id === value) ? value : activeGoals[0]?.id ?? "");
     setEnabled(automationResult.enabled);
     setAutomations(automationResult.automations);
+    const activeGrants = grantResult.enabled ? grantResult.grants.filter(item => item.state === "active") : [];
+    setConnectorGrants(activeGrants);
+    setEventGrantId(value => activeGrants.some(item => item.id === value) ? value : activeGrants[0]?.id ?? "");
     setNotifications(notificationResult.notifications);
     setDigests(digestResult.digests);
     setNotificationPreferences(notificationPreferenceResult);
@@ -71,17 +81,31 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     const [hour, minute] = at.split(":").map(Number);
     setBusy("create"); setError(""); setNotice("");
     try {
+      if (kind === "event" && !eventGrantId) throw new Error("Choose an active connected read authorization.");
       await client.createAutomation({
         goal_id: selectedGoal.id, goal_revision: selectedGoal.revision, timezone,
-        schedule: { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
+        schedule: kind === "event"
+          ? { kind: "event", grant_id: eventGrantId }
+          : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
         output_language: "en", overlap_policy: "skip", catchup_window_seconds: 3600,
         quiet_hours: quiet ? { start: "22:00", end: "07:00" } : null, expires_at: null,
       }, createKey.current);
       createKey.current = "";
       await reload();
-      setNotice("Automation saved. Temporal will reconcile the durable schedule before it can fire.");
+      setNotice(kind === "event"
+        ? "Automation saved. An authorized connected update can wake one bounded Agent run."
+        : "Automation saved. Temporal will reconcile the durable schedule before it can fire.");
     } catch (error) { setError(message(error)); }
     finally { setBusy(""); }
+  }
+
+  function triggerSummary(item: PersonalAutomation) {
+    const schedule = item.schedule;
+    if (schedule.kind === "event") {
+      const grant = connectorGrants.find(value => value.id === schedule.grant_id);
+      return `connected update · ${grant?.capability ?? "authorized read"} · ${item.timezone}`;
+    }
+    return `${schedule.kind} · ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")} · ${item.timezone}`;
   }
 
   async function transition(item: PersonalAutomation, action: "pause" | "resume" | "cancel") {
@@ -201,31 +225,36 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   return <section className="cw-agent cw-automations" aria-label="Automations and notifications">
     <div className="cw-action-intro">
       <span className="cw-eyebrow">Personal agent · PA-02</span>
-      <h2>Recurring work without a permanent chat session.</h2>
-      <p>PostgreSQL stores the desired schedule. Temporal owns due-time execution. Every firing is deduplicated before one bounded run can start.</p>
+      <h2>Durable scheduled and event-driven work without a permanent chat session.</h2>
+      <p>PostgreSQL stores automation authority. Temporal owns due-time schedules; authenticated connector events may wake only explicitly bound automations. Every occurrence is deduplicated before one bounded run can start.</p>
     </div>
     {error && <p className="cw-error" role="alert">{error}</p>}
     {notice && <p className="cw-notice" role="status">{notice}</p>}
     {enabled === false ? <div className="cw-agent-run"><strong>Automations are disabled.</strong><p className="cw-fineprint">The production-safe default remains off until migration, CI and controlled staging evidence are complete.</p></div> :
     <div className="cw-layout">
       <section className="cw-compose">
-        <div className="cw-card-title"><span className="cw-step-number">02</span><div><h2>Schedule bounded work</h2><p>Attach recurring execution to an active persistent goal.</p></div></div>
+        <div className="cw-card-title"><span className="cw-step-number">02</span><div><h2>Automate bounded work</h2><p>Attach a reviewed schedule or connected-event trigger to an active persistent goal.</p></div></div>
         <form onSubmit={create}>
           <label>Goal<select required value={goalId} onChange={event => { setGoalId(event.target.value); createKey.current = ""; }}>
             <option value="">Choose an active goal</option>{goals.map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
           </select></label>
-          <label>Cadence<select value={kind} onChange={event => { setKind(event.target.value as "daily" | "weekly"); createKey.current = ""; }}>
-            <option value="daily">Daily</option><option value="weekly">Selected weekdays</option>
+          <label>Trigger<select value={kind} onChange={event => { setKind(event.target.value as "daily" | "weekly" | "event"); createKey.current = ""; }}>
+            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="event">Authorized connected update</option>
           </select></label>
+          {kind === "event" && <label>Connected read authorization<select required value={eventGrantId} onChange={event => { setEventGrantId(event.target.value); createKey.current = ""; }}>
+            <option value="">Choose an active connection grant</option>
+            {activeConnectorGrants.map(grant => <option key={grant.id} value={grant.id}>{grant.provider} · {grant.capability}</option>)}
+          </select></label>}
+          {kind === "event" && activeConnectorGrants.length === 0 && <p className="cw-fineprint">Create an active Gmail/Calendar read authorization before enabling an event-triggered automation.</p>}
           {kind === "weekly" && <fieldset><legend>Weekdays</legend><div className="cw-agent-meta">{DAYS.map(day =>
             <label key={day}><input type="checkbox" checked={weekdays.includes(day)} onChange={event => {
               setWeekdays(previous => event.target.checked ? [...previous, day] : previous.filter(value => value !== day)); createKey.current = "";
             }} /> {day.toUpperCase()}</label>)}</div></fieldset>}
-          <label>Local time<input type="time" required value={at} onChange={event => { setAt(event.target.value); createKey.current = ""; }} /></label>
+          {kind !== "event" && <label>Local time<input type="time" required value={at} onChange={event => { setAt(event.target.value); createKey.current = ""; }} /></label>}
           <label>Timezone<input required maxLength={64} value={timezone} onChange={event => { setTimezone(event.target.value); createKey.current = ""; }} /></label>
           <label><input type="checkbox" checked={quiet} onChange={event => { setQuiet(event.target.checked); createKey.current = ""; }} /> Delay in-app notifications during 22:00–07:00 quiet hours</label>
-          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || (kind === "weekly" && weekdays.length === 0)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
-          <p className="cw-fineprint">A schedule never grants email, calendar, purchase, or provider authority. Consequential actions still use the separate approval boundary.</p>
+          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
+          <p className="cw-fineprint">A schedule or connected event never grants email, calendar-write, purchase, or provider authority. Event content remains untrusted context; consequential actions still use the separate approval boundary.</p>
         </form>
       </section>
       <div className="cw-output-column">
@@ -233,8 +262,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         {automations.length === 0 ? <section className="cw-empty"><h2>No automation yet.</h2><p>Create one from an active goal.</p></section> :
         <div className="cw-history"><ul>{automations.map(item => <li key={item.id}><div className="cw-agent-run">
           <strong>{goals.find(goal => goal.id === item.goal_id)?.objective ?? "Persistent goal"}</strong>
-          <p>{item.schedule.kind} · {String(item.schedule.hour).padStart(2, "0")}:{String(item.schedule.minute).padStart(2, "0")} · {item.timezone}</p>
-          <div className="cw-agent-meta"><span>{item.state}</span><span>revision {item.revision}</span><span>{item.schedule_applied_revision === item.revision ? "Temporal reconciled" : "reconciliation pending"}</span>{item.schedule_error_code && <span>{item.schedule_error_code}</span>}</div>
+          <p>{triggerSummary(item)}</p>
+          <div className="cw-agent-meta"><span>{item.state}</span><span>revision {item.revision}</span><span>{item.schedule_applied_revision === item.revision ? (item.schedule.kind === "event" ? "event trigger reconciled" : "Temporal reconciled") : "reconciliation pending"}</span>{item.schedule_error_code && <span>{item.schedule_error_code}</span>}</div>
           <div>{item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}
             {item.state === "paused" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "resume")}>Resume</button>}
             {item.state !== "cancelled" && <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => transition(item, "cancel")}>Cancel</button>}</div>

@@ -321,12 +321,20 @@ class Dispatcher:
         if self.container.settings.automations_enabled:
             for buffered in await asyncio.to_thread(automations.claim_buffered_occurrences):
                 try:
-                    await asyncio.to_thread(
-                        automations.accept_occurrence,
-                        str(buffered["automation_id"]),
-                        int(buffered["revision"]),
-                        datetime.fromisoformat(str(buffered["due_at"]).replace("Z", "+00:00")),
-                    )
+                    if buffered.get("event_id"):
+                        await asyncio.to_thread(
+                            automations.accept_event_occurrence,
+                            str(buffered["automation_id"]),
+                            int(buffered["revision"]),
+                            str(buffered["event_id"]),
+                        )
+                    else:
+                        await asyncio.to_thread(
+                            automations.accept_occurrence,
+                            str(buffered["automation_id"]),
+                            int(buffered["revision"]),
+                            datetime.fromisoformat(str(buffered["due_at"]).replace("Z", "+00:00")),
+                        )
                 except Exception:
                     logger.exception("Buffered automation occurrence could not resume.")
         # Accepted notification work remains visible even after the originating

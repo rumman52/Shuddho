@@ -125,16 +125,20 @@ class Container:
             self.suggestions.EVENT_SOURCE_KIND,
             self.suggestions.event_notification_source_allowed,
         )
-        if hasattr(self.connector_reads, "set_event_consumer"):
-            self.connector_reads.set_event_consumer(
-                self.suggestions.handle_connector_event
-            )
         if self.automations is None:
             self.automations = AutomationRepository(
                 self.repository.sessions,
                 self.settings,
                 self.agent,
                 self.notifications,
+            )
+        if hasattr(self.connector_reads, "set_automation_consumer"):
+            self.connector_reads.set_automation_consumer(
+                self.automations.handle_connector_event
+            )
+        if hasattr(self.connector_reads, "set_event_consumer"):
+            self.connector_reads.set_event_consumer(
+                self.suggestions.handle_connector_event
             )
         if self.negotiations is None:
             self.negotiations = NegotiationRepository(

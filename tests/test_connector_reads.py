@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 pytest.importorskip("sqlalchemy")
+from sqlalchemy import select
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -24,12 +25,14 @@ from services.coworker.action_schemas import OAuthFinish, OAuthStart
 from services.coworker.actions import ActionService
 from services.coworker.agent_repository import AgentRepository
 from services.coworker.agent_schemas import AgentRunCreate
+from services.coworker.automation_schemas import AutomationCreate
 from services.coworker.connector_read_schemas import ConnectorReadGrantCreate
 from services.coworker.connector_reads import ConnectorReadRepository, ConnectorReadService
 from services.coworker.connector_push import GooglePushVerifier
 from services.coworker.context import ContextService
 from services.coworker.credential_broker import CredentialBroker
 from services.coworker.errors import CoworkerError
+from services.coworker.goal_schemas import GoalCreate
 from services.coworker.google_actions import (
     CALENDAR_STOP_URL,
     CALENDAR_WATCH_URL,
@@ -45,7 +48,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Notification, NotificationOutbox, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
 
 
 class ReadGoogle:
@@ -182,10 +185,17 @@ def enable_reads(container):
     container.connector_reads = ConnectorReadService(read_repo, broker)
     container.notifications.settings = settings
     container.suggestions.settings = settings
+    container.goals.settings = settings
+    container.agent = AgentRepository(container.repository.sessions, settings)
+    container.automations.settings = settings
+    container.automations.agent = container.agent
+
+    container.connector_reads.set_automation_consumer(
+        container.automations.handle_connector_event
+    )
     container.connector_reads.set_event_consumer(
         container.suggestions.handle_connector_event
     )
-    container.agent = AgentRepository(container.repository.sessions, settings)
     container.memory.settings = settings
     container.context = ContextService(
         container.repository.sessions,
@@ -772,3 +782,225 @@ def test_optional_event_notice_failure_does_not_retry_successful_connector_sync(
         row = db.get(ConnectorEvent, event["id"])
         assert row.state == "processed"
         assert row.last_error_code is None
+
+
+def _create_event_automation(container, owner, grant):
+    goal, created = container.goals.create(
+        owner,
+        GoalCreate(
+            objective="Prepare a bounded update when this connected source changes.",
+            success_criteria=["Create one useful reviewed update."],
+            constraints=["Do not send or mutate anything externally."],
+            timezone="UTC",
+            state="active",
+            budget={"max_runs": 10, "max_planner_tokens": 50000},
+        ),
+        "event-goal-" + str(uuid4()),
+    )
+    assert created is True
+    automation, created = container.automations.create(
+        owner,
+        AutomationCreate(
+            goal_id=goal["id"],
+            goal_revision=goal["revision"],
+            timezone="UTC",
+            schedule={"kind": "event", "grant_id": grant["id"]},
+            output_language="en",
+            overlap_policy="skip",
+            catchup_window_seconds=3600,
+            quiet_hours=None,
+            expires_at=None,
+        ),
+        "event-automation-" + str(uuid4()),
+    )
+    assert created is True
+    return goal, automation
+
+
+def _one_gmail_event(container, message_id):
+    data = base64.urlsafe_b64encode(json.dumps({
+        "emailAddress": "reader@example.test",
+        "historyId": "102",
+    }).encode()).decode().rstrip("=")
+    accepted = asyncio.run(container.connector_reads.ingest_gmail_push(
+        "Bearer signed-google-token",
+        {
+            "subscription": "projects/test-project/subscriptions/shuddho-gmail",
+            "message": {"messageId": message_id, "data": data},
+        },
+    ))
+    assert accepted == 1
+    events = container.connector_reads.repo.claim_events()
+    assert len(events) == 1
+    return events[0]
+
+
+def test_connected_event_automation_wakes_exactly_one_bounded_runtime_v3_run(container):
+    enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    _, automation = _create_event_automation(container, owner, grant)
+
+    event = _one_gmail_event(container, "event-automation-one")
+    asyncio.run(container.connector_reads.process_event(event))
+
+    with container.repository.sessions() as db:
+        runs = db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()
+        assert len(runs) == 1
+        assert runs[0].runtime_version == 3
+        assert runs[0].connector_read_grant_ids == [grant["id"]]
+        assert runs[0].action_ids == []
+        assert len(occurrences) == 1
+        assert occurrences[0].trigger_event_id == event["id"]
+        assert occurrences[0].run_id == runs[0].id
+        assert occurrences[0].state == "accepted"
+        assert db.scalars(select(ExternalAction).where(
+            ExternalAction.owner_id == owner,
+        )).all() == []
+
+    # Replaying the already-persisted connector event cannot create another run.
+    replay = container.automations.accept_event_occurrence(
+        automation["id"], automation["revision"], event["id"]
+    )
+    assert replay["replayed"] is True
+    with container.repository.sessions() as db:
+        assert len(db.scalars(select(AgentRun).where(
+            AgentRun.owner_id == owner,
+        )).all()) == 1
+        assert len(db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()) == 1
+
+
+def test_connected_event_automation_rechecks_revocation_and_goal_revision(container):
+    enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    _, automation = _create_event_automation(container, owner, grant)
+    changed_goal, changed_automation = _create_event_automation(container, owner, grant)
+
+    event = _one_gmail_event(container, "event-automation-revoked")
+    with container.repository.sessions.begin() as db:
+        goal_row = db.get(PersonalGoal, changed_goal["id"])
+        goal_row.revision += 1
+    asyncio.run(container.connector_reads.revoke(owner, grant["id"]))
+
+    revoked = container.automations.accept_event_occurrence(
+        automation["id"], automation["revision"], event["id"]
+    )
+    assert revoked["state"] == "skipped"
+    assert revoked["reason"] == "grant_revoked"
+
+    # A goal revision wins as the more specific stale-authority reason for the
+    # automation bound to that historical goal snapshot.
+    changed = container.automations.accept_event_occurrence(
+        changed_automation["id"], changed_automation["revision"], event["id"]
+    )
+    assert changed["state"] == "skipped"
+    assert changed["reason"] == "goal_changed"
+    with container.repository.sessions() as db:
+        assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all() == []
+
+
+def test_connected_event_occurrence_recovers_after_process_loss(container):
+    enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    _, automation = _create_event_automation(container, owner, grant)
+    event = _one_gmail_event(container, "event-automation-recovery")
+
+    original_create = container.automations.agent.create
+
+    def interrupted(*_args, **_kwargs):
+        raise RuntimeError("synthetic process loss")
+
+    container.automations.agent.create = interrupted
+    with pytest.raises(RuntimeError, match="synthetic process loss"):
+        container.automations.accept_event_occurrence(
+            automation["id"], automation["revision"], event["id"]
+        )
+    container.automations.agent.create = original_create
+
+    with container.repository.sessions.begin() as db:
+        occurrence = db.scalar(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        ))
+        assert occurrence is not None
+        assert occurrence.state == "accepting"
+        assert occurrence.trigger_event_id == event["id"]
+        occurrence.updated_at = utcnow() - timedelta(minutes=2)
+
+    recovered = container.automations.claim_buffered_occurrences()
+    assert len(recovered) == 1
+    assert recovered[0]["event_id"] == event["id"]
+    result = container.automations.accept_event_occurrence(
+        recovered[0]["automation_id"],
+        recovered[0]["revision"],
+        recovered[0]["event_id"],
+    )
+    assert result["state"] == "accepted"
+    with container.repository.sessions() as db:
+        runs = db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()
+        assert len(runs) == 1
+        occurrence = db.scalar(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        ))
+        assert occurrence.run_id == runs[0].id
+
+
+def test_event_automation_consumer_failure_retries_after_cursor_advanced(container):
+    enable_reads(container)
+    container.connector_reads.push_verifier = AllowPush()
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
+    _, automation = _create_event_automation(container, owner, grant)
+
+    original = container.connector_reads.automation_consumer
+
+    def fail_before_admission(_event):
+        raise RuntimeError("synthetic automation consumer outage")
+
+    container.connector_reads.set_automation_consumer(fail_before_admission)
+    event = _one_gmail_event(container, "event-automation-consumer-retry")
+    asyncio.run(container.connector_reads.process_event(event))
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorEvent, event["id"])
+        assert row.state == "retry"
+        assert row.last_error_code == "connector_event_automation_failed"
+        row.available_at = utcnow() - timedelta(seconds=1)
+
+    container.connector_reads.set_automation_consumer(original)
+    retried = container.connector_reads.repo.claim_events()
+    assert len(retried) == 1
+    assert retried[0]["attempts"] == 2
+    asyncio.run(container.connector_reads.process_event(retried[0]))
+
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, event["id"])
+        assert row.state == "processed"
+        runs = db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()
+        assert len(runs) == 1
+        assert len(occurrences) == 1
+        assert occurrences[0].trigger_event_id == event["id"]
