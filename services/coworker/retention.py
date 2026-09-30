@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 
 from .errors import CoworkerError
 from .models import (
-    Account, ActionProposal, ActionRecipient, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, SandboxExecution, SandboxSession,
+    Account, ActionProposal, ActionRecipient, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal,
@@ -136,6 +136,8 @@ class RetentionService:
             automation_ids = list(db.scalars(select(Automation.id).where(Automation.owner_id == owner)).all())
             notification_ids = list(db.scalars(select(Notification.id).where(Notification.owner_id == owner)).all())
 
+            db.execute(delete(BrowserPushDelivery).where(BrowserPushDelivery.owner_id == owner))
+            db.execute(delete(BrowserPushSubscription).where(BrowserPushSubscription.owner_id == owner))
             if notification_ids:
                 db.execute(delete(NotificationOutbox).where(NotificationOutbox.notification_id.in_(notification_ids)))
             db.execute(delete(Notification).where(Notification.owner_id == owner))

@@ -305,6 +305,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "personal_transactions": False,
         "negotiation_proposal_promotion": False,
         "suggestion_model_relevance": False,
+        "browser_push": False,
     }
 
     passed = evaluate_release(

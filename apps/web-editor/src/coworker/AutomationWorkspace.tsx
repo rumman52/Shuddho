@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, type AgentNotification, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
+import { CoworkerClient, type AgentNotification, type BrowserPushConfig, type NotificationDigest, type NotificationPreferences, type PersonalAutomation, type PersonalGoal } from "./client";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 const message = (error: unknown) => error instanceof Error ? error.message : "This automation action could not finish.";
+
+function applicationServerKey(value: string): ArrayBuffer {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const decoded = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
+  const bytes = Uint8Array.from(decoded, char => char.charCodeAt(0));
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 export default function AutomationWorkspace({ client }: { client: CoworkerClient }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -12,6 +19,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [digests, setDigests] = useState<NotificationDigest[]>([]);
   const [groupNotices, setGroupNotices] = useState(false);
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null);
+  const [browserPushConfig, setBrowserPushConfig] = useState<BrowserPushConfig | null>(null);
   const [goalId, setGoalId] = useState("");
   const [kind, setKind] = useState<"daily" | "weekly">("daily");
   const [weekdays, setWeekdays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri"]);
@@ -26,8 +34,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
 
   async function reload(signal?: AbortSignal) {
-    const [goalResult, automationResult, notificationResult, notificationPreferenceResult, digestResult] = await Promise.all([
-      client.goals(signal), client.automations(signal), client.notifications(signal), client.notificationPreferences(signal), client.notificationDigests(signal),
+    const [goalResult, automationResult, notificationResult, notificationPreferenceResult, digestResult, pushConfigResult] = await Promise.all([
+      client.goals(signal), client.automations(signal), client.notifications(signal), client.notificationPreferences(signal), client.notificationDigests(signal), client.browserPushConfig(signal),
     ]);
     const activeGoals = goalResult.goals.filter(item => item.state === "active");
     setGoals(activeGoals);
@@ -37,6 +45,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     setNotifications(notificationResult.notifications);
     setDigests(digestResult.digests);
     setNotificationPreferences(notificationPreferenceResult);
+    setBrowserPushConfig(pushConfigResult);
   }
 
   useEffect(() => {
@@ -101,6 +110,63 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
       setError(message(error));
       try { await reload(); } catch { /* Keep the original action error visible. */ }
     } finally { setBusy(""); }
+  }
+
+  async function setBrowserPush(nextEnabled: boolean) {
+    if (busy || !notificationPreferences) return;
+    setBusy("browser-push"); setError(""); setNotice("");
+    try {
+      if (!nextEnabled) {
+        const registration = "serviceWorker" in navigator
+          ? await navigator.serviceWorker.getRegistration("/") : undefined;
+        const subscription = registration ? await registration.pushManager.getSubscription() : null;
+        if (subscription) {
+          await client.deactivateBrowserPushSubscription(subscription.endpoint);
+          await subscription.unsubscribe();
+        }
+        const saved = await client.saveNotificationPreferences({
+          ...notificationPreferences,
+          browser_push_enabled: false,
+        });
+        setNotificationPreferences(saved);
+        setNotice("Browser notifications are off for this account.");
+        return;
+      }
+      if (!browserPushConfig?.enabled || !browserPushConfig.application_server_key) {
+        throw new Error("Browser notifications are not enabled in this deployment yet.");
+      }
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+        throw new Error("This browser does not support Web Push.");
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") throw new Error("Browser notification permission was not granted.");
+      const registration = await navigator.serviceWorker.register("/push-sw.js", { scope: "/" });
+      await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: applicationServerKey(browserPushConfig.application_server_key),
+        });
+      }
+      const json = subscription.toJSON();
+      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+        throw new Error("The browser returned an incomplete push subscription.");
+      }
+      await client.saveBrowserPushSubscription({
+        endpoint: json.endpoint,
+        p256dh: json.keys.p256dh,
+        auth: json.keys.auth,
+        expiration_time: subscription.expirationTime,
+      });
+      const saved = await client.saveNotificationPreferences({
+        ...notificationPreferences,
+        browser_push_enabled: true,
+      });
+      setNotificationPreferences(saved);
+      setNotice("Browser notifications are enabled for this account and device.");
+    } catch (error) { setError(message(error)); }
+    finally { setBusy(""); }
   }
 
   async function saveNotificationPreference(next: NotificationPreferences) {
@@ -170,6 +236,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             onChange={event => saveNotificationPreference({
               ...notificationPreferences,
               in_app_enabled: event.target.checked,
+              browser_push_enabled: event.target.checked ? notificationPreferences.browser_push_enabled : false,
             })} /> Show personal-agent notifications in Shuddho</label>
           <label><input type="checkbox"
             checked={notificationPreferences.automation_updates_enabled}
@@ -178,7 +245,12 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
               ...notificationPreferences,
               automation_updates_enabled: event.target.checked,
             })} /> Scheduled-work updates</label>
-          <p className="cw-fineprint">Turning notifications off suppresses pending notices before delivery. It does not pause goals, automations, or grant any external-action authority.</p>
+          <label><input type="checkbox"
+            checked={notificationPreferences.browser_push_enabled}
+            disabled={Boolean(busy) || !notificationPreferences.in_app_enabled || !browserPushConfig?.enabled}
+            onChange={event => setBrowserPush(event.target.checked)} /> Browser notifications on this account and device</label>
+          {!browserPushConfig?.enabled && <p className="cw-fineprint">Browser Push is deployment-gated and currently unavailable here.</p>}
+          <p className="cw-fineprint">Browser Push requires separate account consent plus browser permission. Push messages use generic text; open Shuddho to review the actual notice. Turning notifications off never pauses goals or automations.</p>
         </div>}
         <label className="cw-digest-toggle"><input type="checkbox" checked={groupNotices} onChange={event => setGroupNotices(event.target.checked)} /> Group suggestion notices into digests</label>
         <p className="cw-fineprint">Groups contain up to ten delivered notices from the same six-hour period. Expand a group to review each notice.</p>

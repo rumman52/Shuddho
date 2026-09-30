@@ -48,6 +48,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "action_selection",
         "action_proposals",
         "suggestion_model_relevance",
+        "browser_push",
         "personal_goals",
         "automations",
         "runtime_v3",
@@ -201,6 +202,21 @@ def test_suggestion_model_relevance_requires_goals_planner_and_staging_evidence(
     )
     rollout["capabilities"]["intelligent_planner"] = False
     assert "suggestion_model_relevance_dependency" in validate_rollout(
+        rollout, max_cohort_users=25
+    )
+
+
+def test_browser_push_requires_automations_and_staging_evidence():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["agent_runtime"] = True
+    rollout["capabilities"]["personal_goals"] = True
+    rollout["capabilities"]["automations"] = True
+    rollout["capabilities"]["browser_push"] = True
+    assert "browser_push" in required_conditional_gate_ids(
+        rollout["capabilities"], set()
+    )
+    rollout["capabilities"]["automations"] = False
+    assert "browser_push_dependency" in validate_rollout(
         rollout, max_cohort_users=25
     )
 

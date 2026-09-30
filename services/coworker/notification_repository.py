@@ -6,12 +6,32 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 
 from .errors import CoworkerError
-from .models import Account, AuditEvent, Notification, NotificationOutbox, utcnow
+from .models import (
+    Account,
+    AuditEvent,
+    BrowserPushDelivery,
+    BrowserPushSubscription,
+    Notification,
+    NotificationOutbox,
+    utcnow,
+)
 from .notification_digests import GROUPED_KINDS, MAX_INBOX_ITEMS, digest_views
-from .notification_schemas import NotificationPreferences
+from .notification_schemas import (
+    BrowserPushSubscriptionDeactivate,
+    BrowserPushSubscriptionUpsert,
+    NotificationPreferences,
+)
 from .repository import aware, iso, not_found
+from .web_push import (
+    WebPushSender,
+    WebPushSubscriptionVault,
+    endpoint_fingerprint,
+    validate_push_endpoint,
+    validate_subscription_material,
+)
 
 
 SourceValidator = Callable[[object, Notification, Account], bool]
@@ -21,11 +41,19 @@ class NotificationRepository:
     """Durable in-app notification preferences, queueing, delivery and inbox."""
 
     NOTIFICATION_PREFERENCES_KEY = "notifications"
-    DEFAULT_NOTIFICATION_PREFERENCES = {"in_app_enabled": True, "automation_updates_enabled": True}
+    DEFAULT_NOTIFICATION_PREFERENCES = {
+        "in_app_enabled": True,
+        "automation_updates_enabled": True,
+        "browser_push_enabled": False,
+    }
+    BROWSER_PUSH_MAX_ATTEMPTS = 3
+    BROWSER_PUSH_RETRY_SECONDS = 30
 
     def __init__(self, sessions, settings):
         self.sessions = sessions
         self.settings = settings
+        self.web_push_sender = WebPushSender(settings)
+        self.web_push_vault = WebPushSubscriptionVault(settings)
         self._source_validators: dict[str, SourceValidator] = {}
 
     def register_source_validator(self, source_kind: str, validator: SourceValidator) -> None:
@@ -41,10 +69,15 @@ class NotificationRepository:
         if raw is None:
             return dict(cls.DEFAULT_NOTIFICATION_PREFERENCES)
         if not isinstance(raw, dict):
-            return {"in_app_enabled": False, "automation_updates_enabled": False}
+            return {
+                "in_app_enabled": False,
+                "automation_updates_enabled": False,
+                "browser_push_enabled": False,
+            }
         return {
             "in_app_enabled": raw.get("in_app_enabled") is True,
             "automation_updates_enabled": raw.get("automation_updates_enabled") is True,
+            "browser_push_enabled": raw.get("browser_push_enabled") is True,
         }
 
     @classmethod
@@ -106,6 +139,18 @@ class NotificationRepository:
 
     def save_notification_preferences(self, owner: str, request: NotificationPreferences) -> dict[str, bool]:
         value = request.model_dump()
+        if value["browser_push_enabled"] and not value["in_app_enabled"]:
+            raise CoworkerError(
+                "browser_push_requires_in_app",
+                "Browser Push requires in-app notifications to remain enabled.",
+                409,
+            )
+        if value["browser_push_enabled"] and not self.browser_push_available():
+            raise CoworkerError(
+                "browser_push_unavailable",
+                "Browser Push is not enabled in this deployment yet.",
+                409,
+            )
         with self.sessions.begin() as db:
             account = db.scalar(select(Account).where(Account.id == owner).with_for_update())
             if account is None:
@@ -113,8 +158,298 @@ class NotificationRepository:
             current = dict(account.preferences or {})
             current[self.NOTIFICATION_PREFERENCES_KEY] = dict(value)
             account.preferences = current
+            if not value["browser_push_enabled"]:
+                rows = db.scalars(select(BrowserPushDelivery).where(
+                    BrowserPushDelivery.owner_id == owner,
+                    BrowserPushDelivery.state == "pending",
+                ).with_for_update()).all()
+                for row in rows:
+                    row.state = "suppressed"
+                    row.lease_until = None
+                    row.error_code = "browser_push_opted_out"
             self._audit(db, owner, owner, "notification_preferences_updated")
         return value
+
+    def browser_push_available(self) -> bool:
+        return bool(
+            self.settings.browser_push_enabled
+            and self.web_push_sender.available
+            and self.web_push_vault.available
+        )
+
+    def browser_push_config(self) -> dict:
+        enabled = self.browser_push_available()
+        return {
+            "enabled": enabled,
+            "application_server_key": self.web_push_sender.application_server_key if enabled else "",
+        }
+
+    def register_browser_push_subscription(
+        self, owner: str, request: BrowserPushSubscriptionUpsert
+    ) -> dict:
+        if not self.browser_push_available():
+            raise CoworkerError(
+                "browser_push_unavailable",
+                "Browser Push is not enabled in this deployment yet.",
+                409,
+            )
+        try:
+            endpoint = validate_push_endpoint(request.endpoint)
+            validate_subscription_material(request.p256dh, request.auth)
+            expires_at = (
+                datetime.fromtimestamp(request.expiration_time / 1000, tz=timezone.utc)
+                if request.expiration_time is not None else None
+            )
+        except (ValueError, OverflowError, OSError) as exc:
+            raise CoworkerError(
+                "invalid_browser_push_subscription",
+                "The browser push subscription is invalid.",
+                422,
+            ) from exc
+        if expires_at is not None and expires_at <= utcnow():
+            raise CoworkerError("browser_push_expired", "This browser push subscription has expired.", 409)
+        fingerprint = endpoint_fingerprint(endpoint)
+        ciphertext = self.web_push_vault.seal(endpoint, request.p256dh, request.auth)
+        try:
+            with self.sessions.begin() as db:
+                account = db.scalar(select(Account).where(Account.id == owner).with_for_update())
+                if account is None:
+                    raise not_found()
+                other_rows = db.scalars(select(BrowserPushSubscription).where(
+                    BrowserPushSubscription.endpoint_hash == fingerprint,
+                    BrowserPushSubscription.owner_id != owner,
+                    BrowserPushSubscription.active.is_(True),
+                ).with_for_update()).all()
+                for other in other_rows:
+                    other.active = False
+                    other.updated_at = utcnow()
+                    pending = db.scalars(select(BrowserPushDelivery).where(
+                        BrowserPushDelivery.subscription_id == other.id,
+                        BrowserPushDelivery.state == "pending",
+                    ).with_for_update()).all()
+                    for delivery in pending:
+                        delivery.state = "suppressed"
+                        delivery.lease_until = None
+                        delivery.error_code = "browser_push_subscription_rebound"
+                row = db.scalar(select(BrowserPushSubscription).where(
+                    BrowserPushSubscription.owner_id == owner,
+                    BrowserPushSubscription.endpoint_hash == fingerprint,
+                ).with_for_update())
+                if row is None:
+                    row = BrowserPushSubscription(
+                        id=str(uuid4()),
+                        owner_id=owner,
+                        endpoint_hash=fingerprint,
+                        subscription_ciphertext=ciphertext,
+                        expires_at=expires_at,
+                        active=True,
+                        created_at=utcnow(),
+                        updated_at=utcnow(),
+                    )
+                    db.add(row)
+                else:
+                    row.subscription_ciphertext = ciphertext
+                    row.expires_at = expires_at
+                    row.active = True
+                    row.updated_at = utcnow()
+                self._audit(db, owner, row.id, "browser_push_subscription_saved")
+                db.flush()
+                result = {
+                    "id": row.id,
+                    "active": row.active,
+                    "expires_at": iso(row.expires_at) if row.expires_at else None,
+                }
+            return result
+        except IntegrityError as exc:
+            raise CoworkerError(
+                "browser_push_endpoint_conflict",
+                "This browser push endpoint changed ownership concurrently. Refresh and try again.",
+                409,
+            ) from exc
+
+    def deactivate_browser_push_subscription(
+        self, owner: str, request: BrowserPushSubscriptionDeactivate
+    ) -> dict:
+        try:
+            endpoint = validate_push_endpoint(request.endpoint)
+        except ValueError as exc:
+            raise CoworkerError(
+                "invalid_browser_push_subscription",
+                "The browser push subscription is invalid.",
+                422,
+            ) from exc
+        fingerprint = endpoint_fingerprint(endpoint)
+        with self.sessions.begin() as db:
+            row = db.scalar(select(BrowserPushSubscription).where(
+                BrowserPushSubscription.owner_id == owner,
+                BrowserPushSubscription.endpoint_hash == fingerprint,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            row.active = False
+            row.updated_at = utcnow()
+            deliveries = db.scalars(select(BrowserPushDelivery).where(
+                BrowserPushDelivery.subscription_id == row.id,
+                BrowserPushDelivery.state == "pending",
+            ).with_for_update()).all()
+            for delivery in deliveries:
+                delivery.state = "suppressed"
+                delivery.lease_until = None
+                delivery.error_code = "browser_push_subscription_inactive"
+            self._audit(db, owner, row.id, "browser_push_subscription_deactivated")
+            return {"id": row.id, "active": False}
+
+    def _browser_push_allowed(self, preferences: dict | None) -> bool:
+        value = self._normalized_notification_preferences(preferences)
+        return bool(
+            self.browser_push_available()
+            and value["in_app_enabled"]
+            and value["browser_push_enabled"]
+        )
+
+    def _enqueue_browser_push_deliveries(
+        self, db, notification: Notification, account: Account
+    ) -> None:
+        if notification.state not in {"delivered", "read"} or not self._browser_push_allowed(account.preferences):
+            return
+        now = utcnow()
+        subscriptions = db.scalars(select(BrowserPushSubscription).where(
+            BrowserPushSubscription.owner_id == notification.owner_id,
+            BrowserPushSubscription.active.is_(True),
+            or_(
+                BrowserPushSubscription.expires_at.is_(None),
+                BrowserPushSubscription.expires_at > now,
+            ),
+        )).all()
+        for subscription in subscriptions:
+            existing = db.scalar(select(BrowserPushDelivery.id).where(
+                BrowserPushDelivery.notification_id == notification.id,
+                BrowserPushDelivery.subscription_id == subscription.id,
+            ))
+            if existing is not None:
+                continue
+            db.add(BrowserPushDelivery(
+                id=str(uuid4()),
+                owner_id=notification.owner_id,
+                notification_id=notification.id,
+                subscription_id=subscription.id,
+                state="pending",
+                created_at=now,
+            ))
+
+    def claim_browser_push_deliveries(self, limit: int = 20) -> list[str]:
+        if not self.browser_push_available():
+            return []
+        with self.sessions.begin() as db:
+            now = utcnow()
+            rows = db.execute(
+                select(BrowserPushDelivery, BrowserPushSubscription, Notification, Account)
+                .join(BrowserPushSubscription, BrowserPushSubscription.id == BrowserPushDelivery.subscription_id)
+                .join(Notification, Notification.id == BrowserPushDelivery.notification_id)
+                .join(Account, Account.id == BrowserPushDelivery.owner_id)
+                .where(
+                    BrowserPushDelivery.state == "pending",
+                    BrowserPushDelivery.attempts < self.BROWSER_PUSH_MAX_ATTEMPTS,
+                    or_(
+                        BrowserPushDelivery.lease_until.is_(None),
+                        BrowserPushDelivery.lease_until < now,
+                    ),
+                )
+                .order_by(BrowserPushDelivery.created_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ).all()
+            claimed: list[str] = []
+            for delivery, subscription, notification, account in rows:
+                source_ok = self._source_allowed(db, notification, account)
+                subscription_ok = (
+                    subscription.active
+                    and (subscription.expires_at is None or aware(subscription.expires_at) > now)
+                )
+                if (
+                    notification.state not in {"delivered", "read"}
+                    or aware(notification.expires_at) <= now
+                    or not self._browser_push_allowed(account.preferences)
+                    or not source_ok
+                    or not subscription_ok
+                ):
+                    delivery.state = "suppressed"
+                    delivery.lease_until = None
+                    delivery.error_code = "browser_push_not_authorized"
+                    if not subscription_ok:
+                        subscription.active = False
+                    continue
+                delivery.attempts += 1
+                delivery.lease_until = now + timedelta(seconds=30)
+                claimed.append(delivery.id)
+            return claimed
+
+    def deliver_browser_push(self, delivery_id: str) -> None:
+        if not self.browser_push_available():
+            return
+        with self.sessions.begin() as db:
+            result = db.execute(
+                select(BrowserPushDelivery, BrowserPushSubscription, Notification, Account)
+                .join(BrowserPushSubscription, BrowserPushSubscription.id == BrowserPushDelivery.subscription_id)
+                .join(Notification, Notification.id == BrowserPushDelivery.notification_id)
+                .join(Account, Account.id == BrowserPushDelivery.owner_id)
+                .where(BrowserPushDelivery.id == delivery_id)
+                .with_for_update()
+            ).first()
+            if result is None:
+                return
+            delivery, subscription, notification, account = result
+            if delivery.state != "pending":
+                return
+            now = utcnow()
+            if (
+                notification.state not in {"delivered", "read"}
+                or aware(notification.expires_at) <= now
+                or not self._browser_push_allowed(account.preferences)
+                or not self._source_allowed(db, notification, account)
+                or not subscription.active
+                or (subscription.expires_at is not None and aware(subscription.expires_at) <= now)
+            ):
+                delivery.state = "suppressed"
+                delivery.lease_until = None
+                delivery.error_code = "browser_push_not_authorized"
+                return
+            try:
+                material = self.web_push_vault.open(subscription.subscription_ciphertext)
+                result = self.web_push_sender.send(
+                    material,
+                    {
+                        "title": "Shuddho",
+                        "body": "You have a new Shuddho update.",
+                        "url": "/?view=automations",
+                        "notification_id": notification.id,
+                    },
+                    ttl=max(0, int((aware(notification.expires_at) - now).total_seconds())),
+                )
+            except Exception:
+                delivery.state = "outcome_unknown"
+                delivery.lease_until = None
+                delivery.error_code = "browser_push_transport_unknown"
+                return
+            delivery.provider_status = result.status_code
+            delivery.lease_until = None
+            if 200 <= result.status_code < 300:
+                delivery.state = "provider_accepted"
+                delivery.accepted_at = utcnow()
+                delivery.error_code = None
+                return
+            if result.status_code in {404, 410}:
+                delivery.state = "failed"
+                delivery.error_code = "browser_push_endpoint_gone"
+                subscription.active = False
+                subscription.updated_at = utcnow()
+                return
+            if result.status_code in {429, 503} and delivery.attempts < self.BROWSER_PUSH_MAX_ATTEMPTS:
+                delivery.lease_until = utcnow() + timedelta(seconds=self.BROWSER_PUSH_RETRY_SECONDS)
+                delivery.error_code = "browser_push_retryable"
+                return
+            delivery.state = "failed"
+            delivery.error_code = "browser_push_rejected"
 
     @staticmethod
     def visible_at_after_quiet_hours(value: datetime, timezone_name: str, quiet: dict | None) -> datetime:
@@ -233,6 +568,8 @@ class NotificationRepository:
             if outbox.delivered:
                 return
             notification.state = "delivered" if self._notification_allowed(account.preferences,notification.kind) and self._source_allowed(db,notification,account) else "suppressed"
+            if notification.state == "delivered":
+                self._enqueue_browser_push_deliveries(db, notification, account)
             outbox.delivered=True; outbox.lease_until=None
 
     def notifications(self, owner: str, after: datetime | None = None) -> list[dict]:
