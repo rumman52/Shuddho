@@ -41,7 +41,10 @@ def temporal_schedule(value: dict, task_queue: str):
         calendar = ScheduleCalendarSpec(
             day_of_week=[ScheduleRange(start=0, end=6)],
             hour=[ScheduleRange(start=0, end=23)],
-            minute=[ScheduleRange(start=0, end=59, step=int(spec["scan_interval_minutes"]))],
+            minute=[
+                ScheduleRange(start=value)
+                for value in range(0, 60, int(spec["scan_interval_minutes"]))
+            ],
             second=[ScheduleRange(start=0)],
         )
     else:
