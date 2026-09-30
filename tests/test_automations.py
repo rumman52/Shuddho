@@ -1258,7 +1258,7 @@ def test_meeting_schedule_contract_is_temporal_bounded_and_timezone_aware():
     assert schedule.spec.time_zone_name == "Asia/Dhaka"
     assert schedule.spec.calendars[0].hour[0].start == 0
     assert schedule.spec.calendars[0].hour[0].end == 23
-    assert schedule.spec.calendars[0].minute[0].step == 15
+    assert [item.start for item in schedule.spec.calendars[0].minute] == [0, 15, 30, 45]
     assert schedule.policy.catchup_window == timedelta(seconds=3600)
 
 
