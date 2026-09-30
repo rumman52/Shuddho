@@ -787,7 +787,7 @@ def test_browser_push_device_status_limit_and_pending_index(
         json={"endpoint": endpoints[2], "p256dh": ua_public, "auth": auth_secret, "expiration_time": None},
     )
     assert limited.status_code == 409
-    assert limited.json()["detail"]["code"] == "browser_push_subscription_limit"
+    assert limited.json()["error"]["code"] == "browser_push_subscription_limit"
 
     # Updating an existing device remains allowed at the active-device limit.
     replay = client.put(
