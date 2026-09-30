@@ -1289,11 +1289,15 @@ class AutomationRepository:
             if (
                 automation is None
                 or run is None
-                or automation.run_profile != "briefing"
+                or automation.run_profile not in {"briefing", "meeting"}
                 or run.state != "completed"
             ):
                 return
-            notice_id = str(uuid5(NAMESPACE_URL, f"shuddho:briefing-complete:{occurrence.id}:{run_id}"))
+            profile = automation.run_profile
+            notice_id = str(uuid5(
+                NAMESPACE_URL,
+                f"shuddho:{profile}-complete:{occurrence.id}:{run_id}",
+            ))
             visible_at = self.notifications.visible_at_after_quiet_hours(
                 utcnow(), automation.timezone, automation.quiet_hours,
             )
@@ -1303,8 +1307,12 @@ class AutomationRepository:
                 workspace_id=automation.workspace_id,
                 automation_id=automation.id,
                 kind="automation_completed",
-                title="Briefing ready",
-                message="Your private daily/weekly briefing is ready to review in Shuddho.",
+                title="Meeting preparation ready" if profile == "meeting" else "Briefing ready",
+                message=(
+                    "Your private meeting preparation is ready to review in Shuddho."
+                    if profile == "meeting"
+                    else "Your private daily/weekly briefing is ready to review in Shuddho."
+                ),
                 visible_at=visible_at,
                 expires_at=visible_at + timedelta(days=7),
                 notification_id=notice_id,
@@ -1358,6 +1366,8 @@ class AutomationRepository:
                     "revision": occurrence.automation_revision,
                     "due_at": iso(occurrence.due_at),
                     "event_id": occurrence.trigger_event_id,
+                    "snapshot_id": occurrence.trigger_snapshot_id,
+                    "meeting_start_at": iso(occurrence.trigger_start_at) if occurrence.trigger_start_at else None,
                 })
             return result
 
