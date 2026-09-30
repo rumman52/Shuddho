@@ -52,6 +52,7 @@ class Settings:
     agent_memory_enabled: bool = False
     context_retrieval_enabled: bool = False
     intelligent_planner_enabled: bool = False
+    suggestion_model_relevance_enabled: bool = False
     agent_handoffs_enabled: bool = False
     agent_multi_handoffs_enabled: bool = False
     agent_dependency_graph_enabled: bool = False
@@ -201,6 +202,7 @@ class Settings:
             agent_memory_enabled=os.getenv("SHUDDHO_AGENT_MEMORY_ENABLED", "false").lower() == "true",
             context_retrieval_enabled=os.getenv("SHUDDHO_CONTEXT_RETRIEVAL_ENABLED", "false").lower() == "true",
             intelligent_planner_enabled=os.getenv("SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED", "false").lower() == "true",
+            suggestion_model_relevance_enabled=os.getenv("SHUDDHO_SUGGESTION_MODEL_RELEVANCE_ENABLED", "false").lower() == "true",
             agent_handoffs_enabled=os.getenv("SHUDDHO_AGENT_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_multi_handoffs_enabled=os.getenv("SHUDDHO_AGENT_MULTI_HANDOFFS_ENABLED", "false").lower() == "true",
             agent_dependency_graph_enabled=os.getenv("SHUDDHO_AGENT_DEPENDENCY_GRAPH_ENABLED", "false").lower() == "true",
@@ -529,6 +531,11 @@ class Settings:
                 raise ValueError(
                     "Microsoft actions require OAuth credentials, a safe tenant, and an HTTPS frontend /oauth/microsoft/callback redirect URI"
                 )
+        if self.suggestion_model_relevance_enabled:
+            if not self.personal_goals_enabled:
+                raise ValueError("Model-assisted suggestion relevance requires SHUDDHO_PERSONAL_GOALS_ENABLED=true")
+            if not self.intelligent_planner_enabled:
+                raise ValueError("Model-assisted suggestion relevance requires SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
         if self.agent_action_selection_enabled:
             if not self.agent_runtime_enabled:
                 raise ValueError("Agent action selection requires SHUDDHO_AGENT_RUNTIME_ENABLED=true")
