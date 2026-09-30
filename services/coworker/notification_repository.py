@@ -359,6 +359,7 @@ class NotificationRepository:
                 )
                 if (
                     notification.state not in {"delivered", "read"}
+                    or aware(notification.expires_at) <= now
                     or not self._browser_push_allowed(account.preferences)
                     or not source_ok
                     or not subscription_ok
@@ -394,6 +395,7 @@ class NotificationRepository:
             now = utcnow()
             if (
                 notification.state not in {"delivered", "read"}
+                or aware(notification.expires_at) <= now
                 or not self._browser_push_allowed(account.preferences)
                 or not self._source_allowed(db, notification, account)
                 or not subscription.active
