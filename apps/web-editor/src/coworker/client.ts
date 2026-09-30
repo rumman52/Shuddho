@@ -148,6 +148,10 @@ export type NotificationPreferences = {
   in_app_enabled: boolean;
   automation_updates_enabled: boolean;
 };
+export type NotificationDigest = {
+  id: string; kind: string; title: string; count: number; unread_count: number;
+  latest_at: string; notifications: (AgentNotification & { read_digest_id: string })[];
+};
 export type AgentRun = {
   id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
   connector_read_grant_ids: string[];
@@ -521,6 +525,12 @@ export class CoworkerClient {
     });
   }
   notifications(signal?: AbortSignal) { return this.json<{ enabled: boolean; notifications: AgentNotification[] }>("/api/v1/notifications", { signal }); }
+  notificationDigests(signal?: AbortSignal) { return this.json<{ enabled: boolean; digests: NotificationDigest[] }>("/api/v1/notification-digests", { signal }); }
+  readNotificationDigest(id: string, notificationIds: string[]) {
+    return this.json<{ id: string; notifications: { id: string; state: "read"; read_at: string | null }[] }>(`/api/v1/notification-digests/${digestIdentifier(id)}/read`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notification_ids: notificationIds }),
+    });
+  }
   readNotification(id: string) { return this.json<{ id: string; state: "read"; read_at: string }>(`/api/v1/notifications/${identifier(id)}/read`, { method: "POST" }); }
   memory(signal?: AbortSignal) { return this.json<{ enabled: boolean; facts: MemoryFact[] }>("/api/v1/memory", { signal }); }
   memoryProposals(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals: MemoryProposal[] }>("/api/v1/memory-proposals", { signal }); }

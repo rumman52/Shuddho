@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import { verifyActions } from "./coworker-actions-browser.mjs";
 import { verifyAgentProposals } from "./coworker-agent-browser.mjs";
+import { verifyNotificationDigests } from "./coworker-notification-digests-browser.mjs";
 
 const folder = process.env.SHUDDHO_TEST_WORKDIR;
 if (!folder) throw new Error("SHUDDHO_TEST_WORKDIR must point to the local browser fixture directory.");
@@ -163,6 +164,7 @@ try {
   assert.equal(await page.locator(".cw-history li").count(), 11);
   await verifyActions(page, folder);
   await verifyAgentProposals(page, folder);
+  await verifyNotificationDigests(page, folder);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   assert.equal(await page.getByText("প্রকল্পের অগ্রগতি", { exact: true }).count(), 0);

@@ -9,6 +9,7 @@ from sqlalchemy import or_, select
 
 from .errors import CoworkerError
 from .models import Account, AuditEvent, Notification, NotificationOutbox, utcnow
+from .notification_digests import GROUPED_KINDS, MAX_INBOX_ITEMS, digest_views
 from .notification_schemas import NotificationPreferences
 from .repository import aware, iso, not_found
 
@@ -256,3 +257,61 @@ class NotificationRepository:
                 raise not_found()
             row.state="read"; row.read_at=utcnow()
             return {"id":row.id,"state":row.state,"read_at":iso(row.read_at)}
+
+    @staticmethod
+    def _digest_item(row: Notification) -> dict:
+        return {"id": row.id, "workspace_id": row.workspace_id,
+                "automation_id": row.automation_id, "occurrence_id": row.occurrence_id,
+                "kind": row.kind, "title": row.title, "message": row.message,
+                "state": row.state, "visible_at": iso(row.visible_at),
+                "read_at": iso(row.read_at) if row.read_at else None, "created_at": iso(row.created_at)}
+
+    def _digest_member_allowed(self, db, row: Notification, account: Account, now: datetime) -> bool:
+        if row.kind in GROUPED_KINDS and (row.source_kind != row.kind or not row.source_id):
+            return False
+        return (row.state in {"delivered", "read"} and aware(row.visible_at) <= now
+                and aware(row.expires_at) > now
+                and self._notification_allowed(account.preferences, row.kind)
+                and self._source_allowed(db, row, account))
+
+    def notification_digests(self, owner: str) -> list[dict]:
+        self._require_inbox_enabled()
+        with self.sessions() as db:
+            account = db.get(Account, owner)
+            if account is None:
+                raise not_found()
+            now = utcnow()
+            rows = db.scalars(select(Notification).where(
+                Notification.owner_id == owner, Notification.state.in_({"delivered", "read"}),
+                Notification.visible_at <= now, Notification.expires_at > now,
+            ).order_by(Notification.visible_at.desc(), Notification.created_at.desc(),
+                       Notification.id.desc()).limit(MAX_INBOX_ITEMS)).all()
+            items = [self._digest_item(row) for row in rows
+                     if self._digest_member_allowed(db, row, account, now)]
+            return digest_views(owner, items)
+
+    def mark_digest_read(self, owner: str, digest_id: str, notification_ids: list[str]) -> dict:
+        self._require_inbox_enabled()
+        with self.sessions.begin() as db:
+            account = db.scalar(select(Account).where(Account.id == owner).with_for_update())
+            if account is None:
+                raise not_found()
+            rows = db.scalars(select(Notification).where(
+                Notification.owner_id == owner, Notification.id.in_(notification_ids),
+            ).order_by(Notification.id).with_for_update()).all()
+            if len(rows) != len(notification_ids):
+                raise not_found()
+            now = utcnow()
+            allowed = all(self._digest_member_allowed(db, row, account, now) for row in rows)
+            groups = digest_views(owner, [self._digest_item(row) for row in rows]) if allowed else []
+            if len(groups) != 1 or groups[0]["id"] != digest_id:
+                raise CoworkerError("notification_digest_changed",
+                    "This digest changed or is no longer available. Refresh your inbox.", 409)
+            for row in rows:
+                if row.state == "delivered":
+                    row.state = "read"
+                    row.read_at = now
+            return {"id": digest_id, "notifications": [
+                {"id": row.id, "state": row.state, "read_at": iso(row.read_at) if row.read_at else None}
+                for row in rows
+            ]}

@@ -3,6 +3,32 @@ import assert from "node:assert/strict";
 import { CoworkerClient, WorkspaceError, parseProgress, sourceLink, trustedBase } from "./client";
 import { publicAuthConfig } from "./authConfig";
 
+test("notification digest client uses authenticated bounded inbox routes and exact members", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    return new Response(JSON.stringify({ enabled: true, digests: [] }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "digest-test-token");
+    const digest = "a".repeat(64);
+    const members = ["00000001-0000-4000-8000-000000000000", "00000002-0000-4000-8000-000000000000"];
+    await client.notificationDigests();
+    await client.readNotificationDigest(digest, members);
+    assert.equal(seen[0].url, "/backend/api/v1/notification-digests");
+    assert.equal(seen[1].url, `/backend/api/v1/notification-digests/${digest}/read`);
+    assert.equal(seen[1].options?.method, "POST");
+    assert.deepEqual(JSON.parse(String(seen[1].options?.body)), { notification_ids: members });
+    assert.equal(new Headers(seen[1].options?.headers).get("Authorization"), "Bearer digest-test-token");
+    assert.equal(new Headers(seen[1].options?.headers).get("Content-Type"), "application/json");
+    assert.equal(seen[1].options?.credentials, "omit");
+    assert.equal(seen[1].options?.redirect, "error");
+    assert.throws(() => client.readNotificationDigest("../another-owner", members));
+    assert.equal(seen.length, 2);
+  } finally { globalThis.fetch = original; }
+});
+
 test("research links cannot become script, local, credential-bearing, or nonstandard-port links", () => {
   assert.equal(sourceLink("https://example.org/research?q=বাংলা"), "https://example.org/research?q=%E0%A6%AC%E0%A6%BE%E0%A6%82%E0%A6%B2%E0%A6%BE");
   for (const value of [undefined, "javascript:alert(1)", "data:text/html,bad", "file:///etc/passwd", "http://127.0.0.1/", "http://[::1]/",
