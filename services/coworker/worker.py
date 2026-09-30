@@ -328,6 +328,15 @@ class Dispatcher:
                             int(buffered["revision"]),
                             str(buffered["event_id"]),
                         )
+                    elif buffered.get("snapshot_id") and buffered.get("meeting_start_at"):
+                        await asyncio.to_thread(
+                            automations.accept_meeting_occurrence,
+                            str(buffered["automation_id"]),
+                            int(buffered["revision"]),
+                            str(buffered["snapshot_id"]),
+                            datetime.fromisoformat(str(buffered["meeting_start_at"]).replace("Z", "+00:00")),
+                            utcnow(),
+                        )
                     else:
                         await asyncio.to_thread(
                             automations.accept_occurrence,
