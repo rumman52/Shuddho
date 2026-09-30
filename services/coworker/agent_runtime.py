@@ -156,6 +156,7 @@ class AgentRuntime:
             run["actions"],
             goal=run["goal"],
             runtime_version=run["runtime_version"],
+            tool_allowlist=run.get("tool_allowlist") or [],
         )
         remaining = self.repo.v3_remaining_budget(run_id)
         context_payload, context_sources = self.container.context.planner_context(
@@ -392,6 +393,8 @@ class AgentRuntime:
 
     def complete(self, run_id: str):
         self.repo.complete_run(run_id)
+        if self.container.automations is not None:
+            self.container.automations.notify_run_completed(run_id)
 
     def fail(self, run_id: str, code: str, message: str):
         run = self.repo.worker_run(run_id)
