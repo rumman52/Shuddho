@@ -445,6 +445,16 @@ def automation_revisions(automation_id: UUID, identity: Identity, services: Serv
     return {"revisions": services.automations.revisions(identity.account_id, str(automation_id))}
 
 
+@router.get("/automations/{automation_id}/history")
+def automation_history(automation_id: UUID, identity: Identity, services: Services):
+    return {
+        "history": services.automations.history(
+            identity.account_id,
+            str(automation_id),
+        )
+    }
+
+
 @router.patch("/automations/{automation_id}")
 def patch_automation(automation_id: UUID, payload: AutomationPatch, identity: Identity, services: Services, response: Response):
     value = services.automations.update(identity.account_id, str(automation_id), payload)
