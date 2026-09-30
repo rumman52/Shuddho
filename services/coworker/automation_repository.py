@@ -384,8 +384,9 @@ class AutomationRepository:
                 PersonalGoal.id == automation.goal_id,
                 PersonalGoal.owner_id == automation.owner_id,
             ))
+            event_subscription_id = event.subscription_id if event is not None else ""
             subscription = db.scalar(select(ConnectorSubscription).where(
-                ConnectorSubscription.id == event.subscription_id if event is not None else "",
+                ConnectorSubscription.id == event_subscription_id,
                 ConnectorSubscription.owner_id == automation.owner_id,
                 ConnectorSubscription.grant_id == str(automation.schedule.get("grant_id") or ""),
             ))
