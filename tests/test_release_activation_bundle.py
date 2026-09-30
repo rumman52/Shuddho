@@ -509,6 +509,7 @@ def artifact_quality_file(tmp_path: Path, rollout_path: Path) -> Path:
             "source_revision": "1" * 40,
             "rollout_manifest_sha256": file_hash(rollout_path),
             "native_results_sha256": "a" * 64,
+            "artifact_set_sha256": "d" * 64,
             "human_review_sha256": "b" * 64,
             "languages": ["ar", "bn", "en", "zh"],
             "formats": ["pptx", "xlsx"],

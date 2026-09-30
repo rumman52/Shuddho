@@ -32,6 +32,7 @@ uv run python scripts/cohort_release_gate.py \
   --rollout /secure/path/cohort-rollout.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
   --model-eval /secure/release/agent-eval.json \
+  --artifact-quality-eval /secure/release/artifact-quality-evidence.json \
   --max-cohort-users 25 \
   --output /secure/path/cohort-decision.json
 ```
@@ -42,7 +43,7 @@ A successful decision is exactly:
 GO_CONTROLLED_COHORT
 ```
 
-Any missing technical evidence or rollout control returns `NO-GO` and exits non-zero. The final gate parses both live planner and live quality artifacts. Both must bind the exact supplied rollout SHA-256, and quality must match the planner artifact's exact provider model and source revision; staging evidence strings alone are not trusted as AI-runtime proof.
+Any missing technical evidence or rollout control returns `NO-GO` and exits non-zero. The final gate parses both live planner and live quality artifacts. Both must bind the exact supplied rollout SHA-256, and quality must match the planner artifact's exact provider model and source revision; staging evidence strings alone are not trusted as AI-runtime proof. When `artifact_services=true`, the gate also requires structured PA-11 artifact-quality evidence bound to the same rollout and source revision; a staging string alone cannot satisfy that gate.
 
 ## Required base staging evidence
 
@@ -60,6 +61,8 @@ The first cohort always requires:
 - persisted fan-in timing proof;
 - v2 → v1 feature-flag rollback proof;
 - server-enforced cohort admission proof showing an invited account succeeds and a fresh non-member is denied before Coworker provisioning.
+
+Artifact-quality evidence is required when `artifact_services=true`. It combines revision-stamped native PPTX/XLSX render/recalculation checks with explicit human review of the exact generated evidence; see [PA-11 Artifact Quality Evidence](PA11_ARTIFACT_QUALITY_EVIDENCE.md).
 
 Research evidence is required only if `research=true` in the rollout manifest.
 

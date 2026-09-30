@@ -3,6 +3,7 @@
 Run with PYTHONPATH=.:tests python tests/verify_office_native.py /tmp/office-qa
 The production image does not require an Office process or this fixture.
 """
+import hashlib
 import json
 import os
 import shutil
@@ -115,20 +116,47 @@ def main(folder):
         or os.environ.get("GITHUB_SHA")
         or ""
     ).strip().lower() or None
-    if revision is not None and (
+    if revision is None:
+        raise RuntimeError(
+            "Native Office QA release evidence requires SHUDDHO_SOURCE_REVISION, "
+            "RENDER_GIT_COMMIT, or GITHUB_SHA."
+        )
+    if (
         len(revision) != 40
         or any(char not in "0123456789abcdef" for char in revision)
     ):
         raise RuntimeError(
             "Native Office QA source revision must be a full lowercase Git SHA-1."
         )
+
+    artifact_files = sorted([
+        *originals.glob("*.pptx"),
+        *originals.glob("*.xlsx"),
+        *rendered.glob("*.pdf"),
+        *rendered.glob("*.png"),
+        *recalculated.glob("*.xlsx"),
+    ])
+    artifacts_sha256 = {
+        path.relative_to(folder).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in artifact_files
+    }
+    artifact_set_sha256 = hashlib.sha256(
+        json.dumps(
+            artifacts_sha256,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
     native_results = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_revision": revision,
         "languages": ["ar", "bn", "en", "zh"],
         "formats": ["pptx", "xlsx"],
         "rendered": sorted(path.name for path in pdfs),
+        "artifacts_sha256": artifacts_sha256,
+        "artifact_set_sha256": artifact_set_sha256,
         "formula_edits": outcomes,
     }
     (folder / "native-results.json").write_text(

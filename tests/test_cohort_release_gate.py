@@ -39,6 +39,24 @@ def evidence(*, research=False, actions=False, microsoft=False, action_attachmen
     return {key: {"status": "passed", "evidence": "staging-proof"} for key in keys}
 
 
+def artifact_quality_evidence(rollout_sha256: str = "a" * 64) -> dict:
+    return {
+        "schema_version": 1,
+        "mode": "artifact_quality",
+        "release_id": "coworker-cohort-001",
+        "generated_at": "2026-09-30T08:10:00+00:00",
+        "source_revision": "1" * 40,
+        "rollout_manifest_sha256": rollout_sha256,
+        "native_results_sha256": "b" * 64,
+        "artifact_set_sha256": "d" * 64,
+        "human_review_sha256": "c" * 64,
+        "languages": ["ar", "bn", "en", "zh"],
+        "formats": ["pptx", "xlsx"],
+        "gate_decision": "PASS",
+        "failures": [],
+    }
+
+
 def rollout(*, research=False, actions=False, users=25, providers=None, artifacts=False, action_attachments=False, action_reminders=False, action_recipients=False, action_document_sharing=False, action_email_threading=False, action_social_publishing=False, action_selection=False, action_proposals=False):
     monitoring = {
         "queue_age": "queue-dashboard",
@@ -367,6 +385,8 @@ def test_action_attachments_require_independent_gate_dependency_and_kill_switch(
     passed = evaluate_release(
         evidence(actions=True, action_attachments=True),
         value,
+        artifact_quality_evidence=artifact_quality_evidence(),
+        rollout_sha256="a" * 64,
     )
     assert passed["decision"] == "GO_CONTROLLED_COHORT"
 
@@ -468,6 +488,8 @@ def test_document_sharing_requires_independent_gate_dependencies_and_kill_switch
     passed = evaluate_release(
         evidence(actions=True, action_document_sharing=True),
         value,
+        artifact_quality_evidence=artifact_quality_evidence(),
+        rollout_sha256="a" * 64,
     )
     assert passed["decision"] == "GO_CONTROLLED_COHORT"
 
@@ -730,6 +752,7 @@ def test_artifact_services_require_structured_rollout_bound_evidence():
         "source_revision": "1" * 40,
         "rollout_manifest_sha256": "a" * 64,
         "native_results_sha256": "b" * 64,
+        "artifact_set_sha256": "d" * 64,
         "human_review_sha256": "c" * 64,
         "languages": ["ar", "bn", "en", "zh"],
         "formats": ["pptx", "xlsx"],

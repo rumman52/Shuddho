@@ -58,6 +58,7 @@ uv run python -m scripts.release_activation_bundle \
   --staging-evidence /secure/release/staging-evidence.final.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
   --model-eval /secure/release/agent-eval.json \
+  --artifact-quality-eval /secure/release/artifact-quality-evidence.json \
   --release-ledger /secure/release/coworker-cohort-001.jsonl \
   --activations /secure/release/activation-manifest.json \
   --current-stage canary-5 \
@@ -70,7 +71,7 @@ Passing output has:
 status = release_activation_bundle_verified
 ```
 
-and records the exact rollout/staging hashes, exact verified live-planner and live-quality artifact hashes, required activation keys, every activation artifact hash, satisfying ledger sequence/hash, and the ledger head that was verified.
+and records the exact rollout/staging hashes, exact verified live-planner and live-quality artifact hashes, the exact PA-11 artifact-quality evidence hash when Artifact Services are enabled, required activation keys, every activation artifact hash, satisfying ledger sequence/hash, and the ledger head that was verified.
 
 ## Record schema-v16 attestation
 
@@ -87,10 +88,11 @@ uv run python scripts/cohort_release_ledger.py append-release-activation-bundle 
   --staging-evidence /secure/release/staging-evidence.final.json \
   --quality-eval /secure/release/coworker-quality-eval.json \
   --model-eval /secure/release/agent-eval.json \
+  --artifact-quality-eval /secure/release/artifact-quality-evidence.json \
   --release-activation-bundle /secure/release/release-activation-bundle.json
 ```
 
-Schema v16 refuses to append if the release ledger changed after bundle verification. For quality-bound bundles it also independently requires the exact supplied quality artifact SHA-256 to match the bundle before signing. This prevents recording either a stale ledger handoff or substituted quality proof.
+Schema v16 refuses to append if the release ledger changed after bundle verification. For quality-bound bundles it independently requires the exact supplied quality artifact SHA-256 to match the bundle before signing. Artifact-enabled bundles likewise require the exact supplied PA-11 artifact-quality evidence SHA-256. This prevents recording stale ledger handoff or substituted quality proof.
 
 After append succeeds, copy the returned `head_entry_hash` into the independent change/deployment record.
 
