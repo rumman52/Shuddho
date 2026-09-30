@@ -775,7 +775,8 @@ class ConnectorReadRepository:
                         "Connected event snapshot evidence is outside the authorized source.",
                         409,
                     )
-            row.synced_snapshot_ids = bounded
+            if bounded or not list(row.synced_snapshot_ids or []):
+                row.synced_snapshot_ids = bounded
 
     def event_is_stale(self, event: dict) -> bool:
         with self.sessions() as db:
