@@ -396,8 +396,6 @@ class AutomationRepository:
             ))
             if goal is None or goal.state != "active" or goal.revision != automation.goal_revision:
                 reason = reason or "goal_changed"
-            if subscription is None or subscription.state not in {"pending", "active", "renewing"}:
-                reason = reason or "event_source_inactive"
             if (
                 grant is None
                 or grant.state != "active"
@@ -406,6 +404,8 @@ class AutomationRepository:
                 or grant.purpose != "agent_context"
             ):
                 reason = reason or "grant_revoked"
+            if subscription is None or subscription.state not in {"pending", "active", "renewing"}:
+                reason = reason or "event_source_inactive"
 
             due_at = aware(event.received_at) if event is not None else utcnow()
             if previous is None:
