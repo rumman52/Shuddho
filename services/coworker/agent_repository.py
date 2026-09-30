@@ -72,12 +72,32 @@ class AgentRepository:
         *,
         persistent_goal_id: str | None = None,
         persistent_goal_revision: int | None = None,
+        tool_allowlist: list[str] | None = None,
     ) -> tuple[dict, bool]:
         if not self.settings.agent_runtime_enabled:
             raise CoworkerError("agent_runtime_unavailable", "Agent runs are not enabled in this workspace yet.", 409)
         if request.memory_namespaces and not self.settings.agent_memory_enabled:
             raise CoworkerError("agent_memory_unavailable", "Structured memory is not enabled in this workspace yet.", 409)
         payload = request.model_dump(mode="json")
+        normalized_tool_allowlist = list(dict.fromkeys(tool_allowlist or []))
+        if len(normalized_tool_allowlist) > 4:
+            raise CoworkerError("agent_tool_scope", "A bounded Agent run may restrict at most four tools.", 422)
+        if normalized_tool_allowlist:
+            from .agent_tools import tool
+            for tool_name in normalized_tool_allowlist:
+                spec = tool(tool_name)
+                if (
+                    spec.kind != "task"
+                    or spec.consequential
+                    or spec.approval_required
+                    or not spec.enabled(self.settings)
+                ):
+                    raise CoworkerError(
+                        "agent_tool_scope",
+                        "This run requested a tool outside its bounded non-consequential scope.",
+                        409,
+                    )
+            payload = payload | {"tool_allowlist": normalized_tool_allowlist}
         if persistent_goal_id is not None:
             payload = payload | {
                 "persistent_goal_id": persistent_goal_id,
@@ -211,6 +231,7 @@ class AgentRepository:
                 action_ids=action_ids,
                 memory_namespaces=list(request.memory_namespaces),
                 connector_read_grant_ids=connector_read_grant_ids,
+                tool_allowlist=normalized_tool_allowlist,
                 state="queued",
                 phase="planning",
                 message="Agent run created. Waiting for the bounded planner runtime.",
@@ -291,6 +312,7 @@ class AgentRepository:
             "action_proposals": [self._proposal_dto(item) for item in proposals],
             "memory_namespaces": list(run.memory_namespaces),
             "connector_read_grant_ids": list(run.connector_read_grant_ids or []),
+            "tool_allowlist": list(run.tool_allowlist or []),
             "state": run.state,
             "phase": run.phase,
             "message": run.message,
@@ -906,6 +928,7 @@ class AgentRepository:
                 "id": run.id, "owner_id": run.owner_id, "goal": run.goal,
                 "persistent_goal_id": run.goal_id, "persistent_goal_revision": run.goal_revision,
                 "output_language": run.output_language, "document_ids": documents,
+                "tool_allowlist": list(run.tool_allowlist or []),
                 "actions": [{"id": action_rows[action_id].id, "kind": action_rows[action_id].kind,
                              "state": action_rows[action_id].state}
                             for action_id in run.action_ids if action_id in action_rows],
