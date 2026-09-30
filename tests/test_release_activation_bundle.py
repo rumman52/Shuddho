@@ -37,7 +37,7 @@ def file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def rollout_value() -> dict:
+def rollout_value(*, artifacts: bool = False) -> dict:
     return {
         "release_id": RELEASE_ID,
         "environment": "production",
@@ -49,7 +49,7 @@ def rollout_value() -> dict:
         "capabilities": {
             "coworker": True,
             "work_services": True,
-            "artifact_services": True,
+            "artifact_services": artifacts,
             "agent_runtime": True,
             "intelligent_planner": True,
             "memory": False,
@@ -495,4 +495,117 @@ def test_activation_bundle_rejects_model_quality_identity_drift(tmp_path, monkey
             ledger_path=ledger,
             activation_paths={"action_proposals": activation},
             current_stage=STAGE,
+        )
+
+
+def artifact_quality_file(tmp_path: Path, rollout_path: Path) -> Path:
+    return write_json(
+        tmp_path / "artifact-quality.json",
+        {
+            "schema_version": 1,
+            "mode": "artifact_quality",
+            "release_id": RELEASE_ID,
+            "generated_at": "2026-09-24T12:02:00+00:00",
+            "source_revision": "1" * 40,
+            "rollout_manifest_sha256": file_hash(rollout_path),
+            "native_results_sha256": "a" * 64,
+            "human_review_sha256": "b" * 64,
+            "languages": ["ar", "bn", "en", "zh"],
+            "formats": ["pptx", "xlsx"],
+            "gate_decision": "PASS",
+            "failures": [],
+        },
+    )
+
+
+def test_release_activation_bundle_binds_required_artifact_quality(
+    tmp_path,
+    monkeypatch,
+):
+    rollout = write_json(
+        tmp_path / "rollout-artifacts.json",
+        rollout_value(artifacts=True),
+    )
+    staging = write_json(tmp_path / "staging-artifacts.json", staging_value())
+    activation = write_json(
+        tmp_path / "action-proposals-artifacts-activation.json",
+        {
+            "schema_version": 1,
+            "status": "action_proposals_verified",
+            "release_id": RELEASE_ID,
+            "current_stage": STAGE,
+            "artifact_sha256": {
+                "rollout_manifest": file_hash(rollout),
+            },
+        },
+    )
+    ledger = signed_action_proposal_ledger(tmp_path, activation)
+    artifact = artifact_quality_file(tmp_path, rollout)
+    monkeypatch.setenv(
+        "SHUDDHO_RELEASE_LEDGER_HMAC_KEY",
+        KEY.decode("ascii"),
+    )
+
+    with pytest.raises(
+        ReleaseActivationBundleError,
+        match="requires artifact-quality evidence",
+    ):
+        verify_activation_bundle(
+            rollout_path=rollout,
+            staging_evidence_path=staging,
+            ledger_path=ledger,
+            activation_paths={"action_proposals": activation},
+            current_stage=STAGE,
+        )
+
+    bundle = verify_activation_bundle(
+        rollout_path=rollout,
+        staging_evidence_path=staging,
+        artifact_quality_evidence_path=artifact,
+        ledger_path=ledger,
+        activation_paths={"action_proposals": activation},
+        current_stage=STAGE,
+    )
+    assert bundle["artifact_quality_evidence_sha256"] == file_hash(artifact)
+    bundle_path = write_json(
+        tmp_path / "artifact-bound-bundle.json",
+        bundle,
+    )
+
+    append_release_activation_bundle_event(
+        ledger=ledger,
+        key=KEY,
+        release_id=RELEASE_ID,
+        actor_reference="oncall-primary",
+        change_reference="change-1",
+        current_stage=STAGE,
+        rollout_manifest=rollout,
+        staging_evidence=staging,
+        release_activation_bundle=bundle_path,
+        artifact_quality_evidence=artifact,
+    )
+
+    wrong = write_json(
+        tmp_path / "wrong-artifact-quality.json",
+        {
+            **json.loads(artifact.read_text(encoding="utf-8")),
+            "human_review_sha256": "c" * 64,
+        },
+    )
+    second_ledger = signed_action_proposal_ledger(tmp_path, activation)
+    with pytest.raises(
+        ReleaseLedgerError,
+        match="does not bind this artifact-quality evidence",
+    ):
+        append_release_activation_bundle_event(
+            ledger=second_ledger,
+            key=KEY,
+            release_id=RELEASE_ID,
+            actor_reference="oncall-primary",
+            change_reference="change-1",
+            current_stage=STAGE,
+            rollout_manifest=rollout,
+            staging_evidence=staging,
+            release_activation_bundle=bundle_path,
+            artifact_quality_evidence=wrong,
         )
