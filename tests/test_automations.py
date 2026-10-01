@@ -1874,11 +1874,11 @@ def test_simple_reminder_pause_resume_cancel_and_stale_revision_fail_closed(
         json={"expected_revision": paused["revision"]},
     ).json()
     stale = automation_container.automations.accept_occurrence(
-        reminder["id"], reminder["revision"], due + timedelta(minutes=1)
+        reminder["id"], reminder["revision"], due
     )
     assert stale["state"] == "skipped" and stale["reason"] == "stale_revision"
     accepted = automation_container.automations.accept_occurrence(
-        reminder["id"], resumed["revision"], due + timedelta(minutes=2)
+        reminder["id"], resumed["revision"], due
     )
     assert accepted["state"] == "notified" and accepted["run_id"] is None
     cancelled = client.post(
@@ -1887,7 +1887,7 @@ def test_simple_reminder_pause_resume_cancel_and_stale_revision_fail_closed(
         json={"expected_revision": resumed["revision"]},
     ).json()
     blocked = automation_container.automations.accept_occurrence(
-        reminder["id"], cancelled["revision"], due + timedelta(minutes=3)
+        reminder["id"], cancelled["revision"], due
     )
     assert blocked["state"] == "skipped" and blocked["reason"] == "not_active"
     assert accepted["notification_id"] not in automation_container.notifications.claim_notifications()
@@ -1916,7 +1916,7 @@ def test_simple_reminder_goal_revision_and_revocation_fail_closed(
     assert revised["state"] == "skipped" and revised["reason"] == "goal_revision_changed"
     goal2, reminder2 = create_goal_and_reminder(client, auth, "goal-pause")
     accepted = automation_container.automations.accept_occurrence(
-        reminder2["id"], reminder2["revision"], due + timedelta(minutes=1)
+        reminder2["id"], reminder2["revision"], due
     )
     assert accepted["state"] == "notified"
     paused = client.post(
