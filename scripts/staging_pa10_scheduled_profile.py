@@ -15,7 +15,6 @@ import httpx
 SCHEMA_VERSION = 1
 PRODUCTION_NAMES = {"prod", "production"}
 SCENARIOS = {
-    "scheduled_reminder": {"profile": "goal", "schedule": {"daily", "weekly"}},
     "daily_coworker": {"profile": "briefing", "schedule": {"daily"}},
     "weekly_coworker": {"profile": "briefing", "schedule": {"weekly"}},
     "deadline_coworker": {"profile": "deadline", "schedule": {"daily", "weekly"}},
@@ -388,7 +387,8 @@ def verify(args: argparse.Namespace) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Collect release-bound evidence for one scheduled PA-10 profile occurrence. "
+            "Collect release-bound evidence for one Agent-backed scheduled PA-10 profile occurrence. "
+            "The separate one-notice reminder gate is intentionally not represented here. "
             "Repeat with fresh evidence for DST, edits, pause/resume, quiet-hours and other cases."
         )
     )
