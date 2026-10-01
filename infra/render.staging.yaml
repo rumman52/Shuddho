@@ -13,7 +13,6 @@ services:
     plan: free
     autoDeployTrigger: off
     buildCommand: pip install uv && uv sync --frozen --no-dev --extra coworker
-    preDeployCommand: uv run --extra coworker python -m services.coworker.migrate
     startCommand: uv run --extra coworker uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
@@ -109,6 +108,7 @@ services:
     plan: 0.5c-512mb
     autoDeployTrigger: off
     buildCommand: pip install uv && uv sync --frozen --no-dev --extra coworker
+    preDeployCommand: uv run --extra coworker python -m services.coworker.migrate
     startCommand: uv run --extra coworker python -m services.coworker.worker
     maxShutdownDelaySeconds: 120
     envVars:
