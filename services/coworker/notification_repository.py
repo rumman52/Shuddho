@@ -625,6 +625,41 @@ class NotificationRepository:
                 self._enqueue_browser_push_deliveries(db, notification, account)
             outbox.delivered=True; outbox.lease_until=None
 
+    def browser_push_deliveries(
+        self, owner: str, after: datetime | None = None
+    ) -> list[dict]:
+        if not self.browser_push_available():
+            return []
+        with self.sessions() as db:
+            query = select(BrowserPushDelivery).where(
+                BrowserPushDelivery.owner_id == owner
+            )
+            if after is not None:
+                query = query.where(
+                    BrowserPushDelivery.created_at > aware(after)
+                )
+            rows = db.scalars(
+                query.order_by(
+                    BrowserPushDelivery.created_at.desc(),
+                    BrowserPushDelivery.id.desc(),
+                ).limit(100)
+            ).all()
+            return [
+                {
+                    "id": row.id,
+                    "notification_id": row.notification_id,
+                    "state": row.state,
+                    "attempts": row.attempts,
+                    "provider_status": row.provider_status,
+                    "error_code": row.error_code,
+                    "accepted_at": iso(row.accepted_at)
+                    if row.accepted_at
+                    else None,
+                    "created_at": iso(row.created_at),
+                }
+                for row in rows
+            ]
+
     def notifications(self, owner: str, after: datetime | None = None) -> list[dict]:
         self._require_inbox_enabled()
         with self.sessions() as db:

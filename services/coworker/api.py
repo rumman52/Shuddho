@@ -541,6 +541,18 @@ def deactivate_browser_push_subscription(
     )
 
 
+@router.get("/browser-push/deliveries")
+def list_browser_push_deliveries(identity: Identity, services: Services):
+    if not services.settings.browser_push_enabled:
+        return {"enabled": False, "deliveries": []}
+    return {
+        "enabled": True,
+        "deliveries": services.notifications.browser_push_deliveries(
+            identity.account_id
+        ),
+    }
+
+
 @router.get("/notifications")
 def list_notifications(identity: Identity, services: Services):
     if not services.settings.automations_enabled:
