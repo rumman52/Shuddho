@@ -9,7 +9,7 @@ Use `scripts/staging_pa10_scheduled_profile.py` to collect consistent release-bo
 
 The probe records a baseline from the owner-scoped automation history and inbox, waits for exactly one new schedule occurrence, and accepts evidence only when it links one completed Agent run plus exactly one start and one completion notice.
 
-The PA-10 matrix's **simple scheduled reminder** is intentionally excluded. The current ordinary `goal` automation launches an Agent run and emits both start and completion notices, so it is not valid evidence for the separate "exactly one notice" reminder requirement. That reminder path requires its own implementation/evidence and must remain NOT VERIFIED until then. It binds the artifact to the deployed source revision, release ID, rollout hash, provider-policy hash and deployment reference.
+The PA-10 matrix's **simple scheduled reminder** remains intentionally excluded from this Agent-backed collector because it now has a dedicated notification-only path and dedicated `scripts/staging_pa10_simple_reminder.py` verifier. Do not qualify reminders through this scheduled-profile script. This script remains for Agent-backed Daily/Weekly/Deadline/goal-driven profiles.
 
 This does **not** turn one happy-path run into complete qualification. Repeat with fresh artifacts for each applicable matrix case: timezone/DST, edit, pause/resume, restart, quiet hours, deadline thresholds/unchanged suppression, useful-action/no-action and scope/revocation cases.
 
