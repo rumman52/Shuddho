@@ -50,10 +50,11 @@ uv run python scripts/pa10_staging_evidence.py \
   --manifest /secure/release/pa10-scenarios.json \
   --rollout /secure/release/cohort-rollout.json \
   --provider-policy-plan /secure/release/provider-policy-plan.json \
+  --release-freeze /secure/release/pa10-staging-release-freeze.json \
   --output /secure/release/pa10-controlled-staging-bundle.json
 ```
 
-The compiler verifies the rollout/provider-policy hashes, exact release ID, deployed source revision, non-production environment, deployment reference, scenario completeness, timestamps and every evidence-file hash. JSON evidence that embeds a `release` object must match the same release identity. It fails closed on mixed releases, missing scenarios, missing provider coverage, missing human review, missing real-device confirmation or empty economics measurements.
+The compiler requires the frozen Step-1 release artifact and SHA-binds it into the final bundle. It verifies that freeze is status `frozen`, matches the exact rollout/provider-policy release identity, contains an immutable build reference and valid runtime-manifest hash, then verifies scenario completeness, timestamps and every evidence-file hash. JSON evidence that embeds a `release` object must match the same release identity. It fails closed on mixed releases, missing scenarios, missing provider coverage, missing human review, missing real-device confirmation or empty economics measurements.
 
 The output contains ready-to-review `automations` and `browser_push` staging records, but it does not edit `staging-evidence.json`, enable flags or create evidence. An operator may promote those records only after reviewing the bundle and its referenced artifacts.
 
