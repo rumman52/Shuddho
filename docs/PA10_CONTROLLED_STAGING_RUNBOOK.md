@@ -43,6 +43,44 @@ The script additionally requires its documented staging API/token/recipient envi
 
 Passing either command proves only the action approval/receipt checks implemented by that script. It does not prove Gmail/Outlook read-event dedupe, Meeting Coworker, Email Coworker or Browser Push.
 
+## Browser Push qualification probe
+
+The Browser Push staging collector binds a real owner-scoped delivery receipt to the exact deployed release while keeping provider acceptance distinct from actual device display.
+
+Required guards:
+
+```bash
+export SHUDDHO_STAGING_ALLOW_BROWSER_PUSH=true
+export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true
+export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT_LABEL="<non-sensitive synthetic account label>"
+export SHUDDHO_STAGING_EXPECTED_ENVIRONMENT="<exact non-production runtime environment>"
+export SHUDDHO_STAGING_DEPLOYMENT_REFERENCE="<reviewed deployment/platform reference>"
+export SHUDDHO_STAGING_API_BASE_URL="https://<staging-api-origin>"
+export SHUDDHO_STAGING_TOKEN_A="<synthetic staging account token>"
+```
+
+Prepare:
+
+```bash
+uv run --extra coworker python scripts/staging_browser_push.py prepare \
+  --rollout "<reviewed deployed rollout manifest>" \
+  --provider-policy-plan "<reviewed provider-policy plan>" \
+  --state /tmp/browser-push-state.json
+```
+
+Then, on the approved real browser/device, enable Browser Push through Shuddho and generate exactly one eligible staging notification through the normal product path. Confirm that the generic Shuddho notification visibly appears and retain a durable non-secret confirmation reference. Verify:
+
+```bash
+uv run --extra coworker python scripts/staging_browser_push.py verify \
+  --rollout "<same reviewed deployed rollout manifest>" \
+  --provider-policy-plan "<same reviewed provider-policy plan>" \
+  --state /tmp/browser-push-state.json \
+  --device-confirmation-reference "<screenshot/test-run/device-lab reference>" \
+  --output /tmp/browser-push-evidence.json
+```
+
+The verifier requires one new owner-scoped provider-accepted delivery receipt tied to a new Shuddho notification and a separate real-device confirmation reference. HTTP 2xx alone never proves device display.
+
 ## Temporal worker-restart qualification
 
 Prepare the existing controlled recovery workflow:
