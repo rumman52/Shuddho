@@ -2,7 +2,7 @@
 
 **Scope and status.** This is the delivery plan and implementation record for the [architecture](PERSONAL_AGENT_ARCHITECTURE.md) and all 26 entries in the [service catalog](PERSONAL_AGENT_SERVICES.md). Baseline: PR #204. Runtime reality is tracked incrementally below; documentation alone never qualifies a capability, and no production flag is enabled merely because code or a migration is merged.
 
-**Qualify the baseline while developing the next bounded slice.** Current release gates remain mandatory: identity and owner isolation, PostgreSQL, private storage, Temporal/recovery, model and multilingual quality, backup/restore, deletion, parallel restart/fan-in, rollback and enabled-provider proofs. The reviewed rollout, source/model identity, activation bundle and ledger must match. A successful design review or mocked CI run cannot replace live evidence.
+**Qualify the baseline while developing the next bounded slice.** PA-10 Controlled Staging now begins with the dedicated two-phase non-production release-freeze contract in `scripts/staging_release_freeze.py`; no scenario evidence should be collected before that exact release identity is frozen. Current release gates remain mandatory: identity and owner isolation, PostgreSQL, private storage, Temporal/recovery, model and multilingual quality, backup/restore, deletion, parallel restart/fan-in, rollback and enabled-provider proofs. The reviewed rollout, source/model identity, activation bundle and ledger must match. A successful design review or mocked CI run cannot replace live evidence.
 
 **Implement in separate reviewable increments.** Each increment includes its UI, operation limits, failure states, evidence and kill switch. The numbering is an internal plan, not GitHub PR numbers.
 
