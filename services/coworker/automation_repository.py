@@ -755,6 +755,8 @@ class AutomationRepository:
                 result.append({
                     "occurrence_id": occurrence.id,
                     "trigger_type": trigger_type,
+                    "trigger_event_id": occurrence.trigger_event_id,
+                    "trigger_snapshot_id": occurrence.trigger_snapshot_id,
                     "due_at": iso(occurrence.due_at),
                     "occurrence_state": occurrence.state,
                     "reason": occurrence.reason,

@@ -342,6 +342,8 @@ def test_automation_edit_and_history_are_revisioned_and_owner_scoped(
     assert items[0]["occurrence_id"] == result["occurrence_id"]
     assert items[0]["run_id"] == result["run_id"]
     assert items[0]["trigger_type"] == "schedule"
+    assert items[0]["trigger_event_id"] is None
+    assert items[0]["trigger_snapshot_id"] is None
     assert items[0]["occurrence_state"] == "accepted"
 
     assert client.get(
