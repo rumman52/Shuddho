@@ -82,6 +82,10 @@ jobs:
     env:
       SHUDDHO_TEST_POSTGRES_URL: postgresql+psycopg://shuddho_test:ci-only-password@localhost:5432/shuddho_coworker_test
       SHUDDHO_TEMPORAL_TESTS: "true"
+      # Large coworker wheels (for example botocore/temporalio) can exceed uv's
+      # default 30s HTTP timeout on a slow GitHub-hosted runner. Keep the
+      # dependency install fail-closed while allowing bounded network slowness.
+      UV_HTTP_TIMEOUT: "120"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
