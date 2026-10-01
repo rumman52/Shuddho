@@ -132,9 +132,49 @@ For the same reviewed release, collect evidence for:
 10. Multilingual proactive samples including Bangla and English.
 11. Economics evidence reporting cost per completed useful proactive task.
 
-## Missing live proactive-read probe
+## Proactive read-event qualification probe
 
-The repository currently contains guarded live Google/Microsoft **action** scripts, but no dedicated operator script that automatically drives and validates the complete proactive Gmail/Outlook/Calendar read-event scenarios above. Until an approved staging environment performs those scenarios and evidence is reviewed, mark provider/proactive live qualification **NOT VERIFIED**.
+Use the staging-only collector to bind one real provider change to the exact deployed release, owned read grant/subscription, exact automation revision, changed connector snapshot, one logical proactive occurrence/run and one delivered completion notification.
+
+The probe never injects provider webhooks and never receives provider credentials. It only reads authenticated Shuddho staging evidence around an operator-performed synthetic provider change.
+
+Required guards:
+
+```bash
+export SHUDDHO_STAGING_ALLOW_PROACTIVE_READ_EVENTS=true
+export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true
+export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT_LABEL="<non-sensitive synthetic account label>"
+export SHUDDHO_STAGING_EXPECTED_ENVIRONMENT="<exact non-production runtime environment>"
+export SHUDDHO_STAGING_API_BASE_URL="https://<staging-api-origin>"
+export SHUDDHO_STAGING_TOKEN_A="<synthetic staging account token>"
+```
+
+Prepare a Gmail Email Coworker exercise:
+
+```bash
+uv run --extra coworker python scripts/staging_proactive_read_event.py prepare \
+  --provider google \
+  --capability email_read \
+  --rollout "<reviewed deployed rollout manifest>" \
+  --state /tmp/google-gmail-proactive-state.json
+```
+
+Then send exactly one approved synthetic Gmail message to the connected staging account through the real provider path. Do not manually replay or forge the webhook. Verify:
+
+```bash
+uv run --extra coworker python scripts/staging_proactive_read_event.py verify \
+  --rollout "<same reviewed deployed rollout manifest>" \
+  --state /tmp/google-gmail-proactive-state.json \
+  --output /tmp/google-gmail-proactive-evidence.json
+```
+
+Use the same two-phase command for Outlook by selecting `--provider microsoft --capability email_read`.
+
+For Calendar/Meeting qualification select `--capability calendar_read`. The selected Meeting Coworker automation must bind the exact calendar grant in both its meeting trigger and connected-read grant scope. After prepare, create/update the single synthetic provider event required by the scenario and allow the existing provider intake plus Temporal meeting scan to produce the evidence before verify.
+
+If the synthetic account contains multiple eligible grants or automations, pass `--grant-id` and/or `--automation-id` explicitly during prepare.
+
+A passing evidence artifact proves only the observed provider/read-event transition for that exact release and scenario. Duplicate, delayed/out-of-order, revocation, deletion, renewal and malicious-content scenarios still require their own fresh prepare/provider-change/verify evidence. Until those real scenarios run in approved staging, provider/proactive live qualification remains **NOT VERIFIED**.
 
 ## Completion rule
 
