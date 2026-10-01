@@ -45,40 +45,39 @@ The [bounded inbox digest contract](PA10_NOTIFICATION_DIGESTS.md) adds only opti
 
 ## Current continuation checkpoint
 
-Updated at UTC: 2026-10-01T10:02:00Z  
-Updated at Asia/Dhaka: 2026-10-01T16:02:00+06:00  
+Updated at UTC: 2026-10-01T10:26:38Z  
+Updated at Asia/Dhaka: 2026-10-01T16:26:38+06:00  
 Task: PA-10 Automation / Proactive Personal AI Coworker controlled-staging qualification continuation.  
-Outcome: Repository implementation remains complete and repository-verified on current `main` `b64b4b22a0710cc71f2e5fd2878ebbb882df00f2`; merged-main CI #1055 passed. Controlled staging is the active phase. The first dependency-ready staging gap was confirmed: no dedicated operator probe existed to bind a real Gmail/Outlook/Calendar read-event change to exact release identity, changed connector snapshot, proactive occurrence/run and completion-notification evidence. A smallest staging-only collector plus focused tests and runbook/evidence updates are implemented on the active branch. No live provider or staging qualification result is claimed yet.  
-Stage: **CONTROLLED STAGING QUALIFICATION IN PROGRESS — PROVIDER/INFRASTRUCTURE EVIDENCE NOT YET AVAILABLE**.  
-Main SHA: `b64b4b22a0710cc71f2e5fd2878ebbb882df00f2` (merge of PR #277).  
+Outcome: Automation repository implementation remains complete and repository-verified. The missing proactive provider/read-event qualification tooling is now merged and repository-verified through PR #278. PR #278 exact-head CI #1068 passed both required jobs; merged-main CI #1069 passed both `test-and-build` and heavyweight `coworker` on `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`. The staging-only probe binds evidence to exact runtime revision, rollout/release hash, provider-policy hash and deployment reference; exposes persisted trigger identity; verifies changed provider snapshots are actually present in the Agent-run connected context; requires one logical occurrence/completed run/completion notification; and never injects provider callbacks or accepts provider credentials. No live provider/staging qualification result is claimed because approved controlled-staging infrastructure/credentials are not available from this execution environment.  
+Stage: **CONTROLLED STAGING QUALIFICATION NOT COMPLETE — EXTERNAL CONTROLLED-STAGING ACCESS REQUIRED**.  
+Main SHA: `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9` (merge of PR #278).  
 Deployed staging SHA: NOT VERIFIED.  
-Release/environment: NOT VERIFIED; exact staging release ID, deployment reference, rollout manifest, provider-policy artifact and deployed revision have not been established from this execution environment.  
-Branch: `pa10-staging-proactive-read-probe-20261001`.  
-Implementation SHA: current pre-checkpoint branch work includes `93a73cd5c5610e9b003e7fbb1ab9a065cb51d460`, `a9bddf37fb75b95dcfff815f8b9529cb1b63282e`, `f309c077e2cf38d1d406651be78c638681e07371`, `a306efa2fd748a214e046ce86b36036f1e3c6ae7` and `d5af974c46622cd052c81a1faac2a3e52454838f`; this checkpoint update follows.  
-PR: staging probe PR not yet opened at this checkpoint.  
-CI: current merged-main CI #1055 SUCCESS; exact-head CI for the staging probe branch is still required.  
-Environment: controlled non-production staging configuration is NOT VERIFIED from current access.  
-Google status: NOT VERIFIED — real OAuth/read subscription/provider-event evidence unavailable.  
-Microsoft status: NOT VERIFIED — real tenant/read subscription/provider-event evidence unavailable.  
-Browser Push status: NOT VERIFIED — real VAPID/browser/device evidence unavailable.  
-Recovery status: repository recovery tests pass, but managed staging Temporal/API/notification-worker restart evidence is NOT VERIFIED.  
-Daily status: repository verified; staging NOT VERIFIED.  
-Weekly status: repository verified; staging NOT VERIFIED.  
+Release/environment: NOT VERIFIED; exact deployed staging release ID, deployment reference, rollout manifest and provider-policy artifact are not accessible from this execution environment.  
+Branch: `pa10-staging-tooling-verified-checkpoint-20261001`.  
+Implementation/tooling merge: PR #278 MERGED; exact-head implementation SHA `187626e2398f1d2e50cfc94f99eb6292bb6feb21`; merged-main SHA `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`.  
+CI: PR #278 exact-head CI #1068 SUCCESS; merged-main CI #1069 SUCCESS; both required jobs passed in both runs.  
+Environment: approved non-production staging control is NOT AVAILABLE/NOT VERIFIED from current access.  
+Google status: NOT VERIFIED — real synthetic OAuth/read subscription/provider-event evidence requires approved staging credentials/account.  
+Microsoft status: NOT VERIFIED — real synthetic tenant/read subscription/provider-event evidence requires approved staging credentials/account.  
+Browser Push status: NOT VERIFIED — VAPID configuration and approved real test browser/device are unavailable.  
+Recovery status: repository PostgreSQL/Temporal recovery suites pass; managed staging worker/API/notification-worker replacement evidence is NOT VERIFIED.  
+Daily status: repository verified; controlled staging NOT VERIFIED.  
+Weekly status: repository verified; controlled staging NOT VERIFIED.  
 Meeting status: repository verified; live/staging NOT VERIFIED.  
 Email status: repository verified; live/staging NOT VERIFIED.  
-Deadline status: repository verified; staging NOT VERIFIED.  
-Goal-driven status: repository verified; staging NOT VERIFIED.  
-Security status: repository tests cover owner/revocation/prompt-injection boundaries; real controlled-staging security evidence is NOT VERIFIED.  
-Quality status: curated repository multilingual suite passed; required proactive human Bangla/English staging review is NOT VERIFIED.  
-Economics status: repository evidence framework exists; real proactive completed-task measurements are NOT VERIFIED.  
-Last completed action: inspected current Git/CI and authoritative staging documents, confirmed PR #277 and main CI #1055, audited staging scripts/API/connector-event paths, confirmed the proactive read-event operator tooling gap, and implemented `scripts/staging_proactive_read_event.py` with explicit non-production/synthetic-account guards, exact deployed runtime + rollout + provider-policy + deployment-reference binding, owner-scoped read-only evidence collection, persisted trigger identity, changed-snapshot and exact Agent-run connected-context validation, one-occurrence/run/completion-notification validation, Meeting-scan-aware verification timing, focused tests and operator documentation. The probe never injects provider callbacks or accepts provider credentials.  
-Unfinished work: verify this tooling with exact-head CI; merge only if green and verify merged-main CI. Then execute the probe against an approved staging deployment using synthetic Google/Microsoft accounts, followed by Browser Push, managed recovery, Daily/Weekly/Meeting/Email/Deadline/goal-driven, revocation/security, multilingual human review and real task economics.  
-Blockers: approved controlled-staging API origin/token(s), exact deployed release/rollout/provider-policy identity, Google synthetic OAuth account/subscriptions, Microsoft synthetic tenant/subscriptions, VAPID + real test browser/device, and managed Temporal/PostgreSQL/worker control are not accessible from this execution environment.  
-Next action: open the staging-probe PR, require exact-head CI, repair any real failure, merge when green, verify merged-main CI, then run `scripts/staging_proactive_read_event.py prepare` against the exact reviewed staging release as soon as approved staging credentials/infrastructure are available.  
-Next three steps: (1) repository-verify and merge the staging proactive-read evidence probe; (2) execute real Gmail/Google Calendar then Outlook/Microsoft Calendar synthetic-provider scenarios with release-bound evidence; (3) proceed to Browser Push and managed recovery before the remaining proactive workflow/security/quality/economics scenarios.  
-Do not redo: Architecture; Core Agent; PA-02 scheduler/outbox; PA-10 repository feature development; PRs #266–#277; existing guarded Google/Microsoft write-action probes; existing Temporal/rollback/economics tooling.  
-Acceptance remaining: all real controlled-staging scenarios in `docs/PA10_AUTOMATION_EVIDENCE_MATRIX.md`, including providers, Browser Push, proactive workflows, managed recovery, revocation/owner isolation/approval, prompt injection, human multilingual quality and real task economics, all bound to one reviewed release with no unresolved P0/P1 defect.  
-Recovery location: `main` at `b64b4b22a0710cc71f2e5fd2878ebbb882df00f2`; branch `pa10-staging-proactive-read-probe-20261001`; latest pre-checkpoint commit `94c357a87e781accbb90aa1908ba6efa05e7b5a3`.
+Deadline status: repository verified; controlled staging NOT VERIFIED.  
+Goal-driven status: repository verified; controlled staging NOT VERIFIED.  
+Security status: repository owner/revocation/prompt-injection boundaries remain tested; required real controlled-staging revocation/owner-isolation/prompt-injection evidence is NOT VERIFIED.  
+Quality status: curated repository multilingual suites pass; required proactive human Bangla/English staging review is NOT VERIFIED.  
+Economics status: repository economics tooling exists; real completed proactive-task staging measurements are NOT VERIFIED.  
+Last completed action: filled the proactive read-event evidence-integrity gap with the smallest safe staging-only probe and additive owner-scoped trigger-evidence fields, repaired one test-fixture regression found by CI without weakening production logic, passed final exact-head CI, merged PR #278, and verified merged-main CI #1069. Staging tooling is repository-verified.  
+Unfinished work: execute real controlled-staging qualification on one exact reviewed deployed release: Google/Gmail + Google Calendar, Microsoft Outlook + Microsoft Calendar, Browser Push, managed Temporal/API/notification recovery, Daily/Weekly/Meeting/Email/Deadline/goal-driven scenarios, revocation/approval/security, proactive human multilingual quality and real task economics.  
+Blockers: approved staging API origin/token(s); exact deployed release/rollout/provider-policy/deployment identity; synthetic Google OAuth accounts/subscriptions; synthetic Microsoft tenant/accounts/subscriptions; VAPID + approved real test browser/device; managed Temporal/PostgreSQL/API/worker control; authorized DeepSeek staging access where live Runtime-v3 evaluation is required; human reviewers and real task-cost samples. None of these may be replaced with mocks or customer data.  
+Next action: on the approved staging environment, establish exact deployed release identity and run `scripts/staging_proactive_read_event.py prepare --provider google --capability email_read ...` for the synthetic Gmail account, perform one real provider message change, then run `verify` and retain the produced evidence artifact.  
+Next three steps: (1) Gmail then Google Calendar real synthetic qualification; (2) Outlook Mail then Microsoft Calendar real synthetic qualification; (3) Browser Push and managed recovery before remaining proactive workflow/security/quality/economics scenarios.  
+Do not redo: Architecture; Core Agent; PA-02 scheduler/outbox; PA-10 repository feature development; PRs #266–#278; proactive read-event evidence tooling; existing guarded Google/Microsoft write-action probes; existing Temporal/rollback/economics tooling.  
+Acceptance remaining: every real controlled-staging scenario required by `docs/PA10_AUTOMATION_EVIDENCE_MATRIX.md`, all bound to the same reviewed release, with no unresolved P0/P1 defect.  
+Recovery location: `main` at `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`; checkpoint branch `pa10-staging-tooling-verified-checkpoint-20261001`; pre-checkpoint evidence commit `3002420dd94f6a25732547a56a25b7c31353403b`.
 
 **Historical continuation checkpoint (30 September 2026; superseded by PA-10 connected-event automation checkpoint).**
 
