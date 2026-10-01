@@ -71,15 +71,31 @@ def fixture(tmp_path: Path):
         tmp_path / "manifest.json",
         {"schema_version": 1, "release": release, "scenarios": scenarios},
     )
-    return manifest, rollout, policy
+    freeze = write_json(
+        tmp_path / "release-freeze.json",
+        {
+            "schema_version": 1,
+            "evidence_kind": "pa10_staging_release_freeze",
+            "status": "frozen",
+            "release": {
+                **release,
+                "build_reference": "registry.example/shuddho@sha256:abc",
+            },
+            "runtime_manifest_sha256": "f" * 64,
+            "prepared_at": "2026-10-01T11:00:00+00:00",
+            "verified_at": "2026-10-01T11:05:00+00:00",
+        },
+    )
+    return manifest, rollout, policy, freeze
 
 
 def compile_ok(files):
-    manifest, rollout, policy = files
+    manifest, rollout, policy, release_freeze = files
     return compile_bundle(
         manifest_path=manifest,
         rollout_path=rollout,
         provider_policy_path=policy,
+        release_freeze_path=release_freeze,
     )
 
 
@@ -195,3 +211,41 @@ def test_scheduled_reminder_requires_zero_agent_runs_and_exactly_one_notice(tmp_
     write_json(files[0], value)
     with pytest.raises(Pa10EvidenceError, match="automation_reminder"):
         compile_ok(files)
+
+
+def test_missing_or_unfrozen_release_freeze_is_rejected(tmp_path):
+    files = fixture(tmp_path)
+    files[3].unlink()
+    with pytest.raises(Pa10EvidenceError, match="Could not read PA-10 staging release freeze"):
+        compile_ok(files)
+
+    files = fixture(tmp_path)
+    value = json.loads(files[3].read_text(encoding="utf-8"))
+    value["status"] = "prepared"
+    write_json(files[3], value)
+    with pytest.raises(Pa10EvidenceError, match="is not frozen"):
+        compile_ok(files)
+
+
+def test_release_freeze_must_match_exact_release_and_runtime_hash(tmp_path):
+    files = fixture(tmp_path)
+    value = json.loads(files[3].read_text(encoding="utf-8"))
+    value["release"]["source_revision"] = "b" * 40
+    write_json(files[3], value)
+    with pytest.raises(Pa10EvidenceError, match="release identity does not match source_revision"):
+        compile_ok(files)
+
+    files = fixture(tmp_path)
+    value = json.loads(files[3].read_text(encoding="utf-8"))
+    value["runtime_manifest_sha256"] = "not-a-hash"
+    write_json(files[3], value)
+    with pytest.raises(Pa10EvidenceError, match="runtime_manifest_sha256 is invalid"):
+        compile_ok(files)
+
+
+def test_bundle_sha_binds_release_freeze(tmp_path):
+    files = fixture(tmp_path)
+    bundle = compile_ok(files)
+    assert bundle["release_freeze"]["sha256"] == file_hash(files[3])
+    assert bundle["release_freeze"]["build_reference"]
+    assert bundle["release_freeze"]["runtime_manifest_sha256"] == "f" * 64
