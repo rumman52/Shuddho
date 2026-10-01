@@ -702,6 +702,21 @@ def test_browser_push_is_explicit_durable_generic_and_rechecks_consent(
         assert subscription_row is not None and subscription_row.active is True
         assert len(db.scalars(select(AgentRun).where(AgentRun.owner_id == delivery.owner_id)).all()) == before_runs
 
+    receipts = client.get("/api/v1/browser-push/deliveries", headers=auth)
+    assert receipts.status_code == 200
+    assert receipts.json()["enabled"] is True
+    receipt = next(item for item in receipts.json()["deliveries"] if item["id"] == claimed[0])
+    assert receipt["notification_id"] == notice_id
+    assert receipt["state"] == "provider_accepted"
+    assert receipt["provider_status"] == 201
+    assert receipt["attempts"] == 1
+    assert receipt["accepted_at"]
+    assert "subscription_id" not in receipt
+
+    bob_receipts = client.get("/api/v1/browser-push/deliveries", headers=headers("bob"))
+    assert bob_receipts.status_code == 200
+    assert claimed[0] not in {item["id"] for item in bob_receipts.json()["deliveries"]}
+
     with automation_container.repository.sessions() as db:
         delivered = db.get(Notification, notice_id)
         assert delivered is not None
