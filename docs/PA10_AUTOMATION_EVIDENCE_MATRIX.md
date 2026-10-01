@@ -35,6 +35,19 @@ PR #279 is documentation/checkpoint evidence; it does not convert repository ver
 | Economics | Economics framework **REPOSITORY VERIFIED**; proactive live measurement remains separate | proactive cohort measurement NOT VERIFIED | collect real completed proactive-task measurements with reviewed pricing inputs |
 | Quality | Offline agent + multilingual suites **REPOSITORY VERIFIED**; human proactive cohort remains separate | human proactive cohort quality NOT VERIFIED | relevance/timing/correctness/grounding/actionability/noise/safety/reliability review |
 
+## Controlled-staging release freeze
+
+Repository tooling now includes a dedicated fail-closed Step-1 release freeze:
+`scripts/staging_release_freeze.py`, `docs/pa10-staging-rollout.template.json`
+and `docs/PA10_STAGING_RELEASE_FREEZE.md`. The freeze binds the exact
+non-production source revision, immutable build/deployment references, reviewed
+rollout/provider-policy hashes, runtime capability/provider set and synthetic
+cohort controls before any PA-10 scenario is accepted.
+
+This is repository tooling only. The staging release is **NOT FROZEN** until the
+prepare artifact is created for an approved candidate, that exact candidate is
+deployed, and verify succeeds against the real authenticated staging runtime.
+
 ## Required controlled-staging scenarios
 
 The automation staging gate must not be signed until all applicable scenarios have fresh evidence from the same reviewed release:
