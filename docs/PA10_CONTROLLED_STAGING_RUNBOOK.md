@@ -134,7 +134,7 @@ For the same reviewed release, collect evidence for:
 
 ## Proactive read-event qualification probe
 
-Use the staging-only collector to bind one real provider change to the exact deployed release, owned read grant/subscription, exact automation revision, changed connector snapshot, one logical proactive occurrence/run and one delivered completion notification.
+Use the staging-only collector to bind one real provider change to the exact deployed release, owned read grant/subscription, exact automation revision, persisted trigger identity, changed connector snapshot, exact Agent-run connected snapshot context, one logical proactive occurrence/run and one delivered completion notification.
 
 The probe never injects provider webhooks and never receives provider credentials. It only reads authenticated Shuddho staging evidence around an operator-performed synthetic provider change.
 
