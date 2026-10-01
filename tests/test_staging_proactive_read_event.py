@@ -30,12 +30,17 @@ def test_require_https_base_rejects_non_https_and_credentials():
         probe.require_https_base("https://user:pass@staging.example.test")
 
 
-def test_rollout_identity_hashes_exact_file(tmp_path: Path):
+def test_rollout_identity_hashes_exact_release_files(tmp_path: Path, monkeypatch):
     rollout = tmp_path / "rollout.json"
+    policy = tmp_path / "provider-policy.json"
     rollout.write_text(json.dumps({"release_id": "staging-20261001"}) + "\n", encoding="utf-8")
-    value = probe.rollout_identity(rollout)
+    policy.write_text(json.dumps({"schema_version": 1}) + "\n", encoding="utf-8")
+    monkeypatch.setenv("SHUDDHO_STAGING_DEPLOYMENT_REFERENCE", "render:staging-deploy-123")
+    value = probe.rollout_identity(rollout, policy)
     assert value["release_id"] == "staging-20261001"
     assert len(value["rollout_manifest_sha256"]) == 64
+    assert len(value["provider_policy_sha256"]) == 64
+    assert value["deployment_reference"] == "render:staging-deploy-123"
 
 
 def test_select_grant_requires_exact_active_provider_capability():
