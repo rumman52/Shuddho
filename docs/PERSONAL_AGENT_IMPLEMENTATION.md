@@ -45,17 +45,17 @@ The [bounded inbox digest contract](PA10_NOTIFICATION_DIGESTS.md) adds only opti
 
 ## Current continuation checkpoint
 
-Updated at UTC: 2026-10-01T10:26:38Z  
-Updated at Asia/Dhaka: 2026-10-01T16:26:38+06:00  
+Updated at UTC: 2026-10-01T10:51:00Z  
+Updated at Asia/Dhaka: 2026-10-01T16:51:00+06:00  
 Task: PA-10 Automation / Proactive Personal AI Coworker controlled-staging qualification continuation.  
-Outcome: Automation repository implementation remains complete and repository-verified. The missing proactive provider/read-event qualification tooling is now merged and repository-verified through PR #278. PR #278 exact-head CI #1068 passed both required jobs; merged-main CI #1069 passed both `test-and-build` and heavyweight `coworker` on `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`. The staging-only probe binds evidence to exact runtime revision, rollout/release hash, provider-policy hash and deployment reference; exposes persisted trigger identity; verifies changed provider snapshots are actually present in the Agent-run connected context; requires one logical occurrence/completed run/completion notification; and never injects provider callbacks or accepts provider credentials. No live provider/staging qualification result is claimed because approved controlled-staging infrastructure/credentials are not available from this execution environment.  
+Outcome: Automation repository implementation and staging tooling remain complete and repository-verified. PR #278 merged the guarded proactive provider/read-event qualification probe. PR #279 merged the repository checkpoint on current `main` revision `55a6980d0c3906e199b9552d7f1fa4c77a2623ae`. Merged-main CI #1071 / run `36850391865` is now verified SUCCESS: both required jobs, `test-and-build` and heavyweight `coworker`, completed successfully. The canonical release contract was rechecked: the `automations` gate requires the full PA-10 controlled-staging scenario set, while `browser_push` remains an independent gate. No live provider/staging qualification result is claimed because approved controlled-staging infrastructure/credentials are not available from this execution environment.  
 Stage: **CONTROLLED STAGING QUALIFICATION NOT COMPLETE — EXTERNAL CONTROLLED-STAGING ACCESS REQUIRED**.  
-Main SHA: `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9` (merge of PR #278).  
+Main SHA: `55a6980d0c3906e199b9552d7f1fa4c77a2623ae` (merge of PR #279).  
 Deployed staging SHA: NOT VERIFIED.  
 Release/environment: NOT VERIFIED; exact deployed staging release ID, deployment reference, rollout manifest and provider-policy artifact are not accessible from this execution environment.  
-Branch: `pa10-staging-tooling-verified-checkpoint-20261001`.  
-Implementation/tooling merge: PR #278 MERGED; exact-head implementation SHA `187626e2398f1d2e50cfc94f99eb6292bb6feb21`; merged-main SHA `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`.  
-CI: PR #278 exact-head CI #1068 SUCCESS; merged-main CI #1069 SUCCESS; both required jobs passed in both runs.  
+Branch: `pa10-controlled-staging-ci1071-checkpoint-20261001`.  
+Implementation/tooling state: PR #278 MERGED; exact-head implementation SHA `187626e2398f1d2e50cfc94f99eb6292bb6feb21`; merged-main implementation SHA `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`. PR #279 MERGED the follow-up repository checkpoint onto `55a6980d0c3906e199b9552d7f1fa4c77a2623ae`.  
+CI: PR #278 exact-head CI #1068 SUCCESS; PR #278 merged-main CI #1069 SUCCESS; PR #279/current-main CI #1071 / run `36850391865` SUCCESS. Both required jobs passed on #1071.  
 Environment: approved non-production staging control is NOT AVAILABLE/NOT VERIFIED from current access.  
 Google status: NOT VERIFIED — real synthetic OAuth/read subscription/provider-event evidence requires approved staging credentials/account.  
 Microsoft status: NOT VERIFIED — real synthetic tenant/read subscription/provider-event evidence requires approved staging credentials/account.  
@@ -70,14 +70,14 @@ Goal-driven status: repository verified; controlled staging NOT VERIFIED.
 Security status: repository owner/revocation/prompt-injection boundaries remain tested; required real controlled-staging revocation/owner-isolation/prompt-injection evidence is NOT VERIFIED.  
 Quality status: curated repository multilingual suites pass; required proactive human Bangla/English staging review is NOT VERIFIED.  
 Economics status: repository economics tooling exists; real completed proactive-task staging measurements are NOT VERIFIED.  
-Last completed action: filled the proactive read-event evidence-integrity gap with the smallest safe staging-only probe and additive owner-scoped trigger-evidence fields, repaired one test-fixture regression found by CI without weakening production logic, passed final exact-head CI, merged PR #278, and verified merged-main CI #1069. Staging tooling is repository-verified.  
+Last completed action: restored the actual current repository state after PR #279, verified no newer relevant PA-10 staging PR, confirmed PR #279 has no unresolved review thread, verified merged-main CI #1071 / run `36850391865` passed both required jobs on current `main`, and revalidated the canonical `automations` and `browser_push` release-gate boundaries.  
 Unfinished work: execute real controlled-staging qualification on one exact reviewed deployed release: Google/Gmail + Google Calendar, Microsoft Outlook + Microsoft Calendar, Browser Push, managed Temporal/API/notification recovery, Daily/Weekly/Meeting/Email/Deadline/goal-driven scenarios, revocation/approval/security, proactive human multilingual quality and real task economics.  
 Blockers: approved staging API origin/token(s); exact deployed release/rollout/provider-policy/deployment identity; synthetic Google OAuth accounts/subscriptions; synthetic Microsoft tenant/accounts/subscriptions; VAPID + approved real test browser/device; managed Temporal/PostgreSQL/API/worker control; authorized DeepSeek staging access where live Runtime-v3 evaluation is required; human reviewers and real task-cost samples. None of these may be replaced with mocks or customer data.  
-Next action: on the approved staging environment, establish exact deployed release identity and run `scripts/staging_proactive_read_event.py prepare --provider google --capability email_read ...` for the synthetic Gmail account, perform one real provider message change, then run `verify` and retain the produced evidence artifact.  
+Next action: on the approved staging environment, establish the exact deployed release identity and run `scripts/staging_proactive_read_event.py prepare --provider google --capability email_read ...` for the synthetic Gmail account, perform one approved real provider message change, then run `verify` and retain the produced evidence artifact.  
 Next three steps: (1) Gmail then Google Calendar real synthetic qualification; (2) Outlook Mail then Microsoft Calendar real synthetic qualification; (3) Browser Push and managed recovery before remaining proactive workflow/security/quality/economics scenarios.  
-Do not redo: Architecture; Core Agent; PA-02 scheduler/outbox; PA-10 repository feature development; PRs #266–#278; proactive read-event evidence tooling; existing guarded Google/Microsoft write-action probes; existing Temporal/rollback/economics tooling.  
+Do not redo: Architecture; Core Agent; PA-02 scheduler/outbox; PA-10 repository feature development; PRs #266–#279; proactive read-event evidence tooling; existing guarded Google/Microsoft write-action probes; existing Temporal/rollback/economics tooling.  
 Acceptance remaining: every real controlled-staging scenario required by `docs/PA10_AUTOMATION_EVIDENCE_MATRIX.md`, all bound to the same reviewed release, with no unresolved P0/P1 defect.  
-Recovery location: `main` at `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`; checkpoint branch `pa10-staging-tooling-verified-checkpoint-20261001`; pre-checkpoint evidence commit `3002420dd94f6a25732547a56a25b7c31353403b`.
+Recovery location: current `main` at `55a6980d0c3906e199b9552d7f1fa4c77a2623ae`; current checkpoint branch `pa10-controlled-staging-ci1071-checkpoint-20261001`; prior staging-tooling checkpoint branch `pa10-staging-tooling-verified-checkpoint-20261001`.
 
 **Historical continuation checkpoint (30 September 2026; superseded by PA-10 connected-event automation checkpoint).**
 
