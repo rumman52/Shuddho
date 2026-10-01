@@ -55,6 +55,12 @@ The automation staging gate must not be signed until all applicable scenarios ha
 14. proactive multilingual samples including Bangla and English;
 15. task-economics artifact reporting cost per completed useful proactive task.
 
+## Staging tooling checkpoint — proactive provider/read events
+
+A dedicated staging-only evidence collector is implemented on branch `pa10-staging-proactive-read-probe-20261001` in `scripts/staging_proactive_read_event.py` with focused regression coverage in `tests/test_staging_proactive_read_event.py`. It is fail-closed behind explicit controlled-staging and synthetic-account guards, binds evidence to the deployed runtime revision plus reviewed rollout hash/release ID, reads only owner-scoped Shuddho staging APIs, and never injects provider callbacks or accepts provider credentials.
+
+This tooling status is **IMPLEMENTED / CI PENDING** until the branch passes exact-head repository CI. It is not live provider evidence. Google, Microsoft, Meeting/Email proactive flows and all other staging rows remain **NOT VERIFIED** until the probe is executed around actual approved synthetic provider changes in controlled staging.
+
 ## External blockers
 
 No safe claim is made for real Gmail, Google Calendar, Outlook Mail, Microsoft Calendar, Web Push delivery or managed Temporal/restart behavior without controlled staging credentials and infrastructure.
