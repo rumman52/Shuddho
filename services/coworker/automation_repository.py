@@ -14,13 +14,15 @@ from .automation_schemas import AutomationCreate, AutomationPatch
 from .errors import CoworkerError
 from .models import (
     Account, AgentRun, AuditEvent, Automation, AutomationOccurrence, AutomationRevision,
-    AutomationScheduleOutbox, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, PersonalGoal, Workspace, utcnow,
+    AutomationScheduleOutbox, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Notification, PersonalGoal, Workspace, utcnow,
 )
 from .repository import aware, iso, not_found
 
 
 class AutomationRepository:
     """Desired automation state, schedule reconciliation and occurrence admission."""
+
+    REMINDER_SOURCE_KIND = "automation_reminder"
 
     def __init__(self, sessions, settings, agent, notifications):
         self.sessions = sessions
@@ -79,6 +81,28 @@ class AutomationRepository:
             raise CoworkerError(
                 "event_automation_subscription_unavailable",
                 "Activate event synchronization for this connected read before automating it.",
+                409,
+            )
+
+    def _validate_reminder_profile(
+        self,
+        schedule: dict,
+        run_profile: str,
+        connector_read_grant_ids: list[str],
+        tool_allowlist: list[str],
+    ) -> None:
+        if run_profile != "reminder":
+            return
+        if schedule.get("kind") not in {"daily", "weekly"}:
+            raise CoworkerError(
+                "reminder_trigger_scope",
+                "Simple reminders require a reviewed daily or weekly Temporal schedule.",
+                409,
+            )
+        if connector_read_grant_ids or tool_allowlist:
+            raise CoworkerError(
+                "reminder_authority_scope",
+                "Simple reminders cannot use connector context or Agent tools.",
                 409,
             )
 
@@ -670,8 +694,12 @@ class AutomationRepository:
                 raise CoworkerError("goal_not_active", "Only an active goal can be automated.", 409)
             if request.expires_at is not None and aware(request.expires_at) <= utcnow():
                 raise CoworkerError("automation_expired", "Automation expiry must be in the future.", 409)
-            self._validate_event_trigger(db, owner, payload["schedule"])
             connector_read_grant_ids = [str(value) for value in request.connector_read_grant_ids]
+            tool_allowlist = list(request.tool_allowlist)
+            self._validate_reminder_profile(
+                payload["schedule"], request.run_profile, connector_read_grant_ids, tool_allowlist
+            )
+            self._validate_event_trigger(db, owner, payload["schedule"])
             self._validate_briefing_profile(
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids
             )
@@ -684,7 +712,6 @@ class AutomationRepository:
             self._validate_deadline_profile(
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids, goal
             )
-            tool_allowlist = list(request.tool_allowlist)
             self._validate_proactive_profile(
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids, tool_allowlist
             )
@@ -790,6 +817,12 @@ class AutomationRepository:
                 row.schedule = request.schedule.model_dump(mode="json")
             if "quiet_hours" in fields:
                 row.quiet_hours = request.quiet_hours.model_dump(mode="json") if request.quiet_hours else None
+            self._validate_reminder_profile(
+                dict(row.schedule),
+                row.run_profile,
+                list(row.connector_read_grant_ids or []),
+                list(row.tool_allowlist or []),
+            )
             self._validate_event_trigger(db, owner, dict(row.schedule))
             self._validate_briefing_profile(
                 db, owner, dict(row.schedule), row.run_profile, list(row.connector_read_grant_ids or [])
@@ -1787,6 +1820,166 @@ class AutomationRepository:
             "replayed": False,
         }
 
+    def reminder_notification_source_allowed(
+        self,
+        db,
+        notification: Notification,
+        account: Account,
+    ) -> bool:
+        if (
+            not self.settings.automations_enabled
+            or notification.source_kind != self.REMINDER_SOURCE_KIND
+            or not notification.automation_id
+            or not notification.occurrence_id
+            or notification.source_id != notification.occurrence_id
+            or notification.owner_id != account.id
+        ):
+            return False
+        occurrence = db.get(AutomationOccurrence, notification.occurrence_id)
+        automation = db.get(Automation, notification.automation_id)
+        if occurrence is None or automation is None:
+            return False
+        goal = db.scalar(select(PersonalGoal).where(
+            PersonalGoal.id == automation.goal_id,
+            PersonalGoal.owner_id == account.id,
+        ))
+        if goal is None:
+            return False
+        return bool(
+            occurrence.owner_id == account.id
+            and occurrence.automation_id == automation.id
+            and occurrence.automation_revision == automation.revision
+            and occurrence.state == "notified"
+            and occurrence.run_id is None
+            and notification.kind == "automation_reminder"
+            and automation.owner_id == account.id
+            and automation.run_profile == "reminder"
+            and automation.state == "active"
+            and (automation.expires_at is None or aware(automation.expires_at) > utcnow())
+            and goal.state == "active"
+            and goal.revision == automation.goal_revision
+        )
+
+    def accept_reminder_occurrence(
+        self,
+        automation_id: str,
+        revision: int,
+        due_at: datetime,
+    ) -> dict:
+        """Admit one Temporal reminder occurrence without creating an Agent run."""
+        due_at = aware(due_at).astimezone(timezone.utc)
+        with self.sessions.begin() as db:
+            row = db.scalar(select(Automation).where(
+                Automation.id == automation_id
+            ).with_for_update())
+            if row is None:
+                raise CoworkerError(
+                    "automation_missing",
+                    "The scheduled automation no longer exists.",
+                    404,
+                )
+            key = self.occurrence_key(row.owner_id, row.id, revision, due_at)
+            previous = db.scalar(select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == row.id,
+                AutomationOccurrence.occurrence_key == key,
+            ))
+            if previous is not None:
+                notification_id = db.scalar(select(Notification.id).where(
+                    Notification.occurrence_id == previous.id
+                ))
+                return {
+                    "occurrence_id": previous.id,
+                    "run_id": None,
+                    "notification_id": notification_id,
+                    "state": previous.state,
+                    "reason": previous.reason,
+                    "replayed": True,
+                }
+
+            occurrence = AutomationOccurrence(
+                id=str(uuid4()),
+                owner_id=row.owner_id,
+                automation_id=row.id,
+                automation_revision=revision,
+                occurrence_key=key,
+                due_at=due_at,
+                state="accepting",
+                created_at=utcnow(),
+                updated_at=utcnow(),
+            )
+            db.add(occurrence)
+            db.flush()
+
+            goal = db.scalar(select(PersonalGoal).where(
+                PersonalGoal.id == row.goal_id,
+                PersonalGoal.owner_id == row.owner_id,
+            ))
+            reason = None
+            if not self.settings.automations_enabled:
+                reason = "kill_switch"
+            elif row.revision != revision:
+                reason = "stale_revision"
+            elif row.state != "active":
+                reason = "not_active"
+            elif row.run_profile != "reminder":
+                reason = "reminder_profile_changed"
+            elif row.expires_at is not None and aware(row.expires_at) <= due_at:
+                reason = "expired"
+            elif goal is None:
+                reason = "goal_missing"
+            elif goal.state != "active":
+                reason = "goal_not_active"
+            elif goal.revision != row.goal_revision:
+                reason = "goal_revision_changed"
+            elif utcnow() - due_at > timedelta(seconds=row.catchup_window_seconds):
+                reason = "catchup_window"
+
+            if reason is not None:
+                occurrence.state = "skipped"
+                occurrence.reason = reason
+                occurrence.updated_at = utcnow()
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": None,
+                    "notification_id": None,
+                    "state": "skipped",
+                    "reason": reason,
+                    "replayed": False,
+                }
+
+            reminder_text = " ".join(goal.objective.split())
+            if len(reminder_text) > 300:
+                reminder_text = reminder_text[:297].rstrip() + "..."
+            visible_at = self.notifications.visible_at_after_quiet_hours(
+                due_at,
+                row.timezone,
+                row.quiet_hours,
+            )
+            notification_id = self.notifications.enqueue_pending(
+                db,
+                owner=row.owner_id,
+                workspace_id=row.workspace_id,
+                automation_id=row.id,
+                occurrence_id=occurrence.id,
+                source_kind=self.REMINDER_SOURCE_KIND,
+                source_id=occurrence.id,
+                kind="automation_reminder",
+                title="Reminder",
+                message=reminder_text,
+                visible_at=visible_at,
+                expires_at=visible_at + timedelta(days=30),
+            )
+            occurrence.state = "notified"
+            occurrence.reason = None
+            occurrence.updated_at = utcnow()
+            return {
+                "occurrence_id": occurrence.id,
+                "run_id": None,
+                "notification_id": notification_id,
+                "state": "notified",
+                "replayed": False,
+            }
+
     def accept_occurrence(self, automation_id: str, revision: int, due_at: datetime) -> dict:
         """Idempotently accept one Temporal Schedule occurrence and wake one bounded run."""
         due_at = aware(due_at).astimezone(timezone.utc)
@@ -1794,6 +1987,8 @@ class AutomationRepository:
             run_profile = db.scalar(select(Automation.run_profile).where(
                 Automation.id == automation_id,
             ))
+        if run_profile == "reminder":
+            return self.accept_reminder_occurrence(automation_id, revision, due_at)
         if run_profile == "meeting":
             return self.accept_meeting_scan(automation_id, revision, due_at)
         if run_profile == "deadline":

@@ -260,6 +260,14 @@ def validate_scenario(item: dict, expected_release: dict) -> dict:
                 f"PA-10 scenario {scenario_id} must prove both Google and Microsoft provider flows."
             )
 
+    if scenario_id == "scheduled_reminder":
+        if item.get("agent_run_count") != 0:
+            raise Pa10EvidenceError("Scheduled reminder evidence must prove zero Agent runs.")
+        if item.get("notification_count") != 1:
+            raise Pa10EvidenceError("Scheduled reminder evidence must prove exactly one notification.")
+        if item.get("notification_kind") != "automation_reminder":
+            raise Pa10EvidenceError("Scheduled reminder evidence must identify automation_reminder delivery.")
+
     if scenario_id == "browser_push":
         confirmation = item.get("device_confirmation_reference")
         if not isinstance(confirmation, str) or not confirmation.strip():

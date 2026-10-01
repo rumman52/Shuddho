@@ -33,7 +33,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [browserPushConfig, setBrowserPushConfig] = useState<BrowserPushConfig | null>(null);
   const [browserPushDeviceActive, setBrowserPushDeviceActive] = useState(false);
   const [goalId, setGoalId] = useState("");
-  const [kind, setKind] = useState<"daily" | "weekly" | "event" | "meeting" | "email" | "deadline" | "proactive">("daily");
+  const [kind, setKind] = useState<"daily" | "weekly" | "reminder" | "event" | "meeting" | "email" | "deadline" | "proactive">("daily");
   const [eventGrantId, setEventGrantId] = useState("");
   const [emailGrantId, setEmailGrantId] = useState("");
   const [meetingGrantId, setMeetingGrantId] = useState("");
@@ -130,10 +130,10 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             ? { kind: "event", grant_id: emailGrantId }
             : kind === "meeting"
               ? { kind: "meeting", grant_id: meetingGrantId, preparation_minutes: meetingPreparationMinutes, scan_interval_minutes: 15 }
-              : kind === "deadline" || kind === "proactive"
+              : kind === "deadline" || kind === "proactive" || kind === "reminder"
                 ? { kind: "daily", hour, minute, weekdays: [] }
                 : { kind, hour, minute, weekdays: kind === "weekly" ? weekdays : [] },
-        run_profile: kind === "email" ? "email" : kind === "meeting" ? "meeting" : kind === "deadline" ? "deadline" : kind === "proactive" ? "proactive" : briefing && kind !== "event" ? "briefing" : "goal",
+        run_profile: kind === "reminder" ? "reminder" : kind === "email" ? "email" : kind === "meeting" ? "meeting" : kind === "deadline" ? "deadline" : kind === "proactive" ? "proactive" : briefing && kind !== "event" ? "briefing" : "goal",
         connector_read_grant_ids: kind === "meeting" ? meetingEmailGrantIds : kind === "proactive" ? proactiveGrantIds : briefing && kind !== "event" && kind !== "email" && kind !== "deadline" ? briefingGrantIds : [],
         tool_allowlist: kind === "proactive" ? proactiveTools : [],
         output_language: "en", overlap_policy: "skip", catchup_window_seconds: 3600,
@@ -151,6 +151,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
           ? "Deadline Coworker saved. Temporal will check the reviewed goal at this time and start a recovery plan only when urgency meaningfully changes."
         : kind === "proactive"
           ? "Goal-driven coworker saved. Each reviewed wake-up is finite and can use only the tools and context you selected."
+        : kind === "reminder"
+          ? "Reminder saved. Temporal will emit exactly one in-app reminder for each admitted due occurrence without starting an Agent run."
         : briefing
           ? "Briefing saved. Temporal will start one private bounded briefing at each due time."
           : "Automation saved. Temporal will reconcile the durable schedule before it can fire.");
@@ -347,7 +349,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
     <div className="cw-action-intro">
       <span className="cw-eyebrow">Personal agent · PA-02</span>
       <h2>Durable scheduled and event-driven work without a permanent chat session.</h2>
-      <p>PostgreSQL stores automation authority. Temporal owns due-time schedules; authenticated connector events may wake only explicitly bound automations. Every occurrence is deduplicated before one bounded run can start.</p>
+      <p>PostgreSQL stores automation authority. Temporal owns due-time schedules; authenticated connector events may wake only explicitly bound automations. Every occurrence is deduplicated before one bounded run or one reminder notification can be admitted.</p>
     </div>
     {error && <p className="cw-error" role="alert">{error}</p>}
     {notice && <p className="cw-notice" role="status">{notice}</p>}
@@ -360,12 +362,12 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <option value="">Choose an active goal</option>{goals.map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
           </select></label>
           <label>Trigger<select value={kind} onChange={event => {
-            const nextKind = event.target.value as "daily" | "weekly" | "event" | "meeting" | "email" | "deadline" | "proactive";
+            const nextKind = event.target.value as "daily" | "weekly" | "reminder" | "event" | "meeting" | "email" | "deadline" | "proactive";
             setKind(nextKind);
-            if (nextKind === "event" || nextKind === "meeting" || nextKind === "email" || nextKind === "deadline" || nextKind === "proactive") setBriefing(false);
+            if (nextKind === "reminder" || nextKind === "event" || nextKind === "meeting" || nextKind === "email" || nextKind === "deadline" || nextKind === "proactive") setBriefing(false);
             createKey.current = "";
           }}>
-            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="event">Authorized connected update</option><option value="email">Important email coworker</option><option value="meeting">Upcoming meeting preparation</option><option value="deadline">Deadline coworker</option><option value="proactive">Goal-driven coworker</option>
+            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="reminder">Simple reminder</option><option value="event">Authorized connected update</option><option value="email">Important email coworker</option><option value="meeting">Upcoming meeting preparation</option><option value="deadline">Deadline coworker</option><option value="proactive">Goal-driven coworker</option>
           </select></label>
           {kind === "event" && <label>Connected read authorization<select required value={eventGrantId} onChange={event => { setEventGrantId(event.target.value); createKey.current = ""; }}>
             <option value="">Choose an active connection grant</option>
@@ -417,10 +419,10 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <label key={day}><input type="checkbox" checked={weekdays.includes(day)} onChange={event => {
               setWeekdays(previous => event.target.checked ? [...previous, day] : previous.filter(value => value !== day)); createKey.current = "";
             }} /> {day.toUpperCase()}</label>)}</div></fieldset>}
-          {kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && kind !== "proactive" && <label><input type="checkbox" checked={briefing} onChange={event => {
+          {kind !== "reminder" && kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && kind !== "proactive" && <label><input type="checkbox" checked={briefing} onChange={event => {
             setBriefing(event.target.checked); createKey.current = "";
           }} /> Create a private daily/weekly briefing</label>}
-          {kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && kind !== "proactive" && briefing && <fieldset><legend>Optional connected sources</legend>
+          {kind !== "reminder" && kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && kind !== "proactive" && briefing && <fieldset><legend>Optional connected sources</legend>
             <p className="cw-fineprint">Only selected, active read grants become briefing context. Provider content stays untrusted and cannot authorize writes.</p>
             <div className="cw-agent-meta">{activeConnectorGrants.length === 0
               ? <span>No active connected read grants</span>
@@ -445,7 +447,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         {automations.length === 0 ? <section className="cw-empty"><h2>No automation yet.</h2><p>Create one from an active goal.</p></section> :
         <div className="cw-history"><ul>{automations.map(item => <li key={item.id}><div className="cw-agent-run">
           <strong>{goals.find(goal => goal.id === item.goal_id)?.objective ?? "Persistent goal"}</strong>
-          <p>{triggerSummary(item)}{item.run_profile === "briefing" ? " · private briefing" : item.run_profile === "meeting" ? " · meeting coworker" : item.run_profile === "email" ? " · email coworker" : item.run_profile === "deadline" ? " · deadline coworker" : item.run_profile === "proactive" ? " · goal-driven coworker" : ""}</p>
+          <p>{triggerSummary(item)}{item.run_profile === "reminder" ? " · simple reminder" : item.run_profile === "briefing" ? " · private briefing" : item.run_profile === "meeting" ? " · meeting coworker" : item.run_profile === "email" ? " · email coworker" : item.run_profile === "deadline" ? " · deadline coworker" : item.run_profile === "proactive" ? " · goal-driven coworker" : ""}</p>
           <div className="cw-agent-meta"><span>{item.state}</span><span>revision {item.revision}</span><span>{item.schedule_applied_revision === item.revision ? (item.schedule.kind === "event" ? "event trigger reconciled" : "Temporal reconciled") : "reconciliation pending"}</span>{item.schedule_error_code && <span>{item.schedule_error_code}</span>}</div>
           <div>
             {item.state === "active" && <button className="cw-secondary" disabled={Boolean(busy)} onClick={() => transition(item, "pause")}>Pause</button>}

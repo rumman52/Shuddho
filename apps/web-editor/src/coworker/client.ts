@@ -63,7 +63,7 @@ export type AutomationSchedule =
   | { kind: "meeting"; grant_id: string; preparation_minutes: number; scan_interval_minutes: 5 | 10 | 15 | 30 | 60 };
 export type PersonalAutomation = {
   id: string; goal_id: string; goal_revision: number; revision: number; state: "active" | "paused" | "cancelled";
-  timezone: string; schedule: AutomationSchedule; run_profile: "goal" | "briefing" | "meeting" | "email" | "deadline" | "proactive"; connector_read_grant_ids: string[];
+  timezone: string; schedule: AutomationSchedule; run_profile: "goal" | "reminder" | "briefing" | "meeting" | "email" | "deadline" | "proactive"; connector_read_grant_ids: string[];
   tool_allowlist: ("report.create" | "document.create" | "career.create" | "social.draft" | "daily_plan.create" | "personal_plan.create" | "email.draft" | "meeting.prepare")[];
   output_language: string; overlap_policy: "skip" | "buffer_one";
   catchup_window_seconds: number; quiet_hours: { start: string; end: string } | null; expires_at: string | null;
@@ -539,7 +539,7 @@ export class CoworkerClient {
   automations(signal?: AbortSignal) { return this.json<{ enabled: boolean; automations: PersonalAutomation[] }>("/api/v1/automations", { signal }); }
   createAutomation(input: {
     goal_id: string; goal_revision: number; timezone: string; schedule: AutomationSchedule;
-    run_profile: "goal" | "briefing" | "meeting" | "email" | "deadline" | "proactive"; connector_read_grant_ids: string[];
+    run_profile: "goal" | "reminder" | "briefing" | "meeting" | "email" | "deadline" | "proactive"; connector_read_grant_ids: string[];
     tool_allowlist: PersonalAutomation["tool_allowlist"]; output_language: string;
     overlap_policy: "skip" | "buffer_one"; catchup_window_seconds: number;
     quiet_hours: { start: string; end: string } | null; expires_at: string | null;

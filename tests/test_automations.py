@@ -1777,3 +1777,183 @@ def test_personal_suggestion_delivery_revalidates_dismissal_revision_and_opt_out
         assert row.state == "suppressed"
         assert outbox.delivered is True and outbox.lease_until is None
     assert client.get("/api/v1/notifications", headers=auth).json()["notifications"] == []
+
+
+def reminder_payload(goal):
+    body = automation_payload(goal)
+    body["run_profile"] = "reminder"
+    body["connector_read_grant_ids"] = []
+    body["tool_allowlist"] = []
+    return body
+
+
+def create_goal_and_reminder(client, auth, key_suffix="one"):
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": f"reminder-goal-{key_suffix}"},
+        json=goal_payload(),
+    ).json()
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": f"reminder-create-{key_suffix}"},
+        json=reminder_payload(goal),
+    )
+    assert response.status_code == 201
+    assert response.json()["run_profile"] == "reminder"
+    return goal, response.json()
+
+
+def test_simple_reminder_dedupes_across_restart_without_agent_run(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, reminder = create_goal_and_reminder(client, auth)
+    due_at = utcnow().replace(microsecond=0)
+    first = automation_container.automations.accept_occurrence(
+        reminder["id"], reminder["revision"], due_at
+    )
+    assert first["state"] == "notified"
+    assert first["run_id"] is None
+    assert first["notification_id"]
+    restarted = Container.create(automation_container.settings)
+    try:
+        replay = restarted.automations.accept_occurrence(
+            reminder["id"], reminder["revision"], due_at
+        )
+    finally:
+        restarted.repository.sessions.kw["bind"].dispose()
+    assert replay["replayed"] is True
+    assert replay["state"] == "notified"
+    assert replay["run_id"] is None
+    assert replay["notification_id"] == first["notification_id"]
+    with automation_container.repository.sessions() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        assert owner is not None
+        assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner.id)).all() == []
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == reminder["id"]
+        )).all()
+        assert len(occurrences) == 1
+        notices = db.scalars(select(Notification).where(
+            Notification.automation_id == reminder["id"]
+        )).all()
+        assert len(notices) == 1
+        assert notices[0].id == first["notification_id"]
+        assert notices[0].kind == "automation_reminder"
+        assert notices[0].message == goal["objective"]
+    claimed = automation_container.notifications.claim_notifications()
+    assert claimed == [first["notification_id"]]
+    automation_container.notifications.deliver_notification(first["notification_id"])
+    with automation_container.repository.sessions() as db:
+        notice = db.get(Notification, first["notification_id"])
+        assert notice is not None and notice.state == "delivered"
+
+
+def test_simple_reminder_pause_resume_cancel_and_stale_revision_fail_closed(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _goal, reminder = create_goal_and_reminder(client, auth, "controls")
+    due = utcnow().replace(microsecond=0)
+    paused = client.post(
+        f'/api/v1/automations/{reminder["id"]}/pause',
+        headers=auth,
+        json={"expected_revision": reminder["revision"]},
+    ).json()
+    skipped = automation_container.automations.accept_occurrence(
+        reminder["id"], paused["revision"], due
+    )
+    assert skipped["state"] == "skipped" and skipped["reason"] == "not_active"
+    resumed = client.post(
+        f'/api/v1/automations/{reminder["id"]}/resume',
+        headers=auth,
+        json={"expected_revision": paused["revision"]},
+    ).json()
+    stale = automation_container.automations.accept_occurrence(
+        reminder["id"], reminder["revision"], due
+    )
+    assert stale["state"] == "skipped" and stale["reason"] == "stale_revision"
+    accepted = automation_container.automations.accept_occurrence(
+        reminder["id"], resumed["revision"], due
+    )
+    assert accepted["state"] == "notified" and accepted["run_id"] is None
+    cancelled = client.post(
+        f'/api/v1/automations/{reminder["id"]}/cancel',
+        headers=auth,
+        json={"expected_revision": resumed["revision"]},
+    ).json()
+    blocked = automation_container.automations.accept_occurrence(
+        reminder["id"], cancelled["revision"], due
+    )
+    assert blocked["state"] == "skipped" and blocked["reason"] == "not_active"
+    assert accepted["notification_id"] not in automation_container.notifications.claim_notifications()
+    with automation_container.repository.sessions() as db:
+        notice = db.get(Notification, accepted["notification_id"])
+        assert notice is not None and notice.state == "suppressed"
+
+
+def test_simple_reminder_goal_revision_and_revocation_fail_closed(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, reminder = create_goal_and_reminder(client, auth, "goal-revise")
+    due = utcnow().replace(microsecond=0)
+    response = client.patch(
+        f'/api/v1/goals/{goal["id"]}',
+        headers=auth,
+        json={"expected_revision": goal["revision"], "objective": "Updated reminder objective."},
+    )
+    assert response.status_code == 200
+    revised = automation_container.automations.accept_occurrence(
+        reminder["id"], reminder["revision"], due
+    )
+    assert revised["state"] == "skipped" and revised["reason"] == "goal_revision_changed"
+    goal2, reminder2 = create_goal_and_reminder(client, auth, "goal-pause")
+    accepted = automation_container.automations.accept_occurrence(
+        reminder2["id"], reminder2["revision"], due
+    )
+    assert accepted["state"] == "notified"
+    paused = client.post(
+        f'/api/v1/goals/{goal2["id"]}/pause',
+        headers=auth,
+        json={"expected_revision": goal2["revision"]},
+    )
+    assert paused.status_code == 200
+    assert accepted["notification_id"] not in automation_container.notifications.claim_notifications()
+    with automation_container.repository.sessions() as db:
+        notice = db.get(Notification, accepted["notification_id"])
+        assert notice is not None and notice.state == "suppressed"
+
+
+def test_simple_reminder_rejects_connector_and_tool_authority(automation_client):
+    client, headers = automation_client
+    auth = headers()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "reminder-scope-goal"},
+        json=goal_payload(),
+    ).json()
+    connector_scope = reminder_payload(goal)
+    connector_scope["connector_read_grant_ids"] = ["11111111-1111-1111-1111-111111111111"]
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "reminder-connector-scope"},
+        json=connector_scope,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "reminder_authority_scope"
+    tool_scope = reminder_payload(goal)
+    tool_scope["tool_allowlist"] = ["daily_plan.create"]
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "reminder-tool-scope"},
+        json=tool_scope,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "reminder_authority_scope"

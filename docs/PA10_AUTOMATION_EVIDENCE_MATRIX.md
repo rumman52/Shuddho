@@ -39,7 +39,7 @@ PR #279 is documentation/checkpoint evidence; it does not convert repository ver
 
 The automation staging gate must not be signed until all applicable scenarios have fresh evidence from the same reviewed release:
 
-1. simple scheduled reminder with app/browser closed and exactly one notice;
+1. simple scheduled reminder with app/browser closed, exactly one `automation_reminder` notice and zero Agent runs;
 2. Daily Coworker across timezone/DST and restart;
 3. Weekly Coworker using progress, deadlines, meetings and follow-ups;
 4. Meeting Coworker including reschedule, cancel, recurring event and grant revocation;
@@ -74,3 +74,12 @@ If all repository PRs and merged-main CI are green while the external rows above
 `AUTOMATION / PROACTIVE COWORKER — REPOSITORY IMPLEMENTATION COMPLETE; STAGING QUALIFICATION REMAINS.`
 
 Do not mark the overall phase complete or enable production flags until the controlled-staging evidence and final release review satisfy the expanded `automations` release-contract gate.
+
+
+## Simple reminder repository slice — 1 October 2026
+
+This slice adds a dedicated notification-only `reminder` automation profile. It reuses Temporal daily/weekly schedules and the existing canonical occurrence ledger, emits one durable `automation_reminder` notice, keeps `run_id` null, and revalidates automation/goal authority both at occurrence admission and notification delivery. Duplicate Temporal delivery and process restart replay the same occurrence/notice; pause, cancel, stale automation revision, expiry, goal-state revocation and goal-revision changes fail closed. The profile rejects connector-read and Agent-tool authority.
+
+The dedicated controlled-staging collector is `scripts/staging_pa10_simple_reminder.py`. The full PA-10 evidence compiler additionally rejects scheduled-reminder evidence unless it proves `agent_run_count=0`, `notification_count=1` and `notification_kind=automation_reminder`.
+
+Repository implementation does not make the live/staging row pass. The simple-reminder staging scenario remains NOT VERIFIED until the guarded collector runs around a real Temporal occurrence on the reviewed deployed release.

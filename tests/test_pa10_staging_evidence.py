@@ -53,6 +53,10 @@ def fixture(tmp_path: Path):
             "evidence": [{"path": str(evidence), "sha256": file_hash(evidence)}],
             "references": [f"staging-run-{index}"],
         }
+        if scenario_id == "scheduled_reminder":
+            item["agent_run_count"] = 0
+            item["notification_count"] = 1
+            item["notification_kind"] = "automation_reminder"
         if scenario_id in {"meeting_coworker", "email_coworker"}:
             item["providers"] = ["google", "microsoft"]
         if scenario_id == "browser_push":
@@ -164,4 +168,30 @@ def test_production_environment_is_rejected(tmp_path):
     value["release"]["environment"] = "production"
     write_json(files[0], value)
     with pytest.raises(Pa10EvidenceError, match="non-production environment"):
+        compile_ok(files)
+
+
+def test_scheduled_reminder_requires_zero_agent_runs_and_exactly_one_notice(tmp_path):
+    files = fixture(tmp_path)
+    value = json.loads(files[0].read_text(encoding="utf-8"))
+    reminder = next(item for item in value["scenarios"] if item["id"] == "scheduled_reminder")
+    reminder["agent_run_count"] = 1
+    write_json(files[0], value)
+    with pytest.raises(Pa10EvidenceError, match="zero Agent runs"):
+        compile_ok(files)
+
+    files = fixture(tmp_path)
+    value = json.loads(files[0].read_text(encoding="utf-8"))
+    reminder = next(item for item in value["scenarios"] if item["id"] == "scheduled_reminder")
+    reminder["notification_count"] = 2
+    write_json(files[0], value)
+    with pytest.raises(Pa10EvidenceError, match="exactly one notification"):
+        compile_ok(files)
+
+    files = fixture(tmp_path)
+    value = json.loads(files[0].read_text(encoding="utf-8"))
+    reminder = next(item for item in value["scenarios"] if item["id"] == "scheduled_reminder")
+    reminder["notification_kind"] = "automation_started"
+    write_json(files[0], value)
+    with pytest.raises(Pa10EvidenceError, match="automation_reminder"):
         compile_ok(files)
