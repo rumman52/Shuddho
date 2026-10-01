@@ -83,7 +83,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def rollout_identity(path: Path) -> dict:
+def rollout_identity(path: Path, provider_policy_path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -95,9 +95,22 @@ def rollout_identity(path: Path) -> dict:
     release_id = value.get("release_id")
     if not isinstance(release_id, str) or not release_id.strip():
         raise ProactiveReadProbeFailure("Rollout manifest release_id is required.")
+    try:
+        policy = json.loads(provider_policy_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ProactiveReadProbeFailure(
+            f"Could not read provider-policy plan: {type(error).__name__}"
+        ) from None
+    if not isinstance(policy, dict):
+        raise ProactiveReadProbeFailure("Provider-policy plan must contain a JSON object.")
+    deployment_reference = env_secret("SHUDDHO_STAGING_DEPLOYMENT_REFERENCE").strip()
+    if not deployment_reference:
+        raise ProactiveReadProbeFailure("SHUDDHO_STAGING_DEPLOYMENT_REFERENCE must not be blank.")
     return {
         "release_id": release_id.strip(),
         "rollout_manifest_sha256": sha256_file(path),
+        "provider_policy_sha256": sha256_file(provider_policy_path),
+        "deployment_reference": deployment_reference,
     }
 
 
@@ -288,6 +301,10 @@ def load_owned_state(
         capability,
         automation_id,
     )
+    if automation.get("quiet_hours") is not None:
+        raise ProactiveReadProbeFailure(
+            "Use a dedicated staging automation without quiet hours for provider-event qualification so completion evidence is observable deterministically."
+        )
     selected_automation_id = str(automation["id"])
 
     snapshots = json_object(
@@ -411,7 +428,7 @@ def prepare(args: argparse.Namespace) -> dict:
     base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
     token = env_secret("SHUDDHO_STAGING_TOKEN_A")
     synthetic_label = env_secret("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT_LABEL").strip()
-    rollout = rollout_identity(args.rollout)
+    rollout = rollout_identity(args.rollout, args.provider_policy_plan)
 
     with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False) as client:
         release = runtime_context(client, token, rollout)
@@ -437,6 +454,11 @@ def prepare(args: argparse.Namespace) -> dict:
         "subscription_generation": int(owned["subscription"].get("generation") or 0),
         "automation_id": str(owned["automation"]["id"]),
         "automation_revision": int(owned["automation"]["revision"]),
+        "meeting_scan_interval_minutes": (
+            int((owned["automation"].get("schedule") or {}).get("scan_interval_minutes") or 0)
+            if args.capability == "calendar_read"
+            else 0
+        ),
         "baseline": baseline(owned),
         "prepared_at": utcnow_iso(),
     }
@@ -455,10 +477,14 @@ def verify(args: argparse.Namespace) -> dict:
     if not isinstance(state, dict) or state.get("schema_version") != SCHEMA_VERSION:
         raise ProactiveReadProbeFailure("Proactive read-event state has an unexpected schema.")
 
-    rollout = rollout_identity(args.rollout)
+    rollout = rollout_identity(args.rollout, args.provider_policy_plan)
     base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
     token = env_secret("SHUDDHO_STAGING_TOKEN_A")
-    deadline = time.monotonic() + max(1, args.timeout)
+    minimum_timeout = 1
+    if state.get("capability") == "calendar_read":
+        scan_minutes = max(5, int(state.get("meeting_scan_interval_minutes") or 0))
+        minimum_timeout = scan_minutes * 60 + 300
+    deadline = time.monotonic() + max(minimum_timeout, args.timeout)
     last_error: ProactiveReadProbeFailure | None = None
 
     with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False) as client:
@@ -536,10 +562,12 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--grant-id")
     prepare_parser.add_argument("--automation-id")
     prepare_parser.add_argument("--rollout", type=Path, required=True)
+    prepare_parser.add_argument("--provider-policy-plan", type=Path, required=True)
     prepare_parser.add_argument("--state", type=Path, required=True)
 
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--rollout", type=Path, required=True)
+    verify_parser.add_argument("--provider-policy-plan", type=Path, required=True)
     verify_parser.add_argument("--state", type=Path, required=True)
     verify_parser.add_argument("--output", type=Path, required=True)
     verify_parser.add_argument("--timeout", type=int, default=180)
