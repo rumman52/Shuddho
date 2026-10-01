@@ -1,5 +1,22 @@
 # PA-10 controlled staging completion runbook
 
+## Step 1 — freeze the exact staging release
+
+Before running any PA-10 scenario, complete the two-phase release freeze in
+[PA-10 staging release freeze](PA10_STAGING_RELEASE_FREEZE.md).
+
+Do **not** use the production-specific `docs/cohort-rollout.template.json` as
+the PA-10 staging rollout. Start from `docs/pa10-staging-rollout.template.json`,
+review every reference, then run `scripts/staging_release_freeze.py prepare`
+before deployment and `verify` against the authenticated deployed
+`/api/v1/runtime-manifest`.
+
+Every scenario artifact in this runbook must use the same frozen
+`release_id`, source revision, non-production environment, rollout SHA-256 and
+provider-policy SHA-256. A meaningful code/config/provider-policy change
+invalidates the freeze and requires a fresh prepare/deploy/verify cycle.
+
+
 This runbook is for the remaining Automation / Proactive Coworker qualification after repository implementation is green. It does not turn repository tests into live evidence.
 
 ## Release-bound PA-10 evidence bundle
