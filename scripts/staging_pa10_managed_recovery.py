@@ -334,6 +334,28 @@ def verify(args: argparse.Namespace) -> dict:
                     raise ManagedRecoveryProbeFailure(
                         "Recovered occurrence did not bind an Agent run."
                     )
+                due_at = parse_time(
+                    str(occurrence.get("due_at") or ""),
+                    "recovered occurrence due_at",
+                )
+                completed_at = parse_time(
+                    str(occurrence.get("run_updated_at") or ""),
+                    "recovered run_updated_at",
+                )
+                if completed_at < due_at:
+                    raise ManagedRecoveryProbeFailure(
+                        "Recovered run completion precedes the occurrence due time."
+                    )
+                for restart in restarts:
+                    restarted_at = parse_time(
+                        restart["restarted_at"],
+                        f"{restart['component']} restart time",
+                    )
+                    if restarted_at < due_at or restarted_at > completed_at:
+                        raise ManagedRecoveryProbeFailure(
+                            f"{restart['component']} restart did not occur between the "
+                            "new occurrence due time and completed run update."
+                        )
                 occurrence_id = str(occurrence.get("occurrence_id") or "")
                 notices = [
                     item for item in current["notifications"]
@@ -350,11 +372,10 @@ def verify(args: argparse.Namespace) -> dict:
                         f"Expected exactly one completion notification after recovery; found {len(completion)}."
                     )
                 verified_at = utcnow()
-                for restart in restarts:
-                    if parse_time(restart["restarted_at"], "restart time") > verified_at:
-                        raise ManagedRecoveryProbeFailure(
-                            f"{restart['component']} restart timestamp is in the future."
-                        )
+                if completed_at > verified_at:
+                    raise ManagedRecoveryProbeFailure(
+                        "Recovered run completion timestamp is in the future."
+                    )
                 evidence = {
                     "schema_version": SCHEMA_VERSION,
                     "evidence_kind": "pa10_managed_recovery",
@@ -369,9 +390,10 @@ def verify(args: argparse.Namespace) -> dict:
                     "restarts": restarts,
                     "occurrence_id": occurrence_id,
                     "trigger_type": occurrence.get("trigger_type"),
-                    "due_at": occurrence.get("due_at"),
+                    "due_at": due_at.isoformat(),
                     "run_id": run_id,
                     "run_state": "completed",
+                    "run_completed_at": completed_at.isoformat(),
                     "completion_notification_id": str(completion[0]["id"]),
                     "new_notification_count": len(notices),
                     "duplicate_completion_notice_count": len(completion) - 1,
