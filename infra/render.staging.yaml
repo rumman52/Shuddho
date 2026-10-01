@@ -1,0 +1,202 @@
+# PA-10 controlled staging only.
+# Do not sync this Blueprint until managed identity, private S3-compatible
+# storage, Temporal TLS credentials, and the staging worker compute plan have
+# been explicitly reviewed. Production flags remain separate.
+
+services:
+  - type: web
+    runtime: python
+    name: shuddho-api-staging
+    repo: https://github.com/rumman52/Shuddho
+    branch: main
+    region: oregon
+    plan: free
+    autoDeployTrigger: off
+    buildCommand: pip install uv && uv sync --frozen --no-dev --extra coworker
+    startCommand: uv run --extra coworker uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: SHUDDHO_COWORKER_ENV
+        value: staging
+      - key: SHUDDHO_COWORKER_DATABASE_URL
+        fromDatabase:
+          name: shuddho-staging-db
+          property: connectionString
+      - key: SHUDDHO_AUTH_ISSUER
+        sync: false
+      - key: SHUDDHO_AUTH_AUDIENCE
+        value: authenticated
+      - key: SHUDDHO_COWORKER_STORAGE
+        value: s3
+      - key: SHUDDHO_COWORKER_BUCKET
+        sync: false
+      - key: SHUDDHO_COWORKER_S3_ENDPOINT
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: SHUDDHO_TEMPORAL_ADDRESS
+        sync: false
+      - key: SHUDDHO_TEMPORAL_NAMESPACE
+        sync: false
+      - key: SHUDDHO_TEMPORAL_API_KEY
+        sync: false
+      - key: SHUDDHO_TEMPORAL_TLS
+        value: "true"
+      - key: SHUDDHO_TEMPORAL_TASK_QUEUE
+        value: shuddho-documents-v1
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: SHUDDHO_COWORKER_ENABLED
+        value: "false"
+      - key: SHUDDHO_WORK_SERVICES_ENABLED
+        value: "false"
+      - key: SHUDDHO_ARTIFACT_SERVICES_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_RUNTIME_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_RUNTIME_V3_ENABLED
+        value: "false"
+      - key: SHUDDHO_PERSONAL_GOALS_ENABLED
+        value: "false"
+      - key: SHUDDHO_AUTOMATIONS_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED
+        value: "false"
+      - key: SHUDDHO_CONTEXT_RETRIEVAL_ENABLED
+        value: "false"
+      - key: SHUDDHO_ACTIONS_ENABLED
+        value: "false"
+      - key: SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED
+        value: "false"
+      - key: SHUDDHO_CONNECTOR_READS_ENABLED
+        value: "false"
+      - key: SHUDDHO_BROWSER_PUSH_ENABLED
+        value: "false"
+      - key: SHUDDHO_BROWSER_ENABLED
+        value: "false"
+      - key: SHUDDHO_CODE_EXECUTION_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED
+        value: "false"
+      - key: SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_ACTION_SELECTION_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED
+        value: "false"
+      - key: SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED
+        value: "false"
+      - key: SHUDDHO_COWORKER_COHORT_ENFORCED
+        value: "false"
+      - key: SHUDDHO_MICROSOFT_ACTIONS_ENABLED
+        value: "false"
+      - key: SHUDDHO_LOG_RAW_TEXT
+        value: "false"
+
+  - type: worker
+    runtime: python
+    name: shuddho-worker-staging
+    repo: https://github.com/rumman52/Shuddho
+    branch: main
+    region: oregon
+    plan: 0.5c-512mb
+    autoDeployTrigger: off
+    buildCommand: pip install uv && uv sync --frozen --no-dev --extra coworker
+    preDeployCommand: uv run --extra coworker python -m services.coworker.migrate
+    startCommand: uv run --extra coworker python -m services.coworker.worker
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: SHUDDHO_COWORKER_ENV
+        value: staging
+      - key: SHUDDHO_COWORKER_DATABASE_URL
+        fromDatabase:
+          name: shuddho-staging-db
+          property: connectionString
+      - key: SHUDDHO_AUTH_ISSUER
+        sync: false
+      - key: SHUDDHO_AUTH_AUDIENCE
+        value: authenticated
+      - key: SHUDDHO_COWORKER_STORAGE
+        value: s3
+      - key: SHUDDHO_COWORKER_BUCKET
+        sync: false
+      - key: SHUDDHO_COWORKER_S3_ENDPOINT
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: SHUDDHO_TEMPORAL_ADDRESS
+        sync: false
+      - key: SHUDDHO_TEMPORAL_NAMESPACE
+        sync: false
+      - key: SHUDDHO_TEMPORAL_API_KEY
+        sync: false
+      - key: SHUDDHO_TEMPORAL_TLS
+        value: "true"
+      - key: SHUDDHO_TEMPORAL_TASK_QUEUE
+        value: shuddho-documents-v1
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: SHUDDHO_WORK_SERVICES_ENABLED
+        value: "false"
+      - key: SHUDDHO_ARTIFACT_SERVICES_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_RUNTIME_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_RUNTIME_V3_ENABLED
+        value: "false"
+      - key: SHUDDHO_PERSONAL_GOALS_ENABLED
+        value: "false"
+      - key: SHUDDHO_AUTOMATIONS_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED
+        value: "false"
+      - key: SHUDDHO_CONTEXT_RETRIEVAL_ENABLED
+        value: "false"
+      - key: SHUDDHO_ACTIONS_ENABLED
+        value: "false"
+      - key: SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED
+        value: "false"
+      - key: SHUDDHO_CONNECTOR_READS_ENABLED
+        value: "false"
+      - key: SHUDDHO_BROWSER_PUSH_ENABLED
+        value: "false"
+      - key: SHUDDHO_BROWSER_ENABLED
+        value: "false"
+      - key: SHUDDHO_CODE_EXECUTION_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED
+        value: "false"
+      - key: SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_ACTION_SELECTION_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED
+        value: "false"
+      - key: SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED
+        value: "false"
+      - key: SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED
+        value: "false"
+      - key: SHUDDHO_COWORKER_COHORT_ENFORCED
+        value: "false"
+      - key: SHUDDHO_MICROSOFT_ACTIONS_ENABLED
+        value: "false"
+      - key: SHUDDHO_LOG_RAW_TEXT
+        value: "false"
+
+databases:
+  - name: shuddho-staging-db
+    databaseName: shuddho_staging_db
+    plan: free
+    region: oregon
+    postgresMajorVersion: "18"
+    ipAllowList: []

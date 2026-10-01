@@ -158,6 +158,28 @@ uv run --env-file .env.coworker --extra coworker python -m services.coworker.wor
 
 For native local services set `SHUDDHO_COWORKER_ENABLED=true`, development mode, a local PostgreSQL URL, `SHUDDHO_COWORKER_STORAGE=local`, and local Temporal settings in `.env.coworker`. The API does not apply migrations automatically.
 
+## Render controlled-staging Blueprint
+
+For the bounded PA-10 non-production environment, `infra/render.staging.yaml`
+declares the isolated Render API, Postgres database and a separate background
+worker. It intentionally uses `autoDeployTrigger: off` so a later `main`
+commit cannot silently replace the release under qualification.
+
+Render's `fromDatabase.connectionString` uses a standard PostgreSQL URL. The
+Coworker settings layer normalizes that URL to SQLAlchemy's psycopg driver and,
+outside development, adds `sslmode=require` only when no explicit SSL mode is
+already present. This keeps the staging contract fail-closed while allowing a
+Blueprint-managed database binding.
+
+The Blueprint does not commit provider credentials. Managed identity, private
+object storage, Temporal Cloud, DeepSeek, connector and Browser Push secrets use
+`sync: false` and must be supplied in Render's secret UI. Do not sync the
+background worker until its paid compute plan and external managed-service
+credentials have been explicitly approved. After secrets are present, the
+worker runs migrations before starting `python -m services.coworker.worker`.
+Keep Coworker/automation/action flags off until `scripts/staging_live_probe.py`
+and the PA-10 release-freeze verification pass.
+
 ## Production staging and rollback
 
 1. Provision the chosen managed identity, PostgreSQL, private object bucket and Temporal namespace. Record region, retention, backup and cost decisions. Keep browser roles out of the private schema. Use a migration role separately from the runtime database role where practical; grant the runtime role only the private schema/table access it needs.

@@ -26,7 +26,7 @@ from sqlalchemy import select
 
 from services.coworker.api import mount
 from services.coworker.auth import JwtVerifier, Principal
-from services.coworker.config import Settings
+from services.coworker.config import Settings, _normalize_database_url
 from services.coworker.container import Container
 from services.coworker.drafting import DeepSeekDraftModel, DraftFailure, DraftResult
 from services.coworker.errors import CoworkerError
@@ -39,6 +39,28 @@ from services.coworker.schemas import DraftPackage, TaskCreate, UploadRequest
 from services.coworker.worker import Dispatcher
 
 ISSUER = "https://identity.example.test/auth/v1"
+
+
+def test_managed_postgres_url_normalization_is_secure_and_render_compatible():
+    assert _normalize_database_url(
+        "postgresql://user:password@db.internal:5432/app",
+        "staging",
+    ) == "postgresql+psycopg://user:password@db.internal:5432/app?sslmode=require"
+    assert _normalize_database_url(
+        "postgres://user:password@db.internal:5432/app?application_name=shuddho",
+        "production",
+    ) == (
+        "postgresql+psycopg://user:password@db.internal:5432/app"
+        "?application_name=shuddho&sslmode=require"
+    )
+    assert _normalize_database_url(
+        "postgresql+psycopg://user:password@db:5432/app?sslmode=verify-full",
+        "staging",
+    ).endswith("?sslmode=verify-full")
+    assert _normalize_database_url(
+        "sqlite:///tmp/dev.sqlite3",
+        "development",
+    ) == "sqlite:///tmp/dev.sqlite3"
 
 
 @pytest.fixture

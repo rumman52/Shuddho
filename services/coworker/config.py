@@ -4,11 +4,27 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 
 def enabled() -> bool:
     return os.getenv("SHUDDHO_COWORKER_ENABLED", "false").lower() == "true"
+
+
+def _normalize_database_url(value: str, environment: str) -> str:
+    """Normalize managed PostgreSQL URLs without weakening non-development TLS."""
+    raw = value.strip()
+    if raw.startswith("postgres://"):
+        raw = "postgresql://" + raw[len("postgres://"):]
+    if raw.startswith("postgresql://"):
+        raw = "postgresql+psycopg://" + raw[len("postgresql://"):]
+    if environment != "development" and raw.startswith("postgresql+psycopg://"):
+        parsed = urlparse(raw)
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        if not any(key == "sslmode" for key, _ in query):
+            query.append(("sslmode", "require"))
+            raw = urlunparse(parsed._replace(query=urlencode(query)))
+    return raw
 
 
 @dataclass(frozen=True)
@@ -160,7 +176,10 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         value = cls(
-            database_url=os.getenv("SHUDDHO_COWORKER_DATABASE_URL", ""),
+            database_url=_normalize_database_url(
+                os.getenv("SHUDDHO_COWORKER_DATABASE_URL", ""),
+                os.getenv("SHUDDHO_COWORKER_ENV", "production"),
+            ),
             auth_issuer=os.getenv("SHUDDHO_AUTH_ISSUER", "").rstrip("/"),
             auth_audience=os.getenv("SHUDDHO_AUTH_AUDIENCE", "authenticated"),
             storage_backend=os.getenv("SHUDDHO_COWORKER_STORAGE", "s3"),
