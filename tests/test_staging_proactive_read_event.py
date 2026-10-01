@@ -103,12 +103,16 @@ def test_transition_evidence_requires_one_completed_occurrence_and_completion_no
             {
                 "occurrence_id": "occ-new",
                 "trigger_type": "event",
+                "trigger_event_id": "provider-event-row-1",
+                "trigger_snapshot_id": None,
                 "run_id": "run-new",
                 "run_state": "completed",
             },
             {
                 "occurrence_id": "occ-old",
                 "trigger_type": "event",
+                "trigger_event_id": "provider-event-old",
+                "trigger_snapshot_id": None,
                 "run_id": "run-old",
                 "run_state": "completed",
             },
@@ -133,6 +137,8 @@ def test_transition_evidence_requires_one_completed_occurrence_and_completion_no
     assert evidence["occurrence_id"] == "occ-new"
     assert evidence["run_id"] == "run-new"
     assert evidence["completion_notification_id"] == "notice-new"
+    assert evidence["trigger_event_id"] == "provider-event-row-1"
+    assert evidence["new_snapshot_ids"] == ["new"]
 
 
 def test_transition_evidence_rejects_duplicate_new_occurrences():
