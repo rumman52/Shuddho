@@ -348,6 +348,7 @@ def load_owned_state(
 def baseline(value: dict) -> dict:
     return {
         "snapshot_signatures": snapshot_signatures(value["snapshots"]),
+        "snapshot_ids": ids(value["snapshots"]),
         "occurrence_ids": ids(value["history"], "occurrence_id"),
         "notification_ids": ids(value["notifications"]),
         "run_ids": ids(value["runs"]),
@@ -359,6 +360,23 @@ def transition_evidence(state: dict, current: dict) -> dict:
     if not isinstance(before, dict):
         raise ProactiveReadProbeFailure("Probe state baseline is missing.")
 
+    old_snapshot_ids = set(before.get("snapshot_ids") or [])
+    new_snapshot_ids = sorted(
+        str(item.get("id"))
+        for item in current["snapshots"]
+        if item.get("id") is not None
+        and (
+            str(item.get("id")) not in old_snapshot_ids
+            or "|".join(
+                [
+                    str(item.get("id") or ""),
+                    str(item.get("provider_version") or ""),
+                    str(item.get("sha256") or ""),
+                ]
+            )
+            not in set(before.get("snapshot_signatures") or [])
+        )
+    )
     new_snapshot_signatures = sorted(
         set(snapshot_signatures(current["snapshots"]))
         - set(before.get("snapshot_signatures") or [])
@@ -382,6 +400,17 @@ def transition_evidence(state: dict, current: dict) -> dict:
         raise ProactiveReadProbeFailure(
             f"New automation occurrence trigger_type was {occurrence.get('trigger_type')!r}; expected {expected_trigger!r}."
         )
+    trigger_event_id = str(occurrence.get("trigger_event_id") or "")
+    trigger_snapshot_id = str(occurrence.get("trigger_snapshot_id") or "")
+    if state["capability"] == "email_read" and not trigger_event_id:
+        raise ProactiveReadProbeFailure("Email Coworker history did not expose its trigger_event_id.")
+    if state["capability"] == "calendar_read":
+        if not trigger_snapshot_id:
+            raise ProactiveReadProbeFailure("Meeting Coworker history did not expose its trigger_snapshot_id.")
+        if trigger_snapshot_id not in new_snapshot_ids:
+            raise ProactiveReadProbeFailure(
+                "Meeting Coworker trigger snapshot was not one of the provider snapshots changed by this exercise."
+            )
     run_id = str(occurrence.get("run_id") or "")
     if not run_id:
         raise ProactiveReadProbeFailure("New automation occurrence did not bind an Agent run.")
@@ -409,8 +438,11 @@ def transition_evidence(state: dict, current: dict) -> dict:
 
     return {
         "new_snapshot_change_count": len(new_snapshot_signatures),
+        "new_snapshot_ids": new_snapshot_ids,
         "occurrence_id": str(occurrence["occurrence_id"]),
         "trigger_type": str(occurrence["trigger_type"]),
+        "trigger_event_id": trigger_event_id or None,
+        "trigger_snapshot_id": trigger_snapshot_id or None,
         "run_id": run_id,
         "run_state": str(occurrence["run_state"]),
         "completion_notification_id": str(completion[0]["id"]),
@@ -516,6 +548,28 @@ def verify(args: argparse.Namespace) -> dict:
                         "Provider subscription generation moved backwards unexpectedly."
                     )
                 transition = transition_evidence(state, owned)
+                run_context = json_object(
+                    client.get(
+                        f"/api/v1/agent-runs/{transition['run_id']}/context",
+                        headers=auth(token),
+                    ),
+                    "agent run context",
+                )
+                context_items = run_context.get("items")
+                if not isinstance(context_items, list):
+                    raise ProactiveReadProbeFailure("Agent run context returned an unexpected shape.")
+                context_snapshot_ids = sorted(
+                    str((item.get("provenance") or {}).get("snapshot_id"))
+                    for item in context_items
+                    if isinstance(item, dict)
+                    and isinstance(item.get("provenance"), dict)
+                    and (item.get("provenance") or {}).get("snapshot_id")
+                )
+                if not set(context_snapshot_ids).intersection(transition["new_snapshot_ids"]):
+                    raise ProactiveReadProbeFailure(
+                        "Proactive Agent run context did not include any provider snapshot changed by this exercise."
+                    )
+                transition["run_context_snapshot_ids"] = context_snapshot_ids
                 evidence = {
                     "schema_version": SCHEMA_VERSION,
                     "evidence_kind": "pa10_proactive_read_event",
