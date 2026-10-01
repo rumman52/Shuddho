@@ -197,6 +197,7 @@ def select_automation(
             item.get("state") == "active"
             and item.get("run_profile") == expected_profile
             and schedule.get("kind") == expected_schedule
+            and str(schedule.get("grant_id") or "") == grant_id
             and grant_id in [str(value) for value in item.get("connector_read_grant_ids") or []]
             and (automation_id is None or str(item.get("id")) == automation_id)
         ):
