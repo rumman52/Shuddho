@@ -341,7 +341,7 @@ OPTIONAL_CAPABILITIES = (
         staging_gates=(
             StagingGate(
                 "automations",
-                "PA-10 automation controlled staging passed Temporal daily/weekly scheduling, authenticated connected-event wake-up, Daily/Weekly briefings, Meeting Coworker, Email Coworker, Deadline Coworker and reviewed goal-driven proactivity with canonical occurrence/event dedupe; owner/goal/automation/grant/subscription/tool-scope revalidation; exact connected snapshot scoping; prompt-injection containment; pause/resume/cancel/edit controls; restart and process-loss recovery; quiet hours; expiry and revocation blocking; one logical completion notification; and durable in-app delivery without adding provider-write authority, approval bypass or a second scheduler/runtime.",
+                "PA-10 automation controlled staging passed a Temporal simple reminder with exactly one durable notice and no Agent run, Temporal daily/weekly scheduling, authenticated connected-event wake-up, Daily/Weekly briefings, Meeting Coworker, Email Coworker, Deadline Coworker and reviewed goal-driven proactivity with canonical occurrence/event dedupe; owner/goal/automation/grant/subscription/tool-scope revalidation; exact connected snapshot scoping; prompt-injection containment; pause/resume/cancel/edit controls; restart and process-loss recovery; quiet hours; expiry and revocation blocking; one logical completion notification; and durable in-app delivery without adding provider-write authority, approval bypass or a second scheduler/runtime.",
             ),
         ),
     ),
