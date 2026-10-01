@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "release_id": "pa10-stage-YYYYMMDD-001",
+  "environment": "staging",
+  "cohort": {
+    "reference": "approved-synthetic-account-list-or-ticket",
+    "enforced": true,
+    "max_users": 5
+  },
+  "action_providers": [
+    "google",
+    "microsoft"
+  ],
+  "capabilities": {
+    "coworker": true,
+    "work_services": true,
+    "artifact_services": false,
+    "agent_runtime": true,
+    "runtime_v3": true,
+    "context_retrieval": true,
+    "personal_goals": true,
+    "automations": true,
+    "intelligent_planner": true,
+    "memory": false,
+    "handoffs": false,
+    "multi_handoffs": false,
+    "dependency_graph": false,
+    "parallel_execution": false,
+    "outcome_replan": false,
+    "research": false,
+    "actions": true,
+    "connector_trust_boundary": true,
+    "connector_reads": true,
+    "browser": false,
+    "code_execution": false,
+    "agent_sandbox_tool": false,
+    "action_attachments": false,
+    "action_reminders": false,
+    "action_recipients": false,
+    "action_document_sharing": false,
+    "action_email_threading": false,
+    "action_social_publishing": false,
+    "personal_transactions": false,
+    "action_selection": false,
+    "action_proposals": false,
+    "negotiation_proposal_promotion": false,
+    "agent_linkedin_proposals": false,
+    "browser_push": true
+  },
+  "rollback": {
+    "global_kill_switch": "SHUDDHO_COWORKER_ENABLED=false",
+    "agent_kill_switch": "SHUDDHO_AGENT_RUNTIME_ENABLED=false",
+    "personal_goals_kill_switch": "SHUDDHO_PERSONAL_GOALS_ENABLED=false",
+    "automations_kill_switch": "SHUDDHO_AUTOMATIONS_ENABLED=false",
+    "runtime_v3_kill_switch": "SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false",
+    "context_retrieval_kill_switch": "SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false",
+    "actions_kill_switch": "SHUDDHO_ACTIONS_ENABLED=false",
+    "connector_trust_boundary_kill_switch": "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false",
+    "connector_reads_kill_switch": "SHUDDHO_CONNECTOR_READS_ENABLED=false",
+    "browser_push_kill_switch": "SHUDDHO_BROWSER_PUSH_ENABLED=false"
+  },
+  "monitoring": {
+    "queue_age": "dashboard-or-alert-reference",
+    "task_success": "dashboard-or-alert-reference",
+    "provider_errors": "dashboard-or-alert-reference",
+    "latency": "dashboard-or-alert-reference",
+    "token_cost": "dashboard-or-alert-reference",
+    "agent_failures": "dashboard-or-alert-reference"
+  },
+  "incident": {
+    "oncall_reference": "staging-oncall-owner",
+    "change_reference": "staging-change-or-deployment-ticket"
+  }
+}
