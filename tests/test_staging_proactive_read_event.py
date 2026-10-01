@@ -89,6 +89,7 @@ def test_transition_evidence_requires_one_completed_occurrence_and_completion_no
         "automation_id": "automation-1",
         "baseline": {
             "snapshot_signatures": ["old|1|abc"],
+            "snapshot_ids": ["old"],
             "occurrence_ids": ["occ-old"],
             "notification_ids": ["notice-old"],
             "run_ids": ["run-old"],
@@ -147,6 +148,7 @@ def test_transition_evidence_rejects_duplicate_new_occurrences():
         "automation_id": "automation-1",
         "baseline": {
             "snapshot_signatures": [],
+            "snapshot_ids": [],
             "occurrence_ids": [],
             "notification_ids": [],
             "run_ids": [],
