@@ -132,6 +132,10 @@ class Container:
                 self.agent,
                 self.notifications,
             )
+        self.notifications.register_source_validator(
+            self.automations.REMINDER_SOURCE_KIND,
+            self.automations.reminder_notification_source_allowed,
+        )
         if hasattr(self.connector_reads, "set_automation_consumer"):
             self.connector_reads.set_automation_consumer(
                 self.automations.handle_connector_event
