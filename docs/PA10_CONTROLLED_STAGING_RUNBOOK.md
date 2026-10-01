@@ -145,6 +145,7 @@ export SHUDDHO_STAGING_ALLOW_PROACTIVE_READ_EVENTS=true
 export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true
 export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT_LABEL="<non-sensitive synthetic account label>"
 export SHUDDHO_STAGING_EXPECTED_ENVIRONMENT="<exact non-production runtime environment>"
+export SHUDDHO_STAGING_DEPLOYMENT_REFERENCE="<reviewed deployment/platform reference>"
 export SHUDDHO_STAGING_API_BASE_URL="https://<staging-api-origin>"
 export SHUDDHO_STAGING_TOKEN_A="<synthetic staging account token>"
 ```
@@ -156,6 +157,7 @@ uv run --extra coworker python scripts/staging_proactive_read_event.py prepare \
   --provider google \
   --capability email_read \
   --rollout "<reviewed deployed rollout manifest>" \
+  --provider-policy-plan "<reviewed provider-policy plan>" \
   --state /tmp/google-gmail-proactive-state.json
 ```
 
@@ -164,13 +166,16 @@ Then send exactly one approved synthetic Gmail message to the connected staging 
 ```bash
 uv run --extra coworker python scripts/staging_proactive_read_event.py verify \
   --rollout "<same reviewed deployed rollout manifest>" \
+  --provider-policy-plan "<same reviewed provider-policy plan>" \
   --state /tmp/google-gmail-proactive-state.json \
   --output /tmp/google-gmail-proactive-evidence.json
 ```
 
 Use the same two-phase command for Outlook by selecting `--provider microsoft --capability email_read`.
 
-For Calendar/Meeting qualification select `--capability calendar_read`. The selected Meeting Coworker automation must bind the exact calendar grant in both its meeting trigger and connected-read grant scope. After prepare, create/update the single synthetic provider event required by the scenario and allow the existing provider intake plus Temporal meeting scan to produce the evidence before verify.
+For Calendar/Meeting qualification select `--capability calendar_read`. The selected Meeting Coworker automation must bind the exact calendar grant in both its meeting trigger and connected-read grant scope. After prepare, create/update the single synthetic provider event required by the scenario and allow the existing provider intake plus Temporal meeting scan to produce the evidence before verify. The verifier automatically allows at least one configured meeting scan interval plus five minutes, so a valid slow scan is not mislabeled as failure.
+
+Use a dedicated qualification automation with quiet hours disabled. Quiet-hours behavior is a separate staging scenario; the provider-event probe intentionally requires immediately observable completion-notification evidence.
 
 If the synthetic account contains multiple eligible grants or automations, pass `--grant-id` and/or `--automation-id` explicitly during prepare.
 
