@@ -43,3 +43,11 @@ def test_clean_https_origin_rejects_non_origin_values():
     ):
         with pytest.raises(probe.ManagedRecoveryProbeFailure):
             probe.clean_https_origin(value)
+
+
+def test_parse_time_requires_timezone():
+    with pytest.raises(probe.ManagedRecoveryProbeFailure, match="timezone"):
+        probe.parse_time("2026-10-01T12:00:00", "value")
+    assert probe.parse_time(
+        "2026-10-01T12:00:00+00:00", "value"
+    ) == datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
