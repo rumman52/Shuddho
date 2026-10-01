@@ -23,7 +23,6 @@ def test_scenario_contracts_are_explicit_and_bounded():
     }
     assert probe.SCENARIOS["deadline_coworker"]["profile"] == "deadline"
     assert probe.SCENARIOS["goal_driven_proactivity"]["profile"] == "proactive"
-    assert probe.SCENARIOS["scheduled_reminder"]["profile"] == "goal"
 
 
 def test_clean_origin_rejects_non_https_or_path():
@@ -35,3 +34,7 @@ def test_clean_origin_rejects_non_https_or_path():
     ):
         with pytest.raises(probe.ScheduledProfileProbeFailure):
             probe.clean_origin(value)
+
+
+def test_simple_reminder_is_not_misclassified_as_agent_backed_goal_run():
+    assert "scheduled_reminder" not in probe.SCENARIOS
