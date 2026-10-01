@@ -1850,6 +1850,8 @@ class AutomationRepository:
             and occurrence.automation_id == automation.id
             and occurrence.automation_revision == automation.revision
             and occurrence.state == "notified"
+            and occurrence.run_id is None
+            and notification.kind == "automation_reminder"
             and automation.owner_id == account.id
             and automation.run_profile == "reminder"
             and automation.state == "active"
