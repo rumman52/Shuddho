@@ -82,6 +82,24 @@ The script additionally requires its documented staging API/token/recipient envi
 
 Passing either command proves only the action approval/receipt checks implemented by that script. It does not prove Gmail/Outlook read-event dedupe, Meeting Coworker, Email Coworker or Browser Push.
 
+## Simple scheduled reminder qualification
+
+Use the dedicated reminder collector described in [PA-10 Simple Scheduled Reminder](PA10_SIMPLE_SCHEDULED_REMINDER.md).
+
+Prepare:
+
+```bash
+SHUDDHO_STAGING_ALLOW_SIMPLE_REMINDER=true \
+SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true \
+uv run --extra coworker python scripts/staging_pa10_simple_reminder.py prepare \
+  --automation-id "<dedicated reminder automation id>" \
+  --rollout "<reviewed rollout>" \
+  --provider-policy-plan "<reviewed provider-policy plan>" \
+  --state /tmp/pa10-reminder-state.json
+```
+
+Allow exactly one normal Temporal due occurrence, with the app/browser closed when qualifying that case, then run `verify`. A pass requires one new `notified` occurrence, exactly one delivered `automation_reminder` notice and zero new Agent runs. Repeat fresh exercises for pause/resume/cancel, goal revocation, revision changes, quiet hours and restart/replay.
+
 ## Browser Push qualification probe
 
 The Browser Push staging collector binds a real owner-scoped delivery receipt to the exact deployed release while keeping provider acceptance distinct from actual device display.
