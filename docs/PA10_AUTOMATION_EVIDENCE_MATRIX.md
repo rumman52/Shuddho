@@ -4,31 +4,31 @@ This matrix separates implementation, repository verification, live-provider ver
 
 ## Repository freeze verification — 1 October 2026
 
-Cumulative Automation / Proactive Coworker repository implementation is **REPOSITORY VERIFIED** on merged `main` revision `d551ffb33539f566e062a31ad08b1d43f09197a7`. GitHub Actions CI #1051 (run `36830340943`) completed successfully with both required jobs, `test-and-build` and heavyweight `coworker`, passing. This merge introduced no file diff relative to `d132e5c0a3ab657ad304aedb388dd1d76fb8bf7a`; that same cumulative code tree had already passed merged-main CI #1049. No relevant open Automation PR or unresolved review thread remains.
+Cumulative Automation / Proactive Coworker repository implementation and staging tooling are **REPOSITORY VERIFIED** on current merged `main` revision `55a6980d0c3906e199b9552d7f1fa4c77a2623ae` (PR #279 checkpoint merge). Merged-main CI #1071 / run `36850391865` completed successfully with both required jobs, `test-and-build` and heavyweight `coworker`, passing. The implementation-producing proactive provider/read-event probe from PR #278 was already verified by exact-head CI #1068 and merged-main CI #1069.
 
-This is repository evidence only. Google, Microsoft, Browser Push, managed recovery, human multilingual proactive quality, real task economics, staging, production qualification and activation remain independently unverified until controlled evidence exists.
+PR #279 is documentation/checkpoint evidence; it does not convert repository verification into live staging evidence. Google, Microsoft, Browser Push, managed recovery, human multilingual proactive quality, real task economics, staging, production qualification and activation remain independently unverified until controlled evidence exists.
 
 ## Repository scope
 
 | Capability | Repository state | Live / staging state | Evidence / remaining gate |
 | --- | --- | --- | --- |
-| Durable scheduling | **REPOSITORY VERIFIED** on cumulative main CI #1051 | NOT VERIFIED in controlled staging for this expanded PA-10 scope | PA-02 Temporal schedule/reconciliation, occurrence ledger and recovery tests |
-| Occurrence dedupe | **REPOSITORY VERIFIED** on cumulative main CI #1051 | NOT VERIFIED in controlled staging | canonical UTC occurrence keys; event IDs; meeting snapshot/start identity; deadline urgency identity |
-| Pause / resume / cancel | **REPOSITORY VERIFIED** on cumulative main CI #1051 | NOT VERIFIED in controlled staging | revisioned automation state + reconciliation |
-| Connected events | **REPOSITORY VERIFIED** on cumulative main CI #1051 | LIVE NOT VERIFIED | authenticated provider intake, stable event ID, owner/grant/subscription checks |
-| Notification outbox | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING NOT VERIFIED | shared `NotificationRepository`, `cw_notifications`, `cw_notification_outbox` |
-| Deterministic suggestions | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING NOT VERIFIED for expanded program | PA-10 suggestion contracts |
+| Durable scheduling | **REPOSITORY VERIFIED** on current merged main CI #1071 | NOT VERIFIED in controlled staging for this expanded PA-10 scope | PA-02 Temporal schedule/reconciliation, occurrence ledger and recovery tests |
+| Occurrence dedupe | **REPOSITORY VERIFIED** on current merged main CI #1071 | NOT VERIFIED in controlled staging | canonical UTC occurrence keys; event IDs; meeting snapshot/start identity; deadline urgency identity |
+| Pause / resume / cancel | **REPOSITORY VERIFIED** on current merged main CI #1071 | NOT VERIFIED in controlled staging | revisioned automation state + reconciliation |
+| Connected events | **REPOSITORY VERIFIED** on current merged main CI #1071 | LIVE NOT VERIFIED | authenticated provider intake, stable event ID, owner/grant/subscription checks |
+| Notification outbox | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING NOT VERIFIED | shared `NotificationRepository`, `cw_notifications`, `cw_notification_outbox` |
+| Deterministic suggestions | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING NOT VERIFIED for expanded program | PA-10 suggestion contracts |
 | Model relevance | **REPOSITORY VERIFIED**; separately gated | LIVE/STAGING NOT VERIFIED | exact-set relevance path; no execution authority |
 | Browser Push | **REPOSITORY VERIFIED**; live/staging delivery still separate | LIVE/STAGING NOT VERIFIED | real browser permission, push egress, endpoint retirement and multi-device tests required |
-| Daily Coworker | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING NOT VERIFIED | timezone/DST/restart/quiet-hours controlled staging required |
-| Weekly Coworker | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING NOT VERIFIED | progress/deadline/meeting/follow-up controlled staging required |
-| Meeting Coworker | **REPOSITORY VERIFIED** on cumulative main CI #1051 | LIVE/STAGING NOT VERIFIED | real Google/Microsoft calendar reschedule/cancel/recurrence/revocation required |
-| Email Coworker | **REPOSITORY VERIFIED** on cumulative main CI #1051 | LIVE/STAGING NOT VERIFIED | real Gmail/Outlook duplicate/out-of-order/delayed/revoke/token/deleted-message tests required |
-| Deadline Coworker | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING NOT VERIFIED | threshold timing, edited deadline, overdue and restart staging required |
-| Goal-driven proactivity | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING NOT VERIFIED | real finite no-action/useful-action quality + cost runs required |
-| Automation controls | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING UX NOT VERIFIED | edit/reconciliation/recent-activity usability required |
-| Permission revalidation | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING NOT VERIFIED | real revocation race exercises required |
-| Context revocation | **REPOSITORY VERIFIED** on cumulative main CI #1051 | STAGING NOT VERIFIED | real connector/document deletion during waits required |
+| Daily Coworker | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING NOT VERIFIED | timezone/DST/restart/quiet-hours controlled staging required |
+| Weekly Coworker | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING NOT VERIFIED | progress/deadline/meeting/follow-up controlled staging required |
+| Meeting Coworker | **REPOSITORY VERIFIED** on current merged main CI #1071 | LIVE/STAGING NOT VERIFIED | real Google/Microsoft calendar reschedule/cancel/recurrence/revocation required |
+| Email Coworker | **REPOSITORY VERIFIED** on current merged main CI #1071 | LIVE/STAGING NOT VERIFIED | real Gmail/Outlook duplicate/out-of-order/delayed/revoke/token/deleted-message tests required |
+| Deadline Coworker | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING NOT VERIFIED | threshold timing, edited deadline, overdue and restart staging required |
+| Goal-driven proactivity | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING NOT VERIFIED | real finite no-action/useful-action quality + cost runs required |
+| Automation controls | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING UX NOT VERIFIED | edit/reconciliation/recent-activity usability required |
+| Permission revalidation | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING NOT VERIFIED | real revocation race exercises required |
+| Context revocation | **REPOSITORY VERIFIED** on current merged main CI #1071 | STAGING NOT VERIFIED | real connector/document deletion during waits required |
 | Restart recovery | **REPOSITORY VERIFIED** in repository/Temporal tests | STAGING NOT VERIFIED | real worker/API/Temporal replacement drill required |
 | Provider qualification | Connector implementations **REPOSITORY VERIFIED**; live providers remain separate | **NOT VERIFIED** | controlled Google + Microsoft credentials/environment required |
 | Observability | Repository trace/usage/notification paths **REPOSITORY VERIFIED**; staging trace review remains | STAGING review required | confirm traces contain IDs/usage/failure class without secrets |
@@ -59,7 +59,7 @@ The automation staging gate must not be signed until all applicable scenarios ha
 
 A dedicated staging-only evidence collector is merged through PR #278 in `scripts/staging_proactive_read_event.py` with focused regression coverage in `tests/test_staging_proactive_read_event.py`. It is fail-closed behind explicit controlled-staging and synthetic-account guards, binds evidence to the deployed runtime revision, reviewed rollout hash/release ID, reviewed provider-policy hash and deployment reference, reads only owner-scoped Shuddho staging APIs, exposes owner-scoped persisted trigger identity for evidence, verifies that the Agent run actually used a provider snapshot changed by the exercise, and never injects provider callbacks or accepts provider credentials.
 
-Tooling repository verification is **COMPLETE**: PR #278 exact-head CI #1068 passed both `test-and-build` and heavyweight `coworker`, and merged-main CI #1069 passed both required jobs on `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`. This is still not live provider evidence. Google, Microsoft, Meeting/Email proactive flows and all other staging rows remain **NOT VERIFIED** until the probe is executed around actual approved synthetic provider changes in controlled staging.
+Tooling repository verification is **COMPLETE**: PR #278 exact-head CI #1068 passed both `test-and-build` and heavyweight `coworker`, merged-main CI #1069 passed both required jobs on `8c5c0a3e22cfe4224a9f7a810082f2e032ec34f9`, and the subsequent PR #279 checkpoint merge is verified by current-main CI #1071 / run `36850391865`, with both required jobs passing on `55a6980d0c3906e199b9552d7f1fa4c77a2623ae`. This is still not live provider evidence. Google, Microsoft, Meeting/Email proactive flows and all other staging rows remain **NOT VERIFIED** until the probe is executed around actual approved synthetic provider changes in controlled staging.
 
 ## External blockers
 
