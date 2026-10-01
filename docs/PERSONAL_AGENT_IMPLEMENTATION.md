@@ -45,32 +45,32 @@ The [bounded inbox digest contract](PA10_NOTIFICATION_DIGESTS.md) adds only opti
 
 ## Current continuation checkpoint
 
-Updated at UTC: 2026-09-30T21:21:50Z  
-Updated at Asia/Dhaka: 2026-10-01T03:21:50+06:00  
-Task: PA-10 Automation / Proactive Personal AI Coworker full completion continuation.  
-Outcome: Email Coworker repository slice passed exact-head CI and merged; Deadline Coworker, goal-driven proactivity, automation controls and final evidence/release-contract updates are implemented on a linear recoverable PR stack. Live/staging qualification remains separate and is not claimed.  
-Stage: repository implementation advanced / merge-and-verification stack active / controlled staging blocked on real approved infrastructure and credentials.  
-Main SHA: `aa72535dd55d679fea878ccecce5aeb033f8f46f` (merge of PR #269 Email Coworker).  
+Updated at UTC: 2026-10-01T07:43:03Z  
+Updated at Asia/Dhaka: 2026-10-01T13:43:03+06:00  
+Task: PA-10 Automation / Proactive Personal AI Coworker repository completion and staging handoff.  
+Outcome: Cumulative Automation / Proactive Coworker repository implementation is complete and repository-verified. Latest merged `main` revision `d551ffb33539f566e062a31ad08b1d43f09197a7` passed CI #1051 / run `36830340943` with both required jobs (`test-and-build` and heavyweight `coworker`) successful. No live/staging/production qualification is claimed.  
+Stage: **REPOSITORY IMPLEMENTATION COMPLETE / CONTROLLED STAGING QUALIFICATION REMAINS**.  
+Main SHA: `d551ffb33539f566e062a31ad08b1d43f09197a7` (merge of PR #275).  
 Base: `main`.  
-Branch: `pa10-automation-acceptance` stacked after `pa10-automation-controls` -> `pa10-goal-driven-proactivity` -> `pa10-deadline-coworker`.  
-Implementation SHA: pre-checkpoint acceptance head `e8891a455ef8a277f268c75472aee23c6c649fa0`.  
-PR: #270 Deadline Coworker; #271 goal-driven proactivity; #272 automation controls. Final acceptance/release-contract branch not yet opened as a PR at this checkpoint.  
-Merge state: PR #269 Email Coworker MERGED. PRs #270-#272 OPEN. #270 is retargeted to main; #271/#272 remain intentionally stacked until their parent slices merge.  
-Last completed action: expanded the `automations` release staging gate to require Daily/Weekly, Meeting, Email, Deadline, goal-driven proactivity, controls, exact connected snapshot scope, recovery, revocation and prompt-injection evidence; added `docs/PA10_AUTOMATION_EVIDENCE_MATRIX.md` with strict repository/live/staging/production state separation.  
-Unfinished work: finish the active CI/merge chain in order; retarget each child PR to main after its parent merges; run exact-head CI and merged-main CI for every final revision; then land the final acceptance/checkpoint branch. Real Google/Microsoft/Browser Push/staging recovery evidence cannot be collected in this execution environment without approved credentials/infrastructure.  
-Tests: Email PR #269 exact-head CI #1029 passed both `test-and-build` and `coworker`. Email merged-main CI #1031 currently has `test-and-build` PASS and `coworker` IN PROGRESS. Corrected Deadline PR #270 CI #1032 has `test-and-build` PASS and `coworker` IN PROGRESS. Controls stacked CI #1033 has `test-and-build` PASS and `coworker` IN PROGRESS; this head includes the goal-driven implementation and its tests.  
-CI: #1028 for the earlier Meeting-Coworker main revision was superseded/cancelled after its lightweight job passed. Do not use that cancelled run as merged-main verification. Current authoritative merged-main run is #1031 on `aa72535d...`.  
-Deployment: NOT VERIFIED. No production deployment or activation is claimed.  
-Live provider status: NOT VERIFIED for Gmail, Google Calendar, Outlook Mail, Microsoft Calendar and Browser Push in the expanded PA-10 scope.  
-Staging status: NOT VERIFIED. No controlled PA-10 live-provider workflow or credentials are available from this execution environment.  
+Branch: `pa10-automation-repository-freeze-20261001`.  
+Implementation SHA: `331b4de78a2575d1a9a38652bb2b1729a14cd2c9` after repository-evidence freeze update; this checkpoint update follows on the same branch.  
+PR: checkpoint/freeze PR to be opened from `pa10-automation-repository-freeze-20261001` to `main`.  
+Merge state: PRs #266–#275 are merged. There is no relevant open Automation implementation PR. #275 is a no-file-diff cumulative merge relative to `d132e5c0a3ab657ad304aedb388dd1d76fb8bf7a`, so CI #1051 revalidated the already-assembled Automation tree.  
+Last completed action: refreshed real GitHub state, confirmed latest `main`, inspected merged Automation PRs and open PRs, inspected the canonical checkpoint/evidence matrix, verified CI #1051 to completion, confirmed both required jobs passed, and froze repository-level PA-10 evidence as repository verified.  
+Unfinished work: controlled staging only — real Google/Gmail, Google Calendar, Microsoft Mail, Microsoft Calendar, Browser Push, Daily/Weekly/Meeting/Email/Deadline/goal-driven workflows, managed Temporal/process recovery, revocation/security exercises, proactive multilingual human quality evaluation and real proactive task economics.  
+Tests: CI #1051 `test-and-build` PASS; heavyweight `coworker` PASS. The heavyweight job passed PostgreSQL race/Temporal recovery tests, bounded-agent routing contracts, curated multilingual quality contracts, native Office rendering/recalculation, research export preview checks and isolated browser policy/workflow checks.  
+CI: latest merged-main CI #1051 / run `36830340943` = SUCCESS on `d551ffb33539f566e062a31ad08b1d43f09197a7`. Prior equivalent cumulative tree CI #1049 also passed both required jobs.  
+Deployment: NOT VERIFIED. No production deployment or activation was performed.  
+Live provider status: NOT VERIFIED for Gmail, Google Calendar, Outlook Mail, Microsoft Calendar and Browser Push.  
+Staging status: NOT VERIFIED. Controlled provider credentials/infrastructure are not available in this execution environment.  
 Production qualification: NOT VERIFIED.  
-Feature flags: unchanged/default-off unless separately qualified. Existing automations, Runtime-v3, planner, context retrieval, connected reads, Browser Push, browser, sandbox and transaction gates remain fail-closed. No production flag was enabled.  
-Blocker: external controlled-staging credentials/infrastructure are required for live provider, real push, managed Temporal restart and final human multilingual/economics evidence. Repository merge verification is still in progress and is not an external blocker.  
-Next action: when CI #1032 heavyweight `coworker` is green, merge PR #270, verify its merged-main CI, retarget #271 to main and require fresh exact-head CI before merge. Any concrete CI failure takes priority and must be repaired without weakening safety.  
-Next three actions: (1) complete #270 merge + merged-main verification; (2) retarget/verify/merge #271 then #272 in order; (3) open/verify/merge the final acceptance/checkpoint slice and record the resulting evidence matrix.  
-Do not redo: architecture design; Core Agent; PA-02 scheduler/occurrence/outbox foundations; PA-10 deterministic suggestions/digests/model relevance/Browser Push foundation; PR #266 connected-event automation; PR #267 Daily/Weekly Coworker; PR #268 Meeting Coworker; merged PR #269 Email Coworker.  
-Acceptance remaining: Deadline exact-head + merged-main; goal-driven exact-head + merged-main; controls exact-head + merged-main; final acceptance/checkpoint exact-head + merged-main; controlled live Google/Microsoft/Push qualification; Daily/Weekly/Meeting/Email/Deadline staging runs; real restart/recovery drill; permission/revocation/security staging; proactive multilingual human quality evidence; proactive task-economics evidence; final completion review.  
-Recovery location: `pa10-deadline-coworker` at `9941c60dbe5308f22a8a623fad7244d62e4d1c8a` / PR #270; `pa10-goal-driven-proactivity` / PR #271; `pa10-automation-controls` / PR #272; final acceptance branch `pa10-automation-acceptance` at pre-checkpoint `e8891a455ef8a277f268c75472aee23c6c649fa0`.
+Feature flags: unchanged/default-off unless separately qualified. Automations, Runtime-v3, planner, context retrieval, connected reads, Browser Push, browser, sandbox and transaction gates remain fail-closed.  
+Blocker: approved controlled-staging credentials/infrastructure and real provider/browser-push/managed-recovery environment. Repository implementation has no remaining confirmed P0/P1 blocker.  
+Next action: execute the Google/Gmail controlled-staging qualification from `docs/PA10_CONTROLLED_STAGING_RUNBOOK.md`, recording release SHA, environment, flags, provider/test identity, timestamps, result, evidence artifact and reviewer. If credentials are unavailable, record `STAGING NOT VERIFIED` and continue with any independent staging scenario whose infrastructure is available.  
+Next three actions: (1) Gmail/Google Calendar controlled qualification; (2) Microsoft Mail/Calendar qualification; (3) Browser Push and managed recovery qualification before Daily/Weekly/Meeting/Email/Deadline/goal-driven acceptance.  
+Do not redo: Architecture; Core Agent; PA-02 scheduler/outbox; PA-10 suggestions/digests/model relevance/Browser Push foundation; connected-event #266; Daily/Weekly #267; Meeting #268; Email #269/#274; Deadline #270; goal-driven #271; controls #272; acceptance contract #273; cumulative merge #275.  
+Acceptance remaining: all controlled-staging/live/provider/recovery/revocation/security/multilingual-quality/economics evidence required by `docs/PA10_AUTOMATION_EVIDENCE_MATRIX.md` and the final release-contract review.  
+Recovery location: `main` at `d551ffb33539f566e062a31ad08b1d43f09197a7`; checkpoint branch `pa10-automation-repository-freeze-20261001`; evidence freeze commit `331b4de78a2575d1a9a38652bb2b1729a14cd2c9`.
 
 **Historical continuation checkpoint (30 September 2026; superseded by PA-10 connected-event automation checkpoint).**
 
