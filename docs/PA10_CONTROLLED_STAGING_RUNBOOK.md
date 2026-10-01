@@ -2,6 +2,45 @@
 
 This runbook is for the remaining Automation / Proactive Coworker qualification after repository implementation is green. It does not turn repository tests into live evidence.
 
+## Release-bound PA-10 evidence bundle
+
+After collecting the required live PA-10 scenario artifacts, compile them into one fail-closed release-bound bundle before promoting the `automations` or `browser_push` staging records.
+
+Create a private scenario manifest with schema version `1`, one immutable release identity and exactly these scenario IDs:
+
+- `scheduled_reminder`
+- `daily_coworker`
+- `weekly_coworker`
+- `meeting_coworker`
+- `email_coworker`
+- `deadline_coworker`
+- `goal_driven_proactivity`
+- `managed_recovery`
+- `revocation`
+- `duplicate_event`
+- `approval_boundary`
+- `prompt_injection`
+- `browser_push`
+- `multilingual_human_review`
+- `task_economics`
+
+Every scenario must be `passed`, use the exact same non-production release identity, include at least one local evidence file with its SHA-256, and retain at least one durable external evidence reference. Email and Meeting must cover both Google and Microsoft. Browser Push additionally requires a real device-display confirmation reference. Multilingual review requires at least one human reviewer plus English and Bangla. Task economics requires measured completed useful proactive-task samples.
+
+Compile:
+
+```bash
+uv run python scripts/pa10_staging_evidence.py \
+  --manifest /secure/release/pa10-scenarios.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --provider-policy-plan /secure/release/provider-policy-plan.json \
+  --output /secure/release/pa10-controlled-staging-bundle.json
+```
+
+The compiler verifies the rollout/provider-policy hashes, exact release ID, deployed source revision, non-production environment, deployment reference, scenario completeness, timestamps and every evidence-file hash. JSON evidence that embeds a `release` object must match the same release identity. It fails closed on mixed releases, missing scenarios, missing provider coverage, missing human review, missing real-device confirmation or empty economics measurements.
+
+The output contains ready-to-review `automations` and `browser_push` staging records, but it does not edit `staging-evidence.json`, enable flags or create evidence. An operator may promote those records only after reviewing the bundle and its referenced artifacts.
+
+
 ## Prerequisites
 
 Use an approved non-production staging environment with:
