@@ -160,6 +160,64 @@ def compare_release(candidate: dict, expected: dict, label: str) -> None:
             )
 
 
+def validate_release_freeze(
+    freeze_path: Path,
+    expected_release: dict,
+) -> dict:
+    freeze = load_json(freeze_path, "PA-10 staging release freeze")
+    if freeze.get("schema_version") != 1:
+        raise Pa10EvidenceError(
+            "PA-10 staging release freeze has an unexpected schema_version."
+        )
+    if freeze.get("evidence_kind") != "pa10_staging_release_freeze":
+        raise Pa10EvidenceError(
+            "PA-10 staging release freeze has an unexpected evidence_kind."
+        )
+    if freeze.get("status") != "frozen":
+        raise Pa10EvidenceError(
+            "PA-10 staging release freeze is not frozen."
+        )
+    release = freeze.get("release")
+    if not isinstance(release, dict):
+        raise Pa10EvidenceError(
+            "PA-10 staging release freeze release identity is required."
+        )
+    compare_release(
+        release,
+        expected_release,
+        "PA-10 staging release freeze",
+    )
+    build_reference = release.get("build_reference")
+    if not isinstance(build_reference, str) or not build_reference.strip():
+        raise Pa10EvidenceError(
+            "PA-10 staging release freeze build_reference is required."
+        )
+    if not valid_hash(freeze.get("runtime_manifest_sha256")):
+        raise Pa10EvidenceError(
+            "PA-10 staging release freeze runtime_manifest_sha256 is invalid."
+        )
+    prepared_at = parse_timestamp(
+        freeze.get("prepared_at"),
+        "PA-10 staging release freeze prepared_at",
+    )
+    verified_at = parse_timestamp(
+        freeze.get("verified_at"),
+        "PA-10 staging release freeze verified_at",
+    )
+    if verified_at < prepared_at:
+        raise Pa10EvidenceError(
+            "PA-10 staging release freeze verified_at precedes prepared_at."
+        )
+    return {
+        "path": str(freeze_path),
+        "sha256": sha256_file(freeze_path),
+        "runtime_manifest_sha256": freeze["runtime_manifest_sha256"],
+        "build_reference": build_reference.strip(),
+        "prepared_at": prepared_at.isoformat(),
+        "verified_at": verified_at.isoformat(),
+    }
+
+
 def verify_evidence_file(item: dict, expected_release: dict, label: str) -> dict:
     path_value = item.get("path")
     expected_hash = item.get("sha256")
@@ -314,6 +372,7 @@ def compile_bundle(
     manifest_path: Path,
     rollout_path: Path,
     provider_policy_path: Path,
+    release_freeze_path: Path,
 ) -> dict:
     manifest = load_json(manifest_path, "PA-10 scenario manifest")
     if manifest.get("schema_version") != SCHEMA_VERSION:
@@ -324,6 +383,7 @@ def compile_bundle(
         rollout_path=rollout_path,
         provider_policy_path=provider_policy_path,
     )
+    freeze = validate_release_freeze(release_freeze_path, release)
     scenarios = manifest.get("scenarios")
     if not isinstance(scenarios, list):
         raise Pa10EvidenceError("PA-10 scenario manifest scenarios must be a list.")
@@ -361,6 +421,7 @@ def compile_bundle(
         "release": release,
         "verified_at": latest.isoformat(),
         "scenario_count": len(ordered),
+        "release_freeze": freeze,
         "scenarios": ordered,
         "staging_records": {
             "automations": {
@@ -394,6 +455,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--provider-policy-plan", type=Path, required=True)
+    parser.add_argument("--release-freeze", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -405,6 +467,7 @@ def main() -> None:
             manifest_path=args.manifest,
             rollout_path=args.rollout,
             provider_policy_path=args.provider_policy_plan,
+            release_freeze_path=args.release_freeze,
         )
     except Pa10EvidenceError as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))

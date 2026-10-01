@@ -47,6 +47,9 @@ cohort controls before any PA-10 scenario is accepted.
 This is repository tooling only. The staging release is **NOT FROZEN** until the
 prepare artifact is created for an approved candidate, that exact candidate is
 deployed, and verify succeeds against the real authenticated staging runtime.
+The final PA-10 evidence compiler now requires that frozen artifact explicitly
+and records its SHA-256, build reference and runtime-manifest hash, so Step 1
+cannot be bypassed during bundle compilation.
 
 ## Required controlled-staging scenarios
 
