@@ -34,6 +34,24 @@ The script uses synthetic probe content only and verifies:
 
 Only after every check passes is the `identity` staging evidence promoted to `passed`.
 
+
+## PA-10 personal-agent owner isolation
+
+When the reviewed staging release intentionally enables personal goals, automations and memory, add `--personal-agent`:
+
+```bash
+uv run --extra coworker python scripts/staging_api_exercise.py \
+  --base-evidence /secure/path/staging-evidence.next.json \
+  --output /secure/path/staging-evidence.pa10-owner.json \
+  --personal-agent
+```
+
+This creates only synthetic, owner-scoped Shuddho state for account A and verifies that account B cannot read, enumerate, edit, cancel or delete account A's goal, automation, automation history or memory. The exercise then cancels/deletes the synthetic state through account A.
+
+This mode deliberately creates **no Agent run, model call, connector read, provider write or approval**. Those higher-authority surfaces remain separate qualification scenarios and are not inferred from this result.
+
+The output records a separate `personal_agent_owner_isolation` evidence item. A failure is a staging stop condition; do not promote it by editing evidence manually.
+
 ## Full artifact authorization exercise
 
 Add `--artifact` when a staging worker and live model are intentionally available:

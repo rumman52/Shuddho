@@ -108,6 +108,229 @@ def owner_isolation(client: httpx.Client, token_a: str, token_b: str) -> dict:
     return passed("two distinct managed identities passed workspace, document, task, event, cancel and cleanup owner-isolation checks")
 
 
+
+def personal_agent_owner_isolation(
+    client: httpx.Client,
+    token_a: str,
+    token_b: str,
+) -> dict:
+    """Exercise PA-10 owner boundaries without invoking a model or provider write."""
+    marker = uuid.uuid4().hex
+    alice = auth(token_a)
+    bob = auth(token_b)
+
+    goal_response = expect(
+        client.post(
+            "/api/v1/goals",
+            headers=alice | {"Idempotency-Key": "staging-owner-goal-" + marker},
+            json={
+                "objective": "Validate PA-10 owner isolation with synthetic staging data.",
+                "success_criteria": ["Keep every created resource owner scoped."],
+                "constraints": ["Do not perform external actions."],
+                "deadline_at": None,
+                "timezone": "UTC",
+                "state": "active",
+                "milestones": [],
+                "budget": {"max_runs": 1, "max_planner_tokens": 1000},
+                "authorized_resources": [],
+                "next_review_at": None,
+            },
+        ),
+        201,
+        "create owner-isolation goal",
+    )
+    goal = json_object(goal_response, "create owner-isolation goal")
+    goal_id = str(goal.get("id") or "")
+    goal_revision = int(goal.get("revision") or 0)
+    if not goal_id or goal_revision < 1:
+        raise ExerciseFailure("Owner-isolation goal did not return a usable id/revision.")
+
+    expect(
+        client.get(f"/api/v1/goals/{goal_id}", headers=bob),
+        404,
+        "cross-account goal read",
+    )
+    expect(
+        client.patch(
+            f"/api/v1/goals/{goal_id}",
+            headers=bob,
+            json={"expected_revision": goal_revision, "objective": "cross-owner write"},
+        ),
+        404,
+        "cross-account goal edit",
+    )
+
+    memory_response = expect(
+        client.post(
+            "/api/v1/memory",
+            headers=alice,
+            json={
+                "namespace": "preferences",
+                "key": "staging.owner_isolation." + marker,
+                "value": "Synthetic staging owner-isolation fact.",
+                "language": "en",
+            },
+        ),
+        201,
+        "create owner-isolation memory",
+    )
+    memory = json_object(memory_response, "create owner-isolation memory")
+    memory_id = str(memory.get("id") or "")
+    if not memory_id:
+        raise ExerciseFailure("Owner-isolation memory did not return an id.")
+
+    bob_memory = json_object(
+        expect(client.get("/api/v1/memory", headers=bob), 200, "account B memory"),
+        "account B memory",
+    )
+    if any(str(item.get("id")) == memory_id for item in bob_memory.get("facts", [])):
+        raise ExerciseFailure("Account B could enumerate account A's memory.")
+    expect(
+        client.put(
+            f"/api/v1/memory/{memory_id}",
+            headers=bob,
+            json={"value": "cross-owner write", "language": "en"},
+        ),
+        404,
+        "cross-account memory edit",
+    )
+    expect(
+        client.delete(f"/api/v1/memory/{memory_id}", headers=bob),
+        404,
+        "cross-account memory delete",
+    )
+
+    automation_response = expect(
+        client.post(
+            "/api/v1/automations",
+            headers=alice | {"Idempotency-Key": "staging-owner-automation-" + marker},
+            json={
+                "goal_id": goal_id,
+                "goal_revision": goal_revision,
+                "timezone": "UTC",
+                "schedule": {
+                    "kind": "daily",
+                    "hour": 23,
+                    "minute": 59,
+                    "weekdays": [],
+                },
+                "output_language": "en",
+                "overlap_policy": "skip",
+                "catchup_window_seconds": 60,
+                "quiet_hours": None,
+                "expires_at": None,
+            },
+        ),
+        201,
+        "create owner-isolation automation",
+    )
+    automation = json_object(
+        automation_response,
+        "create owner-isolation automation",
+    )
+    automation_id = str(automation.get("id") or "")
+    automation_revision = int(automation.get("revision") or 0)
+    if not automation_id or automation_revision < 1:
+        raise ExerciseFailure(
+            "Owner-isolation automation did not return a usable id/revision."
+        )
+
+    expect(
+        client.get(f"/api/v1/automations/{automation_id}", headers=bob),
+        404,
+        "cross-account automation read",
+    )
+    expect(
+        client.get(
+            f"/api/v1/automations/{automation_id}/history",
+            headers=bob,
+        ),
+        404,
+        "cross-account automation history",
+    )
+    expect(
+        client.patch(
+            f"/api/v1/automations/{automation_id}",
+            headers=bob,
+            json={
+                "expected_revision": automation_revision,
+                "catchup_window_seconds": 120,
+            },
+        ),
+        404,
+        "cross-account automation edit",
+    )
+    expect(
+        client.post(
+            f"/api/v1/automations/{automation_id}/cancel",
+            headers=bob,
+            json={"expected_revision": automation_revision},
+        ),
+        404,
+        "cross-account automation cancel",
+    )
+
+    automations_b = json_object(
+        expect(
+            client.get("/api/v1/automations", headers=bob),
+            200,
+            "account B automations",
+        ),
+        "account B automations",
+    )
+    if any(
+        str(item.get("id")) == automation_id
+        for item in automations_b.get("automations", [])
+    ):
+        raise ExerciseFailure("Account B could enumerate account A's automation.")
+
+    cancelled_automation = json_object(
+        expect(
+            client.post(
+                f"/api/v1/automations/{automation_id}/cancel",
+                headers=alice,
+                json={"expected_revision": automation_revision},
+            ),
+            200,
+            "owned automation cleanup",
+        ),
+        "owned automation cleanup",
+    )
+    if cancelled_automation.get("state") != "cancelled":
+        raise ExerciseFailure("Owned automation cleanup did not cancel the automation.")
+
+    deleted_memory = json_object(
+        expect(
+            client.delete(f"/api/v1/memory/{memory_id}", headers=alice),
+            200,
+            "owned memory cleanup",
+        ),
+        "owned memory cleanup",
+    )
+    if deleted_memory.get("deleted") is not True:
+        raise ExerciseFailure("Owned memory cleanup did not confirm deletion.")
+
+    cancelled_goal = json_object(
+        expect(
+            client.post(
+                f"/api/v1/goals/{goal_id}/cancel",
+                headers=alice,
+                json={"expected_revision": goal_revision},
+            ),
+            200,
+            "owned goal cleanup",
+        ),
+        "owned goal cleanup",
+    )
+    if cancelled_goal.get("state") != "cancelled":
+        raise ExerciseFailure("Owned goal cleanup did not cancel the goal.")
+
+    return passed(
+        "two distinct managed identities passed PA-10 goal, automation, history, "
+        "memory enumeration/write/delete and owner-cleanup isolation checks; no "
+        "Agent run, model call, provider read or provider write was created"
+    )
+
 def artifact_authorization(client: httpx.Client, token_a: str, token_b: str, timeout_seconds: int) -> dict:
     marker = uuid.uuid4().hex
     task = json_object(expect(client.post(
@@ -174,6 +397,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--base-evidence", type=Path)
     parser.add_argument("--artifact", action="store_true", help="Run one live synthetic Coworker task and validate artifact authorization/download.")
+    parser.add_argument("--personal-agent", action="store_true", help="Exercise PA-10 goal, automation, history and memory owner isolation without starting an Agent run.")
     parser.add_argument("--artifact-timeout", type=int, default=180)
     args = parser.parse_args()
 
@@ -194,6 +418,10 @@ def main() -> None:
     try:
         with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False) as client:
             updates["identity"] = owner_isolation(client, token_a, token_b)
+            if args.personal_agent:
+                updates["personal_agent_owner_isolation"] = personal_agent_owner_isolation(
+                    client, token_a, token_b
+                )
             if args.artifact:
                 updates["storage"] = artifact_authorization(client, token_a, token_b, max(30, args.artifact_timeout))
     except (httpx.HTTPError, ExerciseFailure) as error:
