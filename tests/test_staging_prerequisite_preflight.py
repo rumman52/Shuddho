@@ -83,8 +83,22 @@ def test_validate_requires_exact_staging_queue_bucket_and_tls():
         preflight.validate(env)
 
 
-def test_validate_rejects_non_origin_storage_endpoint():
+def test_validate_accepts_reviewed_s3_endpoint_path_and_rejects_unsafe_parts():
     env = valid_env()
-    env["SHUDDHO_COWORKER_S3_ENDPOINT"] = "https://storage.example.test/path"
+    env["SHUDDHO_COWORKER_S3_ENDPOINT"] = "https://storage.example.test/storage/v1/s3"
+    assert preflight.validate(env)["status"] == "passed"
+
+    env = valid_env()
+    env["SHUDDHO_COWORKER_S3_ENDPOINT"] = "http://storage.example.test/storage/v1/s3"
+    with pytest.raises(preflight.PreflightFailure, match="SHUDDHO_COWORKER_S3_ENDPOINT"):
+        preflight.validate(env)
+
+    env = valid_env()
+    env["SHUDDHO_COWORKER_S3_ENDPOINT"] = "https://user:pass@storage.example.test/storage/v1/s3"
+    with pytest.raises(preflight.PreflightFailure, match="SHUDDHO_COWORKER_S3_ENDPOINT"):
+        preflight.validate(env)
+
+    env = valid_env()
+    env["SHUDDHO_COWORKER_S3_ENDPOINT"] = "https://storage.example.test/storage/v1/s3?token=x"
     with pytest.raises(preflight.PreflightFailure, match="SHUDDHO_COWORKER_S3_ENDPOINT"):
         preflight.validate(env)
