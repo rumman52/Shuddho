@@ -80,3 +80,68 @@ def test_live_model_probe_requires_full_eval_pass(monkeypatch):
     result = asyncio.run(probe.probe_model(settings, Path("cases.jsonl")))
     assert result["status"] == "failed"
     assert "pass_rate=0.5" in result["evidence"]
+
+
+def test_temporal_probe_requires_workflow_and_activity_pollers(monkeypatch):
+    settings = SimpleNamespace(
+        temporal_address="example:7233",
+        temporal_namespace="staging",
+        temporal_api_key="secret",
+        temporal_tls=True,
+        task_queue="shuddho-documents-v1",
+    )
+
+    class WorkflowService:
+        def __init__(self, counts):
+            self.counts = iter(counts)
+
+        async def describe_task_queue(self, _request, timeout=None):
+            assert timeout is not None
+            return SimpleNamespace(pollers=[object()] * next(self.counts))
+
+    class FakeClient:
+        def __init__(self, counts):
+            self.workflow_service = WorkflowService(counts)
+
+    async def connect(*_args, **_kwargs):
+        return FakeClient([1, 0])
+
+    monkeypatch.setattr(probe.Client, "connect", connect)
+    result = asyncio.run(probe.probe_temporal(settings))
+    assert result["status"] == "failed"
+    assert "activity" in result["evidence"]
+    assert "workflow_pollers=1" in result["evidence"]
+    assert "activity_pollers=0" in result["evidence"]
+
+
+def test_temporal_probe_records_live_worker_pollers_as_partial(monkeypatch):
+    settings = SimpleNamespace(
+        temporal_address="example:7233",
+        temporal_namespace="staging",
+        temporal_api_key="secret",
+        temporal_tls=True,
+        task_queue="shuddho-documents-v1",
+    )
+
+    class WorkflowService:
+        def __init__(self):
+            self.counts = iter([2, 3])
+
+        async def describe_task_queue(self, request, timeout=None):
+            assert request.namespace == "staging"
+            assert request.task_queue.name == "shuddho-documents-v1"
+            assert timeout is not None
+            return SimpleNamespace(pollers=[object()] * next(self.counts))
+
+    class FakeClient:
+        workflow_service = WorkflowService()
+
+    async def connect(*_args, **_kwargs):
+        return FakeClient()
+
+    monkeypatch.setattr(probe.Client, "connect", connect)
+    result = asyncio.run(probe.probe_temporal(settings))
+    assert result["status"] == "partial"
+    assert "workflow_pollers=2" in result["evidence"]
+    assert "activity_pollers=3" in result["evidence"]
+    assert "restart/replay" in result["evidence"]
