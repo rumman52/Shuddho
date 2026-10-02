@@ -56,6 +56,52 @@ def json_object(response: httpx.Response, label: str) -> dict:
     return value
 
 
+REMAINING_OWNER_RESOURCE_KEYS = {
+    "agent_run_id",
+    "notification_id",
+    "action_id",
+    "artifact_id",
+    "connector_read_grant_id",
+    "connector_snapshot_id",
+}
+
+
+def owned_resource_manifest(path: Path) -> dict[str, str]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ExerciseFailure(
+            f"Could not read owned-resource manifest: {type(error).__name__}."
+        ) from None
+    if not isinstance(value, dict):
+        raise ExerciseFailure("Owned-resource manifest must contain a JSON object.")
+    keys = set(value)
+    missing = sorted(REMAINING_OWNER_RESOURCE_KEYS - keys)
+    unexpected = sorted(keys - REMAINING_OWNER_RESOURCE_KEYS)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append("missing=" + ",".join(missing))
+        if unexpected:
+            details.append("unexpected=" + ",".join(unexpected))
+        raise ExerciseFailure(
+            "Owned-resource manifest must contain only the required non-secret resource IDs ("
+            + "; ".join(details)
+            + ")."
+        )
+    result = {}
+    for key in sorted(REMAINING_OWNER_RESOURCE_KEYS):
+        raw = value.get(key)
+        if not isinstance(raw, str) or not raw.strip():
+            raise ExerciseFailure(f"{key} must be a non-empty UUID string.")
+        try:
+            parsed = uuid.UUID(raw.strip())
+        except ValueError:
+            raise ExerciseFailure(f"{key} must be a valid UUID.") from None
+        result[key] = str(parsed)
+    return result
+
+
 def owner_isolation(client: httpx.Client, token_a: str, token_b: str) -> dict:
     me_a = json_object(expect(client.get("/api/v1/me", headers=auth(token_a)), 200, "account A /me"), "account A /me")
     me_b = json_object(expect(client.get("/api/v1/me", headers=auth(token_b)), 200, "account B /me"), "account B /me")
@@ -331,6 +377,236 @@ def personal_agent_owner_isolation(
         "Agent run, model call, provider read or provider write was created"
     )
 
+def remaining_owner_isolation(
+    client: httpx.Client,
+    token_a: str,
+    token_b: str,
+    resources: dict[str, str],
+) -> dict:
+    """Verify already-created PA-10 resources remain invisible and immutable cross-owner."""
+    alice = auth(token_a)
+    bob = auth(token_b)
+
+    run_id = resources["agent_run_id"]
+    run = json_object(
+        expect(
+            client.get(f"/api/v1/agent-runs/{run_id}", headers=alice),
+            200,
+            "owned Agent run",
+        ),
+        "owned Agent run",
+    )
+    if str(run.get("id") or "") != run_id:
+        raise ExerciseFailure("Owned Agent run response did not match the requested id.")
+    bob_runs = json_object(
+        expect(client.get("/api/v1/agent-runs", headers=bob), 200, "account B Agent runs"),
+        "account B Agent runs",
+    )
+    if any(str(item.get("id")) == run_id for item in bob_runs.get("runs", [])):
+        raise ExerciseFailure("Account B could enumerate account A's Agent run.")
+    expect(
+        client.get(f"/api/v1/agent-runs/{run_id}", headers=bob),
+        404,
+        "cross-account Agent run read",
+    )
+    expect(
+        client.get(f"/api/v1/agent-runs/{run_id}/events", headers=bob),
+        404,
+        "cross-account Agent run events",
+    )
+    expect(
+        client.post(f"/api/v1/agent-runs/{run_id}/cancel", headers=bob),
+        404,
+        "cross-account Agent run cancel",
+    )
+
+    notification_id = resources["notification_id"]
+    alice_notifications = json_object(
+        expect(client.get("/api/v1/notifications", headers=alice), 200, "account A notifications"),
+        "account A notifications",
+    )
+    if alice_notifications.get("enabled") is not True:
+        raise ExerciseFailure("Notifications are not enabled for the owned-resource exercise.")
+    if not any(
+        str(item.get("id")) == notification_id
+        for item in alice_notifications.get("notifications", [])
+    ):
+        raise ExerciseFailure("Account A notification was not present in its owned inbox.")
+    bob_notifications = json_object(
+        expect(client.get("/api/v1/notifications", headers=bob), 200, "account B notifications"),
+        "account B notifications",
+    )
+    if any(
+        str(item.get("id")) == notification_id
+        for item in bob_notifications.get("notifications", [])
+    ):
+        raise ExerciseFailure("Account B could enumerate account A's notification.")
+    expect(
+        client.post(f"/api/v1/notifications/{notification_id}/read", headers=bob),
+        404,
+        "cross-account notification read receipt",
+    )
+
+    action_id = resources["action_id"]
+    action = json_object(
+        expect(client.get(f"/api/v1/actions/{action_id}", headers=alice), 200, "owned action"),
+        "owned action",
+    )
+    if str(action.get("id") or "") != action_id:
+        raise ExerciseFailure("Owned action response did not match the requested id.")
+    preview_hash = action.get("preview_hash")
+    if not isinstance(preview_hash, str) or not preview_hash:
+        raise ExerciseFailure("Owned action does not expose an immutable preview_hash.")
+    before_action_state = action.get("state")
+    bob_actions = json_object(
+        expect(client.get("/api/v1/actions", headers=bob), 200, "account B actions"),
+        "account B actions",
+    )
+    if any(str(item.get("id")) == action_id for item in bob_actions.get("actions", [])):
+        raise ExerciseFailure("Account B could enumerate account A's action.")
+    expect(
+        client.get(f"/api/v1/actions/{action_id}", headers=bob),
+        404,
+        "cross-account action read",
+    )
+    expect(
+        client.post(
+            f"/api/v1/actions/{action_id}/approve",
+            headers=bob,
+            json={"preview_hash": preview_hash},
+        ),
+        404,
+        "cross-account action approval",
+    )
+    expect(
+        client.post(f"/api/v1/actions/{action_id}/cancel", headers=bob),
+        404,
+        "cross-account action cancel",
+    )
+    after_action = json_object(
+        expect(
+            client.get(f"/api/v1/actions/{action_id}", headers=alice),
+            200,
+            "owned action after denied cross-owner attempts",
+        ),
+        "owned action after denied cross-owner attempts",
+    )
+    if (
+        after_action.get("state") != before_action_state
+        or after_action.get("preview_hash") != preview_hash
+    ):
+        raise ExerciseFailure(
+            "Denied cross-owner action attempts changed the owned action."
+        )
+
+    artifact_id = resources["artifact_id"]
+    alice_artifacts = json_object(
+        expect(client.get("/api/v1/artifacts", headers=alice), 200, "account A artifacts"),
+        "account A artifacts",
+    )
+    if not any(
+        str(item.get("id")) == artifact_id
+        for item in alice_artifacts.get("artifacts", [])
+    ):
+        raise ExerciseFailure("Account A artifact was not present in its owned catalog.")
+    bob_artifacts = json_object(
+        expect(client.get("/api/v1/artifacts", headers=bob), 200, "account B artifacts"),
+        "account B artifacts",
+    )
+    if any(
+        str(item.get("id")) == artifact_id
+        for item in bob_artifacts.get("artifacts", [])
+    ):
+        raise ExerciseFailure("Account B could enumerate account A's artifact.")
+    expect(
+        client.get(f"/api/v1/artifacts/{artifact_id}/download", headers=bob),
+        404,
+        "cross-account artifact download",
+    )
+    expect(
+        client.get(f"/api/v1/artifacts/{artifact_id}/content", headers=bob),
+        404,
+        "cross-account artifact content",
+    )
+    json_object(
+        expect(
+            client.get(f"/api/v1/artifacts/{artifact_id}/download", headers=alice),
+            200,
+            "owned artifact download authorization",
+        ),
+        "owned artifact download authorization",
+    )
+
+    grant_id = resources["connector_read_grant_id"]
+    snapshot_id = resources["connector_snapshot_id"]
+    alice_grants = json_object(
+        expect(
+            client.get("/api/v1/connector-read-grants", headers=alice),
+            200,
+            "account A connector read grants",
+        ),
+        "account A connector read grants",
+    )
+    if alice_grants.get("enabled") is not True:
+        raise ExerciseFailure("Connector reads are not enabled for the owned-resource exercise.")
+    if not any(
+        str(item.get("id")) == grant_id
+        for item in alice_grants.get("grants", [])
+    ):
+        raise ExerciseFailure("Account A connector read grant was not present.")
+    bob_grants = json_object(
+        expect(
+            client.get("/api/v1/connector-read-grants", headers=bob),
+            200,
+            "account B connector read grants",
+        ),
+        "account B connector read grants",
+    )
+    if any(str(item.get("id")) == grant_id for item in bob_grants.get("grants", [])):
+        raise ExerciseFailure("Account B could enumerate account A's connector read grant.")
+    snapshots = json_object(
+        expect(
+            client.get(
+                f"/api/v1/connector-read-grants/{grant_id}/snapshots",
+                headers=alice,
+            ),
+            200,
+            "owned connector snapshots",
+        ),
+        "owned connector snapshots",
+    )
+    if not any(
+        str(item.get("id")) == snapshot_id
+        for item in snapshots.get("snapshots", [])
+    ):
+        raise ExerciseFailure(
+            "Account A connector snapshot was not present for the selected grant."
+        )
+    expect(
+        client.get(
+            f"/api/v1/connector-read-grants/{grant_id}/snapshots",
+            headers=bob,
+        ),
+        404,
+        "cross-account connector snapshots",
+    )
+    expect(
+        client.get(
+            f"/api/v1/connector-read-grants/{grant_id}/subscription",
+            headers=bob,
+        ),
+        404,
+        "cross-account connector subscription",
+    )
+
+    return passed(
+        "two distinct managed identities passed remaining PA-10 owner isolation for "
+        "Agent run/events/cancel, notification inbox/read receipt, action read/approval/"
+        "cancel immutability, artifact catalog/download/content, and provider-derived "
+        "connector grant/snapshot state using only pre-existing User A resources"
+    )
+
+
 def artifact_authorization(client: httpx.Client, token_a: str, token_b: str, timeout_seconds: int) -> dict:
     marker = uuid.uuid4().hex
     task = json_object(expect(client.post(
@@ -398,6 +674,7 @@ def main() -> None:
     parser.add_argument("--base-evidence", type=Path)
     parser.add_argument("--artifact", action="store_true", help="Run one live synthetic Coworker task and validate artifact authorization/download.")
     parser.add_argument("--personal-agent", action="store_true", help="Exercise PA-10 goal, automation, history and memory owner isolation without starting an Agent run.")
+    parser.add_argument("--owned-resource-manifest", type=Path, help="Strict non-secret JSON manifest of pre-existing User A Agent run, notification, action, artifact, connector grant and connector snapshot IDs.")
     parser.add_argument("--artifact-timeout", type=int, default=180)
     args = parser.parse_args()
 
@@ -421,6 +698,13 @@ def main() -> None:
             if args.personal_agent:
                 updates["personal_agent_owner_isolation"] = personal_agent_owner_isolation(
                     client, token_a, token_b
+                )
+            if args.owned_resource_manifest:
+                updates["remaining_owner_isolation"] = remaining_owner_isolation(
+                    client,
+                    token_a,
+                    token_b,
+                    owned_resource_manifest(args.owned_resource_manifest),
                 )
             if args.artifact:
                 updates["storage"] = artifact_authorization(client, token_a, token_b, max(30, args.artifact_timeout))
