@@ -52,6 +52,43 @@ This mode deliberately creates **no Agent run, model call, connector read, provi
 
 The output records a separate `personal_agent_owner_isolation` evidence item. A failure is a staging stop condition; do not promote it by editing evidence manually.
 
+
+## Remaining PA-10 owner surfaces
+
+After real synthetic staging scenarios have already produced User A resources, create a **non-secret** JSON manifest containing only these UUIDs:
+
+```json
+{
+  "agent_run_id": "<uuid>",
+  "notification_id": "<uuid>",
+  "action_id": "<uuid>",
+  "artifact_id": "<uuid>",
+  "connector_read_grant_id": "<uuid>",
+  "connector_snapshot_id": "<uuid>"
+}
+```
+
+Then run:
+
+```bash
+uv run --extra coworker python scripts/staging_api_exercise.py \
+  --base-evidence /secure/path/staging-evidence.pa10-owner.json \
+  --output /secure/path/staging-evidence.remaining-owner.json \
+  --owned-resource-manifest /secure/path/pa10-owned-resources.json
+```
+
+The manifest is strict: extra fields are rejected so tokens, provider credentials, message bodies and other sensitive values cannot be smuggled into the evidence input.
+
+This mode performs no provider action and creates no new Agent run. It verifies:
+
+- account B cannot enumerate, read, stream events for, or cancel account A's Agent run;
+- account B cannot enumerate or mark account A's notification read;
+- account B cannot enumerate/read/approve/cancel account A's prepared action, and the denied attempts do not change its state or immutable preview hash;
+- account B cannot enumerate/download/read account A's artifact;
+- account B cannot enumerate account A's connector read grant or read its provider-derived snapshots/subscription.
+
+The selected IDs must already exist for account A and remain valid long enough to run the exercise. Provider-event authenticity and provider-specific duplicate/revocation behavior remain separate live-provider scenarios.
+
 ## Full artifact authorization exercise
 
 Add `--artifact` when a staging worker and live model are intentionally available:
