@@ -96,6 +96,8 @@ def test_merge_evidence_preserves_manual_checks():
 
 
 def test_artifact_authorization_rejects_cross_account_access(monkeypatch):
+    signed_url = "https://storage.example.test/report.pdf?signature=test"
+
     class ArtifactClient:
         def post(self, path, headers=None, json=None):
             return response(202, {"id": "task-1"})
@@ -107,14 +109,41 @@ def test_artifact_authorization_rejects_cross_account_access(monkeypatch):
             if path == "/api/v1/artifacts/artifact-1/download":
                 if token.endswith("token-b"):
                     return response(404, {"error": {"code": "not_found"}})
-                return response(200, {"filename": "report.pdf", "url": None, "content_path": "/api/v1/artifacts/artifact-1/content"})
+                return response(
+                    200,
+                    {
+                        "filename": "report.pdf",
+                        "url": signed_url,
+                        "content_path": None,
+                    },
+                )
             if path == "/api/v1/artifacts/artifact-1/content":
-                return response(404 if token.endswith("token-b") else 200, content=b"pdf-bytes")
+                return response(404, {"error": {"code": "not_found"}})
+            if path.startswith("/api/v1/artifacts/"):
+                return response(404, {"error": {"code": "not_found"}})
             raise AssertionError(path)
 
-    result = exercise.artifact_authorization(ArtifactClient(), "token-a", "token-b", 30)
+    signed_requests = []
+
+    def fake_get(url, timeout=None, follow_redirects=None):
+        signed_requests.append(url)
+        if len(signed_requests) == 1:
+            return response(200, content=b"pdf-bytes")
+        return response(403, content=b"expired")
+
+    monkeypatch.setattr(exercise.httpx, "get", fake_get)
+    monkeypatch.setattr(exercise.time, "sleep", lambda _seconds: None)
+
+    result = exercise.artifact_authorization(
+        ArtifactClient(),
+        "token-a",
+        "token-b",
+        30,
+        signed_url_expiry_wait_seconds=61,
+    )
     assert result["status"] == "passed"
-    assert "artifact authorization" in result["evidence"]
+    assert "owner-scoped S3 artifact authorization" in result["evidence"]
+    assert signed_requests == [signed_url, signed_url]
 
 
 
