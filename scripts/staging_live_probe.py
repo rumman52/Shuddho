@@ -4,10 +4,14 @@ import argparse
 import asyncio
 import json
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
 from sqlalchemy import text
+from temporalio.api.enums.v1 import TaskQueueType
+from temporalio.api.taskqueue.v1 import TaskQueue
+from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest
 from temporalio.client import Client
 
 from scripts.agent_eval import evaluate_live, load_cases
@@ -88,6 +92,18 @@ def probe_storage(settings: Settings) -> dict:
     return partial("private object storage write/read/delete round trip succeeded; owner-scoped signed download authorization still requires an API staging exercise")
 
 
+async def temporal_poller_count(client, settings: Settings, queue_type) -> int:
+    response = await client.workflow_service.describe_task_queue(
+        DescribeTaskQueueRequest(
+            namespace=settings.temporal_namespace,
+            task_queue=TaskQueue(name=settings.task_queue),
+            task_queue_type=queue_type,
+        ),
+        timeout=timedelta(seconds=5),
+    )
+    return len(response.pollers)
+
+
 async def probe_temporal(settings: Settings) -> dict:
     try:
         client = await Client.connect(
@@ -96,9 +112,36 @@ async def probe_temporal(settings: Settings) -> dict:
             api_key=settings.temporal_api_key or None,
             tls=settings.temporal_tls,
         )
-        async for _workflow in client.list_workflows(page_size=1):
-            break
-        return partial(f"Temporal namespace reachable over TLS: {settings.temporal_namespace}; worker restart/replay still requires a staging workflow exercise")
+        workflow_pollers = await temporal_poller_count(
+            client,
+            settings,
+            TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW,
+        )
+        activity_pollers = await temporal_poller_count(
+            client,
+            settings,
+            TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY,
+        )
+        missing = [
+            label
+            for label, count in (
+                ("workflow", workflow_pollers),
+                ("activity", activity_pollers),
+            )
+            if count < 1
+        ]
+        if missing:
+            return failed(
+                "Temporal task queue is reachable but expected worker polling is absent "
+                f"for {', '.join(missing)} tasks on queue={settings.task_queue}; "
+                f"workflow_pollers={workflow_pollers}; activity_pollers={activity_pollers}"
+            )
+        return partial(
+            "Temporal namespace reachable over TLS and worker polling observed on "
+            f"queue={settings.task_queue}; workflow_pollers={workflow_pollers}; "
+            f"activity_pollers={activity_pollers}; worker restart/replay still requires "
+            "a staging workflow exercise"
+        )
     except Exception as error:
         return failed(f"Temporal probe failed: {type(error).__name__}")
 
