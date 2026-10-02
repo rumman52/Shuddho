@@ -1,0 +1,58 @@
+name: PA-10 staging prerequisite preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      SHUDDHO_TEMPORAL_ADDRESS: ${{ secrets.SHUDDHO_TEMPORAL_ADDRESS }}
+      SHUDDHO_TEMPORAL_NAMESPACE: ${{ secrets.SHUDDHO_TEMPORAL_NAMESPACE }}
+      SHUDDHO_TEMPORAL_API_KEY: ${{ secrets.SHUDDHO_TEMPORAL_API_KEY }}
+      SHUDDHO_STAGING_S3_ACCESS_KEY_ID: ${{ secrets.SHUDDHO_STAGING_S3_ACCESS_KEY_ID }}
+      SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY: ${{ secrets.SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      SHUDDHO_TEMPORAL_TLS: "true"
+      SHUDDHO_TEMPORAL_TASK_QUEUE: shuddho-documents-v1
+      SHUDDHO_COWORKER_STORAGE: s3
+      SHUDDHO_COWORKER_BUCKET: shuddho-coworker-staging
+      SHUDDHO_COWORKER_S3_ENDPOINT: https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3
+      AWS_DEFAULT_REGION: us-west-1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate staging prerequisites without provisioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/staging_prerequisite_preflight.py --output "${RUNNER_TEMP}/pa10-staging-preflight.json"
+
+      - name: Emit non-secret readiness summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### PA-10 staging prerequisite preflight"
+            echo ""
+            echo "- Required GitHub Actions secrets: present"
+            echo "- Temporal address shape: valid host:port"
+            echo "- Temporal TLS: required"
+            echo "- Task queue: `shuddho-documents-v1`"
+            echo "- Storage backend: `s3`"
+            echo "- Bucket: `shuddho-coworker-staging`"
+            echo "- This workflow performs no Render provisioning, provider calls, or paid-resource creation"
+            echo "- Worker billing approval remains a separate human boundary"
+          } >> "${GITHUB_STEP_SUMMARY}"
