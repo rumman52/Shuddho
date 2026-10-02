@@ -117,8 +117,22 @@ jobs:
           set -euo pipefail
 
           services_json="$(render services --output json)"
-          worker_id="$(jq -r '[.. | objects | select(.name? == "shuddho-worker-staging")][0].id // empty' <<<"${services_json}")"
-          worker_type="$(jq -r '[.. | objects | select(.name? == "shuddho-worker-staging")][0].type // empty' <<<"${services_json}")"
+          workers="$(jq '[.. | objects | select(.name? == "shuddho-worker-staging" and (.id? | type == "string"))] | unique_by(.id)' <<<"${services_json}")"
+          if [[ "$(jq 'length' <<<"${workers}")" -gt 1 ]]; then
+            echo "::error::Multiple staging workers match; refusing to choose a service."
+            exit 1
+          fi
+          worker_id="$(jq -r '.[0].id // empty' <<<"${workers}")"
+          worker_type="$(jq -r '.[0].type // empty' <<<"${workers}")"
+          if [[ -n "${worker_id}" ]] && ! jq -e --arg owner "${RENDER_WORKSPACE_ID}" '
+            .[0] | .type == "background_worker"
+            and .ownerId == $owner
+            and .repo == "https://github.com/rumman52/Shuddho"
+            and .serviceDetails.region == "oregon"
+          ' <<<"${workers}" >/dev/null; then
+            echo "::error::Existing worker does not match the reviewed type/workspace/repository/region."
+            exit 1
+          fi
 
           common_args=(
             --name shuddho-worker-staging
@@ -135,11 +149,11 @@ jobs:
 
           if [[ -z "${worker_id}" ]]; then
             created="$(render services create               --type background_worker               --region oregon               "${common_args[@]}"               --env-var "SHUDDHO_COWORKER_ENV=staging"               --env-var "SHUDDHO_COWORKER_DATABASE_URL=${SHUDDHO_COWORKER_DATABASE_URL}"               --env-var "SHUDDHO_AUTH_ISSUER=https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1"               --env-var "SHUDDHO_AUTH_AUDIENCE=authenticated"               --env-var "SHUDDHO_COWORKER_STORAGE=s3"               --env-var "SHUDDHO_COWORKER_BUCKET=shuddho-coworker-staging"               --env-var "SHUDDHO_COWORKER_S3_ENDPOINT=https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3"               --env-var "AWS_DEFAULT_REGION=us-west-1"               --env-var "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"               --env-var "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"               --env-var "SHUDDHO_TEMPORAL_ADDRESS=${SHUDDHO_TEMPORAL_ADDRESS}"               --env-var "SHUDDHO_TEMPORAL_NAMESPACE=${SHUDDHO_TEMPORAL_NAMESPACE}"               --env-var "SHUDDHO_TEMPORAL_API_KEY=${SHUDDHO_TEMPORAL_API_KEY}"               --env-var "SHUDDHO_TEMPORAL_TLS=true"               --env-var "SHUDDHO_TEMPORAL_TASK_QUEUE=shuddho-documents-v1"               --env-var "SHUDDHO_WORK_SERVICES_ENABLED=false"               --env-var "SHUDDHO_ARTIFACT_SERVICES_ENABLED=false"               --env-var "SHUDDHO_AGENT_RUNTIME_ENABLED=false"               --env-var "SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false"               --env-var "SHUDDHO_PERSONAL_GOALS_ENABLED=false"               --env-var "SHUDDHO_AUTOMATIONS_ENABLED=false"               --env-var "SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=false"               --env-var "SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false"               --env-var "SHUDDHO_ACTIONS_ENABLED=false"               --env-var "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false"               --env-var "SHUDDHO_CONNECTOR_READS_ENABLED=false"               --env-var "SHUDDHO_BROWSER_PUSH_ENABLED=false"               --env-var "SHUDDHO_BROWSER_ENABLED=false"               --env-var "SHUDDHO_CODE_EXECUTION_ENABLED=false"               --env-var "SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED=false"               --env-var "SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false"               --env-var "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false"               --env-var "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"               --env-var "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false"               --env-var "SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false"               --env-var "SHUDDHO_COWORKER_COHORT_ENFORCED=false"               --env-var "SHUDDHO_MICROSOFT_ACTIONS_ENABLED=false"               --env-var "SHUDDHO_LOG_RAW_TEXT=false"               --output json               --confirm)"
-            worker_id="$(jq -r '.. | objects | .id? // empty' <<<"${created}" | grep '^srv-' | head -n1)"
-            if [[ -z "${worker_id}" ]]; then
-              services_json="$(render services --output json)"
-              worker_id="$(jq -r '[.. | objects | select(.name? == "shuddho-worker-staging")][0].id // empty' <<<"${services_json}")"
-            fi
+            worker_id="$(jq -er --arg owner "${RENDER_WORKSPACE_ID}" '
+              select(.name == "shuddho-worker-staging" and .type == "background_worker"
+                and .ownerId == $owner and .repo == "https://github.com/rumman52/Shuddho"
+                and .serviceDetails.region == "oregon") | .id | select(startswith("srv-"))
+            ' <<<"${created}")"
           else
             if [[ "${worker_type}" != "background_worker" ]]; then
               echo "::error::Existing shuddho-worker-staging has unexpected type '${worker_type}'. Refusing to mutate it."
@@ -148,7 +162,7 @@ jobs:
             render services update "${worker_id}"               --branch main               --repo https://github.com/rumman52/Shuddho               --runtime python               --build-command "pip install uv && uv sync --frozen --no-dev --extra coworker"               --start-command "uv run --extra coworker python -m services.coworker.worker"               --pre-deploy-command "uv run --extra coworker python -m services.coworker.migrate"               --plan 0.5c-512mb               --max-shutdown-delay 120               --auto-deploy=false               --output json               --confirm >/dev/null
           fi
 
-          if [[ -z "${worker_id}" ]]; then
+          if [[ ! "${worker_id}" =~ ^srv-[a-z0-9]+$ ]]; then
             echo "::error::Render did not return or expose the staging worker ID."
             exit 1
           fi
@@ -198,8 +212,17 @@ jobs:
           WORKER_ID: ${{ steps.worker.outputs.worker_id }}
         run: |
           set -euo pipefail
-          render deploys create "${WORKER_ID}"             --commit "${GITHUB_SHA}"             --wait             --output json             --confirm > /tmp/worker-deploy.json
-          jq '{id, status, commit: (.commit.id // .commit.sha // null)}' /tmp/worker-deploy.json
+          deploy_file="${RUNNER_TEMP}/pa10-worker-deploy.json"
+          render deploys create "${WORKER_ID}" \
+            --commit "${GITHUB_SHA}" --wait --output json --confirm > "${deploy_file}"
+          if ! jq -e --arg sha "${GITHUB_SHA}" '
+            .status == "live" and .commit.id == $sha
+            and (.id | type == "string" and startswith("dep-"))
+          ' "${deploy_file}" >/dev/null; then
+            echo "::error::Worker deploy is not live on the exact requested revision."
+            exit 1
+          fi
+          jq '{id, status, commit: .commit.id}' "${deploy_file}"
 
       - name: Emit non-secret worker reference
         shell: bash
@@ -210,9 +233,10 @@ jobs:
           {
             echo "### PA-10 staging worker provisioned"
             echo ""
-            echo "- Worker: `shuddho-worker-staging`"
-            echo "- Service ID: `${WORKER_ID}`"
-            echo "- Source revision: `${GITHUB_SHA}`"
-            echo "- Task queue: `shuddho-documents-v1`"
+            printf -- '- Worker: `%s`\n' 'shuddho-worker-staging'
+            printf -- '- Service ID: `%s`\n' "${WORKER_ID}"
+            printf -- '- Source revision: `%s`\n' "${GITHUB_SHA}"
+            printf -- '- Task queue: `%s`\n' 'shuddho-documents-v1'
             echo "- Production/high-authority capability flags: OFF"
+            echo "- Temporal polling, storage, auth isolation, release freeze and PA-10 qualification: NOT VERIFIED by this workflow"
           } >> "${GITHUB_STEP_SUMMARY}"
