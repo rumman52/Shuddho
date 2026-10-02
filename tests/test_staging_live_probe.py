@@ -237,3 +237,36 @@ def test_storage_privacy_fails_if_anonymous_bucket_listing_succeeds(monkeypatch)
     assert result["status"] == "failed"
     assert "publicly accessible" in result["evidence"]
     assert "bucket listing" in result["evidence"]
+
+
+def test_storage_cleanup_failure_overrides_privacy_probe_failure(monkeypatch):
+    calls = []
+
+    class Store:
+        def __init__(self, _settings):
+            pass
+
+        def put(self, key, data, content_type):
+            calls.append(("put", key, content_type))
+
+        def get(self, key, max_bytes):
+            calls.append(("get", key, max_bytes))
+            return b"shuddho-staging-probe"
+
+        def delete(self, key):
+            calls.append(("delete", key))
+            raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(probe, "S3ObjectStore", Store)
+    monkeypatch.setattr(
+        probe,
+        "probe_storage_privacy",
+        lambda _settings, _key: probe.failed("privacy probe failed first"),
+    )
+
+    result = probe.probe_storage(SimpleNamespace())
+    assert result == {
+        "status": "failed",
+        "evidence": "private object storage cleanup failed: RuntimeError",
+    }
+    assert [item[0] for item in calls] == ["put", "get", "delete"]
