@@ -7,12 +7,6 @@ on:
         description: Type PROVISION to create or repair the paid PA-10 staging worker
         required: true
         default: "NO"
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/provision-pa10-staging-worker.yml
-
 permissions:
   contents: read
 
@@ -22,7 +16,7 @@ concurrency:
 
 jobs:
   provision:
-    if: ${{ github.event_name == 'push' || inputs.confirm == 'PROVISION' }}
+    if: ${{ inputs.confirm == 'PROVISION' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -88,7 +82,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          render workspace set "${RENDER_WORKSPACE_ID}" --output text --confirm
+          render workspace set "${RENDER_WORKSPACE_ID}" --output text
 
       - name: Validate reviewed staging Blueprint
         shell: bash
