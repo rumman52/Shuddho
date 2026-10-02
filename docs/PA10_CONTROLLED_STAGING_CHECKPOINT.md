@@ -66,6 +66,22 @@ Do not create a prepare-only freeze artifact and call it complete. The valid seq
 | Human Bangla/English review | human action | reviewers and retained non-sensitive review references | multilingual_human_review |
 | Measured task economics | dependent evidence | actual completed staging runs plus reviewed pricing inputs | task_economics |
 
+## Non-billing prerequisite preflight
+
+Before requesting paid Render worker authorization, run the GitHub Actions workflow:
+
+`PA-10 staging prerequisite preflight`
+
+It performs no provider calls and creates no infrastructure. It verifies only the presence of the required GitHub Actions secrets and the reviewed non-secret configuration shape for:
+
+- Temporal host/port, namespace presence, TLS and task queue;
+- S3 backend, reviewed staging bucket, HTTPS endpoint and region;
+- Render API credential presence;
+- staging S3 credential presence;
+- optional DeepSeek credential presence reporting.
+
+The same validator is reused by the paid worker provisioner immediately before any Render mutation, preventing drift between preflight and provisioning checks. Secret values are never emitted.
+
 ## Paid worker approval boundary
 
 The reviewed Blueprint requests Render background-worker plan `0.5c-512mb` (0.5 CPU, 512 MB). Do **not** purchase or provision it without account-owner authorization. After approval, provision the worker from the reviewed `infra/render.staging.yaml` contract rather than substituting a web service or cron job.
