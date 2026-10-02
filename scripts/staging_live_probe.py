@@ -70,6 +70,78 @@ def probe_database(settings: Settings) -> dict:
         engine.dispose()
 
 
+def anonymous_s3_client(settings: Settings):
+    import boto3
+    from botocore import UNSIGNED
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.storage_endpoint,
+        region_name=settings.storage_region,
+        config=Config(
+            connect_timeout=5,
+            read_timeout=20,
+            retries={"max_attempts": 1},
+            signature_version=UNSIGNED,
+        ),
+    )
+
+
+def probe_storage_privacy(settings: Settings, key: str) -> dict:
+    from botocore.exceptions import ClientError
+
+    client = anonymous_s3_client(settings)
+    checks = (
+        (
+            "object read",
+            lambda: client.get_object(
+                Bucket=settings.storage_bucket,
+                Key=key,
+            ),
+        ),
+        (
+            "bucket listing",
+            lambda: client.list_objects_v2(
+                Bucket=settings.storage_bucket,
+                Prefix=PROBE_PREFIX,
+                MaxKeys=1,
+            ),
+        ),
+    )
+    for label, operation in checks:
+        try:
+            response = operation()
+        except ClientError as error:
+            status = int(
+                error.response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode",
+                    0,
+                )
+                or 0
+            )
+            if status not in {400, 401, 403, 404}:
+                return failed(
+                    "anonymous private-storage verification failed with provider "
+                    f"HTTP {status or 'unknown'} during {label}"
+                )
+            continue
+        except Exception as error:
+            return failed(
+                "anonymous private-storage verification failed during "
+                f"{label}: {type(error).__name__}"
+            )
+        body = response.get("Body") if isinstance(response, dict) else None
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+        return failed(
+            "private object storage is publicly accessible because anonymous "
+            f"{label} succeeded"
+        )
+    return passed("anonymous object read and bucket listing were denied")
+
+
 def probe_storage(settings: Settings) -> dict:
     key = f"{PROBE_PREFIX}/{uuid.uuid4().hex}.txt"
     payload = b"shuddho-staging-probe"
@@ -79,6 +151,9 @@ def probe_storage(settings: Settings) -> dict:
         downloaded = store.get(key, 1024)
         if downloaded != payload:
             return failed("private object storage round trip returned unexpected bytes")
+        privacy = probe_storage_privacy(settings, key)
+        if privacy["status"] != "passed":
+            return privacy
     except Exception as error:
         try:
             store.delete(key)
@@ -89,7 +164,11 @@ def probe_storage(settings: Settings) -> dict:
         store.delete(key)
     except Exception as error:
         return failed(f"private object storage cleanup failed: {type(error).__name__}")
-    return partial("private object storage write/read/delete round trip succeeded; owner-scoped signed download authorization still requires an API staging exercise")
+    return partial(
+        "private object storage write/read/delete round trip succeeded and "
+        "anonymous object read/bucket listing were denied; owner-scoped signed "
+        "download authorization still requires an API staging exercise"
+    )
 
 
 async def temporal_poller_count(client, settings: Settings, queue_type) -> int:
