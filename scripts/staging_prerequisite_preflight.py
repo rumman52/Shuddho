@@ -50,7 +50,7 @@ def _validate_temporal_address(value: str) -> None:
         raise PreflightFailure("SHUDDHO_TEMPORAL_ADDRESS port is outside 1..65535.")
 
 
-def _validate_https_origin(value: str, name: str) -> None:
+def _validate_https_endpoint(value: str, name: str) -> None:
     parsed = urlparse(value.strip())
     if (
         parsed.scheme != "https"
@@ -59,9 +59,10 @@ def _validate_https_origin(value: str, name: str) -> None:
         or parsed.password
         or parsed.query
         or parsed.fragment
-        or parsed.path not in {"", "/"}
     ):
-        raise PreflightFailure(f"{name} must be a clean HTTPS origin.")
+        raise PreflightFailure(
+            f"{name} must be an HTTPS endpoint without credentials, query or fragment."
+        )
 
 
 def validate(env: dict[str, str]) -> dict:
@@ -97,7 +98,7 @@ def validate(env: dict[str, str]) -> dict:
         )
 
     endpoint = env.get("SHUDDHO_COWORKER_S3_ENDPOINT", "")
-    _validate_https_origin(endpoint, "SHUDDHO_COWORKER_S3_ENDPOINT")
+    _validate_https_endpoint(endpoint, "SHUDDHO_COWORKER_S3_ENDPOINT")
 
     region = env.get("AWS_DEFAULT_REGION", "").strip()
     if not region or any(char.isspace() for char in region):
@@ -118,7 +119,7 @@ def validate(env: dict[str, str]) -> dict:
             "temporal_task_queue": EXPECTED_TASK_QUEUE,
             "storage_backend": "s3",
             "storage_bucket": EXPECTED_BUCKET,
-            "storage_endpoint": "valid_https_origin",
+            "storage_endpoint": "valid_https_endpoint",
             "storage_region": "present",
         },
     }
