@@ -607,7 +607,13 @@ def remaining_owner_isolation(
     )
 
 
-def artifact_authorization(client: httpx.Client, token_a: str, token_b: str, timeout_seconds: int) -> dict:
+def artifact_authorization(
+    client: httpx.Client,
+    token_a: str,
+    token_b: str,
+    timeout_seconds: int,
+    signed_url_expiry_wait_seconds: int = 65,
+) -> dict:
     marker = uuid.uuid4().hex
     task = json_object(expect(client.post(
         "/api/v1/tasks",
@@ -643,23 +649,72 @@ def artifact_authorization(client: httpx.Client, token_a: str, token_b: str, tim
     if not artifact_id:
         raise ExerciseFailure("Artifact metadata did not include an id.")
 
-    route = f"/api/v1/artifacts/{artifact_id}/download"
-    expect(client.get(route, headers=auth(token_b)), 404, "cross-account artifact download")
-    download = json_object(expect(client.get(route, headers=auth(token_a)), 200, "owned artifact download"), "owned artifact download")
-    if download.get("url"):
-        response = httpx.get(download["url"], timeout=20, follow_redirects=False)
-        if response.status_code != 200 or not response.content:
-            raise ExerciseFailure(f"Signed artifact URL returned HTTP {response.status_code} or empty content.")
-    elif download.get("content_path"):
-        content_path = str(download["content_path"])
-        expect(client.get(content_path, headers=auth(token_b)), 404, "cross-account artifact content")
-        response = expect(client.get(content_path, headers=auth(token_a)), 200, "owned artifact content")
-        if not response.content:
-            raise ExerciseFailure("Owned artifact content was empty.")
-    else:
-        raise ExerciseFailure("Artifact download response included neither a signed URL nor a content path.")
+    guessed_id = str(uuid.uuid4())
+    if guessed_id == artifact_id:
+        guessed_id = str(uuid.uuid4())
+    for label, token in (("owner guessed artifact", token_a), ("cross-account guessed artifact", token_b)):
+        expect(
+            client.get(
+                f"/api/v1/artifacts/{guessed_id}/download",
+                headers=auth(token),
+            ),
+            404,
+            label + " download",
+        )
+        expect(
+            client.get(
+                f"/api/v1/artifacts/{guessed_id}/content",
+                headers=auth(token),
+            ),
+            404,
+            label + " content",
+        )
 
-    return passed("owner-scoped artifact authorization and non-empty private download passed with synthetic staging output")
+    route = f"/api/v1/artifacts/{artifact_id}/download"
+    content_route = f"/api/v1/artifacts/{artifact_id}/content"
+    expect(client.get(route, headers=auth(token_b)), 404, "cross-account artifact download")
+    expect(client.get(content_route, headers=auth(token_b)), 404, "cross-account artifact content")
+
+    download = json_object(
+        expect(
+            client.get(route, headers=auth(token_a)),
+            200,
+            "owned artifact download",
+        ),
+        "owned artifact download",
+    )
+    signed_url = download.get("url")
+    if not isinstance(signed_url, str) or not signed_url:
+        if download.get("content_path"):
+            raise ExerciseFailure(
+                "Controlled staging artifact validation requires a private S3 signed URL; "
+                "the API returned a local/authenticated content path instead."
+            )
+        raise ExerciseFailure(
+            "Controlled staging artifact validation returned no private signed URL."
+        )
+
+    response = httpx.get(signed_url, timeout=20, follow_redirects=False)
+    if response.status_code != 200 or not response.content:
+        raise ExerciseFailure(
+            f"Signed artifact URL returned HTTP {response.status_code} or empty content."
+        )
+
+    wait_seconds = max(61, int(signed_url_expiry_wait_seconds))
+    time.sleep(wait_seconds)
+    expired = httpx.get(signed_url, timeout=20, follow_redirects=False)
+    if expired.status_code not in {400, 401, 403, 404}:
+        raise ExerciseFailure(
+            "Previously valid signed artifact URL remained usable after the controlled "
+            f"expiry wait (HTTP {expired.status_code})."
+        )
+
+    return passed(
+        "owner-scoped S3 artifact authorization passed with guessed-ID denial, "
+        "cross-owner download/content denial, non-empty signed download and expired "
+        "signed-URL denial; physical artifact deletion remains the separate retention/"
+        "deletion staging drill"
+    )
 
 
 def merge_evidence(base: dict, updates: dict) -> dict:
@@ -676,6 +731,7 @@ def main() -> None:
     parser.add_argument("--personal-agent", action="store_true", help="Exercise PA-10 goal, automation, history and memory owner isolation without starting an Agent run.")
     parser.add_argument("--owned-resource-manifest", type=Path, help="Strict non-secret JSON manifest of pre-existing User A Agent run, notification, action, artifact, connector grant and connector snapshot IDs.")
     parser.add_argument("--artifact-timeout", type=int, default=180)
+    parser.add_argument("--artifact-signed-url-expiry-wait", type=int, default=65, help="Seconds to wait before requiring the same S3 signed artifact URL to be rejected; values below 61 are raised to 61.")
     args = parser.parse_args()
 
     base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
@@ -707,7 +763,13 @@ def main() -> None:
                     owned_resource_manifest(args.owned_resource_manifest),
                 )
             if args.artifact:
-                updates["storage"] = artifact_authorization(client, token_a, token_b, max(30, args.artifact_timeout))
+                updates["storage"] = artifact_authorization(
+                    client,
+                    token_a,
+                    token_b,
+                    max(30, args.artifact_timeout),
+                    max(61, args.artifact_signed_url_expiry_wait),
+                )
     except (httpx.HTTPError, ExerciseFailure) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))
         raise SystemExit(1) from None
