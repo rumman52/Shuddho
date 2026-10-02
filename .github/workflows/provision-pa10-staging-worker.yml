@@ -28,15 +28,23 @@ jobs:
       SHUDDHO_TEMPORAL_ADDRESS: ${{ secrets.SHUDDHO_TEMPORAL_ADDRESS }}
       SHUDDHO_TEMPORAL_NAMESPACE: ${{ secrets.SHUDDHO_TEMPORAL_NAMESPACE }}
       SHUDDHO_TEMPORAL_API_KEY: ${{ secrets.SHUDDHO_TEMPORAL_API_KEY }}
+      SHUDDHO_STAGING_S3_ACCESS_KEY_ID: ${{ secrets.SHUDDHO_STAGING_S3_ACCESS_KEY_ID }}
+      SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY: ${{ secrets.SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY }}
       AWS_ACCESS_KEY_ID: ${{ secrets.SHUDDHO_STAGING_S3_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY }}
+      SHUDDHO_TEMPORAL_TLS: "true"
+      SHUDDHO_TEMPORAL_TASK_QUEUE: shuddho-documents-v1
+      SHUDDHO_COWORKER_STORAGE: s3
+      SHUDDHO_COWORKER_BUCKET: shuddho-coworker-staging
+      SHUDDHO_COWORKER_S3_ENDPOINT: https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3
+      AWS_DEFAULT_REGION: us-west-1
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@v4
 
-      - name: Guard staging-only execution and required secrets
+      - name: Guard staging-only execution
         shell: bash
         run: |
           set -euo pipefail
@@ -48,21 +56,12 @@ jobs:
             echo "::error::PA-10 staging worker provisioning must run from main."
             exit 1
           fi
-          missing=()
-          for name in             RENDER_API_KEY             SHUDDHO_TEMPORAL_ADDRESS             SHUDDHO_TEMPORAL_NAMESPACE             SHUDDHO_TEMPORAL_API_KEY             AWS_ACCESS_KEY_ID             AWS_SECRET_ACCESS_KEY
-          do
-            if [[ -z "${!name:-}" ]]; then
-              missing+=("$name")
-            fi
-          done
-          if (( ${#missing[@]} )); then
-            printf '::error::Missing required GitHub Actions secrets/environment values: %s\n' "${missing[*]}"
-            exit 1
-          fi
-          if [[ "${SHUDDHO_TEMPORAL_ADDRESS}" == http://* || "${SHUDDHO_TEMPORAL_ADDRESS}" == https://* || "${SHUDDHO_TEMPORAL_ADDRESS}" != *:* ]]; then
-            echo "::error::SHUDDHO_TEMPORAL_ADDRESS must be a Temporal host:port value, not an HTTP URL."
-            exit 1
-          fi
+
+      - name: Validate staging prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/staging_prerequisite_preflight.py
 
       - name: Install pinned Render CLI
         shell: bash
