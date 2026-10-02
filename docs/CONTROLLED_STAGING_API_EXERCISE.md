@@ -102,11 +102,17 @@ uv run --extra coworker python scripts/staging_api_exercise.py \
 
 This creates one synthetic Coworker task, waits for a terminal result, and verifies:
 
-- account B receives 404 for account A's artifact;
-- account A receives a private signed URL or authenticated content path;
-- the private download returns non-empty bytes.
+- account B receives 404 for account A's artifact download and content routes;
+- random/guessed artifact UUIDs receive 404 for both account A and account B;
+- account A receives a private **S3 signed URL** (a local/authenticated content path is rejected for Controlled Staging);
+- the initial signed download returns non-empty bytes;
+- after the signed-URL expiry window, reusing the exact same URL is rejected.
 
-Only then is `storage` promoted to `passed`.
+The signed URL is currently generated with a 60-second TTL. The exercise waits at least 61 seconds before requiring expiry; the default is 65 seconds. Override only for slower staging with `--artifact-signed-url-expiry-wait`, never below 61 seconds.
+
+Physical artifact deletion is **not** inferred from this exercise. Shuddho intentionally has no public artifact-delete route; physical object removal, deleted-object denial, orphan cleanup and retention are verified by the separate controlled-staging retention/deletion drill.
+
+Only then is this application-level storage authorization evidence promoted to `passed`.
 
 ## Fail-closed behavior
 

@@ -96,6 +96,8 @@ def test_merge_evidence_preserves_manual_checks():
 
 
 def test_artifact_authorization_rejects_cross_account_access(monkeypatch):
+    signed_url = "https://storage.example.test/report.pdf?signature=test"
+
     class ArtifactClient:
         def post(self, path, headers=None, json=None):
             return response(202, {"id": "task-1"})
@@ -107,14 +109,220 @@ def test_artifact_authorization_rejects_cross_account_access(monkeypatch):
             if path == "/api/v1/artifacts/artifact-1/download":
                 if token.endswith("token-b"):
                     return response(404, {"error": {"code": "not_found"}})
-                return response(200, {"filename": "report.pdf", "url": None, "content_path": "/api/v1/artifacts/artifact-1/content"})
+                return response(
+                    200,
+                    {
+                        "filename": "report.pdf",
+                        "url": signed_url,
+                        "content_path": None,
+                    },
+                )
             if path == "/api/v1/artifacts/artifact-1/content":
-                return response(404 if token.endswith("token-b") else 200, content=b"pdf-bytes")
+                return response(404, {"error": {"code": "not_found"}})
+            if path.startswith("/api/v1/artifacts/"):
+                return response(404, {"error": {"code": "not_found"}})
             raise AssertionError(path)
 
-    result = exercise.artifact_authorization(ArtifactClient(), "token-a", "token-b", 30)
+    signed_requests = []
+
+    def fake_get(url, timeout=None, follow_redirects=None):
+        signed_requests.append(url)
+        if len(signed_requests) == 1:
+            return response(200, content=b"pdf-bytes")
+        return response(403, content=b"expired")
+
+    monkeypatch.setattr(exercise.httpx, "get", fake_get)
+    monkeypatch.setattr(exercise.time, "sleep", lambda _seconds: None)
+
+    result = exercise.artifact_authorization(
+        ArtifactClient(),
+        "token-a",
+        "token-b",
+        30,
+        signed_url_expiry_wait_seconds=61,
+    )
     assert result["status"] == "passed"
-    assert "artifact authorization" in result["evidence"]
+    assert "owner-scoped S3 artifact authorization" in result["evidence"]
+    assert signed_requests == [signed_url, signed_url]
+
+
+
+def test_artifact_authorization_requires_guessed_id_denial_and_signed_url_expiry(monkeypatch):
+    artifact_id = "11111111-1111-1111-1111-111111111111"
+    signed_url = "https://storage.example.test/object?signature=test"
+    calls = []
+
+    class ArtifactClient:
+        def post(self, path, headers=None, json=None):
+            if path == "/api/v1/tasks":
+                return response(202, {"id": "task-1"})
+            raise AssertionError(path)
+
+        def get(self, path, headers=None):
+            calls.append((path, headers))
+            token = headers["Authorization"]
+            bob = token.endswith("token-b")
+            if path == "/api/v1/tasks/task-1":
+                return response(
+                    200,
+                    {
+                        "state": "completed",
+                        "artifacts": [{"id": artifact_id}],
+                    },
+                )
+            if path == f"/api/v1/artifacts/{artifact_id}/download":
+                if bob:
+                    return response(404, {"error": {"code": "not_found"}})
+                return response(
+                    200,
+                    {
+                        "filename": "report.pdf",
+                        "url": signed_url,
+                        "content_path": None,
+                    },
+                )
+            if path == f"/api/v1/artifacts/{artifact_id}/content":
+                return response(404, {"error": {"code": "not_found"}})
+            if path.startswith("/api/v1/artifacts/"):
+                return response(404, {"error": {"code": "not_found"}})
+            raise AssertionError(path)
+
+    web_calls = []
+
+    def fake_get(url, timeout=None, follow_redirects=None):
+        web_calls.append(url)
+        if len(web_calls) == 1:
+            return response(200, content=b"artifact-bytes")
+        return response(403, content=b"expired")
+
+    monkeypatch.setattr(exercise.httpx, "get", fake_get)
+    monkeypatch.setattr(exercise.time, "sleep", lambda _seconds: None)
+
+    result = exercise.artifact_authorization(
+        ArtifactClient(),
+        "token-a",
+        "token-b",
+        30,
+        signed_url_expiry_wait_seconds=61,
+    )
+
+    assert result["status"] == "passed"
+    assert "guessed-ID denial" in result["evidence"]
+    assert "expired signed-URL denial" in result["evidence"]
+    assert web_calls == [signed_url, signed_url]
+    guessed_paths = [
+        path
+        for path, _headers in calls
+        if artifact_id not in path and path.startswith("/api/v1/artifacts/")
+    ]
+    assert any(path.endswith("/download") for path in guessed_paths)
+    assert any(path.endswith("/content") for path in guessed_paths)
+
+
+def test_artifact_authorization_rejects_local_content_path_for_controlled_staging(monkeypatch):
+    artifact_id = "11111111-1111-1111-1111-111111111111"
+
+    class LocalPathClient:
+        def post(self, path, headers=None, json=None):
+            if path == "/api/v1/tasks":
+                return response(202, {"id": "task-1"})
+            raise AssertionError(path)
+
+        def get(self, path, headers=None):
+            token = headers["Authorization"]
+            bob = token.endswith("token-b")
+            if path == "/api/v1/tasks/task-1":
+                return response(
+                    200,
+                    {
+                        "state": "completed",
+                        "artifacts": [{"id": artifact_id}],
+                    },
+                )
+            if path == f"/api/v1/artifacts/{artifact_id}/download":
+                if bob:
+                    return response(404, {"error": {"code": "not_found"}})
+                return response(
+                    200,
+                    {
+                        "filename": "report.pdf",
+                        "url": None,
+                        "content_path": f"/api/v1/artifacts/{artifact_id}/content",
+                    },
+                )
+            if path.startswith("/api/v1/artifacts/"):
+                return response(404, {"error": {"code": "not_found"}})
+            raise AssertionError(path)
+
+    monkeypatch.setattr(exercise.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(
+        exercise.ExerciseFailure,
+        match="requires a private S3 signed URL",
+    ):
+        exercise.artifact_authorization(
+            LocalPathClient(),
+            "token-a",
+            "token-b",
+            30,
+            signed_url_expiry_wait_seconds=61,
+        )
+
+
+def test_artifact_authorization_fails_if_signed_url_still_works_after_expiry(monkeypatch):
+    artifact_id = "11111111-1111-1111-1111-111111111111"
+    signed_url = "https://storage.example.test/object?signature=test"
+
+    class ArtifactClient:
+        def post(self, path, headers=None, json=None):
+            if path == "/api/v1/tasks":
+                return response(202, {"id": "task-1"})
+            raise AssertionError(path)
+
+        def get(self, path, headers=None):
+            token = headers["Authorization"]
+            bob = token.endswith("token-b")
+            if path == "/api/v1/tasks/task-1":
+                return response(
+                    200,
+                    {
+                        "state": "completed",
+                        "artifacts": [{"id": artifact_id}],
+                    },
+                )
+            if path == f"/api/v1/artifacts/{artifact_id}/download":
+                if bob:
+                    return response(404, {"error": {"code": "not_found"}})
+                return response(
+                    200,
+                    {
+                        "filename": "report.pdf",
+                        "url": signed_url,
+                        "content_path": None,
+                    },
+                )
+            if path.startswith("/api/v1/artifacts/"):
+                return response(404, {"error": {"code": "not_found"}})
+            raise AssertionError(path)
+
+    monkeypatch.setattr(
+        exercise.httpx,
+        "get",
+        lambda *_args, **_kwargs: response(200, content=b"still-valid"),
+    )
+    monkeypatch.setattr(exercise.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(
+        exercise.ExerciseFailure,
+        match="remained usable",
+    ):
+        exercise.artifact_authorization(
+            ArtifactClient(),
+            "token-a",
+            "token-b",
+            30,
+            signed_url_expiry_wait_seconds=61,
+        )
 
 
 def test_personal_agent_owner_isolation_covers_goal_automation_and_memory():
