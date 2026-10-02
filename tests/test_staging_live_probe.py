@@ -145,3 +145,95 @@ def test_temporal_probe_records_live_worker_pollers_as_partial(monkeypatch):
     assert "workflow_pollers=2" in result["evidence"]
     assert "activity_pollers=3" in result["evidence"]
     assert "restart/replay" in result["evidence"]
+
+
+def test_storage_privacy_requires_anonymous_read_and_list_denial(monkeypatch):
+    from botocore.exceptions import ClientError
+
+    settings = SimpleNamespace(
+        storage_bucket="shuddho-coworker-staging",
+        storage_endpoint="https://storage.example.test/storage/v1/s3",
+        storage_region="us-west-1",
+    )
+
+    class Client:
+        def get_object(self, **_kwargs):
+            raise ClientError(
+                {
+                    "Error": {"Code": "AccessDenied", "Message": "denied"},
+                    "ResponseMetadata": {"HTTPStatusCode": 403},
+                },
+                "GetObject",
+            )
+
+        def list_objects_v2(self, **_kwargs):
+            raise ClientError(
+                {
+                    "Error": {"Code": "AccessDenied", "Message": "denied"},
+                    "ResponseMetadata": {"HTTPStatusCode": 403},
+                },
+                "ListObjectsV2",
+            )
+
+    monkeypatch.setattr(probe, "anonymous_s3_client", lambda _settings: Client())
+
+    result = probe.probe_storage_privacy(settings, "staging-probes/probe.txt")
+    assert result["status"] == "passed"
+    assert "anonymous object read" in result["evidence"]
+    assert "bucket listing" in result["evidence"]
+
+
+def test_storage_privacy_fails_if_anonymous_object_read_succeeds(monkeypatch):
+    settings = SimpleNamespace(
+        storage_bucket="shuddho-coworker-staging",
+        storage_endpoint="https://storage.example.test/storage/v1/s3",
+        storage_region="us-west-1",
+    )
+
+    class Body:
+        def close(self):
+            pass
+
+    class Client:
+        def get_object(self, **_kwargs):
+            return {"Body": Body()}
+
+        def list_objects_v2(self, **_kwargs):
+            raise AssertionError("listing should not be reached after public object read")
+
+    monkeypatch.setattr(probe, "anonymous_s3_client", lambda _settings: Client())
+
+    result = probe.probe_storage_privacy(settings, "staging-probes/probe.txt")
+    assert result["status"] == "failed"
+    assert "publicly accessible" in result["evidence"]
+    assert "object read" in result["evidence"]
+
+
+def test_storage_privacy_fails_if_anonymous_bucket_listing_succeeds(monkeypatch):
+    from botocore.exceptions import ClientError
+
+    settings = SimpleNamespace(
+        storage_bucket="shuddho-coworker-staging",
+        storage_endpoint="https://storage.example.test/storage/v1/s3",
+        storage_region="us-west-1",
+    )
+
+    class Client:
+        def get_object(self, **_kwargs):
+            raise ClientError(
+                {
+                    "Error": {"Code": "AccessDenied", "Message": "denied"},
+                    "ResponseMetadata": {"HTTPStatusCode": 403},
+                },
+                "GetObject",
+            )
+
+        def list_objects_v2(self, **_kwargs):
+            return {"Contents": []}
+
+    monkeypatch.setattr(probe, "anonymous_s3_client", lambda _settings: Client())
+
+    result = probe.probe_storage_privacy(settings, "staging-probes/probe.txt")
+    assert result["status"] == "failed"
+    assert "publicly accessible" in result["evidence"]
+    assert "bucket listing" in result["evidence"]

@@ -19,7 +19,7 @@ The probe never enables a feature flag and does not use user content.
 
 - managed identity JWKS endpoint is reachable and exposes supported asymmetric signing keys;
 - PostgreSQL is reachable, the active schema is `shuddho_coworker`, TLS is active, and the Alembic version table is present;
-- private S3-compatible object storage can complete an isolated write/read/delete round trip;
+- private S3-compatible object storage can complete an isolated authenticated write/read/delete round trip, and unsigned anonymous object-read plus bucket-list attempts are denied;
 - the configured Temporal namespace is reachable over TLS and the expected Shuddho task queue has at least one workflow poller and one activity poller;
 - when `--live-model` is supplied, the checked-in planner evaluation runs against live DeepSeek and must score 100%.
 
@@ -30,7 +30,7 @@ The output contains only statuses and concise evidence text. It must never inclu
 A connectivity probe is not enough to satisfy every production gate. The following results intentionally remain `partial` until a higher-level staging exercise is recorded:
 
 - **identity**: JWKS connectivity does not prove owner isolation;
-- **storage**: direct object storage round trip does not prove API authorization for owner-scoped signed downloads;
+- **storage**: authenticated object storage round trip plus denied anonymous read/list proves the bucket/object path is not public, but does not prove API authorization for owner-scoped signed downloads;
 - **temporal**: namespace connectivity plus active workflow/activity pollers proves the worker is attached to the reviewed queue, but does not prove worker restart/replay or duplicate suppression.
 
 The existing `scripts/staging_gate.py` accepts only `status: passed` with a non-empty evidence reference, so these partial checks cannot accidentally produce a production GO.
