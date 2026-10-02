@@ -16,9 +16,16 @@ OWNER = "tea-d6ok4okhg0os73erkdv0"
 
 
 def shell_step(name: str) -> str:
-    step = WORKFLOW.read_text().split(f"      - name: {name}\n", 1)[1]
+    workflow = WORKFLOW.read_text()
+    marker = f"      - name: {name}\n"
+    if marker not in workflow:
+        raise AssertionError(f"Workflow step not found: {name}")
+    step = workflow.split(marker, 1)[1]
     step = step.split("\n      - name:", 1)[0]
-    return textwrap.dedent(step.split("        run: |\n", 1)[1])
+    run_marker = "        run: |\n"
+    if run_marker not in step:
+        raise AssertionError(f"Workflow step has no shell run block: {name}")
+    return textwrap.dedent(step.split(run_marker, 1)[1])
 
 
 def worker(**changes):
@@ -43,7 +50,15 @@ class WorkerProvisioningTests(unittest.TestCase):
             "GITHUB_SHA": SHA, "RENDER_WORKSPACE_ID": OWNER,
             "RENDER_API_KEY": "test-only-render", "SHUDDHO_TEMPORAL_ADDRESS": "example:7233",
             "SHUDDHO_TEMPORAL_NAMESPACE": "test-only", "SHUDDHO_TEMPORAL_API_KEY": "test-only-temporal",
+            "SHUDDHO_STAGING_S3_ACCESS_KEY_ID": "test-only-access",
+            "SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY": "test-only-secret",
             "AWS_ACCESS_KEY_ID": "test-only-access", "AWS_SECRET_ACCESS_KEY": "test-only-secret",
+            "SHUDDHO_TEMPORAL_TLS": "true",
+            "SHUDDHO_TEMPORAL_TASK_QUEUE": "shuddho-documents-v1",
+            "SHUDDHO_COWORKER_STORAGE": "s3",
+            "SHUDDHO_COWORKER_BUCKET": "shuddho-coworker-staging",
+            "SHUDDHO_COWORKER_S3_ENDPOINT": "https://storage.example.test/storage/v1/s3",
+            "AWS_DEFAULT_REGION": "us-west-1",
             "SHUDDHO_COWORKER_DATABASE_URL": "postgresql://test-only",
             "WORKER_ID": "srv-test123",
             "GITHUB_OUTPUT": str(self.root / "output"),
@@ -80,20 +95,50 @@ class WorkerProvisioningTests(unittest.TestCase):
                               capture_output=True, text=True, timeout=10)
 
     def test_missing_secrets_fail_without_printing_values(self):
-        for key in ("RENDER_API_KEY", "SHUDDHO_TEMPORAL_ADDRESS", "SHUDDHO_TEMPORAL_NAMESPACE",
-                    "SHUDDHO_TEMPORAL_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        for key in (
+            "RENDER_API_KEY",
+            "SHUDDHO_TEMPORAL_ADDRESS",
+            "SHUDDHO_TEMPORAL_NAMESPACE",
+            "SHUDDHO_TEMPORAL_API_KEY",
+            "SHUDDHO_STAGING_S3_ACCESS_KEY_ID",
+            "SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY",
+        ):
             with self.subTest(key=key):
-                result = self.run_step("Guard staging-only execution and required secrets", **{key: ""})
+                result = self.run_step("Validate staging prerequisites", **{key: ""})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(key, result.stdout)
                 self.assertNotIn("test-only-secret", result.stdout + result.stderr)
         self.assertFalse((self.root / "calls").exists())
 
-    def test_guard_rejects_wrong_repository_branch_and_http_address(self):
-        for values in ({"GITHUB_REPOSITORY": "other/repo"}, {"GITHUB_REF_NAME": "feature"},
-                       {"SHUDDHO_TEMPORAL_ADDRESS": "https://example:7233"}):
-            self.assertNotEqual(self.run_step("Guard staging-only execution and required secrets", **values).returncode, 0)
-        self.assertEqual(self.run_step("Guard staging-only execution and required secrets").returncode, 0)
+    def test_guard_rejects_wrong_repository_and_branch(self):
+        for values in (
+            {"GITHUB_REPOSITORY": "other/repo"},
+            {"GITHUB_REF_NAME": "feature"},
+        ):
+            self.assertNotEqual(
+                self.run_step("Guard staging-only execution", **values).returncode,
+                0,
+            )
+        self.assertEqual(
+            self.run_step("Guard staging-only execution").returncode,
+            0,
+        )
+        self.assertFalse((self.root / "calls").exists())
+
+    def test_prerequisite_step_rejects_http_temporal_address(self):
+        result = self.run_step(
+            "Validate staging prerequisites",
+            SHUDDHO_TEMPORAL_ADDRESS="https://example:7233",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SHUDDHO_TEMPORAL_ADDRESS", result.stdout)
+        self.assertFalse((self.root / "calls").exists())
+
+    def test_prerequisite_step_accepts_reviewed_shape(self):
+        result = self.run_step("Validate staging prerequisites")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('"status": "passed"', result.stdout)
+        self.assertFalse((self.root / "calls").exists())
 
     def test_create_and_repair_target_worker(self):
         for services in ([], [{"service": worker()}]):
