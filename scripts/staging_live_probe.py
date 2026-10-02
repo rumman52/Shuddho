@@ -146,29 +146,35 @@ def probe_storage(settings: Settings) -> dict:
     key = f"{PROBE_PREFIX}/{uuid.uuid4().hex}.txt"
     payload = b"shuddho-staging-probe"
     store = S3ObjectStore(settings)
+    result: dict | None = None
+
     try:
         store.put(key, payload, "text/plain")
         downloaded = store.get(key, 1024)
         if downloaded != payload:
-            return failed("private object storage round trip returned unexpected bytes")
-        privacy = probe_storage_privacy(settings, key)
-        if privacy["status"] != "passed":
-            return privacy
+            result = failed(
+                "private object storage round trip returned unexpected bytes"
+            )
+        else:
+            privacy = probe_storage_privacy(settings, key)
+            result = privacy if privacy["status"] != "passed" else partial(
+                "private object storage write/read/delete round trip succeeded and "
+                "anonymous object read/bucket listing were denied; owner-scoped signed "
+                "download authorization still requires an API staging exercise"
+            )
     except Exception as error:
-        try:
-            store.delete(key)
-        except Exception:
-            pass
-        return failed(f"private object storage probe failed: {type(error).__name__}")
+        result = failed(
+            f"private object storage probe failed: {type(error).__name__}"
+        )
+
     try:
         store.delete(key)
     except Exception as error:
-        return failed(f"private object storage cleanup failed: {type(error).__name__}")
-    return partial(
-        "private object storage write/read/delete round trip succeeded and "
-        "anonymous object read/bucket listing were denied; owner-scoped signed "
-        "download authorization still requires an API staging exercise"
-    )
+        return failed(
+            f"private object storage cleanup failed: {type(error).__name__}"
+        )
+
+    return result or failed("private object storage probe returned no result")
 
 
 async def temporal_poller_count(client, settings: Settings, queue_type) -> int:
