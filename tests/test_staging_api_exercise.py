@@ -221,3 +221,184 @@ def test_personal_agent_owner_isolation_fails_on_cross_owner_enumeration():
 
     with pytest.raises(exercise.ExerciseFailure, match="enumerate account A's memory"):
         exercise.personal_agent_owner_isolation(LeakyClient(), "token-a", "token-b")
+
+
+def test_owned_resource_manifest_is_strict(tmp_path):
+    manifest = tmp_path / "resources.json"
+    ids = {
+        "agent_run_id": "11111111-1111-1111-1111-111111111111",
+        "notification_id": "22222222-2222-2222-2222-222222222222",
+        "action_id": "33333333-3333-3333-3333-333333333333",
+        "artifact_id": "44444444-4444-4444-4444-444444444444",
+        "connector_read_grant_id": "55555555-5555-5555-5555-555555555555",
+        "connector_snapshot_id": "66666666-6666-6666-6666-666666666666",
+    }
+    manifest.write_text(json.dumps(ids), encoding="utf-8")
+    assert exercise.owned_resource_manifest(manifest) == ids
+
+    manifest.write_text(json.dumps(ids | {"token": "must-not-be-accepted"}), encoding="utf-8")
+    with pytest.raises(exercise.ExerciseFailure, match="unexpected=token"):
+        exercise.owned_resource_manifest(manifest)
+
+    manifest.write_text(json.dumps({key: value for key, value in ids.items() if key != "action_id"}), encoding="utf-8")
+    with pytest.raises(exercise.ExerciseFailure, match="missing=action_id"):
+        exercise.owned_resource_manifest(manifest)
+
+
+def test_remaining_owner_isolation_denies_cross_owner_surfaces():
+    ids = {
+        "agent_run_id": "11111111-1111-1111-1111-111111111111",
+        "notification_id": "22222222-2222-2222-2222-222222222222",
+        "action_id": "33333333-3333-3333-3333-333333333333",
+        "artifact_id": "44444444-4444-4444-4444-444444444444",
+        "connector_read_grant_id": "55555555-5555-5555-5555-555555555555",
+        "connector_snapshot_id": "66666666-6666-6666-6666-666666666666",
+    }
+
+    class RemainingClient:
+        def __init__(self):
+            self.calls = []
+            self.action = {
+                "id": ids["action_id"],
+                "state": "awaiting_approval",
+                "preview_hash": "a" * 64,
+            }
+
+        @staticmethod
+        def is_bob(headers):
+            return headers["Authorization"].endswith("token-b")
+
+        def get(self, path, headers=None):
+            self.calls.append(("GET", path, headers))
+            bob = self.is_bob(headers)
+            if path == f"/api/v1/agent-runs/{ids['agent_run_id']}":
+                return response(404 if bob else 200, {"id": ids["agent_run_id"], "state": "completed"})
+            if path == "/api/v1/agent-runs":
+                return response(200, {"runs": [] if bob else [{"id": ids["agent_run_id"]}]})
+            if path == f"/api/v1/agent-runs/{ids['agent_run_id']}/events":
+                return response(404 if bob else 200, {"events": [], "terminal": True})
+            if path == "/api/v1/notifications":
+                return response(
+                    200,
+                    {
+                        "enabled": True,
+                        "notifications": [] if bob else [{"id": ids["notification_id"]}],
+                    },
+                )
+            if path == f"/api/v1/actions/{ids['action_id']}":
+                return response(404 if bob else 200, self.action)
+            if path == "/api/v1/actions":
+                return response(200, {"actions": [] if bob else [self.action]})
+            if path == "/api/v1/artifacts":
+                return response(
+                    200,
+                    {
+                        "artifacts": [] if bob else [{"id": ids["artifact_id"]}],
+                        "attachments_enabled": False,
+                        "document_sharing_enabled": False,
+                    },
+                )
+            if path == f"/api/v1/artifacts/{ids['artifact_id']}/download":
+                if bob:
+                    return response(404, {"error": {"code": "not_found"}})
+                return response(
+                    200,
+                    {
+                        "filename": "artifact.txt",
+                        "url": None,
+                        "content_path": f"/api/v1/artifacts/{ids['artifact_id']}/content",
+                    },
+                )
+            if path == f"/api/v1/artifacts/{ids['artifact_id']}/content":
+                return response(404 if bob else 200, content=b"artifact")
+            if path == "/api/v1/connector-read-grants":
+                return response(
+                    200,
+                    {
+                        "enabled": True,
+                        "grants": [] if bob else [{"id": ids["connector_read_grant_id"]}],
+                    },
+                )
+            if path == f"/api/v1/connector-read-grants/{ids['connector_read_grant_id']}/snapshots":
+                return response(
+                    404 if bob else 200,
+                    {"snapshots": [] if bob else [{"id": ids["connector_snapshot_id"]}]},
+                )
+            if path == f"/api/v1/connector-read-grants/{ids['connector_read_grant_id']}/subscription":
+                return response(404 if bob else 200, {"subscription": None})
+            raise AssertionError(path)
+
+        def post(self, path, headers=None, json=None):
+            self.calls.append(("POST", path, headers, json))
+            bob = self.is_bob(headers)
+            if path in {
+                f"/api/v1/agent-runs/{ids['agent_run_id']}/cancel",
+                f"/api/v1/notifications/{ids['notification_id']}/read",
+                f"/api/v1/actions/{ids['action_id']}/approve",
+                f"/api/v1/actions/{ids['action_id']}/cancel",
+            }:
+                return response(404 if bob else 200, {"ok": True})
+            raise AssertionError(path)
+
+    client = RemainingClient()
+    result = exercise.remaining_owner_isolation(client, "token-a", "token-b", ids)
+    assert result["status"] == "passed"
+    assert "action read/approval/cancel immutability" in result["evidence"]
+    assert any(
+        call[0] == "POST"
+        and call[1].endswith("/approve")
+        and call[2]["Authorization"].endswith("token-b")
+        for call in client.calls
+    )
+    assert any(
+        call[0] == "GET"
+        and call[1].endswith("/snapshots")
+        and call[2]["Authorization"].endswith("token-b")
+        for call in client.calls
+    )
+
+
+def test_remaining_owner_isolation_fails_if_bob_can_enumerate_action():
+    ids = {
+        "agent_run_id": "11111111-1111-1111-1111-111111111111",
+        "notification_id": "22222222-2222-2222-2222-222222222222",
+        "action_id": "33333333-3333-3333-3333-333333333333",
+        "artifact_id": "44444444-4444-4444-4444-444444444444",
+        "connector_read_grant_id": "55555555-5555-5555-5555-555555555555",
+        "connector_snapshot_id": "66666666-6666-6666-6666-666666666666",
+    }
+
+    class LeakyActionClient:
+        @staticmethod
+        def is_bob(headers):
+            return headers["Authorization"].endswith("token-b")
+
+        def get(self, path, headers=None):
+            bob = self.is_bob(headers)
+            if path == f"/api/v1/agent-runs/{ids['agent_run_id']}":
+                return response(404 if bob else 200, {"id": ids["agent_run_id"]})
+            if path == "/api/v1/agent-runs":
+                return response(200, {"runs": []})
+            if path == f"/api/v1/agent-runs/{ids['agent_run_id']}/events":
+                return response(404, {"error": {"code": "not_found"}})
+            if path == "/api/v1/notifications":
+                return response(
+                    200,
+                    {"enabled": True, "notifications": [] if bob else [{"id": ids["notification_id"]}]},
+                )
+            if path == f"/api/v1/actions/{ids['action_id']}":
+                return response(
+                    404 if bob else 200,
+                    {"id": ids["action_id"], "state": "awaiting_approval", "preview_hash": "a" * 64},
+                )
+            if path == "/api/v1/actions":
+                return response(200, {"actions": [{"id": ids["action_id"]}]})
+            raise AssertionError(path)
+
+        def post(self, path, headers=None, json=None):
+            return response(404, {"error": {"code": "not_found"}})
+
+    with pytest.raises(exercise.ExerciseFailure, match="enumerate account A's action"):
+        exercise.remaining_owner_isolation(
+            LeakyActionClient(), "token-a", "token-b", ids
+        )
