@@ -1,35 +1,38 @@
 # PA-10 Controlled-Staging Canonical Checkpoint
 
-**Inspected:** 2 October 2026  
+**Inspected:** 3 October 2026 (UTC; Asia/Dhaka UTC+06:00)
 **Program result:** **BLOCKED_EXTERNAL**  
 **Scope:** Automation / Proactive Coworker controlled-staging qualification only. Production activation remains unauthorized and unchanged.
 
 ## Release identity
 
 - Repository: `rumman52/Shuddho`
-- Current `main`: `1a6debbcb3cbd3b7407083eed10f0d2eb0e38251`
-- Merge: PR #289, **Prepare Render controlled-staging deployment**
-- Required merged-main CI: #1094 / run `36904018888`
-- CI result: **SUCCESS**
-  - `test-and-build`: SUCCESS
-  - `coworker`: SUCCESS
-- Relevant open PA-10 PRs: none. The remaining open PRs are older unrelated work and are not PA-10 staging blockers.
+- Inspected implementation `main`: `ab44ea1afd56cbddd1b0c8668cc6b1a41d64eca5`.
+- PR #300, **Fix PA-10 preflight summary command substitution**, is merged.
+- Exact-head CI #1116 / run `37090826309`: **SUCCESS** on `538b84805e08a4cb72292c434e1a2f09dfca5086`.
+- Merged-main CI #1117 / run `37093700328`: **SUCCESS** on `ab44ea1afd56cbddd1b0c8668cc6b1a41d64eca5`, including `test-and-build` and `coworker`.
+- PRs #292–#299 supplied worker provisioning, poller verification, owner-isolation collectors, prerequisite preflight and S3 privacy/cleanup hardening. PR #300 fixes summary output only; it does not supply live qualification evidence.
+- This checkpoint is a dated observation, not a claim that the implementation revision remains the latest main after subsequent commits.
 
 ## Operated non-production state
 
 ### Render
 
 - Staging API service exists: `shuddho-api-staging`
-- Latest staging API deploy: `dep-dava5hjtqb8s73d1plmg`
-- Deployed source SHA: `1a6debbcb3cbd3b7407083eed10f0d2eb0e38251`
+- Confirmed workspace: Rumman, `tea-d6ok4okhg0os73erkdv0`
+- Staging API service ID: `srv-dav98otg1s2s73cod4gg`
+- Latest staging API deploy: `dep-davmrnu7bikc73emahdg`
+- Deployed source SHA: `fce72760456bd8bb03524ce98127120c7ac3dfb9`
 - Deploy status observed: `live`
-- Staging PostgreSQL exists: `shuddho-staging-db`; status observed: `available`
+- Staging PostgreSQL exists: `shuddho-staging-db`, `dpg-dav98hfpn0mc739mndvg-a`; status observed: `available`
 - **No `shuddho-worker-staging` service exists.**
-- The existing API is a free Render web service. Logs show normal startup and later shutdown after the free-service idle window; this is not evidence of a persistent background worker.
+- The existing API is a free Render web service. Earlier logs showed normal startup and shutdown after the idle window; current service inventory still reports the free plan. This is not evidence of a persistent background worker or uninterrupted callback availability.
 - The live API service does not exactly match the reviewed `infra/render.staging.yaml`: its configured health-check path is empty, and its build/start commands are looser than the reviewed Blueprint contract.
 - External read-only SQL through the hosted Render connector is unavailable because the database has an empty external IP allowlist. Do not weaken the allowlist merely to collect evidence.
 
 ### Supabase staging
+
+The following project/bucket observations are retained from 2 October and were not rechecked during this execution:
 
 - Project `shuddho-staging`: `ACTIVE_HEALTHY`
 - Private bucket `shuddho-coworker-staging`: exists, `public=false`
@@ -46,9 +49,9 @@ Do not create a prepare-only freeze artifact and call it complete. The valid seq
 
 1. review exact staging rollout and provider-policy plan;
 2. provision the reviewed worker and required secret references;
-3. deploy the exact candidate;
-4. run `scripts/staging_release_freeze.py prepare` before deployment;
-5. verify the authenticated `/api/v1/runtime-manifest`;
+3. run `scripts/staging_release_freeze.py prepare` for the exact candidate;
+4. deploy that exact source revision and reviewed configuration to both API and worker;
+5. run freeze `verify` against the authenticated `/api/v1/runtime-manifest` and separately retain the worker's exact deployment identity;
 6. require `status=frozen`;
 7. collect every PA-10 scenario against that same frozen release.
 
@@ -57,8 +60,9 @@ Do not create a prepare-only freeze artifact and call it complete. The valid seq
 | Blocker | Classification | Owner / required input | Prevents |
 | --- | --- | --- | --- |
 | Persistent `shuddho-worker-staging` missing | paid resource / operator setup | Render account owner must approve and provision the reviewed `0.5c-512mb` background worker | Temporal polling, durable schedules, reminders, Daily/Weekly/Deadline/Meeting/Email executions, restart recovery |
-| Temporal Cloud namespace/auth not available in operated staging | provider setup / secret reference | Temporal namespace endpoint, namespace, API key/TLS auth entered securely into Render | scheduler reconciliation, due occurrences, restart/replay evidence, release readiness |
-| Supabase S3 access credentials not available to the application | provider setup / secret reference | reviewed S3 endpoint/region/access-key secret references for the private bucket | app upload/read/delete, storage isolation, full staging readiness |
+| GitHub workflow dispatch unavailable through the connector; browser sign-in timed out | authenticated access | complete GitHub sign-in through the secure browser flow, or have the authorized operator run the manual preflight directly | verification of secret presence and workflow provisioning |
+| Temporal Cloud namespace/auth not verified in operated staging | provider setup / secret reference | verify endpoint, namespace and API key/TLS through preflight, then authenticate from the worker | scheduler reconciliation, due occurrences, restart/replay evidence, release readiness |
+| Supabase S3 access credentials not verified in GitHub or the application | provider setup / secret reference | verify reviewed endpoint/region/access-key secret references, then run authenticated probes | app upload/read/delete, storage isolation, full staging readiness |
 | Synthetic auth token / operated managed identity exercise not available | human/access | approved synthetic account and token generated through the staging auth flow | authenticated runtime-manifest verification and all owner-scoped collectors |
 | Google Gmail/Calendar synthetic OAuth + subscriptions | provider setup / authorization | approved synthetic Google account/app credentials, grants/subscriptions/callbacks | Email/Meeting live qualification and duplicate/revocation exercises |
 | Microsoft Outlook/Calendar synthetic OAuth + subscriptions | provider setup / authorization | approved synthetic Microsoft tenant/account/app credentials, grants/subscriptions/callbacks | Email/Meeting live qualification and duplicate/revocation exercises |
@@ -68,9 +72,22 @@ Do not create a prepare-only freeze artifact and call it complete. The valid seq
 
 ## Non-billing prerequisite preflight
 
-Before requesting paid Render worker authorization, run the GitHub Actions workflow:
+The next execution step is the GitHub Actions workflow:
 
 `PA-10 staging prerequisite preflight`
+
+The workflow page showed **zero runs** before the sign-in attempt. No live preflight result is claimed. The GitHub connector cannot dispatch workflows or inspect Actions secrets. The local process has no GitHub/Render CLI credentials, Temporal/S3 credentials or synthetic account tokens; this does not establish whether repository secrets are absent. The secure browser sign-in request timed out and its final authentication state could not be verified. Do not reuse an earlier verification number or infer success from attempted sign-in.
+
+Required Actions secret names:
+
+- `RENDER_API_KEY`
+- `SHUDDHO_TEMPORAL_ADDRESS`
+- `SHUDDHO_TEMPORAL_NAMESPACE`
+- `SHUDDHO_TEMPORAL_API_KEY`
+- `SHUDDHO_STAGING_S3_ACCESS_KEY_ID`
+- `SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY`
+
+`DEEPSEEK_API_KEY` remains optional for infrastructure preflight but must be present when an authorized later scenario requires the live model.
 
 It performs no provider calls and creates no infrastructure. It verifies only the presence of the required GitHub Actions secrets and the reviewed non-secret configuration shape for:
 
@@ -82,9 +99,11 @@ It performs no provider calls and creates no infrastructure. It verifies only th
 
 The same validator is reused by the paid worker provisioner immediately before any Render mutation, preventing drift between preflight and provisioning checks. Secret values are never emitted.
 
+PR #300 replaces command-substituting summary strings with literal-safe `printf`. Its regression executes the real shell step with sentinel commands and fails on the old workflow. The fixed regression and all 10 existing worker-provisioning shell tests passed locally. Preflight only checks presence/configuration shape; it does not authenticate against Temporal or S3.
+
 ## Paid worker approval boundary
 
-The reviewed Blueprint requests Render background-worker plan `0.5c-512mb` (0.5 CPU, 512 MB). Do **not** purchase or provision it without account-owner authorization. After approval, provision the worker from the reviewed `infra/render.staging.yaml` contract rather than substituting a web service or cron job.
+The reviewed Blueprint requests Render background-worker plan `0.5c-512mb` (0.5 CPU, 512 MB). Use existing account-owner authorization when it covers the exact resource and spending scope; do not repeatedly request the confirmed workspace. If a spending boundary remains unapproved, prepare the exact action and resolve only that boundary. Provision from `infra/render.staging.yaml`, without substituting a web service or cron job.
 
 ## Scenario status
 
@@ -110,18 +129,21 @@ Repository implementation/tooling remains verified; live-provider/staging eviden
 
 ## Last completed action
 
-Restored the actual current repository and operated staging state; verified current main and CI; verified PR #289 has no unresolved review thread; inspected the live Render API/deployment/database inventory and logs; confirmed the missing worker; inspected the reviewed Render Blueprint; verified the healthy Supabase staging project/private bucket/security-advisor state; and identified the exact external prerequisites blocking freeze.
+Restored current main and live Render service/database/deployment state; reproduced and fixed preflight shell command substitution; published PR #300 and observed it merged after successful exact-head CI; rechecked merged-main CI; attempted secure GitHub authentication for manual workflow dispatch, which timed out. No provisioning workflow, migration, live provider collector or release-freeze operation was executed in this session.
 
 ## Next exact action
 
 **Account owner / staging operator:**
 
-1. Approve the Render `0.5c-512mb` background-worker spend.
-2. Provision `shuddho-worker-staging` from `infra/render.staging.yaml`.
-3. Enter the already-reviewed Temporal, auth, Supabase S3 and model secret values through secure provider/Render secret entry; do not place them in chat or Git.
-4. Align `shuddho-api-staging` with the reviewed Blueprint health/build/start contract.
-5. Verify the worker starts, polls the expected Temporal task queue, can reach PostgreSQL and private storage, and runs migrations.
-6. Then create the reviewed rollout/provider-policy artifacts and run the exact release-freeze prepare/deploy/verify cycle.
+1. Recheck CI #1117 and current main. Complete secure GitHub authentication or run **Actions → PA-10 staging prerequisite preflight → Run workflow → main** as the repository operator.
+2. Verify the actual run result. If it fails, resolve the named missing secret/configuration values through secure entry and rerun. A reply saying "done" is not a substitute for inspecting the run.
+3. With preflight passed and the reviewed worker spending scope authorized, run **Provision PA-10 staging worker** from main with `confirm=PROVISION`. Capture its actual service/deploy IDs and source SHA.
+4. Verify migrations and both workflow/activity pollers on `shuddho-documents-v1`. Align staging API build/start/health settings with the Blueprint; verify API/worker database, Temporal and storage settings match.
+5. Run storage, managed identity, artifact and owner-isolation exercises. Use `--personal-agent`; run `--owned-resource-manifest` only after real synthetic scenarios have produced the six required User A IDs. Poller and bucket probes remain `partial` until their higher-level checks pass.
+6. Complete readiness recovery/backup/retention checks; then select an exact reviewed candidate, PREPARE, deploy identical API/worker source, VERIFY, and require `status=frozen`.
+7. Collect all final release-bound scenarios and compile `scripts/pa10_staging_evidence.py`. Recollect checks that require the final release; do not promote preliminary diagnostics into frozen-release evidence.
+
+Resume source implementation from PR #300 / merge `ab44ea1afd56cbddd1b0c8668cc6b1a41d64eca5`; do not recreate the summary fix. No active provisioning/deploy job or frozen evidence bundle is available to resume from this checkpoint. Production settings were not modified by this execution; the existing production service retains its own auto-deploy behavior.
 
 After those external steps, resume with the scheduled-reminder collector first. Do not launch an Agent for the simple reminder; require one `automation_reminder`, zero Agent runs and `run_id=null`.
 
