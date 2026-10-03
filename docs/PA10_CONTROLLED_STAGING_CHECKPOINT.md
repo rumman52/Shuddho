@@ -60,9 +60,9 @@ Do not create a prepare-only freeze artifact and call it complete. The valid seq
 | Blocker | Classification | Owner / required input | Prevents |
 | --- | --- | --- | --- |
 | Persistent `shuddho-worker-staging` missing | paid resource / operator setup | Render account owner must approve and provision the reviewed `0.5c-512mb` background worker | Temporal polling, durable schedules, reminders, Daily/Weekly/Deadline/Meeting/Email executions, restart recovery |
-| GitHub workflow dispatch unavailable through the connector; browser sign-in timed out | authenticated access | complete GitHub sign-in through the secure browser flow, or have the authorized operator run the manual preflight directly | verification of secret presence and workflow provisioning |
+| All six required GitHub Actions staging secrets absent | credential/configuration input | account owner must add the six exact repository secret names listed below, then rerun preflight | worker provisioning |
 | Temporal Cloud namespace/auth not verified in operated staging | provider setup / secret reference | verify endpoint, namespace and API key/TLS through preflight, then authenticate from the worker | scheduler reconciliation, due occurrences, restart/replay evidence, release readiness |
-| Supabase S3 access credentials not verified in GitHub or the application | provider setup / secret reference | verify reviewed endpoint/region/access-key secret references, then run authenticated probes | app upload/read/delete, storage isolation, full staging readiness |
+| Supabase S3 access credentials absent from GitHub Actions; application access unverified | provider setup / secret reference | verify reviewed endpoint/region/access-key secret references, then run authenticated probes | app upload/read/delete, storage isolation, full staging readiness |
 | Synthetic auth token / operated managed identity exercise not available | human/access | approved synthetic account and token generated through the staging auth flow | authenticated runtime-manifest verification and all owner-scoped collectors |
 | Google Gmail/Calendar synthetic OAuth + subscriptions | provider setup / authorization | approved synthetic Google account/app credentials, grants/subscriptions/callbacks | Email/Meeting live qualification and duplicate/revocation exercises |
 | Microsoft Outlook/Calendar synthetic OAuth + subscriptions | provider setup / authorization | approved synthetic Microsoft tenant/account/app credentials, grants/subscriptions/callbacks | Email/Meeting live qualification and duplicate/revocation exercises |
@@ -72,11 +72,13 @@ Do not create a prepare-only freeze artifact and call it complete. The valid seq
 
 ## Non-billing prerequisite preflight
 
-The next execution step is the GitHub Actions workflow:
+Executed prerequisite workflow:
 
 `PA-10 staging prerequisite preflight`
 
-The workflow page showed **zero runs** before the sign-in attempt. No live preflight result is claimed. The GitHub connector cannot dispatch workflows or inspect Actions secrets. The local process has no GitHub/Render CLI credentials, Temporal/S3 credentials or synthetic account tokens; this does not establish whether repository secrets are absent. The secure browser sign-in request timed out and its final authentication state could not be verified. Do not reuse an earlier verification number or infer success from attempted sign-in.
+GitHub browser authentication was verified as `rumman52` on 3 October at approximately 04:00 UTC. Preflight run #1 (`37095132480`, job `111123403817`) executed on `ab44ea1afd56cbddd1b0c8668cc6b1a41d64eca5` and **FAILED** with `BLOCKED_EXTERNAL — RENDER_API_KEY REQUIRED`. Run: https://github.com/rumman52/Shuddho/actions/runs/37095132480.
+
+The authenticated Actions secrets settings page then showed only `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` as repository secrets and no environment secrets. All six required staging secret names below are absent. This is now observed configuration evidence, not an inference from absent local credentials. Secret values were not accessed. No provisioning was attempted after this failure.
 
 Required Actions secret names:
 
@@ -87,7 +89,7 @@ Required Actions secret names:
 - `SHUDDHO_STAGING_S3_ACCESS_KEY_ID`
 - `SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY`
 
-`DEEPSEEK_API_KEY` remains optional for infrastructure preflight but must be present when an authorized later scenario requires the live model.
+`DEEPSEEK_API_KEY` is also absent from the observed repository secret inventory. It remains optional for infrastructure preflight but must be present when an authorized later scenario requires the live model.
 
 It performs no provider calls and creates no infrastructure. It verifies only the presence of the required GitHub Actions secrets and the reviewed non-secret configuration shape for:
 
@@ -129,14 +131,14 @@ Repository implementation/tooling remains verified; live-provider/staging eviden
 
 ## Last completed action
 
-Restored current main and live Render service/database/deployment state; reproduced and fixed preflight shell command substitution; published PR #300 and observed it merged after successful exact-head CI; rechecked merged-main CI; attempted secure GitHub authentication for manual workflow dispatch, which timed out. No provisioning workflow, migration, live provider collector or release-freeze operation was executed in this session.
+Verified GitHub sign-in, dispatched preflight #1, inspected its failure and confirmed all six required staging secret names are absent. PR #301's earlier checkpoint revision passed CI run `37094490620`; this follow-up records the live failure. No provisioning workflow, migration, live provider collector or release-freeze operation was executed.
 
 ## Next exact action
 
 **Account owner / staging operator:**
 
-1. Recheck CI #1117 and current main. Complete secure GitHub authentication or run **Actions → PA-10 staging prerequisite preflight → Run workflow → main** as the repository operator.
-2. Verify the actual run result. If it fails, resolve the named missing secret/configuration values through secure entry and rerun. A reply saying "done" is not a substitute for inspecting the run.
+1. Add all six exact repository secret names listed above through **Settings → Secrets and variables → Actions → New repository secret**. Supply actual reviewed Render, Temporal and staging S3 values directly in GitHub; do not paste them into chat or source files.
+2. Rerun **Actions → PA-10 staging prerequisite preflight → Run workflow → main** and inspect the actual result. Resolve any configuration-shape error before provisioning.
 3. With preflight passed and the reviewed worker spending scope authorized, run **Provision PA-10 staging worker** from main with `confirm=PROVISION`. Capture its actual service/deploy IDs and source SHA.
 4. Verify migrations and both workflow/activity pollers on `shuddho-documents-v1`. Align staging API build/start/health settings with the Blueprint; verify API/worker database, Temporal and storage settings match.
 5. Run storage, managed identity, artifact and owner-isolation exercises. Use `--personal-agent`; run `--owned-resource-manifest` only after real synthetic scenarios have produced the six required User A IDs. Poller and bucket probes remain `partial` until their higher-level checks pass.
