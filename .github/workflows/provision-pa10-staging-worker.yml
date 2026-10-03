@@ -70,6 +70,9 @@ jobs:
           version="2.28.0"
           asset="cli_${version}_linux_amd64.zip"
           base="https://github.com/render-oss/cli/releases/download/v${version}"
+          cli_dir="$(mktemp -d "${RUNNER_TEMP}/render-cli.XXXXXX")"
+          trap 'rm -rf "${cli_dir}"' EXIT
+          cd "${cli_dir}"
           curl -fsSLO "${base}/${asset}"
           curl -fsSLO "${base}/cli_${version}_SHA256SUMS"
           grep "  ${asset}$" "cli_${version}_SHA256SUMS" | sha256sum -c -
