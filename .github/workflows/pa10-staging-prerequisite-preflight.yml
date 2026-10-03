@@ -50,9 +50,9 @@ jobs:
             echo "- Required GitHub Actions secrets: present"
             echo "- Temporal address shape: valid host:port"
             echo "- Temporal TLS: required"
-            echo "- Task queue: `shuddho-documents-v1`"
-            echo "- Storage backend: `s3`"
-            echo "- Bucket: `shuddho-coworker-staging`"
+            printf '%s\n' '- Task queue: `shuddho-documents-v1`'
+            printf '%s\n' '- Storage backend: `s3`'
+            printf '%s\n' '- Bucket: `shuddho-coworker-staging`'
             echo "- This workflow performs no Render provisioning, provider calls, or paid-resource creation"
             echo "- Worker billing approval remains a separate human boundary"
           } >> "${GITHUB_STEP_SUMMARY}"
