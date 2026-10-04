@@ -888,6 +888,16 @@ class ActionRepository:
                     "Only a negotiation commitment may carry a negotiation proposal source binding.",
                     409,
                 )
+            if (
+                spec.transaction is not None
+                and spec.transaction.requires_transaction_binding
+                and transaction_binding is None
+            ):
+                raise CoworkerError(
+                    "transaction_binding_required",
+                    "This transaction action must be prepared from an exact reviewed transaction.",
+                    409,
+                )
             if transaction_binding is not None:
                 if spec.transaction is None:
                     raise CoworkerError(
