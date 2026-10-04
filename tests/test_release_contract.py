@@ -65,6 +65,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "code_execution",
         "agent_sandbox_tool",
         "personal_transactions",
+        "restaurant_reservations",
         "negotiation_proposal_promotion",
     } == covered
 
