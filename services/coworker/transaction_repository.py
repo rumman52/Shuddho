@@ -973,7 +973,7 @@ class TransactionRepository:
         row: Transaction,
         link: TransactionExecutionLink,
         action: ExternalAction,
-    ) -> TransactionReconciliationEvidence:
+    ) -> tuple[TransactionReconciliationEvidence, bool]:
         receipt = dict(action.receipt) if isinstance(action.receipt, dict) else None
         if action.state == "succeeded" and (
             receipt is None
@@ -1005,7 +1005,7 @@ class TransactionRepository:
             )
         )
         if existing is not None:
-            return existing
+            return existing, False
         sequence = int(
             db.scalar(
                 select(func.coalesce(func.max(TransactionReconciliationEvidence.sequence), 0)).where(
@@ -1034,7 +1034,7 @@ class TransactionRepository:
         )
         db.add(evidence)
         db.flush()
-        return evidence
+        return evidence, True
 
     def sync_external_action(self, owner: str, transaction_id: str) -> dict:
         """Project existing ExternalAction evidence without executing or retrying it."""
@@ -1090,25 +1090,30 @@ class TransactionRepository:
                     "The external action result conflicts with the transaction state.",
                     409,
                 )
-            if target != row.state:
+            state_changed = target != row.state
+            if state_changed:
                 row.state = target
                 row.revision += 1
                 row.updated_at = utcnow()
                 self._record_revision(db, row)
-            evidence = self._append_execution_evidence(db, row, link, action)
-            if target != row.state:
-                raise AssertionError("transaction state projection did not persist")
-            self._record_event(
+            evidence, evidence_created = self._append_execution_evidence(
                 db,
                 row,
-                "transaction_execution_observed",
-                details={
-                    "external_action_id": action.id,
-                    "action_state": action.state,
-                    "evidence_sha256": evidence.evidence_sha256,
-                },
+                link,
+                action,
             )
-            self._audit(db, owner, row.id, "transaction_execution_observed")
+            if evidence_created:
+                self._record_event(
+                    db,
+                    row,
+                    "transaction_execution_observed",
+                    details={
+                        "external_action_id": action.id,
+                        "action_state": action.state,
+                        "evidence_sha256": evidence.evidence_sha256,
+                    },
+                )
+                self._audit(db, owner, row.id, "transaction_execution_observed")
             return {
                 "transaction": self._dto(row),
                 "link": self._link_dto(link),
