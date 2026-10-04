@@ -10,14 +10,18 @@ from uuid import uuid4
 
 from sqlalchemy import func, select
 
+from .action_registry import transaction_binding_manifest, transaction_operation_key, validate_approval_scope
 from .config import Settings
 from .errors import CoworkerError
 from .models import (
     Account,
     AuditEvent,
     Connection,
+    ExternalAction,
     Transaction,
     TransactionEvent,
+    TransactionExecutionLink,
+    TransactionReconciliationEvidence,
     TransactionRevision,
     TransactionTermsSnapshot,
     Workspace,
@@ -775,6 +779,401 @@ class TransactionRepository:
                     "boundary": "external_action_only",
                 },
             }
+
+    @staticmethod
+    def _link_dto(row: TransactionExecutionLink) -> dict:
+        return {
+            "id": row.id,
+            "transaction_id": row.transaction_id,
+            "transaction_revision": row.transaction_revision,
+            "terms_revision": row.terms_revision,
+            "terms_sha256": row.terms_sha256,
+            "external_action_id": row.external_action_id,
+            "preview_hash": row.preview_hash,
+            "provider": row.provider,
+            "action_kind": row.action_kind,
+            "created_at": iso(row.created_at),
+        }
+
+    @staticmethod
+    def _evidence_dto(row: TransactionReconciliationEvidence) -> dict:
+        return {
+            "id": row.id,
+            "sequence": row.sequence,
+            "transaction_revision": row.transaction_revision,
+            "external_action_id": row.external_action_id,
+            "action_state": row.action_state,
+            "provider": row.provider,
+            "action_kind": row.action_kind,
+            "preview_hash": row.preview_hash,
+            "receipt": dict(row.receipt) if isinstance(row.receipt, dict) else None,
+            "receipt_sha256": row.receipt_sha256,
+            "error_code": row.error_code,
+            "evidence_sha256": row.evidence_sha256,
+            "action_finished_at": iso(row.action_finished_at) if row.action_finished_at else None,
+            "observed_at": iso(row.observed_at),
+        }
+
+    @staticmethod
+    def _execution_link(db, owner: str, transaction_id: str) -> TransactionExecutionLink | None:
+        return db.scalar(
+            select(TransactionExecutionLink).where(
+                TransactionExecutionLink.transaction_id == transaction_id,
+                TransactionExecutionLink.owner_id == owner,
+            )
+        )
+
+    def bind_external_action(
+        self,
+        owner: str,
+        transaction_id: str,
+        expected_revision: int,
+        external_action_id: str,
+    ) -> dict:
+        """Internally bind one reviewed transaction to one immutable action preview.
+
+        This method is intentionally not mounted as a public API route in TX-05.
+        Capability-specific adapters must first build an ExternalAction whose
+        approval scope already carries the exact transaction binding.
+        """
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            row = self._transaction(db, owner, transaction_id, lock=True)
+            self._check_revision(row, expected_revision)
+            if row.state != "awaiting_approval":
+                raise CoworkerError(
+                    "transaction_execution_binding_state",
+                    "Confirm the exact transaction review before binding an external action.",
+                    409,
+                )
+            terms = self._require_current_fresh_terms(db, row)
+            existing = self._execution_link(db, owner, transaction_id)
+            if existing is not None:
+                if existing.external_action_id != external_action_id:
+                    raise CoworkerError(
+                        "transaction_execution_already_bound",
+                        "This transaction already has an execution attempt. Create a fresh transaction to try again.",
+                        409,
+                    )
+                return self._link_dto(existing)
+
+            action = db.scalar(
+                select(ExternalAction).where(
+                    ExternalAction.id == external_action_id,
+                    ExternalAction.owner_id == owner,
+                ).with_for_update()
+            )
+            if action is None:
+                raise not_found()
+            if action.state != "awaiting_approval" or action.approved_at is not None:
+                raise CoworkerError(
+                    "transaction_action_already_started",
+                    "Bind the transaction before the external action is approved or executed.",
+                    409,
+                )
+            if self._fingerprint(action.preview) != action.preview_hash:
+                raise CoworkerError(
+                    "approval_changed",
+                    "The external action preview changed.",
+                    409,
+                )
+            spec = validate_approval_scope(action.preview)
+            if spec.transaction is None:
+                raise CoworkerError(
+                    "transaction_action_not_registered",
+                    "This external action is not registered for transaction execution.",
+                    409,
+                )
+            provider = action.preview.get("provider")
+            if (
+                not isinstance(provider, str)
+                or transaction_operation_key(provider, action.kind)
+                not in self.settings.transaction_operations
+            ):
+                raise CoworkerError(
+                    "personal_transaction_operation_disabled",
+                    "This transaction operation is not enabled for this deployment.",
+                    503,
+                )
+            binding = transaction_binding_manifest(action.preview, spec)
+            expected_binding = {
+                "transaction_id": row.id,
+                "transaction_revision": row.revision,
+                "terms_revision": terms.revision,
+                "terms_sha256": terms.terms_sha256,
+            }
+            if binding != expected_binding:
+                raise CoworkerError(
+                    "transaction_action_binding_changed",
+                    "The external action is not bound to the exact reviewed transaction terms.",
+                    409,
+                )
+
+            link = TransactionExecutionLink(
+                id=str(uuid4()),
+                transaction_id=row.id,
+                owner_id=owner,
+                transaction_revision=row.revision,
+                terms_revision=terms.revision,
+                terms_sha256=terms.terms_sha256,
+                external_action_id=action.id,
+                preview_hash=action.preview_hash,
+                provider=provider,
+                action_kind=action.kind,
+            )
+            db.add(link)
+            db.flush()
+            self._record_event(
+                db,
+                row,
+                "transaction_execution_linked",
+                details={
+                    "external_action_id": action.id,
+                    "preview_hash": action.preview_hash,
+                    "terms_sha256": terms.terms_sha256,
+                },
+            )
+            self._audit(db, owner, row.id, "transaction_execution_linked")
+            return self._link_dto(link)
+
+    @staticmethod
+    def _projected_transaction_state(action_state: str) -> str:
+        return {
+            "awaiting_approval": "awaiting_approval",
+            "queued": "approved",
+            "executing": "executing",
+            "succeeded": "confirmed",
+            "failed": "failed",
+            "cancelled": "cancelled",
+            "expired": "expired",
+            "outcome_unknown": "outcome_unknown",
+        }[action_state]
+
+    @staticmethod
+    def _state_projection_allowed(current: str, target: str) -> bool:
+        if current == target:
+            return True
+        allowed = {
+            "awaiting_approval": {
+                "approved", "executing", "confirmed", "failed",
+                "cancelled", "expired", "outcome_unknown",
+            },
+            "approved": {
+                "executing", "confirmed", "failed",
+                "cancelled", "expired", "outcome_unknown",
+            },
+            "executing": {"confirmed", "failed", "outcome_unknown"},
+            "outcome_unknown": {"confirmed"},
+        }
+        return target in allowed.get(current, set())
+
+    def _append_execution_evidence(
+        self,
+        db,
+        row: Transaction,
+        link: TransactionExecutionLink,
+        action: ExternalAction,
+    ) -> TransactionReconciliationEvidence:
+        receipt = dict(action.receipt) if isinstance(action.receipt, dict) else None
+        if action.state == "succeeded" and (
+            receipt is None
+            or receipt.get("provider") != link.provider
+            or not isinstance(receipt.get("status"), str)
+            or not receipt.get("status")
+        ):
+            raise CoworkerError(
+                "transaction_receipt_invalid",
+                "The provider receipt cannot be verified for this transaction.",
+                409,
+            )
+        receipt_sha256 = self._fingerprint(receipt) if receipt is not None else None
+        evidence_value = {
+            "external_action_id": action.id,
+            "action_state": action.state,
+            "provider": link.provider,
+            "action_kind": link.action_kind,
+            "preview_hash": action.preview_hash,
+            "receipt_sha256": receipt_sha256,
+            "error_code": action.error_code,
+            "action_finished_at": iso(action.finished_at) if action.finished_at else None,
+        }
+        evidence_sha256 = self._fingerprint(evidence_value)
+        existing = db.scalar(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.external_action_id == action.id,
+                TransactionReconciliationEvidence.evidence_sha256 == evidence_sha256,
+            )
+        )
+        if existing is not None:
+            return existing
+        sequence = int(
+            db.scalar(
+                select(func.coalesce(func.max(TransactionReconciliationEvidence.sequence), 0)).where(
+                    TransactionReconciliationEvidence.transaction_id == row.id,
+                    TransactionReconciliationEvidence.owner_id == row.owner_id,
+                )
+            )
+            or 0
+        ) + 1
+        evidence = TransactionReconciliationEvidence(
+            id=str(uuid4()),
+            transaction_id=row.id,
+            owner_id=row.owner_id,
+            external_action_id=action.id,
+            sequence=sequence,
+            transaction_revision=row.revision,
+            action_state=action.state,
+            provider=link.provider,
+            action_kind=link.action_kind,
+            preview_hash=action.preview_hash,
+            receipt=receipt,
+            receipt_sha256=receipt_sha256,
+            error_code=action.error_code,
+            evidence_sha256=evidence_sha256,
+            action_finished_at=action.finished_at,
+        )
+        db.add(evidence)
+        db.flush()
+        return evidence
+
+    def sync_external_action(self, owner: str, transaction_id: str) -> dict:
+        """Project existing ExternalAction evidence without executing or retrying it."""
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            row = self._transaction(db, owner, transaction_id, lock=True)
+            link = self._execution_link(db, owner, transaction_id)
+            if link is None:
+                raise CoworkerError(
+                    "transaction_execution_not_bound",
+                    "This transaction has no external execution attempt.",
+                    409,
+                )
+            action = db.scalar(
+                select(ExternalAction).where(
+                    ExternalAction.id == link.external_action_id,
+                    ExternalAction.owner_id == owner,
+                ).with_for_update()
+            )
+            if action is None:
+                raise CoworkerError(
+                    "transaction_execution_evidence_missing",
+                    "The linked external action is unavailable.",
+                    409,
+                )
+            if (
+                action.preview_hash != link.preview_hash
+                or self._fingerprint(action.preview) != link.preview_hash
+            ):
+                raise CoworkerError(
+                    "transaction_execution_binding_changed",
+                    "The linked external action changed after transaction binding.",
+                    409,
+                )
+            spec = validate_approval_scope(action.preview)
+            binding = transaction_binding_manifest(action.preview, spec)
+            if binding != {
+                "transaction_id": row.id,
+                "transaction_revision": link.transaction_revision,
+                "terms_revision": link.terms_revision,
+                "terms_sha256": link.terms_sha256,
+            }:
+                raise CoworkerError(
+                    "transaction_execution_binding_changed",
+                    "The linked external action no longer matches the transaction evidence.",
+                    409,
+                )
+
+            target = self._projected_transaction_state(action.state)
+            if not self._state_projection_allowed(row.state, target):
+                raise CoworkerError(
+                    "transaction_execution_state_conflict",
+                    "The external action result conflicts with the transaction state.",
+                    409,
+                )
+            if target != row.state:
+                row.state = target
+                row.revision += 1
+                row.updated_at = utcnow()
+                self._record_revision(db, row)
+            evidence = self._append_execution_evidence(db, row, link, action)
+            if target != row.state:
+                raise AssertionError("transaction state projection did not persist")
+            self._record_event(
+                db,
+                row,
+                "transaction_execution_observed",
+                details={
+                    "external_action_id": action.id,
+                    "action_state": action.state,
+                    "evidence_sha256": evidence.evidence_sha256,
+                },
+            )
+            self._audit(db, owner, row.id, "transaction_execution_observed")
+            return {
+                "transaction": self._dto(row),
+                "link": self._link_dto(link),
+                "evidence": self._evidence_dto(evidence),
+            }
+
+    def execution_surface(self, owner: str, transaction_id: str) -> dict:
+        self._require_enabled()
+        with self.sessions() as db:
+            row = self._transaction(db, owner, transaction_id)
+            link = self._execution_link(db, owner, transaction_id)
+            if link is None:
+                return {
+                    "transaction": self._dto(row),
+                    "link": None,
+                    "evidence": [],
+                    "reconciliation": {"available": False},
+                }
+            evidence = db.scalars(
+                select(TransactionReconciliationEvidence)
+                .where(
+                    TransactionReconciliationEvidence.transaction_id == row.id,
+                    TransactionReconciliationEvidence.owner_id == owner,
+                )
+                .order_by(TransactionReconciliationEvidence.sequence)
+            ).all()
+            action = db.scalar(
+                select(ExternalAction).where(
+                    ExternalAction.id == link.external_action_id,
+                    ExternalAction.owner_id == owner,
+                )
+            )
+            reconcile_supported = False
+            if action is not None:
+                spec = validate_approval_scope(action.preview)
+                reconcile_supported = (
+                    action.state == "outcome_unknown"
+                    and spec.reconcile_supported
+                )
+            return {
+                "transaction": self._dto(row),
+                "link": self._link_dto(link),
+                "evidence": [self._evidence_dto(item) for item in evidence],
+                "reconciliation": {
+                    "available": reconcile_supported,
+                    "mode": "read_only_provider_receipt" if reconcile_supported else None,
+                },
+            }
+
+    def reconciliation_action_id(self, owner: str, transaction_id: str) -> str:
+        surface = self.execution_surface(owner, transaction_id)
+        link = surface["link"]
+        if link is None:
+            raise CoworkerError(
+                "transaction_execution_not_bound",
+                "This transaction has no external execution attempt.",
+                409,
+            )
+        if surface["reconciliation"]["available"] is not True:
+            raise CoworkerError(
+                "reconciliation_unavailable",
+                "This transaction cannot be reconciled with its connected service.",
+                409,
+            )
+        return str(link["external_action_id"])
 
     def transition(
         self,
