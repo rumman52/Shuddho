@@ -19,6 +19,7 @@ from test_transaction_terms import terms
 
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
+from services.coworker.models import utcnow
 from services.coworker.transaction_repository import TransactionDraft
 
 
@@ -250,6 +251,7 @@ def test_local_sync_projects_action_state_and_dedupes_receipt_evidence(container
         "status": "accepted_by_gmail",
         "provider_id": "mail-tx05",
         "message_id": f'<{action["id"]}@shuddho.invalid>',
+        "confirmed_at": utcnow().isoformat(),
     }
     container.actions.repo.finish(
         action["id"],
@@ -308,6 +310,7 @@ def test_outcome_unknown_never_retries_and_late_receipt_can_confirm(container):
         "status": "accepted_by_gmail",
         "provider_id": "mail-late",
         "message_id": f'<{action["id"]}@shuddho.invalid>',
+        "confirmed_at": utcnow().isoformat(),
     }
     container.actions.repo.finish(action["id"], "succeeded", receipt=receipt)
     recovered = container.transactions.sync_external_action(owner, transaction_id)
@@ -330,7 +333,11 @@ def test_invalid_success_receipt_fails_closed_without_confirming_transaction(con
     container.actions.repo.finish(
         action["id"],
         "succeeded",
-        receipt={"provider": "microsoft", "status": "accepted"},
+        receipt={
+            "provider": "microsoft",
+            "status": "accepted",
+            "confirmed_at": utcnow().isoformat(),
+        },
     )
     with pytest.raises(CoworkerError) as invalid:
         container.transactions.sync_external_action(owner, transaction_id)
@@ -433,7 +440,6 @@ def test_quote_expiry_is_rechecked_before_bound_action_approval(container):
                 confirmed["review_binding"]["terms_revision"],
             ),
         )
-        from services.coworker.models import utcnow
         expired_at = utcnow() - timedelta(seconds=1)
         row.quote_expires_at = expired_at
         row.quoted_at = expired_at - timedelta(minutes=1)
