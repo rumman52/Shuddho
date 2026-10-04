@@ -24,7 +24,7 @@ from .models import (
     utcnow,
 )
 from .repository import aware, iso, not_found
-from .transaction_schemas import TransactionTermsDraft
+from .transaction_schemas import TransactionCreate, TransactionTermsDraft
 
 
 TransactionState = Literal[
@@ -385,6 +385,26 @@ class TransactionRepository:
             self._audit(db, owner, row.id, "transaction_created")
             return self._dto(row), True
 
+    def create_public(
+        self,
+        owner: str,
+        request: TransactionCreate,
+        idempotency_key: str,
+    ) -> tuple[dict, bool]:
+        """Create inert user-owned intent without selecting provider authority."""
+        return self.create(
+            owner,
+            TransactionDraft(
+                transaction_kind=request.transaction_kind,
+                provider="internal",
+                connection_id=None,
+                currency=request.currency,
+                counterparty=request.counterparty,
+                expires_at=request.expires_at,
+            ),
+            idempotency_key,
+        )
+
     def list(self, owner: str, limit: int = 100) -> list[dict]:
         self._require_enabled()
         with self.sessions() as db:
@@ -642,6 +662,118 @@ class TransactionRepository:
                 "provider_quote_id": terms.provider_quote_id,
                 "quoted_at": iso(terms.quoted_at),
                 "quote_expires_at": iso(terms.quote_expires_at),
+            }
+
+    def review_surface(self, owner: str, transaction_id: str) -> dict:
+        """Return only owner-scoped business/review state; never execution authority."""
+        self._require_enabled()
+        with self.sessions() as db:
+            row = self._transaction(db, owner, transaction_id)
+            terms = (
+                db.get(TransactionTermsSnapshot, (row.id, row.current_terms_revision))
+                if row.current_terms_revision is not None
+                else None
+            )
+            events = db.scalars(
+                select(TransactionEvent)
+                .where(
+                    TransactionEvent.transaction_id == row.id,
+                    TransactionEvent.owner_id == owner,
+                )
+                .order_by(TransactionEvent.sequence)
+            ).all()
+            return {
+                "transaction": self._dto(row),
+                "terms": (
+                    self._terms_dto(terms)
+                    if terms is not None and terms.owner_id == owner
+                    else None
+                ),
+                "events": [
+                    {
+                        "sequence": event.sequence,
+                        "revision": event.revision,
+                        "state": event.state,
+                        "event_type": event.event_type,
+                        "details": dict(event.details or {}),
+                        "created_at": iso(event.created_at),
+                    }
+                    for event in events
+                ],
+                "execution": {
+                    "available": False,
+                    "boundary": "external_action_only",
+                },
+            }
+
+    def start_review(
+        self,
+        owner: str,
+        transaction_id: str,
+        expected_revision: int,
+    ) -> dict:
+        """Enter human review only when exact terms are fresh."""
+        return self.transition(
+            owner,
+            transaction_id,
+            expected_revision,
+            "awaiting_review",
+        )
+
+    def confirm_review(
+        self,
+        owner: str,
+        transaction_id: str,
+        expected_revision: int,
+        terms_sha256: str,
+    ) -> dict:
+        """Atomically record exact-hash human review without executing anything."""
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            row = self._transaction(db, owner, transaction_id, lock=True)
+            self._check_revision(row, expected_revision)
+            if row.state != "awaiting_review":
+                raise CoworkerError(
+                    "transaction_review_state",
+                    "The transaction must be awaiting review before it can be confirmed.",
+                    409,
+                )
+            terms = self._require_current_fresh_terms(
+                db,
+                row,
+                expected_terms_sha256=terms_sha256,
+            )
+            row.state = "awaiting_approval"
+            row.revision += 1
+            row.updated_at = utcnow()
+            self._record_revision(db, row)
+            self._record_event(
+                db,
+                row,
+                "transaction_review_confirmed",
+                details={
+                    "terms_revision": terms.revision,
+                    "terms_sha256": terms.terms_sha256,
+                },
+            )
+            self._audit(db, owner, row.id, "transaction_review_confirmed")
+            return {
+                "transaction": self._dto(row),
+                "review_binding": {
+                    "transaction_id": row.id,
+                    "transaction_revision": row.revision,
+                    "terms_revision": terms.revision,
+                    "terms_sha256": terms.terms_sha256,
+                    "currency": terms.currency,
+                    "total_minor": terms.total_minor,
+                    "provider_quote_id": terms.provider_quote_id,
+                    "quoted_at": iso(terms.quoted_at),
+                    "quote_expires_at": iso(terms.quote_expires_at),
+                },
+                "execution": {
+                    "available": False,
+                    "boundary": "external_action_only",
+                },
             }
 
     def transition(
