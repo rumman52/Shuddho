@@ -197,6 +197,38 @@ export type ExternalAction = {
 };
 export type NegotiationLimit = { name: string; comparison: "at_most" | "at_least" | "exact" | "avoid"; value: string };
 export type NegotiationOfferTerm = { name: string; value: string };
+export type TransactionState = "draft" | "terms_ready" | "awaiting_review" | "awaiting_approval" | "approved" | "executing" | "confirmed" | "cancelled" | "expired" | "failed" | "outcome_unknown";
+export type TransactionPrice = {
+  currency: string; subtotal_minor: number; tax_minor: number; fees_minor: number;
+  shipping_minor: number; discount_minor: number; total_minor: number;
+};
+export type TransactionTerm = { name: string; value: string };
+export type TransactionRecord = {
+  id: string; transaction_kind: string; provider: "internal" | string; connection_id: string | null;
+  provider_account_ref: string | null; state: TransactionState; revision: number; current_terms_revision: number | null;
+  currency: string | null; counterparty: string | null; expires_at: string | null; created_at: string; updated_at: string;
+};
+export type TransactionTermsSnapshot = {
+  transaction_id: string; revision: number; terms: TransactionTerm[]; price: TransactionPrice;
+  currency: string; total_minor: number; terms_sha256: string; provider_quote_id: string | null;
+  quoted_at: string; quote_expires_at: string; created_at: string;
+};
+export type TransactionEvent = {
+  sequence: number; revision: number; state: TransactionState; event_type: string;
+  details: Record<string, unknown>; created_at: string;
+};
+export type TransactionSurface = {
+  transaction: TransactionRecord; terms: TransactionTermsSnapshot | null; events: TransactionEvent[];
+  execution: { available: false; boundary: "external_action_only" };
+};
+export type TransactionCreate = {
+  transaction_kind: string; counterparty: string; currency?: string | null; expires_at?: string | null;
+};
+export type TransactionTermsInput = {
+  terms: TransactionTerm[]; price: TransactionPrice; provider_quote_id?: string | null;
+  quoted_at: string; quote_expires_at: string;
+};
+
 export type NegotiationOffer = {
   id: string; sequence: number; direction: "ours" | "theirs"; kind: "proposal" | "counteroffer" | "commitment" | "response";
   summary: string; terms: NegotiationOfferTerm[]; external_action_id: string | null; occurred_at: string; created_at: string;
@@ -453,6 +485,31 @@ export class CoworkerClient {
   }
   cancelAction(id: string) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}/cancel`, { method: "POST" }); }
   reconcileAction(id: string) { return this.response(`/api/v1/actions/${identifier(id)}/reconcile`, { method: "POST" }, 65000).then(response => response.json() as Promise<ExternalAction>); }
+  transactions(signal?: AbortSignal) { return this.json<{ enabled: boolean; execution_available?: boolean; transactions: TransactionRecord[] }>("/api/v1/transactions", { signal }); }
+  transaction(id: string, signal?: AbortSignal) { return this.json<TransactionSurface>(`/api/v1/transactions/${identifier(id)}`, { signal }); }
+  createTransaction(input: TransactionCreate, key: string) {
+    return this.json<TransactionRecord>("/api/v1/transactions", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(input) });
+  }
+  replaceTransactionTerms(id: string, revision: number, input: TransactionTermsInput) {
+    return this.json<{ transaction: TransactionRecord; terms: TransactionTermsSnapshot }>(`/api/v1/transactions/${identifier(id)}/terms`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision, ...input }),
+    });
+  }
+  startTransactionReview(id: string, revision: number) {
+    return this.json<TransactionRecord>(`/api/v1/transactions/${identifier(id)}/review`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }),
+    });
+  }
+  confirmTransactionReview(id: string, revision: number, termsSha256: string) {
+    return this.json<{ transaction: TransactionRecord; review_binding: { transaction_id: string; transaction_revision: number; terms_revision: number; terms_sha256: string; currency: string; total_minor: number; provider_quote_id: string | null; quoted_at: string; quote_expires_at: string }; execution: { available: false; boundary: "external_action_only" } }>(`/api/v1/transactions/${identifier(id)}/review/confirm`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision, terms_sha256: digestIdentifier(termsSha256) }),
+    });
+  }
+  cancelTransaction(id: string, revision: number) {
+    return this.json<TransactionRecord>(`/api/v1/transactions/${identifier(id)}/cancel`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }),
+    });
+  }
   negotiations(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals_enabled?: boolean; proposal_promotion_enabled?: boolean; cases: NegotiationCase[] }>("/api/v1/negotiations", { signal }); }
   negotiation(id: string, signal?: AbortSignal) { return this.json<NegotiationCase>(`/api/v1/negotiations/${identifier(id)}`, { signal }); }
   createNegotiation(input: NegotiationCaseCreate, key: string) {

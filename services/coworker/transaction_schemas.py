@@ -117,3 +117,65 @@ class TransactionTermsDraft(TransactionContractModel):
         if len(names) != len(set(names)):
             raise ValueError("Transaction term names must be unique")
         return self
+
+
+class TransactionCreate(TransactionContractModel):
+    """Public TX-04 creation contract for inert business intent only.
+
+    Provider execution identity is deliberately server-owned. The generic public
+    API creates only internal review records and cannot select a connected account.
+    """
+
+    transaction_kind: str = Field(
+        min_length=1,
+        max_length=40,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
+    counterparty: str = Field(min_length=1, max_length=300)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    expires_at: datetime | None = None
+
+    @field_validator("counterparty")
+    @classmethod
+    def valid_counterparty(cls, value: str) -> str:
+        return _safe_text(value, label="Counterparty")
+
+    @field_validator("currency")
+    @classmethod
+    def valid_currency(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if len(normalized) != 3 or not normalized.isascii() or not normalized.isalpha():
+            raise ValueError("Currency must be a three-letter ASCII code")
+        return normalized
+
+    @field_validator("expires_at")
+    @classmethod
+    def valid_expiry(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        value = _aware(value, label="Transaction expiry")
+        now = datetime.now(timezone.utc)
+        if value <= now:
+            raise ValueError("Transaction expiry must be in the future")
+        if value > now + timedelta(days=366):
+            raise ValueError("Transaction expiry cannot be more than 366 days away")
+        return value
+
+
+class TransactionTermsReplace(TransactionTermsDraft):
+    expected_revision: int = Field(ge=1)
+
+
+class TransactionReviewStart(TransactionContractModel):
+    expected_revision: int = Field(ge=1)
+
+
+class TransactionReviewConfirm(TransactionContractModel):
+    expected_revision: int = Field(ge=1)
+    terms_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class TransactionCancel(TransactionContractModel):
+    expected_revision: int = Field(ge=1)
