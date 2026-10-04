@@ -530,6 +530,12 @@ class TransactionRepository:
         with self.sessions.begin() as db:
             row = self._transaction(db, owner, transaction_id, lock=True)
             self._check_revision(row, expected_revision)
+            if self._execution_link(db, owner, transaction_id) is not None:
+                raise CoworkerError(
+                    "transaction_execution_already_bound",
+                    "This transaction already has an execution attempt. Create a fresh transaction to change terms.",
+                    409,
+                )
             if row.state not in {"draft", "terms_ready", "awaiting_review", "awaiting_approval"}:
                 raise CoworkerError(
                     "transaction_terms_not_editable",
