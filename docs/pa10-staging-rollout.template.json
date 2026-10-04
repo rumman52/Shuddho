@@ -41,6 +41,7 @@
     "action_email_threading": false,
     "action_social_publishing": false,
     "personal_transactions": false,
+    "restaurant_reservations": false,
     "action_selection": false,
     "action_proposals": false,
     "negotiation_proposal_promotion": false,
