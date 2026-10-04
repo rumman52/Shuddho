@@ -34,6 +34,13 @@ from .negotiation_schemas import (
     NegotiationProposalRequest,
     NegotiationProposalReview,
 )
+from .transaction_schemas import (
+    TransactionCancel,
+    TransactionCreate,
+    TransactionReviewConfirm,
+    TransactionReviewStart,
+    TransactionTermsReplace,
+)
 from .automation_schemas import AutomationCreate, AutomationPatch, AutomationTransition
 from .notification_schemas import (
     BrowserPushSubscriptionDeactivate,
@@ -100,6 +107,150 @@ def require_sandbox_worker(request: Request, services: Container) -> None:
     expected = services.settings.sandbox_worker_token
     if not expected or not hmac.compare_digest(supplied, expected):
         raise CoworkerError("sandbox_worker_unauthorized", "Sandbox worker authentication failed.", 403)
+
+
+@router.post("/transactions", status_code=201)
+def create_transaction(
+    payload: TransactionCreate,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = services.transactions.create_public(
+        identity.account_id,
+        payload,
+        idempotency_key,
+    )
+    response.headers["Location"] = f'/api/v1/transactions/{value["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
+
+
+@router.get("/transactions")
+def list_transactions(identity: Identity, services: Services):
+    if not services.settings.personal_transactions_enabled:
+        return {"enabled": False, "transactions": []}
+    return {
+        "enabled": True,
+        "execution_available": False,
+        "transactions": services.transactions.list(identity.account_id),
+    }
+
+
+@router.get("/transactions/{transaction_id}")
+def get_transaction(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.transactions.review_surface(
+        identity.account_id,
+        str(transaction_id),
+    )
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
+
+
+@router.get("/transactions/{transaction_id}/revisions")
+def transaction_revisions(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return {
+        "revisions": services.transactions.revisions(
+            identity.account_id,
+            str(transaction_id),
+        )
+    }
+
+
+@router.get("/transactions/{transaction_id}/events")
+def transaction_events(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return {
+        "events": services.transactions.events(
+            identity.account_id,
+            str(transaction_id),
+        )
+    }
+
+
+@router.put("/transactions/{transaction_id}/terms")
+def replace_transaction_terms(
+    transaction_id: UUID,
+    payload: TransactionTermsReplace,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.transactions.set_terms(
+        identity.account_id,
+        str(transaction_id),
+        payload.expected_revision,
+        payload,
+    )
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
+
+
+@router.post("/transactions/{transaction_id}/review")
+def start_transaction_review(
+    transaction_id: UUID,
+    payload: TransactionReviewStart,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.transactions.start_review(
+        identity.account_id,
+        str(transaction_id),
+        payload.expected_revision,
+    )
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
+
+
+@router.post("/transactions/{transaction_id}/review/confirm")
+def confirm_transaction_review(
+    transaction_id: UUID,
+    payload: TransactionReviewConfirm,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.transactions.confirm_review(
+        identity.account_id,
+        str(transaction_id),
+        payload.expected_revision,
+        payload.terms_sha256,
+    )
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
+
+
+@router.post("/transactions/{transaction_id}/cancel")
+def cancel_transaction(
+    transaction_id: UUID,
+    payload: TransactionCancel,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.transactions.transition(
+        identity.account_id,
+        str(transaction_id),
+        payload.expected_revision,
+        "cancelled",
+    )
+    response.headers["ETag"] = f'"{value["revision"]}"'
+    return value
 
 
 @router.post("/negotiations", status_code=201)
