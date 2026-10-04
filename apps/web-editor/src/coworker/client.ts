@@ -9,7 +9,7 @@ export type WorkSkill = { id: SkillId; name: string; description: string; instru
 export type DraftMetadata = { output_language: string; missing_information: string[] };
 export type WorkSection = { heading: string; paragraphs: string[]; bullets: string[]; source_ids: string[] };
 export type EmailDraft = { subject: string; body: string };
-export type ConnectedAccount = { id: string; provider: "google" | "microsoft" | "linkedin"; capability: "email" | "calendar" | "drive" | "social" | "email_read" | "calendar_read"; email: string; active: boolean };
+export type ConnectedAccount = { id: string; provider: "google" | "microsoft" | "linkedin" | "opentable"; capability: "email" | "calendar" | "drive" | "social" | "restaurant_reservation" | "email_read" | "calendar_read"; email: string; active: boolean };
 export type ActionRecipient = { id: string; name: string; email: string; created_at: string; updated_at: string };
 export type EmailAction = { kind: "email_send"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
 export type AttachmentEmailAction = { kind: "email_send_with_attachments"; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string };
@@ -20,7 +20,8 @@ export type CalendarAction = { kind: "calendar_create"; title: string; descripti
 export type CalendarReminderAction = { kind: "calendar_create_with_reminder"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[]; reminder_minutes_before_start: 5 | 10 | 15 | 30 | 60 | 120 | 1440 };
 export type DocumentShareAction = { kind: "document_share"; recipients: string[] };
 export type LinkedInSocialPublishAction = { kind: "social_publish_linkedin"; text: string };
-export type ActionPayload = EmailAction | AttachmentEmailAction | EmailThreadReplyAction | NegotiationCommitmentAction | CalendarAction | CalendarReminderAction | DocumentShareAction | LinkedInSocialPublishAction;
+export type RestaurantReservationAction = { kind: "restaurant_reservation_create"; restaurant_id: number; restaurant_name: string; date_time: string; time_zone: string; party_size: number; reservation_attribute: "default" | "hightop" | "bar" | "counter" | "outdoor"; dining_area_id: number | null; environment: "Indoor" | "Outdoor" | null; guest_first_name: string; guest_last_name: string; guest_email: string; guest_phone_number: string; guest_phone_country_code: string; special_request: string; availability_sha256: string; availability_observed_at: string; no_payment_required: true };
+export type ActionPayload = EmailAction | AttachmentEmailAction | EmailThreadReplyAction | NegotiationCommitmentAction | CalendarAction | CalendarReminderAction | DocumentShareAction | LinkedInSocialPublishAction | RestaurantReservationAction;
 export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[]; artifact_ids?: string[] };
 export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
 export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "needs_input" | "blocked" | "completed" | "failed" | "cancelled";
@@ -189,7 +190,7 @@ export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: 
 export type ExternalAction = {
   id: string; connection_id: string; kind: ActionPayload["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
-  preview: { account: string; provider: "google" | "microsoft" | "linkedin"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; reply_context?: { parent_action_id: string; root_action_id: string; thread_id: string; parent_message_id: string; parent_provider_id: string; references: string[] }; source_binding?: { type: "negotiation_proposal"; proposal_id: string; proposal_hash: string; case_id: string; case_revision: number; history_sequence: number }; transaction_binding?: { transaction_id: string; transaction_revision: number; terms_revision: number; terms_sha256: string }; transaction?: { class: "binding_negotiation_commitment"; approval: "exact_final_terms"; changed_terms: "fresh_preview_required"; uncertain_outcome: "do_not_retry"; provider_idempotency: "provider_specific_only" }; expires_at: string; calendar: string | null; guest_notifications: string | null };
+  preview: { account: string; provider: "google" | "microsoft" | "linkedin" | "opentable"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; reply_context?: { parent_action_id: string; root_action_id: string; thread_id: string; parent_message_id: string; parent_provider_id: string; references: string[] }; source_binding?: { type: "negotiation_proposal"; proposal_id: string; proposal_hash: string; case_id: string; case_revision: number; history_sequence: number }; transaction_binding?: { transaction_id: string; transaction_revision: number; terms_revision: number; terms_sha256: string }; transaction?: ({ class: "binding_negotiation_commitment"; approval: "exact_final_terms"; changed_terms: "fresh_preview_required"; uncertain_outcome: "do_not_retry"; provider_idempotency: "provider_specific_only" } | { class: "restaurant_reservation"; approval: "exact_final_terms"; changed_terms: "fresh_preview_required"; uncertain_outcome: "do_not_retry"; provider_idempotency: "provider_specific_only"; transaction_binding: "required" }); expires_at: string; calendar: string | null; guest_notifications: string | null };
   preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
   approved_at: string | null; finished_at: string | null;
   receipt: { provider: string; provider_id?: string; thread_id?: string; status: string; confirmed_at: string; message_id?: string; recipient?: string; access?: string; artifact_sha256?: string; author?: string; visibility?: string } | null;
@@ -244,6 +245,19 @@ export type TransactionCreate = {
 export type TransactionTermsInput = {
   terms: TransactionTerm[]; price: TransactionPrice; provider_quote_id?: string | null;
   quoted_at: string; quote_expires_at: string;
+};
+
+export type RestaurantReservationRequest = {
+  restaurant_id: number; restaurant_name: string; date_time: string; time_zone: string; party_size: number;
+  reservation_attribute: "default" | "hightop" | "bar" | "counter" | "outdoor"; dining_area_id?: number | null;
+  environment?: "Indoor" | "Outdoor" | null; guest_first_name: string; guest_last_name: string; guest_email: string;
+  guest_phone_number: string; guest_phone_country_code: string; special_request?: string;
+};
+export type RestaurantReservationSurface = TransactionSurface & {
+  reservation: {
+    transaction_id: string; request: RestaurantReservationRequest; request_sha256: string;
+    availability: Record<string, unknown>; availability_sha256: string; observed_at: string; created_at: string;
+  };
 };
 
 export type NegotiationOffer = {
