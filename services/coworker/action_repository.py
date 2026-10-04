@@ -183,6 +183,15 @@ class ActionRepository:
                 "The transaction state no longer permits this external action.",
                 409,
             )
+        if (
+            transaction.state == "awaiting_approval"
+            and transaction.revision != manifest["transaction_revision"]
+        ):
+            raise CoworkerError(
+                "transaction_action_binding_changed",
+                "The transaction review revision changed after this action was prepared.",
+                409,
+            )
         if require_fresh_terms and aware(terms.quote_expires_at) <= utcnow():
             raise CoworkerError(
                 "transaction_quote_expired",
