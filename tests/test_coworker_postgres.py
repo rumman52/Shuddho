@@ -45,7 +45,16 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             "cw_transaction_revisions",
             "cw_transaction_events",
             "cw_transaction_execution_links",
+            "cw_transaction_terms",
         } <= tables
+        columns = {
+            column["name"]
+            for column in inspect(db.bind).get_columns(
+                "cw_transactions",
+                schema="shuddho_coworker",
+            )
+        }
+        assert "current_terms_revision" in columns
 
 
 def test_simultaneous_retries_share_one_task_and_usage_record(repository):
