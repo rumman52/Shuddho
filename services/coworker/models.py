@@ -562,6 +562,7 @@ class Transaction(Base):
     provider_account_ref: Mapped[str | None] = mapped_column(String(255))
     state: Mapped[str] = mapped_column(String(30), default="draft")
     revision: Mapped[int] = mapped_column(Integer, default=1)
+    current_terms_revision: Mapped[int | None] = mapped_column(Integer)
     currency: Mapped[str | None] = mapped_column(String(3))
     counterparty: Mapped[str | None] = mapped_column(String(300))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -577,6 +578,10 @@ class Transaction(Base):
         CheckConstraint(
             "revision >= 1",
             name="ck_cw_transactions_revision",
+        ),
+        CheckConstraint(
+            "current_terms_revision IS NULL OR current_terms_revision >= 1",
+            name="ck_cw_transactions_current_terms_revision",
         ),
         CheckConstraint(
             "currency IS NULL OR (length(currency) = 3 AND currency = upper(currency))",
@@ -629,6 +634,47 @@ class TransactionEvent(Base):
             name="ck_cw_transaction_events_state",
         ),
         Index("cw_transaction_events_owner_transaction_sequence", "owner_id", "transaction_id", "sequence"),
+    )
+
+
+class TransactionTermsSnapshot(Base):
+    """Immutable exact terms/quote evidence bound to one transaction revision."""
+
+    __tablename__ = "cw_transaction_terms"
+    transaction_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    terms: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    price: Mapped[dict[str, Any]] = mapped_column(JSON)
+    currency: Mapped[str] = mapped_column(String(3))
+    total_minor: Mapped[int] = mapped_column(BigInteger)
+    terms_sha256: Mapped[str] = mapped_column(String(64))
+    provider_quote_id: Mapped[str | None] = mapped_column(String(255))
+    quoted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    quote_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_transaction_terms_transaction_owner",
+        ),
+        CheckConstraint("revision >= 1", name="ck_cw_transaction_terms_revision"),
+        CheckConstraint(
+            "length(currency) = 3 AND currency = upper(currency)",
+            name="ck_cw_transaction_terms_currency",
+        ),
+        CheckConstraint("total_minor >= 0", name="ck_cw_transaction_terms_total_minor"),
+        CheckConstraint(
+            "length(terms_sha256) = 64",
+            name="ck_cw_transaction_terms_sha256",
+        ),
+        CheckConstraint(
+            "quote_expires_at > quoted_at",
+            name="ck_cw_transaction_terms_quote_window",
+        ),
+        Index("cw_transaction_terms_owner_transaction_revision", "owner_id", "transaction_id", "revision"),
+        Index("cw_transaction_terms_quote_expiry", "quote_expires_at"),
     )
 
 
