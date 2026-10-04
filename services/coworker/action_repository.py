@@ -124,6 +124,7 @@ class ActionRepository:
         preview: dict,
         *,
         allowed_states: set[str] | None = None,
+        require_fresh_terms: bool = False,
     ) -> None:
         binding = preview.get("transaction_binding")
         if binding is None:
@@ -180,6 +181,12 @@ class ActionRepository:
             raise CoworkerError(
                 "transaction_action_binding_changed",
                 "The transaction state no longer permits this external action.",
+                409,
+            )
+        if require_fresh_terms and aware(terms.quote_expires_at) <= utcnow():
+            raise CoworkerError(
+                "transaction_quote_expired",
+                "The reviewed provider quote expired before external execution.",
                 409,
             )
 
@@ -1095,6 +1102,7 @@ class ActionRepository:
                 row.id,
                 row.preview,
                 allowed_states=None if row.approved_at else {"awaiting_approval"},
+                require_fresh_terms=row.approved_at is None,
             )
             if row.approved_at:  # Replayed approval never dispatches a new action.
                 return action_dto(row)
@@ -1195,6 +1203,7 @@ class ActionRepository:
                     row.id,
                     row.preview,
                     allowed_states={"awaiting_approval", "approved", "executing"},
+                    require_fresh_terms=True,
                 )
             except CoworkerError as error:
                 row.state, row.finished_at, row.error_code = (
