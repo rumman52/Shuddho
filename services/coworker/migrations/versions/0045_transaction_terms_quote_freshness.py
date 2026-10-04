@@ -16,6 +16,16 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column(
+        "cw_transactions",
+        sa.Column("current_terms_revision", sa.Integer(), nullable=True),
+    )
+    with op.batch_alter_table("cw_transactions") as batch_op:
+        batch_op.create_check_constraint(
+            "ck_cw_transactions_current_terms_revision",
+            "current_terms_revision IS NULL OR current_terms_revision >= 1",
+        )
+
     op.create_table(
         "cw_transaction_terms",
         sa.Column("transaction_id", sa.String(length=36), nullable=False),
@@ -80,3 +90,9 @@ def downgrade() -> None:
         table_name="cw_transaction_terms",
     )
     op.drop_table("cw_transaction_terms")
+    with op.batch_alter_table("cw_transactions") as batch_op:
+        batch_op.drop_constraint(
+            "ck_cw_transactions_current_terms_revision",
+            type_="check",
+        )
+        batch_op.drop_column("current_terms_revision")
