@@ -220,7 +220,17 @@ def test_transaction_registry_and_approval_scope_bind_exact_final_terms(containe
 
     spec = action_spec("negotiation_commitment_email", "google")
     assert spec.capability == "email"
+    assert spec.transaction is not None
     assert spec.transaction_class == "binding_negotiation_commitment"
+    assert spec.transaction.transaction_class == "binding_negotiation_commitment"
+    assert spec.transaction.approval_mode == "exact_final_terms"
+    assert spec.transaction.terms_change_policy == "fresh_preview_required"
+    assert spec.transaction.uncertain_outcome_policy == "do_not_retry"
+    assert spec.transaction.idempotency_mode == "provider_specific_only"
+    assert spec.transaction.reconciliation_mode == spec.reconcile_mode == "none"
+    assert spec.transaction.requires_fresh_terms is True
+    assert spec.transaction.requires_fresh_price is False
+    assert spec.transaction.requires_provider_confirmation is True
     assert spec.approval_ttl_seconds == 10 * 60
     assert spec.execution_ttl_seconds == 3 * 60
     assert action["preview"]["version"] == 6
