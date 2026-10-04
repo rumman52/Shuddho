@@ -156,6 +156,9 @@ def reservation_request(**changes) -> RestaurantReservationRequest:
         "guest_phone_number": "+14155550123",
         "guest_phone_country_code": "US",
         "special_request": "Window table if available",
+        "opentable_terms_accepted": True,
+        "opentable_terms_version": "2026-07-22",
+        "guest_contact_sharing_approved": True,
     }
     value.update(changes)
     return RestaurantReservationRequest.model_validate(value)
