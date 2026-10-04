@@ -844,6 +844,16 @@ class TransactionRepository:
         """
         self._require_enabled()
         with self.sessions.begin() as db:
+            # Keep the same lock order as action approval/claim:
+            # ExternalAction -> Transaction. This avoids PostgreSQL deadlocks.
+            action = db.scalar(
+                select(ExternalAction).where(
+                    ExternalAction.id == external_action_id,
+                    ExternalAction.owner_id == owner,
+                ).with_for_update()
+            )
+            if action is None:
+                raise not_found()
             row = self._transaction(db, owner, transaction_id, lock=True)
             self._check_revision(row, expected_revision)
             if row.state != "awaiting_approval":
@@ -863,14 +873,6 @@ class TransactionRepository:
                     )
                 return self._link_dto(existing)
 
-            action = db.scalar(
-                select(ExternalAction).where(
-                    ExternalAction.id == external_action_id,
-                    ExternalAction.owner_id == owner,
-                ).with_for_update()
-            )
-            if action is None:
-                raise not_found()
             if action.state != "awaiting_approval" or action.approved_at is not None:
                 raise CoworkerError(
                     "transaction_action_already_started",
@@ -1068,14 +1070,16 @@ class TransactionRepository:
         """Project existing ExternalAction evidence without executing or retrying it."""
         self._require_enabled()
         with self.sessions.begin() as db:
-            row = self._transaction(db, owner, transaction_id, lock=True)
             link = self._execution_link(db, owner, transaction_id)
             if link is None:
+                # Resolve owner-scoped not-found semantics before reporting no link.
+                self._transaction(db, owner, transaction_id)
                 raise CoworkerError(
                     "transaction_execution_not_bound",
                     "This transaction has no external execution attempt.",
                     409,
                 )
+            # Match ActionRepository's lock order: ExternalAction -> Transaction.
             action = db.scalar(
                 select(ExternalAction).where(
                     ExternalAction.id == link.external_action_id,
@@ -1088,6 +1092,7 @@ class TransactionRepository:
                     "The linked external action is unavailable.",
                     409,
                 )
+            row = self._transaction(db, owner, transaction_id, lock=True)
             if (
                 action.preview_hash != link.preview_hash
                 or self._fingerprint(action.preview) != link.preview_hash
