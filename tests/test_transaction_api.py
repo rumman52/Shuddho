@@ -10,7 +10,7 @@ pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
 
 from action_samples import enable_actions
-from test_coworker import signed_client
+from test_coworker import container, signed_client
 
 from services.coworker.models import utcnow
 
@@ -81,10 +81,11 @@ def test_public_transaction_review_flow_is_inert_owner_scoped_and_exact_hash_bou
     alice = headers("alice")
     bob = headers("bob")
 
+    creation_payload = create_payload()
     created_response = client.post(
         "/api/v1/transactions",
         headers=alice | {"Idempotency-Key": "tx04-create-001"},
-        json=create_payload(),
+        json=creation_payload,
     )
     assert created_response.status_code == 201
     assert created_response.headers["idempotent-replayed"] == "false"
@@ -98,7 +99,7 @@ def test_public_transaction_review_flow_is_inert_owner_scoped_and_exact_hash_bou
     replay = client.post(
         "/api/v1/transactions",
         headers=alice | {"Idempotency-Key": "tx04-create-001"},
-        json=create_payload(),
+        json=creation_payload,
     )
     assert replay.status_code == 201
     assert replay.headers["idempotent-replayed"] == "true"
