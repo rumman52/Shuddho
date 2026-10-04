@@ -131,34 +131,22 @@ def test_transaction_domain_revisions_events_and_optimistic_state_changes(contai
     assert terms_ready["revision"] == 2
     assert terms_ready["state"] == "terms_ready"
 
-    awaiting_review = container.transactions.transition(
-        owner,
-        created["id"],
-        2,
-        "awaiting_review",
-    )
-    assert awaiting_review["revision"] == 3
-
-    awaiting_approval = container.transactions.transition(
-        owner,
-        created["id"],
-        3,
-        "awaiting_approval",
-    )
-    assert awaiting_approval["revision"] == 4
-
     revisions = container.transactions.revisions(owner, created["id"])
-    assert [item["revision"] for item in revisions] == [1, 2, 3, 4]
+    assert [item["revision"] for item in revisions] == [1, 2]
     assert revisions[0]["snapshot"]["state"] == "draft"
-    assert revisions[-1]["snapshot"]["state"] == "awaiting_approval"
+    assert revisions[-1]["snapshot"]["state"] == "terms_ready"
 
     events = container.transactions.events(owner, created["id"])
-    assert [item["sequence"] for item in events] == [1, 2, 3, 4]
+    assert [item["sequence"] for item in events] == [1, 2]
     assert events[0]["event_type"] == "transaction_created"
-    assert events[-1]["state"] == "awaiting_approval"
+    assert events[-1]["state"] == "terms_ready"
+
+    with pytest.raises(CoworkerError) as missing_terms:
+        container.transactions.transition(owner, created["id"], 2, "awaiting_review")
+    assert missing_terms.value.code == "transaction_terms_stale"
 
     with pytest.raises(CoworkerError) as stale:
-        container.transactions.transition(owner, created["id"], 3, "cancelled")
+        container.transactions.transition(owner, created["id"], 1, "cancelled")
     assert stale.value.code == "transaction_revision_conflict"
 
 
