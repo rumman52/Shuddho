@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -544,6 +544,125 @@ class PersonalGoalRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (
         Index("cw_personal_goal_revisions_owner_goal", "owner_id", "goal_id"),
+    )
+
+
+class Transaction(Base):
+    """Owner-scoped business intent/state, separate from provider mutation."""
+
+    __tablename__ = "cw_transactions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    connection_id: Mapped[str | None] = mapped_column(ForeignKey("cw_connections.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    transaction_kind: Mapped[str] = mapped_column(String(40))
+    provider: Mapped[str] = mapped_column(String(40))
+    provider_account_ref: Mapped[str | None] = mapped_column(String(255))
+    state: Mapped[str] = mapped_column(String(30), default="draft")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    currency: Mapped[str | None] = mapped_column(String(3))
+    counterparty: Mapped[str | None] = mapped_column(String(300))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_transactions_owner_idempotency"),
+        UniqueConstraint("id", "owner_id", name="uq_cw_transactions_id_owner"),
+        CheckConstraint(
+            "state IN ('draft','terms_ready','awaiting_review','awaiting_approval','approved','executing','confirmed','cancelled','expired','failed','outcome_unknown')",
+            name="ck_cw_transactions_state",
+        ),
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_cw_transactions_revision",
+        ),
+        CheckConstraint(
+            "currency IS NULL OR (length(currency) = 3 AND currency = upper(currency))",
+            name="ck_cw_transactions_currency",
+        ),
+        Index("cw_transactions_owner_updated", "owner_id", "updated_at"),
+        Index("cw_transactions_workspace_state", "workspace_id", "state"),
+        Index("cw_transactions_provider_state", "provider", "state"),
+    )
+
+
+class TransactionRevision(Base):
+    __tablename__ = "cw_transaction_revisions"
+    transaction_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_transaction_revisions_transaction_owner",
+        ),
+        CheckConstraint("revision >= 1", name="ck_cw_transaction_revisions_revision"),
+        Index("cw_transaction_revisions_owner_transaction", "owner_id", "transaction_id"),
+    )
+
+
+class TransactionEvent(Base):
+    __tablename__ = "cw_transaction_events"
+    transaction_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(30))
+    event_type: Mapped[str] = mapped_column(String(60))
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_transaction_events_transaction_owner",
+        ),
+        CheckConstraint("sequence >= 1", name="ck_cw_transaction_events_sequence"),
+        CheckConstraint("revision >= 1", name="ck_cw_transaction_events_revision"),
+        CheckConstraint(
+            "state IN ('draft','terms_ready','awaiting_review','awaiting_approval','approved','executing','confirmed','cancelled','expired','failed','outcome_unknown')",
+            name="ck_cw_transaction_events_state",
+        ),
+        Index("cw_transaction_events_owner_transaction_sequence", "owner_id", "transaction_id", "sequence"),
+    )
+
+
+class TransactionExecutionLink(Base):
+    """Immutable relation between business state and one ExternalAction.
+
+    TX-02 intentionally adds no public writer for this table. Capability-specific
+    code must prove semantic compatibility before later slices may persist links.
+    """
+
+    __tablename__ = "cw_transaction_execution_links"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(36), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    transaction_revision: Mapped[int] = mapped_column(Integer)
+    external_action_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_external_actions.id"), unique=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_transaction_execution_links_transaction_owner",
+        ),
+        CheckConstraint(
+            "transaction_revision >= 1",
+            name="ck_cw_transaction_execution_links_revision",
+        ),
+        Index(
+            "cw_transaction_execution_links_owner_transaction",
+            "owner_id",
+            "transaction_id",
+        ),
     )
 
 
