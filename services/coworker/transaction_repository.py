@@ -18,10 +18,12 @@ from .models import (
     Transaction,
     TransactionEvent,
     TransactionRevision,
+    TransactionTermsSnapshot,
     Workspace,
     utcnow,
 )
-from .repository import iso, not_found
+from .repository import aware, iso, not_found
+from .transaction_schemas import TransactionTermsDraft
 
 
 TransactionState = Literal[
@@ -449,6 +451,177 @@ class TransactionRepository:
                 "This transaction changed. Review the latest revision before continuing.",
                 409,
             )
+
+    @staticmethod
+    def _terms_payload(request: TransactionTermsDraft) -> dict:
+        terms = sorted(
+            [
+                {"name": item.name, "value": item.value}
+                for item in request.terms
+            ],
+            key=lambda item: (item["name"].casefold(), item["name"], item["value"]),
+        )
+        price = request.price.model_dump(mode="json")
+        return {
+            "schema_version": 1,
+            "terms": terms,
+            "price": price,
+            "provider_quote_id": request.provider_quote_id,
+            "quoted_at": request.quoted_at.isoformat(),
+            "quote_expires_at": request.quote_expires_at.isoformat(),
+        }
+
+    @classmethod
+    def _terms_sha256(cls, request: TransactionTermsDraft) -> str:
+        return cls._fingerprint(cls._terms_payload(request))
+
+    @staticmethod
+    def _terms_dto(row: TransactionTermsSnapshot) -> dict:
+        return {
+            "transaction_id": row.transaction_id,
+            "revision": row.revision,
+            "terms": list(row.terms),
+            "price": dict(row.price),
+            "currency": row.currency,
+            "total_minor": row.total_minor,
+            "terms_sha256": row.terms_sha256,
+            "provider_quote_id": row.provider_quote_id,
+            "quoted_at": iso(row.quoted_at),
+            "quote_expires_at": iso(row.quote_expires_at),
+            "created_at": iso(row.created_at),
+        }
+
+    def set_terms(
+        self,
+        owner: str,
+        transaction_id: str,
+        expected_revision: int,
+        request: TransactionTermsDraft,
+    ) -> dict:
+        """Persist new exact terms and invalidate any prior review state."""
+        self._require_enabled()
+        with self.sessions.begin() as db:
+            row = self._transaction(db, owner, transaction_id, lock=True)
+            self._check_revision(row, expected_revision)
+            if row.state not in {"draft", "terms_ready", "awaiting_review", "awaiting_approval"}:
+                raise CoworkerError(
+                    "transaction_terms_not_editable",
+                    "Exact transaction terms cannot change in the current state.",
+                    409,
+                )
+            if row.currency is not None and row.currency != request.price.currency:
+                raise CoworkerError(
+                    "transaction_currency_changed",
+                    "Changing transaction currency requires a new transaction.",
+                    409,
+                )
+
+            terms_sha256 = self._terms_sha256(request)
+            row.revision += 1
+            row.state = "terms_ready"
+            row.currency = request.price.currency
+            row.updated_at = utcnow()
+            db.add(
+                TransactionTermsSnapshot(
+                    transaction_id=row.id,
+                    revision=row.revision,
+                    owner_id=owner,
+                    terms=self._terms_payload(request)["terms"],
+                    price=request.price.model_dump(mode="json"),
+                    currency=request.price.currency,
+                    total_minor=request.price.total_minor,
+                    terms_sha256=terms_sha256,
+                    provider_quote_id=request.provider_quote_id,
+                    quoted_at=request.quoted_at,
+                    quote_expires_at=request.quote_expires_at,
+                )
+            )
+            self._record_revision(db, row)
+            self._record_event(
+                db,
+                row,
+                "transaction_terms_replaced",
+                details={
+                    "terms_sha256": terms_sha256,
+                    "quote_expires_at": request.quote_expires_at.isoformat(),
+                },
+            )
+            self._audit(db, owner, row.id, "transaction_terms_replaced")
+            db.flush()
+            saved = db.get(TransactionTermsSnapshot, (row.id, row.revision))
+            return {
+                "transaction": self._dto(row),
+                "terms": self._terms_dto(saved),
+            }
+
+    def latest_terms(self, owner: str, transaction_id: str) -> dict:
+        self._require_enabled()
+        with self.sessions() as db:
+            row = self._transaction(db, owner, transaction_id)
+            terms = db.scalar(
+                select(TransactionTermsSnapshot)
+                .where(
+                    TransactionTermsSnapshot.transaction_id == row.id,
+                    TransactionTermsSnapshot.owner_id == owner,
+                )
+                .order_by(TransactionTermsSnapshot.revision.desc())
+                .limit(1)
+            )
+            if terms is None:
+                raise CoworkerError(
+                    "transaction_terms_missing",
+                    "Final transaction terms are not available yet.",
+                    409,
+                )
+            return self._terms_dto(terms)
+
+    def review_binding(
+        self,
+        owner: str,
+        transaction_id: str,
+        expected_revision: int,
+        *,
+        expected_terms_sha256: str | None = None,
+        now=None,
+    ) -> dict:
+        """Return the exact fresh terms binding required by later approval code."""
+        self._require_enabled()
+        now = aware(now) if now is not None else utcnow()
+        with self.sessions() as db:
+            row = self._transaction(db, owner, transaction_id)
+            self._check_revision(row, expected_revision)
+            terms = db.get(TransactionTermsSnapshot, (row.id, row.revision))
+            if terms is None or terms.owner_id != owner:
+                raise CoworkerError(
+                    "transaction_terms_stale",
+                    "The current transaction revision does not have exact final terms.",
+                    409,
+                )
+            if expected_terms_sha256 is not None and not hmac.compare_digest(
+                terms.terms_sha256,
+                expected_terms_sha256,
+            ):
+                raise CoworkerError(
+                    "transaction_terms_changed",
+                    "Transaction terms changed after review. Review the latest terms again.",
+                    409,
+                )
+            if aware(terms.quote_expires_at) <= now:
+                raise CoworkerError(
+                    "transaction_quote_expired",
+                    "The provider quote expired. Refresh the terms before approval.",
+                    409,
+                )
+            return {
+                "transaction_id": row.id,
+                "transaction_revision": row.revision,
+                "terms_sha256": terms.terms_sha256,
+                "currency": terms.currency,
+                "total_minor": terms.total_minor,
+                "provider_quote_id": terms.provider_quote_id,
+                "quoted_at": iso(terms.quoted_at),
+                "quote_expires_at": iso(terms.quote_expires_at),
+            }
 
     def transition(
         self,
