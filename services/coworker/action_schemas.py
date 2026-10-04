@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints, field_validator, model_validator
 
 
 class Strict(BaseModel):
@@ -16,7 +16,7 @@ class Strict(BaseModel):
 
 Text = Annotated[str, StringConstraints(max_length=20000)]
 Short = Annotated[str, StringConstraints(min_length=1, max_length=300)]
-Capability = Literal["email", "calendar", "drive", "social", "email_read", "calendar_read"]
+Capability = Literal["email", "calendar", "drive", "social", "restaurant_reservation", "email_read", "calendar_read"]
 
 
 def address(value: str) -> str:
@@ -192,6 +192,90 @@ class DocumentShare(Strict):
         return normalized
 
 
+class RestaurantReservationCreate(Strict):
+    """One exact no-payment OpenTable restaurant reservation."""
+
+    kind: Literal["restaurant_reservation_create"]
+    restaurant_id: StrictInt = Field(ge=1)
+    restaurant_name: Short
+    date_time: datetime
+    time_zone: Annotated[str, StringConstraints(min_length=1, max_length=80)]
+    party_size: StrictInt = Field(ge=1, le=20)
+    reservation_attribute: Literal["default", "hightop", "bar", "counter", "outdoor"] = "default"
+    dining_area_id: StrictInt | None = Field(default=None, ge=1)
+    environment: Literal["Indoor", "Outdoor"] | None = None
+    guest_first_name: Annotated[str, StringConstraints(min_length=1, max_length=100)]
+    guest_last_name: Annotated[str, StringConstraints(min_length=1, max_length=100)]
+    guest_email: Annotated[str, StringConstraints(min_length=3, max_length=254)]
+    guest_phone_number: Annotated[str, StringConstraints(min_length=5, max_length=20)]
+    guest_phone_country_code: Annotated[str, StringConstraints(min_length=2, max_length=2)]
+    special_request: Annotated[str, StringConstraints(max_length=75)] = ""
+    availability_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    availability_observed_at: datetime
+    no_payment_required: Literal[True] = True
+
+    @field_validator(
+        "restaurant_name",
+        "guest_first_name",
+        "guest_last_name",
+        "special_request",
+    )
+    @classmethod
+    def reservation_text(cls, value):
+        value = clean_text(value)
+        if value != "" and not value.strip():
+            raise ValueError("Reservation text cannot be blank")
+        return value.strip()
+
+    @field_validator("guest_email")
+    @classmethod
+    def reservation_email(cls, value):
+        return address(value)
+
+    @field_validator("guest_phone_number")
+    @classmethod
+    def reservation_phone(cls, value):
+        value = value.strip()
+        if not re.fullmatch(r"\+?[0-9]{5,19}", value):
+            raise ValueError("Use a phone number with digits and an optional leading +")
+        return value
+
+    @field_validator("guest_phone_country_code")
+    @classmethod
+    def reservation_country(cls, value):
+        value = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", value):
+            raise ValueError("Phone country code must be a two-letter code")
+        return value
+
+    @field_validator("availability_observed_at")
+    @classmethod
+    def observed_at(cls, value):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Availability observation must include a timezone offset")
+        if value > datetime.now(timezone.utc) + timedelta(minutes=5):
+            raise ValueError("Availability observation cannot be in the future")
+        return value
+
+    @model_validator(mode="after")
+    def reservation_time(self):
+        try:
+            zone = ZoneInfo(self.time_zone)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("Select a valid IANA time zone") from None
+        local = zoned_time(self.date_time, zone)
+        now = datetime.now(timezone.utc)
+        instant = local.astimezone(timezone.utc)
+        if instant <= now or instant > now + timedelta(days=366):
+            raise ValueError("Reservation time must be in the future within one year")
+        if local.second or local.microsecond or local.minute % 15:
+            raise ValueError("Reservation time must use a 15-minute boundary")
+        self.date_time = local
+        if self.reservation_attribute == "outdoor" and self.environment not in {None, "Outdoor"}:
+            raise ValueError("Outdoor reservations cannot select an indoor environment")
+        return self
+
+
 class LinkedInSocialPublish(Strict):
     kind: Literal["social_publish_linkedin"]
     text: Annotated[str, StringConstraints(min_length=1, max_length=3000)]
@@ -206,7 +290,7 @@ class LinkedInSocialPublish(Strict):
 
 
 ActionPayload = Annotated[
-    EmailSend | EmailSendWithAttachments | EmailThreadReply | NegotiationCommitmentEmail | CalendarCreate | CalendarCreateWithReminder | DocumentShare | LinkedInSocialPublish,
+    EmailSend | EmailSendWithAttachments | EmailThreadReply | NegotiationCommitmentEmail | CalendarCreate | CalendarCreateWithReminder | DocumentShare | RestaurantReservationCreate | LinkedInSocialPublish,
     Field(discriminator="kind"),
 ]
 
