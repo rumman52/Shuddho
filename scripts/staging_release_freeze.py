@@ -14,7 +14,7 @@ import httpx
 SCHEMA_VERSION = 1
 EVIDENCE_KIND = "pa10_staging_release_freeze"
 PRODUCTION_ENVIRONMENTS = {"prod", "production"}
-ALLOWED_ACTION_PROVIDERS = {"google", "microsoft", "linkedin"}
+ALLOWED_ACTION_PROVIDERS = {"google", "microsoft", "linkedin", "opentable"}
 
 RUNTIME_CAPABILITY_KEYS = frozenset({
     "coworker",
@@ -46,6 +46,7 @@ RUNTIME_CAPABILITY_KEYS = frozenset({
     "action_email_threading",
     "action_social_publishing",
     "personal_transactions",
+    "restaurant_reservations",
     "action_selection",
     "action_proposals",
     "negotiation_proposal_promotion",
@@ -80,6 +81,7 @@ PA10_REQUIRED_FALSE = frozenset({
     "action_email_threading",
     "action_social_publishing",
     "personal_transactions",
+    "restaurant_reservations",
     "action_selection",
     "action_proposals",
     "negotiation_proposal_promotion",
