@@ -433,7 +433,8 @@ def test_quote_expiry_is_rechecked_before_bound_action_approval(container):
                 confirmed["review_binding"]["terms_revision"],
             ),
         )
-        expired_at = row.quoted_at + timedelta(seconds=30)
+        from services.coworker.models import utcnow
+        expired_at = utcnow() - timedelta(seconds=1)
         row.quote_expires_at = expired_at
         row.quoted_at = expired_at - timedelta(minutes=1)
 
