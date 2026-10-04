@@ -197,8 +197,8 @@ class OpenTableActions:
         except (TimeoutError, httpx.TimeoutException, httpx.TransportError):
             raise OpenTableFailure("provider_outcome_unknown") from None
         try:
-            value = response.json() if raw else {}
-        except (ValueError, json.JSONDecodeError):
+            value = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise OpenTableFailure("provider_response_invalid", definitive=True) from None
         if not isinstance(value, dict):
             raise OpenTableFailure("provider_response_invalid", definitive=True)
@@ -315,7 +315,7 @@ class OpenTableActions:
                 or value.get("party_size") != payload["party_size"]
                 or confirmed_time != local_provider_time(payload["date_time"])
                 or value.get("post_booking_required_action") not in {None, "None"}
-                or isinstance(value.get("payment"), dict)
+                or value.get("payment") is not None
             ):
                 # The provider may have created a reservation, so never invite
                 # a second booking attempt from an ambiguous success response.
