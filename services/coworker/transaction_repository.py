@@ -100,6 +100,7 @@ class TransactionDraft:
     currency: str | None = None
     counterparty: str | None = None
     expires_at: datetime | None = None
+    fingerprint_extra: dict | None = None
 
 
 class TransactionRepository:
@@ -336,6 +337,11 @@ class TransactionRepository:
             "counterparty": draft.counterparty,
             "expires_at": draft.expires_at.isoformat() if draft.expires_at else None,
         }
+        if draft.fingerprint_extra is not None:
+            # Provider-specific immutable intent data participates only when a
+            # newer slice explicitly supplies it. Historical fingerprints stay
+            # byte-for-byte compatible.
+            canonical["provider_intent"] = draft.fingerprint_extra
         fingerprint = self._fingerprint(canonical)
         with self.sessions.begin() as db:
             if db.scalar(
