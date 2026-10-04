@@ -54,7 +54,7 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
             continue
         policy = item.get("cancellation_policy")
         # TX-06 deliberately excludes deposit/hold/fee-bearing inventory.
-        if policy not in {None, {}}:
+        if policy is not None and policy != {}:
             return None
         dining = item.get("dining_area")
         requested_area = payload.get("dining_area_id")
