@@ -14,6 +14,7 @@ from .connector_push import GooglePushVerifier
 from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
 from .linkedin_actions import LinkedInActions
+from .opentable_actions import OpenTableActions
 from .agent_repository import AgentRepository
 from .goal_repository import GoalRepository
 from .suggestion_repository import SuggestionRepository
@@ -66,6 +67,8 @@ class Container:
                 providers["microsoft"] = MicrosoftActions(self.settings)
             if self.settings.action_social_publishing_enabled:
                 providers["linkedin"] = LinkedInActions(self.settings)
+            if self.settings.restaurant_reservations_enabled:
+                providers["opentable"] = OpenTableActions(self.settings)
             action_repository = ActionRepository(
                 self.repository.sessions,
                 self.settings,
