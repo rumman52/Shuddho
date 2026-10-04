@@ -207,6 +207,7 @@ class TransactionRepository:
             "connection_id": row.connection_id,
             "provider_account_ref": row.provider_account_ref,
             "state": row.state,
+            "current_terms_revision": row.current_terms_revision,
             "currency": row.currency,
             "counterparty": row.counterparty,
             "expires_at": iso(row.expires_at) if row.expires_at is not None else None,
@@ -305,6 +306,7 @@ class TransactionRepository:
             "provider_account_ref": row.provider_account_ref,
             "state": row.state,
             "revision": row.revision,
+            "current_terms_revision": row.current_terms_revision,
             "currency": row.currency,
             "counterparty": row.counterparty,
             "expires_at": iso(row.expires_at) if row.expires_at is not None else None,
@@ -519,6 +521,7 @@ class TransactionRepository:
 
             terms_sha256 = self._terms_sha256(request)
             row.revision += 1
+            row.current_terms_revision = row.revision
             row.state = "terms_ready"
             row.currency = request.price.currency
             row.updated_at = utcnow()
@@ -559,16 +562,12 @@ class TransactionRepository:
         self._require_enabled()
         with self.sessions() as db:
             row = self._transaction(db, owner, transaction_id)
-            terms = db.scalar(
-                select(TransactionTermsSnapshot)
-                .where(
-                    TransactionTermsSnapshot.transaction_id == row.id,
-                    TransactionTermsSnapshot.owner_id == owner,
-                )
-                .order_by(TransactionTermsSnapshot.revision.desc())
-                .limit(1)
+            terms = (
+                db.get(TransactionTermsSnapshot, (row.id, row.current_terms_revision))
+                if row.current_terms_revision is not None
+                else None
             )
-            if terms is None:
+            if terms is None or terms.owner_id != owner:
                 raise CoworkerError(
                     "transaction_terms_missing",
                     "Final transaction terms are not available yet.",
@@ -585,7 +584,11 @@ class TransactionRepository:
         now=None,
     ) -> TransactionTermsSnapshot:
         now = aware(now) if now is not None else utcnow()
-        terms = db.get(TransactionTermsSnapshot, (row.id, row.revision))
+        terms = (
+            db.get(TransactionTermsSnapshot, (row.id, row.current_terms_revision))
+            if row.current_terms_revision is not None
+            else None
+        )
         if terms is None or terms.owner_id != row.owner_id:
             raise CoworkerError(
                 "transaction_terms_stale",
@@ -632,6 +635,7 @@ class TransactionRepository:
             return {
                 "transaction_id": row.id,
                 "transaction_revision": row.revision,
+                "terms_revision": terms.revision,
                 "terms_sha256": terms.terms_sha256,
                 "currency": terms.currency,
                 "total_minor": terms.total_minor,
