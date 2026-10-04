@@ -678,6 +678,40 @@ class TransactionTermsSnapshot(Base):
     )
 
 
+class RestaurantReservationIntent(Base):
+    """Immutable typed OpenTable intent and no-payment availability evidence."""
+
+    __tablename__ = "cw_restaurant_reservation_intents"
+    transaction_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    request: Mapped[dict[str, Any]] = mapped_column(JSON)
+    request_sha256: Mapped[str] = mapped_column(String(64))
+    availability: Mapped[dict[str, Any]] = mapped_column(JSON)
+    availability_sha256: Mapped[str] = mapped_column(String(64))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_restaurant_reservation_intents_transaction_owner",
+        ),
+        CheckConstraint(
+            "length(request_sha256) = 64",
+            name="ck_cw_restaurant_reservation_intents_request_sha256",
+        ),
+        CheckConstraint(
+            "length(availability_sha256) = 64",
+            name="ck_cw_restaurant_reservation_intents_availability_sha256",
+        ),
+        Index(
+            "cw_restaurant_reservation_intents_owner_transaction",
+            "owner_id",
+            "transaction_id",
+        ),
+    )
+
+
 class TransactionExecutionLink(Base):
     """Immutable one-attempt binding from reviewed business state to ExternalAction."""
 
