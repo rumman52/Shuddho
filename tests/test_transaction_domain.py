@@ -4,10 +4,11 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from sqlalchemy import inspect, select
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
+
+from sqlalchemy import inspect, select
 
 from action_samples import connected, enable_actions
 from test_coworker import account, container
