@@ -920,6 +920,7 @@ def runtime_manifest(
         "action_email_threading": settings.action_email_threading_enabled,
         "action_social_publishing": settings.action_social_publishing_enabled,
         "personal_transactions": settings.personal_transactions_enabled,
+        "restaurant_reservations": settings.restaurant_reservations_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
         "negotiation_proposal_promotion": settings.negotiation_proposal_promotion_enabled,
@@ -933,6 +934,8 @@ def runtime_manifest(
             providers.append("microsoft")
         if settings.action_social_publishing_enabled:
             providers.append("linkedin")
+        if settings.restaurant_reservations_enabled:
+            providers.append("opentable")
     return {
         "schema_version": 1,
         "source_revision": settings.source_revision,
@@ -968,6 +971,7 @@ def transaction_authority_manifest(
         "schema_version": 1,
         "source_revision": settings.source_revision,
         "personal_transactions_enabled": settings.personal_transactions_enabled,
+        "restaurant_reservations_enabled": settings.restaurant_reservations_enabled,
         "operations": sorted(settings.transaction_operations),
     }
 
