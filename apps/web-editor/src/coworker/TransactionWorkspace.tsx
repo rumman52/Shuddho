@@ -37,6 +37,13 @@ const localIso = (value: string) => {
   return date.toISOString();
 };
 
+const localInput = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+};
+
 export default function TransactionWorkspace({ client }: { client: CoworkerClient }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
@@ -107,6 +114,30 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
     });
     return () => controller.abort();
   }, [client, enabled, selected?.id, selected?.revision]);
+
+  useEffect(() => {
+    if (!surface) return;
+    setCurrency(surface.transaction.currency ?? "USD");
+    if (!surface.terms) {
+      setTermsText("");
+      setSubtotal("0");
+      setTax("0");
+      setFees("0");
+      setShipping("0");
+      setDiscount("0");
+      setProviderQuoteId("");
+      setQuoteExpiry("");
+      return;
+    }
+    setTermsText(surface.terms.terms.map(term => `${term.name}=${term.value}`).join("\n"));
+    setSubtotal(String(surface.terms.price.subtotal_minor));
+    setTax(String(surface.terms.price.tax_minor));
+    setFees(String(surface.terms.price.fees_minor));
+    setShipping(String(surface.terms.price.shipping_minor));
+    setDiscount(String(surface.terms.price.discount_minor));
+    setProviderQuoteId(surface.terms.provider_quote_id ?? "");
+    setQuoteExpiry(localInput(surface.terms.quote_expires_at));
+  }, [surface?.transaction.id, surface?.transaction.revision, surface?.terms?.terms_sha256]);
 
   async function run(name: string, operation: () => Promise<void>) {
     if (busy) return;
