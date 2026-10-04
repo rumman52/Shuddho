@@ -551,3 +551,39 @@ def test_account_erasure_removes_transaction_execution_evidence(container):
                 TransactionReconciliationEvidence.owner_id == owner
             )
         ) is None
+
+
+
+def test_quote_expiry_after_approval_blocks_provider_claim(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-expired-before-claim")
+    confirmed = reviewed_transaction(container, owner, "tx05-expired-before-claim")
+    action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-expired-before-claim-action",
+    )
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+
+    with container.repository.sessions.begin() as db:
+        from services.coworker.models import TransactionTermsSnapshot
+        row = db.get(
+            TransactionTermsSnapshot,
+            (
+                confirmed["review_binding"]["transaction_id"],
+                confirmed["review_binding"]["terms_revision"],
+            ),
+        )
+        expired_at = utcnow() - timedelta(seconds=1)
+        row.quote_expires_at = expired_at
+        row.quoted_at = expired_at - timedelta(minutes=1)
+
+    assert container.actions.repo.claim_execution(approved["id"]) is None
+    result = container.actions.repo.get(owner, action["id"])
+    assert result["state"] == "cancelled"
+    assert result["error_code"] == "transaction_quote_expired"
