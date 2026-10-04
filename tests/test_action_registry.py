@@ -80,7 +80,25 @@ def test_registry_declares_existing_consequential_actions():
     assert action_spec("email_thread_reply", "google").thread_reply
     assert action_spec("social_publish_linkedin", "linkedin").social_publish
     assert action_spec("social_publish_linkedin", "linkedin").capability == "social"
-    assert action_spec("negotiation_commitment_email", "google").transaction_class == "binding_negotiation_commitment"
+    negotiation = action_spec("negotiation_commitment_email", "google")
+    assert negotiation.transaction is not None
+    assert negotiation.transaction_class == "binding_negotiation_commitment"
+    assert negotiation.transaction.transaction_class == "binding_negotiation_commitment"
+    assert negotiation.transaction.approval_mode == "exact_final_terms"
+    assert negotiation.transaction.terms_change_policy == "fresh_preview_required"
+    assert negotiation.transaction.uncertain_outcome_policy == "do_not_retry"
+    assert negotiation.transaction.idempotency_mode == "provider_specific_only"
+    assert negotiation.transaction.reconciliation_mode == "none"
+    assert negotiation.transaction.requires_fresh_terms is True
+    assert negotiation.transaction.requires_fresh_price is False
+    assert negotiation.transaction.requires_provider_confirmation is True
+    assert negotiation.policy_manifest()["transaction"] == {
+        "class": "binding_negotiation_commitment",
+        "approval": "exact_final_terms",
+        "changed_terms": "fresh_preview_required",
+        "uncertain_outcome": "do_not_retry",
+        "provider_idempotency": "provider_specific_only",
+    }
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
 
 

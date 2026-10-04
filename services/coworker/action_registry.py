@@ -16,6 +16,40 @@ from .errors import CoworkerError
 
 
 ReconcileMode = Literal["none", "provider_receipt"]
+TransactionApprovalMode = Literal["exact_final_terms"]
+TransactionTermsChangePolicy = Literal["fresh_preview_required"]
+TransactionUncertainOutcomePolicy = Literal["do_not_retry"]
+TransactionIdempotencyMode = Literal["provider_specific_only"]
+
+
+@dataclass(frozen=True)
+class TransactionPolicy:
+    """Code-owned policy for a consequential transaction action.
+
+    The typed fields intentionally carry more semantic detail than the legacy
+    contract-v6 preview. preview_manifest preserves that existing preview shape
+    exactly so already-qualified approval hashes and runtime behavior do not
+    change during TX-01.
+    """
+
+    transaction_class: str
+    approval_mode: TransactionApprovalMode
+    terms_change_policy: TransactionTermsChangePolicy
+    uncertain_outcome_policy: TransactionUncertainOutcomePolicy
+    idempotency_mode: TransactionIdempotencyMode
+    reconciliation_mode: ReconcileMode
+    requires_fresh_terms: bool
+    requires_fresh_price: bool = False
+    requires_provider_confirmation: bool = True
+
+    def preview_manifest(self) -> dict:
+        return {
+            "class": self.transaction_class,
+            "approval": self.approval_mode,
+            "changed_terms": self.terms_change_policy,
+            "uncertain_outcome": self.uncertain_outcome_policy,
+            "provider_idempotency": self.idempotency_mode,
+        }
 
 
 @dataclass(frozen=True)
@@ -38,7 +72,14 @@ class ActionSpec:
     notification_policy: str | None = None
     thread_reply: bool = False
     social_publish: bool = False
-    transaction_class: str | None = None
+    transaction: TransactionPolicy | None = None
+
+    @property
+    def transaction_class(self) -> str | None:
+        """Compatibility accessor for existing PA-09 call sites and manifests."""
+        if self.transaction is None:
+            return None
+        return self.transaction.transaction_class
 
     def public(self) -> dict:
         result = {
@@ -97,14 +138,8 @@ class ActionSpec:
                 "social_read": "none",
                 "agent_authority": "none",
             }
-        if self.transaction_class is not None:
-            result["transaction"] = {
-                "class": self.transaction_class,
-                "approval": "exact_final_terms",
-                "changed_terms": "fresh_preview_required",
-                "uncertain_outcome": "do_not_retry",
-                "provider_idempotency": "provider_specific_only",
-            }
+        if self.transaction is not None:
+            result["transaction"] = self.transaction.preview_manifest()
         return result
 
 
@@ -150,7 +185,17 @@ ACTION_SPECS = {
         execution_ttl_seconds=3 * 60,
         reconcile_mode="none",
         destination_fields=("to", "cc", "bcc"),
-        transaction_class="binding_negotiation_commitment",
+        transaction=TransactionPolicy(
+            transaction_class="binding_negotiation_commitment",
+            approval_mode="exact_final_terms",
+            terms_change_policy="fresh_preview_required",
+            uncertain_outcome_policy="do_not_retry",
+            idempotency_mode="provider_specific_only",
+            reconciliation_mode="none",
+            requires_fresh_terms=True,
+            requires_fresh_price=False,
+            requires_provider_confirmation=True,
+        ),
     ),
     "calendar_create": ActionSpec(
         kind="calendar_create",
@@ -214,7 +259,7 @@ def registered_transaction_operations() -> frozenset[str]:
     return frozenset(
         transaction_operation_key(provider, spec.kind)
         for spec in ACTION_SPECS.values()
-        if spec.transaction_class is not None
+        if spec.transaction is not None
         for provider in spec.providers
     )
 
