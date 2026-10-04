@@ -562,6 +562,7 @@ class Transaction(Base):
     provider_account_ref: Mapped[str | None] = mapped_column(String(255))
     state: Mapped[str] = mapped_column(String(30), default="draft")
     revision: Mapped[int] = mapped_column(Integer, default=1)
+    current_terms_revision: Mapped[int | None] = mapped_column(Integer)
     currency: Mapped[str | None] = mapped_column(String(3))
     counterparty: Mapped[str | None] = mapped_column(String(300))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -577,6 +578,10 @@ class Transaction(Base):
         CheckConstraint(
             "revision >= 1",
             name="ck_cw_transactions_revision",
+        ),
+        CheckConstraint(
+            "current_terms_revision IS NULL OR current_terms_revision >= 1",
+            name="ck_cw_transactions_current_terms_revision",
         ),
         CheckConstraint(
             "currency IS NULL OR (length(currency) = 3 AND currency = upper(currency))",
