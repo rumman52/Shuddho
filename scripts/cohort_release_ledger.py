@@ -38,6 +38,9 @@ CODE_EXECUTION_SCHEMA_VERSION = 24
 AGENT_SANDBOX_TOOL_SCHEMA_VERSION = 25
 PERSONAL_TRANSACTIONS_SCHEMA_VERSION = 26
 NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION = 27
+SUGGESTION_MODEL_RELEVANCE_SCHEMA_VERSION = 28
+BROWSER_PUSH_SCHEMA_VERSION = 29
+RESTAURANT_RESERVATIONS_SCHEMA_VERSION = 30
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -215,6 +218,27 @@ NEGOTIATION_PROPOSAL_PROMOTION_ARTIFACT_KEYS = {
     "operator_status",
     "negotiation_proposal_promotion_activation",
 }
+SUGGESTION_MODEL_RELEVANCE_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "suggestion_model_relevance_activation",
+}
+BROWSER_PUSH_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "browser_push_activation",
+}
+RESTAURANT_RESERVATIONS_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "restaurant_reservations_activation",
+}
 
 
 class ReleaseLedgerError(RuntimeError):
@@ -255,7 +279,7 @@ def normalized_action_providers(rollout: dict) -> list[str]:
         not isinstance(providers, list)
         or any(
             not isinstance(item, str)
-            or item not in {"google", "microsoft", "linkedin"}
+            or item not in {"google", "microsoft", "linkedin", "opentable"}
             for item in providers
         )
         or len(providers) != len(set(providers))
@@ -479,6 +503,9 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             AGENT_SANDBOX_TOOL_SCHEMA_VERSION,
             PERSONAL_TRANSACTIONS_SCHEMA_VERSION,
             NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION,
+            SUGGESTION_MODEL_RELEVANCE_SCHEMA_VERSION,
+            BROWSER_PUSH_SCHEMA_VERSION,
+            RESTAURANT_RESERVATIONS_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -607,6 +634,27 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(
                 f"Ledger entry {index} has an unsupported schema-v27 event type."
             )
+        if (
+            version == SUGGESTION_MODEL_RELEVANCE_SCHEMA_VERSION
+            and event_type != "suggestion_model_relevance_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v28 event type."
+            )
+        if (
+            version == BROWSER_PUSH_SCHEMA_VERSION
+            and event_type != "browser_push_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v29 event type."
+            )
+        if (
+            version == RESTAURANT_RESERVATIONS_SCHEMA_VERSION
+            and event_type != "restaurant_reservations_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v30 event type."
+            )
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -665,6 +713,12 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             if version == PERSONAL_TRANSACTIONS_SCHEMA_VERSION
             else NEGOTIATION_PROPOSAL_PROMOTION_ARTIFACT_KEYS
             if version == NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION
+            else SUGGESTION_MODEL_RELEVANCE_ARTIFACT_KEYS
+            if version == SUGGESTION_MODEL_RELEVANCE_SCHEMA_VERSION
+            else BROWSER_PUSH_ARTIFACT_KEYS
+            if version == BROWSER_PUSH_SCHEMA_VERSION
+            else RESTAURANT_RESERVATIONS_ARTIFACT_KEYS
+            if version == RESTAURANT_RESERVATIONS_SCHEMA_VERSION
             else RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
