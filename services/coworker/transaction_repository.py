@@ -981,17 +981,39 @@ class TransactionRepository:
         action: ExternalAction,
     ) -> tuple[TransactionReconciliationEvidence, bool]:
         receipt = dict(action.receipt) if isinstance(action.receipt, dict) else None
-        if action.state == "succeeded" and (
-            receipt is None
-            or receipt.get("provider") != link.provider
-            or not isinstance(receipt.get("status"), str)
-            or not receipt.get("status")
-        ):
-            raise CoworkerError(
-                "transaction_receipt_invalid",
-                "The provider receipt cannot be verified for this transaction.",
-                409,
+        if action.state == "succeeded":
+            expected_status = (
+                {
+                    "google": "accepted_by_gmail",
+                    "microsoft": "accepted_by_microsoft_graph",
+                }.get(link.provider)
+                if link.action_kind == "negotiation_commitment_email"
+                else None
             )
+            confirmed_at = receipt.get("confirmed_at") if receipt is not None else None
+            try:
+                confirmed_at_value = (
+                    datetime.fromisoformat(confirmed_at)
+                    if isinstance(confirmed_at, str)
+                    else None
+                )
+            except ValueError:
+                confirmed_at_value = None
+            if (
+                receipt is None
+                or receipt.get("provider") != link.provider
+                or not isinstance(receipt.get("status"), str)
+                or not receipt.get("status")
+                or (expected_status is not None and receipt.get("status") != expected_status)
+                or confirmed_at_value is None
+                or confirmed_at_value.tzinfo is None
+                or confirmed_at_value.utcoffset() is None
+            ):
+                raise CoworkerError(
+                    "transaction_receipt_invalid",
+                    "The provider receipt cannot be verified for this transaction.",
+                    409,
+                )
         receipt_sha256 = self._fingerprint(receipt) if receipt is not None else None
         evidence_value = {
             "external_action_id": action.id,
