@@ -411,6 +411,14 @@ ACTIVATION_REQUIREMENTS = (
         capability="personal_transactions",
     ),
     ActivationRequirement(
+        key="restaurant_reservations",
+        status="restaurant_reservations_verified",
+        ledger_schema_version=30,
+        ledger_event_type="restaurant_reservations_verified",
+        ledger_artifact_key="restaurant_reservations_activation",
+        capability="restaurant_reservations",
+    ),
+    ActivationRequirement(
         key="negotiation_proposal_promotion",
         status="negotiation_proposal_promotion_verified",
         ledger_schema_version=27,
