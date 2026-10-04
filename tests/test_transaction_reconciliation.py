@@ -80,17 +80,25 @@ def bound_action(container, owner, confirmed, key="tx05-action"):
             ],
         ),
     })
+    binding = {
+        "transaction_id": exact_terms["transaction_id"],
+        "transaction_revision": exact_terms["transaction_revision"],
+        "terms_revision": exact_terms["terms_revision"],
+        "terms_sha256": exact_terms["terms_sha256"],
+    }
     action = container.actions.repo.prepare(
         owner,
         request,
         key,
-        transaction_binding={
-            "transaction_id": exact_terms["transaction_id"],
-            "transaction_revision": exact_terms["transaction_revision"],
-            "terms_revision": exact_terms["terms_revision"],
-            "terms_sha256": exact_terms["terms_sha256"],
-        },
+        transaction_binding=binding,
     )
+    assert action["preview"]["version"] == 7
+    assert action["preview"]["transaction_binding"] == binding
+    assert action["preview"]["approval_scope"]["contract_version"] == 7
+    assert action["preview"]["approval_scope"]["transaction_binding"] == binding
+    assert len(
+        action["preview"]["approval_scope"]["transaction_binding_sha256"]
+    ) == 64
     link = container.transactions.bind_external_action(
         owner,
         exact_terms["transaction_id"],
@@ -327,4 +335,139 @@ def test_invalid_success_receipt_fails_closed_without_confirming_transaction(con
     with pytest.raises(CoworkerError) as invalid:
         container.transactions.sync_external_action(owner, transaction_id)
     assert invalid.value.code == "transaction_receipt_invalid"
-    assert container.transactions.get(owner, transaction_id)["state"] == "awaiting_approval" or container.transactions.get(owner, transaction_id)["state"] == "executing"
+    assert container.transactions.get(owner, transaction_id)["state"] == "awaiting_approval"
+
+
+
+def test_terms_cannot_change_after_external_action_is_bound(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-locked-terms")
+    confirmed = reviewed_transaction(container, owner, "tx05-locked-terms")
+    _action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-locked-terms-action",
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.transactions.set_terms(
+            owner,
+            transaction_id,
+            confirmed["review_binding"]["transaction_revision"],
+            terms(total=13_500),
+        )
+    assert blocked.value.code == "transaction_execution_already_bound"
+
+
+def test_cancelled_transaction_cannot_approve_bound_action(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-cancel-binding")
+    confirmed = reviewed_transaction(container, owner, "tx05-cancel-binding")
+    action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-cancel-binding-action",
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+
+    cancelled = container.transactions.transition(
+        owner,
+        transaction_id,
+        confirmed["review_binding"]["transaction_revision"],
+        "cancelled",
+    )
+    assert cancelled["state"] == "cancelled"
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.actions.repo.approve(
+            owner,
+            action["id"],
+            action["preview_hash"],
+        )
+    assert blocked.value.code == "transaction_action_binding_changed"
+    assert container.actions.repo.get(owner, action["id"])["state"] == "awaiting_approval"
+
+
+def test_quote_expiry_is_rechecked_before_bound_action_approval(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-expired-before-approval")
+    created, _ = container.transactions.create(
+        owner,
+        TransactionDraft(
+            transaction_kind="reservation",
+            provider="internal",
+            currency="USD",
+            counterparty="Example Hotel",
+        ),
+        "tx05-expired-before-approval",
+    )
+    request = terms(expires_minutes=1)
+    saved = container.transactions.set_terms(owner, created["id"], 1, request)
+    review = container.transactions.start_review(
+        owner,
+        created["id"],
+        saved["transaction"]["revision"],
+    )
+    confirmed = container.transactions.confirm_review(
+        owner,
+        created["id"],
+        review["revision"],
+        saved["terms"]["terms_sha256"],
+    )
+    action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-expired-before-approval-action",
+    )
+
+    with container.repository.sessions.begin() as db:
+        from services.coworker.models import TransactionTermsSnapshot
+        row = db.get(
+            TransactionTermsSnapshot,
+            (
+                confirmed["review_binding"]["transaction_id"],
+                confirmed["review_binding"]["terms_revision"],
+            ),
+        )
+        row.quote_expires_at = row.quoted_at - timedelta(seconds=1)
+
+    with pytest.raises(CoworkerError) as expired:
+        container.actions.repo.approve(
+            owner,
+            action["id"],
+            action["preview_hash"],
+        )
+    assert expired.value.code == "transaction_quote_expired"
+
+
+def test_bound_action_claim_rechecks_transaction_state(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-claim-recheck")
+    confirmed = reviewed_transaction(container, owner, "tx05-claim-recheck")
+    action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-claim-recheck-action",
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    container.transactions.transition(
+        owner,
+        transaction_id,
+        confirmed["review_binding"]["transaction_revision"],
+        "cancelled",
+    )
+
+    assert container.actions.repo.claim_execution(approved["id"]) is None
+    result = container.actions.repo.get(owner, approved["id"])
+    assert result["state"] == "cancelled"
+    assert result["error_code"] == "transaction_action_binding_changed"
