@@ -516,6 +516,26 @@ export class CoworkerClient {
   }
   cancelAction(id: string) { return this.json<ExternalAction>(`/api/v1/actions/${identifier(id)}/cancel`, { method: "POST" }); }
   reconcileAction(id: string) { return this.response(`/api/v1/actions/${identifier(id)}/reconcile`, { method: "POST" }, 65000).then(response => response.json() as Promise<ExternalAction>); }
+  createRestaurantReservation(input: RestaurantReservationRequest, key: string) {
+    return this.json<RestaurantReservationSurface>("/api/v1/restaurant-reservations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+      body: JSON.stringify(input),
+    });
+  }
+  restaurantReservation(id: string, signal?: AbortSignal) {
+    return this.json<RestaurantReservationSurface>(`/api/v1/restaurant-reservations/${identifier(id)}`, { signal });
+  }
+  prepareRestaurantReservationAction(id: string, revision: number, termsSha256: string) {
+    return this.json<{ transaction: TransactionRecord; reservation: RestaurantReservationSurface["reservation"]; action: ExternalAction; link: TransactionExecutionLink }>(
+      `/api/v1/restaurant-reservations/${identifier(id)}/prepare-action`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_revision: revision, terms_sha256: digestIdentifier(termsSha256) }),
+      },
+    );
+  }
   transactions(signal?: AbortSignal) { return this.json<{ enabled: boolean; execution_available?: boolean; transactions: TransactionRecord[] }>("/api/v1/transactions", { signal }); }
   transaction(id: string, signal?: AbortSignal) { return this.json<TransactionSurface>(`/api/v1/transactions/${identifier(id)}`, { signal }); }
   createTransaction(input: TransactionCreate, key: string) {
