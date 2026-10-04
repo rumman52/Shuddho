@@ -38,7 +38,14 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
     with repository.sessions() as db:
         assert db.scalar(text("SELECT current_schema()")) == "shuddho_coworker"
         assert db.scalar(text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'cw_%'")) == 0
-        assert "cw_tasks" in inspect(db.bind).get_table_names(schema="shuddho_coworker")
+        tables = set(inspect(db.bind).get_table_names(schema="shuddho_coworker"))
+        assert "cw_tasks" in tables
+        assert {
+            "cw_transactions",
+            "cw_transaction_revisions",
+            "cw_transaction_events",
+            "cw_transaction_execution_links",
+        } <= tables
 
 
 def test_simultaneous_retries_share_one_task_and_usage_record(repository):
