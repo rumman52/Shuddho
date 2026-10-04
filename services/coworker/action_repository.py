@@ -682,13 +682,23 @@ class ActionRepository:
         key,
         *,
         source_binding: dict | None = None,
+        transaction_binding: dict | None = None,
     ):
         body = request.model_dump(mode="json")
-        fingerprint = digest(
-            body
-            if source_binding is None
-            else {"request": body, "source_binding": source_binding}
-        )
+        if transaction_binding is None:
+            # Preserve historical PA-09 idempotency exactly.
+            fingerprint_value = (
+                body
+                if source_binding is None
+                else {"request": body, "source_binding": source_binding}
+            )
+        else:
+            fingerprint_value = {
+                "request": body,
+                **({"source_binding": source_binding} if source_binding is not None else {}),
+                "transaction_binding": transaction_binding,
+            }
+        fingerprint = digest(fingerprint_value)
         with self.sessions.begin() as db:
             self._account(db, owner)
             old = db.scalar(select(ExternalAction).where(ExternalAction.owner_id == owner, ExternalAction.idempotency_key == key))
@@ -717,6 +727,20 @@ class ActionRepository:
                     "approval_changed",
                     "Only a negotiation commitment may carry a negotiation proposal source binding.",
                     409,
+                )
+            if transaction_binding is not None:
+                if spec.transaction is None:
+                    raise CoworkerError(
+                        "approval_changed",
+                        "This action kind cannot carry transaction authority.",
+                        409,
+                    )
+                # The registry performs exact shape/value validation and later
+                # binds this manifest into approval_scope and preview_hash.
+                from .action_registry import transaction_binding_manifest
+                transaction_binding = transaction_binding_manifest(
+                    {"transaction_binding": transaction_binding},
+                    spec,
                 )
             self._require_optional_feature(spec, connection.provider)
             reply_context = None
@@ -820,6 +844,7 @@ class ActionRepository:
                 **({"shared_artifact": shared_artifact} if spec.owned_artifact_required else {}),
                 **({"reply_context": reply_context} if spec.thread_reply else {}),
                 **({"source_binding": dict(source_binding)} if source_binding is not None else {}),
+                **({"transaction_binding": dict(transaction_binding)} if transaction_binding is not None else {}),
                 "expires_at": iso(expires),
             }
             preview["approval_scope"] = build_approval_scope(preview)
