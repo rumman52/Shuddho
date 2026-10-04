@@ -1209,6 +1209,15 @@ class TransactionRepository:
         with self.sessions.begin() as db:
             row = self._transaction(db, owner, transaction_id, lock=True)
             self._check_revision(row, expected_revision)
+            if (
+                self._execution_link(db, owner, transaction_id) is not None
+                and target != "cancelled"
+            ):
+                raise CoworkerError(
+                    "transaction_execution_already_bound",
+                    "This transaction is already bound to one execution attempt. Only cancellation remains available.",
+                    409,
+                )
             allowed = SAFE_DOMAIN_TRANSITIONS.get(row.state, frozenset())
             if target not in allowed:
                 raise CoworkerError(
