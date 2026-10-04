@@ -8,6 +8,7 @@ import AutomationWorkspace from "./AutomationWorkspace";
 import BrowserWorkspace from "./BrowserWorkspace";
 import SandboxWorkspace from "./SandboxWorkspace";
 import NegotiationWorkspace from "./NegotiationWorkspace";
+import TransactionWorkspace from "./TransactionWorkspace";
 import { hasPendingGoogleCallback } from "./googleCallback";
 import { hasPendingMicrosoftCallback } from "./microsoftCallback";
 import { hasPendingLinkedInCallback } from "./linkedinCallback";
@@ -62,7 +63,7 @@ export function TaskResult({ task, client, revise, prepareEmail, prepareSocial }
 }
 
 export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
-  const [view, setView] = useState<"drafts" | "goals" | "automations" | "browser" | "sandbox" | "negotiations" | "actions" | "agent">(() => {
+  const [view, setView] = useState<"drafts" | "goals" | "automations" | "browser" | "sandbox" | "transactions" | "negotiations" | "actions" | "agent">(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
     if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? "drafts";
     return "drafts";
@@ -206,11 +207,12 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     </header>
     {error && <div className="cw-error cw-banner" role="alert">{error} {!workspace && <button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Try again</button>}</div>}
     {notice && <p className="cw-notice cw-banner" role="status">{notice}</p>}
-    <nav className="cw-work-tabs" aria-label="Coworker services"><button aria-pressed={view === "drafts"} onClick={() => setView("drafts")}>Drafts & files</button><button aria-pressed={view === "goals"} onClick={() => setView("goals")}>Goals</button><button aria-pressed={view === "automations"} onClick={() => setView("automations")}>Automations</button><button aria-pressed={view === "browser"} onClick={() => setView("browser")}>Browser</button><button aria-pressed={view === "sandbox"} onClick={() => setView("sandbox")}>Sandbox</button><button aria-pressed={view === "negotiations"} onClick={() => setView("negotiations")}>Negotiations</button><button aria-pressed={view === "agent"} onClick={() => setView("agent")}>Agent</button><button aria-pressed={view === "actions"} onClick={() => setView("actions")}>Email & calendar</button></nav>
+    <nav className="cw-work-tabs" aria-label="Coworker services"><button aria-pressed={view === "drafts"} onClick={() => setView("drafts")}>Drafts & files</button><button aria-pressed={view === "goals"} onClick={() => setView("goals")}>Goals</button><button aria-pressed={view === "automations"} onClick={() => setView("automations")}>Automations</button><button aria-pressed={view === "browser"} onClick={() => setView("browser")}>Browser</button><button aria-pressed={view === "sandbox"} onClick={() => setView("sandbox")}>Sandbox</button><button aria-pressed={view === "transactions"} onClick={() => setView("transactions")}>Transactions</button><button aria-pressed={view === "negotiations"} onClick={() => setView("negotiations")}>Negotiations</button><button aria-pressed={view === "agent"} onClick={() => setView("agent")}>Agent</button><button aria-pressed={view === "actions"} onClick={() => setView("actions")}>Email & calendar</button></nav>
     {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => setView("agent")} openAutomations={() => setView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
     {view === "sandbox" && workspace && <SandboxWorkspace client={client} />}
+    {view === "transactions" && workspace && <TransactionWorkspace client={client} />}
     {view === "negotiations" && workspace && <NegotiationWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}
     {view === "agent" && workspace && <AgentWorkspace client={client} documents={documents} openActions={() => setView("actions")} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
