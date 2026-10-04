@@ -1077,12 +1077,24 @@ class TransactionRepository:
                 )
             spec = validate_approval_scope(action.preview)
             binding = transaction_binding_manifest(action.preview, spec)
-            if binding != {
-                "transaction_id": row.id,
-                "transaction_revision": link.transaction_revision,
-                "terms_revision": link.terms_revision,
-                "terms_sha256": link.terms_sha256,
-            }:
+            terms = db.get(
+                TransactionTermsSnapshot,
+                (row.id, link.terms_revision),
+            )
+            if (
+                binding != {
+                    "transaction_id": row.id,
+                    "transaction_revision": link.transaction_revision,
+                    "terms_revision": link.terms_revision,
+                    "terms_sha256": link.terms_sha256,
+                }
+                or row.current_terms_revision != link.terms_revision
+                or terms is None
+                or terms.owner_id != owner
+                or terms.terms_sha256 != link.terms_sha256
+                or action.preview.get("provider") != link.provider
+                or action.kind != link.action_kind
+            ):
                 raise CoworkerError(
                     "transaction_execution_binding_changed",
                     "The linked external action no longer matches the transaction evidence.",
@@ -1154,7 +1166,40 @@ class TransactionRepository:
             )
             reconcile_supported = False
             if action is not None:
+                if (
+                    action.preview_hash != link.preview_hash
+                    or self._fingerprint(action.preview) != link.preview_hash
+                    or action.preview.get("provider") != link.provider
+                    or action.kind != link.action_kind
+                ):
+                    raise CoworkerError(
+                        "transaction_execution_binding_changed",
+                        "The linked external action changed after transaction binding.",
+                        409,
+                    )
                 spec = validate_approval_scope(action.preview)
+                binding = transaction_binding_manifest(action.preview, spec)
+                terms = db.get(
+                    TransactionTermsSnapshot,
+                    (row.id, link.terms_revision),
+                )
+                if (
+                    binding != {
+                        "transaction_id": row.id,
+                        "transaction_revision": link.transaction_revision,
+                        "terms_revision": link.terms_revision,
+                        "terms_sha256": link.terms_sha256,
+                    }
+                    or row.current_terms_revision != link.terms_revision
+                    or terms is None
+                    or terms.owner_id != owner
+                    or terms.terms_sha256 != link.terms_sha256
+                ):
+                    raise CoworkerError(
+                        "transaction_execution_binding_changed",
+                        "The linked transaction evidence is no longer valid.",
+                        409,
+                    )
                 reconcile_supported = (
                     action.state == "outcome_unknown"
                     and spec.reconcile_supported
