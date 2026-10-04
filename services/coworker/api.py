@@ -34,6 +34,10 @@ from .negotiation_schemas import (
     NegotiationProposalRequest,
     NegotiationProposalReview,
 )
+from .restaurant_reservation_schemas import (
+    RestaurantReservationPrepare,
+    RestaurantReservationRequest,
+)
 from .transaction_schemas import (
     TransactionCancel,
     TransactionCreate,
@@ -107,6 +111,58 @@ def require_sandbox_worker(request: Request, services: Container) -> None:
     expected = services.settings.sandbox_worker_token
     if not expected or not hmac.compare_digest(supplied, expected):
         raise CoworkerError("sandbox_worker_unauthorized", "Sandbox worker authentication failed.", 403)
+
+
+@router.post("/restaurant-reservations", status_code=201)
+async def create_restaurant_reservation(
+    payload: RestaurantReservationRequest,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = await services.restaurant_reservations.create(
+        identity.account_id,
+        payload,
+        idempotency_key,
+    )
+    transaction_id = value["transaction"]["id"]
+    response.headers["Location"] = f"/api/v1/restaurant-reservations/{transaction_id}"
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
+
+
+@router.get("/restaurant-reservations/{transaction_id}")
+def get_restaurant_reservation(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.restaurant_reservations.get(
+        identity.account_id,
+        str(transaction_id),
+    )
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
+
+
+@router.post("/restaurant-reservations/{transaction_id}/prepare-action", status_code=201)
+def prepare_restaurant_reservation_action(
+    transaction_id: UUID,
+    payload: RestaurantReservationPrepare,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.restaurant_reservations.prepare_action(
+        identity.account_id,
+        str(transaction_id),
+        payload,
+    )
+    response.headers["Location"] = f'/api/v1/actions/{value["action"]["id"]}'
+    return value
 
 
 @router.post("/transactions", status_code=201)
