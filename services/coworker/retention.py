@@ -11,7 +11,7 @@ from .models import (
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal,
-    Transaction, TransactionEvent, TransactionExecutionLink, TransactionRevision,
+    Transaction, TransactionEvent, TransactionExecutionLink, TransactionRevision, TransactionTermsSnapshot,
     Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
     PersonalGoalRevision, Step, Task, TaskEvent, ToolInvocation, ToolReceipt, Workspace, utcnow,
 )
@@ -156,6 +156,7 @@ class RetentionService:
             db.execute(delete(BrowserCommand).where(BrowserCommand.owner_id == owner))
             db.execute(delete(BrowserSession).where(BrowserSession.owner_id == owner))
             db.execute(delete(TransactionExecutionLink).where(TransactionExecutionLink.owner_id == owner))
+            db.execute(delete(TransactionTermsSnapshot).where(TransactionTermsSnapshot.owner_id == owner))
             db.execute(delete(TransactionEvent).where(TransactionEvent.owner_id == owner))
             db.execute(delete(TransactionRevision).where(TransactionRevision.owner_id == owner))
             db.execute(delete(Transaction).where(Transaction.owner_id == owner))
