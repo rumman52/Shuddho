@@ -9,7 +9,7 @@ from .action_schemas import ActionPrepare
 from .errors import CoworkerError
 from .models import RestaurantReservationIntent, Transaction, utcnow
 from .opentable_actions import SCOPES, SERVICE_ACCOUNT, SERVICE_SUBJECT
-from .repository import iso, not_found
+from .repository import aware, iso, not_found
 from .restaurant_reservation_schemas import (
     RestaurantReservationPrepare,
     RestaurantReservationRequest,
@@ -108,6 +108,7 @@ class RestaurantReservationService:
                 "value": "No deposit, hold, or fee-bearing policy returned in approved availability",
             },
         ]
+        observed_at = aware(row.observed_at)
         return TransactionTermsDraft.model_validate({
             "terms": terms,
             "price": {
@@ -121,8 +122,8 @@ class RestaurantReservationService:
                 "total_minor": 0,
             },
             "provider_quote_id": row.availability_sha256,
-            "quoted_at": row.observed_at,
-            "quote_expires_at": row.observed_at + timedelta(minutes=10),
+            "quoted_at": observed_at,
+            "quote_expires_at": observed_at + timedelta(minutes=10),
         })
 
     async def create(
