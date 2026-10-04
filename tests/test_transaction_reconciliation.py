@@ -433,7 +433,9 @@ def test_quote_expiry_is_rechecked_before_bound_action_approval(container):
                 confirmed["review_binding"]["terms_revision"],
             ),
         )
-        row.quote_expires_at = row.quoted_at - timedelta(seconds=1)
+        expired_at = row.quoted_at + timedelta(seconds=30)
+        row.quote_expires_at = expired_at
+        row.quoted_at = expired_at - timedelta(minutes=1)
 
     with pytest.raises(CoworkerError) as expired:
         container.actions.repo.approve(
