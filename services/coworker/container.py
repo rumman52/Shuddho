@@ -20,6 +20,7 @@ from .suggestion_repository import SuggestionRepository
 from .suggestion_relevance_model import SuggestionRelevanceModel
 from .suggestion_relevance_service import SuggestionRelevanceService
 from .negotiation_repository import NegotiationRepository
+from .transaction_repository import TransactionRepository
 from .negotiation_model import NegotiationProposalModel
 from .negotiation_service import NegotiationProposalService
 from .automation_repository import AutomationRepository
@@ -47,6 +48,7 @@ class Container:
     suggestions: SuggestionRepository | None = None
     suggestion_relevance: SuggestionRelevanceService | None = None
     negotiations: NegotiationRepository | None = None
+    transactions: TransactionRepository | None = None
     negotiation_proposals: NegotiationProposalService | None = None
     automations: AutomationRepository | None = None
     notifications: NotificationRepository | None = None
@@ -146,6 +148,11 @@ class Container:
             )
         if self.negotiations is None:
             self.negotiations = NegotiationRepository(
+                self.repository.sessions,
+                self.settings,
+            )
+        if self.transactions is None:
+            self.transactions = TransactionRepository(
                 self.repository.sessions,
                 self.settings,
             )
