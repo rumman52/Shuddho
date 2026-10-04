@@ -15,6 +15,7 @@ from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
 from .linkedin_actions import LinkedInActions
 from .opentable_actions import OpenTableActions
+from .restaurant_reservations import RestaurantReservationService
 from .agent_repository import AgentRepository
 from .goal_repository import GoalRepository
 from .suggestion_repository import SuggestionRepository
@@ -50,6 +51,7 @@ class Container:
     suggestion_relevance: SuggestionRelevanceService | None = None
     negotiations: NegotiationRepository | None = None
     transactions: TransactionRepository | None = None
+    restaurant_reservations: RestaurantReservationService | None = None
     negotiation_proposals: NegotiationProposalService | None = None
     automations: AutomationRepository | None = None
     notifications: NotificationRepository | None = None
@@ -158,6 +160,15 @@ class Container:
             self.transactions = TransactionRepository(
                 self.repository.sessions,
                 self.settings,
+            )
+        if self.restaurant_reservations is None:
+            restaurant_adapter = self.actions.providers.get("opentable")
+            if restaurant_adapter is None:
+                restaurant_adapter = OpenTableActions(self.settings)
+            self.restaurant_reservations = RestaurantReservationService(
+                self.transactions,
+                self.actions.repo,
+                restaurant_adapter,
             )
         if self.negotiation_proposals is None:
             self.negotiation_proposals = NegotiationProposalService(
