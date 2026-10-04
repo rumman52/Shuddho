@@ -998,14 +998,18 @@ class TransactionRepository:
     ) -> tuple[TransactionReconciliationEvidence, bool]:
         receipt = dict(action.receipt) if isinstance(action.receipt, dict) else None
         if action.state == "succeeded":
-            expected_status = (
-                {
+            if link.action_kind == "negotiation_commitment_email":
+                expected_status = {
                     "google": "accepted_by_gmail",
                     "microsoft": "accepted_by_microsoft_graph",
                 }.get(link.provider)
-                if link.action_kind == "negotiation_commitment_email"
-                else None
-            )
+            elif (
+                link.action_kind == "restaurant_reservation_create"
+                and link.provider == "opentable"
+            ):
+                expected_status = "reservation_confirmed"
+            else:
+                expected_status = None
             confirmed_at = receipt.get("confirmed_at") if receipt is not None else None
             try:
                 confirmed_at_value = (
@@ -1024,6 +1028,21 @@ class TransactionRepository:
                 or confirmed_at_value is None
                 or confirmed_at_value.tzinfo is None
                 or confirmed_at_value.utcoffset() is None
+                or (
+                    link.action_kind == "restaurant_reservation_create"
+                    and (
+                        receipt.get("payment_required") is not False
+                        or not isinstance(receipt.get("confirmation_number"), int)
+                        or isinstance(receipt.get("confirmation_number"), bool)
+                        or receipt.get("confirmation_number") < 1
+                        or not isinstance(receipt.get("restaurant_id"), int)
+                        or receipt.get("restaurant_id") < 1
+                        or not isinstance(receipt.get("party_size"), int)
+                        or receipt.get("party_size") < 1
+                        or not isinstance(receipt.get("date_time"), str)
+                        or not receipt.get("date_time")
+                    )
+                )
             ):
                 raise CoworkerError(
                     "transaction_receipt_invalid",
