@@ -85,7 +85,7 @@ class TransactionTermsDraft(TransactionContractModel):
 
     terms: list[TransactionTerm] = Field(min_length=1, max_length=40)
     price: TransactionPrice
-    provider_quote_id: Annotated[str | None, Field(default=None, min_length=1, max_length=255)]
+    provider_quote_id: str | None = Field(default=None, min_length=1, max_length=255)
     quoted_at: datetime
     quote_expires_at: datetime
 
