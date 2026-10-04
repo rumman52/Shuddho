@@ -59,6 +59,10 @@ class Settings:
     action_document_sharing_enabled: bool = False
     action_email_threading_enabled: bool = False
     action_social_publishing_enabled: bool = False
+    restaurant_reservations_enabled: bool = False
+    opentable_environment: str = "sandbox"
+    opentable_client_id: str = ""
+    opentable_client_secret: str = field(default="", repr=False)
     personal_transactions_enabled: bool = False
     transaction_operations: frozenset[str] = field(default_factory=frozenset)
     agent_runtime_enabled: bool = False
@@ -214,6 +218,10 @@ class Settings:
             action_document_sharing_enabled=os.getenv("SHUDDHO_ACTION_DOCUMENT_SHARING_ENABLED", "false").lower() == "true",
             action_email_threading_enabled=os.getenv("SHUDDHO_ACTION_EMAIL_THREADING_ENABLED", "false").lower() == "true",
             action_social_publishing_enabled=os.getenv("SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED", "false").lower() == "true",
+            restaurant_reservations_enabled=os.getenv("SHUDDHO_RESTAURANT_RESERVATIONS_ENABLED", "false").lower() == "true",
+            opentable_environment=os.getenv("SHUDDHO_OPENTABLE_ENVIRONMENT", "sandbox").strip().lower(),
+            opentable_client_id=os.getenv("SHUDDHO_OPENTABLE_CLIENT_ID", ""),
+            opentable_client_secret=os.getenv("SHUDDHO_OPENTABLE_CLIENT_SECRET", ""),
             personal_transactions_enabled=os.getenv("SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED", "false").lower() == "true",
             transaction_operations=frozenset(
                 value.strip().lower()
@@ -532,6 +540,21 @@ class Settings:
             ) and not self.microsoft_actions_enabled:
                 raise ValueError(
                     "Microsoft transaction operations require SHUDDHO_MICROSOFT_ACTIONS_ENABLED=true"
+                )
+        if self.restaurant_reservations_enabled:
+            if not self.actions_enabled:
+                raise ValueError("Restaurant reservations require SHUDDHO_ACTIONS_ENABLED=true")
+            if not self.personal_transactions_enabled:
+                raise ValueError("Restaurant reservations require SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=true")
+            if not self.connector_trust_boundary_enabled:
+                raise ValueError("Restaurant reservations require SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
+            if self.opentable_environment not in {"sandbox", "production"}:
+                raise ValueError("SHUDDHO_OPENTABLE_ENVIRONMENT must be sandbox or production")
+            if not self.opentable_client_id or not self.opentable_client_secret:
+                raise ValueError("Restaurant reservations require OpenTable client credentials")
+            if "opentable:restaurant_reservation_create" not in self.transaction_operations:
+                raise ValueError(
+                    "Restaurant reservations require opentable:restaurant_reservation_create in SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS"
                 )
         if self.action_social_publishing_enabled:
             if not self.actions_enabled:
