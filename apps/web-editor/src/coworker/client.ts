@@ -221,6 +221,23 @@ export type TransactionSurface = {
   transaction: TransactionRecord; terms: TransactionTermsSnapshot | null; events: TransactionEvent[];
   execution: { available: false; boundary: "external_action_only" };
 };
+export type TransactionExecutionLink = {
+  id: string; transaction_id: string; transaction_revision: number; terms_revision: number;
+  terms_sha256: string; external_action_id: string; preview_hash: string;
+  provider: string; action_kind: string; created_at: string;
+};
+export type TransactionReconciliationEvidence = {
+  id: string; sequence: number; transaction_revision: number; external_action_id: string;
+  action_state: ExternalAction["state"]; provider: string; action_kind: string; preview_hash: string;
+  receipt: Record<string, unknown> | null; receipt_sha256: string | null; error_code: string | null;
+  evidence_sha256: string; action_finished_at: string | null; observed_at: string;
+};
+export type TransactionExecutionSurface = {
+  transaction: TransactionRecord;
+  link: TransactionExecutionLink | null;
+  evidence: TransactionReconciliationEvidence[];
+  reconciliation: { available: boolean; mode?: "read_only_provider_receipt" | null };
+};
 export type TransactionCreate = {
   transaction_kind: string; counterparty: string; currency?: string | null; expires_at?: string | null;
 };
@@ -509,6 +526,16 @@ export class CoworkerClient {
     return this.json<TransactionRecord>(`/api/v1/transactions/${identifier(id)}/cancel`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }),
     });
+  }
+  transactionExecution(id: string, signal?: AbortSignal) {
+    return this.json<TransactionExecutionSurface>(`/api/v1/transactions/${identifier(id)}/execution`, { signal });
+  }
+  syncTransactionExecution(id: string) {
+    return this.json<{ transaction: TransactionRecord; link: TransactionExecutionLink; evidence: TransactionReconciliationEvidence }>(`/api/v1/transactions/${identifier(id)}/execution/sync`, { method: "POST" });
+  }
+  reconcileTransaction(id: string) {
+    return this.response(`/api/v1/transactions/${identifier(id)}/reconcile`, { method: "POST" }, 65000)
+      .then(response => response.json() as Promise<{ transaction: TransactionRecord; link: TransactionExecutionLink; evidence: TransactionReconciliationEvidence }>);
   }
   negotiations(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals_enabled?: boolean; proposal_promotion_enabled?: boolean; cases: NegotiationCase[] }>("/api/v1/negotiations", { signal }); }
   negotiation(id: string, signal?: AbortSignal) { return this.json<NegotiationCase>(`/api/v1/negotiations/${identifier(id)}`, { signal }); }
