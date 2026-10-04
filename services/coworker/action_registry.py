@@ -41,15 +41,19 @@ class TransactionPolicy:
     requires_fresh_terms: bool
     requires_fresh_price: bool = False
     requires_provider_confirmation: bool = True
+    requires_transaction_binding: bool = False
 
     def preview_manifest(self) -> dict:
-        return {
+        result = {
             "class": self.transaction_class,
             "approval": self.approval_mode,
             "changed_terms": self.terms_change_policy,
             "uncertain_outcome": self.uncertain_outcome_policy,
             "provider_idempotency": self.idempotency_mode,
         }
+        if self.requires_transaction_binding:
+            result["transaction_binding"] = "required"
+        return result
 
 
 @dataclass(frozen=True)
@@ -195,6 +199,28 @@ ACTION_SPECS = {
             requires_fresh_terms=True,
             requires_fresh_price=False,
             requires_provider_confirmation=True,
+        ),
+    ),
+    "restaurant_reservation_create": ActionSpec(
+        kind="restaurant_reservation_create",
+        version="1",
+        capability="restaurant_reservation",
+        providers=frozenset({"opentable"}),
+        approval_ttl_seconds=5 * 60,
+        execution_ttl_seconds=2 * 60,
+        reconcile_mode="none",
+        destination_fields=(),
+        transaction=TransactionPolicy(
+            transaction_class="restaurant_reservation",
+            approval_mode="exact_final_terms",
+            terms_change_policy="fresh_preview_required",
+            uncertain_outcome_policy="do_not_retry",
+            idempotency_mode="provider_specific_only",
+            reconciliation_mode="none",
+            requires_fresh_terms=True,
+            requires_fresh_price=False,
+            requires_provider_confirmation=True,
+            requires_transaction_binding=True,
         ),
     ),
     "calendar_create": ActionSpec(

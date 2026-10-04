@@ -102,6 +102,17 @@ CONNECTOR_CAPABILITIES = {
             "calendar_create_with_reminder",
         }),
     ),
+    ("opentable", "restaurant_reservation"): ConnectorCapabilitySpec(
+        provider="opentable",
+        capability="restaurant_reservation",
+        version="1",
+        required_scopes=("DEFAULT",),
+        action_kinds=frozenset({"restaurant_reservation_create"}),
+        retry_policy="provider_idempotency_key_no_blind_retry",
+        reconciliation_policy="manual_provider_check_on_unknown",
+        receipt_policy="reservation_confirmation",
+        egress_policy="fixed_opentable_partner_endpoints",
+    ),
     ("linkedin", "social"): ConnectorCapabilitySpec(
         provider="linkedin",
         capability="social",

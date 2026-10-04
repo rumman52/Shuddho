@@ -89,6 +89,15 @@ def test_connector_contracts_are_code_owned_and_operation_bounded():
         "email",
         action_kind="negotiation_commitment_email",
     ).approval_class == "exact_preview"
+    opentable = connector_capability(
+        "opentable",
+        "restaurant_reservation",
+        action_kind="restaurant_reservation_create",
+    )
+    assert opentable.required_scopes == ("DEFAULT",)
+    assert opentable.retry_policy == "provider_idempotency_key_no_blind_retry"
+    assert opentable.reconciliation_policy == "manual_provider_check_on_unknown"
+    assert opentable.egress_policy == "fixed_opentable_partner_endpoints"
     with pytest.raises(CoworkerError) as arbitrary_operation:
         connector_capability(
             "google",

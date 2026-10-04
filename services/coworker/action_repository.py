@@ -98,6 +98,14 @@ class ActionRepository:
                 "action_social_publishing_disabled",
                 "Social publishing is not enabled in this deployment.",
             )
+        if (
+            spec.kind == "restaurant_reservation_create"
+            and not self.settings.restaurant_reservations_enabled
+        ):
+            return (
+                "restaurant_reservations_disabled",
+                "Restaurant reservations are not enabled in this deployment.",
+            )
         if spec.transaction_class is not None:
             if not self.settings.personal_transactions_enabled:
                 return (
@@ -582,6 +590,75 @@ class ActionRepository:
             db.flush()
             return connection_dto(connection)
 
+    def ensure_service_connection(
+        self,
+        owner: str,
+        *,
+        provider: str,
+        capability: str,
+        subject: str,
+        account: str,
+        scopes: list[str],
+    ) -> dict:
+        """Create/reuse a server-owned connector identity without user OAuth.
+
+        TX-06 uses this only for OpenTable partner credentials. No provider
+        secret is persisted in the owner-scoped connection row.
+        """
+        self.enabled()
+        if provider != "opentable" or capability != "restaurant_reservation":
+            raise CoworkerError(
+                "connection_provider_disabled",
+                "This service connection is not registered.",
+                409,
+            )
+        if not self.settings.restaurant_reservations_enabled:
+            raise CoworkerError(
+                "restaurant_reservations_disabled",
+                "Restaurant reservations are not enabled in this deployment.",
+                503,
+            )
+        with self.sessions.begin() as db:
+            self._account(db, owner)
+            existing = db.scalar(
+                select(Connection).where(
+                    Connection.owner_id == owner,
+                    Connection.provider == provider,
+                    Connection.capability == capability,
+                    Connection.active.is_(True),
+                ).with_for_update()
+            )
+            if existing is not None:
+                if (
+                    existing.subject != subject
+                    or existing.email != account
+                    or list(existing.scopes or []) != list(scopes)
+                ):
+                    raise CoworkerError(
+                        "connection_identity_changed",
+                        "The restaurant reservation service identity changed.",
+                        409,
+                    )
+                return connection_dto(existing)
+            connection_id = str(uuid4())
+            row = Connection(
+                id=connection_id,
+                owner_id=owner,
+                provider=provider,
+                capability=capability,
+                subject=subject,
+                email=account,
+                scopes=list(scopes),
+                token_ciphertext=self.vault().seal(
+                    {"service": "opentable"},
+                    owner + ":connection:" + connection_id,
+                ),
+            )
+            db.add(row)
+            self._audit(db, owner, connection_id, "connection.service_created")
+            db.flush()
+            return connection_dto(row)
+
     def connections(self, owner):
         with self.sessions() as db:
             return [connection_dto(row) for row in db.scalars(select(Connection).where(Connection.owner_id == owner, Connection.active.is_(True)).order_by(Connection.created_at.desc()))]
@@ -809,6 +886,16 @@ class ActionRepository:
                 raise CoworkerError(
                     "approval_changed",
                     "Only a negotiation commitment may carry a negotiation proposal source binding.",
+                    409,
+                )
+            if (
+                spec.transaction is not None
+                and spec.transaction.requires_transaction_binding
+                and transaction_binding is None
+            ):
+                raise CoworkerError(
+                    "transaction_binding_required",
+                    "This transaction action must be prepared from an exact reviewed transaction.",
                     409,
                 )
             if transaction_binding is not None:

@@ -47,6 +47,7 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             "cw_transaction_execution_links",
             "cw_transaction_terms",
             "cw_transaction_reconciliation_evidence",
+            "cw_restaurant_reservation_intents",
         } <= tables
         columns = {
             column["name"]

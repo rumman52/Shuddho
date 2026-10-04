@@ -100,6 +100,7 @@ class TransactionDraft:
     currency: str | None = None
     counterparty: str | None = None
     expires_at: datetime | None = None
+    fingerprint_extra: dict | None = None
 
 
 class TransactionRepository:
@@ -336,6 +337,11 @@ class TransactionRepository:
             "counterparty": draft.counterparty,
             "expires_at": draft.expires_at.isoformat() if draft.expires_at else None,
         }
+        if draft.fingerprint_extra is not None:
+            # Provider-specific immutable intent data participates only when a
+            # newer slice explicitly supplies it. Historical fingerprints stay
+            # byte-for-byte compatible.
+            canonical["provider_intent"] = draft.fingerprint_extra
         fingerprint = self._fingerprint(canonical)
         with self.sessions.begin() as db:
             if db.scalar(
@@ -524,12 +530,20 @@ class TransactionRepository:
         transaction_id: str,
         expected_revision: int,
         request: TransactionTermsDraft,
+        *,
+        provider_managed: bool = False,
     ) -> dict:
         """Persist new exact terms and invalidate any prior review state."""
         self._require_enabled()
         with self.sessions.begin() as db:
             row = self._transaction(db, owner, transaction_id, lock=True)
             self._check_revision(row, expected_revision)
+            if row.provider != "internal" and not provider_managed:
+                raise CoworkerError(
+                    "transaction_terms_provider_managed",
+                    "These provider-backed terms must be refreshed through their registered transaction service.",
+                    409,
+                )
             if self._execution_link(db, owner, transaction_id) is not None:
                 raise CoworkerError(
                     "transaction_execution_already_bound",
@@ -984,14 +998,18 @@ class TransactionRepository:
     ) -> tuple[TransactionReconciliationEvidence, bool]:
         receipt = dict(action.receipt) if isinstance(action.receipt, dict) else None
         if action.state == "succeeded":
-            expected_status = (
-                {
+            if link.action_kind == "negotiation_commitment_email":
+                expected_status = {
                     "google": "accepted_by_gmail",
                     "microsoft": "accepted_by_microsoft_graph",
                 }.get(link.provider)
-                if link.action_kind == "negotiation_commitment_email"
-                else None
-            )
+            elif (
+                link.action_kind == "restaurant_reservation_create"
+                and link.provider == "opentable"
+            ):
+                expected_status = "reservation_confirmed"
+            else:
+                expected_status = None
             confirmed_at = receipt.get("confirmed_at") if receipt is not None else None
             try:
                 confirmed_at_value = (
@@ -1010,6 +1028,21 @@ class TransactionRepository:
                 or confirmed_at_value is None
                 or confirmed_at_value.tzinfo is None
                 or confirmed_at_value.utcoffset() is None
+                or (
+                    link.action_kind == "restaurant_reservation_create"
+                    and (
+                        receipt.get("payment_required") is not False
+                        or not isinstance(receipt.get("confirmation_number"), int)
+                        or isinstance(receipt.get("confirmation_number"), bool)
+                        or receipt.get("confirmation_number") < 1
+                        or not isinstance(receipt.get("restaurant_id"), int)
+                        or receipt.get("restaurant_id") < 1
+                        or not isinstance(receipt.get("party_size"), int)
+                        or receipt.get("party_size") < 1
+                        or not isinstance(receipt.get("date_time"), str)
+                        or not receipt.get("date_time")
+                    )
+                )
             ):
                 raise CoworkerError(
                     "transaction_receipt_invalid",

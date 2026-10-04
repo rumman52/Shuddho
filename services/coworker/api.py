@@ -34,6 +34,10 @@ from .negotiation_schemas import (
     NegotiationProposalRequest,
     NegotiationProposalReview,
 )
+from .restaurant_reservation_schemas import (
+    RestaurantReservationPrepare,
+    RestaurantReservationRequest,
+)
 from .transaction_schemas import (
     TransactionCancel,
     TransactionCreate,
@@ -107,6 +111,58 @@ def require_sandbox_worker(request: Request, services: Container) -> None:
     expected = services.settings.sandbox_worker_token
     if not expected or not hmac.compare_digest(supplied, expected):
         raise CoworkerError("sandbox_worker_unauthorized", "Sandbox worker authentication failed.", 403)
+
+
+@router.post("/restaurant-reservations", status_code=201)
+async def create_restaurant_reservation(
+    payload: RestaurantReservationRequest,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = await services.restaurant_reservations.create(
+        identity.account_id,
+        payload,
+        idempotency_key,
+    )
+    transaction_id = value["transaction"]["id"]
+    response.headers["Location"] = f"/api/v1/restaurant-reservations/{transaction_id}"
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
+
+
+@router.get("/restaurant-reservations/{transaction_id}")
+def get_restaurant_reservation(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.restaurant_reservations.get(
+        identity.account_id,
+        str(transaction_id),
+    )
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
+
+
+@router.post("/restaurant-reservations/{transaction_id}/prepare-action", status_code=201)
+def prepare_restaurant_reservation_action(
+    transaction_id: UUID,
+    payload: RestaurantReservationPrepare,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.restaurant_reservations.prepare_action(
+        identity.account_id,
+        str(transaction_id),
+        payload,
+    )
+    response.headers["Location"] = f'/api/v1/actions/{value["action"]["id"]}'
+    return value
 
 
 @router.post("/transactions", status_code=201)
@@ -864,6 +920,7 @@ def runtime_manifest(
         "action_email_threading": settings.action_email_threading_enabled,
         "action_social_publishing": settings.action_social_publishing_enabled,
         "personal_transactions": settings.personal_transactions_enabled,
+        "restaurant_reservations": settings.restaurant_reservations_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
         "negotiation_proposal_promotion": settings.negotiation_proposal_promotion_enabled,
@@ -877,6 +934,8 @@ def runtime_manifest(
             providers.append("microsoft")
         if settings.action_social_publishing_enabled:
             providers.append("linkedin")
+        if settings.restaurant_reservations_enabled:
+            providers.append("opentable")
     return {
         "schema_version": 1,
         "source_revision": settings.source_revision,
@@ -912,6 +971,7 @@ def transaction_authority_manifest(
         "schema_version": 1,
         "source_revision": settings.source_revision,
         "personal_transactions_enabled": settings.personal_transactions_enabled,
+        "restaurant_reservations_enabled": settings.restaurant_reservations_enabled,
         "operations": sorted(settings.transaction_operations),
     }
 
@@ -1627,6 +1687,7 @@ def connections(identity: Identity, services: Services):
         "threading_enabled": services.settings.action_email_threading_enabled,
         "social_publishing_enabled": services.settings.action_social_publishing_enabled,
         "personal_transactions_enabled": services.settings.personal_transactions_enabled,
+        "restaurant_reservations_enabled": services.settings.restaurant_reservations_enabled,
         "transaction_operations": sorted(services.settings.transaction_operations),
         "reads_enabled": services.settings.connector_reads_enabled,
         "connections": services.actions.repo.connections(identity.account_id),

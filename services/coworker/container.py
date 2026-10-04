@@ -14,6 +14,8 @@ from .connector_push import GooglePushVerifier
 from .google_actions import GoogleActions
 from .microsoft_actions import MicrosoftActions
 from .linkedin_actions import LinkedInActions
+from .opentable_actions import OpenTableActions
+from .restaurant_reservations import RestaurantReservationService
 from .agent_repository import AgentRepository
 from .goal_repository import GoalRepository
 from .suggestion_repository import SuggestionRepository
@@ -49,6 +51,7 @@ class Container:
     suggestion_relevance: SuggestionRelevanceService | None = None
     negotiations: NegotiationRepository | None = None
     transactions: TransactionRepository | None = None
+    restaurant_reservations: RestaurantReservationService | None = None
     negotiation_proposals: NegotiationProposalService | None = None
     automations: AutomationRepository | None = None
     notifications: NotificationRepository | None = None
@@ -66,6 +69,8 @@ class Container:
                 providers["microsoft"] = MicrosoftActions(self.settings)
             if self.settings.action_social_publishing_enabled:
                 providers["linkedin"] = LinkedInActions(self.settings)
+            if self.settings.restaurant_reservations_enabled:
+                providers["opentable"] = OpenTableActions(self.settings)
             action_repository = ActionRepository(
                 self.repository.sessions,
                 self.settings,
@@ -155,6 +160,15 @@ class Container:
             self.transactions = TransactionRepository(
                 self.repository.sessions,
                 self.settings,
+            )
+        if self.restaurant_reservations is None:
+            restaurant_adapter = self.actions.providers.get("opentable")
+            if restaurant_adapter is None:
+                restaurant_adapter = OpenTableActions(self.settings)
+            self.restaurant_reservations = RestaurantReservationService(
+                self.transactions,
+                self.actions.repo,
+                restaurant_adapter,
             )
         if self.negotiation_proposals is None:
             self.negotiation_proposals = NegotiationProposalService(

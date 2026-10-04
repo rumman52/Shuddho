@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 
 RELEASE_CONTRACT_VERSION = 1
-ACTION_PROVIDERS = frozenset({"google", "microsoft", "linkedin"})
+ACTION_PROVIDERS = frozenset({"google", "microsoft", "linkedin", "opentable"})
 
 REQUIRED_GATES = {
     "ci": "Dedicated repository CI, including Coworker/Temporal recovery, is green.",
@@ -156,6 +156,20 @@ OPTIONAL_CAPABILITIES = (
             StagingGate(
                 "personal_transactions",
                 "Binding negotiation commitments passed exact counterparty/message/final-term approval binding, changed-term invalidation, owner/connection checks, fixed provider egress, no blind retry after uncertain mutation, confirmed provider acceptance receipts, and owner-scoped negotiation-case/history/limit controls in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
+        capability="restaurant_reservations",
+        rollback_key="restaurant_reservations_kill_switch",
+        kill_switch="SHUDDHO_RESTAURANT_RESERVATIONS_ENABLED=false",
+        dependencies=("personal_transactions", "actions", "connector_trust_boundary"),
+        required_providers=("opentable",),
+        staging_gates=(
+            StagingGate(
+                "restaurant_reservations",
+                "Live/sandbox OpenTable no-payment reservation qualification passed exact availability hashing, visible Terms/contact-sharing consent, immutable transaction/action binding, separate final approval, fresh pre-submit availability recheck, one idempotent reservation POST, provider confirmation receipt validation, payment-required fail-closed handling, owner isolation, and outcome-unknown no-retry behavior.",
+                provider="opentable",
             ),
         ),
     ),
@@ -395,6 +409,14 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="personal_transactions_verified",
         ledger_artifact_key="personal_transactions_activation",
         capability="personal_transactions",
+    ),
+    ActivationRequirement(
+        key="restaurant_reservations",
+        status="restaurant_reservations_verified",
+        ledger_schema_version=30,
+        ledger_event_type="restaurant_reservations_verified",
+        ledger_artifact_key="restaurant_reservations_activation",
+        capability="restaurant_reservations",
     ),
     ActivationRequirement(
         key="negotiation_proposal_promotion",
