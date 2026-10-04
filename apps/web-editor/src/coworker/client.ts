@@ -189,7 +189,7 @@ export type AgentRunInput = { goal: string; document_ids: string[]; action_ids: 
 export type ExternalAction = {
   id: string; connection_id: string; kind: ActionPayload["kind"];
   state: "awaiting_approval" | "queued" | "executing" | "succeeded" | "failed" | "cancelled" | "expired" | "outcome_unknown";
-  preview: { account: string; provider: "google" | "microsoft" | "linkedin"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; reply_context?: { parent_action_id: string; root_action_id: string; thread_id: string; parent_message_id: string; parent_provider_id: string; references: string[] }; source_binding?: { type: "negotiation_proposal"; proposal_id: string; proposal_hash: string; case_id: string; case_revision: number; history_sequence: number }; transaction?: { class: "binding_negotiation_commitment"; approval: "exact_final_terms"; changed_terms: "fresh_preview_required"; uncertain_outcome: "do_not_retry"; provider_idempotency: "provider_specific_only" }; expires_at: string; calendar: string | null; guest_notifications: string | null };
+  preview: { account: string; provider: "google" | "microsoft" | "linkedin"; payload: ActionPayload; attachments?: ActionAttachment[]; shared_artifact?: ActionAttachment; document_sharing?: { source: string; access: "reader"; notifications: "recipient" }; reply_context?: { parent_action_id: string; root_action_id: string; thread_id: string; parent_message_id: string; parent_provider_id: string; references: string[] }; source_binding?: { type: "negotiation_proposal"; proposal_id: string; proposal_hash: string; case_id: string; case_revision: number; history_sequence: number }; transaction_binding?: { transaction_id: string; transaction_revision: number; terms_revision: number; terms_sha256: string }; transaction?: { class: "binding_negotiation_commitment"; approval: "exact_final_terms"; changed_terms: "fresh_preview_required"; uncertain_outcome: "do_not_retry"; provider_idempotency: "provider_specific_only" }; expires_at: string; calendar: string | null; guest_notifications: string | null };
   preview_hash: string; message: string; error_code: string | null; created_at: string; expires_at: string;
   approved_at: string | null; finished_at: string | null;
   receipt: { provider: string; provider_id?: string; thread_id?: string; status: string; confirmed_at: string; message_id?: string; recipient?: string; access?: string; artifact_sha256?: string; author?: string; visibility?: string } | null;
@@ -220,6 +220,23 @@ export type TransactionEvent = {
 export type TransactionSurface = {
   transaction: TransactionRecord; terms: TransactionTermsSnapshot | null; events: TransactionEvent[];
   execution: { available: false; boundary: "external_action_only" };
+};
+export type TransactionExecutionLink = {
+  id: string; transaction_id: string; transaction_revision: number; terms_revision: number;
+  terms_sha256: string; external_action_id: string; preview_hash: string;
+  provider: string; action_kind: string; created_at: string;
+};
+export type TransactionReconciliationEvidence = {
+  id: string; sequence: number; transaction_revision: number; external_action_id: string;
+  action_state: ExternalAction["state"]; provider: string; action_kind: string; preview_hash: string;
+  receipt: Record<string, unknown> | null; receipt_sha256: string | null; error_code: string | null;
+  evidence_sha256: string; action_finished_at: string | null; observed_at: string;
+};
+export type TransactionExecutionSurface = {
+  transaction: TransactionRecord;
+  link: TransactionExecutionLink | null;
+  evidence: TransactionReconciliationEvidence[];
+  reconciliation: { available: boolean; mode?: "read_only_provider_receipt" | null };
 };
 export type TransactionCreate = {
   transaction_kind: string; counterparty: string; currency?: string | null; expires_at?: string | null;
@@ -509,6 +526,16 @@ export class CoworkerClient {
     return this.json<TransactionRecord>(`/api/v1/transactions/${identifier(id)}/cancel`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }),
     });
+  }
+  transactionExecution(id: string, signal?: AbortSignal) {
+    return this.json<TransactionExecutionSurface>(`/api/v1/transactions/${identifier(id)}/execution`, { signal });
+  }
+  syncTransactionExecution(id: string) {
+    return this.json<{ transaction: TransactionRecord; link: TransactionExecutionLink; evidence: TransactionReconciliationEvidence }>(`/api/v1/transactions/${identifier(id)}/execution/sync`, { method: "POST" });
+  }
+  reconcileTransaction(id: string) {
+    return this.response(`/api/v1/transactions/${identifier(id)}/reconcile`, { method: "POST" }, 65000)
+      .then(response => response.json() as Promise<{ transaction: TransactionRecord; link: TransactionExecutionLink; evidence: TransactionReconciliationEvidence }>);
   }
   negotiations(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals_enabled?: boolean; proposal_promotion_enabled?: boolean; cases: NegotiationCase[] }>("/api/v1/negotiations", { signal }); }
   negotiation(id: string, signal?: AbortSignal) { return this.json<NegotiationCase>(`/api/v1/negotiations/${identifier(id)}`, { signal }); }

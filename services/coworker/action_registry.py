@@ -454,6 +454,49 @@ def thread_context_manifest(preview: dict, spec: ActionSpec) -> dict | None:
     return dict(value)
 
 
+def transaction_binding_manifest(preview: dict, spec: ActionSpec) -> dict | None:
+    value = preview.get("transaction_binding")
+    if value is None:
+        return None
+    if spec.transaction is None:
+        raise CoworkerError(
+            "approval_changed",
+            "This action does not allow a transaction binding.",
+            409,
+        )
+    required = {
+        "transaction_id",
+        "transaction_revision",
+        "terms_revision",
+        "terms_sha256",
+    }
+    action_id = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    if not isinstance(value, dict) or set(value) != required:
+        raise CoworkerError(
+            "approval_changed",
+            "The transaction binding could not be verified.",
+            409,
+        )
+    if (
+        not isinstance(value["transaction_id"], str)
+        or not re.fullmatch(action_id, value["transaction_id"])
+        or not isinstance(value["transaction_revision"], int)
+        or isinstance(value["transaction_revision"], bool)
+        or value["transaction_revision"] < 1
+        or not isinstance(value["terms_revision"], int)
+        or isinstance(value["terms_revision"], bool)
+        or value["terms_revision"] < 1
+        or not isinstance(value["terms_sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", value["terms_sha256"])
+    ):
+        raise CoworkerError(
+            "approval_changed",
+            "The transaction binding is invalid.",
+            409,
+        )
+    return dict(value)
+
+
 def build_approval_scope(preview: dict) -> dict:
     payload = preview.get("payload")
     if not isinstance(payload, dict):
@@ -475,6 +518,7 @@ def build_approval_scope(preview: dict) -> dict:
     shared_artifact = shared_artifact_manifest(preview, spec)
     reply_context = thread_context_manifest(preview, spec)
     source_binding = preview.get("source_binding")
+    transaction_binding = transaction_binding_manifest(preview, spec)
     if source_binding is not None and (
         spec.kind != "negotiation_commitment_email"
         or not isinstance(source_binding, dict)
@@ -487,7 +531,7 @@ def build_approval_scope(preview: dict) -> dict:
         )
     result = {
         "contract": "shuddho.consequential-action",
-        "contract_version": 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
+        "contract_version": 7 if transaction_binding is not None else 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
         "action_kind": spec.kind,
         "action_version": spec.version,
         "provider": provider,
@@ -524,6 +568,9 @@ def build_approval_scope(preview: dict) -> dict:
     if source_binding is not None:
         result["source_binding"] = dict(source_binding)
         result["source_binding_sha256"] = stable_digest(source_binding)
+    if transaction_binding is not None:
+        result["transaction_binding"] = transaction_binding
+        result["transaction_binding_sha256"] = stable_digest(transaction_binding)
     if spec.attachments_allowed:
         result["attachments"] = attachments
         result["attachments_sha256"] = stable_digest(attachments)
