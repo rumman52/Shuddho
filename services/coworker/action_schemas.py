@@ -274,6 +274,8 @@ class RestaurantReservationCreate(Strict):
         if local.second or local.microsecond or local.minute % 15:
             raise ValueError("Reservation time must use a 15-minute boundary")
         self.date_time = local
+        if self.environment is not None and self.dining_area_id is None:
+            raise ValueError("Select a dining area when requesting a specific environment")
         if self.reservation_attribute == "outdoor" and self.environment not in {None, "Outdoor"}:
             raise ValueError("Outdoor reservations cannot select an indoor environment")
         return self
