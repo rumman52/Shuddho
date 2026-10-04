@@ -95,6 +95,10 @@
     "status": "pending",
     "evidence": ""
   },
+  "restaurant_reservations": {
+    "status": "pending",
+    "evidence": ""
+  },
   "microsoft_actions": {
     "status": "pending",
     "evidence": ""
