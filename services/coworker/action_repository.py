@@ -14,12 +14,12 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select, update
 
-from .action_registry import action_spec, build_approval_scope, transaction_operation_key, validate_approval_scope
+from .action_registry import action_spec, build_approval_scope, transaction_binding_manifest, transaction_operation_key, validate_approval_scope
 from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE, CONNECTOR_READ_AUDIENCE
 from .errors import CoworkerError
-from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, NegotiationCase, NegotiationOffer, NegotiationProposal, OAuthAttempt, utcnow
+from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, NegotiationCase, NegotiationOffer, NegotiationProposal, OAuthAttempt, Transaction, TransactionExecutionLink, TransactionTermsSnapshot, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
@@ -115,6 +115,73 @@ class ActionRepository:
         failure = self._optional_feature_error(spec, provider)
         if failure is not None:
             raise CoworkerError(failure[0], failure[1], 503)
+
+    @staticmethod
+    def _validate_transaction_source_binding(
+        db,
+        owner: str,
+        action_id: str,
+        preview: dict,
+        *,
+        allowed_states: set[str] | None = None,
+    ) -> None:
+        binding = preview.get("transaction_binding")
+        if binding is None:
+            return
+        spec = validate_approval_scope(preview)
+        manifest = transaction_binding_manifest(preview, spec)
+        if manifest is None:
+            raise CoworkerError(
+                "transaction_action_binding_changed",
+                "The transaction execution binding is missing.",
+                409,
+            )
+        transaction = db.scalar(
+            select(Transaction).where(
+                Transaction.id == manifest["transaction_id"],
+                Transaction.owner_id == owner,
+            ).with_for_update()
+        )
+        link = db.scalar(
+            select(TransactionExecutionLink).where(
+                TransactionExecutionLink.transaction_id == manifest["transaction_id"],
+                TransactionExecutionLink.owner_id == owner,
+                TransactionExecutionLink.external_action_id == action_id,
+            )
+        )
+        terms = (
+            db.get(
+                TransactionTermsSnapshot,
+                (manifest["transaction_id"], manifest["terms_revision"]),
+            )
+            if transaction is not None
+            else None
+        )
+        if (
+            transaction is None
+            or link is None
+            or terms is None
+            or terms.owner_id != owner
+            or transaction.current_terms_revision != manifest["terms_revision"]
+            or terms.terms_sha256 != manifest["terms_sha256"]
+            or link.transaction_revision != manifest["transaction_revision"]
+            or link.terms_revision != manifest["terms_revision"]
+            or link.terms_sha256 != manifest["terms_sha256"]
+            or link.preview_hash != digest(preview)
+            or link.provider != preview.get("provider")
+            or link.action_kind != (preview.get("payload") or {}).get("kind")
+        ):
+            raise CoworkerError(
+                "transaction_action_binding_changed",
+                "The reviewed transaction no longer matches this external action.",
+                409,
+            )
+        if allowed_states is not None and transaction.state not in allowed_states:
+            raise CoworkerError(
+                "transaction_action_binding_changed",
+                "The transaction state no longer permits this external action.",
+                409,
+            )
 
     @staticmethod
     def _require_live_reminder(payload):
@@ -1022,6 +1089,13 @@ class ActionRepository:
                 raise CoworkerError("approval_changed", "The preview changed. Review it again before approving.", 409)
             spec = validate_approval_scope(row.preview)
             self._validate_negotiation_source_binding(db, owner, row.id, row.preview)
+            self._validate_transaction_source_binding(
+                db,
+                owner,
+                row.id,
+                row.preview,
+                allowed_states=None if row.approved_at else {"awaiting_approval"},
+            )
             if row.approved_at:  # Replayed approval never dispatches a new action.
                 return action_dto(row)
             self.enabled()
@@ -1114,6 +1188,13 @@ class ActionRepository:
                     row.owner_id,
                     row.id,
                     row.preview,
+                )
+                self._validate_transaction_source_binding(
+                    db,
+                    row.owner_id,
+                    row.id,
+                    row.preview,
+                    allowed_states={"awaiting_approval", "approved", "executing"},
                 )
             except CoworkerError as error:
                 row.state, row.finished_at, row.error_code = (
