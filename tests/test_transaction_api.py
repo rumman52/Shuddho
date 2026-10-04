@@ -10,7 +10,7 @@ pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
 
 from action_samples import enable_actions
-from test_coworker import signed_client
+from test_coworker import container, signed_client
 
 from services.coworker.models import utcnow
 
