@@ -20,7 +20,7 @@ export type CalendarAction = { kind: "calendar_create"; title: string; descripti
 export type CalendarReminderAction = { kind: "calendar_create_with_reminder"; title: string; description: string; location: string; start_at: string; end_at: string; time_zone: string; attendees: string[]; reminder_minutes_before_start: 5 | 10 | 15 | 30 | 60 | 120 | 1440 };
 export type DocumentShareAction = { kind: "document_share"; recipients: string[] };
 export type LinkedInSocialPublishAction = { kind: "social_publish_linkedin"; text: string };
-export type RestaurantReservationAction = { kind: "restaurant_reservation_create"; restaurant_id: number; restaurant_name: string; date_time: string; time_zone: string; party_size: number; reservation_attribute: "default" | "hightop" | "bar" | "counter" | "outdoor"; dining_area_id: number | null; environment: "Indoor" | "Outdoor" | null; guest_first_name: string; guest_last_name: string; guest_email: string; guest_phone_number: string; guest_phone_country_code: string; special_request: string; availability_sha256: string; availability_observed_at: string; no_payment_required: true };
+export type RestaurantReservationAction = { kind: "restaurant_reservation_create"; restaurant_id: number; restaurant_name: string; date_time: string; time_zone: string; party_size: number; reservation_attribute: "default" | "hightop" | "bar" | "counter" | "outdoor"; dining_area_id: number | null; environment: "Indoor" | "Outdoor" | null; guest_first_name: string; guest_last_name: string; guest_email: string; guest_phone_number: string; guest_phone_country_code: string; special_request: string; opentable_terms_accepted: true; opentable_terms_version: "2026-07-22"; guest_contact_sharing_approved: true; availability_sha256: string; availability_observed_at: string; no_payment_required: true };
 export type ActionPayload = EmailAction | AttachmentEmailAction | EmailThreadReplyAction | NegotiationCommitmentAction | CalendarAction | CalendarReminderAction | DocumentShareAction | LinkedInSocialPublishAction | RestaurantReservationAction;
 export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[]; artifact_ids?: string[] };
 export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
@@ -251,7 +251,7 @@ export type RestaurantReservationRequest = {
   restaurant_id: number; restaurant_name: string; date_time: string; time_zone: string; party_size: number;
   reservation_attribute: "default" | "hightop" | "bar" | "counter" | "outdoor"; dining_area_id?: number | null;
   environment?: "Indoor" | "Outdoor" | null; guest_first_name: string; guest_last_name: string; guest_email: string;
-  guest_phone_number: string; guest_phone_country_code: string; special_request?: string;
+  guest_phone_number: string; guest_phone_country_code: string; special_request?: string; opentable_terms_accepted: true; opentable_terms_version?: "2026-07-22"; guest_contact_sharing_approved: true;
 };
 export type RestaurantReservationSurface = TransactionSurface & {
   reservation: {
