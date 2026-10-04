@@ -317,3 +317,54 @@ def test_cancel_requires_current_revision_and_is_terminal(container, signed_clie
     )
     assert terms.status_code == 409
     assert terms.json()["error"]["code"] == "transaction_terms_not_editable"
+
+
+
+def test_transaction_execution_api_has_no_public_bind_or_execute_authority(
+    container,
+    signed_client,
+):
+    enable_transactions(container)
+    client, headers = signed_client
+    auth = headers("tx05-public-boundary")
+    created = client.post(
+        "/api/v1/transactions",
+        headers=auth | {"Idempotency-Key": "tx05-public-boundary-create"},
+        json=create_payload(),
+    ).json()
+
+    surface = client.get(
+        f'/api/v1/transactions/{created["id"]}/execution',
+        headers=auth,
+    )
+    assert surface.status_code == 200
+    assert surface.json()["link"] is None
+    assert surface.json()["evidence"] == []
+    assert surface.json()["reconciliation"]["available"] is False
+
+    sync = client.post(
+        f'/api/v1/transactions/{created["id"]}/execution/sync',
+        headers=auth,
+    )
+    assert sync.status_code == 409
+    assert sync.json()["error"]["code"] == "transaction_execution_not_bound"
+
+    reconcile = client.post(
+        f'/api/v1/transactions/{created["id"]}/reconcile',
+        headers=auth,
+    )
+    assert reconcile.status_code == 409
+    assert reconcile.json()["error"]["code"] == "transaction_execution_not_bound"
+
+    bind = client.post(
+        f'/api/v1/transactions/{created["id"]}/execution/bind',
+        headers=auth,
+        json={"external_action_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert bind.status_code in {404, 405}
+
+    execute = client.post(
+        f'/api/v1/transactions/{created["id"]}/execute',
+        headers=auth,
+    )
+    assert execute.status_code in {404, 405}
