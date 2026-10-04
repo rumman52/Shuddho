@@ -98,6 +98,18 @@ class RestaurantReservationService:
                 "value": request["guest_phone_country_code"] + " " + request["guest_phone_number"],
             },
             {"name": "Special request", "value": special_request},
+            {
+                "name": "OpenTable Terms",
+                "value": (
+                    "Accepted version "
+                    + request["opentable_terms_version"]
+                    + " — https://www.opentable.com/c/legal/terms-and-conditions/"
+                ),
+            },
+            {
+                "name": "Guest contact sharing",
+                "value": "Approved for this OpenTable reservation and confirmation",
+            },
             {"name": "Payment", "value": "No payment or card authorization permitted"},
             {
                 "name": "Provider inventory",
@@ -105,7 +117,7 @@ class RestaurantReservationService:
             },
             {
                 "name": "Cancellation/deposit",
-                "value": "No deposit, hold, or fee-bearing policy returned in approved availability",
+                "value": "No deposit/hold policy returned; OpenTable Terms and general no-show rules still apply",
             },
         ]
         observed_at = aware(row.observed_at)
