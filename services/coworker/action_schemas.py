@@ -210,6 +210,9 @@ class RestaurantReservationCreate(Strict):
     guest_phone_number: Annotated[str, StringConstraints(min_length=5, max_length=20)]
     guest_phone_country_code: Annotated[str, StringConstraints(min_length=2, max_length=2)]
     special_request: Annotated[str, StringConstraints(max_length=75)] = ""
+    opentable_terms_accepted: Literal[True]
+    opentable_terms_version: Literal["2026-07-22"] = "2026-07-22"
+    guest_contact_sharing_approved: Literal[True]
     availability_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
     availability_observed_at: datetime
     no_payment_required: Literal[True] = True
