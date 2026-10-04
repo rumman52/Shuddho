@@ -224,12 +224,14 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
   }
 
   async function confirmReview() {
-    if (!surface?.terms) return;
+    const current = surface;
+    const terms = current?.terms;
+    if (!current || !terms) return;
     await run("confirm", async () => {
       const value = await client.confirmTransactionReview(
-        surface.transaction.id,
-        surface.transaction.revision,
-        surface.terms.terms_sha256,
+        current.transaction.id,
+        current.transaction.revision,
+        terms.terms_sha256,
       );
       setTransactions(previous => [
         value.transaction,
