@@ -253,6 +253,52 @@ def cancel_transaction(
     return value
 
 
+@router.get("/transactions/{transaction_id}/execution")
+def get_transaction_execution(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return services.transactions.execution_surface(
+        identity.account_id,
+        str(transaction_id),
+    )
+
+
+@router.post("/transactions/{transaction_id}/execution/sync")
+def sync_transaction_execution(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return services.transactions.sync_external_action(
+        identity.account_id,
+        str(transaction_id),
+    )
+
+
+@router.post("/transactions/{transaction_id}/reconcile")
+async def reconcile_transaction_execution(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    action_id = await run_in_threadpool(
+        services.transactions.reconciliation_action_id,
+        identity.account_id,
+        str(transaction_id),
+    )
+    await services.actions.reconcile_owned(
+        identity.account_id,
+        action_id,
+    )
+    return await run_in_threadpool(
+        services.transactions.sync_external_action,
+        identity.account_id,
+        str(transaction_id),
+    )
+
+
 @router.post("/negotiations", status_code=201)
 def create_negotiation_case(
     payload: NegotiationCaseCreate,
