@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -575,6 +576,39 @@ class TransactionRepository:
                 )
             return self._terms_dto(terms)
 
+    @staticmethod
+    def _require_current_fresh_terms(
+        db,
+        row: Transaction,
+        *,
+        expected_terms_sha256: str | None = None,
+        now=None,
+    ) -> TransactionTermsSnapshot:
+        now = aware(now) if now is not None else utcnow()
+        terms = db.get(TransactionTermsSnapshot, (row.id, row.revision))
+        if terms is None or terms.owner_id != row.owner_id:
+            raise CoworkerError(
+                "transaction_terms_stale",
+                "The current transaction revision does not have exact final terms.",
+                409,
+            )
+        if expected_terms_sha256 is not None and not hmac.compare_digest(
+            terms.terms_sha256,
+            expected_terms_sha256,
+        ):
+            raise CoworkerError(
+                "transaction_terms_changed",
+                "Transaction terms changed after review. Review the latest terms again.",
+                409,
+            )
+        if aware(terms.quote_expires_at) <= now:
+            raise CoworkerError(
+                "transaction_quote_expired",
+                "The provider quote expired. Refresh the terms before approval.",
+                409,
+            )
+        return terms
+
     def review_binding(
         self,
         owner: str,
@@ -586,32 +620,15 @@ class TransactionRepository:
     ) -> dict:
         """Return the exact fresh terms binding required by later approval code."""
         self._require_enabled()
-        now = aware(now) if now is not None else utcnow()
         with self.sessions() as db:
             row = self._transaction(db, owner, transaction_id)
             self._check_revision(row, expected_revision)
-            terms = db.get(TransactionTermsSnapshot, (row.id, row.revision))
-            if terms is None or terms.owner_id != owner:
-                raise CoworkerError(
-                    "transaction_terms_stale",
-                    "The current transaction revision does not have exact final terms.",
-                    409,
-                )
-            if expected_terms_sha256 is not None and not hmac.compare_digest(
-                terms.terms_sha256,
-                expected_terms_sha256,
-            ):
-                raise CoworkerError(
-                    "transaction_terms_changed",
-                    "Transaction terms changed after review. Review the latest terms again.",
-                    409,
-                )
-            if aware(terms.quote_expires_at) <= now:
-                raise CoworkerError(
-                    "transaction_quote_expired",
-                    "The provider quote expired. Refresh the terms before approval.",
-                    409,
-                )
+            terms = self._require_current_fresh_terms(
+                db,
+                row,
+                expected_terms_sha256=expected_terms_sha256,
+                now=now,
+            )
             return {
                 "transaction_id": row.id,
                 "transaction_revision": row.revision,
@@ -653,6 +670,8 @@ class TransactionRepository:
                     f"Transaction state {row.state!r} cannot transition to {target!r}.",
                     409,
                 )
+            if target in {"awaiting_review", "awaiting_approval"}:
+                self._require_current_fresh_terms(db, row)
             row.state = target
             row.revision += 1
             row.updated_at = utcnow()
