@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   CoworkerClient,
+  type ExternalAction,
+  type RestaurantReservationSurface,
   type TransactionExecutionSurface,
   type TransactionRecord,
   type TransactionSurface,
   type TransactionTerm,
 } from "./client";
+import RestaurantReservationForm from "./RestaurantReservationForm";
 
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "This transaction update could not be completed.";
@@ -45,7 +48,7 @@ const localInput = (value: string) => {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 };
 
-export default function TransactionWorkspace({ client }: { client: CoworkerClient }) {
+export default function TransactionWorkspace({ client, reviewAction }: { client: CoworkerClient; reviewAction: (action: ExternalAction) => void }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -166,6 +169,22 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
     }
   }
 
+  async function reservationCreated(value: RestaurantReservationSurface) {
+    setTransactions(previous => [
+      value.transaction,
+      ...previous.filter(item => item.id !== value.transaction.id),
+    ]);
+    setSelectedId(value.transaction.id);
+    setSurface(value);
+    setExecution({
+      transaction: value.transaction,
+      link: null,
+      evidence: [],
+      reconciliation: { available: false },
+    });
+    setNotice("Exact no-payment OpenTable availability found. Review the provider-managed terms; no table has been booked.");
+  }
+
   async function createTransaction(event: FormEvent) {
     event.preventDefault();
     await run("create", async () => {
@@ -255,6 +274,26 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
     });
   }
 
+  async function prepareRestaurantAction() {
+    if (
+      !surface
+      || surface.transaction.provider !== "opentable"
+      || surface.transaction.transaction_kind !== "restaurant_reservation"
+      || surface.transaction.state !== "awaiting_approval"
+      || !surface.terms
+    ) return;
+    await run("prepare-reservation", async () => {
+      const value = await client.prepareRestaurantReservationAction(
+        surface.transaction.id,
+        surface.transaction.revision,
+        surface.terms!.terms_sha256,
+      );
+      await refreshSurface(surface.transaction.id);
+      setNotice("Reservation action prepared from the exact reviewed terms. Final OpenTable approval is still required.");
+      reviewAction(value.action);
+    });
+  }
+
   async function cancelTransaction() {
     if (!surface) return;
     await run("cancel", async () => {
@@ -291,13 +330,17 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
   if (enabled === null) return <section className="cw-card"><p>Loading transactions…</p></section>;
   if (!enabled) return <section className="cw-card"><h2>Transactions</h2><p>Transaction review is not enabled in this deployment.</p>{error && <p className="cw-error">{error}</p>}</section>;
 
-  const editable = surface && ["draft", "terms_ready", "awaiting_review", "awaiting_approval"].includes(surface.transaction.state);
+  const editable = surface
+    && surface.transaction.provider === "internal"
+    && ["draft", "terms_ready", "awaiting_review", "awaiting_approval"].includes(surface.transaction.state);
   const cancellable = surface && !["cancelled", "expired", "confirmed", "failed", "outcome_unknown"].includes(surface.transaction.state);
 
   return <section className="cw-card" aria-label="Transaction review">
     <div className="cw-card-title"><div><span className="cw-eyebrow">Transactions</span><h2>Review exact transaction terms</h2><p>Business intent and human review only. Provider execution remains a separate approved ExternalAction.</p></div></div>
     {error && <p className="cw-error" role="alert">{error}</p>}
     {notice && <p className="cw-notice" role="status">{notice}</p>}
+
+    <RestaurantReservationForm client={client} onCreated={value => void reservationCreated(value)} />
 
     <form onSubmit={createTransaction}>
       <h3>New review record</h3>
@@ -321,7 +364,7 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
         <dt>State</dt><dd>{surface.transaction.state}</dd>
         <dt>Revision</dt><dd>{surface.transaction.revision}</dd>
         <dt>Currency</dt><dd>{surface.transaction.currency ?? "Not set"}</dd>
-        <dt>Execution</dt><dd>Not available in this review surface</dd>
+        <dt>Execution</dt><dd>{surface.transaction.provider === "opentable" ? "Separate OpenTable ExternalAction approval required" : "Not available in this review surface"}</dd>
       </dl>
 
       {editable && <form onSubmit={replaceTerms}>
@@ -351,7 +394,11 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
 
       {surface.transaction.state === "terms_ready" && <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={startReview}>Start review</button>}
       {surface.transaction.state === "awaiting_review" && surface.terms && <button className="cw-primary" type="button" disabled={Boolean(busy)} onClick={confirmReview}>Confirm this exact hash</button>}
-      {surface.transaction.state === "awaiting_approval" && <p className="cw-notice">Human review is confirmed. TX-04 does not provide provider approval or execution; a later qualified adapter must create a separately reviewed ExternalAction.</p>}
+      {surface.transaction.state === "awaiting_approval" && surface.transaction.provider === "opentable" && !execution?.link && <div>
+        <p className="cw-notice">Human review is confirmed. Preparing the reservation creates one immutable OpenTable ExternalAction; it still will not book until you approve that action separately.</p>
+        <button className="cw-primary" type="button" disabled={Boolean(busy) || !surface.terms} onClick={() => void prepareRestaurantAction()}>{busy === "prepare-reservation" ? "Preparing…" : "Prepare reservation for final approval"}</button>
+      </div>}
+      {surface.transaction.state === "awaiting_approval" && surface.transaction.provider !== "opentable" && <p className="cw-notice">Human review is confirmed. Provider execution requires a separately reviewed ExternalAction.</p>}
       {cancellable && <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={cancelTransaction}>Cancel transaction review</button>}
 
       <h3>Execution evidence</h3>
@@ -367,7 +414,7 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
         </dl>
         <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={syncExecution}>Sync linked status</button>
         {execution.reconciliation.available && <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={reconcileExecution}>Check provider receipt</button>}
-        <p className="cw-fineprint">Sync reads Shuddho's existing ExternalAction ledger. Provider reconciliation, when available, is read-only and never resends the mutation.</p>
+        <p className="cw-fineprint">{surface.transaction.provider === "opentable" ? "Sync reads Shuddho's existing ExternalAction ledger. If an OpenTable booking result is uncertain, TX-06 does not retry or automatically reconcile it; verify the provider manually." : "Sync reads Shuddho's existing ExternalAction ledger. Provider reconciliation, when available, is read-only and never resends the mutation."}</p>
         {execution.evidence.length === 0 ? <p>No execution observations recorded yet.</p> : <ol>
           {execution.evidence.map(item => <li key={item.id}>
             #{item.sequence} · {item.action_state} · transaction r{item.transaction_revision}
