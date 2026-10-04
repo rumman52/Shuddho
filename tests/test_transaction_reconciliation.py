@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 
 from action_samples import action_request, connected, enable_actions
 from test_coworker import account, container
@@ -19,7 +19,7 @@ from test_transaction_terms import terms
 
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
-from services.coworker.models import utcnow
+from services.coworker.models import TransactionExecutionLink, TransactionReconciliationEvidence, utcnow
 from services.coworker.transaction_repository import TransactionDraft
 
 
@@ -505,3 +505,49 @@ def test_review_state_cannot_reopen_after_execution_binding(container):
     current = container.transactions.get(owner, transaction_id)
     assert current["state"] == "awaiting_approval"
     assert current["revision"] == confirmed["review_binding"]["transaction_revision"]
+
+
+
+def test_account_erasure_removes_transaction_execution_evidence(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-erasure")
+    confirmed = reviewed_transaction(container, owner, "tx05-erasure")
+    action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-erasure-action",
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    assert container.actions.repo.claim_execution(approved["id"]) is not None
+    container.actions.repo.finish(
+        action["id"],
+        "succeeded",
+        receipt={
+            "provider": "google",
+            "status": "accepted_by_gmail",
+            "provider_id": "mail-erasure",
+            "message_id": f'<{action["id"]}@shuddho.invalid>',
+            "confirmed_at": utcnow().isoformat(),
+        },
+    )
+    container.transactions.sync_external_action(owner, transaction_id)
+
+    result = container.retention.erase_account(owner)
+    assert result["database_erased"] is True
+    with container.repository.sessions() as db:
+        assert db.scalar(
+            select(TransactionExecutionLink).where(
+                TransactionExecutionLink.owner_id == owner
+            )
+        ) is None
+        assert db.scalar(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.owner_id == owner
+            )
+        ) is None
