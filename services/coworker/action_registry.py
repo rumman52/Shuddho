@@ -531,7 +531,7 @@ def build_approval_scope(preview: dict) -> dict:
         )
     result = {
         "contract": "shuddho.consequential-action",
-        "contract_version": 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
+        "contract_version": 7 if transaction_binding is not None else 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.thread_reply else 3 if spec.owned_artifact_required else 2 if spec.attachments_allowed else 1,
         "action_kind": spec.kind,
         "action_version": spec.version,
         "provider": provider,
