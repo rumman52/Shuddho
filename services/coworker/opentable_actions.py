@@ -194,6 +194,10 @@ class OpenTableActions:
             "token_type": "Bearer",
         }
 
+    async def service_availability(self, payload: dict) -> dict:
+        token = await self._access_token()
+        return await self.availability(payload, token["access_token"])
+
     async def availability(self, payload: dict, access_token: str) -> dict:
         rid = payload["restaurant_id"]
         status, value, headers = await self._request(
