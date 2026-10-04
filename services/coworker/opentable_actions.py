@@ -44,7 +44,10 @@ def local_provider_time(value: str) -> str:
 
 
 def _standard_slot(value: dict, payload: dict) -> dict | None:
-    if value.get("time") != local_provider_time(payload["date_time"]):
+    try:
+        if local_provider_time(str(value.get("time"))) != local_provider_time(payload["date_time"]):
+            return None
+    except (OpenTableFailure, ValueError, TypeError):
         return None
     types = value.get("availability_types")
     if not isinstance(types, list):
@@ -152,18 +155,24 @@ class OpenTableActions:
                     follow_redirects=False,
                     trust_env=False,
                 ) as client:
-                    response = await client.request(
+                    async with client.stream(
                         method,
                         url,
                         params=params,
                         json=body,
                         headers=request_headers,
-                    )
-                    raw = response.content
+                    ) as response:
+                        raw_value = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            if len(raw_value) + len(chunk) > 256 * 1024:
+                                raise OpenTableFailure(
+                                    "provider_response_invalid",
+                                    definitive=True,
+                                )
+                            raw_value.extend(chunk)
+                        raw = bytes(raw_value)
         except (TimeoutError, httpx.TimeoutException, httpx.TransportError):
             raise OpenTableFailure("provider_outcome_unknown") from None
-        if len(raw) > 256 * 1024:
-            raise OpenTableFailure("provider_response_invalid", definitive=True)
         try:
             value = response.json() if raw else {}
         except (ValueError, json.JSONDecodeError):
@@ -272,12 +281,16 @@ class OpenTableActions:
             body=body,
             headers={"X-Request-Id": action["id"]},
         )
-        if status == 201:
+        if status in {200, 201}:
             confirmation = value.get("confirmation_number")
+            try:
+                confirmed_time = local_provider_time(str(value.get("date_time")))
+            except (OpenTableFailure, ValueError, TypeError):
+                confirmed_time = None
             if (
                 not isinstance(confirmation, int)
                 or value.get("party_size") != payload["party_size"]
-                or value.get("date_time") != local_provider_time(payload["date_time"])
+                or confirmed_time != local_provider_time(payload["date_time"])
                 or value.get("post_booking_required_action") not in {None, "None"}
                 or isinstance(value.get("payment"), dict)
             ):
