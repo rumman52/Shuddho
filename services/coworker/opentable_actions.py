@@ -55,18 +55,37 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
     for item in types:
         if not isinstance(item, dict) or str(item.get("type", "")).casefold() != "standard":
             continue
-        policy = item.get("cancellation_policy")
+        policy = item.get("cancellationPolicy", item.get("cancellation_policy"))
         # TX-06 deliberately excludes deposit/hold/fee-bearing inventory.
         if policy is not None and policy != {}:
             return None
-        dining = item.get("dining_area")
+        dining = item.get("diningArea", item.get("dining_area"))
         requested_area = payload.get("dining_area_id")
+        requested_environment = payload.get("environment")
+        selected_area = None
         if requested_area is not None:
-            if not isinstance(dining, list) or requested_area not in {
-                entry.get("id")
-                for entry in dining
-                if isinstance(entry, dict)
-            }:
+            if not isinstance(dining, list):
+                continue
+            selected_area = next(
+                (
+                    entry
+                    for entry in dining
+                    if isinstance(entry, dict) and entry.get("id") == requested_area
+                ),
+                None,
+            )
+            if selected_area is None:
+                continue
+            attributes = selected_area.get("attributes")
+            if (
+                isinstance(attributes, list)
+                and payload["reservation_attribute"] not in attributes
+            ):
+                continue
+            if (
+                requested_environment is not None
+                and selected_area.get("environment") != requested_environment
+            ):
                 continue
         return {
             "restaurant_id": payload["restaurant_id"],
@@ -74,7 +93,11 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
             "date_time": local_provider_time(payload["date_time"]),
             "reservation_attribute": payload["reservation_attribute"],
             "dining_area_id": requested_area,
-            "environment": payload.get("environment"),
+            "environment": (
+                selected_area.get("environment")
+                if selected_area is not None
+                else requested_environment
+            ),
             "availability_type": "Standard",
             "cancellation_policy": None,
             "payment_required": False,
