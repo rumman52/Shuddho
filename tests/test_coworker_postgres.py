@@ -46,6 +46,7 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             "cw_transaction_events",
             "cw_transaction_execution_links",
             "cw_transaction_terms",
+            "cw_transaction_reconciliation_evidence",
         } <= tables
         columns = {
             column["name"]
@@ -55,6 +56,20 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             )
         }
         assert "current_terms_revision" in columns
+        link_columns = {
+            column["name"]
+            for column in inspect(db.bind).get_columns(
+                "cw_transaction_execution_links",
+                schema="shuddho_coworker",
+            )
+        }
+        assert {
+            "terms_revision",
+            "terms_sha256",
+            "preview_hash",
+            "provider",
+            "action_kind",
+        } <= link_columns
 
 
 def test_simultaneous_retries_share_one_task_and_usage_record(repository):
