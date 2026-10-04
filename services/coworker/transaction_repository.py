@@ -530,12 +530,20 @@ class TransactionRepository:
         transaction_id: str,
         expected_revision: int,
         request: TransactionTermsDraft,
+        *,
+        provider_managed: bool = False,
     ) -> dict:
         """Persist new exact terms and invalidate any prior review state."""
         self._require_enabled()
         with self.sessions.begin() as db:
             row = self._transaction(db, owner, transaction_id, lock=True)
             self._check_revision(row, expected_revision)
+            if row.provider != "internal" and not provider_managed:
+                raise CoworkerError(
+                    "transaction_terms_provider_managed",
+                    "These provider-backed terms must be refreshed through their registered transaction service.",
+                    409,
+                )
             if self._execution_link(db, owner, transaction_id) is not None:
                 raise CoworkerError(
                     "transaction_execution_already_bound",
