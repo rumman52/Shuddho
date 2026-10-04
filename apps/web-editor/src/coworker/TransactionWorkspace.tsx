@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   CoworkerClient,
+  type TransactionExecutionSurface,
   type TransactionRecord,
   type TransactionSurface,
   type TransactionTerm,
@@ -49,6 +50,7 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [surface, setSurface] = useState<TransactionSurface | null>(null);
+  const [execution, setExecution] = useState<TransactionExecutionSurface | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -80,8 +82,12 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
   }
 
   async function refreshSurface(id: string) {
-    const value = await client.transaction(id);
+    const [value, executionValue] = await Promise.all([
+      client.transaction(id),
+      client.transactionExecution(id),
+    ]);
     setSurface(value);
+    setExecution(executionValue);
     setTransactions(previous => [
       value.transaction,
       ...previous.filter(item => item.id !== value.transaction.id),
@@ -104,11 +110,18 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
     const id = selected?.id;
     if (!id || enabled !== true) {
       setSurface(null);
+      setExecution(null);
       return;
     }
     const controller = new AbortController();
-    client.transaction(id, controller.signal).then(value => {
-      if (!controller.signal.aborted) setSurface(value);
+    Promise.all([
+      client.transaction(id, controller.signal),
+      client.transactionExecution(id, controller.signal),
+    ]).then(([value, executionValue]) => {
+      if (!controller.signal.aborted) {
+        setSurface(value);
+        setExecution(executionValue);
+      }
     }).catch(failure => {
       if (!controller.signal.aborted) setError(errorMessage(failure));
     });
@@ -255,6 +268,26 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
     });
   }
 
+  async function syncExecution() {
+    if (!surface || !execution?.link) return;
+    const transactionId = surface.transaction.id;
+    await run("sync-execution", async () => {
+      await client.syncTransactionExecution(transactionId);
+      await refreshSurface(transactionId);
+      setNotice("Linked action status synchronized from Shuddho's local action ledger. No provider call was made.");
+    });
+  }
+
+  async function reconcileExecution() {
+    if (!surface || execution?.reconciliation.available !== true) return;
+    const transactionId = surface.transaction.id;
+    await run("reconcile-execution", async () => {
+      await client.reconcileTransaction(transactionId);
+      await refreshSurface(transactionId);
+      setNotice("Read-only provider reconciliation completed. Shuddho did not repeat the external mutation.");
+    });
+  }
+
   if (enabled === null) return <section className="cw-card"><p>Loading transactions…</p></section>;
   if (!enabled) return <section className="cw-card"><h2>Transactions</h2><p>Transaction review is not enabled in this deployment.</p>{error && <p className="cw-error">{error}</p>}</section>;
 
@@ -320,6 +353,29 @@ export default function TransactionWorkspace({ client }: { client: CoworkerClien
       {surface.transaction.state === "awaiting_review" && surface.terms && <button className="cw-primary" type="button" disabled={Boolean(busy)} onClick={confirmReview}>Confirm this exact hash</button>}
       {surface.transaction.state === "awaiting_approval" && <p className="cw-notice">Human review is confirmed. TX-04 does not provide provider approval or execution; a later qualified adapter must create a separately reviewed ExternalAction.</p>}
       {cancellable && <button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={cancelTransaction}>Cancel transaction review</button>}
+
+      <h3>Execution evidence</h3>
+      {!execution?.link ? <p>No ExternalAction execution attempt is linked to this transaction.</p> : <div>
+        <dl className="cw-action-details">
+          <dt>Provider</dt><dd>{execution.link.provider}</dd>
+          <dt>Action kind</dt><dd>{execution.link.action_kind}</dd>
+          <dt>ExternalAction</dt><dd><code>{execution.link.external_action_id}</code></dd>
+          <dt>Bound transaction revision</dt><dd>{execution.link.transaction_revision}</dd>
+          <dt>Bound terms revision</dt><dd>{execution.link.terms_revision}</dd>
+          <dt>Terms SHA-256</dt><dd><code>{execution.link.terms_sha256}</code></dd>
+          <dt>Preview SHA-256</dt><dd><code>{execution.link.preview_hash}</code></dd>
+        </dl>
+        <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={syncExecution}>Sync linked status</button>
+        {execution.reconciliation.available && <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={reconcileExecution}>Check provider receipt</button>}
+        <p className="cw-fineprint">Sync reads Shuddho's existing ExternalAction ledger. Provider reconciliation, when available, is read-only and never resends the mutation.</p>
+        {execution.evidence.length === 0 ? <p>No execution observations recorded yet.</p> : <ol>
+          {execution.evidence.map(item => <li key={item.id}>
+            #{item.sequence} · {item.action_state} · transaction r{item.transaction_revision}
+            {item.receipt_sha256 ? <> · receipt <code>{item.receipt_sha256}</code></> : null}
+            {item.error_code ? <> · {item.error_code}</> : null}
+          </li>)}
+        </ol>}
+      </div>}
 
       <h3>History</h3>
       {surface.events.length === 0 ? <p>No events recorded.</p> : <ol>
