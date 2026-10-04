@@ -474,3 +474,28 @@ def test_bound_action_claim_rechecks_transaction_state(container):
     result = container.actions.repo.get(owner, approved["id"])
     assert result["state"] == "cancelled"
     assert result["error_code"] == "transaction_action_binding_changed"
+
+
+
+def test_review_state_cannot_reopen_after_execution_binding(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-review-freeze")
+    confirmed = reviewed_transaction(container, owner, "tx05-review-freeze")
+    _action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-review-freeze-action",
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.transactions.start_review(
+            owner,
+            transaction_id,
+            confirmed["review_binding"]["transaction_revision"],
+        )
+    assert blocked.value.code == "transaction_execution_already_bound"
+    current = container.transactions.get(owner, transaction_id)
+    assert current["state"] == "awaiting_approval"
+    assert current["revision"] == confirmed["review_binding"]["transaction_revision"]
