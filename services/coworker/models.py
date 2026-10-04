@@ -679,20 +679,21 @@ class TransactionTermsSnapshot(Base):
 
 
 class TransactionExecutionLink(Base):
-    """Immutable relation between business state and one ExternalAction.
-
-    TX-02 intentionally adds no public writer for this table. Capability-specific
-    code must prove semantic compatibility before later slices may persist links.
-    """
+    """Immutable one-attempt binding from reviewed business state to ExternalAction."""
 
     __tablename__ = "cw_transaction_execution_links"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     transaction_id: Mapped[str] = mapped_column(String(36), index=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
     transaction_revision: Mapped[int] = mapped_column(Integer)
+    terms_revision: Mapped[int] = mapped_column(Integer)
+    terms_sha256: Mapped[str] = mapped_column(String(64))
     external_action_id: Mapped[str] = mapped_column(
         ForeignKey("cw_external_actions.id"), unique=True, index=True
     )
+    preview_hash: Mapped[str] = mapped_column(String(64))
+    provider: Mapped[str] = mapped_column(String(40))
+    action_kind: Mapped[str] = mapped_column(String(60))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (
         ForeignKeyConstraint(
@@ -700,14 +701,103 @@ class TransactionExecutionLink(Base):
             ["cw_transactions.id", "cw_transactions.owner_id"],
             name="fk_cw_transaction_execution_links_transaction_owner",
         ),
+        UniqueConstraint(
+            "transaction_id",
+            name="uq_cw_transaction_execution_links_transaction",
+        ),
         CheckConstraint(
             "transaction_revision >= 1",
             name="ck_cw_transaction_execution_links_revision",
+        ),
+        CheckConstraint(
+            "terms_revision >= 1",
+            name="ck_cw_transaction_execution_links_terms_revision",
+        ),
+        CheckConstraint(
+            "length(terms_sha256) = 64",
+            name="ck_cw_transaction_execution_links_terms_sha256",
+        ),
+        CheckConstraint(
+            "length(preview_hash) = 64",
+            name="ck_cw_transaction_execution_links_preview_hash",
         ),
         Index(
             "cw_transaction_execution_links_owner_transaction",
             "owner_id",
             "transaction_id",
+        ),
+    )
+
+
+class TransactionReconciliationEvidence(Base):
+    """Append-only observation of the bound ExternalAction and its provider receipt."""
+
+    __tablename__ = "cw_transaction_reconciliation_evidence"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(36), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    external_action_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_external_actions.id"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    transaction_revision: Mapped[int] = mapped_column(Integer)
+    action_state: Mapped[str] = mapped_column(String(30))
+    provider: Mapped[str] = mapped_column(String(40))
+    action_kind: Mapped[str] = mapped_column(String(60))
+    preview_hash: Mapped[str] = mapped_column(String(64))
+    receipt: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    receipt_sha256: Mapped[str | None] = mapped_column(String(64))
+    error_code: Mapped[str | None] = mapped_column(String(60))
+    evidence_sha256: Mapped[str] = mapped_column(String(64))
+    action_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_transaction_reconciliation_transaction_owner",
+        ),
+        UniqueConstraint(
+            "transaction_id",
+            "sequence",
+            name="uq_cw_transaction_reconciliation_sequence",
+        ),
+        UniqueConstraint(
+            "external_action_id",
+            "evidence_sha256",
+            name="uq_cw_transaction_reconciliation_action_evidence",
+        ),
+        CheckConstraint("sequence >= 1", name="ck_cw_transaction_reconciliation_sequence"),
+        CheckConstraint(
+            "transaction_revision >= 1",
+            name="ck_cw_transaction_reconciliation_revision",
+        ),
+        CheckConstraint(
+            "action_state IN ('awaiting_approval','queued','executing','succeeded','failed','cancelled','expired','outcome_unknown')",
+            name="ck_cw_transaction_reconciliation_action_state",
+        ),
+        CheckConstraint(
+            "length(preview_hash) = 64",
+            name="ck_cw_transaction_reconciliation_preview_hash",
+        ),
+        CheckConstraint(
+            "receipt_sha256 IS NULL OR length(receipt_sha256) = 64",
+            name="ck_cw_transaction_reconciliation_receipt_sha256",
+        ),
+        CheckConstraint(
+            "length(evidence_sha256) = 64",
+            name="ck_cw_transaction_reconciliation_evidence_sha256",
+        ),
+        Index(
+            "cw_transaction_reconciliation_owner_transaction_sequence",
+            "owner_id",
+            "transaction_id",
+            "sequence",
+        ),
+        Index(
+            "cw_transaction_reconciliation_action_observed",
+            "external_action_id",
+            "observed_at",
         ),
     )
 
