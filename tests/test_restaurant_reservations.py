@@ -77,8 +77,13 @@ class SimulatedOpenTable:
                     "time": time + ":00",
                     "availability_types": [{
                         "type": "Standard",
-                        "cancellation_policy": self.cancellation_policy,
-                        "dining_area": [{"id": 55, "name": "Main Dining"}],
+                        "cancellationPolicy": self.cancellation_policy or {},
+                        "diningArea": [{
+                            "id": 55,
+                            "name": "Main Dining",
+                            "attributes": ["default"],
+                            "environment": "Indoor",
+                        }],
                     }],
                 }]
             return httpx.Response(
