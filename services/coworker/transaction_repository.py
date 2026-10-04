@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
@@ -470,8 +470,8 @@ class TransactionRepository:
             "terms": terms,
             "price": price,
             "provider_quote_id": request.provider_quote_id,
-            "quoted_at": request.quoted_at.isoformat(),
-            "quote_expires_at": request.quote_expires_at.isoformat(),
+            "quoted_at": request.quoted_at.astimezone(timezone.utc).isoformat(),
+            "quote_expires_at": request.quote_expires_at.astimezone(timezone.utc).isoformat(),
         }
 
     @classmethod
