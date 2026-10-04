@@ -833,7 +833,7 @@ class ActionRepository:
             action_id = str(uuid4())
             expires = utcnow() + timedelta(seconds=spec.approval_ttl_seconds)
             preview = {
-                "version": 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.owned_artifact_required else 3 if spec.attachments_allowed else 2,
+                "version": 7 if transaction_binding is not None else 6 if spec.transaction_class is not None else 5 if spec.social_publish else 4 if spec.owned_artifact_required else 3 if spec.attachments_allowed else 2,
                 "provider": connection.provider,
                 "connection_id": connection.id,
                 "account": connection.email,
