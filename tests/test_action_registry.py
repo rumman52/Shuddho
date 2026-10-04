@@ -68,7 +68,7 @@ def bind(preview):
 
 
 def test_registry_declares_existing_consequential_actions():
-    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "email_thread_reply", "negotiation_commitment_email", "calendar_create", "calendar_create_with_reminder", "document_share", "social_publish_linkedin"}
+    assert set(ACTION_SPECS) == {"email_send", "email_send_with_attachments", "email_thread_reply", "negotiation_commitment_email", "restaurant_reservation_create", "calendar_create", "calendar_create_with_reminder", "document_share", "social_publish_linkedin"}
     assert action_spec("email_send", "google").capability == "email"
     assert action_spec("calendar_create", "google").reconcile_supported
     assert action_spec("calendar_create_with_reminder", "google").reminders == "single_explicit"
@@ -99,6 +99,13 @@ def test_registry_declares_existing_consequential_actions():
         "uncertain_outcome": "do_not_retry",
         "provider_idempotency": "provider_specific_only",
     }
+    reservation = action_spec("restaurant_reservation_create", "opentable")
+    assert reservation.capability == "restaurant_reservation"
+    assert reservation.reconcile_supported is False
+    assert reservation.transaction is not None
+    assert reservation.transaction.transaction_class == "restaurant_reservation"
+    assert reservation.transaction.requires_transaction_binding is True
+    assert reservation.policy_manifest()["transaction"]["transaction_binding"] == "required"
     assert {item["kind"] for item in registered_actions()} == set(ACTION_SPECS)
 
 
