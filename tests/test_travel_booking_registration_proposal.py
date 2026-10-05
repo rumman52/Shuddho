@@ -123,6 +123,14 @@ def qualification():
     )
 
 
+def _rehash_qualification(value):
+    item = deepcopy(value)
+    item.pop("qualification_sha256", None)
+    from scripts.travel_booking_registration_proposal import canonical_sha256
+    value["qualification_sha256"] = canonical_sha256(item)
+    return value
+
+
 def review(q=None, **changes):
     q = q or qualification()
     value = {
@@ -287,3 +295,66 @@ def test_tx20_rejects_unexpected_review_schema():
     item["unexpected"] = True
     with pytest.raises(TravelBookingRegistrationProposalError):
         compile_travel_registration_proposal(q, item, now=utcnow())
+
+
+@pytest.mark.parametrize(
+    ("mutator", "expected_fragment"),
+    [
+        (
+            lambda q: q["credential_boundary"].update({"server_side_only": False}),
+            "credential",
+        ),
+        (
+            lambda q: q["idempotency"].update({"supported": False}),
+            "idempotency",
+        ),
+        (
+            lambda q: q["reconciliation"].update({"blind_retry": True}),
+            "reconciliation",
+        ),
+        (
+            lambda q: q["privacy"].update({"retains_traveler_data_in_logs": True}),
+            "privacy",
+        ),
+        (
+            lambda q: q["live_probe"].update({"source_revision": "c" * 40}),
+            "live probe",
+        ),
+        (
+            lambda q: q["live_probe"].update({"booking_origin": "https://other.example"}),
+            "live probe",
+        ),
+    ],
+)
+def test_tx20_rejects_self_rehashed_qualification_with_weakened_guarantees(
+    mutator,
+    expected_fragment,
+):
+    q = qualification()
+    mutator(q)
+    _rehash_qualification(q)
+
+    with pytest.raises(TravelBookingRegistrationProposalError) as error:
+        compile_travel_registration_proposal(
+            q,
+            review(q),
+            now=utcnow(),
+        )
+    assert expected_fragment in str(error.value).lower()
+
+
+def test_tx20_rejects_self_rehashed_receipt_contract_drift():
+    q = qualification()
+    q["receipt"]["exact_fields"] = [
+        item for item in q["receipt"]["exact_fields"]
+        if item != "provider_booking_id"
+    ]
+    _rehash_qualification(q)
+
+    with pytest.raises(TravelBookingRegistrationProposalError) as error:
+        compile_travel_registration_proposal(
+            q,
+            review(q),
+            now=utcnow(),
+        )
+    assert "receipt" in str(error.value).lower()
