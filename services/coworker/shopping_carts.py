@@ -360,6 +360,12 @@ class ShoppingCartService:
             )
             if intent is None:
                 raise not_found()
+            if stable_digest(dict(intent.cart or {})) != intent.cart_sha256:
+                raise CoworkerError(
+                    "shopping_checkout_cart_integrity",
+                    "The stored shopping cart evidence no longer matches its immutable digest.",
+                    409,
+                )
 
             terms = (
                 db.get(
@@ -413,7 +419,18 @@ class ShoppingCartService:
                     "A newer shopping verification exists. Review the latest verification.",
                     409,
                 )
-            if not verification.matched or verification.source_cart_sha256 != intent.cart_sha256:
+            stored_snapshot = dict(verification.snapshot or {})
+            if stable_digest(stored_snapshot) != verification.snapshot_sha256:
+                raise CoworkerError(
+                    "shopping_checkout_verification_integrity",
+                    "The stored shopping verification no longer matches its immutable digest.",
+                    409,
+                )
+            if (
+                not verification.matched
+                or bool(verification.mismatches)
+                or verification.source_cart_sha256 != intent.cart_sha256
+            ):
                 raise CoworkerError(
                     "shopping_checkout_verification_mismatch",
                     "The shopping cart is not exactly verified for checkout binding.",
@@ -447,10 +464,12 @@ class ShoppingCartService:
                     409,
                 )
 
-            snapshot = dict(verification.snapshot or {})
+            snapshot = stored_snapshot
             price = snapshot.get("price")
             if (
                 not isinstance(price, dict)
+                or snapshot.get("provider") != verification.provider
+                or snapshot.get("merchant_cart_id") != verification.merchant_cart_id
                 or price.get("currency") != terms.currency
                 or price.get("total_minor") != terms.total_minor
                 or snapshot.get("merchant_cart_id") != terms.provider_quote_id
