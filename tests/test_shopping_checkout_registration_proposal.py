@@ -210,23 +210,26 @@ def test_tx15_rejects_unexpected_review_schema():
 
 
 def test_tx15_proposal_hash_is_canonical_for_qualified_scope_ordering():
-    q1 = qualification()
     source = tx14_source()
-    source["credential_boundary"]["scopes"] = list(
-        reversed(source["credential_boundary"]["scopes"])
+    reordered = deepcopy(source)
+    reordered["credential_boundary"]["scopes"] = list(
+        reversed(reordered["credential_boundary"]["scopes"])
     )
-    source["reconciliation"]["lookup_keys"] = list(
-        reversed(source["reconciliation"]["lookup_keys"])
+    reordered["reconciliation"]["lookup_keys"] = list(
+        reversed(reordered["reconciliation"]["lookup_keys"])
     )
-    source["receipt"]["exact_fields"] = list(
-        reversed(source["receipt"]["exact_fields"])
+    reordered["receipt"]["exact_fields"] = list(
+        reversed(reordered["receipt"]["exact_fields"])
     )
-    q2 = validate_checkout_provider_qualification(source, now=utcnow())
+
+    now = utcnow()
+    q1 = validate_checkout_provider_qualification(source, now=now)
+    q2 = validate_checkout_provider_qualification(reordered, now=now)
     assert q1["qualification_sha256"] == q2["qualification_sha256"]
 
-    reviewed_at = utcnow().isoformat()
+    reviewed_at = now.isoformat()
     r1 = review(q1, reviewed_at=reviewed_at)
     r2 = review(q2, reviewed_at=reviewed_at)
-    p1 = compile_registration_proposal(q1, r1, now=utcnow())
-    p2 = compile_registration_proposal(q2, r2, now=utcnow())
+    p1 = compile_registration_proposal(q1, r1, now=now)
+    p2 = compile_registration_proposal(q2, r2, now=now)
     assert p1["registration_proposal_sha256"] == p2["registration_proposal_sha256"]
