@@ -43,8 +43,10 @@ receipt matches the approved preview's:
 - exact total.
 
 The receipt must also include a provider booking identifier, status
-`confirmed`, and an offset-aware confirmation timestamp. The normalized
-receipt is SHA-256 hashed for later reconciliation evidence.
+`confirmed`, and an offset-aware confirmation timestamp. The confirmation
+must not predate the approved preview beyond the bounded clock-skew allowance
+and must not occur after the binding expiry. The normalized receipt is SHA-256
+hashed for later reconciliation evidence.
 
 ## Deliberately excluded
 
