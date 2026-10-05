@@ -30,7 +30,7 @@ def evidence():
         "provider": "travelco",
         "adapter_revision": REVISION,
         "booking_origin": "https://booking.travelco.example",
-        "supported_travel_kinds": ["flight", "lodging"],
+        "supported_travel_kinds": ["flight"],
         "credential_boundary": {
             "storage": "credential_broker",
             "server_side_only": True,
@@ -109,7 +109,7 @@ def test_tx19_accepts_exact_provider_qualification_but_grants_no_authority():
     assert result["provider"] == "travelco"
     assert result["operation"] == "travelco:travel_booking_create"
     assert result["contract_version"] == 1
-    assert result["supported_travel_kinds"] == ["flight", "lodging"]
+    assert result["supported_travel_kinds"] == ["flight"]
     assert result["traveler_data_boundary"]["required_fields"] == [
         "date_of_birth",
         "email",
@@ -254,5 +254,19 @@ def test_tx19_rejects_dirty_origin_and_unexpected_schema():
 
     item = evidence()
     item["unexpected"] = True
+    with pytest.raises(TravelBookingQualificationError):
+        validate_travel_booking_provider_qualification(item, now=utcnow())
+
+
+def test_tx19_rejects_multi_kind_or_missing_legal_name():
+    item = evidence()
+    item["supported_travel_kinds"] = ["flight", "lodging"]
+    with pytest.raises(TravelBookingQualificationError):
+        validate_travel_booking_provider_qualification(item, now=utcnow())
+
+    item = evidence()
+    item["traveler_data_boundary"]["required_fields"] = ["date_of_birth", "email"]
+    item["traveler_data_boundary"]["shuddho_transmitted_fields"] = ["email"]
+    item["traveler_data_boundary"]["provider_hosted_fields"] = ["date_of_birth"]
     with pytest.raises(TravelBookingQualificationError):
         validate_travel_booking_provider_qualification(item, now=utcnow())
