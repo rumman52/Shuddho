@@ -17,6 +17,7 @@ from .linkedin_actions import LinkedInActions
 from .opentable_actions import OpenTableActions
 from .restaurant_reservations import RestaurantReservationService
 from .travel_quotes import TravelQuoteService
+from .shopping_carts import ShoppingCartService
 from .agent_repository import AgentRepository
 from .goal_repository import GoalRepository
 from .suggestion_repository import SuggestionRepository
@@ -54,6 +55,7 @@ class Container:
     transactions: TransactionRepository | None = None
     restaurant_reservations: RestaurantReservationService | None = None
     travel_quotes: TravelQuoteService | None = None
+    shopping_carts: ShoppingCartService | None = None
     negotiation_proposals: NegotiationProposalService | None = None
     automations: AutomationRepository | None = None
     notifications: NotificationRepository | None = None
@@ -174,6 +176,8 @@ class Container:
             )
         if self.travel_quotes is None:
             self.travel_quotes = TravelQuoteService(self.transactions)
+        if self.shopping_carts is None:
+            self.shopping_carts = ShoppingCartService(self.transactions)
         if self.negotiation_proposals is None:
             self.negotiation_proposals = NegotiationProposalService(
                 self.negotiations,

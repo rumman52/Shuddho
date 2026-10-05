@@ -25,6 +25,7 @@ from .models import (
     TransactionRevision,
     TransactionTermsSnapshot,
     TravelQuoteIntent,
+    ShoppingCartIntent,
     Workspace,
     utcnow,
 )
@@ -545,8 +546,16 @@ class TransactionRepository:
                     TravelQuoteIntent.owner_id == owner,
                 )
             )
+            managed_shopping_cart = db.scalar(
+                select(ShoppingCartIntent.transaction_id).where(
+                    ShoppingCartIntent.transaction_id == row.id,
+                    ShoppingCartIntent.owner_id == owner,
+                )
+            )
             if (
-                row.provider != "internal" or managed_travel_quote is not None
+                row.provider != "internal"
+                or managed_travel_quote is not None
+                or managed_shopping_cart is not None
             ) and not provider_managed:
                 raise CoworkerError(
                     "transaction_terms_provider_managed",

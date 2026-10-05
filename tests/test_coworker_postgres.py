@@ -50,6 +50,7 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             "cw_restaurant_reservation_intents",
             "cw_travel_quote_intents",
             "cw_travel_quote_verifications",
+            "cw_shopping_cart_intents",
         } <= tables
         columns = {
             column["name"]
