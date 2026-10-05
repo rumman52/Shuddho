@@ -39,7 +39,7 @@ from .restaurant_reservation_schemas import (
     RestaurantReservationRequest,
 )
 from .travel_quote_schemas import TravelQuoteRequest
-from .shopping_cart_schemas import ShoppingCartReviewRequest
+from .shopping_cart_schemas import ShoppingCartReviewRequest, ShoppingCheckoutBindingRequest
 from .transaction_schemas import (
     TransactionCancel,
     TransactionCreate,
@@ -113,6 +113,36 @@ def require_sandbox_worker(request: Request, services: Container) -> None:
     expected = services.settings.sandbox_worker_token
     if not expected or not hmac.compare_digest(supplied, expected):
         raise CoworkerError("sandbox_worker_unauthorized", "Sandbox worker authentication failed.", 403)
+
+
+@router.post("/shopping-carts/{transaction_id}/checkout-binding", status_code=201)
+def create_shopping_checkout_binding(
+    transaction_id: UUID,
+    payload: ShoppingCheckoutBindingRequest,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value, created = services.shopping_carts.create_checkout_binding(
+        identity.account_id,
+        str(transaction_id),
+        payload,
+    )
+    response.headers["Location"] = f"/api/v1/shopping-carts/{transaction_id}/checkout-binding"
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return value
+
+
+@router.get("/shopping-carts/{transaction_id}/checkout-binding")
+def get_shopping_checkout_binding(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return services.shopping_carts.checkout_binding(
+        identity.account_id,
+        str(transaction_id),
+    )
 
 
 @router.post("/shopping-carts", status_code=201)
