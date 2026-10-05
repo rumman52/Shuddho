@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "provider": "REPLACE_WITH_REAL_TRAVEL_PROVIDER_ID",
+  "adapter_revision": "REPLACE_WITH_40_CHAR_LOWERCASE_GIT_SHA1",
+  "booking_origin": "https://REPLACE_WITH_PROVIDER_ORIGIN",
+  "supported_travel_kinds": ["flight"],
+  "credential_boundary": {
+    "storage": "credential_broker",
+    "server_side_only": true,
+    "least_privilege": true,
+    "scopes": ["REPLACE_WITH_PROVIDER_BOOKING_SCOPE"],
+    "raw_payment_credentials": false
+  },
+  "traveler_data_boundary": {
+    "required_fields": ["legal_name"],
+    "shuddho_transmitted_fields": ["legal_name"],
+    "provider_hosted_fields": [],
+    "document_images_to_shuddho": false,
+    "payment_instrument_to_shuddho": false,
+    "optional_fields_default_off": true
+  },
+  "idempotency": {
+    "supported": true,
+    "key_scope": "booking_binding",
+    "duplicate_result": "same_booking_or_lookup"
+  },
+  "reconciliation": {
+    "supported": true,
+    "lookup_keys": ["idempotency_key", "provider_booking_id"],
+    "outcome_unknown_policy": "lookup_before_retry",
+    "blind_retry": false
+  },
+  "receipt": {
+    "readback_supported": true,
+    "exact_fields": [
+      "provider_booking_id",
+      "provider_quote_id",
+      "travel_kind",
+      "currency",
+      "total_minor",
+      "status",
+      "confirmed_at"
+    ],
+    "confirmed_status": "confirmed"
+  },
+  "privacy": {
+    "sends_only_required_fields": true,
+    "secrets_in_logs": false,
+    "retains_traveler_data_in_logs": false,
+    "provider_hosted_collection_supported": true
+  },
+  "payment_boundary": {
+    "mode": "provider_hosted_user_present",
+    "shuddho_charges": false,
+    "stores_payment_instrument": false,
+    "requires_user_present": true
+  },
+  "live_probe": {
+    "status": "NOT_RUN",
+    "environment": "staging",
+    "verified_at": "REPLACE_WITH_ISO8601_TIME",
+    "source_revision": "REPLACE_WITH_40_CHAR_LOWERCASE_GIT_SHA1",
+    "booking_origin": "https://REPLACE_WITH_PROVIDER_ORIGIN",
+    "traveler_minimization_passed": false,
+    "idempotency_passed": false,
+    "reconciliation_passed": false,
+    "receipt_match_passed": false,
+    "privacy_passed": false,
+    "payment_boundary_passed": false,
+    "evidence_sha256": "REPLACE_WITH_64_CHAR_LOWERCASE_SHA256"
+  }
+}
