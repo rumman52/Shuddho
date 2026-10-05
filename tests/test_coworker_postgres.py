@@ -48,6 +48,8 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             "cw_transaction_terms",
             "cw_transaction_reconciliation_evidence",
             "cw_restaurant_reservation_intents",
+            "cw_travel_quote_intents",
+            "cw_travel_quote_verifications",
         } <= tables
         columns = {
             column["name"]
