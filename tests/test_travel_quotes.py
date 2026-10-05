@@ -1,8 +1,9 @@
 """TX-08 review-only travel quote domain."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -15,7 +16,10 @@ from sqlalchemy import inspect, select
 from action_samples import enable_actions
 from test_coworker import account, container, signed_client
 
-from services.coworker.models import ExternalAction, TravelQuoteIntent, utcnow
+from services.coworker.models import ExternalAction, TravelQuoteIntent, TravelQuoteVerificationEvidence, utcnow
+from services.coworker.transaction_schemas import TransactionPrice
+from services.coworker.travel_quote_schemas import TravelFlightSegment, TravelLodgingStay
+from services.coworker.travel_quote_verifier import TravelQuoteVerification
 
 
 def enable_travel_quotes(container):
@@ -32,6 +36,44 @@ def enable_travel_quotes(container):
     container.actions.repo.settings = settings
     container.transactions.settings = settings
     container.travel_quotes.settings = settings
+
+
+class SimulatedTravelVerifier:
+    provider_name = "simulated"
+
+    def __init__(self, payload: dict, *, price_delta_minor: int = 0):
+        self.payload = deepcopy(payload)
+        self.price_delta_minor = price_delta_minor
+        self.calls = []
+
+    async def verify_quote(self, *, provider_quote_id: str, travel_kind: str):
+        self.calls.append({
+            "provider_quote_id": provider_quote_id,
+            "travel_kind": travel_kind,
+        })
+        value = deepcopy(self.payload)
+        if self.price_delta_minor:
+            value["price"]["fees_minor"] += self.price_delta_minor
+            value["price"]["total_minor"] += self.price_delta_minor
+        return TravelQuoteVerification(
+            provider=self.provider_name,
+            provider_quote_id=provider_quote_id,
+            travel_kind=travel_kind,
+            price=TransactionPrice.model_validate(value["price"]),
+            cancellation_terms=value["cancellation_terms"],
+            change_terms=value["change_terms"],
+            quote_expires_at=datetime.fromisoformat(value["quote_expires_at"]),
+            observed_at=utcnow(),
+            flight_segments=tuple(
+                TravelFlightSegment.model_validate(item)
+                for item in value.get("flight_segments", [])
+            ),
+            lodging=(
+                TravelLodgingStay.model_validate(value["lodging"])
+                if value.get("lodging") is not None
+                else None
+            ),
+        )
 
 
 def flight_quote(**changes):
@@ -276,5 +318,140 @@ def test_tx08_account_erasure_removes_quote_intent(container):
         assert db.scalar(
             select(TravelQuoteIntent).where(
                 TravelQuoteIntent.transaction_id == transaction_id
+            )
+        ) is None
+
+
+def test_tx09_trusted_verifier_records_exact_match_without_booking_authority(container):
+    enable_travel_quotes(container)
+    owner = account(container, "tx09-match")
+    payload = flight_quote()
+    from services.coworker.travel_quote_schemas import TravelQuoteRequest
+
+    surface, _ = container.travel_quotes.create(
+        owner,
+        TravelQuoteRequest.model_validate(payload),
+        "tx09-match-001",
+    )
+    transaction_id = surface["transaction"]["id"]
+    verifier = SimulatedTravelVerifier(payload)
+    container.travel_quotes.verifiers["simulated"] = verifier
+
+    verified = asyncio.run(
+        container.travel_quotes.verify_with_provider(
+            owner,
+            transaction_id,
+            "simulated",
+        )
+    )
+    assert verifier.calls == [{
+        "provider_quote_id": payload["provider_quote_id"],
+        "travel_kind": "flight",
+    }]
+    assert verified["travel_quote"]["provider_verified"] is True
+    assert verified["travel_quote"]["booking_available"] is False
+    evidence = verified["travel_quote"]["latest_verification"]
+    assert evidence["matched"] is True
+    assert evidence["mismatches"] == []
+    assert len(evidence["snapshot_sha256"]) == 64
+
+    with container.repository.sessions() as db:
+        assert db.scalar(
+            select(ExternalAction).where(ExternalAction.owner_id == owner)
+        ) is None
+        row = db.scalar(
+            select(TravelQuoteVerificationEvidence).where(
+                TravelQuoteVerificationEvidence.transaction_id == transaction_id,
+                TravelQuoteVerificationEvidence.owner_id == owner,
+            )
+        )
+        assert row is not None
+        assert row.source_quote_sha256 == surface["travel_quote"]["quote_sha256"]
+
+
+def test_tx09_provider_drift_is_append_only_evidence_not_silent_terms_rewrite(container):
+    enable_travel_quotes(container)
+    owner = account(container, "tx09-drift")
+    payload = lodging_quote()
+    from services.coworker.travel_quote_schemas import TravelQuoteRequest
+
+    surface, _ = container.travel_quotes.create(
+        owner,
+        TravelQuoteRequest.model_validate(payload),
+        "tx09-drift-001",
+    )
+    transaction_id = surface["transaction"]["id"]
+    original_terms_hash = surface["terms"]["terms_sha256"]
+    verifier = SimulatedTravelVerifier(payload, price_delta_minor=500)
+    container.travel_quotes.verifiers["simulated"] = verifier
+
+    verified = asyncio.run(
+        container.travel_quotes.verify_with_provider(
+            owner,
+            transaction_id,
+            "simulated",
+        )
+    )
+    assert verified["travel_quote"]["provider_verified"] is False
+    assert verified["travel_quote"]["latest_verification"]["matched"] is False
+    assert "price" in verified["travel_quote"]["latest_verification"]["mismatches"]
+    assert verified["terms"]["terms_sha256"] == original_terms_hash
+    assert verified["execution"]["available"] is False
+
+
+def test_tx09_verifier_owner_isolation_precedes_provider_call(container):
+    enable_travel_quotes(container)
+    alice = account(container, "tx09-alice")
+    bob = account(container, "tx09-bob")
+    payload = flight_quote()
+    from services.coworker.travel_quote_schemas import TravelQuoteRequest
+
+    surface, _ = container.travel_quotes.create(
+        alice,
+        TravelQuoteRequest.model_validate(payload),
+        "tx09-owner-001",
+    )
+    verifier = SimulatedTravelVerifier(payload)
+    container.travel_quotes.verifiers["simulated"] = verifier
+
+    with pytest.raises(Exception) as denied:
+        asyncio.run(
+            container.travel_quotes.verify_with_provider(
+                bob,
+                surface["transaction"]["id"],
+                "simulated",
+            )
+        )
+    assert getattr(denied.value, "status_code", None) == 404
+    assert verifier.calls == []
+
+
+def test_tx09_account_erasure_removes_verification_evidence(container):
+    enable_travel_quotes(container)
+    owner = account(container, "tx09-retention")
+    payload = flight_quote()
+    from services.coworker.travel_quote_schemas import TravelQuoteRequest
+
+    surface, _ = container.travel_quotes.create(
+        owner,
+        TravelQuoteRequest.model_validate(payload),
+        "tx09-retention-001",
+    )
+    transaction_id = surface["transaction"]["id"]
+    container.travel_quotes.verifiers["simulated"] = SimulatedTravelVerifier(payload)
+    asyncio.run(
+        container.travel_quotes.verify_with_provider(
+            owner,
+            transaction_id,
+            "simulated",
+        )
+    )
+
+    result = container.retention.erase_account(owner)
+    assert result["database_erased"] is True
+    with container.repository.sessions() as db:
+        assert db.scalar(
+            select(TravelQuoteVerificationEvidence).where(
+                TravelQuoteVerificationEvidence.transaction_id == transaction_id
             )
         ) is None
