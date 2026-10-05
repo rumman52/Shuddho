@@ -257,3 +257,97 @@ def test_tx16_rejects_stale_registration_review():
             QualifiedAdapter(),
             now=utcnow(),
         )
+
+
+
+def test_tx16_rejects_missing_or_wrong_create_signature():
+    class MissingCreateArgsAdapter(QualifiedAdapter):
+        async def create_checkout(self) -> dict:
+            return {}
+
+    with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
+        admit_checkout_adapter(
+            proposal(),
+            MissingCreateArgsAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx16_rejects_positional_create_parameters():
+    class PositionalCreateAdapter(QualifiedAdapter):
+        async def create_checkout(self, preview, idempotency_key):
+            return {}
+
+    with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
+        admit_checkout_adapter(
+            proposal(),
+            PositionalCreateAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx16_rejects_varargs_create_signature():
+    class VarArgsCreateAdapter(QualifiedAdapter):
+        async def create_checkout(self, *args, **kwargs):
+            return {}
+
+    with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
+        admit_checkout_adapter(
+            proposal(),
+            VarArgsCreateAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx16_rejects_extra_create_parameter():
+    class ExtraCreateAdapter(QualifiedAdapter):
+        async def create_checkout(
+            self,
+            *,
+            preview: dict,
+            idempotency_key: str,
+            extra: str,
+        ) -> dict:
+            return {}
+
+    with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
+        admit_checkout_adapter(
+            proposal(),
+            ExtraCreateAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx16_rejects_lookup_parameters_without_none_defaults():
+    class WrongLookupDefaultsAdapter(QualifiedAdapter):
+        async def lookup_checkout(
+            self,
+            *,
+            idempotency_key: str | None,
+            provider_order_id: str | None,
+        ) -> dict | None:
+            return None
+
+    with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
+        admit_checkout_adapter(
+            proposal(),
+            WrongLookupDefaultsAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx16_rejects_positional_lookup_parameters():
+    class PositionalLookupAdapter(QualifiedAdapter):
+        async def lookup_checkout(
+            self,
+            idempotency_key: str | None = None,
+            provider_order_id: str | None = None,
+        ) -> dict | None:
+            return None
+
+    with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
+        admit_checkout_adapter(
+            proposal(),
+            PositionalLookupAdapter(),
+            now=utcnow(),
+        )
