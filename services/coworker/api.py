@@ -38,6 +38,7 @@ from .restaurant_reservation_schemas import (
     RestaurantReservationPrepare,
     RestaurantReservationRequest,
 )
+from .travel_quote_schemas import TravelQuoteRequest
 from .transaction_schemas import (
     TransactionCancel,
     TransactionCreate,
@@ -111,6 +112,38 @@ def require_sandbox_worker(request: Request, services: Container) -> None:
     expected = services.settings.sandbox_worker_token
     if not expected or not hmac.compare_digest(supplied, expected):
         raise CoworkerError("sandbox_worker_unauthorized", "Sandbox worker authentication failed.", 403)
+
+
+@router.post("/travel-quotes", status_code=201)
+def create_travel_quote(
+    payload: TravelQuoteRequest,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")],
+):
+    value, created = services.travel_quotes.create(
+        identity.account_id,
+        payload,
+        idempotency_key,
+    )
+    transaction_id = value["transaction"]["id"]
+    response.headers["Location"] = f"/api/v1/travel-quotes/{transaction_id}"
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
+
+
+@router.get("/travel-quotes/{transaction_id}")
+def get_travel_quote(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.travel_quotes.get(identity.account_id, str(transaction_id))
+    response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
+    return value
 
 
 @router.post("/restaurant-reservations", status_code=201)
