@@ -24,6 +24,7 @@ from .models import (
     TransactionReconciliationEvidence,
     TransactionRevision,
     TransactionTermsSnapshot,
+    TravelQuoteIntent,
     Workspace,
     utcnow,
 )
@@ -538,10 +539,18 @@ class TransactionRepository:
         with self.sessions.begin() as db:
             row = self._transaction(db, owner, transaction_id, lock=True)
             self._check_revision(row, expected_revision)
-            if row.provider != "internal" and not provider_managed:
+            managed_travel_quote = db.scalar(
+                select(TravelQuoteIntent.transaction_id).where(
+                    TravelQuoteIntent.transaction_id == row.id,
+                    TravelQuoteIntent.owner_id == owner,
+                )
+            )
+            if (
+                row.provider != "internal" or managed_travel_quote is not None
+            ) and not provider_managed:
                 raise CoworkerError(
                     "transaction_terms_provider_managed",
-                    "These provider-backed terms must be refreshed through their registered transaction service.",
+                    "These managed terms must be refreshed through their registered transaction service.",
                     409,
                 )
             if self._execution_link(db, owner, transaction_id) is not None:

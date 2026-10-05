@@ -11,7 +11,7 @@ from .models import (
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal,
-    RestaurantReservationIntent, Transaction, TransactionEvent, TransactionExecutionLink, TransactionReconciliationEvidence, TransactionRevision, TransactionTermsSnapshot,
+    RestaurantReservationIntent, TravelQuoteIntent, Transaction, TransactionEvent, TransactionExecutionLink, TransactionReconciliationEvidence, TransactionRevision, TransactionTermsSnapshot,
     Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
     PersonalGoalRevision, Step, Task, TaskEvent, ToolInvocation, ToolReceipt, Workspace, utcnow,
 )
@@ -158,6 +158,7 @@ class RetentionService:
             db.execute(delete(TransactionReconciliationEvidence).where(TransactionReconciliationEvidence.owner_id == owner))
             db.execute(delete(TransactionExecutionLink).where(TransactionExecutionLink.owner_id == owner))
             db.execute(delete(RestaurantReservationIntent).where(RestaurantReservationIntent.owner_id == owner))
+            db.execute(delete(TravelQuoteIntent).where(TravelQuoteIntent.owner_id == owner))
             db.execute(delete(TransactionTermsSnapshot).where(TransactionTermsSnapshot.owner_id == owner))
             db.execute(delete(TransactionEvent).where(TransactionEvent.owner_id == owner))
             db.execute(delete(TransactionRevision).where(TransactionRevision.owner_id == owner))
