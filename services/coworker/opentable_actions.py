@@ -133,7 +133,16 @@ class OpenTableActions:
         return await self._access_token()
 
     async def access_from_credentials(self, credentials, capability):
-        if capability != "restaurant_reservation" or credentials != {"service": "opentable"}:
+        # The trusted credential broker appends validated scope metadata after
+        # decrypting the server-owned service marker. Accept that broker-only
+        # metadata while rejecting any unexpected persisted/provider secret
+        # fields or a mismatched capability/service identity.
+        if (
+            capability != "restaurant_reservation"
+            or not isinstance(credentials, dict)
+            or credentials.get("service") != "opentable"
+            or set(credentials) - {"service", "scopes"}
+        ):
             raise OpenTableFailure("connection_authorization", definitive=True)
         return await self._access_token()
 
