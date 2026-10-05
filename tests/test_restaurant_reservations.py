@@ -21,6 +21,8 @@ from services.coworker.action_registry import action_spec, stable_digest
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
 from services.coworker.models import RestaurantReservationIntent, utcnow
+from services.coworker.permission_gateway import PermissionGateway
+from services.coworker.credential_broker import CredentialBroker
 from services.coworker.opentable_actions import (
     API_HOSTS,
     OAUTH_HOSTS,
@@ -195,13 +197,26 @@ def enable_restaurants(container):
     container.repository.settings = settings
     container.actions.repo.settings = settings
     container.transactions.settings = settings
-    container.permissions.settings = settings
     container.restaurant_reservations.settings = settings
 
     simulated = SimulatedOpenTable()
     adapter = OpenTableActions(settings, httpx.MockTransport(simulated.transport))
     container.actions.providers["opentable"] = adapter
-    container.credentials.providers["opentable"] = adapter
+
+    # The connector trust boundary is enabled above. enable_actions() replaces
+    # the production-wired ActionService with a lightweight simulated service,
+    # so rebuild the gateway/broker against that exact ActionRepository and the
+    # full provider map before exercising worker execution.
+    gateway = PermissionGateway(container.repository.sessions, settings)
+    broker = CredentialBroker(
+        container.actions.repo,
+        gateway,
+        container.actions.providers,
+    )
+    container.permissions = gateway
+    container.credentials = broker
+    container.actions.permission_gateway = gateway
+    container.actions.credential_broker = broker
     container.restaurant_reservations.adapter = adapter
     return simulated
 
