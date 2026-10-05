@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, StringConstraints, field_validator, model_validator
+from pydantic import Field, StrictInt, StringConstraints, field_validator, model_validator
 
 from .action_schemas import Strict, clean_text, zoned_time
 from .transaction_schemas import TransactionPrice
@@ -183,3 +183,10 @@ class TravelQuoteRequest(Strict):
             if self.flight_segments or self.lodging is None:
                 raise ValueError("Lodging quotes require one lodging stay and no flight segments")
         return self
+
+
+class TravelBookingBindingRequest(Strict):
+    expected_revision: StrictInt = Field(ge=1)
+    terms_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    verification_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")]
+    verification_snapshot_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
