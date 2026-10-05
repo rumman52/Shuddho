@@ -1,6 +1,7 @@
 """TX-08 review-only travel quote domain."""
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -16,6 +17,7 @@ from sqlalchemy import inspect, select
 from action_samples import enable_actions
 from test_coworker import account, container, signed_client
 
+from services.coworker.errors import CoworkerError
 from services.coworker.models import ExternalAction, TravelQuoteIntent, TravelQuoteVerificationEvidence, utcnow
 from services.coworker.transaction_schemas import TransactionPrice
 from services.coworker.travel_quote_schemas import TravelFlightSegment, TravelLodgingStay
@@ -414,7 +416,7 @@ def test_tx09_verifier_owner_isolation_precedes_provider_call(container):
     verifier = SimulatedTravelVerifier(payload)
     container.travel_quotes.verifiers["simulated"] = verifier
 
-    with pytest.raises(Exception) as denied:
+    with pytest.raises(CoworkerError) as denied:
         asyncio.run(
             container.travel_quotes.verify_with_provider(
                 bob,
@@ -422,7 +424,7 @@ def test_tx09_verifier_owner_isolation_precedes_provider_call(container):
                 "simulated",
             )
         )
-    assert getattr(denied.value, "status_code", None) == 404
+    assert denied.value.status_code == 404
     assert verifier.calls == []
 
 
