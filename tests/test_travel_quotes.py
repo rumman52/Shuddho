@@ -17,6 +17,7 @@ from sqlalchemy import inspect, select
 from action_samples import enable_actions
 from test_coworker import account, container, signed_client
 
+from services.coworker.action_registry import registered_transaction_operations
 from services.coworker.errors import CoworkerError
 from services.coworker.models import ExternalAction, TravelQuoteIntent, TravelQuoteVerificationEvidence, utcnow
 from services.coworker.transaction_schemas import TransactionPrice
@@ -457,3 +458,33 @@ def test_tx09_account_erasure_removes_verification_evidence(container):
                 TravelQuoteVerificationEvidence.transaction_id == transaction_id
             )
         ) is None
+
+
+def test_tx09_does_not_register_booking_or_public_verification_authority(container, signed_client):
+    enable_travel_quotes(container)
+    client, headers = signed_client
+    auth = headers("tx09-no-authority")
+    payload = flight_quote()
+
+    created = client.post(
+        "/api/v1/travel-quotes",
+        headers=auth | {"Idempotency-Key": "tx09-no-authority-001"},
+        json=payload,
+    )
+    assert created.status_code == 201
+    transaction_id = created.json()["transaction"]["id"]
+
+    assert all(
+        "travel" not in operation and "booking" not in operation
+        for operation in registered_transaction_operations()
+    )
+    assert client.post(
+        f"/api/v1/travel-quotes/{transaction_id}/verify",
+        headers=auth,
+        json={"provider": "simulated"},
+    ).status_code in {404, 405}
+    assert client.post(
+        f"/api/v1/travel-quotes/{transaction_id}/book",
+        headers=auth,
+        json={},
+    ).status_code in {404, 405}
