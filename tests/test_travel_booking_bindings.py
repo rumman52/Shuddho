@@ -11,6 +11,7 @@ pytest.importorskip("temporalio")
 
 from sqlalchemy import inspect, select
 
+from test_coworker import container, signed_client
 from test_travel_quotes import (
     SimulatedTravelVerifier,
     enable_travel_quotes,
