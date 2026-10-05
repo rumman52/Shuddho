@@ -739,6 +739,56 @@ class ShoppingCartIntent(Base):
     )
 
 
+class ShoppingCartVerificationEvidence(Base):
+    """Append-only TX-11 merchant cart observation bound to one TX-10 cart hash."""
+
+    __tablename__ = "cw_shopping_cart_verifications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(36), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    source_cart_sha256: Mapped[str] = mapped_column(String(64))
+    provider: Mapped[str] = mapped_column(String(80))
+    merchant_cart_id: Mapped[str] = mapped_column(String(255))
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    snapshot_sha256: Mapped[str] = mapped_column(String(64))
+    matched: Mapped[bool] = mapped_column(Boolean)
+    mismatches: Mapped[list[str]] = mapped_column(JSON, default=list)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    quote_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_shopping_cart_verifications_transaction_owner",
+        ),
+        UniqueConstraint(
+            "transaction_id",
+            "sequence",
+            name="uq_cw_shopping_cart_verifications_sequence",
+        ),
+        CheckConstraint(
+            "sequence >= 1",
+            name="ck_cw_shopping_cart_verifications_sequence",
+        ),
+        CheckConstraint(
+            "length(source_cart_sha256) = 64",
+            name="ck_cw_shopping_cart_verifications_source_cart_sha256",
+        ),
+        CheckConstraint(
+            "length(snapshot_sha256) = 64",
+            name="ck_cw_shopping_cart_verifications_snapshot_sha256",
+        ),
+        Index(
+            "cw_shopping_cart_verifications_owner_transaction",
+            "owner_id",
+            "transaction_id",
+            "sequence",
+        ),
+    )
+
+
 class TravelQuoteIntent(Base):
     """Immutable TX-08 review-only travel quote evidence."""
 
