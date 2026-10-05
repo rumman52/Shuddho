@@ -712,6 +712,33 @@ class RestaurantReservationIntent(Base):
     )
 
 
+class ShoppingCartIntent(Base):
+    """Immutable TX-10 review-only shopping cart evidence."""
+
+    __tablename__ = "cw_shopping_cart_intents"
+    transaction_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    cart: Mapped[dict[str, Any]] = mapped_column(JSON)
+    cart_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_shopping_cart_intents_transaction_owner",
+        ),
+        CheckConstraint(
+            "length(cart_sha256) = 64",
+            name="ck_cw_shopping_cart_intents_cart_sha256",
+        ),
+        Index(
+            "cw_shopping_cart_intents_owner_transaction",
+            "owner_id",
+            "transaction_id",
+        ),
+    )
+
+
 class TravelQuoteIntent(Base):
     """Immutable TX-08 review-only travel quote evidence."""
 
