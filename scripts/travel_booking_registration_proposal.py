@@ -6,12 +6,37 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 SCHEMA_VERSION = 1
 ACTION_KIND = "travel_booking_create"
 CONTRACT_VERSION = 1
 FORBIDDEN_PROVIDERS = {"internal", "simulated", "example", "test"}
+REQUIRED_RECEIPT_FIELDS = {
+    "provider_booking_id",
+    "provider_quote_id",
+    "travel_kind",
+    "currency",
+    "total_minor",
+    "status",
+    "confirmed_at",
+}
+ALLOWED_TRAVELER_FIELDS = {
+    "legal_name",
+    "date_of_birth",
+    "gender_marker",
+    "nationality",
+    "email",
+    "phone",
+    "passport_number",
+    "passport_country",
+    "passport_expiry",
+    "known_traveler_number",
+    "redress_number",
+    "loyalty_program",
+    "loyalty_number",
+}
 
 
 class TravelBookingRegistrationProposalError(RuntimeError):
@@ -69,6 +94,48 @@ def _revision(value: object, label: str) -> str:
     ):
         raise TravelBookingRegistrationProposalError(
             f"{label} must be a full lowercase Git SHA-1."
+        )
+    return value
+
+
+def _clean_https_origin(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise TravelBookingRegistrationProposalError(
+            f"{label} must be a clean HTTPS origin."
+        )
+    clean = value.rstrip("/")
+    parsed = urlparse(clean)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise TravelBookingRegistrationProposalError(
+            f"{label} must be a clean HTTPS origin."
+        )
+    return clean
+
+
+def _canonical_unique_strings(
+    value: object,
+    label: str,
+    *,
+    min_items: int = 0,
+    max_items: int = 100,
+) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or not min_items <= len(value) <= max_items
+        or any(not isinstance(item, str) or not item.strip() for item in value)
+        or len(value) != len(set(value))
+        or value != sorted(value)
+    ):
+        raise TravelBookingRegistrationProposalError(
+            f"{label} must be a canonical sorted list of unique strings."
         )
     return value
 
@@ -134,7 +201,14 @@ def validate_tx19_qualification(
             "TX-19 operation does not match the provider travel-booking operation."
         )
 
-    _revision(qualification["adapter_revision"], "TX-19 adapter_revision")
+    adapter_revision = _revision(
+        qualification["adapter_revision"],
+        "TX-19 adapter_revision",
+    )
+    booking_origin = _clean_https_origin(
+        qualification["booking_origin"],
+        "TX-19 booking_origin",
+    )
 
     kinds = qualification["supported_travel_kinds"]
     if (
@@ -158,6 +232,34 @@ def validate_tx19_qualification(
             "TX-19 evidence unexpectedly grants runtime authority."
         )
 
+    credentials = _exact_dict(
+        qualification["credential_boundary"],
+        {
+            "storage",
+            "server_side_only",
+            "least_privilege",
+            "scopes",
+            "raw_payment_credentials",
+        },
+        "TX-19 credential_boundary",
+    )
+    scopes = _canonical_unique_strings(
+        credentials["scopes"],
+        "TX-19 credential scopes",
+        min_items=1,
+        max_items=20,
+    )
+    if (
+        credentials["storage"] != "credential_broker"
+        or credentials["server_side_only"] is not True
+        or credentials["least_privilege"] is not True
+        or credentials["raw_payment_credentials"] is not False
+        or any(len(item) > 120 for item in scopes)
+    ):
+        raise TravelBookingRegistrationProposalError(
+            "TX-19 credential boundary is not brokered, server-side and least-privilege."
+        )
+
     traveler = _exact_dict(
         qualification["traveler_data_boundary"],
         {
@@ -170,14 +272,23 @@ def validate_tx19_qualification(
         },
         "TX-19 traveler_data_boundary",
     )
-    required = traveler["required_fields"]
-    shuddho = traveler["shuddho_transmitted_fields"]
-    hosted = traveler["provider_hosted_fields"]
+    required = _canonical_unique_strings(
+        traveler["required_fields"],
+        "TX-19 required traveler fields",
+        min_items=1,
+    )
+    shuddho = _canonical_unique_strings(
+        traveler["shuddho_transmitted_fields"],
+        "TX-19 Shuddho traveler fields",
+    )
+    hosted = _canonical_unique_strings(
+        traveler["provider_hosted_fields"],
+        "TX-19 provider-hosted traveler fields",
+    )
+    declared = set(required) | set(shuddho) | set(hosted)
     if (
-        not isinstance(required, list)
-        or not isinstance(shuddho, list)
-        or not isinstance(hosted, list)
-        or "legal_name" not in required
+        "legal_name" not in required
+        or not declared <= ALLOWED_TRAVELER_FIELDS
         or set(required) != set(shuddho) | set(hosted)
         or set(shuddho) & set(hosted)
         or traveler["document_images_to_shuddho"] is not False
@@ -196,6 +307,85 @@ def validate_tx19_qualification(
     }
     traveler_data_boundary_sha256 = canonical_sha256(normalized_traveler)
 
+    idempotency = _exact_dict(
+        qualification["idempotency"],
+        {"supported", "key_scope", "duplicate_result"},
+        "TX-19 idempotency",
+    )
+    if (
+        idempotency["supported"] is not True
+        or idempotency["key_scope"] != "booking_binding"
+        or idempotency["duplicate_result"] != "same_booking_or_lookup"
+    ):
+        raise TravelBookingRegistrationProposalError(
+            "TX-19 idempotency contract is not binding-scoped and deterministic."
+        )
+
+    reconciliation = _exact_dict(
+        qualification["reconciliation"],
+        {
+            "supported",
+            "lookup_keys",
+            "outcome_unknown_policy",
+            "blind_retry",
+        },
+        "TX-19 reconciliation",
+    )
+    lookup_keys = _canonical_unique_strings(
+        reconciliation["lookup_keys"],
+        "TX-19 reconciliation lookup keys",
+        min_items=2,
+    )
+    if (
+        reconciliation["supported"] is not True
+        or set(lookup_keys) != {"idempotency_key", "provider_booking_id"}
+        or reconciliation["outcome_unknown_policy"] != "lookup_before_retry"
+        or reconciliation["blind_retry"] is not False
+    ):
+        raise TravelBookingRegistrationProposalError(
+            "TX-19 reconciliation contract does not require lookup-before-retry."
+        )
+
+    receipt = _exact_dict(
+        qualification["receipt"],
+        {"readback_supported", "exact_fields", "confirmed_status"},
+        "TX-19 receipt",
+    )
+    receipt_fields = _canonical_unique_strings(
+        receipt["exact_fields"],
+        "TX-19 receipt fields",
+        min_items=len(REQUIRED_RECEIPT_FIELDS),
+        max_items=len(REQUIRED_RECEIPT_FIELDS),
+    )
+    if (
+        receipt["readback_supported"] is not True
+        or set(receipt_fields) != REQUIRED_RECEIPT_FIELDS
+        or receipt["confirmed_status"] != "confirmed"
+    ):
+        raise TravelBookingRegistrationProposalError(
+            "TX-19 qualification does not prove the exact TX-18 receipt contract."
+        )
+
+    privacy = _exact_dict(
+        qualification["privacy"],
+        {
+            "sends_only_required_fields",
+            "secrets_in_logs",
+            "retains_traveler_data_in_logs",
+            "provider_hosted_collection_supported",
+        },
+        "TX-19 privacy",
+    )
+    if (
+        privacy["sends_only_required_fields"] is not True
+        or privacy["secrets_in_logs"] is not False
+        or privacy["retains_traveler_data_in_logs"] is not False
+        or privacy["provider_hosted_collection_supported"] is not True
+    ):
+        raise TravelBookingRegistrationProposalError(
+            "TX-19 privacy boundary is not compatible with bounded travel booking."
+        )
+
     payment = qualification["payment_boundary"]
     if (
         not isinstance(payment, dict)
@@ -208,32 +398,46 @@ def validate_tx19_qualification(
             "TX-19 payment boundary is not provider-hosted and user-present."
         )
 
-    receipt = qualification["receipt"]
+    probe = _exact_dict(
+        qualification["live_probe"],
+        {
+            "status",
+            "environment",
+            "verified_at",
+            "source_revision",
+            "booking_origin",
+            "travel_kind",
+            "traveler_data_boundary_sha256",
+            "traveler_minimization_passed",
+            "idempotency_passed",
+            "reconciliation_passed",
+            "receipt_match_passed",
+            "privacy_passed",
+            "payment_boundary_passed",
+            "evidence_sha256",
+        },
+        "TX-19 live_probe",
+    )
     if (
-        not isinstance(receipt, dict)
-        or receipt.get("readback_supported") is not True
-        or receipt.get("confirmed_status") != "confirmed"
+        probe["status"] != "passed"
+        or probe["environment"] != "staging"
+        or probe["source_revision"] != adapter_revision
+        or _clean_https_origin(
+            probe["booking_origin"],
+            "TX-19 live_probe.booking_origin",
+        ) != booking_origin
+        or probe["travel_kind"] != travel_kind
+        or probe["traveler_minimization_passed"] is not True
+        or probe["idempotency_passed"] is not True
+        or probe["reconciliation_passed"] is not True
+        or probe["receipt_match_passed"] is not True
+        or probe["privacy_passed"] is not True
+        or probe["payment_boundary_passed"] is not True
     ):
         raise TravelBookingRegistrationProposalError(
-            "TX-19 qualification does not prove provider receipt readback."
+            "TX-19 live probe is not a passing staging qualification for this exact adapter and origin."
         )
-
-    probe = qualification["live_probe"]
-    if (
-        not isinstance(probe, dict)
-        or probe.get("status") != "passed"
-        or probe.get("environment") != "staging"
-        or probe.get("travel_kind") != travel_kind
-        or probe.get("traveler_minimization_passed") is not True
-        or probe.get("idempotency_passed") is not True
-        or probe.get("reconciliation_passed") is not True
-        or probe.get("receipt_match_passed") is not True
-        or probe.get("privacy_passed") is not True
-        or probe.get("payment_boundary_passed") is not True
-    ):
-        raise TravelBookingRegistrationProposalError(
-            "TX-19 live probe is not a passing staging qualification."
-        )
+    _sha256(probe["evidence_sha256"], "TX-19 live_probe.evidence_sha256")
     if (
         _sha256(
             probe.get("traveler_data_boundary_sha256"),
