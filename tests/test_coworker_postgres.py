@@ -53,6 +53,7 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             "cw_shopping_cart_intents",
             "cw_shopping_cart_verifications",
             "cw_shopping_checkout_bindings",
+            "cw_travel_booking_bindings",
         } <= tables
         columns = {
             column["name"]
