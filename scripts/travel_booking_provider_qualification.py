@@ -195,12 +195,11 @@ def validate_travel_booking_provider_qualification(
     kinds = root["supported_travel_kinds"]
     if (
         not isinstance(kinds, list)
-        or not kinds
-        or any(item not in {"flight", "lodging"} for item in kinds)
-        or len(kinds) != len(set(kinds))
+        or len(kinds) != 1
+        or kinds[0] not in {"flight", "lodging"}
     ):
         raise TravelBookingQualificationError(
-            "supported_travel_kinds must contain unique flight/lodging values."
+            "Each TX-19 qualification must cover exactly one travel kind: flight or lodging."
         )
 
     credentials = _require_exact_keys(
@@ -258,6 +257,11 @@ def validate_travel_booking_provider_qualification(
         traveler["provider_hosted_fields"],
         "traveler_data_boundary.provider_hosted_fields",
     )
+
+    if "legal_name" not in required_fields:
+        raise TravelBookingQualificationError(
+            "Each travel booking qualification must require traveler legal_name, whether collected by Shuddho or provider-hosted."
+        )
 
     all_declared = set(required_fields) | set(shuddho_fields) | set(provider_hosted_fields)
     if not all_declared <= ALLOWED_TRAVELER_FIELDS:
