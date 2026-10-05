@@ -167,9 +167,9 @@ def reservation_request(**changes) -> RestaurantReservationRequest:
 def enable_restaurants(container):
     enable_actions(container)
     # enable_actions replaces container.actions with a simulated ActionService.
-    # Rebind the reservation service so its service-connection path observes
-    # the enabled action repository instead of the Container.create() instance.
-    container.restaurant_reservations.actions = container.actions
+    # Rebind the reservation service to that service's ActionRepository so its
+    # service-connection path observes the enabled test settings and shared DB.
+    container.restaurant_reservations.actions = container.actions.repo
     settings = replace(
         container.settings,
         connector_trust_boundary_enabled=True,
