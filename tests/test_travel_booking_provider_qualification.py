@@ -7,6 +7,7 @@ import pytest
 
 from scripts.travel_booking_provider_qualification import (
     TravelBookingQualificationError,
+    canonical_sha256,
     validate_travel_booking_provider_qualification,
 )
 from services.coworker.action_registry import (
@@ -25,6 +26,24 @@ def utcnow():
 
 def evidence():
     now = utcnow()
+    traveler_boundary = {
+        "required_fields": ["legal_name", "date_of_birth", "email"],
+        "shuddho_transmitted_fields": ["legal_name", "email"],
+        "provider_hosted_fields": ["date_of_birth"],
+        "document_images_to_shuddho": False,
+        "payment_instrument_to_shuddho": False,
+        "optional_fields_default_off": True,
+    }
+    traveler_boundary_sha256 = canonical_sha256({
+        **traveler_boundary,
+        "required_fields": sorted(traveler_boundary["required_fields"]),
+        "shuddho_transmitted_fields": sorted(
+            traveler_boundary["shuddho_transmitted_fields"]
+        ),
+        "provider_hosted_fields": sorted(
+            traveler_boundary["provider_hosted_fields"]
+        ),
+    })
     return {
         "schema_version": 1,
         "provider": "travelco",
@@ -38,14 +57,7 @@ def evidence():
             "scopes": ["booking.create", "booking.read"],
             "raw_payment_credentials": False,
         },
-        "traveler_data_boundary": {
-            "required_fields": ["legal_name", "date_of_birth", "email"],
-            "shuddho_transmitted_fields": ["legal_name", "email"],
-            "provider_hosted_fields": ["date_of_birth"],
-            "document_images_to_shuddho": False,
-            "payment_instrument_to_shuddho": False,
-            "optional_fields_default_off": True,
-        },
+        "traveler_data_boundary": traveler_boundary,
         "idempotency": {
             "supported": True,
             "key_scope": "booking_binding",
@@ -88,6 +100,8 @@ def evidence():
             "verified_at": (now - timedelta(minutes=10)).isoformat(),
             "source_revision": REVISION,
             "booking_origin": "https://booking.travelco.example",
+            "travel_kind": "flight",
+            "traveler_data_boundary_sha256": traveler_boundary_sha256,
             "traveler_minimization_passed": True,
             "idempotency_passed": True,
             "reconciliation_passed": True,
@@ -268,5 +282,25 @@ def test_tx19_rejects_multi_kind_or_missing_legal_name():
     item["traveler_data_boundary"]["required_fields"] = ["date_of_birth", "email"]
     item["traveler_data_boundary"]["shuddho_transmitted_fields"] = ["email"]
     item["traveler_data_boundary"]["provider_hosted_fields"] = ["date_of_birth"]
+    with pytest.raises(TravelBookingQualificationError):
+        validate_travel_booking_provider_qualification(item, now=utcnow())
+
+
+def test_tx19_rejects_probe_scope_drift():
+    item = evidence()
+    item["live_probe"]["travel_kind"] = "lodging"
+    with pytest.raises(TravelBookingQualificationError):
+        validate_travel_booking_provider_qualification(item, now=utcnow())
+
+    item = evidence()
+    item["live_probe"]["traveler_data_boundary_sha256"] = "c" * 64
+    with pytest.raises(TravelBookingQualificationError):
+        validate_travel_booking_provider_qualification(item, now=utcnow())
+
+
+def test_tx19_rejects_traveler_boundary_changed_after_probe():
+    item = evidence()
+    item["traveler_data_boundary"]["required_fields"].append("phone")
+    item["traveler_data_boundary"]["provider_hosted_fields"].append("phone")
     with pytest.raises(TravelBookingQualificationError):
         validate_travel_booking_provider_qualification(item, now=utcnow())

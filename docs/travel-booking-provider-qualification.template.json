@@ -61,6 +61,8 @@
     "verified_at": "REPLACE_WITH_ISO8601_TIME",
     "source_revision": "REPLACE_WITH_40_CHAR_LOWERCASE_GIT_SHA1",
     "booking_origin": "https://REPLACE_WITH_PROVIDER_ORIGIN",
+    "travel_kind": "flight",
+    "traveler_data_boundary_sha256": "REPLACE_WITH_64_CHAR_LOWERCASE_SHA256",
     "traveler_minimization_passed": false,
     "idempotency_passed": false,
     "reconciliation_passed": false,
