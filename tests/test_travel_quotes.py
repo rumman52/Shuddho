@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -35,8 +36,8 @@ def enable_travel_quotes(container):
 
 def flight_quote(**changes):
     now = utcnow()
-    departure = (now + timedelta(days=20)).replace(second=0, microsecond=0)
-    arrival = departure + timedelta(hours=2)
+    departure = (now.astimezone(ZoneInfo("Asia/Dhaka")) + timedelta(days=20)).replace(second=0, microsecond=0)
+    arrival = (departure.astimezone(ZoneInfo("UTC")) + timedelta(hours=2)).astimezone(ZoneInfo("Asia/Bangkok"))
     value = {
         "travel_kind": "flight",
         "quote_source": "user_supplied",
@@ -77,7 +78,7 @@ def flight_quote(**changes):
 
 def lodging_quote(**changes):
     now = utcnow()
-    check_in = (now + timedelta(days=30)).replace(second=0, microsecond=0)
+    check_in = (now.astimezone(ZoneInfo("Asia/Dhaka")) + timedelta(days=30)).replace(second=0, microsecond=0)
     check_out = check_in + timedelta(days=3)
     value = {
         "travel_kind": "lodging",
