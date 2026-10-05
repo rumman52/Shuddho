@@ -38,7 +38,7 @@ from .restaurant_reservation_schemas import (
     RestaurantReservationPrepare,
     RestaurantReservationRequest,
 )
-from .travel_quote_schemas import TravelQuoteRequest
+from .travel_quote_schemas import TravelBookingBindingRequest, TravelQuoteRequest
 from .shopping_cart_schemas import ShoppingCartReviewRequest, ShoppingCheckoutBindingRequest
 from .transaction_schemas import (
     TransactionCancel,
@@ -175,6 +175,36 @@ def get_shopping_cart_review(
     value = services.shopping_carts.get(identity.account_id, str(transaction_id))
     response.headers["ETag"] = f'"{value["transaction"]["revision"]}"'
     return value
+
+
+@router.post("/travel-quotes/{transaction_id}/booking-binding", status_code=201)
+def create_travel_booking_binding(
+    transaction_id: UUID,
+    payload: TravelBookingBindingRequest,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value, created = services.travel_quotes.create_booking_binding(
+        identity.account_id,
+        str(transaction_id),
+        payload,
+    )
+    response.headers["Location"] = f"/api/v1/travel-quotes/{transaction_id}/booking-binding"
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return value
+
+
+@router.get("/travel-quotes/{transaction_id}/booking-binding")
+def get_travel_booking_binding(
+    transaction_id: UUID,
+    identity: Identity,
+    services: Services,
+):
+    return services.travel_quotes.booking_binding(
+        identity.account_id,
+        str(transaction_id),
+    )
 
 
 @router.post("/travel-quotes", status_code=201)

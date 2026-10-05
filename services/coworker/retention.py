@@ -11,7 +11,7 @@ from .models import (
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal,
-    RestaurantReservationIntent, ShoppingCartIntent, ShoppingCartVerificationEvidence, ShoppingCheckoutBinding, TravelQuoteIntent, TravelQuoteVerificationEvidence, Transaction, TransactionEvent, TransactionExecutionLink, TransactionReconciliationEvidence, TransactionRevision, TransactionTermsSnapshot,
+    RestaurantReservationIntent, ShoppingCartIntent, ShoppingCartVerificationEvidence, ShoppingCheckoutBinding, TravelBookingBinding, TravelQuoteIntent, TravelQuoteVerificationEvidence, Transaction, TransactionEvent, TransactionExecutionLink, TransactionReconciliationEvidence, TransactionRevision, TransactionTermsSnapshot,
     Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
     PersonalGoalRevision, Step, Task, TaskEvent, ToolInvocation, ToolReceipt, Workspace, utcnow,
 )
@@ -161,6 +161,7 @@ class RetentionService:
             db.execute(delete(ShoppingCheckoutBinding).where(ShoppingCheckoutBinding.owner_id == owner))
             db.execute(delete(ShoppingCartVerificationEvidence).where(ShoppingCartVerificationEvidence.owner_id == owner))
             db.execute(delete(ShoppingCartIntent).where(ShoppingCartIntent.owner_id == owner))
+            db.execute(delete(TravelBookingBinding).where(TravelBookingBinding.owner_id == owner))
             db.execute(delete(TravelQuoteVerificationEvidence).where(TravelQuoteVerificationEvidence.owner_id == owner))
             db.execute(delete(TravelQuoteIntent).where(TravelQuoteIntent.owner_id == owner))
             db.execute(delete(TransactionTermsSnapshot).where(TransactionTermsSnapshot.owner_id == owner))
