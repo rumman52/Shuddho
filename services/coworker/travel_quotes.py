@@ -243,10 +243,23 @@ class TravelQuoteService:
                 409,
             )
         observed_at = observation.observed_at.astimezone(timezone.utc)
-        if observed_at > utcnow() + timedelta(minutes=5):
+        now = utcnow()
+        if observed_at > now + timedelta(minutes=5):
             raise CoworkerError(
                 "travel_quote_verification_invalid",
                 "The travel provider observation time is in the future.",
+                409,
+            )
+        if observed_at < now - timedelta(minutes=5):
+            raise CoworkerError(
+                "travel_quote_verification_stale",
+                "The travel provider observation is too old to verify current terms.",
+                409,
+            )
+        if observation.quote_expires_at.astimezone(timezone.utc) <= observed_at:
+            raise CoworkerError(
+                "travel_quote_verification_invalid",
+                "The travel provider quote already expired at observation time.",
                 409,
             )
 
