@@ -12,7 +12,7 @@ from .transaction_schemas import TransactionPrice
 
 
 ShortText = Annotated[str, StringConstraints(min_length=1, max_length=300)]
-LongText = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+LongText = Annotated[str, StringConstraints(min_length=1, max_length=1000)]
 
 
 class TravelTraveler(Strict):
