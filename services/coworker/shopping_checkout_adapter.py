@@ -110,6 +110,42 @@ def _parse_time(value: object, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _require_exact_async_signature(
+    method: object,
+    *,
+    label: str,
+    required: tuple[str, ...],
+    optional_none: tuple[str, ...] = (),
+) -> None:
+    if not inspect.iscoroutinefunction(method):
+        raise ShoppingCheckoutAdapterAdmissionError(
+            f"{label} must be asynchronous."
+        )
+
+    signature = inspect.signature(method)
+    parameters = list(signature.parameters.values())
+    expected_names = list(required) + list(optional_none)
+
+    if [item.name for item in parameters] != expected_names:
+        raise ShoppingCheckoutAdapterAdmissionError(
+            f"{label} must declare exactly: {', '.join(expected_names)}."
+        )
+
+    for item in parameters:
+        if item.kind is not inspect.Parameter.KEYWORD_ONLY:
+            raise ShoppingCheckoutAdapterAdmissionError(
+                f"{label} parameters must be keyword-only."
+            )
+        if item.name in required and item.default is not inspect.Parameter.empty:
+            raise ShoppingCheckoutAdapterAdmissionError(
+                f"{label} required parameters cannot define defaults."
+            )
+        if item.name in optional_none and item.default is not None:
+            raise ShoppingCheckoutAdapterAdmissionError(
+                f"{label} optional lookup parameters must default to None."
+            )
+
+
 @runtime_checkable
 class ShoppingCheckoutProviderAdapter(Protocol):
     """Structural contract for a future provider-specific checkout adapter.
@@ -403,13 +439,17 @@ def admit_checkout_adapter(
         raise ShoppingCheckoutAdapterAdmissionError(
             "Checkout adapter does not implement the required structural protocol."
         )
-    if (
-        not inspect.iscoroutinefunction(adapter.create_checkout)
-        or not inspect.iscoroutinefunction(adapter.lookup_checkout)
-    ):
-        raise ShoppingCheckoutAdapterAdmissionError(
-            "Checkout adapter mutation and lookup methods must be asynchronous."
-        )
+    _require_exact_async_signature(
+        adapter.create_checkout,
+        label="Checkout adapter create_checkout",
+        required=("preview", "idempotency_key"),
+    )
+    _require_exact_async_signature(
+        adapter.lookup_checkout,
+        label="Checkout adapter lookup_checkout",
+        required=(),
+        optional_none=("idempotency_key", "provider_order_id"),
+    )
 
     expected_metadata = {
         "provider_name": proposal["provider"],
