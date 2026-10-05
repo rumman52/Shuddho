@@ -166,6 +166,21 @@ def test_tx08_api_records_exact_flight_quote_without_execution_authority(contain
     hidden = client.get(f'/api/v1/travel-quotes/{tx["id"]}', headers=bob)
     assert hidden.status_code == 404
 
+    generic_rewrite = client.put(
+        f'/api/v1/transactions/{tx["id"]}/terms',
+        headers=alice,
+        json={
+            "expected_revision": tx["revision"],
+            "terms": [{"name": "Price", "value": "Changed outside travel service"}],
+            "price": payload["price"],
+            "provider_quote_id": "tampered",
+            "quoted_at": payload["quoted_at"],
+            "quote_expires_at": payload["quote_expires_at"],
+        },
+    )
+    assert generic_rewrite.status_code == 409
+    assert generic_rewrite.json()["error"]["code"] == "transaction_terms_provider_managed"
+
     changed = flight_quote(provider_quote_id="travel-quote-002")
     conflict = client.post(
         "/api/v1/travel-quotes",
