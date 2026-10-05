@@ -25,6 +25,7 @@ from services.coworker.opentable_actions import (
     API_HOSTS,
     OAUTH_HOSTS,
     OpenTableActions,
+    OpenTableFailure,
     local_provider_time,
 )
 from services.coworker.restaurant_reservation_schemas import (
@@ -35,6 +36,13 @@ from services.coworker.transaction_schemas import TransactionTermsDraft
 
 
 RID = 123456
+
+
+def test_opentable_provider_local_time_accepts_provider_naive_values_but_not_user_payloads():
+    assert local_provider_time("2026-10-08T19:00:00") == "2026-10-08T19:00"
+    assert local_provider_time("2026-10-08T19:00:00+06:00", require_offset=True) == "2026-10-08T19:00"
+    with pytest.raises(OpenTableFailure):
+        local_provider_time("2026-10-08T19:00:00", require_offset=True)
 
 
 class SimulatedOpenTable:
