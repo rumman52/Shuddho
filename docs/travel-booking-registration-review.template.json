@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "provider": "REPLACE_WITH_TX19_PROVIDER",
+  "operation": "REPLACE_WITH_PROVIDER:travel_booking_create",
+  "adapter_revision": "REPLACE_WITH_TX19_40_CHAR_GIT_SHA1",
+  "booking_origin": "https://REPLACE_WITH_TX19_PROVIDER_ORIGIN",
+  "travel_kind": "flight",
+  "traveler_data_boundary_sha256": "REPLACE_WITH_TX19_TRAVELER_BOUNDARY_SHA256",
+  "qualification_sha256": "REPLACE_WITH_TX19_QUALIFICATION_SHA256",
+  "action_contract_version": 1,
+  "change_reference": "REPLACE_WITH_REVIEWED_CHANGE_REFERENCE",
+  "reviewed_at": "REPLACE_WITH_ISO8601_TIME",
+  "reviewer_reference": "REPLACE_WITH_REVIEWER_REFERENCE"
+}
