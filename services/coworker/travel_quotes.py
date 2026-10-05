@@ -179,6 +179,7 @@ class TravelQuoteService:
                     transaction["id"],
                     current["revision"],
                     self._terms_from_intent(intent),
+                    provider_managed=True,
                 )
             except CoworkerError as error:
                 if error.code != "transaction_revision_conflict":
