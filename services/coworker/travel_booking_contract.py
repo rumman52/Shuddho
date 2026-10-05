@@ -79,6 +79,7 @@ class TravelBookingPreview(Strict):
     currency: Currency
     total_minor: StrictInt = Field(ge=0, le=BIGINT_MAX)
     booking_binding_scope_sha256: Sha256
+    prepared_at: datetime
     expires_at: datetime
     execution_authority: Literal["not_registered"] = "not_registered"
     identity_authority: Literal["not_bound"] = "not_bound"
@@ -92,10 +93,10 @@ class TravelBookingPreview(Strict):
             raise ValueError("Travel booking preview text cannot be blank")
         return value
 
-    @field_validator("expires_at")
+    @field_validator("prepared_at", "expires_at")
     @classmethod
-    def aware_expiry(cls, value: datetime) -> datetime:
-        return _aware(value, label="Travel booking preview expiry")
+    def aware_preview_time(cls, value: datetime) -> datetime:
+        return _aware(value, label="Travel booking preview time")
 
 
 class TravelBookingReceipt(Strict):
@@ -186,6 +187,7 @@ def build_travel_booking_preview(
         currency=binding.currency,
         total_minor=binding.total_minor,
         booking_binding_scope_sha256=binding.approval_scope_sha256,
+        prepared_at=current,
         expires_at=binding.expires_at,
     )
     value = preview.model_dump(mode="json")
@@ -212,6 +214,18 @@ def validate_travel_booking_receipt(
         raise CoworkerError(
             "travel_booking_receipt_invalid",
             "The booking receipt confirmation time is in the future.",
+            409,
+        )
+    if receipt.confirmed_at < preview.prepared_at - timedelta(minutes=5):
+        raise CoworkerError(
+            "travel_booking_receipt_invalid",
+            "The booking receipt predates the approved booking preview.",
+            409,
+        )
+    if receipt.confirmed_at > preview.expires_at:
+        raise CoworkerError(
+            "travel_booking_receipt_invalid",
+            "The booking receipt was confirmed after the approved quote expired.",
             409,
         )
 
