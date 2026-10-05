@@ -782,6 +782,30 @@ def test_tx12_rejects_mismatched_or_stale_verification(container, signed_client)
     assert stale.json()["error"]["code"] == "shopping_checkout_verification_stale"
 
 
+def test_tx12_rejects_tampered_verification_snapshot(container, signed_client):
+    enable_shopping_carts(container)
+    client, headers = signed_client
+    value = _tx12_verified_reviewed_cart(container, client, headers, "tx12-integrity")
+    with container.repository.sessions.begin() as db:
+        row = db.get(ShoppingCartVerificationEvidence, value["evidence"]["id"])
+        tampered = dict(row.snapshot)
+        tampered["merchant_name"] = "Tampered Merchant"
+        row.snapshot = tampered
+
+    response = client.post(
+        f'/api/v1/shopping-carts/{value["transaction_id"]}/checkout-binding',
+        headers=value["auth"],
+        json={
+            "expected_revision": value["confirmed"]["transaction"]["revision"],
+            "terms_sha256": value["surface"]["terms"]["terms_sha256"],
+            "verification_id": value["evidence"]["id"],
+            "verification_snapshot_sha256": value["evidence"]["snapshot_sha256"],
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "shopping_checkout_verification_integrity"
+
+
 def test_tx12_checkout_binding_is_owner_scoped_and_erased(container, signed_client):
     enable_shopping_carts(container)
     client, headers = signed_client
