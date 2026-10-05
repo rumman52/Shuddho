@@ -47,6 +47,28 @@ def test_opentable_provider_local_time_accepts_provider_naive_values_but_not_use
         local_provider_time("2026-10-08T19:00:00", require_offset=True)
 
 
+def test_opentable_broker_credentials_accept_scope_metadata_only(container):
+    enable_restaurants(container)
+    adapter = container.actions.providers["opentable"]
+
+    token = asyncio.run(adapter.access_from_credentials(
+        {"service": "opentable", "scopes": ["DEFAULT"]},
+        "restaurant_reservation",
+    ))
+    assert token["access_token"] == "opentable-test-access"
+    assert token["scope"] == "DEFAULT"
+
+    with pytest.raises(OpenTableFailure):
+        asyncio.run(adapter.access_from_credentials(
+            {
+                "service": "opentable",
+                "scopes": ["DEFAULT"],
+                "client_secret": "must-not-be-accepted",
+            },
+            "restaurant_reservation",
+        ))
+
+
 class SimulatedOpenTable:
     def __init__(self):
         self.requests = []
