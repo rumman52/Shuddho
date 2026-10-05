@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "provider": "REPLACE_WITH_REAL_PROVIDER_ID",
+  "adapter_revision": "REPLACE_WITH_40_CHAR_LOWERCASE_GIT_SHA1",
+  "checkout_origin": "https://REPLACE_WITH_PROVIDER_ORIGIN",
+  "credential_boundary": {
+    "storage": "credential_broker",
+    "server_side_only": true,
+    "least_privilege": true,
+    "scopes": ["REPLACE_WITH_PROVIDER_CHECKOUT_SCOPE"],
+    "raw_payment_credentials": false
+  },
+  "idempotency": {
+    "supported": true,
+    "key_scope": "checkout_binding",
+    "duplicate_result": "same_order_or_lookup"
+  },
+  "reconciliation": {
+    "supported": true,
+    "lookup_keys": ["idempotency_key", "provider_order_id"],
+    "outcome_unknown_policy": "lookup_before_retry",
+    "blind_retry": false
+  },
+  "receipt": {
+    "readback_supported": true,
+    "exact_fields": [
+      "provider_order_id",
+      "merchant_cart_id",
+      "currency",
+      "total_minor",
+      "status",
+      "confirmed_at"
+    ],
+    "confirmed_status": "confirmed"
+  },
+  "privacy": {
+    "sends_only_required_fields": true,
+    "secrets_in_logs": false,
+    "payment_instrument_to_shuddho": false,
+    "identity_model": "merchant_hosted_user_present"
+  },
+  "payment_boundary": {
+    "mode": "merchant_hosted_user_present",
+    "shuddho_charges": false,
+    "stores_payment_instrument": false,
+    "requires_user_present": true
+  },
+  "live_probe": {
+    "status": "NOT_RUN",
+    "environment": "staging",
+    "verified_at": "REPLACE_WITH_ISO8601_TIME",
+    "source_revision": "REPLACE_WITH_40_CHAR_LOWERCASE_GIT_SHA1",
+    "checkout_origin": "https://REPLACE_WITH_PROVIDER_ORIGIN",
+    "idempotency_passed": false,
+    "reconciliation_passed": false,
+    "receipt_match_passed": false,
+    "privacy_passed": false,
+    "payment_boundary_passed": false,
+    "evidence_sha256": "REPLACE_WITH_64_CHAR_LOWERCASE_SHA256"
+  }
+}
