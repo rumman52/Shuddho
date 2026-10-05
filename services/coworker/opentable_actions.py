@@ -36,16 +36,23 @@ class OpenTableFailure(ConnectorFailure):
         super().__init__(code, definitive=definitive)
 
 
-def local_provider_time(value: str) -> str:
+def local_provider_time(value: str, *, require_offset: bool = False) -> str:
+    """Normalize OpenTable local timestamps to minute precision.
+
+    User/action payloads must carry an explicit offset and call this helper with
+    require_offset=True. OpenTable availability/booking responses use local
+    restaurant timestamps without an offset, which are valid only for equality
+    checks against the already validated reviewed local time.
+    """
     parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
+    if require_offset and (parsed.tzinfo is None or parsed.utcoffset() is None):
         raise OpenTableFailure("reservation_time_invalid", definitive=True)
     return parsed.replace(tzinfo=None).isoformat(timespec="minutes")
 
 
 def _standard_slot(value: dict, payload: dict) -> dict | None:
     try:
-        if local_provider_time(str(value.get("time"))) != local_provider_time(payload["date_time"]):
+        if local_provider_time(str(value.get("time"))) != local_provider_time(payload["date_time"], require_offset=True):
             return None
     except (OpenTableFailure, ValueError, TypeError):
         return None
