@@ -50,7 +50,8 @@ The qualification requires:
 - no secret or traveler-data logging;
 - provider-hosted traveler collection support;
 - provider-hosted, user-present payment;
-- fresh staging probe bound to exact revision and origin.
+- fresh staging probe bound to the exact revision, origin, travel kind and
+  SHA-256 of the normalized traveler-data minimization boundary.
 
 ## Passing TX-19 still grants zero runtime authority
 
@@ -61,6 +62,10 @@ A passing artifact returns:
 - `external_action_registered=false`;
 - `identity_authority=false`;
 - `payment_authority=false`.
+
+The live probe cannot be reused after changing the qualified travel kind or
+traveler-data partition: those values are cryptographically bound into the
+probe evidence contract.
 
 TX-19 does not modify the action registry, transaction allowlist, credentials,
 deployment flags or rollout state.
