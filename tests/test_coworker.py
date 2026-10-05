@@ -1951,6 +1951,7 @@ def test_transaction_authority_manifest_is_authenticated_scoped_and_exact(
         "schema_version": 1,
         "source_revision": "b" * 40,
         "personal_transactions_enabled": True,
+        "restaurant_reservations_enabled": False,
         "operations": ["google:negotiation_commitment_email"],
     }
     encoded = response.text
