@@ -11,6 +11,7 @@ from .transaction_schemas import TransactionPrice
 
 ShortText = Annotated[str, StringConstraints(min_length=1, max_length=300)]
 LongText = Annotated[str, StringConstraints(min_length=1, max_length=1000)]
+BIGINT_MAX = 9_223_372_036_854_775_807
 
 
 class ShoppingCartItem(Strict):
@@ -18,8 +19,8 @@ class ShoppingCartItem(Strict):
     title: Annotated[str, StringConstraints(min_length=1, max_length=240)]
     variant: Annotated[str, StringConstraints(min_length=1, max_length=160)] | None = None
     quantity: StrictInt = Field(ge=1, le=99)
-    unit_price_minor: StrictInt = Field(ge=0)
-    line_total_minor: StrictInt = Field(ge=0)
+    unit_price_minor: StrictInt = Field(ge=0, le=BIGINT_MAX)
+    line_total_minor: StrictInt = Field(ge=0, le=BIGINT_MAX)
 
     @field_validator("product_id", "title", "variant")
     @classmethod
@@ -67,6 +68,14 @@ class ShoppingCartReviewRequest(Strict):
         value = clean_text(value).strip()
         if not value:
             raise ValueError("Shopping cart text cannot be blank")
+        return value
+
+    @field_validator("price")
+    @classmethod
+    def bounded_price(cls, value: TransactionPrice) -> TransactionPrice:
+        for amount in value.model_dump(mode="python").values():
+            if isinstance(amount, int) and amount > BIGINT_MAX:
+                raise ValueError("Shopping money values exceed durable database limits")
         return value
 
     @field_validator("quoted_at", "quote_expires_at")
