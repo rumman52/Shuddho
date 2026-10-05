@@ -7,13 +7,19 @@ It does not select or activate a provider by itself.
 
 ## Traveler-data minimization
 
-Every provider must declare the exact traveler fields required for booking and
-partition them into:
+Each TX-19 qualification covers exactly one travel kind (`flight` or
+`lodging`). A provider supporting both requires separate evidence for each,
+so flight-only identity requirements cannot leak into lodging collection.
+
+Every provider must declare the exact traveler fields required for that travel
+kind and partition them into:
 
 - fields Shuddho must transmit; and
 - fields collected directly by the provider in a user-present hosted flow.
 
-Every required field must appear exactly once in that partition.
+Every required field must appear exactly once in that partition. `legal_name`
+is always required, but it may be collected directly by the provider rather
+than transmitted by Shuddho.
 
 The gate only permits a bounded field vocabulary. Optional fields are default
 off. Passport/identity/visa document images and payment instruments may not be
