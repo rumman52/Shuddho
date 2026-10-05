@@ -44,9 +44,16 @@ def enable_travel_quotes(container):
 class SimulatedTravelVerifier:
     provider_name = "simulated"
 
-    def __init__(self, payload: dict, *, price_delta_minor: int = 0):
+    def __init__(
+        self,
+        payload: dict,
+        *,
+        price_delta_minor: int = 0,
+        observed_at=None,
+    ):
         self.payload = deepcopy(payload)
         self.price_delta_minor = price_delta_minor
+        self.observed_at = observed_at
         self.calls = []
 
     async def verify_quote(self, *, provider_quote_id: str, travel_kind: str):
@@ -66,7 +73,7 @@ class SimulatedTravelVerifier:
             cancellation_terms=value["cancellation_terms"],
             change_terms=value["change_terms"],
             quote_expires_at=datetime.fromisoformat(value["quote_expires_at"]),
-            observed_at=utcnow(),
+            observed_at=self.observed_at or utcnow(),
             flight_segments=tuple(
                 TravelFlightSegment.model_validate(item)
                 for item in value.get("flight_segments", [])
@@ -488,3 +495,38 @@ def test_tx09_does_not_register_booking_or_public_verification_authority(contain
         headers=auth,
         json={},
     ).status_code in {404, 405}
+
+
+def test_tx09_rejects_stale_provider_observation_before_persisting_evidence(container):
+    enable_travel_quotes(container)
+    owner = account(container, "tx09-stale")
+    payload = flight_quote()
+    from services.coworker.travel_quote_schemas import TravelQuoteRequest
+
+    surface, _ = container.travel_quotes.create(
+        owner,
+        TravelQuoteRequest.model_validate(payload),
+        "tx09-stale-001",
+    )
+    transaction_id = surface["transaction"]["id"]
+    container.travel_quotes.verifiers["simulated"] = SimulatedTravelVerifier(
+        payload,
+        observed_at=utcnow() - timedelta(minutes=10),
+    )
+
+    with pytest.raises(CoworkerError) as stale:
+        asyncio.run(
+            container.travel_quotes.verify_with_provider(
+                owner,
+                transaction_id,
+                "simulated",
+            )
+        )
+    assert stale.value.code == "travel_quote_verification_stale"
+
+    with container.repository.sessions() as db:
+        assert db.scalar(
+            select(TravelQuoteVerificationEvidence).where(
+                TravelQuoteVerificationEvidence.transaction_id == transaction_id
+            )
+        ) is None
