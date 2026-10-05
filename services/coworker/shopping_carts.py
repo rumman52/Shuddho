@@ -10,11 +10,13 @@ from .errors import CoworkerError
 from .models import (
     ShoppingCartIntent,
     ShoppingCartVerificationEvidence,
+    ShoppingCheckoutBinding,
     Transaction,
+    TransactionTermsSnapshot,
     utcnow,
 )
 from .repository import aware, iso, not_found
-from .shopping_cart_schemas import ShoppingCartReviewRequest
+from .shopping_cart_schemas import ShoppingCartReviewRequest, ShoppingCheckoutBindingRequest
 from .transaction_repository import TransactionDraft
 from .transaction_schemas import TransactionTermsDraft
 
@@ -279,6 +281,254 @@ class ShoppingCartService:
             **self.transactions.review_surface(owner, transaction_id),
             "shopping_cart": self._intent_dto(self._intent(owner, transaction_id)),
         }
+
+    @staticmethod
+    def _binding_dto(row: ShoppingCheckoutBinding) -> dict:
+        return {
+            "id": row.id,
+            "transaction_id": row.transaction_id,
+            "verification_id": row.verification_id,
+            "transaction_revision": row.transaction_revision,
+            "terms_revision": row.terms_revision,
+            "terms_sha256": row.terms_sha256,
+            "cart_sha256": row.cart_sha256,
+            "verification_snapshot_sha256": row.verification_snapshot_sha256,
+            "provider": row.provider,
+            "merchant_cart_id": row.merchant_cart_id,
+            "currency": row.currency,
+            "total_minor": row.total_minor,
+            "approval_scope_sha256": row.approval_scope_sha256,
+            "expires_at": iso(row.expires_at),
+            "created_at": iso(row.created_at),
+            "execution_available": False,
+        }
+
+    def checkout_binding(self, owner: str, transaction_id: str) -> dict:
+        self._require_enabled()
+        with self.sessions() as db:
+            row = db.scalar(
+                select(ShoppingCheckoutBinding).where(
+                    ShoppingCheckoutBinding.transaction_id == transaction_id,
+                    ShoppingCheckoutBinding.owner_id == owner,
+                )
+            )
+            if row is None:
+                raise not_found()
+            return self._binding_dto(row)
+
+    def create_checkout_binding(
+        self,
+        owner: str,
+        transaction_id: str,
+        request: ShoppingCheckoutBindingRequest,
+    ) -> tuple[dict, bool]:
+        self._require_enabled()
+        now = utcnow()
+
+        with self.sessions.begin() as db:
+            transaction = db.scalar(
+                select(Transaction).where(
+                    Transaction.id == transaction_id,
+                    Transaction.owner_id == owner,
+                ).with_for_update()
+            )
+            if transaction is None:
+                raise not_found()
+            if (
+                transaction.provider != "internal"
+                or transaction.transaction_kind != "shopping_cart_review"
+            ):
+                raise not_found()
+            if transaction.revision != request.expected_revision:
+                raise CoworkerError(
+                    "transaction_revision_conflict",
+                    "This transaction changed. Review the latest revision before continuing.",
+                    409,
+                )
+            if transaction.state != "awaiting_approval":
+                raise CoworkerError(
+                    "shopping_checkout_review_required",
+                    "Confirm the exact shopping terms before preparing checkout approval.",
+                    409,
+                )
+
+            intent = db.scalar(
+                select(ShoppingCartIntent).where(
+                    ShoppingCartIntent.transaction_id == transaction_id,
+                    ShoppingCartIntent.owner_id == owner,
+                )
+            )
+            if intent is None:
+                raise not_found()
+
+            terms = (
+                db.get(
+                    TransactionTermsSnapshot,
+                    (transaction.id, transaction.current_terms_revision),
+                )
+                if transaction.current_terms_revision is not None
+                else None
+            )
+            if terms is None or terms.owner_id != owner:
+                raise CoworkerError(
+                    "transaction_terms_stale",
+                    "The current transaction revision does not have exact final terms.",
+                    409,
+                )
+            if terms.terms_sha256 != request.terms_sha256:
+                raise CoworkerError(
+                    "transaction_terms_changed",
+                    "Transaction terms changed after review. Review the latest terms again.",
+                    409,
+                )
+            if aware(terms.quote_expires_at) <= now:
+                raise CoworkerError(
+                    "transaction_quote_expired",
+                    "The reviewed shopping quote expired. Refresh and review it again.",
+                    409,
+                )
+
+            verification = db.scalar(
+                select(ShoppingCartVerificationEvidence).where(
+                    ShoppingCartVerificationEvidence.id == request.verification_id,
+                    ShoppingCartVerificationEvidence.transaction_id == transaction_id,
+                    ShoppingCartVerificationEvidence.owner_id == owner,
+                )
+            )
+            if verification is None:
+                raise not_found()
+
+            latest_verification_id = db.scalar(
+                select(ShoppingCartVerificationEvidence.id)
+                .where(
+                    ShoppingCartVerificationEvidence.transaction_id == transaction_id,
+                    ShoppingCartVerificationEvidence.owner_id == owner,
+                )
+                .order_by(ShoppingCartVerificationEvidence.sequence.desc())
+                .limit(1)
+            )
+            if latest_verification_id != verification.id:
+                raise CoworkerError(
+                    "shopping_checkout_verification_superseded",
+                    "A newer shopping verification exists. Review the latest verification.",
+                    409,
+                )
+            if not verification.matched or verification.source_cart_sha256 != intent.cart_sha256:
+                raise CoworkerError(
+                    "shopping_checkout_verification_mismatch",
+                    "The shopping cart is not exactly verified for checkout binding.",
+                    409,
+                )
+            if verification.snapshot_sha256 != request.verification_snapshot_sha256:
+                raise CoworkerError(
+                    "shopping_checkout_verification_changed",
+                    "The shopping verification changed. Review the latest verification.",
+                    409,
+                )
+
+            observed_at = aware(verification.observed_at)
+            verification_expires = aware(verification.quote_expires_at)
+            freshness_expires = observed_at + timedelta(minutes=5)
+            expires_at = min(
+                aware(terms.quote_expires_at),
+                verification_expires,
+                freshness_expires,
+            )
+            if observed_at > now + timedelta(minutes=5):
+                raise CoworkerError(
+                    "shopping_checkout_verification_invalid",
+                    "The shopping verification observation time is invalid.",
+                    409,
+                )
+            if expires_at <= now:
+                raise CoworkerError(
+                    "shopping_checkout_verification_stale",
+                    "The shopping verification is no longer fresh enough for checkout binding.",
+                    409,
+                )
+
+            snapshot = dict(verification.snapshot or {})
+            price = snapshot.get("price")
+            if (
+                not isinstance(price, dict)
+                or price.get("currency") != terms.currency
+                or price.get("total_minor") != terms.total_minor
+                or snapshot.get("merchant_cart_id") != terms.provider_quote_id
+            ):
+                raise CoworkerError(
+                    "shopping_checkout_terms_mismatch",
+                    "Verified merchant cart totals no longer match the reviewed transaction terms.",
+                    409,
+                )
+
+            scope = {
+                "schema_version": 1,
+                "transaction_id": transaction.id,
+                "transaction_revision": transaction.revision,
+                "terms_revision": terms.revision,
+                "terms_sha256": terms.terms_sha256,
+                "cart_sha256": intent.cart_sha256,
+                "verification_id": verification.id,
+                "verification_snapshot_sha256": verification.snapshot_sha256,
+                "provider": verification.provider,
+                "merchant_cart_id": verification.merchant_cart_id,
+                "currency": terms.currency,
+                "total_minor": terms.total_minor,
+                "expires_at": expires_at.isoformat(),
+                "authority": "binding_only_no_execution",
+            }
+            approval_scope_sha256 = stable_digest(scope)
+
+            existing = db.scalar(
+                select(ShoppingCheckoutBinding).where(
+                    ShoppingCheckoutBinding.transaction_id == transaction_id,
+                    ShoppingCheckoutBinding.owner_id == owner,
+                )
+            )
+            if existing is not None:
+                exact = (
+                    existing.transaction_revision == transaction.revision
+                    and existing.terms_revision == terms.revision
+                    and existing.terms_sha256 == terms.terms_sha256
+                    and existing.cart_sha256 == intent.cart_sha256
+                    and existing.verification_id == verification.id
+                    and existing.verification_snapshot_sha256 == verification.snapshot_sha256
+                    and existing.provider == verification.provider
+                    and existing.merchant_cart_id == verification.merchant_cart_id
+                    and existing.currency == terms.currency
+                    and existing.total_minor == terms.total_minor
+                    and existing.approval_scope_sha256 == approval_scope_sha256
+                    and aware(existing.expires_at) == expires_at
+                )
+                if exact:
+                    return self._binding_dto(existing), False
+                raise CoworkerError(
+                    "shopping_checkout_binding_conflict",
+                    "A different checkout binding already exists for this transaction.",
+                    409,
+                )
+
+            row = ShoppingCheckoutBinding(
+                id=str(uuid4()),
+                transaction_id=transaction.id,
+                owner_id=owner,
+                verification_id=verification.id,
+                transaction_revision=transaction.revision,
+                terms_revision=terms.revision,
+                terms_sha256=terms.terms_sha256,
+                cart_sha256=intent.cart_sha256,
+                verification_snapshot_sha256=verification.snapshot_sha256,
+                provider=verification.provider,
+                merchant_cart_id=verification.merchant_cart_id,
+                currency=terms.currency,
+                total_minor=terms.total_minor,
+                approval_scope_sha256=approval_scope_sha256,
+                expires_at=expires_at,
+                created_at=utcnow(),
+            )
+            db.add(row)
+            db.flush()
+            return self._binding_dto(row), True
 
     def create(
         self,
