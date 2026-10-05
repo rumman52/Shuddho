@@ -268,3 +268,102 @@ def test_tx21_rejects_sync_adapter_methods():
             SyncAdapter(),
             now=utcnow(),
         )
+
+
+@pytest.mark.parametrize(
+    "adapter_factory",
+    [
+        lambda: type(
+            "MissingCreateArgsAdapter",
+            (QualifiedTravelAdapter,),
+            {
+                "create_booking": (lambda self: None),
+            },
+        )(),
+    ],
+)
+def test_tx21_rejects_missing_or_wrong_create_signature(adapter_factory):
+    adapter = adapter_factory()
+    with pytest.raises(TravelBookingAdapterAdmissionError):
+        admit_travel_booking_adapter(proposal(), adapter, now=utcnow())
+
+
+def test_tx21_rejects_positional_create_parameters():
+    class PositionalCreateAdapter(QualifiedTravelAdapter):
+        async def create_booking(self, preview, traveler_data, idempotency_key):
+            return {}
+
+    with pytest.raises(TravelBookingAdapterAdmissionError):
+        admit_travel_booking_adapter(
+            proposal(),
+            PositionalCreateAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx21_rejects_varargs_create_signature():
+    class VarArgsCreateAdapter(QualifiedTravelAdapter):
+        async def create_booking(self, *args, **kwargs):
+            return {}
+
+    with pytest.raises(TravelBookingAdapterAdmissionError):
+        admit_travel_booking_adapter(
+            proposal(),
+            VarArgsCreateAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx21_rejects_extra_create_parameter():
+    class ExtraCreateAdapter(QualifiedTravelAdapter):
+        async def create_booking(
+            self,
+            *,
+            preview: dict,
+            traveler_data: dict,
+            idempotency_key: str,
+            extra: str,
+        ) -> dict:
+            return {}
+
+    with pytest.raises(TravelBookingAdapterAdmissionError):
+        admit_travel_booking_adapter(
+            proposal(),
+            ExtraCreateAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx21_rejects_lookup_parameters_without_none_defaults():
+    class WrongLookupDefaultsAdapter(QualifiedTravelAdapter):
+        async def lookup_booking(
+            self,
+            *,
+            idempotency_key: str | None,
+            provider_booking_id: str | None,
+        ) -> dict | None:
+            return None
+
+    with pytest.raises(TravelBookingAdapterAdmissionError):
+        admit_travel_booking_adapter(
+            proposal(),
+            WrongLookupDefaultsAdapter(),
+            now=utcnow(),
+        )
+
+
+def test_tx21_rejects_positional_lookup_parameters():
+    class PositionalLookupAdapter(QualifiedTravelAdapter):
+        async def lookup_booking(
+            self,
+            idempotency_key: str | None = None,
+            provider_booking_id: str | None = None,
+        ) -> dict | None:
+            return None
+
+    with pytest.raises(TravelBookingAdapterAdmissionError):
+        admit_travel_booking_adapter(
+            proposal(),
+            PositionalLookupAdapter(),
+            now=utcnow(),
+        )

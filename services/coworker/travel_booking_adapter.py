@@ -147,6 +147,42 @@ def _canonical_unique_strings(
     return value
 
 
+def _require_exact_async_signature(
+    method: object,
+    *,
+    label: str,
+    required: tuple[str, ...],
+    optional_none: tuple[str, ...] = (),
+) -> None:
+    if not inspect.iscoroutinefunction(method):
+        raise TravelBookingAdapterAdmissionError(
+            f"{label} must be asynchronous."
+        )
+
+    signature = inspect.signature(method)
+    parameters = list(signature.parameters.values())
+    expected_names = list(required) + list(optional_none)
+
+    if [item.name for item in parameters] != expected_names:
+        raise TravelBookingAdapterAdmissionError(
+            f"{label} must declare exactly: {', '.join(expected_names)}."
+        )
+
+    for item in parameters:
+        if item.kind is not inspect.Parameter.KEYWORD_ONLY:
+            raise TravelBookingAdapterAdmissionError(
+                f"{label} parameters must be keyword-only."
+            )
+        if item.name in required and item.default is not inspect.Parameter.empty:
+            raise TravelBookingAdapterAdmissionError(
+                f"{label} required parameters cannot define defaults."
+            )
+        if item.name in optional_none and item.default is not None:
+            raise TravelBookingAdapterAdmissionError(
+                f"{label} optional lookup parameters must default to None."
+            )
+
+
 @runtime_checkable
 class TravelBookingProviderAdapter(Protocol):
     """Structural contract for a future real travel-booking adapter.
@@ -512,13 +548,17 @@ def admit_travel_booking_adapter(
         raise TravelBookingAdapterAdmissionError(
             "Travel booking adapter does not implement the required structural protocol."
         )
-    if (
-        not inspect.iscoroutinefunction(adapter.create_booking)
-        or not inspect.iscoroutinefunction(adapter.lookup_booking)
-    ):
-        raise TravelBookingAdapterAdmissionError(
-            "Travel booking mutation and lookup methods must be asynchronous."
-        )
+    _require_exact_async_signature(
+        adapter.create_booking,
+        label="Travel booking adapter create_booking",
+        required=("preview", "traveler_data", "idempotency_key"),
+    )
+    _require_exact_async_signature(
+        adapter.lookup_booking,
+        label="Travel booking adapter lookup_booking",
+        required=(),
+        optional_none=("idempotency_key", "provider_booking_id"),
+    )
 
     expected_metadata = {
         "provider_name": proposal["provider"],
