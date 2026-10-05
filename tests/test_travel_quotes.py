@@ -151,7 +151,7 @@ def test_tx08_api_records_exact_flight_quote_without_execution_authority(contain
     assert len(value["travel_quote"]["quote_sha256"]) == 64
 
     with container.repository.sessions() as db:
-        assert db.scalar(select(ExternalAction).where(ExternalAction.owner_id == tx["id"])) is None
+        assert db.scalar(select(ExternalAction).where(ExternalAction.owner_id == client.get("/api/v1/me", headers=alice).json()["account_id"])) is None
 
     replay = client.post(
         "/api/v1/travel-quotes",
