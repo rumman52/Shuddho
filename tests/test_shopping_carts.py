@@ -21,6 +21,7 @@ from services.coworker.models import (
     ExternalAction,
     ShoppingCartIntent,
     ShoppingCartVerificationEvidence,
+    ShoppingCheckoutBinding,
     utcnow,
 )
 from services.coworker.shopping_cart_schemas import (
@@ -546,3 +547,293 @@ def test_tx11_account_erasure_removes_verification_evidence(container):
                 ShoppingCartVerificationEvidence.transaction_id == transaction_id
             )
         ) is None
+
+
+def _tx12_verified_reviewed_cart(container, client, headers, subject: str):
+    auth = headers(subject)
+    payload = cart_payload()
+    created = client.post(
+        "/api/v1/shopping-carts",
+        headers=auth | {"Idempotency-Key": f"{subject}-cart"},
+        json=payload,
+    )
+    assert created.status_code == 201
+    surface = created.json()
+    transaction_id = surface["transaction"]["id"]
+    owner = client.get("/api/v1/me", headers=auth).json()["account_id"]
+
+    container.shopping_carts.verifiers["simulated"] = SimulatedShoppingVerifier(payload)
+    verified = asyncio.run(
+        container.shopping_carts.verify_with_provider(
+            owner,
+            transaction_id,
+            "simulated",
+        )
+    )
+    evidence = verified["shopping_cart"]["latest_verification"]
+    assert evidence["matched"] is True
+
+    review = client.post(
+        f"/api/v1/transactions/{transaction_id}/review",
+        headers=auth,
+        json={"expected_revision": surface["transaction"]["revision"]},
+    )
+    assert review.status_code == 200
+    confirmed = client.post(
+        f"/api/v1/transactions/{transaction_id}/review/confirm",
+        headers=auth,
+        json={
+            "expected_revision": review.json()["revision"],
+            "terms_sha256": surface["terms"]["terms_sha256"],
+        },
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["transaction"]["state"] == "awaiting_approval"
+    return {
+        "auth": auth,
+        "owner": owner,
+        "payload": payload,
+        "surface": surface,
+        "transaction_id": transaction_id,
+        "evidence": evidence,
+        "confirmed": confirmed.json(),
+    }
+
+
+def test_tx12_exact_checkout_binding_is_inert_and_idempotent(container, signed_client):
+    enable_shopping_carts(container)
+    client, headers = signed_client
+    value = _tx12_verified_reviewed_cart(container, client, headers, "tx12-exact")
+    transaction_id = value["transaction_id"]
+    confirmed = value["confirmed"]
+    evidence = value["evidence"]
+
+    request = {
+        "expected_revision": confirmed["transaction"]["revision"],
+        "terms_sha256": value["surface"]["terms"]["terms_sha256"],
+        "verification_id": evidence["id"],
+        "verification_snapshot_sha256": evidence["snapshot_sha256"],
+    }
+    created = client.post(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout-binding",
+        headers=value["auth"],
+        json=request,
+    )
+    assert created.status_code == 201
+    assert created.headers["idempotent-replayed"] == "false"
+    binding = created.json()
+    assert binding["transaction_id"] == transaction_id
+    assert binding["verification_id"] == evidence["id"]
+    assert binding["terms_sha256"] == request["terms_sha256"]
+    assert binding["verification_snapshot_sha256"] == evidence["snapshot_sha256"]
+    assert binding["currency"] == "USD"
+    assert binding["total_minor"] == 7000
+    assert len(binding["approval_scope_sha256"]) == 64
+    assert binding["execution_available"] is False
+
+    replay = client.post(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout-binding",
+        headers=value["auth"],
+        json=request,
+    )
+    assert replay.status_code == 201
+    assert replay.headers["idempotent-replayed"] == "true"
+    assert replay.json()["id"] == binding["id"]
+
+    fetched = client.get(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout-binding",
+        headers=value["auth"],
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["id"] == binding["id"]
+
+    transaction = client.get(
+        f"/api/v1/transactions/{transaction_id}",
+        headers=value["auth"],
+    )
+    assert transaction.status_code == 200
+    assert transaction.json()["transaction"]["state"] == "awaiting_approval"
+    assert transaction.json()["execution"]["available"] is False
+
+    with container.repository.sessions() as db:
+        assert db.scalar(
+            select(ExternalAction).where(ExternalAction.owner_id == value["owner"])
+        ) is None
+
+    assert client.post(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout",
+        headers=value["auth"],
+        json={},
+    ).status_code in {404, 405}
+    assert client.post(
+        f"/api/v1/transactions/{transaction_id}/execute",
+        headers=value["auth"],
+        json={},
+    ).status_code in {404, 405}
+
+
+def test_tx12_rejects_changed_or_superseded_verification(container, signed_client):
+    enable_shopping_carts(container)
+    client, headers = signed_client
+    value = _tx12_verified_reviewed_cart(container, client, headers, "tx12-change")
+    transaction_id = value["transaction_id"]
+    confirmed = value["confirmed"]
+    evidence = value["evidence"]
+
+    wrong_hash = client.post(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout-binding",
+        headers=value["auth"],
+        json={
+            "expected_revision": confirmed["transaction"]["revision"],
+            "terms_sha256": value["surface"]["terms"]["terms_sha256"],
+            "verification_id": evidence["id"],
+            "verification_snapshot_sha256": "0" * 64,
+        },
+    )
+    assert wrong_hash.status_code == 409
+    assert wrong_hash.json()["error"]["code"] == "shopping_checkout_verification_changed"
+
+    container.shopping_carts.verifiers["simulated"] = SimulatedShoppingVerifier(value["payload"])
+    newer = asyncio.run(
+        container.shopping_carts.verify_with_provider(
+            value["owner"],
+            transaction_id,
+            "simulated",
+        )
+    )["shopping_cart"]["latest_verification"]
+    assert newer["id"] != evidence["id"]
+
+    superseded = client.post(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout-binding",
+        headers=value["auth"],
+        json={
+            "expected_revision": confirmed["transaction"]["revision"],
+            "terms_sha256": value["surface"]["terms"]["terms_sha256"],
+            "verification_id": evidence["id"],
+            "verification_snapshot_sha256": evidence["snapshot_sha256"],
+        },
+    )
+    assert superseded.status_code == 409
+    assert superseded.json()["error"]["code"] == "shopping_checkout_verification_superseded"
+
+
+def test_tx12_rejects_mismatched_or_stale_verification(container, signed_client):
+    enable_shopping_carts(container)
+    client, headers = signed_client
+    auth = headers("tx12-mismatch")
+    payload = cart_payload()
+    created = client.post(
+        "/api/v1/shopping-carts",
+        headers=auth | {"Idempotency-Key": "tx12-mismatch-cart"},
+        json=payload,
+    ).json()
+    transaction_id = created["transaction"]["id"]
+    owner = client.get("/api/v1/me", headers=auth).json()["account_id"]
+
+    container.shopping_carts.verifiers["simulated"] = SimulatedShoppingVerifier(
+        payload,
+        price_delta_minor=25,
+    )
+    mismatched = asyncio.run(
+        container.shopping_carts.verify_with_provider(owner, transaction_id, "simulated")
+    )["shopping_cart"]["latest_verification"]
+    review = client.post(
+        f"/api/v1/transactions/{transaction_id}/review",
+        headers=auth,
+        json={"expected_revision": created["transaction"]["revision"]},
+    ).json()
+    confirmed = client.post(
+        f"/api/v1/transactions/{transaction_id}/review/confirm",
+        headers=auth,
+        json={
+            "expected_revision": review["revision"],
+            "terms_sha256": created["terms"]["terms_sha256"],
+        },
+    ).json()
+
+    rejected = client.post(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout-binding",
+        headers=auth,
+        json={
+            "expected_revision": confirmed["transaction"]["revision"],
+            "terms_sha256": created["terms"]["terms_sha256"],
+            "verification_id": mismatched["id"],
+            "verification_snapshot_sha256": mismatched["snapshot_sha256"],
+        },
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "shopping_checkout_verification_mismatch"
+
+    fresh = _tx12_verified_reviewed_cart(container, client, headers, "tx12-stale")
+    with container.repository.sessions.begin() as db:
+        row = db.get(ShoppingCartVerificationEvidence, fresh["evidence"]["id"])
+        row.observed_at = utcnow() - timedelta(minutes=6)
+
+    stale = client.post(
+        f'/api/v1/shopping-carts/{fresh["transaction_id"]}/checkout-binding',
+        headers=fresh["auth"],
+        json={
+            "expected_revision": fresh["confirmed"]["transaction"]["revision"],
+            "terms_sha256": fresh["surface"]["terms"]["terms_sha256"],
+            "verification_id": fresh["evidence"]["id"],
+            "verification_snapshot_sha256": fresh["evidence"]["snapshot_sha256"],
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "shopping_checkout_verification_stale"
+
+
+def test_tx12_rejects_tampered_verification_snapshot(container, signed_client):
+    enable_shopping_carts(container)
+    client, headers = signed_client
+    value = _tx12_verified_reviewed_cart(container, client, headers, "tx12-integrity")
+    with container.repository.sessions.begin() as db:
+        row = db.get(ShoppingCartVerificationEvidence, value["evidence"]["id"])
+        tampered = dict(row.snapshot)
+        tampered["merchant_name"] = "Tampered Merchant"
+        row.snapshot = tampered
+
+    response = client.post(
+        f'/api/v1/shopping-carts/{value["transaction_id"]}/checkout-binding',
+        headers=value["auth"],
+        json={
+            "expected_revision": value["confirmed"]["transaction"]["revision"],
+            "terms_sha256": value["surface"]["terms"]["terms_sha256"],
+            "verification_id": value["evidence"]["id"],
+            "verification_snapshot_sha256": value["evidence"]["snapshot_sha256"],
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "shopping_checkout_verification_integrity"
+
+
+def test_tx12_checkout_binding_is_owner_scoped_and_erased(container, signed_client):
+    enable_shopping_carts(container)
+    client, headers = signed_client
+    value = _tx12_verified_reviewed_cart(container, client, headers, "tx12-owner")
+    transaction_id = value["transaction_id"]
+    request = {
+        "expected_revision": value["confirmed"]["transaction"]["revision"],
+        "terms_sha256": value["surface"]["terms"]["terms_sha256"],
+        "verification_id": value["evidence"]["id"],
+        "verification_snapshot_sha256": value["evidence"]["snapshot_sha256"],
+    }
+    created = client.post(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout-binding",
+        headers=value["auth"],
+        json=request,
+    )
+    assert created.status_code == 201
+    binding_id = created.json()["id"]
+
+    other = headers("tx12-other")
+    hidden = client.get(
+        f"/api/v1/shopping-carts/{transaction_id}/checkout-binding",
+        headers=other,
+    )
+    assert hidden.status_code == 404
+
+    result = container.retention.erase_account(value["owner"])
+    assert result["database_erased"] is True
+    with container.repository.sessions() as db:
+        assert db.get(ShoppingCheckoutBinding, binding_id) is None

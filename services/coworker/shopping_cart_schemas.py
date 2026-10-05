@@ -106,3 +106,10 @@ class ShoppingCartReviewRequest(Strict):
         if subtotal != self.price.subtotal_minor:
             raise ValueError("Shopping subtotal must equal the sum of item line totals")
         return self
+
+
+class ShoppingCheckoutBindingRequest(Strict):
+    expected_revision: StrictInt = Field(ge=1)
+    terms_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    verification_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")]
+    verification_snapshot_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]

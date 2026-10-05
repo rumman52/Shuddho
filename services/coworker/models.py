@@ -789,6 +789,63 @@ class ShoppingCartVerificationEvidence(Base):
     )
 
 
+class ShoppingCheckoutBinding(Base):
+    """Immutable TX-12 reviewed checkout source binding; never execution authority."""
+
+    __tablename__ = "cw_shopping_checkout_bindings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    verification_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_shopping_cart_verifications.id")
+    )
+    transaction_revision: Mapped[int] = mapped_column(Integer)
+    terms_revision: Mapped[int] = mapped_column(Integer)
+    terms_sha256: Mapped[str] = mapped_column(String(64))
+    cart_sha256: Mapped[str] = mapped_column(String(64))
+    verification_snapshot_sha256: Mapped[str] = mapped_column(String(64))
+    provider: Mapped[str] = mapped_column(String(80))
+    merchant_cart_id: Mapped[str] = mapped_column(String(255))
+    currency: Mapped[str] = mapped_column(String(3))
+    total_minor: Mapped[int] = mapped_column(BigInteger)
+    approval_scope_sha256: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "owner_id"],
+            ["cw_transactions.id", "cw_transactions.owner_id"],
+            name="fk_cw_shopping_checkout_bindings_transaction_owner",
+        ),
+        CheckConstraint(
+            "transaction_revision >= 1 AND terms_revision >= 1",
+            name="ck_cw_shopping_checkout_bindings_revisions",
+        ),
+        CheckConstraint(
+            "length(terms_sha256) = 64",
+            name="ck_cw_shopping_checkout_bindings_terms_sha256",
+        ),
+        CheckConstraint(
+            "length(cart_sha256) = 64",
+            name="ck_cw_shopping_checkout_bindings_cart_sha256",
+        ),
+        CheckConstraint(
+            "length(verification_snapshot_sha256) = 64",
+            name="ck_cw_shopping_checkout_bindings_verification_snapshot_sha256",
+        ),
+        CheckConstraint(
+            "length(approval_scope_sha256) = 64",
+            name="ck_cw_shopping_checkout_bindings_scope_sha256",
+        ),
+        CheckConstraint("total_minor >= 0", name="ck_cw_shopping_checkout_bindings_total_minor"),
+        Index(
+            "cw_shopping_checkout_bindings_owner_transaction",
+            "owner_id",
+            "transaction_id",
+        ),
+    )
+
+
 class TravelQuoteIntent(Base):
     """Immutable TX-08 review-only travel quote evidence."""
 
