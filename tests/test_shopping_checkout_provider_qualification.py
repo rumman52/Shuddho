@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from services.coworker.models import utcnow
 from services.coworker.action_registry import action_spec, registered_transaction_operations
 from scripts.shopping_checkout_provider_qualification import (
     ShoppingCheckoutQualificationError,
@@ -15,6 +14,10 @@ from scripts.shopping_checkout_provider_qualification import (
 
 REVISION = "a" * 40
 EVIDENCE_SHA = "b" * 64
+
+
+def utcnow():
+    return datetime.now(timezone.utc)
 
 
 def evidence():
