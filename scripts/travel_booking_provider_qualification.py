@@ -286,6 +286,14 @@ def validate_travel_booking_provider_qualification(
             "Traveler-data boundary exceeds the permitted Shuddho disclosure model."
         )
 
+    normalized_traveler_boundary = {
+        **traveler,
+        "required_fields": sorted(required_fields),
+        "shuddho_transmitted_fields": sorted(shuddho_fields),
+        "provider_hosted_fields": sorted(provider_hosted_fields),
+    }
+    traveler_data_boundary_sha256 = canonical_sha256(normalized_traveler_boundary)
+
     idempotency = _require_exact_keys(
         root["idempotency"],
         {"supported", "key_scope", "duplicate_result"},
@@ -389,6 +397,8 @@ def validate_travel_booking_provider_qualification(
             "verified_at",
             "source_revision",
             "booking_origin",
+            "travel_kind",
+            "traveler_data_boundary_sha256",
             "traveler_minimization_passed",
             "idempotency_passed",
             "reconciliation_passed",
@@ -416,6 +426,20 @@ def validate_travel_booking_provider_qualification(
     ):
         raise TravelBookingQualificationError(
             "Live probe booking origin does not match the reviewed provider origin."
+        )
+    if probe["travel_kind"] != kinds[0]:
+        raise TravelBookingQualificationError(
+            "Live probe travel kind does not match the qualified travel kind."
+        )
+    if (
+        _sha(
+            probe["traveler_data_boundary_sha256"],
+            "live_probe.traveler_data_boundary_sha256",
+        )
+        != traveler_data_boundary_sha256
+    ):
+        raise TravelBookingQualificationError(
+            "Live probe traveler-data boundary does not match the reviewed minimization contract."
         )
     for key in (
         "traveler_minimization_passed",
@@ -459,12 +483,7 @@ def validate_travel_booking_provider_qualification(
             **credentials,
             "scopes": sorted(scopes),
         },
-        "traveler_data_boundary": {
-            **traveler,
-            "required_fields": sorted(required_fields),
-            "shuddho_transmitted_fields": sorted(shuddho_fields),
-            "provider_hosted_fields": sorted(provider_hosted_fields),
-        },
+        "traveler_data_boundary": normalized_traveler_boundary,
         "idempotency": idempotency,
         "reconciliation": {
             **reconciliation,
