@@ -652,7 +652,8 @@ def test_tx12_exact_checkout_binding_is_inert_and_idempotent(container, signed_c
         headers=value["auth"],
     )
     assert transaction.status_code == 200
-    assert transaction.json()["state"] == "awaiting_approval"
+    assert transaction.json()["transaction"]["state"] == "awaiting_approval"
+    assert transaction.json()["execution"]["available"] is False
 
     with container.repository.sessions() as db:
         assert db.scalar(
