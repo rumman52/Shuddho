@@ -86,6 +86,7 @@ def test_tx18_builds_exact_non_executable_travel_booking_preview():
     assert preview["execution_authority"] == "not_registered"
     assert preview["identity_authority"] == "not_bound"
     assert preview["payment_authority"] == "not_authorized"
+    assert "prepared_at" in preview
     assert value["preview_hash"] == stable_digest(preview)
 
     forbidden = {
@@ -207,6 +208,69 @@ def test_tx18_rejects_future_receipt_timestamp():
     }
     with pytest.raises(CoworkerError) as error:
         validate_travel_booking_receipt(built["preview"], receipt, now=now)
+    assert error.value.code == "travel_booking_receipt_invalid"
+
+
+
+
+def test_tx18_rejects_receipt_that_predates_preview():
+    now = utcnow()
+    built = build_travel_booking_preview(binding_payload(), now=now)
+    receipt = {
+        "provider": "example_travel",
+        "provider_booking_id": "booking-456",
+        "provider_quote_id": "quote-123",
+        "travel_kind": "flight",
+        "currency": "USD",
+        "total_minor": 50000,
+        "status": "confirmed",
+        "confirmed_at": (now - timedelta(minutes=6)).isoformat(),
+    }
+    with pytest.raises(CoworkerError) as error:
+        validate_travel_booking_receipt(built["preview"], receipt, now=now)
+    assert error.value.code == "travel_booking_receipt_invalid"
+
+
+def test_tx18_rejects_receipt_after_binding_expiry():
+    now = utcnow()
+    binding = binding_payload(
+        expires_at=(now + timedelta(minutes=1)).isoformat(),
+    )
+    scope = {
+        "schema_version": 1,
+        "transaction_id": binding["transaction_id"],
+        "transaction_revision": binding["transaction_revision"],
+        "terms_revision": binding["terms_revision"],
+        "terms_sha256": binding["terms_sha256"],
+        "quote_sha256": binding["quote_sha256"],
+        "verification_id": binding["verification_id"],
+        "verification_snapshot_sha256": binding["verification_snapshot_sha256"],
+        "travel_kind": binding["travel_kind"],
+        "provider": binding["provider"],
+        "provider_quote_id": binding["provider_quote_id"],
+        "currency": binding["currency"],
+        "total_minor": binding["total_minor"],
+        "expires_at": binding["expires_at"],
+        "authority": "binding_only_no_execution",
+    }
+    binding["approval_scope_sha256"] = stable_digest(scope)
+    built = build_travel_booking_preview(binding, now=now)
+    receipt = {
+        "provider": "example_travel",
+        "provider_booking_id": "booking-456",
+        "provider_quote_id": "quote-123",
+        "travel_kind": "flight",
+        "currency": "USD",
+        "total_minor": 50000,
+        "status": "confirmed",
+        "confirmed_at": (now + timedelta(minutes=2)).isoformat(),
+    }
+    with pytest.raises(CoworkerError) as error:
+        validate_travel_booking_receipt(
+            built["preview"],
+            receipt,
+            now=now + timedelta(minutes=2),
+        )
     assert error.value.code == "travel_booking_receipt_invalid"
 
 
