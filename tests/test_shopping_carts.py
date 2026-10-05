@@ -262,6 +262,26 @@ def test_tx10_review_confirmation_still_cannot_checkout_or_pay(container, signed
             quoted_at=(utcnow() - timedelta(hours=2)).isoformat(),
             quote_expires_at=(utcnow() - timedelta(hours=1)).isoformat(),
         ),
+        cart_payload(
+            items=[
+                {
+                    "product_id": "overflow",
+                    "title": "Overflow price",
+                    "quantity": 1,
+                    "unit_price_minor": 9_223_372_036_854_775_808,
+                    "line_total_minor": 9_223_372_036_854_775_808,
+                }
+            ],
+            price={
+                "currency": "USD",
+                "subtotal_minor": 9_223_372_036_854_775_808,
+                "tax_minor": 0,
+                "fees_minor": 0,
+                "shipping_minor": 0,
+                "discount_minor": 0,
+                "total_minor": 9_223_372_036_854_775_808,
+            },
+        ),
     ],
 )
 def test_tx10_schema_rejects_invalid_cart_evidence(container, signed_client, payload):
