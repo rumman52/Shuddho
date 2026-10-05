@@ -145,3 +145,25 @@ jobs:
         with:
           name: coworker-browser-screenshots
           path: /tmp/shuddho-coworker-browser/screenshots/
+
+  ci-merge-gate:
+    name: ci-merge-gate
+    if: always()
+    needs:
+      - test-and-build
+      - coworker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require complete CI success
+        env:
+          TEST_AND_BUILD_RESULT: ${{ needs.test-and-build.result }}
+          COWORKER_RESULT: ${{ needs.coworker.result }}
+        run: |
+          echo "test-and-build=$TEST_AND_BUILD_RESULT"
+          echo "coworker=$COWORKER_RESULT"
+          if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ]; then
+            echo "CI merge gate failed: every required upstream job must succeed."
+            exit 1
+          fi
+          echo "CI merge gate passed."
+
