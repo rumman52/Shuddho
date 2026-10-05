@@ -9,6 +9,8 @@ from .action_registry import stable_digest
 from .errors import CoworkerError
 from .models import (
     Transaction,
+    TransactionTermsSnapshot,
+    TravelBookingBinding,
     TravelQuoteIntent,
     TravelQuoteVerificationEvidence,
     utcnow,
@@ -16,7 +18,7 @@ from .models import (
 from .repository import aware, iso, not_found
 from .transaction_repository import TransactionDraft
 from .transaction_schemas import TransactionTermsDraft
-from .travel_quote_schemas import TravelQuoteRequest
+from .travel_quote_schemas import TravelBookingBindingRequest, TravelQuoteRequest
 
 
 class TravelQuoteService:
@@ -318,6 +320,290 @@ class TravelQuoteService:
             **self.transactions.review_surface(owner, transaction_id),
             "travel_quote": self._intent_dto(self._intent(owner, transaction_id)),
         }
+
+    @staticmethod
+    def _booking_binding_dto(row: TravelBookingBinding) -> dict:
+        return {
+            "id": row.id,
+            "transaction_id": row.transaction_id,
+            "verification_id": row.verification_id,
+            "transaction_revision": row.transaction_revision,
+            "terms_revision": row.terms_revision,
+            "terms_sha256": row.terms_sha256,
+            "quote_sha256": row.quote_sha256,
+            "verification_snapshot_sha256": row.verification_snapshot_sha256,
+            "travel_kind": row.travel_kind,
+            "provider": row.provider,
+            "provider_quote_id": row.provider_quote_id,
+            "currency": row.currency,
+            "total_minor": row.total_minor,
+            "approval_scope_sha256": row.approval_scope_sha256,
+            "expires_at": iso(row.expires_at),
+            "created_at": iso(row.created_at),
+            "execution_available": False,
+        }
+
+    def booking_binding(self, owner: str, transaction_id: str) -> dict:
+        self._require_enabled()
+        with self.sessions() as db:
+            row = db.scalar(
+                select(TravelBookingBinding).where(
+                    TravelBookingBinding.transaction_id == transaction_id,
+                    TravelBookingBinding.owner_id == owner,
+                )
+            )
+            if row is None:
+                raise not_found()
+            return self._booking_binding_dto(row)
+
+    def create_booking_binding(
+        self,
+        owner: str,
+        transaction_id: str,
+        request: TravelBookingBindingRequest,
+    ) -> tuple[dict, bool]:
+        self._require_enabled()
+        now = utcnow()
+
+        with self.sessions.begin() as db:
+            transaction = db.scalar(
+                select(Transaction).where(
+                    Transaction.id == transaction_id,
+                    Transaction.owner_id == owner,
+                ).with_for_update()
+            )
+            if transaction is None:
+                raise not_found()
+            if (
+                transaction.provider != "internal"
+                or transaction.transaction_kind not in {"travel_flight", "travel_lodging"}
+            ):
+                raise not_found()
+            if transaction.revision != request.expected_revision:
+                raise CoworkerError(
+                    "transaction_revision_conflict",
+                    "This transaction changed. Review the latest revision before continuing.",
+                    409,
+                )
+            if transaction.state != "awaiting_approval":
+                raise CoworkerError(
+                    "travel_booking_review_required",
+                    "Confirm the exact travel terms before preparing booking approval.",
+                    409,
+                )
+
+            intent = db.scalar(
+                select(TravelQuoteIntent).where(
+                    TravelQuoteIntent.transaction_id == transaction_id,
+                    TravelQuoteIntent.owner_id == owner,
+                )
+            )
+            if intent is None:
+                raise not_found()
+            stored_quote = dict(intent.quote or {})
+            if stable_digest(stored_quote) != intent.quote_sha256:
+                raise CoworkerError(
+                    "travel_booking_quote_integrity",
+                    "The stored travel quote no longer matches its immutable digest.",
+                    409,
+                )
+            quote = TravelQuoteRequest.model_validate(stored_quote)
+            expected_kind = (
+                "travel_flight" if quote.travel_kind == "flight" else "travel_lodging"
+            )
+            if transaction.transaction_kind != expected_kind:
+                raise CoworkerError(
+                    "travel_booking_quote_integrity",
+                    "The travel transaction kind no longer matches its quote evidence.",
+                    409,
+                )
+
+            terms = (
+                db.get(
+                    TransactionTermsSnapshot,
+                    (transaction.id, transaction.current_terms_revision),
+                )
+                if transaction.current_terms_revision is not None
+                else None
+            )
+            if terms is None or terms.owner_id != owner:
+                raise CoworkerError(
+                    "transaction_terms_stale",
+                    "The current transaction revision does not have exact final terms.",
+                    409,
+                )
+            if terms.terms_sha256 != request.terms_sha256:
+                raise CoworkerError(
+                    "transaction_terms_changed",
+                    "Transaction terms changed after review. Review the latest terms again.",
+                    409,
+                )
+            if aware(terms.quote_expires_at) <= now:
+                raise CoworkerError(
+                    "transaction_quote_expired",
+                    "The reviewed travel quote expired. Refresh and review it again.",
+                    409,
+                )
+
+            verification = db.scalar(
+                select(TravelQuoteVerificationEvidence).where(
+                    TravelQuoteVerificationEvidence.id == request.verification_id,
+                    TravelQuoteVerificationEvidence.transaction_id == transaction_id,
+                    TravelQuoteVerificationEvidence.owner_id == owner,
+                )
+            )
+            if verification is None:
+                raise not_found()
+
+            latest_verification_id = db.scalar(
+                select(TravelQuoteVerificationEvidence.id)
+                .where(
+                    TravelQuoteVerificationEvidence.transaction_id == transaction_id,
+                    TravelQuoteVerificationEvidence.owner_id == owner,
+                )
+                .order_by(TravelQuoteVerificationEvidence.sequence.desc())
+                .limit(1)
+            )
+            if latest_verification_id != verification.id:
+                raise CoworkerError(
+                    "travel_booking_verification_superseded",
+                    "A newer travel verification exists. Review the latest verification.",
+                    409,
+                )
+
+            stored_snapshot = dict(verification.snapshot or {})
+            if stable_digest(stored_snapshot) != verification.snapshot_sha256:
+                raise CoworkerError(
+                    "travel_booking_verification_integrity",
+                    "The stored travel verification no longer matches its immutable digest.",
+                    409,
+                )
+            if (
+                not verification.matched
+                or bool(verification.mismatches)
+                or verification.source_quote_sha256 != intent.quote_sha256
+            ):
+                raise CoworkerError(
+                    "travel_booking_verification_mismatch",
+                    "The travel quote is not exactly verified for booking binding.",
+                    409,
+                )
+            if verification.snapshot_sha256 != request.verification_snapshot_sha256:
+                raise CoworkerError(
+                    "travel_booking_verification_changed",
+                    "The travel verification changed. Review the latest verification.",
+                    409,
+                )
+
+            observed_at = aware(verification.observed_at)
+            verification_expires = aware(verification.quote_expires_at)
+            freshness_expires = observed_at + timedelta(minutes=5)
+            expires_at = min(
+                aware(terms.quote_expires_at),
+                verification_expires,
+                freshness_expires,
+            )
+            if observed_at > now + timedelta(minutes=5):
+                raise CoworkerError(
+                    "travel_booking_verification_invalid",
+                    "The travel verification observation time is invalid.",
+                    409,
+                )
+            if expires_at <= now:
+                raise CoworkerError(
+                    "travel_booking_verification_stale",
+                    "The travel verification is no longer fresh enough for booking binding.",
+                    409,
+                )
+
+            price = stored_snapshot.get("price")
+            if (
+                not isinstance(price, dict)
+                or stored_snapshot.get("provider") != verification.provider
+                or stored_snapshot.get("provider_quote_id") != verification.provider_quote_id
+                or stored_snapshot.get("travel_kind") != quote.travel_kind
+                or verification.provider_quote_id != quote.provider_quote_id
+                or terms.provider_quote_id != quote.provider_quote_id
+                or price.get("currency") != terms.currency
+                or price.get("total_minor") != terms.total_minor
+            ):
+                raise CoworkerError(
+                    "travel_booking_terms_mismatch",
+                    "Verified travel terms no longer match the reviewed transaction terms.",
+                    409,
+                )
+
+            scope = {
+                "schema_version": 1,
+                "transaction_id": transaction.id,
+                "transaction_revision": transaction.revision,
+                "terms_revision": terms.revision,
+                "terms_sha256": terms.terms_sha256,
+                "quote_sha256": intent.quote_sha256,
+                "verification_id": verification.id,
+                "verification_snapshot_sha256": verification.snapshot_sha256,
+                "travel_kind": quote.travel_kind,
+                "provider": verification.provider,
+                "provider_quote_id": verification.provider_quote_id,
+                "currency": terms.currency,
+                "total_minor": terms.total_minor,
+                "expires_at": expires_at.isoformat(),
+                "authority": "binding_only_no_execution",
+            }
+            approval_scope_sha256 = stable_digest(scope)
+
+            existing = db.scalar(
+                select(TravelBookingBinding).where(
+                    TravelBookingBinding.transaction_id == transaction_id,
+                    TravelBookingBinding.owner_id == owner,
+                )
+            )
+            if existing is not None:
+                exact = (
+                    existing.transaction_revision == transaction.revision
+                    and existing.terms_revision == terms.revision
+                    and existing.terms_sha256 == terms.terms_sha256
+                    and existing.quote_sha256 == intent.quote_sha256
+                    and existing.verification_id == verification.id
+                    and existing.verification_snapshot_sha256 == verification.snapshot_sha256
+                    and existing.travel_kind == quote.travel_kind
+                    and existing.provider == verification.provider
+                    and existing.provider_quote_id == verification.provider_quote_id
+                    and existing.currency == terms.currency
+                    and existing.total_minor == terms.total_minor
+                    and existing.approval_scope_sha256 == approval_scope_sha256
+                    and aware(existing.expires_at) == expires_at
+                )
+                if exact:
+                    return self._booking_binding_dto(existing), False
+                raise CoworkerError(
+                    "travel_booking_binding_conflict",
+                    "A different travel booking binding already exists for this transaction.",
+                    409,
+                )
+
+            row = TravelBookingBinding(
+                id=str(uuid4()),
+                transaction_id=transaction.id,
+                owner_id=owner,
+                verification_id=verification.id,
+                transaction_revision=transaction.revision,
+                terms_revision=terms.revision,
+                terms_sha256=terms.terms_sha256,
+                quote_sha256=intent.quote_sha256,
+                verification_snapshot_sha256=verification.snapshot_sha256,
+                travel_kind=quote.travel_kind,
+                provider=verification.provider,
+                provider_quote_id=verification.provider_quote_id,
+                currency=terms.currency,
+                total_minor=terms.total_minor,
+                approval_scope_sha256=approval_scope_sha256,
+                expires_at=expires_at,
+                created_at=utcnow(),
+            )
+            db.add(row)
+            db.flush()
+            return self._booking_binding_dto(row), True
 
     def create(
         self,
