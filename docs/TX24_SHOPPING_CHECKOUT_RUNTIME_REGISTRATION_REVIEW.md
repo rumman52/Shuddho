@@ -28,8 +28,8 @@ The only successful status is:
 
 `eligible_for_runtime_registration_review`
 
-The bundle binds the TX-14 qualification, TX-15 proposal, TX-23 conformance,
-live-probe evidence and confirmed receipt digests. It is itself protected by
+The bundle binds the TX-14 qualification, TX-15 proposal, TX-23 hosted-handoff
+conformance, live-probe evidence and exact TX-27 handoff digest. It is itself protected by
 `runtime_registration_review_sha256`.
 
 A successful TX-24 bundle still carries:
