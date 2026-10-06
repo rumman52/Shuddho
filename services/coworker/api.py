@@ -1548,6 +1548,12 @@ def qualify_agent_route(payload: AgentRunCreate, identity: Identity, services: S
 @router.post("/agent-runs", status_code=202)
 def create_agent_run(payload: AgentRunCreate, identity: Identity, services: Services, response: Response,
                      idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
+    if not services.settings.agent_runtime_enabled:
+        raise CoworkerError(
+            "agent_runtime_unavailable",
+            "Agent runs are not enabled in this workspace yet.",
+            409,
+        )
     route = qualify_agent_goal(
         payload.goal,
         services.settings,
