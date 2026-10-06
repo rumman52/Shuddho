@@ -1554,6 +1554,17 @@ def create_agent_run(payload: AgentRunCreate, identity: Identity, services: Serv
             "Agent runs are not enabled in this workspace yet.",
             409,
         )
+    replay = services.agent.public_idempotent_replay(
+        identity.account_id,
+        payload,
+        idempotency_key,
+    )
+    if replay is not None:
+        response.headers["Location"] = f'/api/v1/agent-runs/{replay["id"]}'
+        response.headers["Idempotent-Replayed"] = "true"
+        response.headers["X-Shuddho-Agent-Route"] = "idempotent_replay"
+        return replay
+
     route = qualify_agent_goal(
         payload.goal,
         services.settings,
