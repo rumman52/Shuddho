@@ -913,6 +913,19 @@ class AgentRepository:
                 if not spec.enabled(self.settings):
                     raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
                 validated = spec.validate(planned.arguments)
+                step_key = spec.name + ":" + json.dumps(
+                    validated.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                if step_key in seen_step_keys:
+                    raise CoworkerError(
+                        "agent_duplicate_step",
+                        "An agent plan cannot contain an identical repeated tool step.",
+                        422,
+                    )
+                seen_step_keys.add(step_key)
                 if hasattr(validated, "document_ids"):
                     requested = {str(value) for value in validated.document_ids}
                     if not requested.issubset(run_docs):
