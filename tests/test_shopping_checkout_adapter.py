@@ -133,11 +133,11 @@ class QualifiedAdapter:
         self.create_calls = []
         self.lookup_calls = []
 
-    async def create_checkout(self, *, preview: dict, idempotency_key: str) -> dict:
+    async def create_checkout_handoff(self, *, preview: dict, idempotency_key: str) -> dict:
         self.create_calls.append((preview, idempotency_key))
         raise AssertionError("TX-16 admission must not call the provider")
 
-    async def lookup_checkout(
+    async def lookup_checkout_receipt(
         self,
         *,
         idempotency_key: str | None = None,
@@ -230,7 +230,7 @@ def test_tx16_rejects_registration_proposal_claiming_runtime_authority():
 
 def test_tx16_rejects_non_async_adapter_methods():
     class SyncAdapter(QualifiedAdapter):
-        def create_checkout(self, *, preview: dict, idempotency_key: str) -> dict:
+        def create_checkout_handoff(self, *, preview: dict, idempotency_key: str) -> dict:
             return {}
 
     with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
@@ -262,7 +262,7 @@ def test_tx16_rejects_stale_registration_review():
 
 def test_tx16_rejects_missing_or_wrong_create_signature():
     class MissingCreateArgsAdapter(QualifiedAdapter):
-        async def create_checkout(self) -> dict:
+        async def create_checkout_handoff(self) -> dict:
             return {}
 
     with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
@@ -275,7 +275,7 @@ def test_tx16_rejects_missing_or_wrong_create_signature():
 
 def test_tx16_rejects_positional_create_parameters():
     class PositionalCreateAdapter(QualifiedAdapter):
-        async def create_checkout(self, preview, idempotency_key):
+        async def create_checkout_handoff(self, preview, idempotency_key):
             return {}
 
     with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
@@ -288,7 +288,7 @@ def test_tx16_rejects_positional_create_parameters():
 
 def test_tx16_rejects_varargs_create_signature():
     class VarArgsCreateAdapter(QualifiedAdapter):
-        async def create_checkout(self, *args, **kwargs):
+        async def create_checkout_handoff(self, *args, **kwargs):
             return {}
 
     with pytest.raises(ShoppingCheckoutAdapterAdmissionError):
@@ -301,7 +301,7 @@ def test_tx16_rejects_varargs_create_signature():
 
 def test_tx16_rejects_extra_create_parameter():
     class ExtraCreateAdapter(QualifiedAdapter):
-        async def create_checkout(
+        async def create_checkout_handoff(
             self,
             *,
             preview: dict,
@@ -320,7 +320,7 @@ def test_tx16_rejects_extra_create_parameter():
 
 def test_tx16_rejects_lookup_parameters_without_none_defaults():
     class WrongLookupDefaultsAdapter(QualifiedAdapter):
-        async def lookup_checkout(
+        async def lookup_checkout_receipt(
             self,
             *,
             idempotency_key: str | None,
@@ -338,7 +338,7 @@ def test_tx16_rejects_lookup_parameters_without_none_defaults():
 
 def test_tx16_rejects_positional_lookup_parameters():
     class PositionalLookupAdapter(QualifiedAdapter):
-        async def lookup_checkout(
+        async def lookup_checkout_receipt(
             self,
             idempotency_key: str | None = None,
             provider_order_id: str | None = None,
