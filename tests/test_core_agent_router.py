@@ -8,7 +8,6 @@ from fastapi import Response
 
 from services.coworker.agent_router import qualify_agent_goal
 from services.coworker.agent_schemas import AgentRunCreate
-from services.coworker.api import create_agent_run
 from services.coworker.config import Settings
 from services.coworker.errors import CoworkerError
 
@@ -86,6 +85,9 @@ def test_unknown_imperative_does_not_become_document_tool():
 
 
 def test_simple_question_does_not_create_agent_run():
+    pytest.importorskip("jwt", reason="API boundary test runs with the coworker extra")
+    from services.coworker.api import create_agent_run
+
     class AgentMustNotRun:
         def create(self, *_args, **_kwargs):
             raise AssertionError("simple question created an Agent run")
