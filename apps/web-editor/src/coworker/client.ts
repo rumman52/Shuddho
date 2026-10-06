@@ -25,6 +25,7 @@ export type ActionPayload = EmailAction | AttachmentEmailAction | EmailThreadRep
 export type ActionInput = { connection_id: string; payload: ActionPayload; attachment_ids?: string[]; artifact_ids?: string[] };
 export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
 export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "needs_input" | "blocked" | "completed" | "failed" | "cancelled";
+export type AgentFinalState = "completed" | "partially_completed" | "waiting_for_user" | "waiting_for_approval" | "blocked" | "cancelled" | "failed";
 export type AgentTool = { name: string; version: string; kind: "task" | "approved_action"; consequential: boolean; approval_required: boolean; timeout_seconds: number };
 export type AgentActionProposal = {
   id: string; kind: EmailAction["kind"] | CalendarAction["kind"] | LinkedInSocialPublishAction["kind"]; payload: EmailAction | CalendarAction | LinkedInSocialPublishAction; rationale: string;
@@ -177,6 +178,14 @@ export type NotificationDigest = {
 };
 export type AgentRun = {
   id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
+  plan: { step_id: string; ordinal: number; tool: string | null; state: string; invocation_id: string | null; depends_on: number[] }[];
+  current_step: { step_id: string; ordinal: number; tool: string | null; state: string; invocation_id: string | null } | null;
+  completed_steps: { id: string; ordinal: number; tool: string | null; invocation_id: string | null }[];
+  tool_results: { invocation_id: string; tool: string; status: string; resource_type: string | null; resource_id: string | null; summary: Record<string, unknown>; created_at: string }[];
+  pending_approval: { invocation_id: string; step_id: string; tool: string } | null;
+  retry_state: { planner_calls_used: number; planner_calls_remaining: number; planner_tokens_reserved: number; tool_steps_used: number; tool_steps_remaining: number; temporal_activity_retries_bounded: boolean };
+  final_state: AgentFinalState | null;
+  evidence: { verified_receipt_count: number; verified_invocation_ids: string[]; deadline_at: string; planner_decision_count: number };
   connector_read_grant_ids: string[];
   memory_namespaces: string[]; state: AgentRunState; phase: string; message: string; error_code: string | null; cancel_requested: boolean;
   event_sequence: number; planner_calls: number; planner_tokens: number; planner_mode: string | null;

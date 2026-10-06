@@ -173,7 +173,7 @@ _AGENT_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "meeting.prepare",
         "meeting",
-        ("meeting agenda", "meeting minutes", "minutes for", "prepare an agenda", "meeting notes"),
+        ("meeting agenda", "meeting minutes", "minutes for", "prepare an agenda", "meeting notes", "meeting pack", "investor pack"),
     ),
     (
         "career.create",

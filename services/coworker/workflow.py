@@ -9,6 +9,9 @@ from temporalio.exceptions import ActivityError, ApplicationError
 
 
 
+MAX_AGENT_V3_COORDINATOR_CYCLES = 16
+
+
 @workflow.defn(name="shuddho_agent_run_v3")
 class AgentWorkflowV3:
     """Result-aware bounded coordinator. Workflow history contains only IDs/status."""
@@ -16,8 +19,15 @@ class AgentWorkflowV3:
     @workflow.run
     async def run(self, value: dict):
         run_id = str(value["run_id"])
+        cycles = 0
         try:
             while True:
+                cycles += 1
+                if cycles > MAX_AGENT_V3_COORDINATOR_CYCLES:
+                    raise ApplicationError(
+                        "Runtime v3 exceeded its deterministic coordinator-cycle bound.",
+                        type="agent_loop_limit",
+                    )
                 decision = await workflow.execute_activity(
                     "shuddho_agent_decide_v3",
                     run_id,
