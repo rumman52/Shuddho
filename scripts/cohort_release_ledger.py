@@ -5557,7 +5557,10 @@ def append_transaction_capability_event(
             f"{capability} activation does not prove the reviewed runtime."
         )
     expected_providers = normalized_action_providers(rollout)
-    if runtime.get("action_providers") != expected_providers:
+    if (
+        not isinstance(runtime.get("action_providers"), list)
+        or sorted(runtime["action_providers"]) != expected_providers
+    ):
         raise ReleaseLedgerError(
             f"{capability} activation action providers do not match rollout."
         )
