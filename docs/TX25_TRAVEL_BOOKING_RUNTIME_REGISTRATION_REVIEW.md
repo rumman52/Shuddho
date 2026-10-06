@@ -15,7 +15,7 @@ It recomputes the TX-22 conformance digest and requires exact continuity for:
 - adapter revision and travel kind;
 - TX-19 qualification SHA-256;
 - TX-20 registration-proposal SHA-256;
-- adapter admission, preview, receipt and idempotency digests;
+- adapter admission, preview, hosted-handoff and idempotency digests;
 - the reviewed traveler-data transmission field set;
 - bounded provider I/O evidence;
 - all zero-authority flags.
