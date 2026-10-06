@@ -830,12 +830,26 @@ class AgentRepository:
                 db.delete(step)
                 db.flush()
             run_docs = self._run_document_ids(db, run)
+            seen_replan_step_keys: set[str] = set()
             for offset, planned in enumerate(steps):
                 ordinal = from_ordinal + offset
                 spec = tool(planned.tool)
                 if not spec.enabled(self.settings):
                     raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
                 validated = spec.validate(planned.arguments)
+                step_key = spec.name + ":" + json.dumps(
+                    validated.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                if step_key in seen_step_keys:
+                    raise CoworkerError(
+                        "agent_duplicate_step",
+                        "An agent plan cannot contain an identical repeated tool step.",
+                        422,
+                    )
+                seen_step_keys.add(step_key)
                 if hasattr(validated, "document_ids"):
                     requested = {str(value) for value in validated.document_ids}
                     if not requested.issubset(run_docs):
@@ -887,6 +901,7 @@ class AgentRepository:
             if existing:
                 raise CoworkerError("plan_already_saved", "This agent run already has a saved plan.", 409)
             run_docs = self._run_document_ids(db, run)
+            seen_step_keys: set[str] = set()
             placeholder = db.scalar(select(AgentStep).where(
                 AgentStep.run_id == run.id, AgentStep.owner_id == owner, AgentStep.ordinal == 0,
             ))
