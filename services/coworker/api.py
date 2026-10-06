@@ -1047,6 +1047,8 @@ def runtime_manifest(
         "action_social_publishing": settings.action_social_publishing_enabled,
         "personal_transactions": settings.personal_transactions_enabled,
         "restaurant_reservations": settings.restaurant_reservations_enabled,
+        "shopping_checkout": settings.shopping_checkout_enabled,
+        "travel_booking": settings.travel_booking_enabled,
         "action_selection": settings.agent_action_selection_enabled,
         "action_proposals": settings.agent_action_proposals_enabled,
         "negotiation_proposal_promotion": settings.negotiation_proposal_promotion_enabled,
@@ -1062,6 +1064,15 @@ def runtime_manifest(
             providers.append("linkedin")
         if settings.restaurant_reservations_enabled:
             providers.append("opentable")
+        if settings.shopping_checkout_enabled or settings.travel_booking_enabled:
+            for operation in sorted(settings.transaction_operations):
+                provider, separator, kind = operation.partition(":")
+                if (
+                    separator
+                    and kind in {"shopping_checkout_create", "travel_booking_create"}
+                    and provider not in providers
+                ):
+                    providers.append(provider)
     return {
         "schema_version": 1,
         "source_revision": settings.source_revision,
@@ -1094,10 +1105,12 @@ def transaction_authority_manifest(
         )
     response.headers["Cache-Control"] = "no-store"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_revision": settings.source_revision,
         "personal_transactions_enabled": settings.personal_transactions_enabled,
         "restaurant_reservations_enabled": settings.restaurant_reservations_enabled,
+        "shopping_checkout_enabled": settings.shopping_checkout_enabled,
+        "travel_booking_enabled": settings.travel_booking_enabled,
         "operations": sorted(settings.transaction_operations),
     }
 
