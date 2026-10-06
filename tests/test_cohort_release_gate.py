@@ -326,6 +326,8 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "agent_sandbox_tool": False,
         "personal_transactions": False,
         "restaurant_reservations": False,
+        "shopping_checkout": False,
+        "travel_booking": False,
         "negotiation_proposal_promotion": False,
         "suggestion_model_relevance": False,
         "browser_push": False,
