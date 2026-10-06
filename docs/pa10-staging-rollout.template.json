@@ -42,6 +42,8 @@
     "action_social_publishing": false,
     "personal_transactions": false,
     "restaurant_reservations": false,
+    "shopping_checkout": false,
+    "travel_booking": false,
     "action_selection": false,
     "action_proposals": false,
     "negotiation_proposal_promotion": false,
