@@ -163,9 +163,8 @@ class SandboxTravelAdapter:
         self.create_calls: list[tuple[dict, dict, str]] = []
         self.lookup_calls: list[tuple[str | None, str | None]] = []
         self.by_key: dict[str, dict] = {}
-        self.by_id: dict[str, dict] = {}
 
-    async def create_booking(
+    async def create_booking_handoff(
         self,
         *,
         preview: dict,
@@ -176,35 +175,21 @@ class SandboxTravelAdapter:
         existing = self.by_key.get(idempotency_key)
         if existing is not None:
             return dict(existing)
-        receipt = {
-            "provider": preview["provider"],
-            "provider_booking_id": "booking-123",
-            "provider_quote_id": preview["provider_quote_id"],
-            "travel_kind": preview["travel_kind"],
-            "currency": preview["currency"],
-            "total_minor": preview["total_minor"],
-            "status": "confirmed",
-            "confirmed_at": self.now.isoformat(),
+        handoff = {
+            "handoff_id": "booking-session-123",
+            "handoff_url": self.booking_origin + "/continue/123?token=opaque",
         }
-        self.by_key[idempotency_key] = dict(receipt)
-        self.by_id[receipt["provider_booking_id"]] = dict(receipt)
-        return receipt
+        self.by_key[idempotency_key] = dict(handoff)
+        return handoff
 
-    async def lookup_booking(
+    async def lookup_booking_receipt(
         self,
         *,
         idempotency_key: str | None = None,
         provider_booking_id: str | None = None,
     ) -> dict | None:
         self.lookup_calls.append((idempotency_key, provider_booking_id))
-        if idempotency_key is not None:
-            value = self.by_key.get(idempotency_key)
-        elif provider_booking_id is not None:
-            value = self.by_id.get(provider_booking_id)
-        else:
-            value = None
-        return dict(value) if value is not None else None
-
+        return None
 
 def run(adapter: SandboxTravelAdapter, now: datetime, **overrides):
     kwargs = {
@@ -226,17 +211,20 @@ def run(adapter: SandboxTravelAdapter, now: datetime, **overrides):
     )
 
 
-def test_tx22_exercises_sandbox_adapter_and_keeps_runtime_closed():
+def test_tx22_exercises_hosted_sandbox_adapter_and_keeps_runtime_closed():
     now = utcnow()
     adapter = SandboxTravelAdapter(now)
 
     result = run(adapter, now)
 
-    assert result["status"] == "provider_implementation_conformance_passed"
+    assert result["schema_version"] == 2
+    assert result["status"] == "provider_handoff_conformance_passed"
     assert result["sandbox_provider_io"] is True
     assert result["provider_called"] is True
-    assert result["create_attempts"] == 2
-    assert result["lookup_attempts"] == 3
+    assert result["handoff_attempts"] == 2
+    assert result["receipt_lookup_attempts"] == 2
+    assert result["completion_receipt_observed"] is False
+    assert len(result["handoff_sha256"]) == 64
     assert result["registration_authority"] is False
     assert result["operation_allowlisted"] is False
     assert result["external_action_registered"] is False
@@ -248,7 +236,7 @@ def test_tx22_exercises_sandbox_adapter_and_keeps_runtime_closed():
     assert result["qualification_sha256"]
     assert result["evaluated_at"] == now.isoformat()
     assert len(adapter.create_calls) == 2
-    assert len(adapter.lookup_calls) == 3
+    assert len(adapter.lookup_calls) == 2
     assert adapter.create_calls[0][2] == adapter.create_calls[1][2]
 
     with pytest.raises(Exception):
@@ -262,10 +250,8 @@ def test_tx22_exercises_sandbox_adapter_and_keeps_runtime_closed():
 def test_tx22_requires_explicit_provider_io_opt_in_before_calls():
     now = utcnow()
     adapter = SandboxTravelAdapter(now)
-
     with pytest.raises(TravelBookingAdapterConformanceError):
         run(adapter, now, allow_provider_test_io=False)
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
@@ -274,10 +260,8 @@ def test_tx22_rejects_non_sandbox_adapter_before_calls():
     now = utcnow()
     adapter = SandboxTravelAdapter(now)
     adapter.implementation_test_environment = "production"
-
     with pytest.raises(TravelBookingAdapterConformanceError):
         run(adapter, now)
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
@@ -286,10 +270,8 @@ def test_tx22_rejects_unreviewed_sandbox_origin_before_calls():
     now = utcnow()
     adapter = SandboxTravelAdapter(now)
     adapter.implementation_test_origin = "https://different-sandbox.example"
-
     with pytest.raises(TravelBookingAdapterConformanceError):
         run(adapter, now)
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
@@ -297,7 +279,6 @@ def test_tx22_rejects_unreviewed_sandbox_origin_before_calls():
 def test_tx22_rejects_unreviewed_traveler_fields_before_calls():
     now = utcnow()
     adapter = SandboxTravelAdapter(now)
-
     with pytest.raises(TravelBookingAdapterConformanceError):
         run(
             adapter,
@@ -308,7 +289,6 @@ def test_tx22_rejects_unreviewed_traveler_fields_before_calls():
                 "passport_number": "P1234567",
             },
         )
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
@@ -318,60 +298,83 @@ def test_tx22_rejects_expired_preview_before_calls():
     adapter = SandboxTravelAdapter(now)
     value = preview(now)
     value["expires_at"] = (now - timedelta(seconds=1)).isoformat()
-
     with pytest.raises(TravelBookingAdapterConformanceError):
         run(adapter, now, preview_value=value)
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
 
-def test_tx22_rejects_non_idempotent_duplicate_create():
+def test_tx22_rejects_non_idempotent_handoff():
     now = utcnow()
 
     class NonIdempotentAdapter(SandboxTravelAdapter):
-        async def create_booking(
+        async def create_booking_handoff(
             self,
             *,
             preview: dict,
             traveler_data: dict,
             idempotency_key: str,
         ) -> dict:
-            value = await super().create_booking(
+            value = await super().create_booking_handoff(
                 preview=preview,
                 traveler_data=traveler_data,
                 idempotency_key=idempotency_key,
             )
             if len(self.create_calls) > 1:
-                value = dict(value)
-                value["provider_booking_id"] = "booking-different"
+                return {
+                    "handoff_id": "booking-session-different",
+                    "handoff_url": self.booking_origin + "/continue/different",
+                }
             return value
 
-    adapter = NonIdempotentAdapter(now)
     with pytest.raises(TravelBookingAdapterConformanceError):
-        run(adapter, now)
+        run(NonIdempotentAdapter(now), now)
 
 
-def test_tx22_rejects_receipt_term_drift():
+def test_tx22_rejects_immediate_confirmed_receipt_before_user_completion():
     now = utcnow()
 
-    class PriceDriftAdapter(SandboxTravelAdapter):
-        async def create_booking(
+    class PrematureReceiptAdapter(SandboxTravelAdapter):
+        async def lookup_booking_receipt(
+            self,
+            *,
+            idempotency_key: str | None = None,
+            provider_booking_id: str | None = None,
+        ) -> dict | None:
+            self.lookup_calls.append((idempotency_key, provider_booking_id))
+            if self.create_calls:
+                return {
+                    "provider": "travelco",
+                    "provider_booking_id": "booking-123",
+                    "provider_quote_id": "quote-123",
+                    "travel_kind": "flight",
+                    "currency": "USD",
+                    "total_minor": 12500,
+                    "status": "confirmed",
+                    "confirmed_at": now.isoformat(),
+                }
+            return None
+
+    with pytest.raises(TravelBookingAdapterConformanceError):
+        run(PrematureReceiptAdapter(now), now)
+
+
+def test_tx22_rejects_invalid_handoff_url():
+    now = utcnow()
+
+    class BadHandoffAdapter(SandboxTravelAdapter):
+        async def create_booking_handoff(
             self,
             *,
             preview: dict,
             traveler_data: dict,
             idempotency_key: str,
         ) -> dict:
-            value = await super().create_booking(
-                preview=preview,
-                traveler_data=traveler_data,
-                idempotency_key=idempotency_key,
-            )
-            value = dict(value)
-            value["total_minor"] += 1
-            return value
+            self.create_calls.append((preview, traveler_data, idempotency_key))
+            return {
+                "handoff_id": "booking-session-123",
+                "handoff_url": "https://evil.example/continue/123",
+            }
 
-    adapter = PriceDriftAdapter(now)
     with pytest.raises(TravelBookingAdapterConformanceError):
-        run(adapter, now)
+        run(BadHandoffAdapter(now), now)
