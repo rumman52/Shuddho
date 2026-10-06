@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "provider": "REPLACE_WITH_TX15_PROVIDER",
+  "operation": "REPLACE_WITH_PROVIDER:shopping_checkout_create",
+  "adapter_revision": "REPLACE_WITH_TX15_40_CHAR_REVISION",
+  "registration_proposal_sha256": "REPLACE_WITH_TX15_PROPOSAL_SHA256",
+  "conformance_sha256": "REPLACE_WITH_TX23_CONFORMANCE_SHA256",
+  "decision": "approved_for_runtime_registration_review",
+  "change_reference": "REPLACE_WITH_REVIEWED_CHANGE_REFERENCE",
+  "reviewer_reference": "REPLACE_WITH_REVIEWER_REFERENCE",
+  "reviewed_at": "REPLACE_WITH_ISO8601_TIME"
+}

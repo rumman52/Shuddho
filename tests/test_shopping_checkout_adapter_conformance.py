@@ -238,6 +238,8 @@ def test_tx23_exercises_staging_adapter_and_keeps_runtime_closed():
     assert result["provider_test_environment"] == "staging"
     assert result["create_attempts"] == 2
     assert result["lookup_attempts"] == 3
+    assert result["registration_proposal_sha256"]
+    assert result["evaluated_at"] == now.isoformat()
     assert result["registration_authority"] is False
     assert result["operation_allowlisted"] is False
     assert result["external_action_registered"] is False
