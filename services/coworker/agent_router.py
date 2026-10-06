@@ -178,7 +178,7 @@ _AGENT_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "career.create",
         "career",
-        ("resume", "curriculum vitae", "cover letter", "interview prep", "interview preparation", " cv "),
+        ("resume", "curriculum vitae", "cover letter", "interview prep", "interview preparation", "cv"),
     ),
     (
         "social.draft",
@@ -247,7 +247,7 @@ def _decision(
 
 
 def _question_like(text: str) -> bool:
-    return text.endswith("?") or text.startswith(_QUESTION_PREFIXES)
+    return text.startswith(_QUESTION_PREFIXES)
 
 
 def _ambiguous_high_impact(text: str) -> bool:
@@ -283,8 +283,8 @@ def qualify_agent_goal(
 
     research_requested = _has_any(text, _RESEARCH_MARKERS)
 
-    # Informational questions remain on the direct-answer path unless they
-    # explicitly require fresh/external research.
+    # Clear explanatory questions are direct even when they mention an action
+    # as a concept (for example, "How do I book a flight?").
     if _question_like(text) and not research_requested:
         return _decision(
             intent="direct_question",
@@ -397,6 +397,20 @@ def qualify_agent_goal(
             fallback_policy="domain_handler",
             reason_code="consequential_connected_action",
             message="Route this request through the bound action preview/approval path; do not let the planner invent a connector or endpoint.",
+        )
+
+    if text.endswith("?"):
+        return _decision(
+            intent="direct_question",
+            complexity="simple",
+            execution="direct_answer",
+            capability="chat",
+            provider="none",
+            access="read",
+            confidence=0.95,
+            fallback_policy="direct",
+            reason_code="direct_question",
+            message="Answer this request directly without creating an Agent run.",
         )
 
     selected: list[str] = []
