@@ -1948,10 +1948,12 @@ def test_transaction_authority_manifest_is_authenticated_scoped_and_exact(
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store"
     assert response.json() == {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_revision": "b" * 40,
         "personal_transactions_enabled": True,
         "restaurant_reservations_enabled": False,
+        "shopping_checkout_enabled": False,
+        "travel_booking_enabled": False,
         "operations": ["google:negotiation_commitment_email"],
     }
     encoded = response.text
