@@ -254,6 +254,7 @@ class AgentRuntime:
             )
 
     async def execute_step(self, run_id: str, ordinal: int) -> dict:
+        self.repo.assert_within_deadline(run_id)
         run = self.repo.worker_run(run_id)
         invocation = self.repo.invocation_for_step(run_id, ordinal)
         if invocation["state"] == "completed":
