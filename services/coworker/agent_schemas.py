@@ -22,6 +22,22 @@ def _safe_text(value: str) -> str:
     return value
 
 
+class AgentRouteDecision(AgentModel):
+    intent: str = Field(min_length=2, max_length=80, pattern=r"^[a-z][a-z0-9_.-]+$")
+    complexity: Literal["simple", "single_step", "multi_step", "consequential"]
+    execution: Literal["direct_answer", "agent_run", "actions", "automation", "transactions", "clarify", "unsupported"]
+    capability: str = Field(min_length=2, max_length=100, pattern=r"^[a-z][a-z0-9_.-]+$")
+    tools: list[str] = Field(default_factory=list, max_length=3)
+    provider: str = Field(min_length=2, max_length=100, pattern=r"^[a-z][a-z0-9_.+-]+$")
+    access: Literal["read", "write", "read_write", "action"]
+    consequential: bool = False
+    capability_available: bool = True
+    confidence: float = Field(ge=0.0, le=1.0)
+    fallback_policy: Literal["direct", "deterministic_agent", "domain_handler", "clarify", "unsupported"]
+    reason_code: str = Field(min_length=2, max_length=100, pattern=r"^[a-z][a-z0-9_.-]+$")
+    message: str = Field(min_length=1, max_length=300)
+
+
 class AgentRunCreate(AgentModel):
     goal: str = Field(min_length=3, max_length=4000)
     document_ids: list[UUID] = Field(default_factory=list, max_length=5)

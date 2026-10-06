@@ -1,0 +1,27 @@
+{"id":"direct-semiconductor","goal":"What is a semiconductor?","execution":"direct_answer","capability":"chat","tools":[]}
+{"id":"direct-rag","goal":"Explain retrieval augmented generation.","execution":"direct_answer","capability":"chat","tools":[]}
+{"id":"direct-how-book","goal":"How do I book a flight safely?","execution":"direct_answer","capability":"chat","tools":[]}
+{"id":"document-memo","goal":"Create a project memo for the board.","execution":"agent_run","capability":"document","tools":["document.create"]}
+{"id":"document-letter","goal":"Write a formal application letter.","execution":"agent_run","capability":"document","tools":["document.create"]}
+{"id":"email-draft","goal":"Draft a professional follow-up email to the team.","execution":"agent_run","capability":"email","tools":["email.draft"]}
+{"id":"meeting","goal":"Prepare a meeting agenda for the product review.","execution":"agent_run","capability":"meeting","tools":["meeting.prepare"]}
+{"id":"career","goal":"Create a CV for a junior software engineer.","execution":"agent_run","capability":"career","tools":["career.create"]}
+{"id":"social-draft","goal":"Draft a LinkedIn social post announcing our update.","execution":"agent_run","capability":"social","tools":["social.draft"]}
+{"id":"presentation","goal":"Create a presentation for the quarterly review.","execution":"agent_run","capability":"presentation","tools":["presentation.create"]}
+{"id":"spreadsheet","goal":"Create a spreadsheet budget for the launch.","execution":"agent_run","capability":"spreadsheet","tools":["spreadsheet.create"]}
+{"id":"daily-plan","goal":"Create a daily plan for tomorrow's work.","execution":"agent_run","capability":"daily_plan","tools":["daily_plan.create"]}
+{"id":"personal-plan","goal":"Create a travel plan for a three day trip.","execution":"agent_run","capability":"personal_plan","tools":["personal_plan.create"]}
+{"id":"report","goal":"Create a concise project status report.","execution":"agent_run","capability":"report","tools":["report.create"]}
+{"id":"research","goal":"Research the latest AI coworker market.","execution":"agent_run","capability":"research","tools":["research.search"]}
+{"id":"research-report","goal":"Research the latest AI coworker market and summarize the findings.","execution":"agent_run","capability":"agent_workflow","tools":["research.search","report.create"]}
+{"id":"transaction-flight","goal":"Book a flight from Dhaka to Singapore next Friday.","execution":"transactions","capability":"transactions","tools":[]}
+{"id":"transaction-table","goal":"Reserve a table for two tomorrow evening.","execution":"transactions","capability":"transactions","tools":[]}
+{"id":"automation-reminder","goal":"Remind me tomorrow at 8 AM to review the release.","execution":"automation","capability":"automation","tools":[]}
+{"id":"automation-recurring","goal":"Every morning notify me to check the deployment dashboard.","execution":"automation","capability":"automation","tools":[]}
+{"id":"action-email","goal":"Send this email to the finance team.","execution":"actions","capability":"email","tools":[]}
+{"id":"action-calendar","goal":"Schedule a meeting on my calendar.","execution":"actions","capability":"calendar","tools":[]}
+{"id":"unsupported-slack","goal":"Send this on Slack.","execution":"unsupported","capability":"unregistered_connector_action","tools":[]}
+{"id":"unsupported-payment","goal":"Transfer money to my supplier.","execution":"unsupported","capability":"payments_or_transfers","tools":[]}
+{"id":"unsupported-unknown","goal":"Rotate the production encryption keys.","execution":"unsupported","capability":"none","tools":[]}
+{"id":"clarify-send","goal":"Send it.","execution":"clarify","capability":"unknown_action","tools":[]}
+{"id":"clarify-delete","goal":"Delete this.","execution":"clarify","capability":"unknown_action","tools":[]}
