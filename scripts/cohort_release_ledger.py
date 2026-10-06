@@ -41,6 +41,8 @@ NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION = 27
 SUGGESTION_MODEL_RELEVANCE_SCHEMA_VERSION = 28
 BROWSER_PUSH_SCHEMA_VERSION = 29
 RESTAURANT_RESERVATIONS_SCHEMA_VERSION = 30
+SHOPPING_CHECKOUT_SCHEMA_VERSION = 31
+TRAVEL_BOOKING_SCHEMA_VERSION = 32
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -238,6 +240,40 @@ RESTAURANT_RESERVATIONS_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "restaurant_reservations_activation",
+}
+SHOPPING_CHECKOUT_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "shopping_checkout_activation",
+}
+TRAVEL_BOOKING_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "travel_booking_activation",
+}
+TRANSACTION_CAPABILITY_LEDGER = {
+    "restaurant_reservations": {
+        "schema_version": RESTAURANT_RESERVATIONS_SCHEMA_VERSION,
+        "event_type": "restaurant_reservations_verified",
+        "activation_key": "restaurant_reservations_activation",
+        "authority_flag": "restaurant_reservations_enabled",
+    },
+    "shopping_checkout": {
+        "schema_version": SHOPPING_CHECKOUT_SCHEMA_VERSION,
+        "event_type": "shopping_checkout_verified",
+        "activation_key": "shopping_checkout_activation",
+        "authority_flag": "shopping_checkout_enabled",
+    },
+    "travel_booking": {
+        "schema_version": TRAVEL_BOOKING_SCHEMA_VERSION,
+        "event_type": "travel_booking_verified",
+        "activation_key": "travel_booking_activation",
+        "authority_flag": "travel_booking_enabled",
+    },
 }
 
 
@@ -506,6 +542,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             SUGGESTION_MODEL_RELEVANCE_SCHEMA_VERSION,
             BROWSER_PUSH_SCHEMA_VERSION,
             RESTAURANT_RESERVATIONS_SCHEMA_VERSION,
+            SHOPPING_CHECKOUT_SCHEMA_VERSION,
+            TRAVEL_BOOKING_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -655,6 +693,20 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(
                 f"Ledger entry {index} has an unsupported schema-v30 event type."
             )
+        if (
+            version == SHOPPING_CHECKOUT_SCHEMA_VERSION
+            and event_type != "shopping_checkout_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v31 event type."
+            )
+        if (
+            version == TRAVEL_BOOKING_SCHEMA_VERSION
+            and event_type != "travel_booking_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v32 event type."
+            )
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -719,6 +771,10 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             if version == BROWSER_PUSH_SCHEMA_VERSION
             else RESTAURANT_RESERVATIONS_ARTIFACT_KEYS
             if version == RESTAURANT_RESERVATIONS_SCHEMA_VERSION
+            else SHOPPING_CHECKOUT_ARTIFACT_KEYS
+            if version == SHOPPING_CHECKOUT_SCHEMA_VERSION
+            else TRAVEL_BOOKING_ARTIFACT_KEYS
+            if version == TRAVEL_BOOKING_SCHEMA_VERSION
             else RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
@@ -5307,6 +5363,290 @@ def append_personal_transactions_event(
 
 
 
+
+def append_transaction_capability_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    capability: str,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    staging_evidence: Path,
+    rollout_manifest: Path,
+    deployment_change: Path,
+    operator_status: Path,
+    activation_evidence: Path,
+    created_at: str | None = None,
+) -> dict:
+    spec = TRANSACTION_CAPABILITY_LEDGER.get(capability)
+    if spec is None:
+        raise ReleaseLedgerError("Unsupported transaction capability ledger event.")
+    if not actor_reference.strip() or len(actor_reference) > 500:
+        raise ReleaseLedgerError(
+            "actor_reference must be non-empty and at most 500 characters."
+        )
+    if not change_reference.strip() or len(change_reference) > 500:
+        raise ReleaseLedgerError(
+            "change_reference must be non-empty and at most 500 characters."
+        )
+    if not current_stage.strip() or len(current_stage) > 100:
+        raise ReleaseLedgerError(
+            "Transaction capability ledger event requires a valid current_stage."
+        )
+
+    staging = load_json_object(staging_evidence, f"{capability} staging evidence")
+    rollout = load_json_object(rollout_manifest, f"{capability} rollout manifest")
+    deployment = load_json_object(deployment_change, f"{capability} deployment change")
+    status = load_json_object(operator_status, f"{capability} operator status")
+    activation = load_json_object(activation_evidence, f"{capability} activation evidence")
+
+    for label, value in (
+        ("rollout", rollout),
+        ("deployment", deployment),
+        ("operator status", status),
+        ("activation", activation),
+    ):
+        if value.get("release_id") != release_id:
+            raise ReleaseLedgerError(
+                f"{capability} {label} release_id does not match."
+            )
+
+    staged = staging.get(capability)
+    if (
+        not isinstance(staged, dict)
+        or staged.get("status") != "passed"
+        or not isinstance(staged.get("evidence"), str)
+        or not staged["evidence"].strip()
+        or not isinstance(staged.get("verified_at"), str)
+        or not isinstance(staged.get("operation"), str)
+        or not isinstance(staged.get("provider_evidence_sha256"), str)
+        or not valid_hash(staged["provider_evidence_sha256"])
+    ):
+        raise ReleaseLedgerError(
+            f"{spec['event_type']} requires exact timestamped provider-bound staging evidence."
+        )
+
+    capabilities = rollout.get("capabilities")
+    if (
+        rollout.get("environment") != "production"
+        or not isinstance(capabilities, dict)
+        or capabilities.get("actions") is not True
+        or capabilities.get("connector_trust_boundary") is not True
+        or capabilities.get("personal_transactions") is not True
+        or capabilities.get(capability) is not True
+    ):
+        raise ReleaseLedgerError(
+            f"{spec['event_type']} requires the reviewed transaction capability prerequisites."
+        )
+    operations = rollout.get("transaction_operations")
+    if (
+        not isinstance(operations, list)
+        or staged["operation"] not in operations
+    ):
+        raise ReleaseLedgerError(
+            f"{spec['event_type']} staging operation is not in the reviewed allowlist."
+        )
+    incident = rollout.get("incident")
+    if (
+        not isinstance(incident, dict)
+        or incident.get("change_reference") != change_reference
+    ):
+        raise ReleaseLedgerError("Reviewed rollout change reference does not match.")
+
+    if (
+        deployment.get("change_reference") != change_reference
+        or deployment.get("current_stage") != current_stage
+        or deployment.get("staging_evidence_sha256") != file_sha256(staging_evidence)
+        or deployment.get("rollout_manifest_sha256") != file_sha256(rollout_manifest)
+    ):
+        raise ReleaseLedgerError(
+            f"{capability} deployment does not bind the exact reviewed artifacts/stage."
+        )
+    revision = deployment.get("source_revision")
+    if (
+        not isinstance(revision, str)
+        or len(revision) != 40
+        or revision != revision.lower()
+        or any(char not in "0123456789abcdef" for char in revision)
+    ):
+        raise ReleaseLedgerError(
+            f"{capability} deployment source_revision is invalid."
+        )
+    if (
+        status.get("decision") != "CONTINUE_COHORT"
+        or status.get("breaches") != []
+    ):
+        raise ReleaseLedgerError(
+            f"{spec['event_type']} requires clean post-deploy operator status."
+        )
+
+    if (
+        activation.get("schema_version") != 1
+        or activation.get("status") != spec["event_type"]
+        or activation.get("capability") != capability
+        or activation.get("operation") != staged["operation"]
+        or activation.get("provider_evidence_sha256")
+        != staged["provider_evidence_sha256"]
+        or activation.get("release_id") != release_id
+        or activation.get("change_reference") != change_reference
+        or activation.get("current_stage") != current_stage
+        or activation.get("source_revision") != revision
+        or activation.get("deployed_at") != deployment.get("deployed_at")
+        or activation.get("operator_status_generated_at")
+        != status.get("generated_at")
+    ):
+        raise ReleaseLedgerError(
+            f"{capability} activation does not bind the exact deployment/staging evidence."
+        )
+
+    unsigned_activation = dict(activation)
+    stored_activation_digest = unsigned_activation.pop("activation_sha256", None)
+    if (
+        not valid_hash(stored_activation_digest)
+        or stored_activation_digest
+        != hashlib.sha256(canonical(unsigned_activation)).hexdigest()
+    ):
+        raise ReleaseLedgerError(
+            f"{capability} activation digest does not match its contents."
+        )
+
+    runtime = activation.get("runtime")
+    authority = activation.get("transaction_authority")
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("source_revision") != revision
+        or runtime.get("environment") != rollout.get("environment")
+        or normalize_capabilities(runtime.get("capabilities", {}))
+        != normalize_capabilities(capabilities)
+    ):
+        raise ReleaseLedgerError(
+            f"{capability} activation does not prove the reviewed runtime."
+        )
+    expected_providers = normalized_action_providers(rollout)
+    if runtime.get("action_providers") != expected_providers:
+        raise ReleaseLedgerError(
+            f"{capability} activation action providers do not match rollout."
+        )
+    cohort = runtime.get("cohort")
+    rollout_cohort = rollout.get("cohort")
+    if (
+        not isinstance(cohort, dict)
+        or not isinstance(rollout_cohort, dict)
+        or cohort.get("enforced") is not True
+        or cohort.get("max_users") != rollout_cohort.get("max_users")
+        or not isinstance(cohort.get("configured_members"), int)
+        or isinstance(cohort.get("configured_members"), bool)
+        or not 1 <= cohort["configured_members"] <= cohort["max_users"]
+    ):
+        raise ReleaseLedgerError(
+            f"{capability} activation does not prove controlled-cohort enforcement."
+        )
+
+    if (
+        not isinstance(authority, dict)
+        or authority.get("schema_version") != 2
+        or authority.get("source_revision") != revision
+        or authority.get("personal_transactions_enabled") is not True
+        or authority.get(spec["authority_flag"]) is not True
+        or authority.get("operations") != sorted(operations)
+    ):
+        raise ReleaseLedgerError(
+            f"{capability} activation does not prove exact transaction authority."
+        )
+    if activation.get("runtime_manifest_sha256") != hashlib.sha256(
+        canonical(runtime)
+    ).hexdigest():
+        raise ReleaseLedgerError(
+            f"{capability} runtime manifest hash does not match."
+        )
+    if activation.get("transaction_authority_manifest_sha256") != hashlib.sha256(
+        canonical(authority)
+    ).hexdigest():
+        raise ReleaseLedgerError(
+            f"{capability} transaction authority hash does not match."
+        )
+
+    expected_bound = {
+        "staging_evidence": file_sha256(staging_evidence),
+        "rollout_manifest": file_sha256(rollout_manifest),
+        "deployment_change": file_sha256(deployment_change),
+        "operator_status": file_sha256(operator_status),
+    }
+    hashes = activation.get("artifact_sha256")
+    if (
+        not isinstance(hashes, dict)
+        or set(hashes) != set(expected_bound)
+        or any(hashes.get(name) != value for name, value in expected_bound.items())
+    ):
+        raise ReleaseLedgerError(
+            f"{capability} activation does not bind exact release artifacts."
+        )
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if state["release_id"] not in {None, release_id}:
+        raise ReleaseLedgerError(
+            "Ledger release_id does not match transaction capability event."
+        )
+    if not any(
+        item.get("schema_version") == PERSONAL_TRANSACTIONS_SCHEMA_VERSION
+        and item.get("event_type") == "personal_transactions_verified"
+        and item.get("current_stage") == current_stage
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            f"{spec['event_type']} requires a personal_transactions_verified attestation at current_stage."
+        )
+
+    activation_hash = file_sha256(activation_evidence)
+    activation_key = spec["activation_key"]
+    if any(
+        item.get("schema_version") == spec["schema_version"]
+        and item.get("event_type") == spec["event_type"]
+        and item.get("artifact_sha256", {}).get(activation_key) == activation_hash
+        for item in entries
+    ):
+        raise ReleaseLedgerError(
+            f"This {capability} activation is already recorded."
+        )
+
+    core = {
+        "schema_version": spec["schema_version"],
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": spec["event_type"],
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": None,
+        "artifact_sha256": {
+            **expected_bound,
+            activation_key: activation_hash,
+        },
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {
+        **core,
+        "entry_hash": entry_hash,
+        "hmac_sha256": tag,
+    }
+    serialized = "".join(
+        json.dumps(
+            item,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ) + "\n"
+        for item in [*entries, entry]
+    )
+    atomic_write(ledger, serialized)
+    return entry
+
+
 def append_negotiation_proposal_promotion_event(
     *,
     ledger: Path,
@@ -6451,6 +6791,33 @@ def main() -> None:
         required=True,
     )
 
+    transaction_capability_parser = sub.add_parser(
+        "append-transaction-capability"
+    )
+    transaction_capability_parser.add_argument("--ledger", type=Path, required=True)
+    transaction_capability_parser.add_argument(
+        "--capability",
+        choices=sorted(TRANSACTION_CAPABILITY_LEDGER),
+        required=True,
+    )
+    transaction_capability_parser.add_argument("--release-id", required=True)
+    transaction_capability_parser.add_argument("--actor-reference", required=True)
+    transaction_capability_parser.add_argument("--change-reference", required=True)
+    transaction_capability_parser.add_argument("--current-stage", required=True)
+    transaction_capability_parser.add_argument(
+        "--staging-evidence", type=Path, required=True
+    )
+    transaction_capability_parser.add_argument("--rollout", type=Path, required=True)
+    transaction_capability_parser.add_argument(
+        "--deployment-change", type=Path, required=True
+    )
+    transaction_capability_parser.add_argument(
+        "--operator-status", type=Path, required=True
+    )
+    transaction_capability_parser.add_argument(
+        "--activation", type=Path, required=True
+    )
+
     negotiation_promotion_parser = sub.add_parser(
         "append-negotiation-proposal-promotion"
     )
@@ -6780,6 +7147,28 @@ def main() -> None:
                 deployment_change=args.deployment_change,
                 operator_status=args.operator_status,
                 personal_transactions_activation=args.personal_transactions_activation,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        elif args.command == "append-transaction-capability":
+            entry = append_transaction_capability_event(
+                ledger=args.ledger,
+                key=key,
+                capability=args.capability,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                staging_evidence=args.staging_evidence,
+                rollout_manifest=args.rollout,
+                deployment_change=args.deployment_change,
+                operator_status=args.operator_status,
+                activation_evidence=args.activation,
             )
             result = {
                 "appended": True,
