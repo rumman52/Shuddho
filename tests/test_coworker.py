@@ -615,6 +615,15 @@ def test_agent_plan_limits_step_count(container):
         container.agent.save_plan(owner, run["id"], [step] * 9)
     assert too_many.value.code == "invalid_plan"
 
+    duplicate_run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Prepare one email only.", output_language="en"),
+        "agent-plan-duplicate-step",
+    )
+    with pytest.raises(CoworkerError) as duplicate:
+        container.agent.save_plan(owner, duplicate_run["id"], [step, step])
+    assert duplicate.value.code == "agent_duplicate_step"
+
 
 
 def test_oauth_provider_binding_model_matches_portable_migration(container):
