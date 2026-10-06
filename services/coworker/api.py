@@ -24,6 +24,7 @@ from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
+from .agent_router import qualify_agent_goal
 from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
 from .suggestion_schemas import PersonalSuggestionPreferences
 from .negotiation_schemas import (
@@ -1532,12 +1533,37 @@ def agent_tools(identity: Identity, services: Services):
     return {"enabled": services.settings.agent_runtime_enabled, "tools": services.agent.tools()}
 
 
+@router.post("/agent-route")
+def qualify_agent_route(payload: AgentRunCreate, identity: Identity, services: Services):
+    # This endpoint is intentionally side-effect free. It exists so clients can
+    # decide between direct chat, bounded Agent work, Actions, Automations and
+    # Transactions without first creating a durable Agent run.
+    return qualify_agent_goal(
+        payload.goal,
+        services.settings,
+        has_attached_actions=bool(payload.action_ids),
+    ).model_dump(mode="json")
+
+
 @router.post("/agent-runs", status_code=202)
 def create_agent_run(payload: AgentRunCreate, identity: Identity, services: Services, response: Response,
                      idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
+    route = qualify_agent_goal(
+        payload.goal,
+        services.settings,
+        has_attached_actions=bool(payload.action_ids),
+    )
+    if route.execution != "agent_run":
+        status = 422 if route.execution in {"clarify", "unsupported"} else 409
+        raise CoworkerError(
+            f"agent_route_{route.execution}",
+            route.message,
+            status,
+        )
     run, created = services.agent.create(identity.account_id, payload, idempotency_key)
     response.headers["Location"] = f'/api/v1/agent-runs/{run["id"]}'
     response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["X-Shuddho-Agent-Route"] = route.reason_code
     return run
 
 
