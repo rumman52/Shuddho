@@ -31,8 +31,8 @@ future registration PR must change:
 
 - ActionPayload schema;
 - ActionSpec registry entry;
-- concrete provider adapter runtime binding;
-- execution/reconciliation path;
+- concrete provider hosted-handoff runtime binding;
+- post-user-completion receipt lookup/reconciliation path;
 - owner-scoped audit and receipt persistence;
 - frontend payload type.
 
