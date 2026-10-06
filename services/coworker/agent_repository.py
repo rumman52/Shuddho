@@ -201,6 +201,32 @@ class AgentRepository:
                 expired.append(run.id)
         return expired
 
+    def public_idempotent_replay(
+        self,
+        owner: str,
+        request: AgentRunCreate,
+        idempotency_key: str,
+    ) -> dict | None:
+        """Resolve a public replay before capability routing can change its semantics."""
+        payload = request.model_dump(mode="json")
+        fingerprint = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode()
+        ).hexdigest()
+        with self.sessions() as db:
+            previous = db.scalar(select(AgentRun).where(
+                AgentRun.owner_id == owner,
+                AgentRun.idempotency_key == idempotency_key,
+            ))
+            if previous is None:
+                return None
+            if previous.fingerprint != fingerprint:
+                raise CoworkerError(
+                    "idempotency_conflict",
+                    "This request key belongs to a different agent goal.",
+                    409,
+                )
+            return self._dto(db, previous)
+
     def create(
         self,
         owner: str,
