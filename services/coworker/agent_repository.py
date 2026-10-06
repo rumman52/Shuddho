@@ -952,6 +952,7 @@ class AgentRepository:
                 ))
             self._checkpoint(
                 db, run, "plan_replaced",
+                resource_type="plan", resource_id=f"from:{from_ordinal}",
                 evidence={"from_ordinal": from_ordinal, "step_count": len(steps)},
             )
             self._event(db, run, "planning", "replanned", f"Plan updated from step {from_ordinal}.")
@@ -1594,6 +1595,7 @@ class AgentRepository:
             ))
             self._checkpoint(
                 db, run, "analysis_decision",
+                resource_type="planner", resource_id=str(planner_call),
                 evidence={
                     "decision": decision.decision,
                     "planner_call": planner_call,
