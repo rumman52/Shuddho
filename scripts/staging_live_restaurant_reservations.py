@@ -11,8 +11,6 @@ from pathlib import Path
 
 import httpx
 
-from services.coworker.config import Settings
-
 
 class RestaurantReservationProbeError(RuntimeError):
     pass
@@ -32,7 +30,7 @@ def env(name: str) -> str:
     return value
 
 
-def require_guard(settings: Settings) -> None:
+def require_guard() -> None:
     if os.environ.get(
         "SHUDDHO_STAGING_ALLOW_LIVE_RESTAURANT_RESERVATIONS", ""
     ).lower() != "true":
@@ -40,24 +38,13 @@ def require_guard(settings: Settings) -> None:
             "Set SHUDDHO_STAGING_ALLOW_LIVE_RESTAURANT_RESERVATIONS=true only "
             "for the dedicated OpenTable sandbox qualification."
         )
-    if settings.environment != "staging":
+    if os.environ.get("SHUDDHO_COWORKER_ENV", "").lower() != "staging":
         raise RestaurantReservationProbeError(
             "Restaurant reservation live qualification may run only in staging."
         )
-    if settings.opentable_environment != "sandbox":
+    if os.environ.get("SHUDDHO_OPENTABLE_ENVIRONMENT", "").lower() != "sandbox":
         raise RestaurantReservationProbeError(
             "Restaurant reservation live qualification refuses non-sandbox OpenTable."
-        )
-    if (
-        not settings.actions_enabled
-        or not settings.connector_trust_boundary_enabled
-        or not settings.personal_transactions_enabled
-        or not settings.restaurant_reservations_enabled
-        or OPERATION not in settings.transaction_operations
-    ):
-        raise RestaurantReservationProbeError(
-            "Staging must enable actions, connector trust, personal transactions, "
-            "restaurant reservations, and the exact OpenTable operation."
         )
 
 
@@ -233,8 +220,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        settings = Settings.from_env()
-        require_guard(settings)
+        require_guard()
         if args.timeout < 1:
             raise RestaurantReservationProbeError("Timeout must be positive.")
         base_url = env("SHUDDHO_STAGING_API_BASE_URL").rstrip("/")
