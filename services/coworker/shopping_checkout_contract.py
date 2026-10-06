@@ -209,6 +209,12 @@ def validate_checkout_receipt(
             "The checkout receipt confirmation time is in the future.",
             409,
         )
+    if receipt.confirmed_at > preview.expires_at:
+        raise CoworkerError(
+            "shopping_checkout_receipt_invalid",
+            "The checkout receipt was confirmed after the approved checkout expired.",
+            409,
+        )
 
     mismatches = []
     for field in ("provider", "merchant_cart_id", "currency", "total_minor"):
