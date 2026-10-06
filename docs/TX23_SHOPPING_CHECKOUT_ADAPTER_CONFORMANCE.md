@@ -41,7 +41,8 @@ For one immutable TX-13 preview, the harness:
 8. requires every observed receipt digest to be identical.
 
 The resulting evidence contains hashes and identifiers needed for continuity,
-but never payment-instrument values.
+including the exact TX-15 registration-proposal SHA-256 and the conformance
+evaluation timestamp. It never contains payment-instrument values.
 
 ## Authority remains closed
 
@@ -55,6 +56,7 @@ A passing result has status
 - `identity_authority=false`;
 - `payment_authority=false`.
 
-TX-23 is implementation evidence only. A later slice may compile this evidence
-for a runtime-registration review, but must not silently register or activate
-checkout.
+TX-23 is implementation evidence only. TX-24 may compile this evidence together
+with the exact TX-15 proposal and a fresh human review into an inert
+runtime-registration-review bundle, but neither TX-23 nor TX-24 may silently
+register or activate checkout.
