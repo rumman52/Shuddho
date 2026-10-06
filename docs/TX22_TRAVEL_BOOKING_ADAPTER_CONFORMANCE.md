@@ -36,19 +36,23 @@ as a sandbox; the exact test origin remains bound to the reviewed TX-20 origin.
 
 ## Bounded provider I/O
 
-For one immutable booking preview, TX-22:
+For one immutable booking preview, TX-22 now:
 
-1. performs a pre-create lookup by the binding-scoped idempotency key;
-2. performs a sandbox create;
-3. performs the same sandbox create again with the same idempotency key;
-4. reads the booking back by idempotency key;
-5. reads the booking back by provider booking ID;
-6. validates every returned receipt against the exact TX-18 receipt contract;
-7. requires all observed receipt hashes to be identical.
+1. confirms no receipt exists for the new binding-scoped idempotency key;
+2. requests a provider-hosted booking handoff with only reviewed traveler data;
+3. repeats the handoff request with the same idempotency key;
+4. validates both handoffs through TX-27;
+5. requires the handoff digests to be identical;
+6. confirms the adapter still exposes no confirmed receipt before the user
+   completes the hosted flow.
 
 The deterministic idempotency key is derived from the TX-21 adapter admission,
 booking binding, immutable booking scope and preview digest. No traveler data,
 secret or payment value is embedded in the key or emitted in the result.
+
+A final provider receipt is deliberately **not** manufactured by this automated
+adapter test. Final receipt equality and reconciliation after a real/sandbox
+user-present completion remain live provider evidence required by TX-27/TX-28.
 
 ## Privacy boundary
 
@@ -62,7 +66,7 @@ SHA-256, and conformance evaluation timestamp for downstream review continuity.
 
 A successful TX-22 result has status:
 
-`provider_implementation_conformance_passed`
+`provider_handoff_conformance_passed`
 
 The evidence still requires:
 
