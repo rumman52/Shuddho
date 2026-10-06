@@ -51,6 +51,17 @@ def test_core_agent_phase1_required_routes(goal, execution, capability, tools):
     assert route.tools == tools
 
 
+def test_current_sources_do_not_force_web_research_for_meeting_pack():
+    route = qualify_agent_goal(
+        "Prepare an investor meeting pack from my current sources.",
+        settings(),
+    )
+    assert route.execution == "agent_run"
+    assert route.capability == "meeting"
+    assert route.tools == ["meeting.prepare"]
+    assert route.provider == "coworker_model"
+
+
 def test_router_distinguishes_draft_from_consequential_send():
     draft = qualify_agent_goal("Draft an email to the finance team.", settings())
     send = qualify_agent_goal("Send this email to the finance team.", settings())

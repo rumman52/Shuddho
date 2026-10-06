@@ -28,6 +28,26 @@ def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
     return any(_contains(text, phrase) for phrase in phrases)
 
 
+def _research_requested(text: str) -> bool:
+    """Treat 'current sources/documents' as local context, not an implicit web search."""
+    explicit = tuple(item for item in _RESEARCH_MARKERS if item != "current")
+    if _has_any(text, explicit):
+        return True
+    if not _contains(text, "current"):
+        return False
+    local_context = (
+        "current source",
+        "current sources",
+        "my current source",
+        "my current sources",
+        "current document",
+        "current documents",
+        "my current document",
+        "my current documents",
+    )
+    return not _has_any(text, local_context)
+
+
 _QUESTION_PREFIXES = (
     "what is ",
     "what are ",
@@ -281,7 +301,7 @@ def qualify_agent_goal(
             message="A non-empty request is required.",
         )
 
-    research_requested = _has_any(text, _RESEARCH_MARKERS)
+    research_requested = _research_requested(text)
 
     # Clear explanatory questions are direct even when they mention an action
     # as a concept (for example, "How do I book a flight?").
@@ -417,7 +437,10 @@ def qualify_agent_goal(
     intents: list[str] = []
     for name, intent, phrases in _AGENT_RULES:
         if name == "research.search":
-            matched = research_requested or _has_any(text, phrases)
+            matched = research_requested or _has_any(
+                text,
+                tuple(phrase for phrase in phrases if phrase != "current"),
+            )
         else:
             matched = _has_any(text, phrases)
         if not matched:

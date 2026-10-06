@@ -185,6 +185,8 @@ export type AgentRun = {
   pending_approval: { invocation_id: string; step_id: string; tool: string } | null;
   retry_state: { planner_calls_used: number; planner_calls_remaining: number; planner_tokens_reserved: number; tool_steps_used: number; tool_steps_remaining: number; temporal_activity_retries_bounded: boolean };
   final_state: AgentFinalState | null;
+  checkpoints: { id: string; kind: string; step_id: string | null; invocation_id: string | null; resource_type: string | null; resource_id: string | null; evidence: Record<string, unknown>; created_at: string }[];
+  resume_from: string;
   evidence: { verified_receipt_count: number; verified_invocation_ids: string[]; deadline_at: string; planner_decision_count: number };
   connector_read_grant_ids: string[];
   memory_namespaces: string[]; state: AgentRunState; phase: string; message: string; error_code: string | null; cancel_requested: boolean;

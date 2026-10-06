@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 
 from .errors import CoworkerError
 from .models import (
-    Account, ActionProposal, ActionRecipient, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
+    Account, ActionProposal, ActionRecipient, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal,
@@ -181,6 +181,7 @@ class RetentionService:
             db.execute(delete(ConnectorReadGrant).where(ConnectorReadGrant.owner_id == owner))
             db.execute(delete(ActionRecipient).where(ActionRecipient.owner_id == owner))
             db.execute(delete(ToolReceipt).where(ToolReceipt.owner_id == owner))
+            db.execute(delete(AgentCheckpoint).where(AgentCheckpoint.owner_id == owner))
             db.execute(delete(ToolInvocation).where(ToolInvocation.owner_id == owner))
             db.execute(delete(AgentEvent).where(AgentEvent.owner_id == owner))
             db.execute(delete(AgentDecision).where(AgentDecision.owner_id == owner))

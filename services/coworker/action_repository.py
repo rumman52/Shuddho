@@ -19,7 +19,7 @@ from .action_schemas import ActionPrepare
 from .action_security import TokenVault
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE, CONNECTOR_READ_AUDIENCE
 from .errors import CoworkerError
-from .models import Account, ActionProposal, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, NegotiationCase, NegotiationOffer, NegotiationProposal, OAuthAttempt, Transaction, TransactionExecutionLink, TransactionTermsSnapshot, utcnow
+from .models import Account, ActionProposal, AgentCheckpoint, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, NegotiationCase, NegotiationOffer, NegotiationProposal, OAuthAttempt, Transaction, TransactionExecutionLink, TransactionTermsSnapshot, utcnow
 from .repository import aware, iso, not_found
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
@@ -65,6 +65,29 @@ def action_dto(row):
 
 
 class ActionRepository:
+    def _agent_checkpoint(self, db, row: ExternalAction, kind: str, evidence: dict | None = None) -> None:
+        if not row.agent_run_id:
+            return
+        key = f"{kind}:0:{row.id}"[:160]
+        existing = db.scalar(select(AgentCheckpoint).where(
+            AgentCheckpoint.run_id == row.agent_run_id,
+            AgentCheckpoint.checkpoint_key == key,
+        ))
+        if existing is not None:
+            return
+        db.add(AgentCheckpoint(
+            id=str(uuid4()),
+            run_id=row.agent_run_id,
+            owner_id=row.owner_id,
+            step_id=None,
+            invocation_id=None,
+            checkpoint_key=key,
+            kind=kind,
+            resource_type="action",
+            resource_id=row.id,
+            evidence=evidence or {},
+        ))
+
     def __init__(self, sessions, settings):
         self.sessions, self.settings = sessions, settings
 
@@ -1218,6 +1241,16 @@ class ActionRepository:
                 aware(row.expires_at),
                 utcnow() + timedelta(seconds=spec.execution_ttl_seconds),
             )
+            self._agent_checkpoint(
+                db,
+                row,
+                "action_approved",
+                {
+                    "action_state": "queued",
+                    "preview_hash": row.preview_hash,
+                    "blind_retry_allowed": False,
+                },
+            )
             self._audit(db, owner, action_id, "action.approved")
             return action_dto(row)
 
@@ -1333,6 +1366,17 @@ class ActionRepository:
                     self._audit(db, row.owner_id, row.id, "action.failed")
                     return None
             row.state, row.started_at = "executing", utcnow()
+            self._agent_checkpoint(
+                db,
+                row,
+                "action_execution_claimed",
+                {
+                    "action_state": "executing",
+                    "preview_hash": row.preview_hash,
+                    "blind_retry_allowed": False,
+                    "recovery_policy": "reconcile_only",
+                },
+            )
             self._audit(db, row.owner_id, row.id, "action.execution_started")
             return action_dto(row)
 
@@ -1350,6 +1394,30 @@ class ActionRepository:
             if row.state == "queued" and state == "outcome_unknown":
                 state = "failed"  # No execution claim: no provider mutation.
             row.state, row.receipt, row.error_code, row.finished_at = state, receipt, error_code, utcnow()
+            if state == "succeeded":
+                self._agent_checkpoint(
+                    db,
+                    row,
+                    "action_result_verified",
+                    {
+                        "action_state": "succeeded",
+                        "provider_confirmed": True,
+                        "receipt_sha256": digest(receipt) if receipt else None,
+                        "blind_retry_allowed": False,
+                    },
+                )
+            elif state == "outcome_unknown":
+                self._agent_checkpoint(
+                    db,
+                    row,
+                    "action_outcome_unknown",
+                    {
+                        "action_state": "outcome_unknown",
+                        "error_code": error_code,
+                        "blind_retry_allowed": False,
+                        "recovery_policy": "reconcile_or_manual_verify",
+                    },
+                )
             self._audit(db, row.owner_id, row.id, "action." + state)
 
     def claim_outbox(self):
@@ -1362,6 +1430,17 @@ class ActionRepository:
             # "executing" forever. Reconciliation is read-only afterward.
             for row in db.scalars(select(ExternalAction).where(ExternalAction.state == "executing", ExternalAction.started_at < now - timedelta(minutes=10)).with_for_update(skip_locked=True)):
                 row.state, row.finished_at, row.error_code = "outcome_unknown", now, "worker_interrupted"
+                self._agent_checkpoint(
+                    db,
+                    row,
+                    "action_outcome_unknown",
+                    {
+                        "action_state": "outcome_unknown",
+                        "error_code": "worker_interrupted",
+                        "blind_retry_allowed": False,
+                        "recovery_policy": "reconcile_or_manual_verify",
+                    },
+                )
                 self._audit(db, row.owner_id, row.id, "action.outcome_unknown")
             db.execute(update(OAuthAttempt).where(OAuthAttempt.expires_at <= now, OAuthAttempt.verifier_ciphertext != "").values(verifier_ciphertext="", consumed=True))
             if not self.settings.actions_enabled:

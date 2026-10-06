@@ -1575,6 +1575,25 @@ class AgentStep(Base):
     __table_args__ = (UniqueConstraint("run_id", "ordinal"),)
 
 
+class AgentCheckpoint(Base):
+    __tablename__ = "cw_agent_checkpoints"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    step_id: Mapped[str | None] = mapped_column(String(36))
+    invocation_id: Mapped[str | None] = mapped_column(String(36))
+    checkpoint_key: Mapped[str] = mapped_column(String(160))
+    kind: Mapped[str] = mapped_column(String(50))
+    resource_type: Mapped[str | None] = mapped_column(String(40))
+    resource_id: Mapped[str | None] = mapped_column(String(128))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("run_id", "checkpoint_key", name="uq_cw_agent_checkpoints_run_key"),
+        Index("cw_agent_checkpoints_owner_run", "owner_id", "run_id"),
+    )
+
+
 class AgentEvent(Base):
     __tablename__ = "cw_agent_events"
     run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), primary_key=True)

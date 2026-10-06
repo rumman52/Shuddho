@@ -11,7 +11,7 @@ from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, A
 from .agent_tools import available_tools, tool
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -40,6 +40,60 @@ class AgentRepository:
 
     def _audit(self, db, owner: str, resource: str, action: str):
         db.add(AuditEvent(id=str(uuid4()), owner_id=owner, resource_id=resource, action=action))
+
+    def _checkpoint(
+        self,
+        db,
+        run: AgentRun,
+        kind: str,
+        *,
+        step: AgentStep | None = None,
+        invocation: ToolInvocation | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        evidence: dict | None = None,
+    ) -> AgentCheckpoint:
+        ordinal = step.ordinal if step is not None else 0
+        identity = resource_id or (invocation.id if invocation is not None else "-")
+        key = f"{kind}:{ordinal}:{identity}"[:160]
+        existing = db.scalar(select(AgentCheckpoint).where(
+            AgentCheckpoint.run_id == run.id,
+            AgentCheckpoint.checkpoint_key == key,
+        ))
+        if existing is not None:
+            return existing
+        row = AgentCheckpoint(
+            id=str(uuid4()),
+            run_id=run.id,
+            owner_id=run.owner_id,
+            step_id=step.id if step is not None else None,
+            invocation_id=invocation.id if invocation is not None else None,
+            checkpoint_key=key,
+            kind=kind,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            evidence=evidence or {},
+        )
+        db.add(row)
+        return row
+
+    def checkpoints(self, owner: str, run_id: str) -> list[dict]:
+        with self.sessions() as db:
+            run = self._run(db, owner, run_id)
+            rows = db.scalars(select(AgentCheckpoint).where(
+                AgentCheckpoint.run_id == run.id,
+                AgentCheckpoint.owner_id == owner,
+            ).order_by(AgentCheckpoint.created_at, AgentCheckpoint.id)).all()
+            return [{
+                "id": row.id,
+                "kind": row.kind,
+                "step_id": row.step_id,
+                "invocation_id": row.invocation_id,
+                "resource_type": row.resource_type,
+                "resource_id": row.resource_id,
+                "evidence": row.evidence,
+                "created_at": iso(row.created_at),
+            } for row in rows]
 
     def _event(self, db, run: AgentRun, state: str, phase: str, message: str):
         run.state = state
@@ -146,6 +200,32 @@ class AgentRepository:
                 self._audit(db, run.owner_id, run.id, "agent_run_deadline_expired")
                 expired.append(run.id)
         return expired
+
+    def public_idempotent_replay(
+        self,
+        owner: str,
+        request: AgentRunCreate,
+        idempotency_key: str,
+    ) -> dict | None:
+        """Resolve a public replay before capability routing can change its semantics."""
+        payload = request.model_dump(mode="json")
+        fingerprint = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode()
+        ).hexdigest()
+        with self.sessions() as db:
+            previous = db.scalar(select(AgentRun).where(
+                AgentRun.owner_id == owner,
+                AgentRun.idempotency_key == idempotency_key,
+            ))
+            if previous is None:
+                return None
+            if previous.fingerprint != fingerprint:
+                raise CoworkerError(
+                    "idempotency_conflict",
+                    "This request key belongs to a different agent goal.",
+                    409,
+                )
+            return self._dto(db, previous)
 
     def create(
         self,
@@ -371,6 +451,22 @@ class AgentRepository:
                 output={},
             ))
             db.add(AgentOutbox(run_id=run.id))
+            self._checkpoint(
+                db, run, "run_created",
+                evidence={"runtime_version": run.runtime_version, "deadline_at": iso(run.deadline_at)},
+            )
+            for bound_action_id in action_ids:
+                bound_action = db.get(ExternalAction, bound_action_id)
+                if bound_action is not None:
+                    self._checkpoint(
+                        db, run, "action_prepared",
+                        resource_type="action", resource_id=bound_action.id,
+                        evidence={
+                            "action_state": bound_action.state,
+                            "preview_hash": bound_action.preview_hash,
+                            "approval_required": True,
+                        },
+                    )
             self._event(db, run, "queued", "planning", "Agent run created. Waiting for the bounded planner runtime.")
             self._audit(db, owner, run.id, "agent_run_created")
             return self._dto(db, run), True
@@ -451,6 +547,10 @@ class AgentRepository:
             None,
         )
         final_state = self._final_state(run, receipts, invocations)
+        checkpoints = db.scalars(select(AgentCheckpoint).where(
+            AgentCheckpoint.run_id == run.id,
+            AgentCheckpoint.owner_id == run.owner_id,
+        ).order_by(AgentCheckpoint.created_at, AgentCheckpoint.id)).all()
         tool_results = [
             {
                 "invocation_id": receipt.invocation_id,
@@ -506,6 +606,17 @@ class AgentRepository:
                 "temporal_activity_retries_bounded": True,
             },
             "final_state": final_state,
+            "checkpoints": [{
+                "id": item.id,
+                "kind": item.kind,
+                "step_id": item.step_id,
+                "invocation_id": item.invocation_id,
+                "resource_type": item.resource_type,
+                "resource_id": item.resource_id,
+                "evidence": item.evidence,
+                "created_at": iso(item.created_at),
+            } for item in checkpoints],
+            "resume_from": (checkpoints[-1].kind if checkpoints else "run_created"),
             "evidence": {
                 "verified_receipt_count": len(receipts),
                 "verified_invocation_ids": [item.invocation_id for item in receipts],
@@ -877,6 +988,11 @@ class AgentRepository:
                     arguments=validated.model_dump(mode="json"), state="prepared",
                     consequential=spec.consequential, approval_required=spec.approval_required,
                 ))
+            self._checkpoint(
+                db, run, "plan_replaced",
+                resource_type="plan", resource_id=f"from:{from_ordinal}",
+                evidence={"from_ordinal": from_ordinal, "step_count": len(steps)},
+            )
             self._event(db, run, "planning", "replanned", f"Plan updated from step {from_ordinal}.")
             self._audit(db, owner, run.id, "agent_plan_replanned")
             return self._dto(db, run)
@@ -999,6 +1115,10 @@ class AgentRepository:
                     proposal_id,
                     "agent_action_proposal_suggested",
                 )
+            self._checkpoint(
+                db, run, "plan_saved",
+                evidence={"step_count": len(steps), "runtime_version": run.runtime_version},
+            )
             self._event(db, run, "planning", "planned", f"Plan saved with {len(steps)} bounded steps.")
             self._audit(db, owner, run.id, "agent_plan_saved")
             return self._dto(db, run)
@@ -1511,6 +1631,15 @@ class AgentRepository:
                 observation_count=observation_count,
                 total_tokens=total_tokens, cost_microusd=cost_microusd,
             ))
+            self._checkpoint(
+                db, run, "analysis_decision",
+                resource_type="planner", resource_id=str(planner_call),
+                evidence={
+                    "decision": decision.decision,
+                    "planner_call": planner_call,
+                    "observation_count": observation_count,
+                },
+            )
             self._audit(db, run.owner_id, run.id, "agent_v3_decision_recorded")
 
     def v3_can_complete(self, run_id: str) -> bool:
@@ -1583,6 +1712,11 @@ class AgentRepository:
             invocation.started_at = invocation.started_at or now
             step.state = "running"
             step.started_at = step.started_at or now
+            self._checkpoint(
+                db, run, "tool_call_started",
+                step=step, invocation=invocation,
+                evidence={"tool": invocation.tool_name, "consequential": False},
+            )
             self._event(db, run, "running", f"step_{ordinal}", f"Running agent step {ordinal}.")
 
     def step_resource(self, run_id: str, ordinal: int) -> dict | None:
@@ -1600,6 +1734,16 @@ class AgentRepository:
             if step is None:
                 raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
             step.output = {"resource_type": resource_type, "resource_id": resource_id}
+            run = db.get(AgentRun, step.run_id)
+            invocation = db.scalar(select(ToolInvocation).where(
+                ToolInvocation.step_id == step.id,
+            ))
+            if run is not None and invocation is not None:
+                self._checkpoint(
+                    db, run, "tool_resource_linked",
+                    step=step, invocation=invocation,
+                    resource_type=resource_type, resource_id=resource_id,
+                )
 
     def action_waiting(self, run_id: str, ordinal: int, action_id: str, action_state: str):
         with self.sessions.begin() as db:
@@ -1623,12 +1767,21 @@ class AgentRepository:
             action.agent_ready = True
             step.output = {"resource_type": "action", "resource_id": action_id}
             if action_state == "awaiting_approval":
+                self._checkpoint(
+                    db, run, "wait_for_approval",
+                    step=step, invocation=invocation,
+                    resource_type="action", resource_id=action_id,
+                    evidence={"action_state": "awaiting_approval"},
+                )
                 changed = invocation.state != "awaiting_approval" or run.state != "awaiting_approval"
                 invocation.state = "awaiting_approval"
                 step.state = "awaiting_approval"
                 if changed:
                     self._event(db, run, "awaiting_approval", f"step_{ordinal}", "Review and approve the attached action to continue.")
             elif action_state in {"queued", "executing"}:
+                # Approval and execution-claim checkpoints are written by
+                # ActionRepository in the same transactions that change the
+                # action state. This observer must not create competing copies.
                 changed = invocation.state != "running" or run.state != "running"
                 invocation.state = "running"
                 step.state = "running"
@@ -1662,6 +1815,16 @@ class AgentRepository:
             step.state = "completed"
             step.finished_at = now
             step.output = {"resource_type": resource_type, "resource_id": resource_id}
+            self._checkpoint(
+                db, run,
+                "verify_result" if resource_type == "action" else "tool_observed",
+                step=step, invocation=invocation,
+                resource_type=resource_type, resource_id=resource_id,
+                evidence={
+                    "verified": True,
+                    "provider_confirmed": summary.get("provider_confirmed") is True,
+                },
+            )
             self._event(db, run, "running", f"step_{ordinal}", f"Agent step {ordinal} completed.")
 
     def fail_run(self, run_id: str, code: str, message: str):
@@ -1715,5 +1878,12 @@ class AgentRepository:
                     "The agent run cannot complete without one verified receipt per completed tool.",
                     409,
                 )
+            self._checkpoint(
+                db, run, "complete",
+                evidence={
+                    "completed_invocations": int(completed_invocations or 0),
+                    "verified_receipts": int(verified_receipts or 0),
+                },
+            )
             self._event(db, run, "completed", "complete", "Agent run completed.")
             self._audit(db, run.owner_id, run.id, "agent_run_completed")

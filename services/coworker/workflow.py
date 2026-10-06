@@ -33,7 +33,7 @@ class AgentWorkflowV3:
                     run_id,
                     start_to_close_timeout=timedelta(seconds=45),
                     schedule_to_close_timeout=timedelta(minutes=2),
-                    retry_policy=RetryPolicy(maximum_attempts=1),
+                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=2),
                 )
                 kind = str(decision.get("decision"))
                 if kind == "complete":
@@ -221,7 +221,7 @@ class AgentWorkflow:
                 "shuddho_agent_plan_v1", run_id,
                 start_to_close_timeout=timedelta(seconds=30),
                 schedule_to_close_timeout=timedelta(minutes=2),
-                retry_policy=RetryPolicy(maximum_attempts=1),
+                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=2),
             )
             ordinal = 1
             replanned = False
@@ -254,7 +254,7 @@ class AgentWorkflow:
                             {"run_id": run_id, "from_ordinal": from_ordinal, "reason": reason},
                             start_to_close_timeout=timedelta(seconds=45),
                             schedule_to_close_timeout=timedelta(minutes=2),
-                            retry_policy=RetryPolicy(maximum_attempts=1),
+                            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=2),
                         )
                         count = from_ordinal - 1 + replacement_count
                         replanned = True
@@ -297,7 +297,7 @@ class AgentWorkflowV2:
                 "shuddho_agent_plan_v1", run_id,
                 start_to_close_timeout=timedelta(seconds=30),
                 schedule_to_close_timeout=timedelta(minutes=2),
-                retry_policy=RetryPolicy(maximum_attempts=1),
+                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=2),
             )
             while True:
                 snapshot = await workflow.execute_activity(
@@ -319,7 +319,7 @@ class AgentWorkflowV2:
                         {"run_id": run_id, "from_ordinal": int(replan_ordinal), "reason": "capability_changed"},
                         start_to_close_timeout=timedelta(seconds=45),
                         schedule_to_close_timeout=timedelta(minutes=2),
-                        retry_policy=RetryPolicy(maximum_attempts=1),
+                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=2),
                     )
                     count = int(replan_ordinal) - 1 + replacement_count
                     replanned = True
@@ -377,7 +377,7 @@ class AgentWorkflowV2:
                         {"run_id": run_id, "from_ordinal": from_ordinal, "reason": reason},
                         start_to_close_timeout=timedelta(seconds=45),
                         schedule_to_close_timeout=timedelta(minutes=2),
-                        retry_policy=RetryPolicy(maximum_attempts=1),
+                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=2),
                     )
                     count = from_ordinal - 1 + replacement_count
                     replanned = True
