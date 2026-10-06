@@ -23,13 +23,16 @@ The harness requires all of the following:
 - a TX-21-compatible adapter;
 - `implementation_test_only=true` on the adapter;
 - `implementation_test_environment="sandbox"`;
+- an `implementation_test_origin` exactly matching the reviewed TX-20 booking origin;
 - an explicit caller opt-in with `allow_provider_test_io=True`;
 - a fresh TX-18 travel booking preview;
 - only the reviewed `shuddho_transmitted_fields` traveler data;
 - no `travel_booking_create` entry in `ACTION_SPECS`;
 - no allowlisted `provider:travel_booking_create` transaction operation.
 
-The harness fails closed if any of these conditions are absent.
+The harness fails closed if any of these conditions are absent. The adapter cannot
+switch its implementation test to an unreviewed host merely by labeling that host
+as a sandbox; the exact test origin remains bound to the reviewed TX-20 origin.
 
 ## Bounded provider I/O
 
