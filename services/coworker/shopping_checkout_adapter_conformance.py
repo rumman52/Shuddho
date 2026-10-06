@@ -9,10 +9,11 @@ from .action_registry import (
     stable_digest,
 )
 from .shopping_checkout_adapter import admit_checkout_adapter
-from .shopping_checkout_contract import (
-    ShoppingCheckoutPreview,
-    validate_checkout_receipt,
+from .hosted_transaction_handoff import (
+    HostedTransactionHandoffError,
+    build_hosted_transaction_handoff,
 )
+from .shopping_checkout_contract import ShoppingCheckoutPreview
 
 
 ACTION_KIND = "shopping_checkout_create"
@@ -241,77 +242,75 @@ def _idempotency_key(admission: dict, preview: ShoppingCheckoutPreview) -> str:
     )
 
 
-async def _lookup(
+async def _lookup_receipt(
     adapter: object,
     *,
     idempotency_key: str | None = None,
     provider_order_id: str | None = None,
 ) -> dict | None:
     try:
-        value = await adapter.lookup_checkout(
+        value = await adapter.lookup_checkout_receipt(
             idempotency_key=idempotency_key,
             provider_order_id=provider_order_id,
         )
     except Exception as exc:
         raise ShoppingCheckoutAdapterConformanceError(
-            "TX-23 staging checkout lookup failed."
+            "TX-23 staging checkout receipt lookup failed."
         ) from exc
     if value is not None and not isinstance(value, dict):
         raise ShoppingCheckoutAdapterConformanceError(
-            "TX-23 checkout lookup must return a receipt dictionary or None."
+            "TX-23 receipt lookup must return a receipt dictionary or None."
         )
     return value
 
 
-async def _create(
+async def _create_handoff(
     adapter: object,
     *,
     preview: dict,
     idempotency_key: str,
 ) -> dict:
     try:
-        value = await adapter.create_checkout(
+        value = await adapter.create_checkout_handoff(
             preview=preview,
             idempotency_key=idempotency_key,
         )
     except Exception as exc:
         raise ShoppingCheckoutAdapterConformanceError(
-            "TX-23 staging checkout creation failed."
+            "TX-23 staging checkout handoff creation failed."
         ) from exc
-    if not isinstance(value, dict):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"handoff_id", "handoff_url"}
+        or not isinstance(value["handoff_id"], str)
+        or not isinstance(value["handoff_url"], str)
+    ):
         raise ShoppingCheckoutAdapterConformanceError(
-            "TX-23 checkout creation must return a receipt dictionary."
+            "TX-23 checkout handoff must return exactly handoff_id and handoff_url."
         )
     return value
 
 
-def _validated_receipt(
-    preview: ShoppingCheckoutPreview,
-    receipt: dict,
+def _validated_handoff(
+    preview: dict,
+    handoff: dict,
     *,
+    reviewed_origin: str,
     now: datetime,
     label: str,
 ) -> dict:
     try:
-        result = validate_checkout_receipt(
-            preview.model_dump(mode="json"),
-            receipt,
+        return build_hosted_transaction_handoff(
+            preview,
+            handoff_id=handoff["handoff_id"],
+            handoff_url=handoff["handoff_url"],
+            reviewed_handoff_origin=reviewed_origin,
             now=now,
         )
-    except Exception as exc:
+    except HostedTransactionHandoffError as exc:
         raise ShoppingCheckoutAdapterConformanceError(
-            f"TX-23 {label} receipt failed the TX-13 receipt contract."
+            f"TX-23 {label} handoff failed the TX-27 hosted handoff contract."
         ) from exc
-
-    confirmed_at = _parse_time(
-        result["receipt"]["confirmed_at"],
-        label=f"TX-23 {label} confirmed_at",
-    )
-    if confirmed_at > preview.expires_at:
-        raise ShoppingCheckoutAdapterConformanceError(
-            f"TX-23 {label} receipt was confirmed after the reviewed checkout expired."
-        )
-    return result
 
 
 async def exercise_shopping_checkout_adapter(
@@ -324,7 +323,13 @@ async def exercise_shopping_checkout_adapter(
     now: datetime | None = None,
     max_probe_age_hours: int = 24,
 ) -> dict[str, Any]:
-    """Exercise a TX-16-admitted checkout adapter in controlled staging only."""
+    """Exercise a TX-16-admitted hosted checkout adapter in controlled staging.
+
+    TX-23 proves only the provider-hosted handoff boundary. It explicitly
+    rejects adapters that surface a confirmed receipt before the user-present
+    provider flow completes. Final receipt reconciliation is a separate live
+    staging/activation requirement through TX-27/TX-28.
+    """
 
     current = _aware(
         now or datetime.now(timezone.utc),
@@ -372,90 +377,60 @@ async def exercise_shopping_checkout_adapter(
     normalized_preview = preview.model_dump(mode="json")
     idempotency_key = _idempotency_key(admission, preview)
 
-    existing = await _lookup(
+    before = await _lookup_receipt(
         adapter,
         idempotency_key=idempotency_key,
     )
-    existing_validated = (
-        _validated_receipt(
-            preview,
-            existing,
-            now=current,
-            label="pre-create lookup",
+    if before is not None:
+        raise ShoppingCheckoutAdapterConformanceError(
+            "TX-23 refuses a pre-existing confirmed receipt before hosted handoff."
         )
-        if existing is not None
-        else None
-    )
 
-    first = await _create(
+    first = await _create_handoff(
         adapter,
         preview=normalized_preview,
         idempotency_key=idempotency_key,
     )
-    first_validated = _validated_receipt(
-        preview,
+    first_validated = _validated_handoff(
+        normalized_preview,
         first,
+        reviewed_origin=probe["checkout_origin"],
         now=current,
-        label="first create",
+        label="first",
     )
 
-    second = await _create(
+    second = await _create_handoff(
         adapter,
         preview=normalized_preview,
         idempotency_key=idempotency_key,
     )
-    second_validated = _validated_receipt(
-        preview,
+    second_validated = _validated_handoff(
+        normalized_preview,
         second,
+        reviewed_origin=probe["checkout_origin"],
         now=current,
-        label="idempotent create",
+        label="idempotent",
     )
 
-    provider_order_id = first_validated["receipt"]["provider_order_id"]
-    by_key = await _lookup(
+    if first_validated["handoff_sha256"] != second_validated["handoff_sha256"]:
+        raise ShoppingCheckoutAdapterConformanceError(
+            "TX-23 hosted checkout handoff is not idempotent."
+        )
+
+    after = await _lookup_receipt(
         adapter,
         idempotency_key=idempotency_key,
     )
-    by_provider_id = await _lookup(
-        adapter,
-        provider_order_id=provider_order_id,
-    )
-    if by_key is None or by_provider_id is None:
+    if after is not None:
         raise ShoppingCheckoutAdapterConformanceError(
-            "TX-23 requires checkout readback by both idempotency key and provider order ID."
-        )
-
-    by_key_validated = _validated_receipt(
-        preview,
-        by_key,
-        now=current,
-        label="idempotency lookup",
-    )
-    by_provider_id_validated = _validated_receipt(
-        preview,
-        by_provider_id,
-        now=current,
-        label="provider order lookup",
-    )
-
-    receipt_hashes = {
-        first_validated["receipt_sha256"],
-        second_validated["receipt_sha256"],
-        by_key_validated["receipt_sha256"],
-        by_provider_id_validated["receipt_sha256"],
-    }
-    if existing_validated is not None:
-        receipt_hashes.add(existing_validated["receipt_sha256"])
-    if len(receipt_hashes) != 1:
-        raise ShoppingCheckoutAdapterConformanceError(
-            "TX-23 provider implementation is not idempotent or readback-stable."
+            "TX-23 adapter exposed a confirmed receipt before user-present completion."
         )
 
     _require_runtime_closed()
 
     result = {
-        "schema_version": 1,
-        "status": "provider_implementation_conformance_passed",
+        "schema_version": 2,
+        "status": "provider_handoff_conformance_passed",
         "provider": admission["provider"],
         "operation": admission["operation"],
         "adapter_revision": admission["adapter_revision"],
@@ -465,15 +440,16 @@ async def exercise_shopping_checkout_adapter(
         "live_probe_evidence_sha256": probe["evidence_sha256"],
         "adapter_admission_sha256": admission["adapter_admission_sha256"],
         "preview_sha256": stable_digest(normalized_preview),
-        "receipt_sha256": first_validated["receipt_sha256"],
+        "handoff_sha256": first_validated["handoff_sha256"],
         "idempotency_key_sha256": stable_digest(
             {"idempotency_key": idempotency_key}
         ),
         "provider_test_environment": "staging",
         "staging_provider_io": True,
         "provider_called": True,
-        "create_attempts": 2,
-        "lookup_attempts": 3,
+        "handoff_attempts": 2,
+        "receipt_lookup_attempts": 2,
+        "completion_receipt_observed": False,
         "evaluated_at": current.isoformat(),
         "registration_authority": False,
         "operation_allowlisted": False,

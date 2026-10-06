@@ -24,13 +24,13 @@ CONFORMANCE_KEYS = {
     "registration_proposal_sha256",
     "adapter_admission_sha256",
     "preview_sha256",
-    "receipt_sha256",
+    "handoff_sha256",
     "idempotency_key_sha256",
     "sandbox_provider_io",
     "provider_called",
-    "create_attempts",
-    "lookup_attempts",
-    "existing_booking_observed",
+    "handoff_attempts",
+    "receipt_lookup_attempts",
+    "completion_receipt_observed",
     "traveler_fields_sent",
     "evaluated_at",
     "registration_authority",
@@ -125,7 +125,10 @@ def validate_conformance(
             "TX-22 conformance digest does not match its contents."
         )
 
-    if value["status"] != "provider_implementation_conformance_passed":
+    if (
+        value["schema_version"] != 2
+        or value["status"] != "provider_handoff_conformance_passed"
+    ):
         raise TravelBookingRuntimeRegistrationReviewError(
             "TX-22 conformance did not pass."
         )
@@ -148,7 +151,7 @@ def validate_conformance(
     for field in (
         "adapter_admission_sha256",
         "preview_sha256",
-        "receipt_sha256",
+        "handoff_sha256",
         "idempotency_key_sha256",
     ):
         _sha(value[field], label=f"TX-22 {field}")
@@ -156,8 +159,9 @@ def validate_conformance(
     if (
         value["sandbox_provider_io"] is not True
         or value["provider_called"] is not True
-        or value["create_attempts"] != 2
-        or value["lookup_attempts"] != 3
+        or value["handoff_attempts"] != 2
+        or value["receipt_lookup_attempts"] != 2
+        or value["completion_receipt_observed"] is not False
     ):
         raise TravelBookingRuntimeRegistrationReviewError(
             "TX-22 conformance does not prove the required bounded sandbox exercise."
@@ -283,7 +287,7 @@ def compile_runtime_registration_review(
         "qualification_sha256": proposal["qualification_sha256"],
         "registration_proposal_sha256": proposal["registration_proposal_sha256"],
         "conformance_sha256": conformance["conformance_sha256"],
-        "receipt_sha256": conformance["receipt_sha256"],
+        "handoff_sha256": conformance["handoff_sha256"],
         "traveler_fields_sent": conformance["traveler_fields_sent"],
         "change_reference": change_reference,
         "reviewer_reference": reviewer_reference,

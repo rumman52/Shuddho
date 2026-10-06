@@ -164,9 +164,8 @@ class StagingCheckoutAdapter:
         self.create_calls: list[tuple[dict, str]] = []
         self.lookup_calls: list[tuple[str | None, str | None]] = []
         self.by_key: dict[str, dict] = {}
-        self.by_id: dict[str, dict] = {}
 
-    async def create_checkout(
+    async def create_checkout_handoff(
         self,
         *,
         preview: dict,
@@ -176,34 +175,21 @@ class StagingCheckoutAdapter:
         existing = self.by_key.get(idempotency_key)
         if existing is not None:
             return dict(existing)
-        receipt = {
-            "provider": preview["provider"],
-            "provider_order_id": "order-123",
-            "merchant_cart_id": preview["merchant_cart_id"],
-            "currency": preview["currency"],
-            "total_minor": preview["total_minor"],
-            "status": "confirmed",
-            "confirmed_at": self.now.isoformat(),
+        handoff = {
+            "handoff_id": "checkout-session-123",
+            "handoff_url": ORIGIN + "/session/123?token=opaque",
         }
-        self.by_key[idempotency_key] = dict(receipt)
-        self.by_id[receipt["provider_order_id"]] = dict(receipt)
-        return receipt
+        self.by_key[idempotency_key] = dict(handoff)
+        return handoff
 
-    async def lookup_checkout(
+    async def lookup_checkout_receipt(
         self,
         *,
         idempotency_key: str | None = None,
         provider_order_id: str | None = None,
     ) -> dict | None:
         self.lookup_calls.append((idempotency_key, provider_order_id))
-        if idempotency_key is not None:
-            value = self.by_key.get(idempotency_key)
-        elif provider_order_id is not None:
-            value = self.by_id.get(provider_order_id)
-        else:
-            value = None
-        return dict(value) if value is not None else None
-
+        return None
 
 def run(adapter: StagingCheckoutAdapter, now: datetime, **overrides):
     q = overrides.pop("qualification_value", qualification(now))
@@ -226,18 +212,21 @@ def run(adapter: StagingCheckoutAdapter, now: datetime, **overrides):
     )
 
 
-def test_tx23_exercises_staging_adapter_and_keeps_runtime_closed():
+def test_tx23_exercises_hosted_staging_adapter_and_keeps_runtime_closed():
     now = utcnow()
     adapter = StagingCheckoutAdapter(now)
 
     result = run(adapter, now)
 
-    assert result["status"] == "provider_implementation_conformance_passed"
+    assert result["schema_version"] == 2
+    assert result["status"] == "provider_handoff_conformance_passed"
     assert result["staging_provider_io"] is True
     assert result["provider_called"] is True
     assert result["provider_test_environment"] == "staging"
-    assert result["create_attempts"] == 2
-    assert result["lookup_attempts"] == 3
+    assert result["handoff_attempts"] == 2
+    assert result["receipt_lookup_attempts"] == 2
+    assert result["completion_receipt_observed"] is False
+    assert len(result["handoff_sha256"]) == 64
     assert result["registration_proposal_sha256"]
     assert result["evaluated_at"] == now.isoformat()
     assert result["registration_authority"] is False
@@ -247,7 +236,7 @@ def test_tx23_exercises_staging_adapter_and_keeps_runtime_closed():
     assert result["identity_authority"] is False
     assert result["payment_authority"] is False
     assert len(adapter.create_calls) == 2
-    assert len(adapter.lookup_calls) == 3
+    assert len(adapter.lookup_calls) == 2
     assert adapter.create_calls[0][1] == adapter.create_calls[1][1]
 
     with pytest.raises(Exception):
@@ -261,10 +250,8 @@ def test_tx23_exercises_staging_adapter_and_keeps_runtime_closed():
 def test_tx23_requires_explicit_provider_io_opt_in_before_calls():
     now = utcnow()
     adapter = StagingCheckoutAdapter(now)
-
     with pytest.raises(ShoppingCheckoutAdapterConformanceError):
         run(adapter, now, allow_provider_test_io=False)
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
@@ -273,10 +260,8 @@ def test_tx23_rejects_non_staging_adapter_before_calls():
     now = utcnow()
     adapter = StagingCheckoutAdapter(now)
     adapter.implementation_test_environment = "production"
-
     with pytest.raises(ShoppingCheckoutAdapterConformanceError):
         run(adapter, now)
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
@@ -285,10 +270,8 @@ def test_tx23_rejects_unreviewed_origin_before_calls():
     now = utcnow()
     adapter = StagingCheckoutAdapter(now)
     adapter.implementation_test_origin = "https://different.example"
-
     with pytest.raises(ShoppingCheckoutAdapterConformanceError):
         run(adapter, now)
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
@@ -305,7 +288,6 @@ def test_tx23_rejects_tampered_tx14_qualification_before_calls():
             "checkout_origin": "https://different.example",
         },
     }
-
     with pytest.raises(ShoppingCheckoutAdapterConformanceError):
         run(
             adapter,
@@ -313,7 +295,6 @@ def test_tx23_rejects_tampered_tx14_qualification_before_calls():
             qualification_value=tampered,
             proposal_value=proposal_value,
         )
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
@@ -322,80 +303,79 @@ def test_tx23_rejects_expired_preview_before_calls():
     now = utcnow()
     adapter = StagingCheckoutAdapter(now)
     value = preview(now, expires_in_minutes=-1)
-
     with pytest.raises(ShoppingCheckoutAdapterConformanceError):
         run(adapter, now, preview_value=value)
-
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
 
 
-def test_tx23_rejects_non_idempotent_duplicate_create():
+def test_tx23_rejects_non_idempotent_handoff():
     now = utcnow()
 
     class NonIdempotentAdapter(StagingCheckoutAdapter):
-        async def create_checkout(
+        async def create_checkout_handoff(
             self,
             *,
             preview: dict,
             idempotency_key: str,
         ) -> dict:
-            value = await super().create_checkout(
+            value = await super().create_checkout_handoff(
                 preview=preview,
                 idempotency_key=idempotency_key,
             )
             if len(self.create_calls) > 1:
-                value = dict(value)
-                value["provider_order_id"] = "order-different"
+                return {
+                    "handoff_id": "checkout-session-different",
+                    "handoff_url": ORIGIN + "/session/different",
+                }
             return value
 
     with pytest.raises(ShoppingCheckoutAdapterConformanceError):
         run(NonIdempotentAdapter(now), now)
 
 
-def test_tx23_rejects_receipt_term_drift():
+def test_tx23_rejects_immediate_confirmed_receipt_before_user_completion():
     now = utcnow()
 
-    class PriceDriftAdapter(StagingCheckoutAdapter):
-        async def create_checkout(
+    class PrematureReceiptAdapter(StagingCheckoutAdapter):
+        async def lookup_checkout_receipt(
+            self,
+            *,
+            idempotency_key: str | None = None,
+            provider_order_id: str | None = None,
+        ) -> dict | None:
+            self.lookup_calls.append((idempotency_key, provider_order_id))
+            if self.create_calls:
+                return {
+                    "provider": "merchantx",
+                    "provider_order_id": "order-123",
+                    "merchant_cart_id": "cart-123",
+                    "currency": "USD",
+                    "total_minor": 12500,
+                    "status": "confirmed",
+                    "confirmed_at": now.isoformat(),
+                }
+            return None
+
+    with pytest.raises(ShoppingCheckoutAdapterConformanceError):
+        run(PrematureReceiptAdapter(now), now)
+
+
+def test_tx23_rejects_invalid_handoff_url():
+    now = utcnow()
+
+    class BadHandoffAdapter(StagingCheckoutAdapter):
+        async def create_checkout_handoff(
             self,
             *,
             preview: dict,
             idempotency_key: str,
         ) -> dict:
-            value = await super().create_checkout(
-                preview=preview,
-                idempotency_key=idempotency_key,
-            )
-            value = dict(value)
-            value["total_minor"] += 1
-            return value
+            self.create_calls.append((preview, idempotency_key))
+            return {
+                "handoff_id": "checkout-session-123",
+                "handoff_url": "https://evil.example/session/123",
+            }
 
     with pytest.raises(ShoppingCheckoutAdapterConformanceError):
-        run(PriceDriftAdapter(now), now)
-
-
-def test_tx23_rejects_confirmation_after_checkout_expiry():
-    now = utcnow()
-
-    class LateReceiptAdapter(StagingCheckoutAdapter):
-        async def create_checkout(
-            self,
-            *,
-            preview: dict,
-            idempotency_key: str,
-        ) -> dict:
-            value = await super().create_checkout(
-                preview=preview,
-                idempotency_key=idempotency_key,
-            )
-            value = dict(value)
-            value["confirmed_at"] = (now + timedelta(minutes=3)).isoformat()
-            return value
-
-    with pytest.raises(ShoppingCheckoutAdapterConformanceError):
-        run(
-            LateReceiptAdapter(now),
-            now,
-            preview_value=preview(now, expires_in_minutes=2),
-        )
+        run(BadHandoffAdapter(now), now)

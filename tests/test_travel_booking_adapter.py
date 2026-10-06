@@ -130,7 +130,7 @@ class QualifiedTravelAdapter:
         self.create_calls = []
         self.lookup_calls = []
 
-    async def create_booking(
+    async def create_booking_handoff(
         self,
         *,
         preview: dict,
@@ -140,7 +140,7 @@ class QualifiedTravelAdapter:
         self.create_calls.append((preview, traveler_data, idempotency_key))
         raise AssertionError("TX-21 admission must not call provider mutation")
 
-    async def lookup_booking(
+    async def lookup_booking_receipt(
         self,
         *,
         idempotency_key: str | None = None,
@@ -253,7 +253,7 @@ def test_tx21_rejects_registration_proposal_claiming_runtime_authority():
 
 def test_tx21_rejects_sync_adapter_methods():
     class SyncAdapter(QualifiedTravelAdapter):
-        def create_booking(
+        def create_booking_handoff(
             self,
             *,
             preview: dict,
@@ -277,7 +277,7 @@ def test_tx21_rejects_sync_adapter_methods():
             "MissingCreateArgsAdapter",
             (QualifiedTravelAdapter,),
             {
-                "create_booking": (lambda self: None),
+                "create_booking_handoff": (lambda self: None),
             },
         )(),
     ],
@@ -290,7 +290,7 @@ def test_tx21_rejects_missing_or_wrong_create_signature(adapter_factory):
 
 def test_tx21_rejects_positional_create_parameters():
     class PositionalCreateAdapter(QualifiedTravelAdapter):
-        async def create_booking(self, preview, traveler_data, idempotency_key):
+        async def create_booking_handoff(self, preview, traveler_data, idempotency_key):
             return {}
 
     with pytest.raises(TravelBookingAdapterAdmissionError):
@@ -303,7 +303,7 @@ def test_tx21_rejects_positional_create_parameters():
 
 def test_tx21_rejects_varargs_create_signature():
     class VarArgsCreateAdapter(QualifiedTravelAdapter):
-        async def create_booking(self, *args, **kwargs):
+        async def create_booking_handoff(self, *args, **kwargs):
             return {}
 
     with pytest.raises(TravelBookingAdapterAdmissionError):
@@ -316,7 +316,7 @@ def test_tx21_rejects_varargs_create_signature():
 
 def test_tx21_rejects_extra_create_parameter():
     class ExtraCreateAdapter(QualifiedTravelAdapter):
-        async def create_booking(
+        async def create_booking_handoff(
             self,
             *,
             preview: dict,
@@ -336,7 +336,7 @@ def test_tx21_rejects_extra_create_parameter():
 
 def test_tx21_rejects_lookup_parameters_without_none_defaults():
     class WrongLookupDefaultsAdapter(QualifiedTravelAdapter):
-        async def lookup_booking(
+        async def lookup_booking_receipt(
             self,
             *,
             idempotency_key: str | None,
@@ -354,7 +354,7 @@ def test_tx21_rejects_lookup_parameters_without_none_defaults():
 
 def test_tx21_rejects_positional_lookup_parameters():
     class PositionalLookupAdapter(QualifiedTravelAdapter):
-        async def lookup_booking(
+        async def lookup_booking_receipt(
             self,
             idempotency_key: str | None = None,
             provider_booking_id: str | None = None,

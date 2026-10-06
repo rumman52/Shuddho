@@ -389,13 +389,55 @@ Then verify the complete chain and externally anchor the returned head hash.
 
 Schema v14 records release evidence only. It does not enable social publishing, approve a post, mutate LinkedIn, change cohort membership, or authorize expansion/recovery by itself. When social publishing is enabled, scale and recovery require the exact schema-v14 activation SHA; post-rollback recovery requires a fresh satisfying schema-v14 event after the recorded rollback completion.
 
+## Nested transaction capability activation evidence
+
+Schemas v30, v31 and v32 record the separately gated nested transaction
+capabilities:
+
+- v30: `restaurant_reservations_verified`;
+- v31: `shopping_checkout_verified`;
+- v32: `travel_booking_verified`.
+
+Each event requires a current-stage schema-v26
+`personal_transactions_verified` attestation first. The generic writer then
+revalidates the exact provider operation, provider-bound staging evidence,
+reviewed rollout, deployment revision, controlled-cohort runtime manifest,
+schema-v2 transaction-authority manifest, clean operator status, activation
+digest, and every artifact SHA-256.
+
+Append one capability only after its production activation verifier has passed:
+
+```bash
+uv run --extra coworker python scripts/cohort_release_ledger.py append-transaction-capability \
+  --ledger /secure/release/coworker-cohort-001.jsonl \
+  --capability restaurant_reservations \
+  --release-id coworker-cohort-001 \
+  --actor-reference security-review \
+  --change-reference change-restaurant-001 \
+  --current-stage canary-5 \
+  --staging-evidence /secure/release/staging-evidence.restaurant.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --deployment-change /secure/release/restaurant-deployment.json \
+  --operator-status /secure/release/post-restaurant-status.json \
+  --activation /secure/release/restaurant-reservations-activation.json
+```
+
+Use `shopping_checkout` or `travel_booking` only when a concrete provider
+operation has separately passed provider qualification, hosted-handoff
+conformance, live user-present completion/reconciliation, production activation,
+and the reviewed allowlist/registry change.
+
+These events are release evidence only. They do not enable a feature flag,
+register an ActionSpec, grant payment/identity authority, or perform a provider
+mutation.
+
 ## Release activation bundle handoff
 
 Schema v16 adds one event type: `release_activation_bundle_verified`.
 
 This event is the final operations handoff checkpoint after the reviewed rollout has passed the final controlled-cohort gate and every required optional capability activation has already been independently recorded in the ledger.
 
-The bundle verifier derives the exact required activation set from the reviewed rollout and verifies each required schema-v6 through schema-v15 activation artifact against its exact ledger event. The schema-v16 append then binds by SHA-256:
+The bundle verifier derives the exact required activation set from the reviewed rollout and verifies every feature-specific activation schema declared by `release_contract.py` against its exact ledger event. The schema-v16 append then binds by SHA-256:
 
 - the exact reviewed rollout manifest;
 - the exact staging evidence file used to re-run the final GO/NO-GO decision;

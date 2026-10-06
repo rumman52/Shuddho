@@ -110,8 +110,8 @@ def proposal(now: datetime, q: dict) -> dict:
 
 def conformance(now: datetime, p: dict) -> dict:
     value = {
-        "schema_version": 1,
-        "status": "provider_implementation_conformance_passed",
+        "schema_version": 2,
+        "status": "provider_handoff_conformance_passed",
         "provider": p["provider"],
         "operation": p["operation"],
         "adapter_revision": p["adapter_revision"],
@@ -121,13 +121,14 @@ def conformance(now: datetime, p: dict) -> dict:
         "live_probe_evidence_sha256": PROBE_SHA,
         "adapter_admission_sha256": "c" * 64,
         "preview_sha256": "d" * 64,
-        "receipt_sha256": "e" * 64,
+        "handoff_sha256": "e" * 64,
         "idempotency_key_sha256": "f" * 64,
         "provider_test_environment": "staging",
         "staging_provider_io": True,
         "provider_called": True,
-        "create_attempts": 2,
-        "lookup_attempts": 3,
+        "handoff_attempts": 2,
+        "receipt_lookup_attempts": 2,
+        "completion_receipt_observed": False,
         "evaluated_at": now.isoformat(),
         "registration_authority": False,
         "operation_allowlisted": False,
@@ -190,7 +191,7 @@ def test_tx24_rejects_tampered_conformance():
     p = proposal(now, q)
     c = conformance(now, p)
     bad = deepcopy(c)
-    bad["receipt_sha256"] = "0" * 64
+    bad["handoff_sha256"] = "0" * 64
 
     with pytest.raises(ShoppingCheckoutRuntimeRegistrationReviewError):
         compile_runtime_registration_review(

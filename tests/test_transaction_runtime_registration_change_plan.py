@@ -25,7 +25,7 @@ def shopping_review(now: datetime) -> dict:
         "registration_proposal_sha256": "c" * 64,
         "conformance_sha256": "d" * 64,
         "live_probe_evidence_sha256": "e" * 64,
-        "receipt_sha256": "f" * 64,
+        "handoff_sha256": "f" * 64,
         "change_reference": "TX24-reviewed-change",
         "reviewer_reference": "security-reviewer",
         "reviewed_at": (now - timedelta(minutes=2)).isoformat(),
@@ -53,7 +53,7 @@ def travel_review(now: datetime) -> dict:
         "qualification_sha256": "2" * 64,
         "registration_proposal_sha256": "3" * 64,
         "conformance_sha256": "4" * 64,
-        "receipt_sha256": "5" * 64,
+        "handoff_sha256": "5" * 64,
         "traveler_fields_sent": ["email", "legal_name"],
         "change_reference": "TX25-reviewed-change",
         "reviewer_reference": "security-reviewer",
@@ -117,7 +117,7 @@ def test_tx26_compiles_travel_registration_code_change_plan():
 def test_tx26_rejects_tampered_review_digest():
     now = utcnow()
     value = shopping_review(now)
-    value["receipt_sha256"] = "0" * 64
+    value["handoff_sha256"] = "0" * 64
 
     with pytest.raises(tx26.TransactionRuntimeRegistrationPlanError):
         tx26.compile_runtime_registration_change_plan(value, now=now)

@@ -27,13 +27,14 @@ CONFORMANCE_KEYS = {
     "live_probe_evidence_sha256",
     "adapter_admission_sha256",
     "preview_sha256",
-    "receipt_sha256",
+    "handoff_sha256",
     "idempotency_key_sha256",
     "provider_test_environment",
     "staging_provider_io",
     "provider_called",
-    "create_attempts",
-    "lookup_attempts",
+    "handoff_attempts",
+    "receipt_lookup_attempts",
+    "completion_receipt_observed",
     "evaluated_at",
     "registration_authority",
     "operation_allowlisted",
@@ -129,7 +130,10 @@ def validate_conformance(
             "TX-23 conformance digest does not match its contents."
         )
 
-    if value["status"] != "provider_implementation_conformance_passed":
+    if (
+        value["schema_version"] != 2
+        or value["status"] != "provider_handoff_conformance_passed"
+    ):
         raise ShoppingCheckoutRuntimeRegistrationReviewError(
             "TX-23 conformance did not pass."
         )
@@ -150,7 +154,7 @@ def validate_conformance(
         "live_probe_evidence_sha256",
         "adapter_admission_sha256",
         "preview_sha256",
-        "receipt_sha256",
+        "handoff_sha256",
         "idempotency_key_sha256",
     ):
         _require_sha(value[field], label=f"TX-23 {field}")
@@ -159,8 +163,9 @@ def validate_conformance(
         value["provider_test_environment"] != "staging"
         or value["staging_provider_io"] is not True
         or value["provider_called"] is not True
-        or value["create_attempts"] != 2
-        or value["lookup_attempts"] != 3
+        or value["handoff_attempts"] != 2
+        or value["receipt_lookup_attempts"] != 2
+        or value["completion_receipt_observed"] is not False
     ):
         raise ShoppingCheckoutRuntimeRegistrationReviewError(
             "TX-23 conformance does not prove the required bounded staging exercise."
@@ -288,7 +293,7 @@ def compile_runtime_registration_review(
         "registration_proposal_sha256": proposal["registration_proposal_sha256"],
         "conformance_sha256": conformance["conformance_sha256"],
         "live_probe_evidence_sha256": conformance["live_probe_evidence_sha256"],
-        "receipt_sha256": conformance["receipt_sha256"],
+        "handoff_sha256": conformance["handoff_sha256"],
         "change_reference": change_reference,
         "reviewer_reference": reviewer_reference,
         "reviewed_at": reviewed_at.isoformat(),

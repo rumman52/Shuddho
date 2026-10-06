@@ -31,23 +31,26 @@ The adapter must additionally declare `implementation_test_only=true`,
 
 For one immutable TX-13 preview, the harness:
 
-1. looks up by the binding-scoped idempotency key before mutation;
-2. creates checkout in controlled staging;
-3. repeats the same create with the same idempotency key;
-4. reads back by idempotency key;
-5. reads back by provider order ID;
-6. validates every returned receipt against TX-13;
-7. rejects receipts confirmed after the reviewed checkout expiry;
-8. requires every observed receipt digest to be identical.
+1. confirms no receipt exists for the new idempotency key;
+2. requests a provider-hosted checkout handoff;
+3. repeats the handoff request with the same idempotency key;
+4. validates both handoffs through TX-27;
+5. requires the handoff digests to be identical;
+6. confirms the adapter still exposes no confirmed receipt before the user
+   completes the hosted flow.
 
-The resulting evidence contains hashes and identifiers needed for continuity,
-including the exact TX-15 registration-proposal SHA-256 and the conformance
-evaluation timestamp. It never contains payment-instrument values.
+The result is schema v2 with status
+`provider_handoff_conformance_passed`. It binds the exact TX-15 proposal,
+adapter admission, preview, idempotency key, and TX-27 handoff digest.
+
+A final provider receipt is deliberately **not** manufactured by this automated
+adapter test. Final receipt equality and reconciliation after a real/sandbox
+user-present completion remain live provider evidence required by TX-27/TX-28.
 
 ## Authority remains closed
 
 A passing result has status
-`provider_implementation_conformance_passed` and still records:
+`provider_handoff_conformance_passed` and still records:
 
 - `registration_authority=false`;
 - `operation_allowlisted=false`;
