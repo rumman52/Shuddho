@@ -60,6 +60,8 @@ class Settings:
     action_email_threading_enabled: bool = False
     action_social_publishing_enabled: bool = False
     restaurant_reservations_enabled: bool = False
+    shopping_checkout_enabled: bool = False
+    travel_booking_enabled: bool = False
     opentable_environment: str = "sandbox"
     opentable_client_id: str = ""
     opentable_client_secret: str = field(default="", repr=False)
@@ -219,6 +221,8 @@ class Settings:
             action_email_threading_enabled=os.getenv("SHUDDHO_ACTION_EMAIL_THREADING_ENABLED", "false").lower() == "true",
             action_social_publishing_enabled=os.getenv("SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED", "false").lower() == "true",
             restaurant_reservations_enabled=os.getenv("SHUDDHO_RESTAURANT_RESERVATIONS_ENABLED", "false").lower() == "true",
+            shopping_checkout_enabled=os.getenv("SHUDDHO_SHOPPING_CHECKOUT_ENABLED", "false").lower() == "true",
+            travel_booking_enabled=os.getenv("SHUDDHO_TRAVEL_BOOKING_ENABLED", "false").lower() == "true",
             opentable_environment=os.getenv("SHUDDHO_OPENTABLE_ENVIRONMENT", "sandbox").strip().lower(),
             opentable_client_id=os.getenv("SHUDDHO_OPENTABLE_CLIENT_ID", ""),
             opentable_client_secret=os.getenv("SHUDDHO_OPENTABLE_CLIENT_SECRET", ""),
@@ -555,6 +559,34 @@ class Settings:
             if "opentable:restaurant_reservation_create" not in self.transaction_operations:
                 raise ValueError(
                     "Restaurant reservations require opentable:restaurant_reservation_create in SHUDDHO_PERSONAL_TRANSACTION_OPERATIONS"
+                )
+        if self.shopping_checkout_enabled:
+            if not self.actions_enabled:
+                raise ValueError("Shopping checkout requires SHUDDHO_ACTIONS_ENABLED=true")
+            if not self.personal_transactions_enabled:
+                raise ValueError("Shopping checkout requires SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=true")
+            if not self.connector_trust_boundary_enabled:
+                raise ValueError("Shopping checkout requires SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
+            if not any(
+                item.endswith(":shopping_checkout_create")
+                for item in self.transaction_operations
+            ):
+                raise ValueError(
+                    "Shopping checkout requires a separately registered and qualified provider:shopping_checkout_create operation"
+                )
+        if self.travel_booking_enabled:
+            if not self.actions_enabled:
+                raise ValueError("Travel booking requires SHUDDHO_ACTIONS_ENABLED=true")
+            if not self.personal_transactions_enabled:
+                raise ValueError("Travel booking requires SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=true")
+            if not self.connector_trust_boundary_enabled:
+                raise ValueError("Travel booking requires SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=true")
+            if not any(
+                item.endswith(":travel_booking_create")
+                for item in self.transaction_operations
+            ):
+                raise ValueError(
+                    "Travel booking requires a separately registered and qualified provider:travel_booking_create operation"
                 )
         if self.action_social_publishing_enabled:
             if not self.actions_enabled:
