@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "provider": "REPLACE_WITH_TX20_PROVIDER",
+  "operation": "REPLACE_WITH_PROVIDER:travel_booking_create",
+  "adapter_revision": "REPLACE_WITH_TX20_40_CHAR_REVISION",
+  "travel_kind": "flight",
+  "registration_proposal_sha256": "REPLACE_WITH_TX20_PROPOSAL_SHA256",
+  "conformance_sha256": "REPLACE_WITH_TX22_CONFORMANCE_SHA256",
+  "decision": "approved_for_runtime_registration_review",
+  "change_reference": "REPLACE_WITH_REVIEWED_CHANGE_REFERENCE",
+  "reviewer_reference": "REPLACE_WITH_REVIEWER_REFERENCE",
+  "reviewed_at": "REPLACE_WITH_ISO8601_TIME"
+}
