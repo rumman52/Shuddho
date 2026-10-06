@@ -161,6 +161,28 @@ def test_transaction_authority_manifest_must_exactly_match_reviewed_operation_al
         )
 
 
+def test_transaction_authority_manifest_v2_preserves_default_off_nested_authority():
+    reviewed = validate_reviewed_rollout(rollout(), max_cohort_users=25)
+    deployment = {"source_revision": REVISION}
+    value = {
+        "schema_version": 2,
+        "source_revision": REVISION,
+        "personal_transactions_enabled": True,
+        "restaurant_reservations_enabled": False,
+        "shopping_checkout_enabled": False,
+        "travel_booking_enabled": False,
+        "operations": list(reviewed["transaction_operations"]),
+    }
+    normalized = validate_transaction_authority_manifest(
+        value,
+        deployment=deployment,
+        rollout=reviewed,
+    )
+    assert normalized["schema_version"] == 2
+    assert normalized["shopping_checkout_enabled"] is False
+    assert normalized["travel_booking_enabled"] is False
+
+
 def test_activation_evidence_binds_exact_artifacts(tmp_path):
     staging_path = tmp_path / "staging.json"
     rollout_path = tmp_path / "rollout.json"
