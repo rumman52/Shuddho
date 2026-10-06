@@ -244,6 +244,9 @@ def test_tx22_exercises_sandbox_adapter_and_keeps_runtime_closed():
     assert result["identity_authority"] is False
     assert result["payment_authority"] is False
     assert result["traveler_fields_sent"] == ["email", "legal_name"]
+    assert result["registration_proposal_sha256"]
+    assert result["qualification_sha256"]
+    assert result["evaluated_at"] == now.isoformat()
     assert len(adapter.create_calls) == 2
     assert len(adapter.lookup_calls) == 3
     assert adapter.create_calls[0][2] == adapter.create_calls[1][2]
