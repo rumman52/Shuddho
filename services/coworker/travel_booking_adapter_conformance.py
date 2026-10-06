@@ -44,7 +44,7 @@ def _require_runtime_closed() -> None:
         )
 
 
-def _require_sandbox_boundary(adapter: object) -> None:
+def _require_sandbox_boundary(adapter: object, *, reviewed_origin: str) -> None:
     if getattr(adapter, "implementation_test_only", None) is not True:
         raise TravelBookingAdapterConformanceError(
             "TX-22 requires an adapter explicitly marked implementation_test_only."
@@ -52,6 +52,11 @@ def _require_sandbox_boundary(adapter: object) -> None:
     if getattr(adapter, "implementation_test_environment", None) != "sandbox":
         raise TravelBookingAdapterConformanceError(
             "TX-22 provider I/O is allowed only against an explicitly declared sandbox environment."
+        )
+    test_origin = getattr(adapter, "implementation_test_origin", None)
+    if test_origin != reviewed_origin:
+        raise TravelBookingAdapterConformanceError(
+            "TX-22 sandbox origin must exactly match the reviewed TX-20 booking origin."
         )
 
 
@@ -195,7 +200,10 @@ async def exercise_travel_booking_adapter(
         raise TravelBookingAdapterConformanceError(
             "TX-22 provider implementation tests require explicit allow_provider_test_io=True."
         )
-    _require_sandbox_boundary(adapter)
+    _require_sandbox_boundary(
+        adapter,
+        reviewed_origin=admission["booking_origin"],
+    )
 
     try:
         preview = TravelBookingPreview.model_validate(preview_value)
