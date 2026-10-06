@@ -167,20 +167,22 @@ class ShoppingCheckoutProviderAdapter(Protocol):
     payment_mode: str
     receives_payment_instrument: bool
 
-    async def create_checkout(
+    async def create_checkout_handoff(
         self,
         *,
         preview: dict,
         idempotency_key: str,
     ) -> dict:
+        """Return only provider-hosted handoff metadata, never a confirmed receipt."""
         ...
 
-    async def lookup_checkout(
+    async def lookup_checkout_receipt(
         self,
         *,
         idempotency_key: str | None = None,
         provider_order_id: str | None = None,
     ) -> dict | None:
+        """Return a confirmed receipt only after the provider-hosted user flow completes."""
         ...
 
 
@@ -440,13 +442,13 @@ def admit_checkout_adapter(
             "Checkout adapter does not implement the required structural protocol."
         )
     _require_exact_async_signature(
-        adapter.create_checkout,
-        label="Checkout adapter create_checkout",
+        adapter.create_checkout_handoff,
+        label="Checkout adapter create_checkout_handoff",
         required=("preview", "idempotency_key"),
     )
     _require_exact_async_signature(
-        adapter.lookup_checkout,
-        label="Checkout adapter lookup_checkout",
+        adapter.lookup_checkout_receipt,
+        label="Checkout adapter lookup_checkout_receipt",
         required=(),
         optional_none=("idempotency_key", "provider_order_id"),
     )
