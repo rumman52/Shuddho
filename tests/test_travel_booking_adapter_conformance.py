@@ -156,6 +156,7 @@ class SandboxTravelAdapter:
 
     implementation_test_only = True
     implementation_test_environment = "sandbox"
+    implementation_test_origin = "https://booking.travelco.example"
 
     def __init__(self, now: datetime):
         self.now = now
@@ -270,6 +271,18 @@ def test_tx22_rejects_non_sandbox_adapter_before_calls():
     now = utcnow()
     adapter = SandboxTravelAdapter(now)
     adapter.implementation_test_environment = "production"
+
+    with pytest.raises(TravelBookingAdapterConformanceError):
+        run(adapter, now)
+
+    assert adapter.create_calls == []
+    assert adapter.lookup_calls == []
+
+
+def test_tx22_rejects_unreviewed_sandbox_origin_before_calls():
+    now = utcnow()
+    adapter = SandboxTravelAdapter(now)
+    adapter.implementation_test_origin = "https://different-sandbox.example"
 
     with pytest.raises(TravelBookingAdapterConformanceError):
         run(adapter, now)
