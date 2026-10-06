@@ -216,26 +216,54 @@ def validate_transaction_authority_manifest(
     deployment: dict,
     rollout: dict,
 ) -> dict:
-    if set(value) != {
-        "schema_version", "source_revision",
-        "personal_transactions_enabled", "operations",
-    }:
-        _raise("Deployed transaction-authority manifest has an unexpected schema.")
-    if value.get("schema_version") != 1:
-        _raise("Deployed transaction-authority manifest schema is unsupported.")
+    schema = value.get("schema_version")
+    base_keys = {
+        "schema_version",
+        "source_revision",
+        "personal_transactions_enabled",
+        "operations",
+    }
+    v1_keys = base_keys | {"restaurant_reservations_enabled"}
+    v2_keys = v1_keys | {
+        "shopping_checkout_enabled",
+        "travel_booking_enabled",
+    }
+    if (
+        schema == 1
+        and set(value) not in {frozenset(base_keys), frozenset(v1_keys)}
+    ) or (
+        schema == 2
+        and set(value) != v2_keys
+    ) or schema not in {1, 2}:
+        message = "Deployed transaction authority manifest has an unexpected schema."
+        _raise(message)
     if value.get("source_revision") != deployment["source_revision"]:
-        _raise("Transaction-authority revision does not match deployment.")
+        message = "Deployed transaction authority revision does not match reviewed deployment."
+        _raise(message)
     if value.get("personal_transactions_enabled") is not True:
-        _raise("Personal transaction authority is disabled in the deployed runtime.")
+        message = "Deployed transaction authority has personal transactions disabled."
+        _raise(message)
     operations = value.get("operations")
-    if operations != rollout["transaction_operations"]:
-        _raise("Deployed transaction operations do not exactly match reviewed rollout.")
-    return {
-        "schema_version": 1,
+    if (
+        not isinstance(operations, list)
+        or operations != rollout["transaction_operations"]
+    ):
+        message = "Deployed transaction operations do not exactly match reviewed rollout."
+        _raise(message)
+    normalized = {
+        "schema_version": schema,
         "source_revision": value["source_revision"],
         "personal_transactions_enabled": True,
         "operations": list(operations),
     }
+    if "restaurant_reservations_enabled" in value:
+        normalized["restaurant_reservations_enabled"] = value[
+            "restaurant_reservations_enabled"
+        ]
+    if schema == 2:
+        normalized["shopping_checkout_enabled"] = value["shopping_checkout_enabled"]
+        normalized["travel_booking_enabled"] = value["travel_booking_enabled"]
+    return normalized
 
 
 def build_evidence(
