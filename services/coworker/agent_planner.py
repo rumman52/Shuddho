@@ -32,10 +32,11 @@ def deterministic_plan(goal: str, document_ids: list[str], output_language: str,
                 selected.append(name)
     actions = list(actions or [])
     if not selected and not actions:
-        fallback = tool("document.create")
-        if not fallback.enabled(settings):
-            raise CoworkerError("no_agent_tool", "No suitable non-consequential agent tool is enabled.", 409)
-        selected = ["document.create"]
+        raise CoworkerError(
+            "no_agent_tool",
+            "No registered non-consequential Agent capability matches this request.",
+            409,
+        )
     selected = list(dict.fromkeys(selected))[:3]
     steps: list[AgentPlanStep] = []
     for name in selected:
