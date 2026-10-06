@@ -207,6 +207,9 @@ class StagingCheckoutAdapter:
 
 def run(adapter: StagingCheckoutAdapter, now: datetime, **overrides):
     q = overrides.pop("qualification_value", qualification(now))
+    proposal_value = overrides.pop("proposal_value", None)
+    if proposal_value is None:
+        proposal_value = proposal(now, q)
     kwargs = {
         "preview_value": preview(now),
         "allow_provider_test_io": True,
@@ -215,7 +218,7 @@ def run(adapter: StagingCheckoutAdapter, now: datetime, **overrides):
     kwargs.update(overrides)
     return asyncio.run(
         exercise_shopping_checkout_adapter(
-            proposal(now, q),
+            proposal_value,
             q,
             adapter,
             **kwargs,
@@ -291,11 +294,23 @@ def test_tx23_rejects_unreviewed_origin_before_calls():
 def test_tx23_rejects_tampered_tx14_qualification_before_calls():
     now = utcnow()
     adapter = StagingCheckoutAdapter(now)
-    q = qualification(now)
-    q["live_probe"]["checkout_origin"] = "https://different.example"
+    reviewed = qualification(now)
+    proposal_value = proposal(now, reviewed)
+    tampered = {
+        **reviewed,
+        "live_probe": {
+            **reviewed["live_probe"],
+            "checkout_origin": "https://different.example",
+        },
+    }
 
     with pytest.raises(ShoppingCheckoutAdapterConformanceError):
-        run(adapter, now, qualification_value=q)
+        run(
+            adapter,
+            now,
+            qualification_value=tampered,
+            proposal_value=proposal_value,
+        )
 
     assert adapter.create_calls == []
     assert adapter.lookup_calls == []
