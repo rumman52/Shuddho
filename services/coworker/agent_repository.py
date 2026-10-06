@@ -425,6 +425,10 @@ class AgentRepository:
                 output={},
             ))
             db.add(AgentOutbox(run_id=run.id))
+            self._checkpoint(
+                db, run, "run_created",
+                evidence={"runtime_version": run.runtime_version, "deadline_at": iso(run.deadline_at)},
+            )
             self._event(db, run, "queued", "planning", "Agent run created. Waiting for the bounded planner runtime.")
             self._audit(db, owner, run.id, "agent_run_created")
             return self._dto(db, run), True
@@ -505,6 +509,10 @@ class AgentRepository:
             None,
         )
         final_state = self._final_state(run, receipts, invocations)
+        checkpoints = db.scalars(select(AgentCheckpoint).where(
+            AgentCheckpoint.run_id == run.id,
+            AgentCheckpoint.owner_id == run.owner_id,
+        ).order_by(AgentCheckpoint.created_at, AgentCheckpoint.id)).all()
         tool_results = [
             {
                 "invocation_id": receipt.invocation_id,
