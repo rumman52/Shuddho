@@ -100,8 +100,8 @@ def proposal(now: datetime) -> dict:
 
 def conformance(now: datetime, p: dict) -> dict:
     value = {
-        "schema_version": 1,
-        "status": "provider_implementation_conformance_passed",
+        "schema_version": 2,
+        "status": "provider_handoff_conformance_passed",
         "provider": p["provider"],
         "operation": p["operation"],
         "adapter_revision": p["adapter_revision"],
@@ -110,13 +110,13 @@ def conformance(now: datetime, p: dict) -> dict:
         "registration_proposal_sha256": p["registration_proposal_sha256"],
         "adapter_admission_sha256": "c" * 64,
         "preview_sha256": "d" * 64,
-        "receipt_sha256": "e" * 64,
+        "handoff_sha256": "e" * 64,
         "idempotency_key_sha256": "f" * 64,
         "sandbox_provider_io": True,
         "provider_called": True,
-        "create_attempts": 2,
-        "lookup_attempts": 3,
-        "existing_booking_observed": False,
+        "handoff_attempts": 2,
+        "receipt_lookup_attempts": 2,
+        "completion_receipt_observed": False,
         "traveler_fields_sent": ["email", "legal_name"],
         "evaluated_at": now.isoformat(),
         "registration_authority": False,
@@ -172,7 +172,7 @@ def test_tx25_rejects_tampered_conformance():
     p = proposal(now)
     c = conformance(now, p)
     bad = deepcopy(c)
-    bad["receipt_sha256"] = "0" * 64
+    bad["handoff_sha256"] = "0" * 64
     with pytest.raises(TravelBookingRuntimeRegistrationReviewError):
         compile_runtime_registration_review(
             p, bad, review(now, p, c), now=now + timedelta(seconds=2)
