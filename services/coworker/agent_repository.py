@@ -843,13 +843,13 @@ class AgentRepository:
                     sort_keys=True,
                     separators=(",", ":"),
                 )
-                if step_key in seen_step_keys:
+                if step_key in seen_replan_step_keys:
                     raise CoworkerError(
                         "agent_duplicate_step",
-                        "An agent plan cannot contain an identical repeated tool step.",
+                        "An agent replan cannot contain an identical repeated tool step.",
                         422,
                     )
-                seen_step_keys.add(step_key)
+                seen_replan_step_keys.add(step_key)
                 if hasattr(validated, "document_ids"):
                     requested = {str(value) for value in validated.document_ids}
                     if not requested.issubset(run_docs):
