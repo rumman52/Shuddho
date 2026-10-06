@@ -306,7 +306,8 @@ def validate_runtime_manifest(value: dict, *, deployment: dict, rollout: dict) -
         value.get("source_revision") != deployment["source_revision"]
         or value.get("environment") != rollout["environment"]
         or value.get("capabilities") != rollout["capabilities"]
-        or value.get("action_providers") != rollout["action_providers"]
+        or not isinstance(value.get("action_providers"), list)
+        or sorted(value["action_providers"]) != rollout["action_providers"]
     ):
         raise TransactionCapabilityActivationError(
             "Runtime manifest does not exactly match the reviewed deployment."
