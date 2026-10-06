@@ -180,6 +180,47 @@ def test_tx13_rejects_receipt_drift(field, value):
     assert error.value.code == "shopping_checkout_receipt_mismatch"
 
 
+def test_tx13_rejects_receipt_confirmed_after_checkout_expiry():
+    now = utcnow()
+    binding = binding_payload()
+    binding["expires_at"] = (now + timedelta(minutes=2)).isoformat()
+    scope = {
+        "schema_version": 1,
+        "transaction_id": binding["transaction_id"],
+        "transaction_revision": binding["transaction_revision"],
+        "terms_revision": binding["terms_revision"],
+        "terms_sha256": binding["terms_sha256"],
+        "cart_sha256": binding["cart_sha256"],
+        "verification_id": binding["verification_id"],
+        "verification_snapshot_sha256": binding["verification_snapshot_sha256"],
+        "provider": binding["provider"],
+        "merchant_cart_id": binding["merchant_cart_id"],
+        "currency": binding["currency"],
+        "total_minor": binding["total_minor"],
+        "expires_at": binding["expires_at"],
+        "authority": "binding_only_no_execution",
+    }
+    binding["approval_scope_sha256"] = stable_digest(scope)
+    built = build_checkout_preview(binding, now=now)
+    receipt = {
+        "provider": "example_merchant",
+        "provider_order_id": "order-456",
+        "merchant_cart_id": "cart-123",
+        "currency": "USD",
+        "total_minor": 7000,
+        "status": "confirmed",
+        "confirmed_at": (now + timedelta(minutes=3)).isoformat(),
+    }
+
+    with pytest.raises(CoworkerError) as error:
+        validate_checkout_receipt(
+            built["preview"],
+            receipt,
+            now=now + timedelta(minutes=4),
+        )
+    assert error.value.code == "shopping_checkout_receipt_invalid"
+
+
 def test_tx13_checkout_action_remains_unregistered_and_unallowlisted():
     with pytest.raises(CoworkerError) as error:
         action_spec("shopping_checkout_create")
