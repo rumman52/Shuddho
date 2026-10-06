@@ -437,7 +437,10 @@ def qualify_agent_goal(
     intents: list[str] = []
     for name, intent, phrases in _AGENT_RULES:
         if name == "research.search":
-            matched = research_requested or _has_any(text, phrases)
+            matched = research_requested or _has_any(
+                text,
+                tuple(phrase for phrase in phrases if phrase != "current"),
+            )
         else:
             matched = _has_any(text, phrases)
         if not matched:
