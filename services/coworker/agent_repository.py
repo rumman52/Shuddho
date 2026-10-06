@@ -109,6 +109,20 @@ class AgentRepository:
             ).all()
             for run in rows:
                 run.error_code = "agent_deadline"
+                for action in db.scalars(select(ExternalAction).where(
+                    ExternalAction.agent_run_id == run.id,
+                    ExternalAction.owner_id == run.owner_id,
+                    ExternalAction.state.in_({"awaiting_approval", "queued"}),
+                ).with_for_update()):
+                    action.state = "cancelled"
+                    action.finished_at = now
+                    self._audit(db, run.owner_id, action.id, "action.cancelled_agent_deadline")
+                for task in db.scalars(select(Task).where(
+                    Task.agent_run_id == run.id,
+                    Task.owner_id == run.owner_id,
+                    Task.state.not_in({"completed", "failed", "cancelled", "needs_input"}),
+                ).with_for_update()):
+                    task.cancel_requested = True
                 for invocation, step in db.execute(
                     select(ToolInvocation, AgentStep).join(
                         AgentStep, AgentStep.id == ToolInvocation.step_id
