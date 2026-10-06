@@ -243,7 +243,7 @@ class Dispatcher:
     async def dispatch_agent_run(self, run_id: str):
         agent = self.container.agent
         run = await asyncio.to_thread(agent.worker_run, run_id)
-        if run["state"] not in {"completed", "failed", "cancelled"}:
+        if run["state"] not in {"completed", "failed", "cancelled", "needs_input", "blocked"}:
             try:
                 runtime_version = int(run.get("runtime_version", 0))
                 if runtime_version == 3:
@@ -371,6 +371,9 @@ class Dispatcher:
                 self.container.connector_reads.repo.claim_events
             ):
                 await self.container.connector_reads.process_event(event)
+        # Deadline reconciliation is independent of the feature flag so accepted
+        # work cannot remain indefinitely active after a Temporal/process timeout.
+        await asyncio.to_thread(agent.expire_due_runs)
         if self.container.settings.agent_runtime_enabled:
             for run_id in await asyncio.to_thread(agent.claim_outbox):
                 await self.dispatch_agent_run(run_id)
