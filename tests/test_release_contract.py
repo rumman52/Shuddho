@@ -66,6 +66,8 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "agent_sandbox_tool",
         "personal_transactions",
         "restaurant_reservations",
+        "shopping_checkout",
+        "travel_booking",
         "negotiation_proposal_promotion",
     } == covered
 
@@ -194,6 +196,25 @@ def test_personal_transactions_require_actions_trust_boundary_and_staging():
     assert "personal_transactions_dependency" in validate_rollout(
         rollout, max_cohort_users=25
     )
+
+
+def test_shopping_and_travel_require_transaction_prerequisites_and_staging():
+    rollout = load("docs/cohort-rollout.template.json")
+    rollout["capabilities"]["actions"] = True
+    rollout["capabilities"]["connector_trust_boundary"] = True
+    rollout["capabilities"]["personal_transactions"] = True
+    rollout["capabilities"]["shopping_checkout"] = True
+    rollout["capabilities"]["travel_booking"] = True
+    assert "shopping_checkout" in required_conditional_gate_ids(
+        rollout["capabilities"], {"google"}
+    )
+    assert "travel_booking" in required_conditional_gate_ids(
+        rollout["capabilities"], {"google"}
+    )
+    rollout["capabilities"]["personal_transactions"] = False
+    failures = validate_rollout(rollout, max_cohort_users=25)
+    assert "shopping_checkout_dependency" in failures
+    assert "travel_booking_dependency" in failures
 
 
 def test_negotiation_proposal_promotion_requires_transactions_and_action_proposals():
