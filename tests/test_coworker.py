@@ -2180,3 +2180,211 @@ def test_core_agent_phase2_runtime_v3_suppresses_identical_steps(container):
     saved = container.agent.get(owner, run["id"])
     assert len(saved["plan"]) == 1
     assert saved["retry_state"]["tool_steps_used"] == 1
+
+
+def test_core_agent_phase3_checkpoint_model_matches_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import AgentCheckpoint
+
+    columns = {
+        item["name"]
+        for item in inspect(
+            container.repository.sessions.kw["bind"]
+        ).get_columns("cw_agent_checkpoints")
+    }
+    assert columns == set(AgentCheckpoint.__table__.columns.keys())
+
+
+def test_core_agent_phase3_resumes_nonconsequential_step_from_durable_checkpoint(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        work_services_enabled=True,
+        max_active_agent_runs=10,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Create a short project document.",
+            output_language="en",
+        ),
+        "core-phase3-checkpoint-resume",
+    )
+    planned = container.agent.save_plan(
+        owner,
+        run["id"],
+        [
+            AgentPlanStep(
+                tool="document.create",
+                arguments={
+                    "instruction": "Create a short project document.",
+                    "notes": "",
+                    "document_ids": [],
+                    "output_language": "en",
+                },
+            )
+        ],
+    )
+    assert planned["resume_from"] == "plan_saved"
+    assert [item["kind"] for item in planned["checkpoints"]] == [
+        "run_created",
+        "plan_saved",
+    ]
+
+    # Simulate an API/process restart by reconstructing the repository over the
+    # same durable database before any tool call.
+    restarted_repo = AgentRepository(container.repository.sessions, enabled)
+    recovered = restarted_repo.get(owner, run["id"])
+    assert recovered["resume_from"] == "plan_saved"
+    assert recovered["plan"][0]["invocation_id"] == planned["plan"][0]["invocation_id"]
+
+    first_runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    assert asyncio.run(first_runtime.execute_step(run["id"], 1)) == {
+        "status": "completed"
+    }
+
+    # Simulate a lost activity acknowledgement + worker replacement. The new
+    # runtime must observe the completed durable invocation and must not create
+    # another child task.
+    second_runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    assert asyncio.run(second_runtime.execute_step(run["id"], 1)) == {
+        "status": "completed"
+    }
+
+    with container.repository.sessions() as db:
+        tasks = list(db.scalars(select(Task).where(
+            Task.agent_run_id == run["id"],
+        )).all())
+    assert len(tasks) == 1
+    assert tasks[0].idempotency_key == f'agent:{run["id"]}:1'
+
+    recovered = restarted_repo.get(owner, run["id"])
+    kinds = [item["kind"] for item in recovered["checkpoints"]]
+    assert kinds.count("tool_call_started") == 1
+    assert kinds.count("tool_resource_linked") == 1
+    assert kinds.count("tool_observed") == 1
+    assert recovered["resume_from"] == "tool_observed"
+
+    second_runtime.complete(run["id"])
+    completed = restarted_repo.get(owner, run["id"])
+    assert completed["final_state"] == "completed"
+    assert completed["resume_from"] == "complete"
+    assert [item["kind"] for item in completed["checkpoints"]].count("complete") == 1
+
+
+def test_core_agent_phase3_consequential_replay_never_mutates_provider_twice(container):
+    from action_samples import action_request, connected, enable_actions
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    provider = enable_actions(container)
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        work_services_enabled=True,
+        actions_enabled=True,
+        max_active_agent_runs=10,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner, "email")
+    action = container.actions.repo.prepare(
+        owner,
+        action_request(connection, "email_send"),
+        "core-phase3-action-preview",
+    )
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Send the attached approved email action.",
+            action_ids=[action["id"]],
+            output_language="en",
+        ),
+        "core-phase3-action-run",
+    )
+    container.agent.save_plan(
+        owner,
+        run["id"],
+        [
+            AgentPlanStep(
+                tool="email.send",
+                arguments={"action_id": action["id"]},
+            )
+        ],
+    )
+
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+
+    # Crash/restart before approval: repeated execution only restores the wait.
+    assert asyncio.run(runtime.execute_step(run["id"], 1)) == {
+        "status": "awaiting_approval"
+    }
+    restarted = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    assert asyncio.run(restarted.execute_step(run["id"], 1)) == {
+        "status": "awaiting_approval"
+    }
+    assert provider.sent == []
+
+    waiting = container.agent.get(owner, run["id"])
+    assert [item["kind"] for item in waiting["checkpoints"]].count(
+        "wait_for_approval"
+    ) == 1
+
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    assert approved["state"] == "queued"
+
+    # Crash/restart after approval but before provider mutation: the action
+    # remains the same durable action ID and no second preview/approval exists.
+    assert asyncio.run(restarted.execute_step(run["id"], 1)) == {
+        "status": "executing"
+    }
+    after_approval = container.agent.get(owner, run["id"])
+    assert any(
+        item["kind"] == "action_approved"
+        and item["resource_id"] == action["id"]
+        for item in after_approval["checkpoints"]
+    )
+
+    # Simulate a provider mutation whose response is lost. The execution claim
+    # is committed before the provider call, so replay may reconcile but may
+    # never issue another send.
+    provider.lose_reply = True
+    asyncio.run(container.actions.execute(action["id"]))
+    assert len(provider.sent) == 1
+    first_result = container.actions.repo.get(owner, action["id"])
+    assert first_result["state"] == "outcome_unknown"
+
+    # Duplicate Temporal/activity delivery after the uncertain mutation.
+    asyncio.run(container.actions.execute(action["id"]))
+    assert len(provider.sent) == 1
+    assert container.actions.repo.claim_execution(action["id"]) is None
+
+    recovered = container.agent.get(owner, run["id"])
+    kinds = [item["kind"] for item in recovered["checkpoints"]]
+    assert kinds.count("action_execution_claimed") == 1
+    assert kinds.count("action_outcome_unknown") == 1
+    claimed = next(
+        item for item in recovered["checkpoints"]
+        if item["kind"] == "action_execution_claimed"
+    )
+    assert claimed["evidence"]["blind_retry_allowed"] is False
+    assert claimed["evidence"]["recovery_policy"] == "reconcile_only"
