@@ -31,8 +31,11 @@ A concrete adapter must expose code-owned metadata for:
 
 It must also implement asynchronous:
 
-- `create_checkout(preview=..., idempotency_key=...)`;
-- `lookup_checkout(idempotency_key=..., provider_order_id=...)`.
+- `create_checkout_handoff(preview=..., idempotency_key=...)`;
+- `lookup_checkout_receipt(idempotency_key=..., provider_order_id=...)`.
+
+The create method returns only provider-hosted handoff metadata. It must not
+return or imply a confirmed order before the user-present hosted flow completes.
 
 TX-16 admission performs no call to either method.
 
