@@ -4,6 +4,7 @@ import {
   WorkspaceError,
   type AgentActionProposal,
   type AgentRun,
+  type AgentFinalState,
   type ConnectedAccount,
   type ExternalAction,
   type SourceDocument,
@@ -24,6 +25,19 @@ const stateLabel: Record<AgentRun["state"], string> = {
   failed: "Could not finish",
   cancelled: "Cancelled",
 };
+
+const finalStateLabel: Record<AgentFinalState, string> = {
+  completed: "Completed",
+  partially_completed: "Partially completed",
+  waiting_for_user: "Waiting for you",
+  waiting_for_approval: "Waiting for approval",
+  blocked: "Blocked",
+  cancelled: "Cancelled",
+  failed: "Failed",
+};
+
+const runStateLabel = (value: AgentRun) =>
+  value.final_state ? finalStateLabel[value.final_state] : stateLabel[value.state];
 
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "This Agent request could not finish.";
@@ -288,7 +302,7 @@ export default function AgentWorkspace({
       <div className="cw-output-column">
         {run ? <section className="cw-agent-run" aria-label="Agent run details">
           <div className="cw-history-title"><div><span className="cw-eyebrow">02 · Run</span><h2 dir="auto">{run.goal}</h2></div><button className="cw-text-button" disabled={Boolean(busy)} onClick={() => void refreshRun()}>Refresh</button></div>
-          <p role="status"><span className={`cw-status cw-status-${run.state}`}>{stateLabel[run.state]}</span> {run.message}</p>
+          <p role="status"><span className={`cw-status cw-status-${run.state}`}>{runStateLabel(run)}</span> {run.message}</p>
           <div className="cw-agent-meta"><span>Runtime: v{run.runtime_version || "legacy"}</span><span>Planner: {run.planner_mode ?? "pending"}</span><span>Calls: {run.planner_calls}</span><span>Reserved tokens: {run.planner_tokens}</span><span>Actual tokens: {run.planner_actual_tokens}</span>{run.planner_cost_microusd > 0 && <span>Planner cost: {(run.planner_cost_microusd / 1_000_000).toFixed(4)} USD</span>}</div>
           {context?.enabled && <details className="cw-agent-decisions"><summary>Authorized context ({context.items.length})</summary>{context.items.length > 0 ? <ul>{context.items.map(item => <li key={item.source_id}><strong>{item.label}</strong><small> {item.source_id} · {item.provenance.version_id ? `version ${item.provenance.version_id.slice(0, 8)}…` : `${item.provenance.provider ?? "connected"} · synchronized snapshot`}</small></li>)}</ul> : <p>No active document context was retrieved.</p>}{context.invalidated.length > 0 && <p>{context.invalidated.length} attached source{context.invalidated.length === 1 ? "" : "s"} invalidated by deletion or source state.</p>}</details>}
           {memoryProposals.filter(item => item.run_id === run.id && item.state === "proposed").length > 0 && <section className="cw-proposals" aria-label="Memory proposals"><div><span className="cw-eyebrow">Memory review</span><h3>Nothing is remembered until you accept it.</h3><p>These proposals are inert context suggestions. They do not grant permission or approve actions.</p></div>{memoryProposals.filter(item => item.run_id === run.id && item.state === "proposed").map(proposal => <article className="cw-proposal-card" key={proposal.id}><div className="cw-proposal-heading"><div><strong>{proposal.namespace}.{proposal.key}</strong><small>Proposed memory · {proposal.source_refs.map(item => item.source_id).join(", ")}</small></div></div><p dir="auto">{proposal.value}</p><div className="cw-proposal-controls"><button className="cw-primary" type="button" disabled={Boolean(busy)} onClick={() => void perform("memory-accept:" + proposal.id, async () => { const result = await client.acceptMemoryProposal(proposal.id); setMemoryProposals(previous => previous.map(item => item.id === proposal.id ? result.proposal : item)); if (result.fact) setMemoryFacts(previous => [result.fact!, ...previous.filter(item => item.id !== result.fact!.id)]); })}>Accept memory</button><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={() => void perform("memory-reject:" + proposal.id, async () => { const rejected = await client.rejectMemoryProposal(proposal.id); setMemoryProposals(previous => previous.map(item => item.id === proposal.id ? rejected : item)); })}>Reject</button></div></article>)}</section>}
@@ -317,7 +331,7 @@ export default function AgentWorkspace({
           </section>}
           {!["completed", "failed", "cancelled"].includes(run.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void perform("cancel", async () => { const next = await client.cancelAgentRun(run.id); setRun(next); })}>Cancel Agent run</button>}
         </section> : <section className="cw-empty"><span className="cw-empty-mark" aria-hidden="true">✦</span><span className="cw-eyebrow">Bounded by design</span><h2>Give the Agent a goal.</h2><p>It can plan registered tools and suggest inert actions, while provider identity, promotion, approval, and execution stay under your control.</p></section>}
-        {runs.length > 0 && <section className="cw-history"><div className="cw-history-title"><h2>Recent Agent runs</h2><button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Refresh</button></div><ul>{runs.map(item => <li key={item.id}><button aria-pressed={run?.id === item.id} onClick={() => setRun(item)}><div><strong dir="auto">{item.goal}</strong><small>{item.planner_mode ?? "pending"} · {new Date(item.created_at).toLocaleString()}</small></div><span className={`cw-status cw-status-${item.state}`}>{stateLabel[item.state]}</span></button></li>)}</ul></section>}
+        {runs.length > 0 && <section className="cw-history"><div className="cw-history-title"><h2>Recent Agent runs</h2><button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Refresh</button></div><ul>{runs.map(item => <li key={item.id}><button aria-pressed={run?.id === item.id} onClick={() => setRun(item)}><div><strong dir="auto">{item.goal}</strong><small>{item.planner_mode ?? "pending"} · {new Date(item.created_at).toLocaleString()}</small></div><span className={`cw-status cw-status-${item.state}`}>{runStateLabel(item)}</span></button></li>)}</ul></section>}
       </div>
     </div>
   </section>;
