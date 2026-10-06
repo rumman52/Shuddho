@@ -29,7 +29,7 @@ COMMON_REVIEW_KEYS = {
     "qualification_sha256",
     "registration_proposal_sha256",
     "conformance_sha256",
-    "receipt_sha256",
+    "handoff_sha256",
     "change_reference",
     "reviewer_reference",
     "reviewed_at",
@@ -162,7 +162,7 @@ def _validate_review(
         "qualification_sha256",
         "registration_proposal_sha256",
         "conformance_sha256",
-        "receipt_sha256",
+        "handoff_sha256",
     ):
         _sha(value[field], label=field)
     if action_kind == SHOPPING_KIND:
@@ -288,7 +288,7 @@ def compile_runtime_registration_change_plan(
             "registration_proposal_sha256": review["registration_proposal_sha256"],
             "conformance_sha256": review["conformance_sha256"],
             "live_probe_evidence_sha256": review["live_probe_evidence_sha256"],
-            "receipt_sha256": review["receipt_sha256"],
+            "handoff_sha256": review["handoff_sha256"],
         }
         privacy_boundary = {
             "payment_instrument_to_shuddho": False,
@@ -303,7 +303,7 @@ def compile_runtime_registration_change_plan(
             "qualification_sha256": review["qualification_sha256"],
             "registration_proposal_sha256": review["registration_proposal_sha256"],
             "conformance_sha256": review["conformance_sha256"],
-            "receipt_sha256": review["receipt_sha256"],
+            "handoff_sha256": review["handoff_sha256"],
         }
         privacy_boundary = {
             "traveler_fields_sent": list(review["traveler_fields_sent"]),
@@ -348,7 +348,8 @@ def compile_runtime_registration_change_plan(
             "exact-source CI success",
             "controlled-staging provider execution",
             "idempotency and reconciliation verification",
-            "receipt equality with approved immutable terms",
+            "hosted handoff equality with approved immutable terms",
+            "final receipt equality after user-present completion",
             "owner isolation and audit verification",
             "rollback verification",
             "production activation verification",
