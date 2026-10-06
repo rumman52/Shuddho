@@ -8,11 +8,12 @@ from .action_registry import (
     registered_transaction_operations,
     stable_digest,
 )
-from .travel_booking_adapter import admit_travel_booking_adapter
-from .travel_booking_contract import (
-    TravelBookingPreview,
-    validate_travel_booking_receipt,
+from .hosted_transaction_handoff import (
+    HostedTransactionHandoffError,
+    build_hosted_transaction_handoff,
 )
+from .travel_booking_adapter import admit_travel_booking_adapter
+from .travel_booking_contract import TravelBookingPreview
 
 
 ACTION_KIND = "travel_booking_create"
@@ -102,29 +103,29 @@ def _idempotency_key(admission: dict, preview: TravelBookingPreview) -> str:
     )
 
 
-async def _lookup(
+async def _lookup_receipt(
     adapter: object,
     *,
     idempotency_key: str | None = None,
     provider_booking_id: str | None = None,
 ) -> dict | None:
     try:
-        value = await adapter.lookup_booking(
+        value = await adapter.lookup_booking_receipt(
             idempotency_key=idempotency_key,
             provider_booking_id=provider_booking_id,
         )
     except Exception as exc:
         raise TravelBookingAdapterConformanceError(
-            "TX-22 sandbox lookup failed."
+            "TX-22 sandbox booking receipt lookup failed."
         ) from exc
     if value is not None and not isinstance(value, dict):
         raise TravelBookingAdapterConformanceError(
-            "TX-22 sandbox lookup must return a receipt dictionary or None."
+            "TX-22 receipt lookup must return a receipt dictionary or None."
         )
     return value
 
 
-async def _create(
+async def _create_handoff(
     adapter: object,
     *,
     preview: dict,
@@ -132,40 +133,47 @@ async def _create(
     idempotency_key: str,
 ) -> dict:
     try:
-        value = await adapter.create_booking(
+        value = await adapter.create_booking_handoff(
             preview=preview,
             traveler_data=traveler_data,
             idempotency_key=idempotency_key,
         )
     except Exception as exc:
         raise TravelBookingAdapterConformanceError(
-            "TX-22 sandbox booking creation failed."
+            "TX-22 sandbox booking handoff creation failed."
         ) from exc
-    if not isinstance(value, dict):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"handoff_id", "handoff_url"}
+        or not isinstance(value["handoff_id"], str)
+        or not isinstance(value["handoff_url"], str)
+    ):
         raise TravelBookingAdapterConformanceError(
-            "TX-22 sandbox booking creation must return a receipt dictionary."
+            "TX-22 booking handoff must return exactly handoff_id and handoff_url."
         )
     return value
 
 
-def _validated_receipt(
+def _validated_handoff(
     preview: dict,
-    receipt: dict,
+    handoff: dict,
     *,
+    reviewed_origin: str,
     now: datetime,
     label: str,
 ) -> dict:
     try:
-        result = validate_travel_booking_receipt(
+        return build_hosted_transaction_handoff(
             preview,
-            receipt,
+            handoff_id=handoff["handoff_id"],
+            handoff_url=handoff["handoff_url"],
+            reviewed_handoff_origin=reviewed_origin,
             now=now,
         )
-    except Exception as exc:
+    except HostedTransactionHandoffError as exc:
         raise TravelBookingAdapterConformanceError(
-            f"TX-22 {label} receipt failed the TX-18 receipt contract."
+            f"TX-22 {label} handoff failed the TX-27 hosted handoff contract."
         ) from exc
-    return result
 
 
 async def exercise_travel_booking_adapter(
@@ -177,11 +185,12 @@ async def exercise_travel_booking_adapter(
     allow_provider_test_io: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Exercise a TX-21-admitted adapter against a sandbox implementation boundary.
+    """Exercise a TX-21-admitted hosted travel adapter in sandbox only.
 
-    This function is intentionally disconnected from the ExternalAction registry.
-    It can perform bounded provider sandbox I/O only when the caller opts in
-    explicitly and the adapter declares a sandbox-only implementation-test mode.
+    TX-22 proves only the provider-hosted handoff boundary. It explicitly
+    rejects adapters that surface a confirmed receipt before the user-present
+    provider flow completes. Final receipt reconciliation is separate live
+    staging/activation evidence through TX-27/TX-28.
     """
 
     current = _aware(
@@ -231,92 +240,62 @@ async def exercise_travel_booking_adapter(
     )
     idempotency_key = _idempotency_key(admission, preview)
 
-    existing = await _lookup(
+    before = await _lookup_receipt(
         adapter,
         idempotency_key=idempotency_key,
     )
-    existing_validated = (
-        _validated_receipt(
-            normalized_preview,
-            existing,
-            now=current,
-            label="pre-create lookup",
+    if before is not None:
+        raise TravelBookingAdapterConformanceError(
+            "TX-22 refuses a pre-existing confirmed receipt before hosted handoff."
         )
-        if existing is not None
-        else None
-    )
 
-    first = await _create(
+    first = await _create_handoff(
         adapter,
         preview=normalized_preview,
         traveler_data=normalized_traveler_data,
         idempotency_key=idempotency_key,
     )
-    first_validated = _validated_receipt(
+    first_validated = _validated_handoff(
         normalized_preview,
         first,
+        reviewed_origin=admission["booking_origin"],
         now=current,
-        label="first create",
+        label="first",
     )
 
-    second = await _create(
+    second = await _create_handoff(
         adapter,
         preview=normalized_preview,
         traveler_data=normalized_traveler_data,
         idempotency_key=idempotency_key,
     )
-    second_validated = _validated_receipt(
+    second_validated = _validated_handoff(
         normalized_preview,
         second,
+        reviewed_origin=admission["booking_origin"],
         now=current,
-        label="idempotent create",
+        label="idempotent",
     )
 
-    provider_booking_id = first_validated["receipt"]["provider_booking_id"]
-    by_key = await _lookup(
+    if first_validated["handoff_sha256"] != second_validated["handoff_sha256"]:
+        raise TravelBookingAdapterConformanceError(
+            "TX-22 hosted booking handoff is not idempotent."
+        )
+
+    after = await _lookup_receipt(
         adapter,
         idempotency_key=idempotency_key,
     )
-    by_provider_id = await _lookup(
-        adapter,
-        provider_booking_id=provider_booking_id,
-    )
-    if by_key is None or by_provider_id is None:
+    if after is not None:
         raise TravelBookingAdapterConformanceError(
-            "TX-22 requires provider readback by both idempotency key and provider booking ID."
-        )
-
-    by_key_validated = _validated_receipt(
-        normalized_preview,
-        by_key,
-        now=current,
-        label="idempotency lookup",
-    )
-    by_provider_id_validated = _validated_receipt(
-        normalized_preview,
-        by_provider_id,
-        now=current,
-        label="provider booking lookup",
-    )
-
-    receipt_hashes = {
-        first_validated["receipt_sha256"],
-        second_validated["receipt_sha256"],
-        by_key_validated["receipt_sha256"],
-        by_provider_id_validated["receipt_sha256"],
-    }
-    if existing_validated is not None:
-        receipt_hashes.add(existing_validated["receipt_sha256"])
-    if len(receipt_hashes) != 1:
-        raise TravelBookingAdapterConformanceError(
-            "TX-22 provider implementation is not idempotent or readback-stable."
+            "TX-22 adapter exposed a confirmed receipt before user-present completion."
         )
 
     _require_runtime_closed()
 
     result = {
-        "schema_version": 1,
-        "status": "provider_implementation_conformance_passed",
+        "schema_version": 2,
+        "status": "provider_handoff_conformance_passed",
         "provider": admission["provider"],
         "operation": admission["operation"],
         "adapter_revision": admission["adapter_revision"],
@@ -325,15 +304,15 @@ async def exercise_travel_booking_adapter(
         "registration_proposal_sha256": admission["registration_proposal_sha256"],
         "adapter_admission_sha256": admission["adapter_admission_sha256"],
         "preview_sha256": stable_digest(normalized_preview),
-        "receipt_sha256": first_validated["receipt_sha256"],
+        "handoff_sha256": first_validated["handoff_sha256"],
         "idempotency_key_sha256": stable_digest(
             {"idempotency_key": idempotency_key}
         ),
         "sandbox_provider_io": True,
         "provider_called": True,
-        "create_attempts": 2,
-        "lookup_attempts": 3,
-        "existing_booking_observed": existing_validated is not None,
+        "handoff_attempts": 2,
+        "receipt_lookup_attempts": 2,
+        "completion_receipt_observed": False,
         "traveler_fields_sent": sorted(normalized_traveler_data),
         "evaluated_at": current.isoformat(),
         "registration_authority": False,
