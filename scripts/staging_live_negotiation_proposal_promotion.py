@@ -158,7 +158,7 @@ def wrong_hash(value: str) -> str:
 def validate_transaction_authority(value: dict, provider: str) -> str:
     operation = f"{provider}:negotiation_commitment_email"
     if (
-        value.get("schema_version") != 1
+        value.get("schema_version") not in {1, 2}
         or value.get("personal_transactions_enabled") is not True
         or not isinstance(value.get("operations"), list)
         or operation not in value["operations"]

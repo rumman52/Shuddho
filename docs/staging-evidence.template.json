@@ -99,6 +99,14 @@
     "status": "pending",
     "evidence": ""
   },
+  "shopping_checkout": {
+    "status": "pending",
+    "evidence": ""
+  },
+  "travel_booking": {
+    "status": "pending",
+    "evidence": ""
+  },
   "microsoft_actions": {
     "status": "pending",
     "evidence": ""

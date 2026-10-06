@@ -174,6 +174,30 @@ OPTIONAL_CAPABILITIES = (
         ),
     ),
     OptionalCapability(
+        capability="shopping_checkout",
+        rollback_key="shopping_checkout_kill_switch",
+        kill_switch="SHUDDHO_SHOPPING_CHECKOUT_ENABLED=false",
+        dependencies=("personal_transactions", "actions", "connector_trust_boundary"),
+        staging_gates=(
+            StagingGate(
+                "shopping_checkout",
+                "One concrete registered shopping provider passed TX-14 qualification, TX-16 adapter admission, TX-23 implementation conformance, TX-27 provider-hosted user-present handoff, exact immutable amount/currency/cart binding, provider idempotency and reconciliation, final receipt confirmation before approval expiry, owner isolation, and rollback in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
+        capability="travel_booking",
+        rollback_key="travel_booking_kill_switch",
+        kill_switch="SHUDDHO_TRAVEL_BOOKING_ENABLED=false",
+        dependencies=("personal_transactions", "actions", "connector_trust_boundary"),
+        staging_gates=(
+            StagingGate(
+                "travel_booking",
+                "One concrete registered travel provider passed TX-19 qualification, TX-21 adapter admission, TX-22 implementation conformance, TX-27 provider-hosted user-present handoff, exact quote/amount/currency/travel-kind binding, reviewed traveler-data minimization, provider idempotency and reconciliation, final receipt confirmation before approval expiry, owner isolation, and rollback in controlled staging.",
+            ),
+        ),
+    ),
+    OptionalCapability(
         capability="negotiation_proposal_promotion",
         rollback_key="negotiation_proposal_promotion_kill_switch",
         kill_switch="SHUDDHO_NEGOTIATION_PROPOSAL_PROMOTION_ENABLED=false",
@@ -417,6 +441,22 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="restaurant_reservations_verified",
         ledger_artifact_key="restaurant_reservations_activation",
         capability="restaurant_reservations",
+    ),
+    ActivationRequirement(
+        key="shopping_checkout",
+        status="shopping_checkout_verified",
+        ledger_schema_version=31,
+        ledger_event_type="shopping_checkout_verified",
+        ledger_artifact_key="shopping_checkout_activation",
+        capability="shopping_checkout",
+    ),
+    ActivationRequirement(
+        key="travel_booking",
+        status="travel_booking_verified",
+        ledger_schema_version=32,
+        ledger_event_type="travel_booking_verified",
+        ledger_artifact_key="travel_booking_activation",
+        capability="travel_booking",
     ),
     ActivationRequirement(
         key="negotiation_proposal_promotion",
