@@ -1741,16 +1741,9 @@ class AgentRepository:
                 if changed:
                     self._event(db, run, "awaiting_approval", f"step_{ordinal}", "Review and approve the attached action to continue.")
             elif action_state in {"queued", "executing"}:
-                self._checkpoint(
-                    db, run,
-                    "action_approved" if action_state == "queued" else "action_execution_claimed",
-                    step=step, invocation=invocation,
-                    resource_type="action", resource_id=action_id,
-                    evidence={
-                        "action_state": action_state,
-                        "blind_retry_allowed": False,
-                    },
-                )
+                # Approval and execution-claim checkpoints are written by
+                # ActionRepository in the same transactions that change the
+                # action state. This observer must not create competing copies.
                 changed = invocation.state != "running" or run.state != "running"
                 invocation.state = "running"
                 step.state = "running"
