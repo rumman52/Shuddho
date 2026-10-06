@@ -1965,3 +1965,209 @@ def test_transaction_authority_manifest_is_authenticated_scoped_and_exact(
     ):
         if secret:
             assert secret not in encoded
+
+
+def test_core_agent_phase2_exposes_explicit_execution_lifecycle(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        work_services_enabled=True,
+        max_active_agent_runs=10,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Create a short project document.",
+            output_language="en",
+        ),
+        "core-phase2-lifecycle",
+    )
+    planned = container.agent.save_plan(
+        owner,
+        run["id"],
+        [
+            AgentPlanStep(
+                tool="document.create",
+                arguments={
+                    "instruction": "Create a short project document.",
+                    "notes": "",
+                    "document_ids": [],
+                    "output_language": "en",
+                },
+            )
+        ],
+    )
+
+    assert len(planned["plan"]) == 1
+    assert planned["plan"][0]["step_id"] == planned["steps"][0]["id"]
+    assert planned["plan"][0]["invocation_id"] == planned["tool_invocations"][0]["id"]
+    assert planned["current_step"]["ordinal"] == 1
+    assert planned["completed_steps"] == []
+    assert planned["tool_results"] == []
+    assert planned["pending_approval"] is None
+    assert planned["retry_state"]["tool_steps_used"] == 1
+    assert planned["retry_state"]["tool_steps_remaining"] == 7
+    assert planned["final_state"] is None
+    assert planned["evidence"]["verified_receipt_count"] == 0
+
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    assert asyncio.run(runtime.execute_step(run["id"], 1)) == {"status": "completed"}
+    runtime.complete(run["id"])
+
+    completed = container.agent.get(owner, run["id"])
+    assert completed["state"] == "completed"
+    assert completed["final_state"] == "completed"
+    assert completed["current_step"] is None
+    assert [item["ordinal"] for item in completed["completed_steps"]] == [1]
+    assert len(completed["tool_results"]) == 1
+    assert completed["tool_results"][0]["invocation_id"] == completed["tool_invocations"][0]["id"]
+    assert completed["evidence"]["verified_receipt_count"] == 1
+
+
+def test_core_agent_phase2_reports_partial_completion_when_tool_needs_input(container):
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        work_services_enabled=True,
+        max_active_agent_runs=10,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Create a document from incomplete details.",
+            output_language="en",
+        ),
+        "core-phase2-partial",
+    )
+    container.agent.save_plan(
+        owner,
+        run["id"],
+        [
+            AgentPlanStep(
+                tool="document.create",
+                arguments={
+                    "instruction": "Create a document from incomplete details.",
+                    "notes": "",
+                    "document_ids": [],
+                    "output_language": "en",
+                },
+            )
+        ],
+    )
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel(missing=True)))
+    assert asyncio.run(runtime.execute_step(run["id"], 1)) == {"status": "completed"}
+    runtime.complete(run["id"])
+
+    result = container.agent.get(owner, run["id"])
+    assert result["state"] == "completed"
+    assert result["final_state"] == "partially_completed"
+    assert result["tool_results"][0]["summary"]["has_missing_information"] is True
+
+
+def test_core_agent_phase2_deadline_reconciliation_is_explicit(container):
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import AgentRun
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        work_services_enabled=True,
+        max_active_agent_runs=10,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Create a project document.", output_language="en"),
+        "core-phase2-deadline",
+    )
+    container.agent.save_plan(
+        owner,
+        run["id"],
+        [
+            AgentPlanStep(
+                tool="document.create",
+                arguments={
+                    "instruction": "Create a project document.",
+                    "notes": "",
+                    "document_ids": [],
+                    "output_language": "en",
+                },
+            )
+        ],
+    )
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).deadline_at = utcnow() - timedelta(seconds=1)
+
+    assert container.agent.expire_due_runs() == [run["id"]]
+    expired = container.agent.get(owner, run["id"])
+    assert expired["state"] == "failed"
+    assert expired["error_code"] == "agent_deadline"
+    assert expired["final_state"] == "failed"
+    assert expired["steps"][0]["state"] == "failed"
+    with pytest.raises(CoworkerError) as deadline:
+        container.agent.assert_within_deadline(run["id"])
+    assert deadline.value.code == "agent_deadline"
+
+
+def test_core_agent_phase2_runtime_v3_suppresses_identical_steps(container):
+    from services.coworker.agent_schemas import AgentRunCreate
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_runtime_v3_enabled=True,
+        work_services_enabled=True,
+        max_active_agent_runs=10,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Draft a project update email.", output_language="en"),
+        "core-phase2-loop",
+    )
+    first = container.agent.append_v3_step(
+        owner,
+        run["id"],
+        "email.draft",
+        "Draft a project update email.",
+    )
+    assert first == 1
+
+    with pytest.raises(CoworkerError) as repeated:
+        container.agent.append_v3_step(
+            owner,
+            run["id"],
+            "email.draft",
+            "Draft a project update email.",
+        )
+    assert repeated.value.code == "agent_loop_detected"
+    saved = container.agent.get(owner, run["id"])
+    assert len(saved["plan"]) == 1
+    assert saved["retry_state"]["tool_steps_used"] == 1
