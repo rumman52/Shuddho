@@ -429,6 +429,18 @@ class AgentRepository:
                 db, run, "run_created",
                 evidence={"runtime_version": run.runtime_version, "deadline_at": iso(run.deadline_at)},
             )
+            for bound_action_id in action_ids:
+                bound_action = db.get(ExternalAction, bound_action_id)
+                if bound_action is not None:
+                    self._checkpoint(
+                        db, run, "action_prepared",
+                        resource_type="action", resource_id=bound_action.id,
+                        evidence={
+                            "action_state": bound_action.state,
+                            "preview_hash": bound_action.preview_hash,
+                            "approval_required": True,
+                        },
+                    )
             self._event(db, run, "queued", "planning", "Agent run created. Waiting for the bounded planner runtime.")
             self._audit(db, owner, run.id, "agent_run_created")
             return self._dto(db, run), True
