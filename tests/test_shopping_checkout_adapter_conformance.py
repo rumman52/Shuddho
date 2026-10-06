@@ -207,7 +207,9 @@ class StagingCheckoutAdapter:
 
 def run(adapter: StagingCheckoutAdapter, now: datetime, **overrides):
     q = overrides.pop("qualification_value", qualification(now))
-    proposal_value = overrides.pop("proposal_value", proposal(now, q))
+    proposal_value = overrides.pop("proposal_value", None)
+    if proposal_value is None:
+        proposal_value = proposal(now, q)
     kwargs = {
         "preview_value": preview(now),
         "allow_provider_test_io": True,
