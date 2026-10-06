@@ -302,6 +302,48 @@ def valid_hash(value) -> bool:
     )
 
 
+def valid_transaction_authority_snapshot(
+    value: object,
+    *,
+    revision: str,
+    operations: list[str],
+    required_flag: str | None = None,
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    schema = value.get("schema_version")
+    base_keys = {
+        "schema_version",
+        "source_revision",
+        "personal_transactions_enabled",
+        "operations",
+    }
+    v1_keys = base_keys | {"restaurant_reservations_enabled"}
+    v2_keys = v1_keys | {
+        "shopping_checkout_enabled",
+        "travel_booking_enabled",
+    }
+    if schema == 1:
+        if frozenset(value) not in {frozenset(base_keys), frozenset(v1_keys)}:
+            return False
+        if required_flag in {"shopping_checkout_enabled", "travel_booking_enabled"}:
+            return False
+    elif schema == 2:
+        if set(value) != v2_keys:
+            return False
+    else:
+        return False
+    if (
+        value.get("source_revision") != revision
+        or value.get("personal_transactions_enabled") is not True
+        or value.get("operations") != sorted(operations)
+    ):
+        return False
+    if required_flag is not None and value.get(required_flag) is not True:
+        return False
+    return True
+
+
 def normalized_action_providers(rollout: dict) -> list[str]:
     capabilities = rollout.get("capabilities")
     actions_enabled = (
@@ -5195,20 +5237,10 @@ def append_personal_transactions_event(
             "Personal-transactions activation has no valid runtime proof."
         )
     transaction_authority = activation.get("transaction_authority")
-    if (
-        not isinstance(transaction_authority, dict)
-        or set(transaction_authority) != {
-            "schema_version",
-            "source_revision",
-            "personal_transactions_enabled",
-            "operations",
-        }
-        or transaction_authority.get("schema_version") != 1
-        or transaction_authority.get("source_revision") != revision
-        or transaction_authority.get("personal_transactions_enabled") is not True
-        or transaction_authority.get("operations") != sorted(
-            rollout.get("transaction_operations", [])
-        )
+    if not valid_transaction_authority_snapshot(
+        transaction_authority,
+        revision=revision,
+        operations=rollout.get("transaction_operations", []),
     ):
         raise ReleaseLedgerError(
             "Personal-transactions activation does not prove the exact reviewed transaction operation authority."
@@ -5544,13 +5576,11 @@ def append_transaction_capability_event(
             f"{capability} activation does not prove controlled-cohort enforcement."
         )
 
-    if (
-        not isinstance(authority, dict)
-        or authority.get("schema_version") != 2
-        or authority.get("source_revision") != revision
-        or authority.get("personal_transactions_enabled") is not True
-        or authority.get(spec["authority_flag"]) is not True
-        or authority.get("operations") != sorted(operations)
+    if not valid_transaction_authority_snapshot(
+        authority,
+        revision=revision,
+        operations=operations,
+        required_flag=spec["authority_flag"],
     ):
         raise ReleaseLedgerError(
             f"{capability} activation does not prove exact transaction authority."
@@ -5843,18 +5873,10 @@ def append_negotiation_proposal_promotion_event(
         raise ReleaseLedgerError(
             "Negotiation-promotion activation has no valid runtime proof."
         )
-    if (
-        not isinstance(transaction_authority, dict)
-        or set(transaction_authority) != {
-            "schema_version",
-            "source_revision",
-            "personal_transactions_enabled",
-            "operations",
-        }
-        or transaction_authority.get("schema_version") != 1
-        or transaction_authority.get("source_revision") != revision
-        or transaction_authority.get("personal_transactions_enabled") is not True
-        or transaction_authority.get("operations") != sorted(operations)
+    if not valid_transaction_authority_snapshot(
+        transaction_authority,
+        revision=revision,
+        operations=operations,
     ):
         raise ReleaseLedgerError(
             "Negotiation-promotion activation does not prove exact transaction authority."
