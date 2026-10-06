@@ -230,7 +230,7 @@ def validate_transaction_authority_manifest(
     }
     if (
         schema == 1
-        and set(value) not in {frozenset(base_keys), frozenset(v1_keys)}
+        and frozenset(value) not in {frozenset(base_keys), frozenset(v1_keys)}
     ) or (
         schema == 2
         and set(value) != v2_keys
