@@ -1430,6 +1430,17 @@ class ActionRepository:
             # "executing" forever. Reconciliation is read-only afterward.
             for row in db.scalars(select(ExternalAction).where(ExternalAction.state == "executing", ExternalAction.started_at < now - timedelta(minutes=10)).with_for_update(skip_locked=True)):
                 row.state, row.finished_at, row.error_code = "outcome_unknown", now, "worker_interrupted"
+                self._agent_checkpoint(
+                    db,
+                    row,
+                    "action_outcome_unknown",
+                    {
+                        "action_state": "outcome_unknown",
+                        "error_code": "worker_interrupted",
+                        "blind_retry_allowed": False,
+                        "recovery_policy": "reconcile_or_manual_verify",
+                    },
+                )
                 self._audit(db, row.owner_id, row.id, "action.outcome_unknown")
             db.execute(update(OAuthAttempt).where(OAuthAttempt.expires_at <= now, OAuthAttempt.verifier_ciphertext != "").values(verifier_ciphertext="", consumed=True))
             if not self.settings.actions_enabled:
