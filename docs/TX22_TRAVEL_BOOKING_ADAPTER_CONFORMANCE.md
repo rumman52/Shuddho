@@ -54,7 +54,9 @@ secret or payment value is embedded in the key or emitted in the result.
 
 Only the exact reviewed `shuddho_transmitted_fields` may be passed to the
 adapter. Provider-hosted traveler fields remain outside the Shuddho payload.
-The conformance evidence records only field names, not traveler values.
+The conformance evidence records only field names, not traveler values. It also
+binds the exact TX-19 qualification SHA-256, TX-20 registration-proposal
+SHA-256, and conformance evaluation timestamp for downstream review continuity.
 
 ## Authority remains closed
 
@@ -91,5 +93,7 @@ TX-22 does not:
 - qualify production activation.
 
 A later provider-specific slice must supply reviewed concrete provider code and
-sandbox configuration, then run this harness and retain the resulting evidence
-before any runtime-registration proposal can proceed.
+sandbox configuration, then run this harness and retain the resulting evidence.
+TX-25 may compile that exact evidence together with the TX-20 proposal and a
+fresh human review into an inert runtime-registration-review bundle, but it must
+not silently register or activate travel booking.
