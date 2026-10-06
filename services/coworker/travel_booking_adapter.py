@@ -212,21 +212,23 @@ class TravelBookingProviderAdapter(Protocol):
     receives_document_images: bool
     retains_traveler_data_in_logs: bool
 
-    async def create_booking(
+    async def create_booking_handoff(
         self,
         *,
         preview: dict,
         traveler_data: dict,
         idempotency_key: str,
     ) -> dict:
+        """Return only provider-hosted handoff metadata, never a confirmed receipt."""
         ...
 
-    async def lookup_booking(
+    async def lookup_booking_receipt(
         self,
         *,
         idempotency_key: str | None = None,
         provider_booking_id: str | None = None,
     ) -> dict | None:
+        """Return a confirmed receipt only after the provider-hosted user flow completes."""
         ...
 
 
@@ -549,13 +551,13 @@ def admit_travel_booking_adapter(
             "Travel booking adapter does not implement the required structural protocol."
         )
     _require_exact_async_signature(
-        adapter.create_booking,
-        label="Travel booking adapter create_booking",
+        adapter.create_booking_handoff,
+        label="Travel booking adapter create_booking_handoff",
         required=("preview", "traveler_data", "idempotency_key"),
     )
     _require_exact_async_signature(
-        adapter.lookup_booking,
-        label="Travel booking adapter lookup_booking",
+        adapter.lookup_booking_receipt,
+        label="Travel booking adapter lookup_booking_receipt",
         required=(),
         optional_none=("idempotency_key", "provider_booking_id"),
     )
