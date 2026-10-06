@@ -16,6 +16,8 @@ from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
+AGENT_TERMINAL_STATES = {"completed", "failed", "cancelled", "needs_input", "blocked"}
+AGENT_MAX_TOOL_STEPS = 8
 
 
 class AgentRepository:
@@ -63,6 +65,73 @@ class AgentRepository:
         return set(db.scalars(select(DocumentVersion.document_id).where(
             DocumentVersion.id.in_(run.input_versions), DocumentVersion.owner_id == run.owner_id,
         )))
+
+    @staticmethod
+    def _final_state(run: AgentRun, receipts: list[ToolReceipt], invocations: list[ToolInvocation]) -> str | None:
+        completed = sum(1 for item in invocations if item.state == "completed")
+        partial = completed > 0 and completed < len(invocations)
+        missing = any(
+            isinstance(item.summary, dict) and item.summary.get("has_missing_information") is True
+            for item in receipts
+        )
+        if run.state == "completed":
+            return "partially_completed" if missing else "completed"
+        if run.state == "needs_input":
+            return "waiting_for_user"
+        if run.state == "awaiting_approval":
+            return "waiting_for_approval"
+        if run.state == "blocked":
+            return "blocked"
+        if run.state == "cancelled":
+            return "cancelled"
+        if run.state == "failed":
+            return "partially_completed" if partial or completed > 0 else "failed"
+        return None
+
+    def _assert_within_deadline(self, run: AgentRun) -> None:
+        if aware(run.deadline_at) <= utcnow():
+            raise CoworkerError(
+                "agent_deadline",
+                "This bounded Agent run reached its task-level deadline.",
+                409,
+            )
+
+    def expire_due_runs(self, limit: int = 50) -> list[str]:
+        """Persist explicit deadline failures for runs that outlive Temporal/process execution."""
+        expired: list[str] = []
+        with self.sessions.begin() as db:
+            now = utcnow()
+            rows = db.scalars(
+                select(AgentRun).where(
+                    AgentRun.state.in_(ACTIVE_RUN_STATES),
+                    AgentRun.deadline_at <= now,
+                ).order_by(AgentRun.deadline_at).limit(limit).with_for_update(skip_locked=True)
+            ).all()
+            for run in rows:
+                run.error_code = "agent_deadline"
+                for invocation, step in db.execute(
+                    select(ToolInvocation, AgentStep).join(
+                        AgentStep, AgentStep.id == ToolInvocation.step_id
+                    ).where(
+                        ToolInvocation.run_id == run.id,
+                        ToolInvocation.state.in_({"prepared", "running", "awaiting_approval"}),
+                    )
+                ):
+                    invocation.state = "failed"
+                    invocation.finished_at = now
+                    step.state = "failed"
+                    step.error_code = "agent_deadline"
+                    step.finished_at = now
+                self._event(
+                    db,
+                    run,
+                    "failed",
+                    "deadline",
+                    "Agent run stopped because its task-level deadline expired.",
+                )
+                self._audit(db, run.owner_id, run.id, "agent_run_deadline_expired")
+                expired.append(run.id)
+        return expired
 
     def create(
         self,
@@ -335,11 +404,100 @@ class AgentRepository:
         documents = list(db.scalars(select(DocumentVersion.document_id).where(
             DocumentVersion.id.in_(run.input_versions), DocumentVersion.owner_id == run.owner_id,
         ))) if run.input_versions else []
+        invocation_by_step = {item.step_id: item for item in invocations}
+        completed_steps = [
+            {
+                "id": step.id,
+                "ordinal": step.ordinal,
+                "tool": step.tool_name,
+                "invocation_id": invocation_by_step[step.id].id if step.id in invocation_by_step else None,
+            }
+            for step in steps
+            if step.ordinal > 0 and step.state == "completed"
+        ]
+        current = next(
+            (
+                step for step in steps
+                if step.ordinal > 0 and step.state in {"running", "awaiting_approval"}
+            ),
+            None,
+        ) or next(
+            (
+                step for step in steps
+                if step.ordinal > 0 and step.state in {"planned", "queued"}
+            ),
+            None,
+        )
+        current_invocation = invocation_by_step.get(current.id) if current is not None else None
+        pending = next(
+            (
+                item for item in invocations
+                if item.state == "awaiting_approval"
+            ),
+            None,
+        )
+        final_state = self._final_state(run, receipts, invocations)
+        tool_results = [
+            {
+                "invocation_id": receipt.invocation_id,
+                "tool": receipt.tool_name,
+                "status": receipt.status,
+                "resource_type": receipt.resource_type,
+                "resource_id": receipt.resource_id,
+                "summary": receipt.summary,
+                "created_at": iso(receipt.created_at),
+            }
+            for receipt in receipts
+        ]
         return {
             "id": run.id,
             "persistent_goal_id": run.goal_id,
             "persistent_goal_revision": run.goal_revision,
             "goal": run.goal,
+            "plan": [{
+                "step_id": step.id,
+                "ordinal": step.ordinal,
+                "tool": step.tool_name,
+                "state": step.state,
+                "invocation_id": invocation_by_step[step.id].id if step.id in invocation_by_step else None,
+                "depends_on": list(step.depends_on_ordinals),
+            } for step in steps if step.ordinal > 0],
+            "current_step": ({
+                "step_id": current.id,
+                "ordinal": current.ordinal,
+                "tool": current.tool_name,
+                "state": current.state,
+                "invocation_id": current_invocation.id if current_invocation is not None else None,
+            } if current is not None else None),
+            "completed_steps": completed_steps,
+            "tool_results": tool_results,
+            "pending_approval": ({
+                "invocation_id": pending.id,
+                "step_id": pending.step_id,
+                "tool": pending.tool_name,
+            } if pending is not None else None),
+            "retry_state": {
+                "planner_calls_used": run.planner_calls,
+                "planner_calls_remaining": max(
+                    0,
+                    (
+                        self.settings.max_agent_v3_planner_calls
+                        if run.runtime_version == 3
+                        else self.settings.max_agent_planner_calls
+                    ) - run.planner_calls,
+                ),
+                "planner_tokens_reserved": run.planner_tokens,
+                "tool_steps_used": len(invocations),
+                "tool_steps_remaining": max(0, AGENT_MAX_TOOL_STEPS - len(invocations)),
+                "temporal_activity_retries_bounded": True,
+            },
+            "final_state": final_state,
+            "evidence": {
+                "verified_receipt_count": len(receipts),
+                "verified_invocation_ids": [item.invocation_id for item in receipts],
+                "deadline_at": iso(run.deadline_at),
+                "planner_decision_count": len(decisions),
+            },
             "output_language": run.output_language,
             "document_ids": documents,
             "action_ids": list(run.action_ids),
@@ -420,7 +578,7 @@ class AgentRepository:
                     "message": item.message,
                     "created_at": iso(item.created_at),
                 } for item in rows],
-                "terminal": run.state in {"completed", "failed", "cancelled", "needs_input", "blocked"},
+                "terminal": run.state in AGENT_TERMINAL_STATES,
                 "sequence": run.event_sequence,
             }
 
@@ -431,6 +589,7 @@ class AgentRepository:
                 raise not_found()
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            self._assert_within_deadline(run)
             max_calls = (
                 self.settings.max_agent_v3_planner_calls
                 if run.runtime_version == 3 else self.settings.max_agent_planner_calls
@@ -561,6 +720,7 @@ class AgentRepository:
                 raise not_found()
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            self._assert_within_deadline(run)
             rows = db.execute(select(AgentStep, ToolInvocation).join(
                 ToolInvocation, ToolInvocation.step_id == AgentStep.id,
             ).where(
@@ -633,6 +793,7 @@ class AgentRepository:
             run = self._run(db, owner, run_id, lock=True)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            self._assert_within_deadline(run)
             if from_ordinal < 1:
                 raise CoworkerError("invalid_replan", "The replan boundary is invalid.", 422)
             prior = db.scalars(select(AgentStep).where(
@@ -705,6 +866,7 @@ class AgentRepository:
             run = self._run(db, owner, run_id, lock=True)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            self._assert_within_deadline(run)
             existing = db.scalar(select(func.count()).select_from(ToolInvocation).where(
                 ToolInvocation.run_id == run.id, ToolInvocation.owner_id == owner,
             ))
@@ -897,7 +1059,7 @@ class AgentRepository:
     def cancel(self, owner: str, run_id: str) -> dict:
         with self.sessions.begin() as db:
             run = self._run(db, owner, run_id, lock=True)
-            if run.state in {"completed", "failed", "cancelled"}:
+            if run.state in AGENT_TERMINAL_STATES:
                 return self._dto(db, run)
             run.cancel_requested = True
             for step in db.scalars(select(AgentStep).where(
@@ -1144,12 +1306,7 @@ class AgentRepository:
             run = db.get(AgentRun, run_id)
             if run is None:
                 raise not_found()
-            if aware(run.deadline_at) <= utcnow():
-                raise CoworkerError(
-                    "agent_deadline",
-                    "This bounded Agent Runtime v3 run reached its active-runtime deadline.",
-                    409,
-                )
+            self._assert_within_deadline(run)
 
     def v3_remaining_budget(self, run_id: str) -> dict:
         with self.sessions() as db:
@@ -1160,7 +1317,7 @@ class AgentRepository:
                 ToolInvocation.run_id == run.id,
             ))
             return {
-                "tool_steps_remaining": max(0, 8 - int(step_count or 0)),
+                "tool_steps_remaining": max(0, AGENT_MAX_TOOL_STEPS - int(step_count or 0)),
                 "planner_calls_remaining": max(
                     0, self.settings.max_agent_v3_planner_calls - run.planner_calls
                 ),
@@ -1179,6 +1336,7 @@ class AgentRepository:
                 raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            self._assert_within_deadline(run)
             placeholder = db.scalar(select(AgentStep).where(
                 AgentStep.run_id == run.id, AgentStep.owner_id == owner, AgentStep.ordinal == 0,
             ))
@@ -1188,7 +1346,7 @@ class AgentRepository:
             existing = db.scalar(select(func.count()).select_from(ToolInvocation).where(
                 ToolInvocation.run_id == run.id,
             ))
-            if existing >= 8:
+            if existing >= AGENT_MAX_TOOL_STEPS:
                 raise CoworkerError("agent_step_limit", "This agent run reached its tool-step limit.", 429)
             action_rows = {action.id: action for action in db.scalars(select(ExternalAction).where(
                 ExternalAction.id.in_(run.action_ids), ExternalAction.owner_id == owner,
@@ -1240,12 +1398,25 @@ class AgentRepository:
             if not spec.enabled(self.settings):
                 raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
             validated = spec.validate(arguments)
+            normalized_arguments = normalized_arguments
+            duplicate = db.scalar(select(ToolInvocation.id).where(
+                ToolInvocation.run_id == run.id,
+                ToolInvocation.owner_id == owner,
+                ToolInvocation.tool_name == spec.name,
+                ToolInvocation.arguments == normalized_arguments,
+            ).limit(1))
+            if duplicate is not None:
+                raise CoworkerError(
+                    "agent_loop_detected",
+                    "The planner repeated an identical tool step; the bounded run was stopped to prevent a loop.",
+                    409,
+                )
             ordinal = int(existing or 0) + 1
-            planned = AgentPlanStep(tool=actual_name, arguments=validated.model_dump(mode="json"))
+            planned = AgentPlanStep(tool=actual_name, arguments=normalized_arguments)
             step = AgentStep(
                 id=str(uuid4()), run_id=run.id, owner_id=owner, ordinal=ordinal,
                 tool_name=spec.name, state="planned",
-                input={"arguments": validated.model_dump(mode="json"), "v3_objective": objective},
+                input={"arguments": normalized_arguments, "v3_objective": objective},
                 output={},
                 depends_on_ordinals=self._dependency_ordinals(db, run.id, owner, ordinal, planned),
             )
@@ -1253,7 +1424,7 @@ class AgentRepository:
             db.add(ToolInvocation(
                 id=str(uuid4()), run_id=run.id, step_id=step.id, owner_id=owner,
                 tool_name=spec.name, tool_version=spec.version,
-                arguments=validated.model_dump(mode="json"), state="prepared",
+                arguments=normalized_arguments, state="prepared",
                 consequential=spec.consequential, approval_required=spec.approval_required,
             ))
             self._event(db, run, "planning", "v3_decision", f"Runtime v3 selected bounded step {ordinal}.")
@@ -1350,6 +1521,7 @@ class AgentRepository:
                 raise not_found()
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            self._assert_within_deadline(run)
             step = db.scalar(select(AgentStep).where(
                 AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
             ).with_for_update())
@@ -1451,7 +1623,7 @@ class AgentRepository:
     def fail_run(self, run_id: str, code: str, message: str):
         with self.sessions.begin() as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
-            if run is None or run.state in {"completed", "failed", "cancelled"}:
+            if run is None or run.state in AGENT_TERMINAL_STATES:
                 return
             run.error_code = code
             now = utcnow()
