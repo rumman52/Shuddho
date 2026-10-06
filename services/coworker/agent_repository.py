@@ -1301,12 +1301,15 @@ class AgentRepository:
                 })
             return result
 
-    def assert_v3_within_deadline(self, run_id: str) -> None:
+    def assert_within_deadline(self, run_id: str) -> None:
         with self.sessions() as db:
             run = db.get(AgentRun, run_id)
             if run is None:
                 raise not_found()
             self._assert_within_deadline(run)
+
+    def assert_v3_within_deadline(self, run_id: str) -> None:
+        self.assert_within_deadline(run_id)
 
     def v3_remaining_budget(self, run_id: str) -> dict:
         with self.sessions() as db:
@@ -1398,14 +1401,13 @@ class AgentRepository:
             if not spec.enabled(self.settings):
                 raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
             validated = spec.validate(arguments)
-            normalized_arguments = normalized_arguments
-            duplicate = db.scalar(select(ToolInvocation.id).where(
+            normalized_arguments = validated.model_dump(mode="json")
+            prior_invocations = db.scalars(select(ToolInvocation).where(
                 ToolInvocation.run_id == run.id,
                 ToolInvocation.owner_id == owner,
                 ToolInvocation.tool_name == spec.name,
-                ToolInvocation.arguments == normalized_arguments,
-            ).limit(1))
-            if duplicate is not None:
+            )).all()
+            if any(item.arguments == normalized_arguments for item in prior_invocations):
                 raise CoworkerError(
                     "agent_loop_detected",
                     "The planner repeated an identical tool step; the bounded run was stopped to prevent a loop.",
