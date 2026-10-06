@@ -45,8 +45,11 @@ A concrete adapter must expose code-owned metadata matching the proposal for:
 
 It must implement asynchronous:
 
-- `create_booking(preview=..., traveler_data=..., idempotency_key=...)`;
-- `lookup_booking(idempotency_key=..., provider_booking_id=...)`.
+- `create_booking_handoff(preview=..., traveler_data=..., idempotency_key=...)`;
+- `lookup_booking_receipt(idempotency_key=..., provider_booking_id=...)`.
+
+The create method returns only provider-hosted handoff metadata. It must not
+return or imply a confirmed booking before the user-present hosted flow completes.
 
 TX-21 admission does not call either method.
 
