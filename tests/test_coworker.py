@@ -2388,3 +2388,78 @@ def test_core_agent_phase3_consequential_replay_never_mutates_provider_twice(con
     )
     assert claimed["evidence"]["blind_retry_allowed"] is False
     assert claimed["evidence"]["recovery_policy"] == "reconcile_only"
+
+
+def test_core_agent_phase3_verified_action_checkpoints_and_completes(container):
+    from action_samples import action_request, connected, enable_actions
+    from coworker_samples import WorkModel
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+
+    provider = enable_actions(container)
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        work_services_enabled=True,
+        actions_enabled=True,
+        max_active_agent_runs=10,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.actions.repo.settings = enabled
+
+    owner = account(container)
+    connection = connected(container.actions.repo, owner, "email")
+    action = container.actions.repo.prepare(
+        owner,
+        action_request(connection, "email_send"),
+        "core-phase3-success-preview",
+    )
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Send the attached approved email action.",
+            action_ids=[action["id"]],
+            output_language="en",
+        ),
+        "core-phase3-success-run",
+    )
+    container.agent.save_plan(
+        owner,
+        run["id"],
+        [AgentPlanStep(tool="email.send", arguments={"action_id": action["id"]})],
+    )
+    runtime = AgentRuntime(container, DocumentRunner(container, WorkModel()))
+    assert asyncio.run(runtime.execute_step(run["id"], 1)) == {
+        "status": "awaiting_approval"
+    }
+
+    container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+    assert asyncio.run(runtime.execute_step(run["id"], 1)) == {
+        "status": "executing"
+    }
+    asyncio.run(container.actions.execute(action["id"]))
+    assert len(provider.sent) == 1
+
+    # A worker replay after the provider receipt observes the existing action
+    # and records the Agent tool receipt; it never calls the provider again.
+    assert asyncio.run(
+        AgentRuntime(container, DocumentRunner(container, WorkModel())).execute_step(
+            run["id"], 1
+        )
+    ) == {"status": "completed"}
+    assert len(provider.sent) == 1
+    runtime.complete(run["id"])
+
+    result = container.agent.get(owner, run["id"])
+    assert result["final_state"] == "completed"
+    kinds = [item["kind"] for item in result["checkpoints"]]
+    assert kinds.count("action_prepared") == 1
+    assert kinds.count("wait_for_approval") == 1
+    assert kinds.count("action_approved") == 1
+    assert kinds.count("action_execution_claimed") == 1
+    assert kinds.count("action_result_verified") == 1
+    assert kinds.count("verify_result") == 1
+    assert kinds.count("complete") == 1
+    assert result["resume_from"] == "complete"
