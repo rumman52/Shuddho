@@ -276,7 +276,7 @@ class AgentRuntime:
                 summary = {"action_state": state, "provider_confirmed": True}
                 self.repo.finish_invocation(run_id, ordinal, "action", action["id"], summary)
                 return validate_tool_result(spec, {
-                    "status": "provider_confirmed",
+                    "status": "completed",
                     "resource_type": "action",
                     "resource_id": action["id"],
                     "summary": summary,
