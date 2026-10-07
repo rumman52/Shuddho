@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -228,12 +229,11 @@ def test_phase5_planning_model_cannot_smuggle_linkedin_publish_when_gate_is_off(
             },
         )
 
-    configured = settings().model_copy(
-        update={
-            "deepseek_api_key": "test-only-key",
-            "agent_action_proposals_enabled": True,
-            "agent_linkedin_proposals_enabled": False,
-        }
+    configured = replace(
+        settings(),
+        deepseek_api_key="test-only-key",
+        agent_action_proposals_enabled=True,
+        agent_linkedin_proposals_enabled=False,
     )
     planner = DeepSeekAgentPlanner(
         configured,
