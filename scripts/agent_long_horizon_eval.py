@@ -8,7 +8,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from services.coworker.agent_repository import AGENT_MAX_TOOL_STEPS
+from services.coworker.agent_limits import AGENT_MAX_TOOL_STEPS
 from services.coworker.agent_router import qualify_agent_goal
 from services.coworker.config import Settings
 
