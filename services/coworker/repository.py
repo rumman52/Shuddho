@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from .auth import Principal
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, Workspace, utcnow
+from .models import Account, AgentRun, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, Workspace, utcnow
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 from .schemas import TaskCreate, UploadRequest
 from .skills import SKILLS, service_enabled, skill_for_version
@@ -397,10 +397,66 @@ class Repository:
     def reserve_model(self, task_id, token_upper_bound):
         owner = self.worker_task(task_id)["owner_id"]
         with self.sessions.begin() as db:
+            task_scope = db.get(Task, task_id)
+            if task_scope is None:
+                raise not_found()
+            parent_run = None
+            if task_scope.agent_run_id:
+                # Keep the same run -> account lock order as AgentRepository.reserve_planner
+                # so planner and child-model reservations cannot race past per-run budgets.
+                parent_run = db.scalar(
+                    select(AgentRun).where(
+                        AgentRun.id == task_scope.agent_run_id,
+                        AgentRun.owner_id == owner,
+                    ).with_for_update()
+                )
+                if parent_run is None:
+                    raise CoworkerError("agent_run_missing", "The parent Agent run no longer exists.", 409)
+                if aware(parent_run.deadline_at) <= utcnow():
+                    raise CoworkerError(
+                        "agent_deadline",
+                        "This bounded Agent run reached its task-level deadline.",
+                        409,
+                    )
             self._account(db, owner)
             task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
             self._check_live(task)
             attempts = db.scalars(select(ModelAttempt).where(ModelAttempt.task_id == task_id)).all()
+            if parent_run is not None:
+                run_attempts = list(db.scalars(
+                    select(ModelAttempt).join(Task, Task.id == ModelAttempt.task_id).where(
+                        Task.agent_run_id == parent_run.id,
+                    )
+                ).all())
+                child_calls = len(run_attempts)
+                child_tokens = sum(max(0, int(item.charged_tokens or 0)) for item in run_attempts)
+                if parent_run.planner_calls + child_calls >= self.settings.max_agent_model_calls_per_run:
+                    raise CoworkerError(
+                        "agent_model_call_limit",
+                        "This Agent run reached its total model-call budget.",
+                        429,
+                    )
+                if parent_run.planner_tokens + child_tokens + token_upper_bound > self.settings.max_agent_tokens_per_run:
+                    raise CoworkerError(
+                        "agent_token_limit",
+                        "This Agent run reached its total token budget.",
+                        429,
+                    )
+                rate = max(0, int(self.settings.agent_v3_planner_cost_microusd_per_1k_tokens))
+                estimated_child_cost = (child_tokens * rate + 999) // 1000 if rate else 0
+                estimated_next_cost = (max(0, int(token_upper_bound)) * rate + 999) // 1000 if rate else 0
+                estimated_planner_cost = (parent_run.planner_tokens * rate + 999) // 1000 if rate else 0
+                if (
+                    max(int(parent_run.planner_cost_microusd or 0), estimated_planner_cost)
+                    + estimated_child_cost
+                    + estimated_next_cost
+                    > self.settings.max_agent_cost_microusd_per_run
+                ):
+                    raise CoworkerError(
+                        "agent_cost_limit",
+                        "This Agent run reached its total model-cost budget.",
+                        402,
+                    )
             if len(attempts) >= self.settings.max_model_attempts or sum(row.charged_tokens for row in attempts) + token_upper_bound > self.settings.task_token_budget:
                 raise CoworkerError("task_budget", "This task reached its model budget. Try a shorter document.", 429)
             day = utcnow().date().isoformat()

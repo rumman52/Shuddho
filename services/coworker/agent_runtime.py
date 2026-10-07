@@ -447,10 +447,20 @@ class AgentRuntime:
                 "summary": summary,
             }
 
+        async def observe_retry(next_attempt: int, error_code: str) -> None:
+            await asyncio.to_thread(
+                self.repo.record_tool_retry,
+                run_id,
+                ordinal,
+                next_attempt,
+                error_code,
+            )
+
         observed = await execute_tool_contract(
             spec,
             execute_task_tool,
             cancellation_check=cancelled,
+            retry_observer=observe_retry,
         )
         task_id = str(observed["resource_id"])
         summary = dict(observed["summary"])

@@ -156,6 +156,10 @@ class Settings:
     max_agent_v3_planner_calls: int = 4
     agent_v3_planner_token_budget: int = 24000
     agent_v3_planner_cost_microusd_per_1k_tokens: int = 0
+    max_agent_model_calls_per_run: int = 12
+    max_agent_tokens_per_run: int = 250000
+    max_agent_tool_calls_per_run: int = 8
+    max_agent_cost_microusd_per_run: int = 1000000
     max_agent_handoff_bytes: int = 12000
     max_agent_handoff_sources: int = 2
     max_agent_parallel_steps: int = 2
@@ -328,6 +332,10 @@ class Settings:
             max_agent_v3_planner_calls=int(os.getenv("SHUDDHO_AGENT_V3_PLANNER_CALLS", "4")),
             agent_v3_planner_token_budget=int(os.getenv("SHUDDHO_AGENT_V3_PLANNER_TOKEN_BUDGET", "24000")),
             agent_v3_planner_cost_microusd_per_1k_tokens=int(os.getenv("SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS", "0")),
+            max_agent_model_calls_per_run=int(os.getenv("SHUDDHO_AGENT_MAX_MODEL_CALLS_PER_RUN", "12")),
+            max_agent_tokens_per_run=int(os.getenv("SHUDDHO_AGENT_MAX_TOKENS_PER_RUN", "250000")),
+            max_agent_tool_calls_per_run=int(os.getenv("SHUDDHO_AGENT_MAX_TOOL_CALLS_PER_RUN", "8")),
+            max_agent_cost_microusd_per_run=int(os.getenv("SHUDDHO_AGENT_MAX_COST_MICROUSD_PER_RUN", "1000000")),
             max_agent_handoff_bytes=int(os.getenv("SHUDDHO_AGENT_HANDOFF_BYTES", "12000")),
             max_agent_handoff_sources=int(os.getenv("SHUDDHO_AGENT_HANDOFF_SOURCES", "2")),
             max_agent_parallel_steps=int(os.getenv("SHUDDHO_AGENT_MAX_PARALLEL_STEPS", "2")),
@@ -688,6 +696,8 @@ class Settings:
                self.max_agent_context_bytes, self.max_memory_context_age_seconds, self.max_connector_context_age_seconds,
                self.max_prior_task_context_age_seconds, self.max_memory_proposals, self.max_agent_planner_calls, self.max_agent_v3_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens, self.agent_v3_planner_token_budget,
+               self.max_agent_model_calls_per_run, self.max_agent_tokens_per_run,
+               self.max_agent_tool_calls_per_run, self.max_agent_cost_microusd_per_run,
                self.max_agent_handoff_bytes, self.max_agent_handoff_sources,
                self.max_agent_parallel_steps, self.cohort_max_users,
                self.provider_max_concurrent_calls, self.provider_max_concurrent_per_workspace,
@@ -704,6 +714,12 @@ class Settings:
             raise ValueError("SHUDDHO_PROVIDER_LEASE_SECONDS must exceed the model timeout")
         if self.max_agent_parallel_steps > 4:
             raise ValueError("SHUDDHO_AGENT_MAX_PARALLEL_STEPS must be between 1 and 4")
+        if self.max_agent_tool_calls_per_run > 8:
+            raise ValueError("SHUDDHO_AGENT_MAX_TOOL_CALLS_PER_RUN cannot exceed the hard Core Agent ceiling of 8")
+        if self.max_agent_v3_planner_calls > self.max_agent_model_calls_per_run:
+            raise ValueError("Planner calls per run cannot exceed SHUDDHO_AGENT_MAX_MODEL_CALLS_PER_RUN")
+        if self.agent_v3_planner_token_budget > self.max_agent_tokens_per_run:
+            raise ValueError("Planner token budget cannot exceed SHUDDHO_AGENT_MAX_TOKENS_PER_RUN")
         if self.max_action_recipients > 500:
             raise ValueError("SHUDDHO_ACTION_RECIPIENTS_MAX must be between 1 and 500")
         if self.cohort_enforced:

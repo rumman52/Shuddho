@@ -136,6 +136,7 @@ async def execute_tool_contract(
     *,
     cancellation_check: Callable[[], bool] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    retry_observer: Callable[[int, str], Awaitable[None] | None] | None = None,
 ) -> dict:
     """Execute one non-consequential tool behind the Phase-4 reliability contract."""
 
@@ -194,6 +195,10 @@ async def execute_tool_contract(
 
         if not retryable:
             raise normalized
+        if retry_observer is not None:
+            observed_retry = retry_observer(attempt + 1, normalized.code)
+            if observed_retry is not None:
+                await observed_retry
         delay = spec.retry_policy.initial_backoff_seconds * (2 ** (attempt - 1))
         if delay > 0:
             await sleep(delay)
