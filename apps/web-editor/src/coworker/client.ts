@@ -26,7 +26,25 @@ export type ActionInput = { connection_id: string; payload: ActionPayload; attac
 export type ActionAttachment = { id: string; filename: string; content_type: string; byte_size: number; sha256: string };
 export type AgentRunState = "queued" | "planning" | "running" | "awaiting_approval" | "needs_input" | "blocked" | "completed" | "failed" | "cancelled";
 export type AgentFinalState = "completed" | "partially_completed" | "waiting_for_user" | "waiting_for_approval" | "blocked" | "cancelled" | "failed";
-export type AgentTool = { name: string; version: string; kind: "task" | "approved_action"; consequential: boolean; approval_required: boolean; timeout_seconds: number };
+export type AgentTool = {
+  name: string;
+  version: string;
+  kind: "task" | "approved_action" | "sandbox";
+  capability: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  permissions: string[];
+  read_write_classification: "read" | "write" | "read_write" | "compute";
+  risk_class: "low" | "medium" | "high" | "critical";
+  timeout_seconds: number;
+  retry_policy: { mode: "none" | "bounded"; max_attempts: number; initial_backoff_seconds: number; retryable_errors: string[] };
+  idempotency_policy: { mode: "server_idempotency_key" | "provider_idempotency_key" | "reconcile_only"; key_scope: string; outcome_unknown_policy: string };
+  approval_requirement: "none" | "explicit_user_approval";
+  consequential: boolean;
+  approval_required: boolean;
+  max_result_bytes: number;
+  circuit_breaker: { failure_threshold: number; cooldown_seconds: number };
+};
 export type AgentActionProposal = {
   id: string; kind: EmailAction["kind"] | CalendarAction["kind"] | LinkedInSocialPublishAction["kind"]; payload: EmailAction | CalendarAction | LinkedInSocialPublishAction; rationale: string;
   proposal_hash: string; state: "suggested" | "promoting" | "promoted" | "dismissed" | "expired";
