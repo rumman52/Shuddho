@@ -62,6 +62,7 @@ def normalize_tool_error(error: Exception, *, consequential: bool = False) -> Co
             "connector_trust_boundary_unavailable",
             "connector_read_unregistered",
             "connector_reads_disabled",
+            "connection_unavailable",
             "attachment_unavailable",
             "document_share_unavailable",
         }:
