@@ -85,8 +85,19 @@ def normalize_tool_error(error: Exception, *, consequential: bool = False) -> Co
             return CoworkerError("provider_rate_limited", "The provider rate limit was reached.", 429)
         if consequential and not error.definitive:
             return CoworkerError("outcome_unknown", "The provider outcome is uncertain and must be reconciled.", 409)
-        if "scope" in code or "permission" in code:
+        if "scope" in code or "permission" in code or "authorization" in code:
             return CoworkerError("permission_denied", "The provider denied the required permission.", 403)
+        if code in {
+            "provider_unavailable",
+            "provider_response_invalid",
+            "oauth_response_invalid",
+        }:
+            return CoworkerError("provider_unavailable", "The provider is currently unavailable.", 503)
+        if error.definitive:
+            # Preserve reviewed transaction/business-domain failures such as
+            # reservation_not_available and reservation_payment_required.
+            # These are structured outcomes, not transport failures.
+            return CoworkerError(code or "provider_unavailable", str(error), 409)
         return CoworkerError("provider_unavailable", "The provider is currently unavailable.", 503)
 
     status = getattr(error, "status_code", None)
@@ -106,6 +117,9 @@ def _result_size(value: dict) -> int:
 def validate_tool_result(spec, raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise CoworkerError("provider_unavailable", "The tool returned a malformed response.", 502)
+    # Validate the provider payload as actual JSON before Pydantic can coerce
+    # values such as sets into JSON-compatible lists.
+    _result_size(raw)
     value = spec.validate_output(raw).model_dump(mode="json")
     if _result_size(value) > spec.max_result_bytes:
         raise CoworkerError(
