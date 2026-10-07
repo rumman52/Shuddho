@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import inspect
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +11,6 @@ from services.coworker.action_registry import ACTION_SPECS
 from services.coworker.agent_router import qualify_agent_goal
 from services.coworker.agent_tools import TOOLS
 from services.coworker.config import Settings
-from services.coworker import action_repository, agent_repository, transaction_repository, repository as task_repository
 
 MULTILINGUAL_CASES = Path("tests/fixtures/core_agent_multilingual_cases.jsonl")
 LONG_HORIZON_CASES = Path("tests/fixtures/agent_long_horizon_cases.jsonl")
@@ -245,15 +243,15 @@ def evaluate_registry_safety() -> dict:
     }
 
 def evaluate_owner_isolation_contracts() -> dict:
-    modules = {
-        "task_repository": task_repository.Repository,
-        "agent_repository": agent_repository.AgentRepository,
-        "action_repository": action_repository.ActionRepository,
-        "transaction_repository": transaction_repository.TransactionRepository,
+    files = {
+        "task_repository": Path("services/coworker/repository.py"),
+        "agent_repository": Path("services/coworker/agent_repository.py"),
+        "action_repository": Path("services/coworker/action_repository.py"),
+        "transaction_repository": Path("services/coworker/transaction_repository.py"),
     }
     results = []
-    for name, cls in modules.items():
-        source = inspect.getsource(cls)
+    for name, path in files.items():
+        source = path.read_text(encoding="utf-8")
         passed = "owner_id" in source and "owner" in source
         results.append({"repository": name, "passed": passed})
     return {
