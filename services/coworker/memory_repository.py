@@ -7,6 +7,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from .config import Settings
+from .context_policy import filter_sensitive, is_stale, memory_conflict, relevance_score
 from .errors import CoworkerError
 from .agent_schemas import AgentMemoryProposal
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
@@ -311,14 +312,63 @@ class MemoryRepository:
                 MemoryFact.workspace_id == run.workspace_id,
                 MemoryFact.namespace.in_(namespaces),
                 (MemoryFact.expires_at.is_(None) | (MemoryFact.expires_at > now)),
-            ).order_by(MemoryFact.updated_at.desc()).limit(self.settings.max_memory_context_facts)).all()
-            facts, provenance, used = [], [], 0
+            ).order_by(MemoryFact.updated_at.desc()).limit(
+                max(self.settings.max_memory_context_facts * 3, self.settings.max_memory_context_facts)
+            )).all()
+
+            ranked = []
             for row in rows:
-                entry = {"namespace": row.namespace, "key": row.key, "value": row.value, "language": row.language}
+                if is_stale(
+                    row.updated_at,
+                    now=now,
+                    max_age_seconds=self.settings.max_memory_context_age_seconds,
+                ):
+                    continue
+                conflict = memory_conflict(run.goal, row.key, row.value)
+                if conflict is not None:
+                    # The newest explicit instruction always wins for this run.
+                    continue
+                value, redactions = filter_sensitive(row.value)
+                if not value.strip():
+                    continue
+                score = relevance_score(
+                    run.goal,
+                    f"{row.key} {value}",
+                    source_type="durable_memory",
+                    updated_at=row.updated_at,
+                    now=now,
+                    max_age_seconds=self.settings.max_memory_context_age_seconds,
+                )
+                ranked.append((score, row.updated_at, row, value, redactions))
+
+            ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            facts, provenance, used = [], [], 0
+            seen = set()
+            for score, _updated_at, row, value, redactions in ranked:
+                dedupe_key = (row.namespace, row.key, " ".join(value.casefold().split()))
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                entry = {
+                    "namespace": row.namespace,
+                    "key": row.key,
+                    "value": value,
+                    "language": row.language,
+                }
                 encoded = json.dumps(entry, ensure_ascii=False, sort_keys=True).encode("utf-8")
                 if used + len(encoded) > self.settings.max_memory_context_bytes:
                     continue
                 used += len(encoded)
                 facts.append(entry)
-                provenance.append({"id": row.id, "version": row.version})
+                provenance.append({
+                    "id": row.id,
+                    "version": row.version,
+                    "relevance_score": score,
+                    "updated_at": iso(row.updated_at),
+                    "expires_at": iso(row.expires_at) if row.expires_at else None,
+                    "redactions": redactions,
+                    "source_type": "durable_memory",
+                })
+                if len(facts) >= self.settings.max_memory_context_facts:
+                    break
             return {"facts": facts, "provenance": provenance}
