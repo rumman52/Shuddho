@@ -284,11 +284,17 @@ class AgentRuntime:
             if state == "outcome_unknown":
                 raise CoworkerError("outcome_unknown", "The provider result is uncertain. Reconcile the connected service before continuing.", 409)
             if state == "failed":
+                error_code = str(action.get("error_code") or "provider_unavailable")
+                status_code = (
+                    429 if error_code == "provider_rate_limited"
+                    else 403 if "scope" in error_code or "permission" in error_code
+                    else 503
+                )
                 raise normalize_tool_error(
                     CoworkerError(
-                        str(action.get("error_code") or "provider_unavailable"),
+                        error_code,
                         "The approved tool did not complete successfully.",
-                        503,
+                        status_code,
                     ),
                     consequential=True,
                 )
