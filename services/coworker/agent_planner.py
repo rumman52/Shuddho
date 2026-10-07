@@ -142,7 +142,7 @@ def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: li
             name = "email.send" if selected["kind"] == "email_send" else "calendar.create"
             spec = tool(name)
             if not spec.enabled(settings):
-                raise CoworkerError("tool_unavailable", "The attached action capability is not enabled.", 409)
+                raise CoworkerError("tool_not_supported", "The attached action capability is not enabled in this runtime.", 409)
             selected_action_ids.add(selected["id"])
             steps.append(AgentPlanStep(tool=name, arguments={"action_id": selected["id"]}))
             continue
@@ -169,7 +169,7 @@ def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: li
         name = "email.send" if action["kind"] == "email_send" else "calendar.create"
         spec = tool(name)
         if not spec.enabled(settings):
-            raise CoworkerError("tool_unavailable", "The attached action capability is not enabled.", 409)
+            raise CoworkerError("tool_not_supported", "The attached action capability is not enabled in this runtime.", 409)
         steps.append(AgentPlanStep(tool=name, arguments={"action_id": action["id"]}))
     if not 1 <= len(steps) <= 8:
         raise CoworkerError("invalid_plan", "The bounded agent plan is too large.", 422)
