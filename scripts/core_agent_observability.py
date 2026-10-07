@@ -93,6 +93,10 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         AgentCheckpoint.run_id == run.id,
         AgentCheckpoint.kind == "wait_for_approval",
     ).order_by(AgentCheckpoint.created_at)).all())
+    tool_retries = list(db.scalars(select(AgentCheckpoint).where(
+        AgentCheckpoint.run_id == run.id,
+        AgentCheckpoint.kind == "tool_retry",
+    )).all())
     outbox = db.get(AgentOutbox, run.id)
 
     planner_failures = max(0, int(run.planner_calls or 0) - len(decisions))
@@ -102,7 +106,13 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         for item in steps
     )
     action_failures = sum(item.state in {"failed", "outcome_unknown"} for item in actions)
-    provider_failures = planner_failures + child_model_failures + provider_step_failures + action_failures
+    provider_failures = (
+        planner_failures
+        + child_model_failures
+        + provider_step_failures
+        + action_failures
+        + len(tool_retries)
+    )
 
     charged_child_tokens = sum(max(0, int(item.charged_tokens or 0)) for item in model_attempts)
     planner_tokens = max(int(run.planner_tokens or 0), int(run.planner_actual_tokens or 0))
@@ -134,7 +144,7 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         attempts_by_task[item.task_id] = attempts_by_task.get(item.task_id, 0) + 1
     model_retries = sum(max(0, count - 1) for count in attempts_by_task.values())
     dispatch_retries = max(0, int(outbox.attempts or 0) - 1) if outbox is not None else 0
-    retries = planner_failures + model_retries + dispatch_retries
+    retries = planner_failures + model_retries + dispatch_retries + len(tool_retries)
 
     action_by_id = {item.id: item for item in actions}
     approval_wait_ms = 0
