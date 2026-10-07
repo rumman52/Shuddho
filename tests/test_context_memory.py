@@ -275,7 +275,11 @@ def test_retrieved_memory_sensitive_values_are_redacted(container):
     assert len(memory["facts"]) == 1
     assert "supersecretvalue123" not in memory["facts"][0]["value"]
     assert "[REDACTED]" in memory["facts"][0]["value"]
-    assert "secret_assignment" in memory["provenance"][0]["redactions"]
+    assert memory["provenance"][0] == {
+        "id": memory["context_metadata"][0]["id"],
+        "version": memory["context_metadata"][0]["version"],
+    }
+    assert "secret_assignment" in memory["context_metadata"][0]["redactions"]
 
 
 def test_context_hierarchy_dedupes_identical_documents_and_reports_budget(container):
@@ -370,6 +374,7 @@ def test_planner_context_exposes_precedence_freshness_and_current_instruction(co
     assert context["hierarchy"] == list(CONTEXT_HIERARCHY)
     assert context["items"][0]["source_type"] == "workspace_document"
     assert context["items"][0]["freshness"]["stale"] is False
+    assert "memory_context_metadata" in context
     assert context["authority"].startswith(
         "newer_explicit_user_instruction_overrides_memory"
     )
