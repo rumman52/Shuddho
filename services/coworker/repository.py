@@ -436,8 +436,9 @@ class Repository:
                 rate = max(0, int(self.settings.agent_v3_planner_cost_microusd_per_1k_tokens))
                 estimated_child_cost = (child_tokens * rate + 999) // 1000 if rate else 0
                 estimated_next_cost = (max(0, int(token_upper_bound)) * rate + 999) // 1000 if rate else 0
+                estimated_planner_cost = (parent_run.planner_tokens * rate + 999) // 1000 if rate else 0
                 if (
-                    int(parent_run.planner_cost_microusd or 0)
+                    max(int(parent_run.planner_cost_microusd or 0), estimated_planner_cost)
                     + estimated_child_cost
                     + estimated_next_cost
                     > self.settings.max_agent_cost_microusd_per_run
