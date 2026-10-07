@@ -256,7 +256,7 @@ class ContextService:
                 source["kind"],
                 self.settings.max_source_chars,
             )
-            add_item(
+            added = add_item(
                 source_id=source["source_id"],
                 label=source["label"],
                 text=text,
@@ -268,6 +268,11 @@ class ContextService:
                     "version_id": source["version_id"],
                 },
             )
+            if added:
+                # Memory proposal source revalidation relies on this legacy
+                # trusted type. Planner-facing source_type remains
+                # workspace_document.
+                source_map[source["source_id"]]["type"] = "document"
 
         # 3) Relevant prior completed task context from the same owner/workspace.
         # It is read-only context and can never grant tool/provider authority.
