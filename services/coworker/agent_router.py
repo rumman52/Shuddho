@@ -208,7 +208,7 @@ _AGENT_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "email.draft",
         "email",
-        ("email draft", "draft an email", "draft email", "reply email", "follow-up email", "follow up email", "professional email", "ইমেইল ড্রাফট", "মেইল ড্রাফট"),
+        ("email draft", "draft an email", "draft email", "suggest an email", "suggest email", "reply email", "follow-up email", "follow up email", "professional email", "ইমেইল ড্রাফট", "মেইল ড্রাফট"),
     ),
     (
         "daily_plan.create",

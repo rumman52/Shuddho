@@ -62,6 +62,17 @@ def test_current_sources_do_not_force_web_research_for_meeting_pack():
     assert route.provider == "coworker_model"
 
 
+def test_router_treats_email_suggestion_as_non_consequential_draft():
+    route = qualify_agent_goal(
+        "Draft a project update and suggest an email to recipient@example.org with subject Agent project update and body The project is ready for review.",
+        settings(),
+    )
+    assert route.execution == "agent_run"
+    assert route.tools == ["email.draft"]
+    assert route.capability == "email"
+    assert route.consequential is False
+
+
 def test_router_distinguishes_draft_from_consequential_send():
     draft = qualify_agent_goal("Draft an email to the finance team.", settings())
     send = qualify_agent_goal("Send this email to the finance team.", settings())
