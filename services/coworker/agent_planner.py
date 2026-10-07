@@ -55,7 +55,7 @@ def deterministic_plan(goal: str, document_ids: list[str], output_language: str,
         name = "email.send" if action["kind"] == "email_send" else "calendar.create"
         spec = tool(name)
         if not spec.enabled(settings):
-            raise CoworkerError("tool_unavailable", "The attached action capability is not enabled.", 409)
+            raise CoworkerError("tool_not_supported", "The attached action capability is not enabled in this runtime.", 409)
         steps.append(AgentPlanStep(tool=name, arguments={"action_id": action["id"]}))
     if not 1 <= len(steps) <= 8:
         raise CoworkerError("invalid_plan", "The bounded agent plan is too large.", 422)
