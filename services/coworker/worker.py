@@ -212,7 +212,7 @@ class AgentActivities:
             raise
         except Exception:
             logger.error("Agent step failed run=%s ordinal=%s", run_id, ordinal)
-            raise ApplicationError("An agent tool was unavailable. Please try again.", type="agent_tool_unavailable") from None
+            raise ApplicationError("The tool provider is unavailable.", type="provider_unavailable") from None
         finally:
             if not operation.done():
                 operation.cancel()

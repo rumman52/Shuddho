@@ -946,7 +946,7 @@ class AgentRepository:
                 ordinal = from_ordinal + offset
                 spec = tool(planned.tool)
                 if not spec.enabled(self.settings):
-                    raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
+                    raise CoworkerError("tool_not_supported", "A required Agent tool is not enabled in this runtime.", 409)
                 validated = spec.validate(planned.arguments)
                 step_key = spec.name + ":" + json.dumps(
                     validated.model_dump(mode="json"),
@@ -1027,7 +1027,7 @@ class AgentRepository:
             for ordinal, planned in enumerate(steps, 1):
                 spec = tool(planned.tool)
                 if not spec.enabled(self.settings):
-                    raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
+                    raise CoworkerError("tool_not_supported", "A required Agent tool is not enabled in this runtime.", 409)
                 validated = spec.validate(planned.arguments)
                 step_key = spec.name + ":" + json.dumps(
                     validated.model_dump(mode="json"),
@@ -1561,7 +1561,7 @@ class AgentRepository:
 
             spec = tool(actual_name)
             if not spec.enabled(self.settings):
-                raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
+                raise CoworkerError("tool_not_supported", "A required Agent tool is not enabled in this runtime.", 409)
             validated = spec.validate(arguments)
             normalized_arguments = validated.model_dump(mode="json")
             prior_invocations = db.scalars(select(ToolInvocation).where(

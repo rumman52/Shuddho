@@ -1,12 +1,30 @@
 """Explicit user commands only; models have no access to this executor."""
 import asyncio
 import hashlib
+import json
 
 from .action_registry import action_spec
 from .action_repository import ActionRepository, TERMINAL
 from .connector_actions import ConnectorFailure
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE
 from .errors import CoworkerError
+from .tool_execution import normalize_tool_error
+
+
+def _bounded_provider_receipt(value: object, *, max_bytes: int = 65536) -> bool:
+    if not isinstance(value, dict) or not value:
+        return False
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return False
+    return len(encoded) <= max_bytes
+
 
 
 class ActionService:
@@ -356,24 +374,26 @@ class ActionService:
         if boundary_enabled:
             try:
                 grant = await self.authorized_access(action, purpose="execute")
-            except (ConnectorFailure, CoworkerError):
+            except (ConnectorFailure, CoworkerError) as error:
+                normalized = normalize_tool_error(error, consequential=True)
                 await asyncio.to_thread(
                     self.repo.finish,
                     action_id,
                     "failed",
-                    error_code="connection_unavailable",
+                    error_code=normalized.code,
                     unstarted=True,
                 )
                 return
         else:
             try:
                 adapter, token = await self.access(action)
-            except (ConnectorFailure, CoworkerError):
+            except (ConnectorFailure, CoworkerError) as error:
+                normalized = normalize_tool_error(error, consequential=True)
                 await asyncio.to_thread(
                     self.repo.finish,
                     action_id,
                     "failed",
-                    error_code="connection_unavailable",
+                    error_code=normalized.code,
                     unstarted=True,
                 )
                 return
@@ -391,12 +411,13 @@ class ActionService:
                     claimed,
                     purpose="execute",
                 )
-            except (ConnectorFailure, CoworkerError):
+            except (ConnectorFailure, CoworkerError) as error:
+                normalized = normalize_tool_error(error, consequential=True)
                 await asyncio.to_thread(
                     self.repo.finish,
                     action_id,
                     "failed",
-                    error_code="connection_unavailable",
+                    error_code=normalized.code,
                 )
                 return
         try:
@@ -410,11 +431,12 @@ class ActionService:
                 receipt = await adapter.execute(claimed, token)
         except ConnectorFailure as error:
             if error.definitive:
+                normalized = normalize_tool_error(error, consequential=True)
                 await asyncio.to_thread(
                     self.repo.finish,
                     action_id,
                     "failed",
-                    error_code=error.code,
+                    error_code=normalized.code,
                 )
             else:
                 await self.reconcile(
@@ -423,6 +445,27 @@ class ActionService:
                     token=token,
                 )
             return
+        except Exception:
+            # The provider may have mutated external state before a malformed
+            # client/library failure surfaced. Never convert that uncertainty
+            # into a blind retry; reconcile the already-claimed action.
+            await self.reconcile(
+                claimed,
+                adapter=adapter,
+                token=token,
+            )
+            return
+
+        if not _bounded_provider_receipt(receipt):
+            # A provider mutation is not considered confirmed until a bounded,
+            # serializable receipt is observed. Reconcile rather than retry.
+            await self.reconcile(
+                claimed,
+                adapter=adapter,
+                token=token,
+            )
+            return
+
         await asyncio.to_thread(
             self.repo.finish,
             action_id,
@@ -454,7 +497,7 @@ class ActionService:
                 receipt = await adapter.reconcile(action, token)
             except (ConnectorFailure, CoworkerError):
                 pass
-        if receipt:
+        if _bounded_provider_receipt(receipt):
             await asyncio.to_thread(
                 self.repo.finish,
                 action["id"],
@@ -466,7 +509,7 @@ class ActionService:
                 self.repo.finish,
                 action["id"],
                 "outcome_unknown",
-                error_code="provider_outcome_unknown",
+                error_code="outcome_unknown",
             )
 
     async def reconcile_owned(self, owner, action_id):
