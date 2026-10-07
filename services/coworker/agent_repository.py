@@ -1795,6 +1795,29 @@ class AgentRepository:
                     resource_type=resource_type, resource_id=resource_id,
                 )
 
+    def record_tool_retry(self, run_id: str, ordinal: int, attempt: int, error_code: str) -> None:
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            step = db.scalar(select(AgentStep).where(
+                AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
+            ))
+            invocation = db.scalar(select(ToolInvocation).where(
+                ToolInvocation.step_id == step.id,
+            )) if step is not None else None
+            if run is None or step is None or invocation is None:
+                raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
+            self._checkpoint(
+                db,
+                run,
+                "tool_retry",
+                step=step,
+                invocation=invocation,
+                resource_type="invocation",
+                resource_id=f"{invocation.id}:{attempt}",
+                evidence={"attempt": attempt, "error_code": error_code[:60]},
+            )
+            self._audit(db, run.owner_id, run.id, "agent_tool_retry_recorded")
+
     def action_waiting(self, run_id: str, ordinal: int, action_id: str, action_state: str):
         with self.sessions.begin() as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
