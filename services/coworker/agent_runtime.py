@@ -6,7 +6,7 @@ from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
 from .agent_schemas import AgentObservation
 from .errors import CoworkerError
 from .runner import DocumentRunner
-from .tool_execution import execute_tool_contract, validate_tool_result
+from .tool_execution import execute_tool_contract, normalize_tool_error, validate_tool_result
 from .schemas import ResearchOptions, TaskCreate
 from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
@@ -267,7 +267,7 @@ class AgentRuntime:
         if not spec.enabled(self.container.settings) and spec.kind == "task":
             if self.container.settings.intelligent_planner_enabled and invocation["state"] == "prepared":
                 return {"status": "replan_required"}
-            raise CoworkerError("tool_unavailable", "A required agent tool is not enabled.", 409)
+            raise CoworkerError("tool_not_supported", "A required Agent tool is not enabled in this runtime.", 409)
         args = spec.validate(invocation["arguments"])
         if spec.kind == "approved_action":
             action = self.container.actions.repo.get(run["owner_id"], str(args.action_id))
@@ -283,8 +283,19 @@ class AgentRuntime:
                 })
             if state == "outcome_unknown":
                 raise CoworkerError("outcome_unknown", "The provider result is uncertain. Reconcile the connected service before continuing.", 409)
-            if state in {"failed", "cancelled", "expired"}:
-                raise CoworkerError("action_" + state, "The attached action did not complete successfully.", 409)
+            if state == "failed":
+                raise normalize_tool_error(
+                    CoworkerError(
+                        str(action.get("error_code") or "provider_unavailable"),
+                        "The approved tool did not complete successfully.",
+                        503,
+                    ),
+                    consequential=True,
+                )
+            if state == "cancelled":
+                raise CoworkerError("agent_cancelled", "The approved tool was cancelled.", 409)
+            if state == "expired":
+                raise CoworkerError("approval_required", "The approved action expired and must be reviewed again.", 409)
             if state not in {"awaiting_approval", "queued", "executing"}:
                 raise CoworkerError("action_state", "The attached action is not in a resumable state.", 409)
             self.repo.action_waiting(run_id, ordinal, action["id"], state)
