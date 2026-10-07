@@ -85,6 +85,7 @@ def test_phase4_all_registered_tools_expose_complete_execution_contract():
         "permissions",
         "read_write_classification",
         "risk_class",
+        "timeout",
         "timeout_seconds",
         "retry_policy",
         "idempotency_policy",
@@ -98,6 +99,7 @@ def test_phase4_all_registered_tools_expose_complete_execution_contract():
         assert required <= set(public)
         assert public["input_schema"]["type"] == "object"
         assert public["output_schema"]["type"] == "object"
+        assert public["timeout"] == public["timeout_seconds"]
         assert public["timeout_seconds"] > 0
         assert public["max_result_bytes"] > 0
         assert public["retry_policy"]["max_attempts"] in {1, 2, 3}
