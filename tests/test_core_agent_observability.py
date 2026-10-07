@@ -66,7 +66,11 @@ def test_total_model_call_budget_spans_planner_and_child_tasks(tmp_path):
 
     task, _ = container.repository.create_task(
         account_id,
-        TaskCreate(instruction="Draft the bounded output.", output_language="en"),
+        TaskCreate(
+            instruction="Draft the bounded output.",
+            notes="Phase 10 bounded child model budget test.",
+            output_language="en",
+        ),
         "phase10-child-task",
         enqueue=False,
         agent_run_id=run["id"],
