@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from .agent_schemas import AgentPlanStep, AgentPlannerProposal
+from .approval_boundary import assert_model_tool_surface
 from .agent_tools import TOOLS, tool
 from .config import Settings
 from .errors import CoworkerError
@@ -124,6 +125,7 @@ def intelligent_tool_names(
         names.append(sandbox.name)
     if settings.agent_action_selection_enabled and not allowed:
         names.extend(action_selection_candidates(actions))
+    assert_model_tool_surface(names)
     return names
 
 
