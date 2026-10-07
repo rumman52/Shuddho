@@ -8,6 +8,7 @@ from .action_repository import ActionRepository, TERMINAL
 from .connector_actions import ConnectorFailure
 from .connector_registry import CONNECTOR_ACTION_AUDIENCE
 from .errors import CoworkerError
+from .tool_execution import normalize_tool_error
 
 
 class ActionService:
@@ -357,24 +358,26 @@ class ActionService:
         if boundary_enabled:
             try:
                 grant = await self.authorized_access(action, purpose="execute")
-            except (ConnectorFailure, CoworkerError):
+            except (ConnectorFailure, CoworkerError) as error:
+                normalized = normalize_tool_error(error, consequential=True)
                 await asyncio.to_thread(
                     self.repo.finish,
                     action_id,
                     "failed",
-                    error_code="connection_unavailable",
+                    error_code=normalized.code,
                     unstarted=True,
                 )
                 return
         else:
             try:
                 adapter, token = await self.access(action)
-            except (ConnectorFailure, CoworkerError):
+            except (ConnectorFailure, CoworkerError) as error:
+                normalized = normalize_tool_error(error, consequential=True)
                 await asyncio.to_thread(
                     self.repo.finish,
                     action_id,
                     "failed",
-                    error_code="connection_unavailable",
+                    error_code=normalized.code,
                     unstarted=True,
                 )
                 return
@@ -392,12 +395,13 @@ class ActionService:
                     claimed,
                     purpose="execute",
                 )
-            except (ConnectorFailure, CoworkerError):
+            except (ConnectorFailure, CoworkerError) as error:
+                normalized = normalize_tool_error(error, consequential=True)
                 await asyncio.to_thread(
                     self.repo.finish,
                     action_id,
                     "failed",
-                    error_code="connection_unavailable",
+                    error_code=normalized.code,
                 )
                 return
         try:
@@ -411,11 +415,12 @@ class ActionService:
                 receipt = await adapter.execute(claimed, token)
         except ConnectorFailure as error:
             if error.definitive:
+                normalized = normalize_tool_error(error, consequential=True)
                 await asyncio.to_thread(
                     self.repo.finish,
                     action_id,
                     "failed",
-                    error_code=error.code,
+                    error_code=normalized.code,
                 )
             else:
                 await self.reconcile(
@@ -502,7 +507,7 @@ class ActionService:
                 self.repo.finish,
                 action["id"],
                 "outcome_unknown",
-                error_code="provider_outcome_unknown",
+                error_code="outcome_unknown",
             )
 
     async def reconcile_owned(self, owner, action_id):
