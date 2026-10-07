@@ -156,6 +156,7 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
     models = sorted({
         *(item.model for item in decisions if item.model),
         *(item.model for item in model_attempts if item.model),
+        *([settings.deepseek_model] if int(run.planner_calls or 0) > 0 else []),
     })
     terminal = run.state not in ACTIVE_RUN_STATES
     latency_end = run.updated_at if terminal else now
