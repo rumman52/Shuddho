@@ -58,7 +58,7 @@ def settings() -> Settings:
 def _topics() -> list[str]:
     return [
         "ARR", "release readiness", "customer feedback", "quarterly planning",
-        "AI coworker market", "launch metrics", "security posture", "research findings",
+        "launch readiness", "launch metrics", "security posture", "quality findings",
         "product roadmap", "user onboarding", "reliability review", "support trends",
         "cost efficiency", "retention metrics", "engineering progress", "sales forecast",
         "design review", "staging results", "market expansion", "team priorities",
