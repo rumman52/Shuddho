@@ -373,3 +373,82 @@ def test_planner_context_exposes_precedence_freshness_and_current_instruction(co
     assert context["authority"].startswith(
         "newer_explicit_user_instruction_overrides_memory"
     )
+
+
+
+def test_informal_current_instruction_overrides_formal_memory_without_substring_collision(container):
+    enable_pa04(container)
+    alice = owner(container)
+    container.memory.create(
+        alice,
+        MemoryFactCreate(
+            namespace="preferences",
+            key="writing.tone",
+            value="Usually write formally.",
+            language="en",
+        ),
+    )
+    run, _ = container.agent.create(
+        alice,
+        AgentRunCreate(
+            goal="Write this reply informally.",
+            memory_namespaces=["preferences"],
+            output_language="en",
+        ),
+        "phase6-informal-substring",
+    )
+
+    assert container.memory.context_for_run(alice, run["id"])["facts"] == []
+
+
+def test_topic_word_casual_does_not_override_formal_writing_preference(container):
+    enable_pa04(container)
+    alice = owner(container)
+    container.memory.create(
+        alice,
+        MemoryFactCreate(
+            namespace="preferences",
+            key="writing.tone",
+            value="Usually write formally.",
+            language="en",
+        ),
+    )
+    run, _ = container.agent.create(
+        alice,
+        AgentRunCreate(
+            goal="Summarize the casual dining market in Bangladesh.",
+            memory_namespaces=["preferences"],
+            output_language="en",
+        ),
+        "phase6-casual-topic-not-style",
+    )
+
+    memory = container.memory.context_for_run(alice, run["id"])
+    assert len(memory["facts"]) == 1
+    assert memory["facts"][0]["value"] == "Usually write formally."
+
+
+def test_indirect_topic_does_not_collide_with_direct_style_axis(container):
+    enable_pa04(container)
+    alice = owner(container)
+    container.memory.create(
+        alice,
+        MemoryFactCreate(
+            namespace="preferences",
+            key="writing.style",
+            value="Keep replies gentle and diplomatic.",
+            language="en",
+        ),
+    )
+    run, _ = container.agent.create(
+        alice,
+        AgentRunCreate(
+            goal="Summarize the indirect tax changes.",
+            memory_namespaces=["preferences"],
+            output_language="en",
+        ),
+        "phase6-indirect-topic-not-style",
+    )
+
+    memory = container.memory.context_for_run(alice, run["id"])
+    assert len(memory["facts"]) == 1
