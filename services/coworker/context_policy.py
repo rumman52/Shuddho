@@ -186,6 +186,8 @@ def relevance_score(
 _FORMALITY = {
     "formal": (
         "formal",
+        "formally",
+        "professional",
         "professionally",
         "professional tone",
         "businesslike",
@@ -193,28 +195,71 @@ _FORMALITY = {
     ),
     "casual": (
         "casual",
+        "casually",
         "informal",
+        "informally",
         "friendly tone",
         "conversational",
         "relaxed tone",
     ),
 }
 _VERBOSITY = {
-    "concise": ("concise", "brief", "short", "succinct"),
+    "concise": ("concise", "concisely", "brief", "briefly", "short", "succinct", "succinctly"),
     "detailed": ("detailed", "comprehensive", "thorough", "in depth", "in-depth"),
 }
 _DIRECTNESS = {
-    "direct": ("direct", "straightforward"),
-    "gentle": ("gentle", "soft tone", "diplomatic"),
+    "direct": ("direct", "directly", "straightforward"),
+    "gentle": ("gentle", "gently", "soft tone", "diplomatic"),
 }
+
+_STYLE_DIRECTIVE_LEFT = re.compile(
+    r"(?i)(?:^|\b)(?:make|write|keep|use|be|sound|reply|respond|draft|answer|phrase|word)"
+    r"(?:\s+(?:this|the|my|your|it))?(?:\s+(?:message|email|reply|response|answer|draft))?"
+    r"(?:\s+(?:very|more|less))?\s*$"
+)
+_STYLE_DIRECTIVE_RIGHT = re.compile(
+    r"(?i)^\s*(?:tone|style|voice|writing|message|email|reply|response|answer)\b"
+)
+
+
+def _phrase_matches(text: str, phrase: str) -> list[re.Match]:
+    return list(re.finditer(
+        r"(?<!\w)" + re.escape(normalized_text(phrase)) + r"(?!\w)",
+        normalized_text(text),
+        flags=re.UNICODE,
+    ))
 
 
 def _axis_choice(text: str, axis: dict[str, tuple[str, ...]]) -> str | None:
-    normalized = normalized_text(text)
     matches = []
     for choice, phrases in axis.items():
-        if any(phrase in normalized for phrase in phrases):
+        if any(_phrase_matches(text, phrase) for phrase in phrases):
             matches.append(choice)
+    return matches[0] if len(set(matches)) == 1 else None
+
+
+def _explicit_axis_choice(text: str, axis: dict[str, tuple[str, ...]]) -> str | None:
+    """Recognize an explicit current-task style instruction, not topic words.
+
+    This prevents phrases such as "casual dining market" or "indirect tax"
+    from being mistaken for tone/directness overrides.
+    """
+    normalized = normalized_text(text)
+    matches: list[str] = []
+    for choice, phrases in axis.items():
+        for phrase in phrases:
+            for match in _phrase_matches(normalized, phrase):
+                left = normalized[max(0, match.start() - 80):match.start()]
+                right = normalized[match.end():match.end() + 40]
+                if (
+                    _STYLE_DIRECTIVE_LEFT.search(left)
+                    or _STYLE_DIRECTIVE_RIGHT.search(right)
+                    or re.search(r"(?i)\b(?:tone|style|voice)\s+(?:should\s+be\s+)?$", left)
+                ):
+                    matches.append(choice)
+                    break
+            if choice in matches:
+                break
     return matches[0] if len(set(matches)) == 1 else None
 
 
@@ -227,7 +272,7 @@ def memory_conflict(current_instruction: str, key: str, value: str) -> str | Non
         ("directness", _DIRECTNESS),
     )
     for name, axis in axes:
-        current_choice = _axis_choice(current_instruction, axis)
+        current_choice = _explicit_axis_choice(current_instruction, axis)
         memory_choice = _axis_choice(memory_text, axis)
         if current_choice is not None and memory_choice is not None and current_choice != memory_choice:
             return name

@@ -340,10 +340,12 @@ class ContextService:
         # suppression, contradiction handling and sensitive-data filtering.
         memory_facts: list[dict] = []
         memory_provenance: list[dict] = []
-        for fact, provenance in zip(
+        memory_context_metadata: list[dict] = []
+        raw_metadata = list(memory.get("context_metadata", []))
+        for index, (fact, provenance) in enumerate(zip(
             memory.get("facts", []),
             memory.get("provenance", []),
-        ):
+        )):
             if remaining <= 0:
                 break
             memory_value = str(fact.get("value") or "")
@@ -357,7 +359,13 @@ class ContextService:
             remaining -= len(encoded)
             memory_facts.append(fact)
             memory_provenance.append(provenance)
-        memory = {"facts": memory_facts, "provenance": memory_provenance}
+            if index < len(raw_metadata) and isinstance(raw_metadata[index], dict):
+                memory_context_metadata.append(raw_metadata[index])
+        memory = {
+            "facts": memory_facts,
+            "provenance": memory_provenance,
+            "context_metadata": memory_context_metadata,
+        }
 
         # 5) External connector context is lowest priority, freshness-bounded and
         # restricted to snapshots already authorized/bound to this run.
@@ -523,6 +531,7 @@ class ContextService:
             "items": items,
             "explicit_memory": value["memory"]["facts"],
             "memory_provenance": value["memory"]["provenance"],
+            "memory_context_metadata": value["memory"].get("context_metadata", []),
             "budget": value.get("budget", {
                 "limit_bytes": self.settings.max_agent_context_bytes,
                 "used_bytes": 0,
