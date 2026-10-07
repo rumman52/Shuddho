@@ -342,7 +342,7 @@ class MemoryRepository:
                 ranked.append((score, row.updated_at, row, value, redactions))
 
             ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
-            facts, provenance, used = [], [], 0
+            facts, provenance, context_metadata, used = [], [], [], 0
             seen = set()
             for score, _updated_at, row, value, redactions in ranked:
                 dedupe_key = (row.namespace, row.key, " ".join(value.casefold().split()))
@@ -363,6 +363,10 @@ class MemoryRepository:
                 provenance.append({
                     "id": row.id,
                     "version": row.version,
+                })
+                context_metadata.append({
+                    "id": row.id,
+                    "version": row.version,
                     "relevance_score": score,
                     "updated_at": iso(row.updated_at),
                     "expires_at": iso(row.expires_at) if row.expires_at else None,
@@ -371,4 +375,7 @@ class MemoryRepository:
                 })
                 if len(facts) >= self.settings.max_memory_context_facts:
                     break
-            return {"facts": facts, "provenance": provenance}
+            result = {"facts": facts, "provenance": provenance}
+            if context_metadata:
+                result["context_metadata"] = context_metadata
+            return result
