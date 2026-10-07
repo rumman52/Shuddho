@@ -39,7 +39,7 @@ def reset_tool_circuits() -> None:
     _CIRCUITS.clear()
 
 
-def _normalize_error(error: Exception, *, consequential: bool) -> CoworkerError:
+def normalize_tool_error(error: Exception, *, consequential: bool = False) -> CoworkerError:
     if isinstance(error, CoworkerError):
         if error.code in STANDARD_TOOL_ERRORS:
             return error
@@ -160,7 +160,7 @@ async def execute_tool_contract(
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            normalized = _normalize_error(error, consequential=False)
+            normalized = normalize_tool_error(error, consequential=False)
 
         last_error = normalized
         retryable = (
