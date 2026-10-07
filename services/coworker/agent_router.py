@@ -68,6 +68,28 @@ _QUESTION_PREFIXES = (
     "কে ",
     "কখন ",
     "কোথায় ",
+    "qué ",
+    "que ",
+    "cómo ",
+    "como ",
+    "por qué ",
+    "quién ",
+    "quien ",
+    "cuándo ",
+    "cuando ",
+    "dónde ",
+    "donde ",
+    "explica ",
+    "define ",
+    "ما ",
+    "ماذا ",
+    "لماذا ",
+    "كيف ",
+    "من ",
+    "متى ",
+    "أين ",
+    "اين ",
+    "اشرح ",
 )
 
 _RESEARCH_MARKERS = (
@@ -88,6 +110,16 @@ _RESEARCH_MARKERS = (
     "গবেষণা",
     "সর্বশেষ",
     "বর্তমান",
+    "investiga",
+    "investigar",
+    "último",
+    "ultimo",
+    "actual",
+    "reciente",
+    "بحث",
+    "أحدث",
+    "احدث",
+    "حالي",
 )
 
 _AUTOMATION_MARKERS = (
@@ -106,10 +138,22 @@ _AUTOMATION_MARKERS = (
     "when the price",
     "when available",
     "মনে করিয়ে",
+    "মনে করিয়ে",
+    "মনে করায়",
+    "মনে করাই",
+    "মনে করিয়ে দিও",
+    "মনে করিয়ে দিও",
     "রিমাইন্ডার",
     "নোটিফাই",
     "প্রতি দিন",
     "প্রতিদিন",
+    "mone koriye",
+    "mone koray",
+    "remind koro",
+    "recuérdame",
+    "recuerdame",
+    "recordatorio",
+    "ذكرني",
 )
 
 _PAYMENT_UNSUPPORTED = (
@@ -147,6 +191,67 @@ _TRANSACTION_MARKERS = (
     "রিজার্ভ",
     "ফ্লাইট বুক",
     "হোটেল বুক",
+    "flight book koro",
+    "hotel book koro",
+    "table reserve koro",
+    "buy koro",
+    "order koro",
+    "checkout koro",
+    "reserva un vuelo",
+    "reservar un vuelo",
+    "reserva una mesa",
+    "reservar una mesa",
+    "compra esto",
+    "comprar esto",
+    "احجز رحلة",
+    "احجز طاولة",
+    "اشتر هذا",
+)
+
+_EMAIL_MARKERS = (
+    "email",
+    "e-mail",
+    "mail",
+    "ইমেইল",
+    "মেইল",
+    "correo",
+    "البريد",
+    "ايميل",
+    "إيميل",
+)
+
+_SEND_MARKERS = (
+    "send",
+    "send koro",
+    "pathao",
+    "পাঠাও",
+    "পাঠিয়ে",
+    "পাঠিয়ে",
+    "enviar",
+    "envía",
+    "envia",
+    "أرسل",
+    "ارسل",
+)
+
+_DRAFT_ONLY_MARKERS = (
+    "draft",
+    "prepare a draft",
+    "write a draft",
+    "ready to send",
+    "send-ready",
+    "ready koro",
+    "ready kore dao",
+    "send korar jonno ready",
+    "pathanor jonno ready",
+    "খসড়া",
+    "খসড়া",
+    "পাঠানোর জন্য প্রস্তুত",
+    "প্রস্তুত করে দাও",
+    "borrador",
+    "prepara un borrador",
+    "مسودة",
+    "جهز مسودة",
 )
 
 _UNSUPPORTED_CONNECTORS = (
@@ -208,7 +313,7 @@ _AGENT_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "email.draft",
         "email",
-        ("email draft", "draft an email", "draft email", "suggest an email", "suggest email", "reply email", "follow-up email", "follow up email", "professional email", "ইমেইল ড্রাফট", "মেইল ড্রাফট"),
+        ("email draft", "draft an email", "draft email", "suggest an email", "suggest email", "reply email", "follow-up email", "follow up email", "professional email", "ইমেইল ড্রাফট", "মেইল ড্রাফট", "borrador de correo", "redacta un correo", "مسودة بريد", "اكتب مسودة بريد"),
     ),
     (
         "daily_plan.create",
@@ -228,7 +333,7 @@ _AGENT_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "document.create",
         "document",
-        ("document", "letter", "memo", "proposal", "sop", "application", "essay", "statement", "article", "story", "poem", "চিঠি", "আবেদন", "ডকুমেন্ট"),
+        ("document", "letter", "memo", "proposal", "sop", "application", "essay", "statement", "article", "story", "poem", "চিঠি", "আবেদন", "ডকুমেন্ট", "documento", "carta", "مستند", "وثيقة"),
     ),
 )
 
@@ -271,11 +376,32 @@ def _question_like(text: str) -> bool:
 
 
 def _ambiguous_high_impact(text: str) -> bool:
-    return re.fullmatch(
+    if re.fullmatch(
         r"(?:please\s+)?(?:send|publish|post|book|reserve|buy|purchase|pay|delete|cancel|transfer|submit)"
         r"(?:\s+(?:it|this|that|them))?(?:\s+now)?(?:\s+for\s+me)?[.!]?",
         text,
-    ) is not None
+    ) is not None:
+        return True
+    stripped = text.rstrip(" .!?؟")
+    return stripped in {
+        "send koro",
+        "eta send koro",
+        "eita send koro",
+        "delete koro",
+        "eta delete koro",
+        "eita delete koro",
+        "এটা পাঠাও",
+        "এটা পাঠিয়ে দাও",
+        "এটা পাঠিয়ে দাও",
+        "এটা ডিলিট কর",
+        "এটা মুছে দাও",
+        "envíalo",
+        "envialo",
+        "bórralo",
+        "borralo",
+        "ارسله",
+        "احذفه",
+    }
 
 
 def qualify_agent_goal(
@@ -395,18 +521,18 @@ def qualify_agent_goal(
             confidence=0.99,
             fallback_policy="domain_handler",
             reason_code="transaction_intent",
-            message="Route this request to the Transactions domain and its qualified provider registry.",
+            message="Route this request to the Transactions domain; execution still requires fresh terms, an immutable preview, explicit approval, a qualified provider receipt, and reconciliation.",
         )
 
     # Consequential connected actions are kept out of ordinary tool planning.
-    email_action = _has_any(text, ("email", "e-mail", "mail", "ইমেইল", "মেইল")) and _contains(text, "send")
+    email_action = _has_any(text, _EMAIL_MARKERS) and _has_any(text, _SEND_MARKERS)
     calendar_action = _has_any(text, ("calendar", "schedule a meeting", "schedule meeting", "add an event", "create an event"))
     social_action = _has_any(text, ("linkedin", "facebook", "social")) and _has_any(text, ("publish", "post"))
     document_share_action = (
         _has_any(text, ("document", "file", "artifact"))
         and _has_any(text, ("share", "grant access", "send access"))
     )
-    draft_only = _has_any(text, ("draft", "prepare a draft", "write a draft", "caption"))
+    draft_only = _has_any(text, _DRAFT_ONLY_MARKERS + ("caption",))
     if (email_action and not draft_only) or calendar_action or (social_action and not draft_only) or document_share_action:
         capability = (
             "email" if email_action
@@ -449,6 +575,11 @@ def qualify_agent_goal(
             matched = research_requested or _has_any(
                 text,
                 tuple(phrase for phrase in phrases if phrase != "current"),
+            )
+        elif name == "email.draft":
+            matched = _has_any(text, phrases) or (
+                _has_any(text, _EMAIL_MARKERS)
+                and _has_any(text, _DRAFT_ONLY_MARKERS)
             )
         else:
             matched = _has_any(text, phrases)
