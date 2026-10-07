@@ -755,7 +755,13 @@ class AgentRepository:
                     "This Agent run reached its total token budget.",
                     429,
                 )
-            accounted_cost = int(run.planner_cost_microusd or 0) + self._estimated_cost_microusd(child_tokens)
+            accounted_cost = (
+                max(
+                    int(run.planner_cost_microusd or 0),
+                    self._estimated_cost_microusd(run.planner_tokens),
+                )
+                + self._estimated_cost_microusd(child_tokens)
+            )
             if accounted_cost + self._estimated_cost_microusd(reserve_tokens) > self.settings.max_agent_cost_microusd_per_run:
                 raise CoworkerError(
                     "agent_cost_limit",
