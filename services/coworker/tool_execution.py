@@ -102,6 +102,19 @@ def _result_size(value: dict) -> int:
     return len(encoded)
 
 
+def validate_tool_result(spec, raw: dict) -> dict:
+    if not isinstance(raw, dict):
+        raise CoworkerError("provider_unavailable", "The tool returned a malformed response.", 502)
+    value = spec.validate_output(raw).model_dump(mode="json")
+    if _result_size(value) > spec.max_result_bytes:
+        raise CoworkerError(
+            "provider_unavailable",
+            "The tool result exceeded its registered size limit.",
+            502,
+        )
+    return value
+
+
 async def execute_tool_contract(
     spec,
     operation: Callable[[], Awaitable[dict]],
@@ -138,15 +151,7 @@ async def execute_tool_contract(
             raw = await asyncio.wait_for(operation(), timeout=spec.timeout_seconds)
             if cancellation_check is not None and cancellation_check():
                 raise CoworkerError("agent_cancelled", "This Agent run was cancelled.", 409)
-            if not isinstance(raw, dict):
-                raise CoworkerError("provider_unavailable", "The tool returned a malformed response.", 502)
-            value = spec.validate_output(raw).model_dump(mode="json")
-            if _result_size(value) > spec.max_result_bytes:
-                raise CoworkerError(
-                    "provider_unavailable",
-                    "The tool result exceeded its registered size limit.",
-                    502,
-                )
+            value = validate_tool_result(spec, raw)
             circuit.failures = 0
             circuit.open_until = 0.0
             return value
