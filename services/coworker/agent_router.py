@@ -402,9 +402,18 @@ def qualify_agent_goal(
     email_action = _has_any(text, ("email", "e-mail", "mail", "ইমেইল", "মেইল")) and _contains(text, "send")
     calendar_action = _has_any(text, ("calendar", "schedule a meeting", "schedule meeting", "add an event", "create an event"))
     social_action = _has_any(text, ("linkedin", "facebook", "social")) and _has_any(text, ("publish", "post"))
+    document_share_action = (
+        _has_any(text, ("document", "file", "artifact"))
+        and _has_any(text, ("share", "grant access", "send access"))
+    )
     draft_only = _has_any(text, ("draft", "prepare a draft", "write a draft", "caption"))
-    if (email_action and not draft_only) or calendar_action or (social_action and not draft_only):
-        capability = "email" if email_action else "calendar" if calendar_action else "social_publish"
+    if (email_action and not draft_only) or calendar_action or (social_action and not draft_only) or document_share_action:
+        capability = (
+            "email" if email_action
+            else "calendar" if calendar_action
+            else "social_publish" if social_action
+            else "document_share"
+        )
         return _decision(
             intent="external_action",
             complexity="consequential",

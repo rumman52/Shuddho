@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from services.api.shuddho_api.llm_deepseek import ResponseTooLarge, _post_review
 from .agent_schemas import AgentPlannerProposal, AgentV3Decision
+from .approval_boundary import assert_model_action_proposals, assert_model_tool_surface
 from .config import Settings
 from .errors import CoworkerError
 
@@ -37,6 +38,7 @@ class DeepSeekAgentPlanner:
         """Return one bounded result-aware decision for Agent Runtime v3."""
         if not self.settings.deepseek_api_key:
             raise PlannerFailure("planner_not_configured", "The intelligent planner is not configured.")
+        assert_model_tool_surface(tools)
         schema = AgentV3Decision.model_json_schema()
         system = (
             "You are Shuddho's result-aware bounded planner for Agent Runtime v3. "
@@ -145,6 +147,7 @@ class DeepSeekAgentPlanner:
     ) -> tuple[AgentPlannerProposal, int | None, int]:
         if not self.settings.deepseek_api_key:
             raise PlannerFailure("planner_not_configured", "The intelligent planner is not configured.")
+        assert_model_tool_surface(tools)
         schema = AgentPlannerProposal.model_json_schema()
         messages = [
             {"role": "system", "content": (
@@ -205,8 +208,11 @@ class DeepSeekAgentPlanner:
             if message.get("tool_calls") or message.get("refusal"):
                 raise ValueError()
             proposal = AgentPlannerProposal.model_validate_json(message["content"])
-            if proposal.action_proposals and not allow_action_proposals:
-                raise ValueError()
+            assert_model_action_proposals(
+                proposal.action_proposals,
+                allow_action_proposals=allow_action_proposals,
+                allow_linkedin_action_proposals=allow_linkedin_action_proposals,
+            )
             allowed = set(tools)
             if any(step.tool not in allowed for step in proposal.steps):
                 raise ValueError()

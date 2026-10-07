@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select
 
 from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, AgentV3Decision, action_proposal_hash
 from .agent_tools import available_tools, tool
+from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
 from .errors import CoworkerError
 from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
@@ -1084,6 +1085,10 @@ class AgentRepository:
                 )
             for proposed in proposals:
                 payload = proposed.payload.model_dump(mode="json")
+                assert_inert_proposal_payload(
+                    payload,
+                    allow_linkedin_action_proposals=self.settings.agent_linkedin_proposals_enabled,
+                )
                 if (
                     payload.get("kind") == "social_publish_linkedin"
                     and not self.settings.agent_linkedin_proposals_enabled
