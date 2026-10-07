@@ -1,6 +1,7 @@
 """Explicit user commands only; models have no access to this executor."""
 import asyncio
 import hashlib
+import json
 
 from .action_registry import action_spec
 from .action_repository import ActionRepository, TERMINAL
@@ -423,6 +424,41 @@ class ActionService:
                     token=token,
                 )
             return
+        except Exception:
+            # The provider may have mutated external state before a malformed
+            # client/library failure surfaced. Never convert that uncertainty
+            # into a blind retry; reconcile the already-claimed action.
+            await self.reconcile(
+                claimed,
+                adapter=adapter,
+                token=token,
+            )
+            return
+
+        try:
+            encoded_receipt = json.dumps(
+                receipt,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            encoded_receipt = b""
+        if (
+            not isinstance(receipt, dict)
+            or not receipt
+            or not encoded_receipt
+            or len(encoded_receipt) > 65536
+        ):
+            # A provider mutation is not considered confirmed until a bounded,
+            # serializable receipt is observed. Reconcile rather than retry.
+            await self.reconcile(
+                claimed,
+                adapter=adapter,
+                token=token,
+            )
+            return
+
         await asyncio.to_thread(
             self.repo.finish,
             action_id,
