@@ -36,6 +36,7 @@ export type AgentTool = {
   permissions: string[];
   read_write_classification: "read" | "write" | "read_write" | "compute";
   risk_class: "low" | "medium" | "high" | "critical";
+  timeout: number;
   timeout_seconds: number;
   retry_policy: { mode: "none" | "bounded"; max_attempts: number; initial_backoff_seconds: number; retryable_errors: string[] };
   idempotency_policy: { mode: "server_idempotency_key" | "provider_idempotency_key" | "reconcile_only"; key_scope: string; outcome_unknown_policy: string };
