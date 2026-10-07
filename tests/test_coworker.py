@@ -597,7 +597,7 @@ def test_agent_plan_is_bounded_registered_and_source_scoped(signed_client, conta
     ), "agent-plan-tool-scope")
     with pytest.raises(CoworkerError) as unknown:
         container.agent.save_plan(owner, third["id"], [AgentPlanStep(tool="shell.run", arguments={})])
-    assert unknown.value.code == "unknown_tool"
+    assert unknown.value.code == "tool_not_supported"
 
 
 def test_agent_plan_limits_step_count(container):
