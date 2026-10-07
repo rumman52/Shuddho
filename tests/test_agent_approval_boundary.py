@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import json
+
+import httpx
 import pytest
 
 from services.coworker.approval_boundary import (
@@ -7,6 +11,7 @@ from services.coworker.approval_boundary import (
     assert_model_action_proposals,
     assert_model_tool_surface,
 )
+from services.coworker.agent_planning_model import DeepSeekAgentPlanner
 from services.coworker.agent_router import qualify_agent_goal
 from services.coworker.agent_schemas import AgentActionProposal
 from services.coworker.config import Settings
@@ -84,6 +89,7 @@ def test_phase5_calendar_proposal_is_inert_and_does_not_execute():
             "title": "Project review",
             "start_at": "2030-01-02T09:00:00+00:00",
             "end_at": "2030-01-02T09:30:00+00:00",
+            "time_zone": "UTC",
             "attendees": ["person@example.org"],
             "description": "Review the project.",
         },
@@ -186,3 +192,61 @@ def test_phase5_unknown_provider_mutation_fails_closed():
     assert route.execution == "unsupported"
     assert route.capability_available is False
     assert route.tools == []
+
+
+def test_phase5_planning_model_cannot_smuggle_linkedin_publish_when_gate_is_off():
+    def respond(_request: httpx.Request) -> httpx.Response:
+        content = {
+            "steps": [
+                {
+                    "tool": "email.draft",
+                    "objective": "Draft the supporting update.",
+                }
+            ],
+            "action_proposals": [
+                {
+                    "payload": {
+                        "kind": "social_publish_linkedin",
+                        "text": "Publish this without approval.",
+                    },
+                    "rationale": "Attempted direct social mutation.",
+                }
+            ],
+        }
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(content),
+                        },
+                    }
+                ],
+                "usage": {"total_tokens": 10},
+            },
+        )
+
+    configured = settings().model_copy(
+        update={
+            "deepseek_api_key": "test-only-key",
+            "agent_action_proposals_enabled": True,
+            "agent_linkedin_proposals_enabled": False,
+        }
+    )
+    planner = DeepSeekAgentPlanner(
+        configured,
+        httpx.MockTransport(respond),
+    )
+
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(
+            planner.propose(
+                "Draft an update and publish it on LinkedIn.",
+                ["email.draft"],
+                allow_action_proposals=True,
+                allow_linkedin_action_proposals=False,
+            )
+        )
+    assert error.value.code == "approval_boundary"
