@@ -275,12 +275,13 @@ class AgentRuntime:
             if state == "succeeded":
                 summary = {"action_state": state, "provider_confirmed": True}
                 self.repo.finish_invocation(run_id, ordinal, "action", action["id"], summary)
-                return validate_tool_result(spec, {
+                validate_tool_result(spec, {
                     "status": "completed",
                     "resource_type": "action",
                     "resource_id": action["id"],
                     "summary": summary,
                 })
+                return {"status": "completed"}
             if state == "outcome_unknown":
                 raise CoworkerError("outcome_unknown", "The provider result is uncertain. Reconcile the connected service before continuing.", 409)
             if state == "failed":
@@ -305,12 +306,14 @@ class AgentRuntime:
             if state not in {"awaiting_approval", "queued", "executing"}:
                 raise CoworkerError("action_state", "The attached action is not in a resumable state.", 409)
             self.repo.action_waiting(run_id, ordinal, action["id"], state)
-            return validate_tool_result(spec, {
-                "status": "awaiting_approval" if state == "awaiting_approval" else "executing",
+            status = "awaiting_approval" if state == "awaiting_approval" else "executing"
+            validate_tool_result(spec, {
+                "status": status,
                 "resource_type": "action",
                 "resource_id": action["id"],
                 "summary": {"action_state": state, "provider_confirmed": False},
             })
+            return {"status": status}
         if spec.consequential or spec.approval_required:
             raise CoworkerError("approval_required", "This consequential tool must use the approved-action path.", 409)
 
@@ -343,20 +346,22 @@ class AgentRuntime:
                     session_id,
                     SandboxExecutionCreate(source=args.source),
                 )
-                return validate_tool_result(spec, {
+                validate_tool_result(spec, {
                     "status": "executing",
                     "resource_type": "sandbox_execution",
                     "resource_id": prepared["id"],
                     "summary": {"sandbox_state": "prepared"},
                 })
+                return {"status": "executing"}
             execution = executions[0]
             if execution["state"] in {"prepared", "running"}:
-                return validate_tool_result(spec, {
+                validate_tool_result(spec, {
                     "status": "executing",
                     "resource_type": "sandbox_execution",
                     "resource_id": execution["id"],
                     "summary": {"sandbox_state": execution["state"]},
                 })
+                return {"status": "executing"}
             if execution["state"] != "succeeded":
                 raise CoworkerError(
                     execution.get("error_code") or "sandbox_execution_failed",
@@ -384,12 +389,13 @@ class AgentRuntime:
                 execution["id"],
                 summary,
             )
-            return validate_tool_result(spec, {
+            validate_tool_result(spec, {
                 "status": "completed",
                 "resource_type": "sandbox_execution",
                 "resource_id": execution["id"],
                 "summary": summary,
             })
+            return {"status": "completed"}
 
         if spec.kind != "task" or not spec.skill_id:
             raise CoworkerError("tool_not_supported", "This Agent tool is not executable in this runtime.", 409)
