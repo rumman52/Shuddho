@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, or_, select
 
+from .agent_limits import AGENT_MAX_TOOL_STEPS
 from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, AgentV3Decision, action_proposal_hash
 from .agent_tools import available_tools, tool
 from .approval_boundary import assert_inert_proposal_payload
@@ -18,7 +19,6 @@ from .provider_capacity import acquire_provider_lease, release_provider_lease, s
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
 AGENT_TERMINAL_STATES = {"completed", "failed", "cancelled", "needs_input", "blocked"}
-AGENT_MAX_TOOL_STEPS = 8
 
 
 class AgentRepository:
