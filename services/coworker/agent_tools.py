@@ -141,6 +141,7 @@ class ToolSpec:
             "permissions": list(self.permissions),
             "read_write_classification": self.read_write_classification,
             "risk_class": self.risk_class,
+            "timeout": self.timeout_seconds,
             "timeout_seconds": self.timeout_seconds,
             "retry_policy": self.retry_policy.public(),
             "idempotency_policy": self.idempotency_policy.public(),
