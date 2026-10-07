@@ -28,6 +28,7 @@ def make_container(tmp_path, **overrides):
         local_storage_path=tmp_path / "objects",
         agent_runtime_enabled=True,
         agent_runtime_v3_enabled=True,
+        intelligent_planner_enabled=True,
         **overrides,
     )
     settings.validate()
