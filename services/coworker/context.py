@@ -12,6 +12,7 @@ from .context_policy import (
     content_fingerprint,
     filter_sensitive,
     is_stale,
+    lexical_relevance,
     relevance_score,
 )
 from .errors import CoworkerError
@@ -283,9 +284,8 @@ class ContextService:
                 or_(Task.agent_run_id.is_(None), Task.agent_run_id != run.id),
                 Task.state.in_(["completed", "needs_input"]),
             ).order_by(Task.updated_at.desc()).limit(12)).all())
+            prior_candidates = []
             for task in prior_tasks:
-                if len(items) >= self.settings.max_agent_context_items or remaining <= 0:
-                    break
                 draft = db.get(Step, (task.id, "draft"))
                 draft_value = (
                     json.dumps(draft.output.get("draft"), ensure_ascii=False, sort_keys=True)
@@ -302,6 +302,25 @@ class ContextService:
                         "Result: " + draft_value if draft_value else "",
                     ] if value
                 )
+                lexical = lexical_relevance(run.goal, text)
+                if lexical <= 0:
+                    continue
+                score = relevance_score(
+                    run.goal,
+                    text,
+                    source_type="prior_task",
+                    updated_at=task.updated_at,
+                    now=now,
+                    max_age_seconds=self.settings.max_prior_task_context_age_seconds,
+                )
+                prior_candidates.append((score, task.updated_at, task, text))
+            prior_candidates.sort(
+                key=lambda item: (item[0], item[1]),
+                reverse=True,
+            )
+            for _score, _updated_at, task, text in prior_candidates:
+                if len(items) >= self.settings.max_agent_context_items or remaining <= 0:
+                    break
                 digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
                 add_item(
                     source_id="task-" + task.id[:12],
