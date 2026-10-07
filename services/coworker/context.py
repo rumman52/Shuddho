@@ -5,7 +5,7 @@ import json
 import re
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from .context_policy import (
     CONTEXT_HIERARCHY,
@@ -275,7 +275,7 @@ class ContextService:
             prior_tasks = list(db.scalars(select(Task).where(
                 Task.owner_id == owner,
                 Task.workspace_id == run.workspace_id,
-                Task.agent_run_id != run.id,
+                or_(Task.agent_run_id.is_(None), Task.agent_run_id != run.id),
                 Task.state.in_(["completed", "needs_input"]),
             ).order_by(Task.updated_at.desc()).limit(12)).all())
             for task in prior_tasks:
@@ -316,30 +316,23 @@ class ContextService:
         # suppression, contradiction handling and sensitive-data filtering.
         memory_facts: list[dict] = []
         memory_provenance: list[dict] = []
-        provenance_by_id = {
-            item.get("id"): item
-            for item in memory.get("provenance", [])
-            if isinstance(item, dict)
-        }
-        for fact in memory.get("facts", []):
+        for fact, provenance in zip(
+            memory.get("facts", []),
+            memory.get("provenance", []),
+        ):
             if remaining <= 0:
                 break
+            memory_value = str(fact.get("value") or "")
+            fingerprint = content_fingerprint(memory_value)
+            if fingerprint in seen_content:
+                continue
             encoded = json.dumps(fact, ensure_ascii=False, sort_keys=True).encode("utf-8")
             if len(encoded) > remaining:
                 continue
+            seen_content.add(fingerprint)
             remaining -= len(encoded)
             memory_facts.append(fact)
-            fact_id = next(
-                (
-                    item.get("id")
-                    for item in memory.get("provenance", [])
-                    if isinstance(item, dict)
-                    and item.get("id") not in {p.get("id") for p in memory_provenance}
-                ),
-                None,
-            )
-            if fact_id is not None:
-                memory_provenance.append(provenance_by_id[fact_id])
+            memory_provenance.append(provenance)
         memory = {"facts": memory_facts, "provenance": memory_provenance}
 
         # 5) External connector context is lowest priority, freshness-bounded and
