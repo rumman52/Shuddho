@@ -11,6 +11,22 @@ from .errors import CoworkerError
 from .tool_execution import normalize_tool_error
 
 
+def _bounded_provider_receipt(value: object, *, max_bytes: int = 65536) -> bool:
+    if not isinstance(value, dict) or not value:
+        return False
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return False
+    return len(encoded) <= max_bytes
+
+
+
 class ActionService:
     def __init__(
         self,
@@ -440,21 +456,7 @@ class ActionService:
             )
             return
 
-        try:
-            encoded_receipt = json.dumps(
-                receipt,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        except (TypeError, ValueError):
-            encoded_receipt = b""
-        if (
-            not isinstance(receipt, dict)
-            or not receipt
-            or not encoded_receipt
-            or len(encoded_receipt) > 65536
-        ):
+        if not _bounded_provider_receipt(receipt):
             # A provider mutation is not considered confirmed until a bounded,
             # serializable receipt is observed. Reconcile rather than retry.
             await self.reconcile(
@@ -495,7 +497,7 @@ class ActionService:
                 receipt = await adapter.reconcile(action, token)
             except (ConnectorFailure, CoworkerError):
                 pass
-        if receipt:
+        if _bounded_provider_receipt(receipt):
             await asyncio.to_thread(
                 self.repo.finish,
                 action["id"],
