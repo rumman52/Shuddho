@@ -13,7 +13,7 @@ from .agent_tools import available_tools, tool
 from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -603,7 +603,9 @@ class AgentRepository:
                 ),
                 "planner_tokens_reserved": run.planner_tokens,
                 "tool_steps_used": len(invocations),
-                "tool_steps_remaining": max(0, AGENT_MAX_TOOL_STEPS - len(invocations)),
+                "tool_steps_remaining": max(
+                    0, min(AGENT_MAX_TOOL_STEPS, self.settings.max_agent_tool_calls_per_run) - len(invocations)
+                ),
                 "temporal_activity_retries_bounded": True,
             },
             "final_state": final_state,
@@ -708,6 +710,18 @@ class AgentRepository:
                 "sequence": run.event_sequence,
             }
 
+    def _child_model_usage(self, db, run_id: str) -> tuple[int, int]:
+        attempts = list(db.scalars(
+            select(ModelAttempt).join(Task, Task.id == ModelAttempt.task_id).where(
+                Task.agent_run_id == run_id,
+            )
+        ).all())
+        return len(attempts), sum(max(0, int(item.charged_tokens or 0)) for item in attempts)
+
+    def _estimated_cost_microusd(self, tokens: int) -> int:
+        rate = max(0, int(self.settings.agent_v3_planner_cost_microusd_per_1k_tokens))
+        return (max(0, int(tokens)) * rate + 999) // 1000 if rate else 0
+
     def reserve_planner(self, run_id: str, reserve_tokens: int) -> dict:
         with self.sessions.begin() as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
@@ -724,10 +738,30 @@ class AgentRepository:
                 self.settings.agent_v3_planner_token_budget
                 if run.runtime_version == 3 else self.settings.agent_planner_token_budget
             )
+            child_calls, child_tokens = self._child_model_usage(db, run.id)
+            if run.planner_calls + child_calls >= self.settings.max_agent_model_calls_per_run:
+                raise CoworkerError(
+                    "agent_model_call_limit",
+                    "This Agent run reached its total model-call budget.",
+                    429,
+                )
             if run.planner_calls >= max_calls:
                 raise CoworkerError("planner_call_limit", "This agent run reached its planner call limit.", 429)
             if reserve_tokens < 1 or run.planner_tokens + reserve_tokens > token_budget:
                 raise CoworkerError("planner_budget", "This agent run reached its planner token budget.", 429)
+            if run.planner_tokens + child_tokens + reserve_tokens > self.settings.max_agent_tokens_per_run:
+                raise CoworkerError(
+                    "agent_token_limit",
+                    "This Agent run reached its total token budget.",
+                    429,
+                )
+            accounted_cost = int(run.planner_cost_microusd or 0) + self._estimated_cost_microusd(child_tokens)
+            if accounted_cost + self._estimated_cost_microusd(reserve_tokens) > self.settings.max_agent_cost_microusd_per_run:
+                raise CoworkerError(
+                    "agent_cost_limit",
+                    "This Agent run reached its total model-cost budget.",
+                    402,
+                )
             if db.scalar(select(Account.id).where(Account.id == run.owner_id).with_for_update()) is None:
                 raise not_found()
             day = utcnow().date().isoformat()
@@ -1487,7 +1521,11 @@ class AgentRepository:
                 ToolInvocation.run_id == run.id,
             ))
             return {
-                "tool_steps_remaining": max(0, AGENT_MAX_TOOL_STEPS - int(step_count or 0)),
+                "tool_steps_remaining": max(
+                    0,
+                    min(AGENT_MAX_TOOL_STEPS, self.settings.max_agent_tool_calls_per_run)
+                    - int(step_count or 0),
+                ),
                 "planner_calls_remaining": max(
                     0, self.settings.max_agent_v3_planner_calls - run.planner_calls
                 ),
@@ -1516,7 +1554,8 @@ class AgentRepository:
             existing = db.scalar(select(func.count()).select_from(ToolInvocation).where(
                 ToolInvocation.run_id == run.id,
             ))
-            if existing >= AGENT_MAX_TOOL_STEPS:
+            tool_limit = min(AGENT_MAX_TOOL_STEPS, self.settings.max_agent_tool_calls_per_run)
+            if existing >= tool_limit:
                 raise CoworkerError("agent_step_limit", "This agent run reached its tool-step limit.", 429)
             action_rows = {action.id: action for action in db.scalars(select(ExternalAction).where(
                 ExternalAction.id.in_(run.action_ids), ExternalAction.owner_id == owner,
