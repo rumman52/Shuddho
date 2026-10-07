@@ -146,6 +146,9 @@ class Settings:
     max_agent_context_items: int = 5
     max_agent_context_item_bytes: int = 4096
     max_agent_context_bytes: int = 12288
+    max_memory_context_age_seconds: int = 365 * 24 * 60 * 60
+    max_connector_context_age_seconds: int = 7 * 24 * 60 * 60
+    max_prior_task_context_age_seconds: int = 30 * 24 * 60 * 60
     max_memory_proposals: int = 20
     max_agent_planner_calls: int = 2
     agent_planner_token_budget: int = 16000
@@ -315,6 +318,9 @@ class Settings:
             max_agent_context_items=int(os.getenv("SHUDDHO_AGENT_CONTEXT_ITEMS", "5")),
             max_agent_context_item_bytes=int(os.getenv("SHUDDHO_AGENT_CONTEXT_ITEM_BYTES", "4096")),
             max_agent_context_bytes=int(os.getenv("SHUDDHO_AGENT_CONTEXT_BYTES", "12288")),
+            max_memory_context_age_seconds=int(os.getenv("SHUDDHO_AGENT_MEMORY_CONTEXT_MAX_AGE_SECONDS", str(365 * 24 * 60 * 60))),
+            max_connector_context_age_seconds=int(os.getenv("SHUDDHO_AGENT_CONNECTOR_CONTEXT_MAX_AGE_SECONDS", str(7 * 24 * 60 * 60))),
+            max_prior_task_context_age_seconds=int(os.getenv("SHUDDHO_AGENT_PRIOR_TASK_CONTEXT_MAX_AGE_SECONDS", str(30 * 24 * 60 * 60))),
             max_memory_proposals=int(os.getenv("SHUDDHO_AGENT_MEMORY_PROPOSALS", "20")),
             max_agent_planner_calls=int(os.getenv("SHUDDHO_AGENT_PLANNER_CALLS", "2")),
             agent_planner_token_budget=int(os.getenv("SHUDDHO_AGENT_PLANNER_TOKEN_BUDGET", "16000")),
@@ -679,7 +685,8 @@ class Settings:
                self.task_token_budget, self.max_account_bytes, self.max_daily_actions, self.max_action_recipients,
                self.max_active_agent_runs, self.agent_run_timeout_seconds, self.max_active_browser_sessions, self.browser_session_ttl_seconds, self.max_personal_goals, self.max_automations, self.max_memory_facts,
                self.max_memory_context_facts, self.max_memory_context_bytes, self.max_agent_context_items, self.max_agent_context_item_bytes,
-               self.max_agent_context_bytes, self.max_memory_proposals, self.max_agent_planner_calls, self.max_agent_v3_planner_calls,
+               self.max_agent_context_bytes, self.max_memory_context_age_seconds, self.max_connector_context_age_seconds,
+               self.max_prior_task_context_age_seconds, self.max_memory_proposals, self.max_agent_planner_calls, self.max_agent_v3_planner_calls,
                self.agent_planner_token_budget, self.agent_planner_max_output_tokens, self.agent_v3_planner_token_budget,
                self.max_agent_handoff_bytes, self.max_agent_handoff_sources,
                self.max_agent_parallel_steps, self.cohort_max_users,
