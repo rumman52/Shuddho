@@ -6,6 +6,7 @@ from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
 from .agent_schemas import AgentObservation
 from .errors import CoworkerError
 from .runner import DocumentRunner
+from .tool_execution import execute_tool_contract, validate_tool_result
 from .schemas import ResearchOptions, TaskCreate
 from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
@@ -274,21 +275,31 @@ class AgentRuntime:
             if state == "succeeded":
                 summary = {"action_state": state, "provider_confirmed": True}
                 self.repo.finish_invocation(run_id, ordinal, "action", action["id"], summary)
-                return {"status": "completed"}
+                return validate_tool_result(spec, {
+                    "status": "provider_confirmed",
+                    "resource_type": "action",
+                    "resource_id": action["id"],
+                    "summary": summary,
+                })
             if state == "outcome_unknown":
-                raise CoworkerError("action_outcome_unknown", "The provider result is uncertain. Check the connected service before continuing.", 409)
+                raise CoworkerError("outcome_unknown", "The provider result is uncertain. Reconcile the connected service before continuing.", 409)
             if state in {"failed", "cancelled", "expired"}:
                 raise CoworkerError("action_" + state, "The attached action did not complete successfully.", 409)
             if state not in {"awaiting_approval", "queued", "executing"}:
                 raise CoworkerError("action_state", "The attached action is not in a resumable state.", 409)
             self.repo.action_waiting(run_id, ordinal, action["id"], state)
-            return {"status": "awaiting_approval" if state == "awaiting_approval" else "executing"}
+            return validate_tool_result(spec, {
+                "status": "awaiting_approval" if state == "awaiting_approval" else "executing",
+                "resource_type": "action",
+                "resource_id": action["id"],
+                "summary": {"action_state": state, "provider_confirmed": False},
+            })
         if spec.consequential or spec.approval_required:
             raise CoworkerError("approval_required", "This consequential tool must use the approved-action path.", 409)
 
         if spec.kind == "sandbox":
             if run["runtime_version"] != 3 or not self.container.settings.agent_sandbox_tool_enabled:
-                raise CoworkerError("tool_unavailable", "Planner sandbox execution is not enabled for this run.", 409)
+                raise CoworkerError("tool_not_supported", "Planner sandbox execution is not enabled for this run.", 409)
             self.repo.begin_invocation(run_id, ordinal)
             resource = self.repo.step_resource(run_id, ordinal)
             if resource is None:
@@ -315,10 +326,20 @@ class AgentRuntime:
                     session_id,
                     SandboxExecutionCreate(source=args.source),
                 )
-                return {"status": "executing", "execution_id": prepared["id"]}
+                return validate_tool_result(spec, {
+                    "status": "executing",
+                    "resource_type": "sandbox_execution",
+                    "resource_id": prepared["id"],
+                    "summary": {"sandbox_state": "prepared"},
+                })
             execution = executions[0]
             if execution["state"] in {"prepared", "running"}:
-                return {"status": "executing"}
+                return validate_tool_result(spec, {
+                    "status": "executing",
+                    "resource_type": "sandbox_execution",
+                    "resource_id": execution["id"],
+                    "summary": {"sandbox_state": execution["state"]},
+                })
             if execution["state"] != "succeeded":
                 raise CoworkerError(
                     execution.get("error_code") or "sandbox_execution_failed",
@@ -346,45 +367,72 @@ class AgentRuntime:
                 execution["id"],
                 summary,
             )
-            return {"status": "completed"}
+            return validate_tool_result(spec, {
+                "status": "completed",
+                "resource_type": "sandbox_execution",
+                "resource_id": execution["id"],
+                "summary": summary,
+            })
 
         if spec.kind != "task" or not spec.skill_id:
-            raise CoworkerError("unsupported_agent_tool", "This agent tool is not executable in this runtime.", 409)
+            raise CoworkerError("tool_not_supported", "This Agent tool is not executable in this runtime.", 409)
 
         self.repo.begin_invocation(run_id, ordinal)
-        research = None
-        if spec.skill_id == "research":
-            research = ResearchOptions(query=args.query, time_range=args.time_range)
-        request = TaskCreate(
-            skill_id=spec.skill_id,
-            instruction=args.instruction,
-            notes=args.notes,
-            document_ids=args.document_ids,
-            output_language=args.output_language,
-            research=research,
+
+        def cancelled() -> bool:
+            snapshot = self.repo.worker_run(run_id)
+            return bool(snapshot["cancel_requested"] or snapshot["state"] == "cancelled")
+
+        async def execute_task_tool() -> dict:
+            research = None
+            if spec.skill_id == "research":
+                research = ResearchOptions(query=args.query, time_range=args.time_range)
+            request = TaskCreate(
+                skill_id=spec.skill_id,
+                instruction=args.instruction,
+                notes=args.notes,
+                document_ids=args.document_ids,
+                output_language=args.output_language,
+                research=research,
+            )
+            task, _ = self.container.repository.create_task(
+                run["owner_id"], request, f"agent:{run_id}:{ordinal}", enqueue=False,
+                agent_run_id=run_id, agent_step_id=invocation["step_id"]
+            )
+            self.repo.link_invocation_resource(run_id, ordinal, "task", task["id"])
+            worker_task = self.container.repository.worker_task(task["id"], False)
+            phases = ["extract"] + (["research"] if worker_task["skill_id"] == "research" else []) + ["draft", "export", "complete"]
+            for phase in phases:
+                if cancelled():
+                    raise CoworkerError("agent_cancelled", "This Agent run was cancelled.", 409)
+                await self.runner.phase(task["id"], phase)
+            result = self.container.repository.get_task(run["owner_id"], task["id"])
+            if result["state"] not in {"completed", "needs_input"}:
+                raise CoworkerError("provider_unavailable", "The Agent tool did not produce a valid terminal result.", 503)
+            draft_step = self.container.repository.step(task["id"], "draft") or {}
+            summary = {
+                "task_state": result["state"],
+                "artifact_count": len(result["artifacts"]),
+                "has_missing_information": result["state"] == "needs_input",
+                "memory": draft_step.get("memory_provenance", []),
+                "handoff": draft_step.get("handoff_provenance", []),
+            }
+            return {
+                "status": "needs_input" if result["state"] == "needs_input" else "completed",
+                "resource_type": "task",
+                "resource_id": task["id"],
+                "summary": summary,
+            }
+
+        observed = await execute_tool_contract(
+            spec,
+            execute_task_tool,
+            cancellation_check=cancelled,
         )
-        task, _ = self.container.repository.create_task(
-            run["owner_id"], request, f"agent:{run_id}:{ordinal}", enqueue=False,
-            agent_run_id=run_id, agent_step_id=invocation["step_id"]
-        )
-        self.repo.link_invocation_resource(run_id, ordinal, "task", task["id"])
-        worker_task = self.container.repository.worker_task(task["id"], False)
-        phases = ["extract"] + (["research"] if worker_task["skill_id"] == "research" else []) + ["draft", "export", "complete"]
-        for phase in phases:
-            await self.runner.phase(task["id"], phase)
-        result = self.container.repository.get_task(run["owner_id"], task["id"])
-        if result["state"] not in {"completed", "needs_input"}:
-            raise CoworkerError("agent_tool_failed", "An agent tool did not complete successfully.", 409)
-        draft_step = self.container.repository.step(task["id"], "draft") or {}
-        summary = {
-            "task_state": result["state"],
-            "artifact_count": len(result["artifacts"]),
-            "has_missing_information": result["state"] == "needs_input",
-            "memory": draft_step.get("memory_provenance", []),
-            "handoff": draft_step.get("handoff_provenance", []),
-        }
-        self.repo.finish_invocation(run_id, ordinal, "task", task["id"], summary)
-        if (result["state"] == "needs_input"
+        task_id = str(observed["resource_id"])
+        summary = dict(observed["summary"])
+        self.repo.finish_invocation(run_id, ordinal, "task", task_id, summary)
+        if (observed["status"] == "needs_input"
                 and self.container.settings.agent_outcome_replan_enabled
                 and self.container.settings.intelligent_planner_enabled):
             current = self.repo.get(run["owner_id"], run_id)
