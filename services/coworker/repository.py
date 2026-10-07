@@ -405,10 +405,19 @@ class Repository:
                 # Keep the same run -> account lock order as AgentRepository.reserve_planner
                 # so planner and child-model reservations cannot race past per-run budgets.
                 parent_run = db.scalar(
-                    select(AgentRun).where(AgentRun.id == task_scope.agent_run_id).with_for_update()
+                    select(AgentRun).where(
+                        AgentRun.id == task_scope.agent_run_id,
+                        AgentRun.owner_id == owner,
+                    ).with_for_update()
                 )
                 if parent_run is None:
                     raise CoworkerError("agent_run_missing", "The parent Agent run no longer exists.", 409)
+                if aware(parent_run.deadline_at) <= utcnow():
+                    raise CoworkerError(
+                        "agent_deadline",
+                        "This bounded Agent run reached its task-level deadline.",
+                        409,
+                    )
             self._account(db, owner)
             task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
             self._check_live(task)
