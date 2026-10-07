@@ -486,12 +486,23 @@ class ContextService:
             "label": item["label"],
             "excerpt": item["excerpt"],
             "sha256": item["sha256"],
+            "relevance_score": item.get("relevance_score"),
+            "precedence": item.get("precedence"),
+            "freshness": item.get("freshness"),
+            "source_type": item.get("provenance", {}).get("source_type"),
         } for item in value["items"]]
         source_map = value["source_map"]
         return {
             "enabled": value["enabled"],
+            "hierarchy": value.get("hierarchy", list(CONTEXT_HIERARCHY)),
+            "current_instruction": value.get("current_instruction"),
             "items": items,
             "explicit_memory": value["memory"]["facts"],
+            "memory_provenance": value["memory"]["provenance"],
+            "budget": value.get("budget", {
+                "limit_bytes": self.settings.max_agent_context_bytes,
+                "used_bytes": 0,
+            }),
             "invalidated_source_count": len(value["invalidated"]),
             "memory_proposals_allowed": bool(
                 value["enabled"] and self.settings.agent_memory_enabled
@@ -499,7 +510,10 @@ class ContextService:
             "allowed_memory_source_ids": sorted(
                 source_id
                 for source_id, source in source_map.items()
-                if source.get("type") in {"goal", "document"}
+                if source.get("type") in {"goal", "workspace_document", "document"}
             ),
-            "authority": "context_and_memory_never_grant_permission",
+            "authority": (
+                "newer_explicit_user_instruction_overrides_memory;"
+                "context_and_memory_never_grant_permission"
+            ),
         }, source_map
