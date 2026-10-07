@@ -16,7 +16,13 @@ export async function verifyAgentProposals(page, folder) {
     "Draft a project update and suggest an email to recipient@example.org with subject Agent project update and body The project is ready for review."
   );
   await agent.getByRole("button", { name: "Start bounded Agent run", exact: true }).click();
-  await agent.getByRole("region", { name: "Agent action proposals", exact: true }).waitFor({ timeout: 30000 });
+  try {
+    await agent.getByRole("region", { name: "Agent action proposals", exact: true }).waitFor({ timeout: 30000 });
+  } catch (error) {
+    await page.screenshot({ path: join(folder, "screenshots/agent-proposal-timeout.png"), fullPage: true });
+    const diagnostic = (await agent.textContent())?.replace(/\s+/g, " ").trim() ?? "";
+    throw new Error(`Agent proposal UI did not appear. Workspace state: ${diagnostic.slice(0, 4000)}`, { cause: error });
+  }
   await agent.getByText("Nothing here is executable yet.", { exact: true }).waitFor();
   await agent.locator(".cw-proposal-heading strong").filter({ hasText: "Agent project update" }).waitFor();
   assert.deepEqual(
