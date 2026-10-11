@@ -1,13 +1,9 @@
-"""Phase 11 transaction chaos qualification.
+"""CW-01 transaction chaos qualification.
 
-Chaos contract:
-- uncertain provider outcomes never create a second consequential action;
-- retries reuse the same transaction execution identity;
-- expired approvals fail closed;
-- reconciliation evidence is required for unknown outcomes.
-
-This suite focuses on the transaction safety boundary. Infrastructure chaos
-providers (Temporal/S3/API/model gateways) should feed these same outcomes.
+The suite verifies the transaction safety boundary:
+- duplicate deliveries preserve one execution identity;
+- unknown provider outcomes require reconciliation;
+- expired approvals cannot cross execution boundaries.
 """
 
 from datetime import timedelta
@@ -24,22 +20,26 @@ from services.coworker.models import TransactionReconciliationEvidence, utcnow
 
 
 CHAOS_EXPECTATIONS = {
+    "model_429": "retry_without_duplicate_action",
+    "model_500": "fail_without_action",
+    "model_timeout": "uncertain_reconcile",
     "provider_401": "fail_closed_no_execution",
     "provider_403": "fail_closed_no_execution",
     "provider_429": "retry_same_execution_identity",
     "provider_500": "unknown_reconcile_no_duplicate",
-    "provider_timeout": "unknown_reconcile_no_duplicate",
     "malformed_response": "failed_validation_no_duplicate",
-    "duplicate_message": "same_execution_binding",
-    "approval_after_expiration": "reject_no_execution",
-    "database_disconnect_before_commit": "rollback_safe_retry",
-    "database_disconnect_after_provider_success": "unknown_reconcile",
+    "database_disconnect": "rollback_or_reconcile",
+    "s3_disconnect": "preserve_transaction_state",
+    "temporal_outage": "resume_or_reconcile",
     "worker_crash": "resume_or_reconcile_no_duplicate",
+    "api_crash": "safe_retry",
+    "duplicate_message": "same_execution_binding",
+    "lost_provider_response": "reconcile_without_resend",
+    "approval_after_expiration": "reject_no_execution",
 }
 
 
 def test_tx28_duplicate_delivery_cannot_create_second_execution(container):
-    """Proves the core invariant: one consequential action only."""
     enable_transactions(container)
     owner = account(container, "tx28-duplicate")
     confirmed = reviewed_transaction(container, owner, "tx28-duplicate")
@@ -58,7 +58,6 @@ def test_tx28_duplicate_delivery_cannot_create_second_execution(container):
 
 
 def test_tx28_lost_provider_response_requires_reconciliation(container):
-    """Provider success uncertainty is reconciled, never blindly replayed."""
     enable_transactions(container)
     owner = account(container, "tx28-provider-timeout")
     confirmed = reviewed_transaction(container, owner, "tx28-provider-timeout")
@@ -75,31 +74,22 @@ def test_tx28_lost_provider_response_requires_reconciliation(container):
             )
         )
 
-    result = container.transactions.get(owner, confirmed["id"])
-    assert result is not None
+    assert container.transactions.get(owner, confirmed["id"]) is not None
 
 
 def test_tx28_expired_approval_fails_closed(container):
-    """Expired approvals cannot reach consequential execution."""
     enable_transactions(container)
     owner = account(container, "tx28-expired")
     confirmed = reviewed_transaction(container, owner, "tx28-expired")
 
     with container.repository.sessions.begin() as db:
-        row = container.transactions._transaction(
-            db,
-            owner,
-            confirmed["id"],
-            lock=True,
-        )
+        row = container.transactions._transaction(db, owner, confirmed["id"], lock=True)
         row.expires_at = utcnow() - timedelta(seconds=1)
 
-    assert confirmed["id"]
+    with pytest.raises(CoworkerError):
+        container.transactions.advance_execution(owner, confirmed["id"], confirmed["revision"])
 
 
 def test_tx28_chaos_matrix_has_defined_outcomes():
-    """Every injected failure has an explicit expected result."""
-    assert "provider_500" in CHAOS_EXPECTATIONS
-    assert "worker_crash" in CHAOS_EXPECTATIONS
-    assert "duplicate_message" in CHAOS_EXPECTATIONS
+    assert len(CHAOS_EXPECTATIONS) == 16
     assert all(CHAOS_EXPECTATIONS.values())
