@@ -1,61 +1,56 @@
 # Coworker evolution progress
 
-Updated: 12 October 2026 Asia/Dhaka.
-Inspected source baseline: `ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40`.
-Baseline CI: https://github.com/rumman52/Shuddho/actions/runs/38163844235
-(`test-and-build`, `coworker`, `ci-merge-gate` succeeded).
+Updated: 11 October 2026 UTC. Base: `c6389b3702aae93019c2ec5643f4e4d5dd76ea2a`.
+The coding kit from PR #362 is merged.
 
-## Current task
+## Three-stage execution
 
-CW-00 coding kit: roadmap, specification, prompts, task/progress templates and
-repository engineering skill prepared. No roadmap runtime task implemented here.
-Personal ChatGPT account Skills-page installation unavailable in this session.
-Repository skill is delivered on the coding-kit PR branch; default branch remains
-unchanged until reviewed/merged by an authorized actor.
+| Stage | Tasks | Status |
+| --- | --- | --- |
+| 1. Safety and operated foundation | CW-01..04 | CW-01 implemented and locally verified; full recovery/deployed qualification pending |
+| 2. Continuous coworker | CW-05..13 | CW-05 in progress; later tasks planned |
+| 3. Transactions and production pilot | CW-14..20 | Provider/live review and operated evidence required; not qualified or activated |
 
-## Next action
+## CW-01 result
 
-CW-01: reproduce and repair the new transaction-chaos tests and mandatory CI collection.
-First inspect existing open chaos PR #361 at
-https://github.com/rumman52/Shuddho/pull/361 (reviewed head
-`f543573220c2254c6f16c8777d0ff9783efcd92c`) before duplicating its work.
-That head still uses undeclared ORM fields, an absent external_action_id in the
-review binding, and an expiry assertion that does not test the execution boundary.
-Refresh its current head, CI and review status before resuming or replacing it.
-Then CW-02: full failure/process qualification. While staging access is blocked,
-CW-05 conversation groundwork can proceed after the CW-01 safety repair is verified.
+Branch: `codex/cw01-safety-foundation-20261011`.
+Repairs invalid fixtures/assertions without changing production behavior; same binding
+replays and another action conflicts. Simulated real-transport tests count dispatches and
+applied mutations after a lost reply, check actual approval/claim expiry and exact receipts.
+The existing coworker CI job runs a separate mandatory suite with locked extras,
+JUnit upload and empty/skip/failure/error/required-module rejection.
 
-## Task queue
+Verification:
+- Original three tests reproduced three failures before reaching the safety boundary.
+- Final focused transaction/gate suite: **44 passed, zero skips**, 17.18 seconds.
+- Surrounding action/permission/personal-transaction suite: **57 passed, zero skips**, 25.92 seconds.
+- Chaos-only CLI gate: **5 collected, zero skips/failures/errors**.
+- Fresh review: no Critical findings; one Important mandatory-collection gap fixed
+  with a failing regression, required-module check and separate reports.
+- Deferred minor: successful replay checks applied mutations but could also assert
+  HTTP dispatch count; lost-reply coverage already checks both.
+- Exact-head remote CI pending. Local checks do not establish complete repository CI.
 
-CW-01..CW-20 are planned; none is marked done by authoring this kit.
-The queue extends existing implementations and must not recreate PA-01..PA-10 or
-TX-01..TX-28 foundations that already exist.
+Existing PR #363 is open/conflicted at inspected head
+`3ba85a5c66582dc9cd27a5e7653291ec97c099f4`; it still calls unsupported
+interfaces and installs missing requirements.txt. This main-based branch replaces that
+repair; maintainers should retain one implementation, not merge both conflicting patches.
 
-## Known evidence gaps
+## External qualification blockers
 
-- New chaos file not in the explicit heavyweight test command.
-- Same-binding replay assertion conflicts with the source's idempotent contract.
-- Timeout test constructs ORM fields absent from the inspected model.
-- Expiration test references a repository method absent from the inspected class.
-- Full 16-case/process-level qualification and measured 99.9% SLO not established.
-- Canonical PA-10 checkpoint records staging worker/billing and live access blockers;
-  refresh these before treating them as present-day infrastructure facts.
-- Broad shopping/travel execution requires concrete selected/registered providers.
+Fresh local CW-03 preflight: `blocked_external: RENDER_API_KEY REQUIRED`.
+This execution has no Render connector, staging synthetic identity, Temporal credentials
+or private S3 access. Historical PA-10 billing/worker observations were not re-certified.
+CW-02 needs the full public API/PostgreSQL/Temporal process-interruption matrix.
+CW-04 requires matching frozen API/worker/model/rollout identity.
+CW-12..20 additionally require live connector/push/provider access, concrete registered
+shopping/travel providers, human Bangla/English and security review, real cost/load,
+restore/rollback and an operated availability window.
 
-## Handoff to fill after each task
+## Scope and next action
 
-- Updated timestamp/timezone:
-- Task and bounded scope:
-- Base SHA / implementation SHA / final head SHA:
-- Branch / PR URL and merge state:
-- Exact-head CI jobs, pass/fail/skip counts and URLs:
-- Staging source/API/worker/model/rollout identity:
-- Evidence artifact hashes/references:
-- Implemented / repository-verified / staging-verified / production-qualified / activated:
-- Flags/provider authority changes:
-- Last completed action:
-- Unfinished work / unresolved findings:
-- External blocker and named owner:
-- Next exact command or action:
-- Recovery location:
-
+CW-05 may proceed independently while staging access is blocked. Use existing task/run
+outboxes and ledgers for CW-06/07. Preserve all capabilities default-off; this work has
+not activated production, broadened provider authority, provisioned paid infrastructure,
+or executed external sends/purchases. All CW-02..20 acceptance gates remain unfinished
+until their exact evidence passes. Refresh main/open PRs/CI before resuming.
