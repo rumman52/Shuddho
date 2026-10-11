@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shuddho Engineering"
+  short_description: "Build and qualify Shuddho in bounded coding tasks"
+  default_prompt: "Use $shuddho-engineering to inspect Shuddho and complete the next dependency-ready roadmap task."

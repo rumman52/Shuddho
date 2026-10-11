@@ -109,3 +109,16 @@ If a command does not exist, inspect `package.json`, `pyproject.toml`, and tests
 - Do not fake high-quality ML corrector results.
 - Do not hide AI provider errors.
 - Do not return 200 OK with no explanation when AI failed.
+
+## Coworker evolution coding workflow
+
+For Shuddho coworker architecture, agent, proactive automation, transactions or
+qualification work, read `.agents/skills/shuddho-engineering/SKILL.md` and
+`docs/coworker-roadmap/README.md`. The roadmap extends existing implementations;
+refresh main/PR/CI state before choosing a task. Implement one bounded task per PR,
+record progress in `docs/coworker-roadmap/PROGRESS.md`, and distinguish source/CI
+completion from real staging qualification and production activation.
+
+The kit does not authorize production activation, paid provisioning or external
+transactions. Preserve all existing project instructions above.
+
