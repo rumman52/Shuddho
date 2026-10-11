@@ -35,6 +35,7 @@ from .recipient_repository import RecipientRepository
 from .retention import RetentionService
 from .browser import BrowserRepository
 from .sandbox import SandboxRepository
+from .conversation_repository import ConversationRepository
 
 
 @dataclass
@@ -65,8 +66,11 @@ class Container:
     retention: RetentionService | None = None
     browser: BrowserRepository | None = None
     sandbox: SandboxRepository | None = None
+    conversations: ConversationRepository | None = None
 
     def __post_init__(self):
+        if self.conversations is None:
+            self.conversations = ConversationRepository(self.repository.sessions, self.settings)
         if self.actions is None:
             providers = {"google": GoogleActions(self.settings)}
             if self.settings.microsoft_actions_enabled:

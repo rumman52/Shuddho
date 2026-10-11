@@ -3,6 +3,8 @@
 Reviewed on 12 October 2026 (Asia/Dhaka). Baseline: main `ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40`.
 
 Start with [ROADMAP.md](ROADMAP.md), then [CHATBOT_WORKFLOW.md](CHATBOT_WORKFLOW.md).
+For the requested three-stage execution, use [THREE_STEP_EXECUTION.md](THREE_STEP_EXECUTION.md)
+and refresh [PROGRESS.md](PROGRESS.md) before starting the next task.
 The target contract is [SPEC.md](SPEC.md); the implementation queue is
 [2026-10-12-coworker-evolution.md](../superpowers/plans/2026-10-12-coworker-evolution.md).
 Copy [TASK_TEMPLATE.md](TASK_TEMPLATE.md) for each PR and update [PROGRESS.md](PROGRESS.md) at handoff.

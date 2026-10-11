@@ -19,6 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
+from .conversation_schemas import ConversationCreate, MessageCreate
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -1022,6 +1023,7 @@ def runtime_manifest(
         "work_services": settings.work_services_enabled,
         "artifact_services": settings.artifact_services_enabled,
         "agent_runtime": settings.agent_runtime_enabled,
+        "conversations": settings.conversations_enabled,
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,
         "personal_goals": settings.personal_goals_enabled,
@@ -1531,6 +1533,50 @@ def fail_browser_command(command_id: UUID, payload: BrowserWorkerFailure, reques
 @router.get("/agent-tools")
 def agent_tools(identity: Identity, services: Services):
     return {"enabled": services.settings.agent_runtime_enabled, "tools": services.agent.tools()}
+
+
+@router.post("/conversations", status_code=201)
+def create_conversation(payload: ConversationCreate, identity: Identity, services: Services, response: Response,
+                        idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
+    value, created = services.conversations.create(identity.account_id, payload, idempotency_key)
+    response.status_code = 201 if created else 200
+    response.headers["Location"] = f'/api/v1/conversations/{value["id"]}'
+    response.headers["Idempotent-Replayed"] = str(not created).lower()
+    response.headers["Cache-Control"] = "no-store"
+    return value
+
+
+@router.get("/conversations")
+def list_conversations(identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return {"items": services.conversations.list(identity.account_id)}
+
+
+@router.get("/conversations/{conversation_id}")
+def get_conversation(conversation_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return services.conversations.get(identity.account_id, str(conversation_id))
+
+
+@router.post("/conversations/{conversation_id}/messages", status_code=201)
+def append_conversation_message(conversation_id: UUID, payload: MessageCreate, identity: Identity, services: Services, response: Response):
+    value, created = services.conversations.append_message(identity.account_id, str(conversation_id), payload)
+    response.status_code = 201 if created else 200
+    response.headers["Idempotent-Replayed"] = str(not created).lower()
+    response.headers["Cache-Control"] = "no-store"
+    return value
+
+
+@router.get("/conversations/{conversation_id}/messages")
+def list_conversation_messages(conversation_id: UUID, identity: Identity, services: Services, response: Response,
+                               after: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=100)] = 50):
+    response.headers["Cache-Control"] = "no-store"
+    return services.conversations.messages(identity.account_id, str(conversation_id), after=after, limit=limit)
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(conversation_id: UUID, identity: Identity, services: Services):
+    return services.conversations.delete(identity.account_id, str(conversation_id))
 
 
 @router.post("/agent-route")

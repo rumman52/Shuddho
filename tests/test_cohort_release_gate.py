@@ -306,6 +306,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
     assert missing["decision"] == "NO-GO"
     assert "action_selection" in missing["staging"]["missing"]
     assert missing["required_feature_gates"] == {
+        "conversations": False,
         "action_attachments": False,
         "action_reminders": False,
         "action_recipients": False,

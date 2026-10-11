@@ -93,6 +93,16 @@ class ActivationRequirement:
 
 OPTIONAL_CAPABILITIES = (
     OptionalCapability(
+        capability="conversations",
+        rollback_key="conversations_kill_switch",
+        kill_switch="SHUDDHO_CONVERSATIONS_ENABLED=false",
+        dependencies=("coworker",),
+        staging_gates=(StagingGate(
+            "conversations",
+            "Private conversation ownership, identical replay, conflicting payload/source rejection, PostgreSQL concurrent admission, cursor reconnection, deletion/redaction and account erasure passed against the matching frozen staging release.",
+        ),),
+    ),
+    OptionalCapability(
         capability="connector_reads",
         rollback_key="connector_reads_kill_switch",
         kill_switch="SHUDDHO_CONNECTOR_READS_ENABLED=false",
@@ -410,6 +420,14 @@ OPTIONAL_CAPABILITIES = (
 )
 
 ACTIVATION_REQUIREMENTS = (
+    ActivationRequirement(
+        key="conversations",
+        status="conversations_verified",
+        ledger_schema_version=33,
+        ledger_event_type="conversations_verified",
+        ledger_artifact_key="conversations_activation",
+        capability="conversations",
+    ),
     ActivationRequirement(
         key="suggestion_model_relevance",
         status="suggestion_model_relevance_verified",
