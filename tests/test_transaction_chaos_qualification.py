@@ -1,16 +1,8 @@
-"""TX-28 transaction chaos qualification.
+"""Mandatory transaction safety regressions using real ledgers and transport.
 
-Failure injection contract:
-- provider uncertainty never becomes an automatic second execution;
-- duplicate delivery is idempotent;
-- expired approval cannot cross the execution boundary.
-
-These tests intentionally exercise the transaction safety boundary rather than
-provider-specific adapters.
+Provider I/O is simulated; these tests do not certify deployed infrastructure.
 """
-from __future__ import annotations
-
-from dataclasses import replace
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -18,93 +10,77 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
 
+from test_permission_gateway import enable_boundary
 from test_coworker import account, container
-from test_personal_transactions import payload as commitment_payload
-from test_transaction_reconciliation import enable_transactions, reviewed_transaction
-
-from services.coworker.action_schemas import ActionPrepare
+from test_transaction_reconciliation import bound_action, enable_transactions, reviewed_transaction
 from services.coworker.errors import CoworkerError
-from services.coworker.models import TransactionReconciliationEvidence, utcnow
+from services.coworker.google_actions import SEND_URL
+from services.coworker.models import ExternalAction, utcnow
 
 
-
-def test_tx28_duplicate_execution_attempt_has_single_bound_action(container):
-    """A repeated delivery cannot create a second consequential binding."""
+def prepared(container, key):
     enable_transactions(container)
-    owner = account(container, "tx28-duplicate-delivery")
-    confirmed = reviewed_transaction(container, owner, "tx28-duplicate-delivery")
+    provider, _gateway = enable_boundary(container)
+    owner = account(container, key)
+    review = reviewed_transaction(container, owner, key)
+    action, link = bound_action(container, owner, review, key + "-action")
+    return provider, owner, review, action, link
 
-    binding = confirmed["review_binding"]
-    connection = container.actions.repo
 
-    action = container.actions.repo.prepare(
-        owner,
-        ActionPrepare.model_validate({
-            "connection_id": None,
-            "payload": commitment_payload(),
-        }),
-        "tx28-single-action",
+def test_duplicate_binding_replays_same_link_and_rejects_another_action(container):
+    _provider, owner, review, action, link = prepared(container, "chaos-binding")
+    binding = review["review_binding"]
+    replay = container.transactions.bind_external_action(
+        owner, binding["transaction_id"], binding["transaction_revision"], action["id"],
     )
-
-    container.transactions.bind_external_action(
-        owner,
-        binding["transaction_id"],
-        binding["transaction_revision"],
-        action["id"],
-    )
-
-    with pytest.raises(CoworkerError) as duplicate:
-        container.transactions.bind_external_action(
-            owner,
-            binding["transaction_id"],
-            binding["transaction_revision"],
-            action["id"],
-        )
-
-    assert duplicate.value.code == "transaction_execution_already_bound"
+    assert replay == link
+    with pytest.raises(CoworkerError) as conflict:
+        bound_action(container, owner, review, "chaos-second-action")
+    assert conflict.value.code == "transaction_execution_already_bound"
 
 
-def test_tx28_provider_timeout_records_unknown_without_retry_path(container):
-    """A lost provider response is evidence for reconciliation, not retry."""
-    enable_transactions(container)
-    owner = account(container, "tx28-provider-timeout")
-    confirmed = reviewed_transaction(container, owner, "tx28-provider-timeout")
+def test_accepted_then_lost_response_preserves_uncertainty_without_resend(container):
+    provider, owner, review, action, _link = prepared(container, "chaos-lost-reply")
+    provider.lose_reply = True
+    container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+    for _ in range(3):
+        asyncio.run(container.actions.execute(action["id"]))
+    surface = container.transactions.sync_external_action(owner, review["review_binding"]["transaction_id"])
+    assert surface["transaction"]["state"] == "outcome_unknown"
+    assert surface["evidence"]["action_state"] == "outcome_unknown"
+    assert surface["evidence"]["receipt"] is None
+    assert len(provider.sent) == 1
+    assert len([r for r in provider.requests if r.method == "POST" and str(r.url) == SEND_URL]) == 1
+    assert container.actions.repo.claim_execution(action["id"]) is None
 
-    transaction_id = confirmed["id"]
+
+@pytest.mark.parametrize("approved_first", [False, True])
+def test_expired_approval_or_execution_claim_never_calls_provider(container, approved_first):
+    provider, owner, _review, action, _link = prepared(container, "chaos-expired")
+    if approved_first:
+        container.actions.repo.approve(owner, action["id"], action["preview_hash"])
     with container.repository.sessions.begin() as db:
-        db.add(
-            TransactionReconciliationEvidence(
-                id="tx28-timeout-evidence",
-                transaction_id=transaction_id,
-                owner_id=owner,
-                transaction_revision=confirmed["revision"],
-                evidence_type="provider_timeout",
-                evidence={"result": "lost_provider_response"},
-            )
-        )
+        db.get(ExternalAction, action["id"]).expires_at = utcnow() - timedelta(seconds=1)
+    if not approved_first:
+        with pytest.raises(CoworkerError) as expired:
+            container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+        assert expired.value.code == "approval_expired"
+    else:
+        assert container.actions.repo.claim_execution(action["id"]) is None
+    asyncio.run(container.actions.execute(action["id"]))
+    assert not provider.requests
+    assert not provider.sent
+    if approved_first:
+        assert container.actions.repo.get(owner, action["id"])["state"] == "expired"
 
-    result = container.transactions.get(owner, transaction_id)
-    assert result["state"] in {"confirmed", "outcome_unknown"}
 
-
-def test_tx28_approval_after_expiration_does_not_execute(container):
-    """Expired approvals fail closed."""
-    enable_transactions(container)
-    owner = account(container, "tx28-expired-approval")
-    confirmed = reviewed_transaction(container, owner, "tx28-expired-approval")
-
-    with container.repository.sessions.begin() as db:
-        row = container.transactions._transaction(
-            db,
-            owner,
-            confirmed["id"],
-            lock=True,
-        )
-        row.expires_at = utcnow() - timedelta(seconds=1)
-
-    with pytest.raises(CoworkerError):
-        container.transactions.advance_execution(
-            owner,
-            confirmed["id"],
-            confirmed["revision"],
-        )
+def test_replayed_success_never_dispatches_again(container):
+    provider, owner, review, action, _link = prepared(container, "chaos-success")
+    container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+    for _ in range(3):
+        asyncio.run(container.actions.execute(action["id"]))
+    surface = container.transactions.sync_external_action(owner, review["review_binding"]["transaction_id"])
+    assert surface["transaction"]["state"] == "confirmed"
+    assert surface["evidence"]["receipt"]["provider_id"] == "mail-1"
+    assert len(surface["evidence"]["receipt_sha256"]) == 64
+    assert len(provider.sent) == 1
