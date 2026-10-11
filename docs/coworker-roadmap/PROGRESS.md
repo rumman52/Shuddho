@@ -54,3 +54,36 @@ outboxes and ledgers for CW-06/07. Preserve all capabilities default-off; this w
 not activated production, broadened provider authority, provisioned paid infrastructure,
 or executed external sends/purchases. All CW-02..20 acceptance gates remain unfinished
 until their exact evidence passes. Refresh main/open PRs/CI before resuming.
+
+## CW-05 implementation checkpoint
+
+Branch: `codex/cw05-durable-conversations-20261011`, stacked on PR #364.
+Added private owner-scoped conversation/message records and migration 0055;
+create/list/get/append/poll/delete routes; identical replay and changed text/source
+conflicts; owned uploaded document-version/unexpired-artifact snapshots; bounded
+storage; no-store responses; redaction/tombstone replay denial; account erasure.
+No message admission implicitly dispatches a task, run or external action.
+
+Local focused conversation/retention/release checks: **77 passed, zero skips**;
+canonical release template check passed. Locked Python/coworker and JavaScript
+dependencies installed; root npm tests and build passed. PostgreSQL concurrency
+checks are added to required CI but not yet executed locally (no PostgreSQL service).
+Fresh review found an Account/Conversation lock-order inversion; corrected all
+conversation mutations to lock Account first and added a PostgreSQL regression.
+That regression's RED/GREEN execution is still pending real PostgreSQL CI; source
+review alone is not a proof. Full exact-head CI is required before repository verification.
+
+`SHUDDHO_CONVERSATIONS_ENABLED` defaults off. Canonical staging/kill-switch entries
+and activation requirement reserve schema 33, whose collector and ledger support
+remain CW-20 work: activation is explicitly blocked. Conversation deletion redacts
+chat; its tombstone counts toward the lifetime conversation quota (deferred minor).
+Selected references require fresh use-time revalidation in CW-06/08. No credentials,
+provider authority, paid infrastructure or production activation changed.
+
+Next dependency-ready source task after CW-05 review/CI: CW-06 atomic dispatch and
+revision-checked steering using existing task/run admission and outboxes. Its design
+must share one database transaction or prevent orphan admissions; nested repository
+transactions with Account locks cannot safely substitute for that atomic boundary.
+The complete three-stage task map and chatbot instruction are in
+[THREE_STEP_EXECUTION.md](THREE_STEP_EXECUTION.md). All remaining task-level acceptance
+gates continue to apply; this checkpoint does not mark the full roadmap complete.

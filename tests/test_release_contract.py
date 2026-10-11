@@ -42,6 +42,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         }
     }
     assert {
+        "conversations",
         "action_attachments",
         "action_reminders_google",
         "action_reminders_microsoft",

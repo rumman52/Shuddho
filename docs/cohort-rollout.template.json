@@ -45,7 +45,8 @@
     "context_retrieval": false,
     "negotiation_proposal_promotion": false,
     "suggestion_model_relevance": false,
-    "browser_push": false
+    "browser_push": false,
+    "conversations": false
   },
   "rollback": {
     "runbook_reference": "deployment-runbook-or-ticket",
@@ -78,7 +79,8 @@
     "context_retrieval_kill_switch": "SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false",
     "negotiation_proposal_promotion_kill_switch": "SHUDDHO_NEGOTIATION_PROPOSAL_PROMOTION_ENABLED=false",
     "suggestion_model_relevance_kill_switch": "SHUDDHO_SUGGESTION_MODEL_RELEVANCE_ENABLED=false",
-    "browser_push_kill_switch": "SHUDDHO_BROWSER_PUSH_ENABLED=false"
+    "browser_push_kill_switch": "SHUDDHO_BROWSER_PUSH_ENABLED=false",
+    "conversations_kill_switch": "SHUDDHO_CONVERSATIONS_ENABLED=false"
   },
   "monitoring": {
     "queue_age": "dashboard-or-alert-reference",
