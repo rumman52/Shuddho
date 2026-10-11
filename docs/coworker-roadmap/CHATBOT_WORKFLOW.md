@@ -41,6 +41,10 @@ Paste this at the start of a fresh coding conversation:
 
 ```text
 Work on https://github.com/rumman52/Shuddho.
+Until coding-kit PR #362 is merged, read this kit from branch
+codex/coworker-roadmap-coding-kit-20261012; inspect runtime code on
+fresh main or the explicitly selected repair branch. Inspect existing
+chaos PR #361 before creating a duplicate CW-01 implementation PR.
 Read root AGENTS.md, .agents/skills/shuddho-engineering/SKILL.md,
 docs/coworker-roadmap/README.md, SPEC.md, ROADMAP.md, PROGRESS.md,
 and docs/superpowers/plans/2026-10-12-coworker-evolution.md.

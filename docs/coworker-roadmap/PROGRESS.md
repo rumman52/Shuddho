@@ -16,6 +16,12 @@ unchanged until reviewed/merged by an authorized actor.
 ## Next action
 
 CW-01: reproduce and repair the new transaction-chaos tests and mandatory CI collection.
+First inspect existing open chaos PR #361 at
+https://github.com/rumman52/Shuddho/pull/361 (reviewed head
+`f543573220c2254c6f16c8777d0ff9783efcd92c`) before duplicating its work.
+That head still uses undeclared ORM fields, an absent external_action_id in the
+review binding, and an expiry assertion that does not test the execution boundary.
+Refresh its current head, CI and review status before resuming or replacing it.
 Then CW-02: full failure/process qualification. While staging access is blocked,
 CW-05 conversation groundwork can proceed after the CW-01 safety repair is verified.
 

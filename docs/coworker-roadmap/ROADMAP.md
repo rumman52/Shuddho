@@ -69,6 +69,13 @@ These are source/CI-configuration findings. The current chaos suite was not exec
 locally during this planning review. CW-01 requires a real reproduction before repair.
 The findings do not establish that the production action service duplicates actions.
 
+Open [chaos PR #361](https://github.com/rumman52/Shuddho/pull/361), inspected at
+`f543573220c2254c6f16c8777d0ff9783efcd92c`, changes this file but is not merged.
+It still constructs undeclared ORM fields, references an absent
+`review_binding["external_action_id"]`, and its expiry test only checks a nonempty ID.
+Inspect/reconcile that work before starting another repair PR; do not consider it
+qualified merely because it replaces the missing-method call.
+
 ## The target experience
 
 A student says: "Use my syllabus to help me prepare for this course. Brief me each morning."
