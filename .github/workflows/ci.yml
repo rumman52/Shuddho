@@ -108,6 +108,16 @@ jobs:
           uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_chaos_qualification
           uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_chaos_matrix
           uv run pytest tests/test_mandatory_test_gate.py -q
+      - name: Qualify PostgreSQL transaction fault boundaries without skips
+        run: |
+          uv run --extra coworker pytest tests/test_transaction_chaos_postgres.py -q -rs --junitxml=/tmp/transaction-postgres.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/transaction-postgres.xml --required-module tests.test_transaction_chaos_postgres
+      - name: Keep PostgreSQL transaction fault evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transaction-postgres-evidence
+          path: /tmp/transaction-postgres.xml
       - name: Keep transaction safety evidence
         if: always()
         uses: actions/upload-artifact@v4
