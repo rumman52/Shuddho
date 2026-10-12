@@ -85,6 +85,14 @@ def validate_checkpoint(checkpoint, *, source_revision, rollout_id):
             errors.append(f"{role}: missing deployment ID")
         elif not _time(item.get("observed_at")):
             errors.append(f"{role}: missing timezone-aware observation")
+    # A workflow cannot qualify a release that was not yet observed deployed.
+    # The later of the two API/worker readiness observations is the floor.
+    deployment_times = [
+        _time(item.get("observed_at"))
+        for item in deployments.values()
+        if isinstance(item, dict) and _time(item.get("observed_at")) is not None
+    ]
+    deployment_ready_at = max(deployment_times) if len(deployment_times) == 2 else None
     infrastructure = checkpoint.get("infrastructure")
     infrastructure = infrastructure if isinstance(infrastructure, dict) else {}
     for name in sorted(INFRASTRUCTURE):
@@ -119,8 +127,11 @@ def validate_checkpoint(checkpoint, *, source_revision, rollout_id):
         ):
             if not required or item.get(key) != required:
                 errors.append(f"{name}: {key} binding mismatch")
-        if item.get("result") != "passed" or not _time(item.get("observed_at")):
+        observed_at = _time(item.get("observed_at"))
+        if item.get("result") != "passed" or not observed_at:
             errors.append(f"{name}: incomplete workflow observation")
+        elif deployment_ready_at is not None and observed_at < deployment_ready_at:
+            errors.append(f"{name}: workflow observed before frozen API/worker deployment was ready")
         if not isinstance(item.get("evidence_sha256"), str) or not SHA256.fullmatch(item["evidence_sha256"]):
             errors.append(f"{name}: invalid workflow evidence SHA-256")
         if not isinstance(item.get("observation_ref"), str) or not item["observation_ref"].strip():
