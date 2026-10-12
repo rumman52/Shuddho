@@ -102,3 +102,74 @@ def test_runtime_flags_stay_default_off(container):
     with pytest.raises(CoworkerError) as failure:
         service.dispatch(owner, "invalid", "invalid", expected_sequence=1)
     assert failure.value.code == "conversation_dispatch_unavailable"
+
+
+def test_revision_checked_cancel_disarms_outbox_and_allows_deletion(container):
+    owner, conv, conversations, dispatch = setup(container, key="cw06-cancel")
+    msg = message(conversations, owner, conv)
+    admitted, _ = dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1)
+    before = dispatch.activity(owner, conv["id"])["items"][0]
+    with pytest.raises(CoworkerError) as stale:
+        dispatch.cancel(owner, conv["id"], msg["id"], expected_sequence=1,
+                        expected_event_sequence=before["event_sequence"] + 1)
+    assert stale.value.code == "agent_revision_conflict"
+    with pytest.raises(CoworkerError) as active:
+        conversations.delete(owner, conv["id"])
+    assert active.value.code == "conversation_active_work"
+    cancelled = dispatch.cancel(owner, conv["id"], msg["id"], expected_sequence=1,
+                                expected_event_sequence=before["event_sequence"])
+    assert cancelled["state"] == "cancelled"
+    assert dispatch.cancel(owner, conv["id"], msg["id"], expected_sequence=1,
+                           expected_event_sequence=before["event_sequence"])["state"] == "cancelled"
+    with dispatch.sessions() as db:
+        run = db.get(AgentRun, admitted["run_id"])
+        assert run.cancel_requested
+        assert db.get(AgentOutbox, run.id).delivered is True
+    assert conversations.delete(owner, conv["id"])["deleted"] is True
+
+
+def test_cancel_wrong_owner_is_hidden(container):
+    owner, conv, conversations, dispatch = setup(container, key="cw06-owner-cancel")
+    msg = message(conversations, owner, conv)
+    dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1)
+    foreign = account(container, "cw06-foreign")
+    with pytest.raises(CoworkerError) as denied:
+        dispatch.cancel(foreign, conv["id"], msg["id"],
+                        expected_sequence=1, expected_event_sequence=1)
+    assert denied.value.code == "not_found"
+
+
+def test_http_conversation_dispatch_and_activity_contract(container, signed_client):
+    container.settings = replace(container.settings, conversations_enabled=True, agent_runtime_enabled=True)
+    container.conversations.settings = container.settings
+    container.conversation_dispatch.settings = container.settings
+    client, headers = signed_client
+    auth = headers() | {"Idempotency-Key": "cw06-http-conversation-key"}
+    created = client.post("/api/v1/conversations", json={"title": "Reports"}, headers=auth)
+    assert created.status_code == 201, created.text
+    conversation_id = created.json()["id"]
+    path = f"/api/v1/conversations/{conversation_id}"
+    added = client.post(path + "/messages", json={
+        "text": "Create a detailed report about quarterly sales",
+        "client_request_key": "cw06-http-message-key",
+    }, headers=headers())
+    assert added.status_code == 201, added.text
+    msg = added.json()
+    endpoint = path + "/messages/" + msg["id"] + "/dispatch"
+    admitted = client.post(endpoint, json={"expected_sequence": 1}, headers=headers())
+    assert admitted.status_code == 202, admitted.text
+    assert admitted.json()["run_id"]
+    replay = client.post(endpoint, json={"expected_sequence": 1}, headers=headers())
+    assert replay.status_code == 200 and replay.json()["run_id"] == admitted.json()["run_id"]
+    activity = client.get(path + "/activity", headers=headers())
+    assert activity.status_code == 200
+    event = activity.json()["items"][0]
+    assert event["run_id"] == admitted.json()["run_id"]
+    cancel = client.post(path + "/messages/" + msg["id"] + "/cancel", json={
+        "expected_sequence": 1, "expected_event_sequence": event["event_sequence"],
+    }, headers=headers())
+    assert cancel.status_code == 200, cancel.text
+    assert cancel.json()["state"] == "cancelled"
+    assert client.post("/api/v1/agent-runs", json={"goal": msg["text"]}, headers={
+        **headers(), "Idempotency-Key": "conversation:" + msg["id"],
+    }).status_code == 409
