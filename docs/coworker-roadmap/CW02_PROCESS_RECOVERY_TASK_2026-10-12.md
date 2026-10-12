@@ -7,6 +7,7 @@
 - Interfaces reused: authenticated transaction review/approval routes, TransactionRepository, ActionRepository, PermissionGateway, CredentialBroker, GoogleActions, ActionActivities, ApprovedActionWorkflow and Dispatcher.
 - New files: `tests/transaction_process_harness.py`, `tests/test_transaction_chaos_temporal.py`.
 - Modified files: `.github/workflows/ci.yml`, the Phase 11 runbook and progress checkpoint.
+- CI setup: rendering dependency installation is explicitly noninteractive and time-bounded after an observed stalled run; every required rendering/test check is retained.
 - Compatibility: no migration, runtime API, provider registry, default feature flag or Temporal workflow definition changes.
 
 ## Acceptance behavior

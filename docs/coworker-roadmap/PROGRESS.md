@@ -17,6 +17,10 @@ Review PR: [#375](https://github.com/rumman52/Shuddho/pull/375). Initial impleme
 commit: `b8a5a2b2130991b383cc8a9bfd16472b903a8ed4`; the follow-up also binds restarted
 Temporal worker readiness before unlocking its virtual retry clock. The PR check suite
 records the exact final head and required CI evidence; this checkpoint precedes that result.
+CI run `38240791655` remained in rendering dependency installation for more than fifteen
+minutes. The final follow-up makes apt/debconf/needrestart noninteractive and bounds the
+installer to ten minutes, triggering a fresh runner without removing any required check.
+The cause of the stalled installer was not observable from unfinished GitHub job logs.
 
 The final focused local process/Temporal/HTTP plus existing safety/matrix run passed
 35 tests with one explicitly PostgreSQL-only skip (46.14 seconds). The new module itself
