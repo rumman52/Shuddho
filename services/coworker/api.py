@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
-from .conversation_schemas import ConversationCreate, MessageCreate, ConversationDispatchCreate
+from .conversation_schemas import ConversationCreate, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -1592,6 +1592,20 @@ def dispatch_conversation_message(
     response.headers["Idempotent-Replayed"] = str(not created).lower()
     response.headers["Cache-Control"] = "no-store"
     response.status_code = 202 if created else 200
+    return value
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/cancel")
+def cancel_conversation_agent(
+    conversation_id: UUID, message_id: UUID, payload: ConversationCancelRequest,
+    identity: Identity, services: Services, response: Response,
+):
+    value = services.conversation_dispatch.cancel(
+        identity.account_id, str(conversation_id), str(message_id),
+        expected_sequence=payload.expected_sequence,
+        expected_event_sequence=payload.expected_event_sequence,
+    )
+    response.headers["Cache-Control"] = "no-store"
     return value
 
 
