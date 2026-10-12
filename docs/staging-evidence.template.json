@@ -174,5 +174,9 @@
   "browser_push": {
     "status": "pending",
     "evidence": ""
+  },
+  "conversations": {
+    "status": "pending",
+    "evidence": ""
   }
 }
