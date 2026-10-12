@@ -212,3 +212,35 @@ def test_manifest_stays_disabled_without_conversations(records):
     with pytest.raises(CoworkerError) as failure:
         service.get(owner)
     assert failure.value.code == "conversations_unavailable"
+
+
+def test_memory_review_edit_rejects_stale_version_and_can_delete(records):
+    from types import SimpleNamespace
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+    from services.coworker.memory_repository import MemoryRepository
+    from services.coworker.memory_schemas import MemoryFactUpdate
+    from services.coworker.models import MemoryFact
+
+    db, owner, *_ = records
+    workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
+    fact_id = new_id()
+    db.add(MemoryFact(
+        id=fact_id, owner_id=owner, workspace_id=workspace_id,
+        namespace="project", key="review-key", value="Old scoped fact",
+        language="en", provenance_type="user", version=1,
+    ))
+    db.commit()
+    repository = MemoryRepository(sessionmaker(bind=db.bind), SimpleNamespace(agent_memory_enabled=True))
+    updated = repository.update(owner, fact_id, MemoryFactUpdate(
+        value="Reviewed new fact", language="en", expected_version=1,
+    ))
+    assert updated["version"] == 2 and updated["value"] == "Reviewed new fact"
+    with pytest.raises(CoworkerError) as stale:
+        repository.update(owner, fact_id, MemoryFactUpdate(
+            value="Lost competing edit", language="en", expected_version=1,
+        ))
+    assert stale.value.code == "memory_revision_conflict"
+    with repository.sessions() as session:
+        assert session.get(MemoryFact, fact_id).value == "Reviewed new fact"
+    assert repository.delete(owner, fact_id)["deleted"] is True
