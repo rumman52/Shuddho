@@ -54,3 +54,18 @@ outboxes and ledgers for CW-06/07. Preserve all capabilities default-off; this w
 not activated production, broadened provider authority, provisioned paid infrastructure,
 or executed external sends/purchases. All CW-02..20 acceptance gates remain unfinished
 until their exact evidence passes. Refresh main/open PRs/CI before resuming.
+
+## Latest five-commit security and integration review — 12 October 2026
+
+Reviewed main head `ec41ac8b55de99a50e8214a58b22bfc797ae5256` and the four preceding main commits
+(`79070ea`, `039093b`, `bb77b28`, `b90b6a4`).
+
+- CW-05 PR #368 is now merged into main. PR #369 marked merged **into the CW-05 feature branch**, not main, so CW-08 source revalidation did not reach main from that merge.
+- Repaired CW-05 source selection to reject an expired uploaded document version before message admission; previous behavior pinned expired documents.
+- Ported CW-08 read-only, owner-bound document/artifact source revalidation and its seven tests to a new main-based review branch. This is a foundation, **not yet connected to CW-06 admission**.
+- Added both the CW-08 unit tests and the PostgreSQL conversation-race module to mandatory coworker CI gating.
+- Source changes remain default-off; exact-head CI and PostgreSQL migration/race evidence must be independently reviewed.
+- CW-01 source safety foundation remains implemented. CW-02–04 operated staging checks and CW-06/07/08 full task-level acceptance criteria remain incomplete.
+- Do not turn on conversations, transactions, or external-action providers from this patch alone.
+
+Next: review/qualify this branch, merge through normal protections, implement CW-06 atomic admission/steering with source validation at the same transaction boundary, then CW-07 UI and complete CW-08 workspace/context lifecycle.
