@@ -1,6 +1,63 @@
 # Coworker evolution progress
 
-## Current Transactions continuation — 12 October 2026
+## Current Transactions qualification recovery — 13 October 2026 (Asia/Dhaka)
+
+Refreshed main: `fb1a08059cd242f5da4d72dbf72da0c6971bfe30`, latest merge PR #379.
+PR #375 process recovery, #376 attestation chronology/file binding and #377's
+checkpoint are now merged. There were no open PRs at the start of this continuation.
+[Exact-main CI 38292932568](https://github.com/rumman52/Shuddho/actions/runs/38292932568)
+failed both required upstream jobs: lightweight collection imported optional
+SQLAlchemy without a guard, and Temporal `before_claim` recovery hit the workflow
+deadline. The merged boundary/reconciliation tests were absent from the explicit
+heavyweight transaction safety command.
+
+Branch `codex/transactions-ci-recovery-20261013` repairs that qualification boundary:
+
+- Optional-dependency collection follows the existing lightweight/heavyweight split.
+- All newly merged execution, reconciliation and mutation-guard test modules are
+  mandatory in the safety JUnit report, with collection and zero-skip checks.
+- A parent-owned barrier keeps the restarted real Temporal worker connected but
+  not polling while only the interrupted activity timeout/first retry is advanced.
+  Automatic result time skipping is then disabled. Production workflow timeouts,
+  authorization, durable claims, receipt validation and uncertainty remain unchanged.
+- Enabling the omitted reconciliation test reproduced a nonexistent fixture field
+  (`SimulatedGoogle.provider`). Its corrected receipt assertions check the actual
+  configured Google provider, confirmed state, one send and another owner's 404.
+- Added execution diagnostics identify the exception class before the Temporal
+  activity redacts its error; that diagnostic prints no raw SQL parameters,
+  credentials or message contents.
+
+Local verification: the lightweight project suite passed **1,052 tests, 65 optional
+skips** (8.56 seconds); the final combined process/Temporal/HTTP/safety/boundary run
+passed **41 tests with one PostgreSQL-only admission-race skip** (60.14 seconds).
+The mandatory safety subset passed **25 tests, zero skips** (4.88 seconds), and
+its gate confirmed collection from all five required modules. Neighboring transaction/
+action/permission/gate checks passed **103 tests** (46.58 seconds).
+The initial combined run also failed before its first crash barrier;
+four isolated Temporal cases and the final combined run passed after adding safe
+setup diagnostics. These local SQLite runs do not establish PostgreSQL qualification.
+The required exact-head CI must run all 17 process cases on real PostgreSQL and
+all 25 transaction safety cases with zero mandatory skips before review readiness.
+
+| Evidence level | Current status |
+| --- | --- |
+| Implemented | Bounded test/CI repair exists on the review branch |
+| Repository-verified | Pending exact final-head required CI; record its SHA/run in the PR |
+| Staging-verified | Not established by this continuation |
+| Production-qualified | Pending operated matrix, selected-provider evidence and release reviews |
+| Activated | No capability/provider/production activation |
+
+PR #379's `TransactionMutationGuard` is an unused, process-local qualification helper:
+its unit tests do not establish distributed provider deduplication. Production
+authority remains the existing durable ExternalAction boundary. Complete Transactions
+qualification still requires the full sixteen-fault operated staging matrix and
+selected real-provider receipts/counters; shopping/travel registration remains disabled.
+
+Next exact action: independently review this repair, inspect exact final-head CI,
+then collect the controlled staging/provider evidence on a frozen matching release.
+See [the bounded task plan](../superpowers/plans/2026-10-13-transactions-qualification-recovery.md).
+
+## Historical process-recovery checkpoint — 12 October 2026
 
 Reviewed main `1c41907594dd8dd93a6eac747494d5491587b709` (PR #373); merged-main CI #1368
 passed `test-and-build`, `coworker` and `ci-merge-gate`. Draft PR #374 remains a separate

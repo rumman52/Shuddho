@@ -4,6 +4,10 @@ These regressions ensure transaction state cannot become a provider mutation
 path without going through ExternalAction.
 """
 
+import pytest
+
+pytest.importorskip("sqlalchemy")
+
 from services.coworker.transaction_repository import SAFE_DOMAIN_TRANSITIONS
 
 

@@ -104,9 +104,12 @@ jobs:
         run: docker build -f Dockerfile.sandbox-worker -t shuddho-sandbox-worker:ci .
       - name: Run mandatory transaction safety regressions without skips
         run: |
-          uv run --extra coworker pytest tests/test_transaction_chaos_qualification.py tests/test_transaction_chaos_matrix.py -q -rs --junitxml=/tmp/transaction-safety.xml
+          uv run --extra coworker pytest tests/test_transaction_chaos_qualification.py tests/test_transaction_chaos_matrix.py tests/test_transaction_execution_boundary_contract.py tests/test_transaction_reconciliation_boundary.py tests/test_transaction_mutation_guard.py -q -rs --junitxml=/tmp/transaction-safety.xml
           uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_chaos_qualification
           uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_chaos_matrix
+          uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_execution_boundary_contract
+          uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_reconciliation_boundary
+          uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_mutation_guard
           uv run pytest tests/test_mandatory_test_gate.py -q
       - name: Qualify PostgreSQL transaction fault boundaries without skips
         run: |
