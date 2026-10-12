@@ -104,8 +104,9 @@ jobs:
         run: docker build -f Dockerfile.sandbox-worker -t shuddho-sandbox-worker:ci .
       - name: Run mandatory transaction safety regressions without skips
         run: |
-          uv run --extra coworker pytest tests/test_transaction_chaos_qualification.py -q -rs --junitxml=/tmp/transaction-safety.xml
+          uv run --extra coworker pytest tests/test_transaction_chaos_qualification.py tests/test_transaction_chaos_matrix.py -q -rs --junitxml=/tmp/transaction-safety.xml
           uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_chaos_qualification
+          uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_chaos_matrix
           uv run pytest tests/test_mandatory_test_gate.py -q
       - name: Keep transaction safety evidence
         if: always()
