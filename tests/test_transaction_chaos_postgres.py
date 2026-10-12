@@ -94,7 +94,13 @@ def test_postgres_different_action_cannot_steal_reviewed_transaction(repository)
         identity,
         ActionPrepare.model_validate({
             "connection_id": connection["id"],
-            "payload": commitment_payload(),
+            "payload": commitment_payload(
+                counterparty="Example Hotel",
+                terms=[
+                    {"name": "Room", "value": "Deluxe room"},
+                    {"name": "Cancellation", "value": "Free until 24 hours before arrival"},
+                ],
+            ),
         }),
         "cw02-postgres-another-action",
         transaction_binding={
