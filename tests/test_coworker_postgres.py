@@ -40,6 +40,7 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
         assert db.scalar(text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'cw_%'")) == 0
         tables = set(inspect(db.bind).get_table_names(schema="shuddho_coworker"))
         assert "cw_tasks" in tables
+        assert {"cw_conversations", "cw_conversation_messages"} <= tables
         assert {
             "cw_transactions",
             "cw_transaction_revisions",
@@ -495,3 +496,79 @@ def test_browser_push_active_device_limit_is_atomic(repository):
         assert db.scalar(text(
             "SELECT count(*) FROM cw_browser_push_subscriptions WHERE owner_id=:owner AND active"
         ), {"owner": identity}) == 2
+
+
+def test_concurrent_conversation_creation_and_message_replay_accept_once(repository):
+    from threading import Barrier
+    from services.coworker.conversation_repository import ConversationRepository
+    from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
+    repo = ConversationRepository(repository.sessions, replace(repository.settings, conversations_enabled=True))
+    identity = owner(repository)
+    barrier = Barrier(6)
+    def create(_):
+        barrier.wait(timeout=10)
+        return repo.create(identity, ConversationCreate(title="Project"), "conversation-race-key")
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        created = list(pool.map(create, range(6)))
+    assert len({item[0]["id"] for item in created}) == 1
+    assert sum(item[1] for item in created) == 1
+    conversation_id = created[0][0]["id"]
+    barrier = Barrier(6)
+    def append(_):
+        barrier.wait(timeout=10)
+        return repo.append_message(identity, conversation_id, MessageCreate(text="Create a report", client_request_key="message-race-key"))
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        messages = list(pool.map(append, range(6)))
+    assert len({item[0]["id"] for item in messages}) == 1
+    assert sum(item[1] for item in messages) == 1
+    assert repo.get(identity, conversation_id)["message_sequence"] == 1
+
+
+def test_concurrent_independent_conversation_messages_preserve_sequence(repository):
+    from services.coworker.conversation_repository import ConversationRepository
+    from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
+    repo = ConversationRepository(repository.sessions, replace(repository.settings, conversations_enabled=True))
+    identity = owner(repository)
+    conversation, _ = repo.create(identity, ConversationCreate(title="Project"), "conversation-sequence")
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        messages = list(pool.map(lambda index: repo.append_message(identity, conversation["id"], MessageCreate(text=f"Message {index}", client_request_key=f"message-independent-{index}")), range(6)))
+    assert sorted(item[0]["sequence"] for item in messages) == [1, 2, 3, 4, 5, 6]
+    assert all(item[1] for item in messages)
+
+
+def test_conversation_mutations_wait_for_account_lock_before_child_lock(repository):
+    from threading import Event
+    from sqlalchemy import event, select
+    from services.coworker.models import Account
+    from services.coworker.conversation_repository import ConversationRepository
+    from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
+    repo = ConversationRepository(repository.sessions, replace(repository.settings, conversations_enabled=True))
+    identity = owner(repository)
+    engine = repository.sessions.kw["bind"]
+    for operation in ("append", "delete"):
+        conversation, _ = repo.create(identity, ConversationCreate(title="Project"), "conversation-lock-" + operation)
+        attempted = Event()
+        observed = []
+        def before_cursor(_conn, _cursor, statement, _params, _context, _many):
+            if "FOR UPDATE" in statement and not observed:
+                observed.append("account" if "cw_accounts" in statement else "child")
+                attempted.set()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with repository.sessions.begin() as db:
+                # Match erasure's first lock. The other request must wait here
+                # without holding a conversation lock that erasure needs next.
+                db.scalar(select(Account).where(Account.id == identity).with_for_update())
+                event.listen(engine, "before_cursor_execute", before_cursor)
+                try:
+                    if operation == "append":
+                        future = pool.submit(repo.append_message, identity, conversation["id"], MessageCreate(text="Message", client_request_key="message-lock-key"))
+                    else:
+                        future = pool.submit(repo.delete, identity, conversation["id"])
+                    assert attempted.wait(10)
+                finally:
+                    event.remove(engine, "before_cursor_execute", before_cursor)
+            # Release account before checking/awaiting, so a regression never
+            # leaves the pool blocked during cleanup.
+            result = future.result(timeout=10)
+            assert result is not None
+            assert observed == ["account"]
