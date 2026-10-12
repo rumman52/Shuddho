@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
-from .conversation_schemas import ConversationCreate, MessageCreate
+from .conversation_schemas import ConversationCreate, MessageCreate, ConversationDispatchCreate
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -1577,6 +1577,31 @@ def list_conversation_messages(conversation_id: UUID, identity: Identity, servic
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: UUID, identity: Identity, services: Services):
     return services.conversations.delete(identity.account_id, str(conversation_id))
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/dispatch", status_code=202)
+def dispatch_conversation_message(
+    conversation_id: UUID, message_id: UUID, payload: ConversationDispatchCreate,
+    identity: Identity, services: Services, response: Response,
+):
+    value, created = services.conversation_dispatch.dispatch(
+        identity.account_id, str(conversation_id), str(message_id),
+        expected_sequence=payload.expected_sequence, output_language=payload.output_language,
+    )
+    response.headers["Location"] = f'/api/v1/agent-runs/{value["run_id"]}'
+    response.headers["Idempotent-Replayed"] = str(not created).lower()
+    response.headers["Cache-Control"] = "no-store"
+    response.status_code = 202 if created else 200
+    return value
+
+
+@router.get("/conversations/{conversation_id}/activity")
+def conversation_activity(
+    conversation_id: UUID, identity: Identity, services: Services,
+    response: Response, limit: Annotated[int, Query(ge=1, le=100)] = 50,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return services.conversation_dispatch.activity(identity.account_id, str(conversation_id), limit=limit)
 
 
 @router.post("/agent-route")
