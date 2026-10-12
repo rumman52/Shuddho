@@ -1,0 +1,90 @@
+"""Fail-closed CW-02 transaction fault evidence manifest validator.
+
+This checks claimed evidence structure only. Actual staging/process failure
+injection and independent verification are separate release requirements.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+SCENARIOS = (
+    "model_429", "model_500", "model_timeout", "provider_401",
+    "provider_403", "provider_429", "provider_500", "malformed_response",
+    "database_disconnect", "s3_disconnect", "temporal_outage",
+    "worker_crash", "api_crash", "duplicate_message",
+    "lost_provider_response", "approval_after_expiration",
+)
+
+
+def qualify(document: dict, *, expected_revision: str, expected_rollout: str) -> list[str]:
+    """Return qualification rejection reasons; never assume success."""
+    problems: list[str] = []
+    if document.get("schema_version") != 1:
+        problems.append("schema_version must equal 1")
+    if not expected_revision or document.get("source_revision") != expected_revision:
+        problems.append("source_revision mismatch")
+    if not expected_rollout or document.get("rollout_id") != expected_rollout:
+        problems.append("rollout_id mismatch")
+    entries = document.get("scenarios")
+    if not isinstance(entries, list):
+        return problems + ["scenarios must be a list"]
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            problems.append("scenario entry is not an object")
+            continue
+        name = entry.get("id")
+        if not isinstance(name, str) or name not in SCENARIOS:
+            problems.append(f"unrecognized scenario: {name!r}")
+            continue
+        if name in seen:
+            problems.append(f"duplicate scenario: {name}")
+        seen.add(name)
+        if entry.get("result") != "passed":
+            problems.append(f"{name}: result is not passed")
+        if entry.get("environment") != "staging":
+            problems.append(f"{name}: staging environment evidence required")
+        for field in ("test_run_id", "evidence_sha256", "operator", "observed_at"):
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                problems.append(f"{name}: missing {field}")
+        digest = entry.get("evidence_sha256")
+        if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            problems.append(f"{name}: evidence_sha256 must be lowercase SHA-256")
+        attempts = entry.get("attempted_mutations")
+        applied = entry.get("applied_mutations")
+        if type(attempts) is not int or type(applied) is not int or attempts < 0 or applied < 0 or applied > 1:
+            problems.append(f"{name}: invalid mutation counters")
+        if entry.get("outcome") not in ("rejected", "failed", "uncertain", "confirmed", "recovered", "blocked"):
+            problems.append(f"{name}: missing explicit outcome")
+    for name in SCENARIOS:
+        if name not in seen:
+            problems.append(f"missing scenario: {name}")
+    return problems
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("evidence", type=Path)
+    parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--rollout-id", required=True)
+    args = parser.parse_args()
+    try:
+        document = json.loads(args.evidence.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise ValueError("evidence must be a JSON object")
+        problems = qualify(document, expected_revision=args.source_revision, expected_rollout=args.rollout_id)
+    except (OSError, ValueError) as error:
+        problems = [str(error)]
+    if problems:
+        for problem in problems:
+            print(f"NOT QUALIFIED: {problem}")
+        return 1
+    print("CW-02 manifest structurally complete; independent evidence verification still required")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
