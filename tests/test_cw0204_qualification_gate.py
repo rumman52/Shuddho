@@ -294,3 +294,16 @@ def test_workflow_evidence_directory_required(tmp_path):
     missing = tmp_path / "missing-workflows"
     args["workflow_evidence_dir"] = missing
     assert any("workflow evidence directory missing" in problem for problem in qualify_release(**args))
+
+
+def test_workflow_cannot_predate_frozen_worker_deployment():
+    checkpoint = _checkpoint()
+    checkpoint["deployments"]["worker"]["observed_at"] = "2026-10-12T09:01:00Z"
+    problems = validate_checkpoint(checkpoint, source_revision=REV, rollout_id=ROLLOUT)
+    assert any("workflow observed before frozen" in problem for problem in problems)
+
+
+def test_workflow_after_both_deployments_is_accepted():
+    checkpoint = _checkpoint()
+    checkpoint["deployments"]["worker"]["observed_at"] = "2026-10-12T08:59:00Z"
+    assert validate_checkpoint(checkpoint, source_revision=REV, rollout_id=ROLLOUT) == []
