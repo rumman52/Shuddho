@@ -466,6 +466,21 @@ export class CoworkerClient {
     return this.json<{ items: ConversationMessageRecord[]; next_cursor: number }>(
       `/api/v1/conversations/${identifier(id)}/messages`, { signal });
   }
+  async conversationHistory(id: string, signal?: AbortSignal) {
+    // Existing API is cursor-paginated; never silently hide recent messages
+    // once the first page reaches 50 items.
+    const items: ConversationMessageRecord[] = [];
+    let cursor = 0;
+    for (let page = 0; page < 20; page += 1) {
+      const batch = await this.json<{ items: ConversationMessageRecord[]; next_cursor: number }>(
+        `/api/v1/conversations/${identifier(id)}/messages?after=${cursor}&limit=100`, { signal });
+      items.push(...batch.items);
+      if (batch.items.length < 100) return { items, next_cursor: batch.next_cursor };
+      if (batch.next_cursor <= cursor) throw new WorkspaceError("Conversation pagination did not advance.");
+      cursor = batch.next_cursor;
+    }
+    return { items, next_cursor: cursor };
+  }
   appendConversationMessage(id: string, text: string, key: string) {
     return this.json<ConversationMessageRecord>(`/api/v1/conversations/${identifier(id)}/messages`, {
       method: "POST", headers: { "Content-Type": "application/json" },
