@@ -98,7 +98,7 @@ export type AutomationHistoryItem = {
 };
 export type MemoryFact = {
   id: string; namespace: "profile" | "preferences" | "project" | "organization" | "writing";
-  key: string; value: string; language: string; version: number; active: boolean;
+  key: string; value: string; language: string; version: number; active: boolean; expires_at?: string | null;
 };
 export type MemoryProposal = {
   id: string; run_id: string; namespace: MemoryFact["namespace"]; key: string; value: string; language: string;
@@ -829,6 +829,15 @@ export class CoworkerClient {
   }
   readNotification(id: string) { return this.json<{ id: string; state: "read"; read_at: string }>(`/api/v1/notifications/${identifier(id)}/read`, { method: "POST" }); }
   memory(signal?: AbortSignal) { return this.json<{ enabled: boolean; facts: MemoryFact[] }>("/api/v1/memory", { signal }); }
+  updateMemoryFact(id: string, value: string, language: string, expectedVersion: number, expiresAt: string | null) {
+    return this.json<MemoryFact>(`/api/v1/memory/${identifier(id)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value, language, expected_version: expectedVersion, expires_at: expiresAt }),
+    });
+  }
+  deleteMemoryFact(id: string) {
+    return this.json<{ id: string; deleted: boolean }>(`/api/v1/memory/${identifier(id)}`, { method: "DELETE" });
+  }
   memoryProposals(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals: MemoryProposal[] }>("/api/v1/memory-proposals", { signal }); }
   acceptMemoryProposal(id: string) { return this.json<{ proposal: MemoryProposal; fact: MemoryFact | null }>(`/api/v1/memory-proposals/${identifier(id)}/accept`, { method: "POST" }); }
   rejectMemoryProposal(id: string) { return this.json<MemoryProposal>(`/api/v1/memory-proposals/${identifier(id)}/reject`, { method: "POST" }); }
