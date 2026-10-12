@@ -37,11 +37,12 @@ export default function ConversationWorkspace({ client, openAgent }: {
   }, [client]);
 
   async function reloadConversation(id: string) {
-    const [messagesResponse, activityResponse] = await Promise.all([
-      client.conversationMessages(id), client.conversationActivity(id),
+    const [messagesResponse, activityResponse, listResponse] = await Promise.all([
+      client.conversationMessages(id), client.conversationActivity(id), client.conversations(),
     ]);
     setMessages(messagesResponse.items);
     setActivity(activityResponse.items);
+    setConversations(listResponse.items);
   }
 
   useEffect(() => {
@@ -51,13 +52,15 @@ export default function ConversationWorkspace({ client, openAgent }: {
     const controller = new AbortController();
     const reload = async () => {
       try {
-        const [chat, projection] = await Promise.all([
+        const [chat, projection, latestList] = await Promise.all([
           client.conversationMessages(selected, controller.signal),
           client.conversationActivity(selected, controller.signal),
+          client.conversations(controller.signal),
         ]);
         if (!controller.signal.aborted) {
           setMessages(chat.items);
           setActivity(projection.items);
+          setConversations(latestList.items);
         }
       } catch (cause) {
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not refresh conversation.");
@@ -116,6 +119,18 @@ export default function ConversationWorkspace({ client, openAgent }: {
     } finally { setWorking(false); }
   }
 
+  async function cancel(item: ConversationMessageRecord, run: ConversationActivityRecord) {
+    if (!selected || !selectedConversation || working) return;
+    setWorking(true); setError(""); setNotice("");
+    try {
+      await client.cancelConversationAgent(selected, item.id, selectedConversation.message_sequence, run.event_sequence);
+      await reloadConversation(selected);
+      setNotice("Agent cancellation recorded. Continue with a new reviewed message.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Agent cancellation was not accepted.");
+    } finally { setWorking(false); }
+  }
+
   async function remove() {
     if (!selected || working || !window.confirm("Delete and redact this conversation?")) return;
     setWorking(true); setError("");
@@ -162,6 +177,10 @@ export default function ConversationWorkspace({ client, openAgent }: {
               <p dir="auto">{item.text}</p>
               <small>Message {item.sequence} · {new Date(item.created_at).toLocaleString()}</small>
               {run && <p role="status">Agent {run.state}: {run.detail}</p>}
+              {run && !["completed", "failed", "cancelled", "needs_input", "blocked"].includes(run.state) &&
+                <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>
+                  Cancel Agent work
+                </button>}
               {!linked && item.sequence === selectedConversation.message_sequence &&
                 <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>
                   Start bounded Agent work
