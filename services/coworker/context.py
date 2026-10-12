@@ -122,14 +122,41 @@ class ContextService:
                     "byte_size": int(version.byte_size),
                     "object_key": version.object_key,
                 }
-                if document.deleted or version.state != "uploaded":
-                    sources.append(base | {
-                        "state": "invalidated",
-                        "reason": "deleted" if document.deleted else "not_uploaded",
-                    })
+                if (document.deleted or version.state != "uploaded" or
+                    (version.expires_at is not None and aware(version.expires_at) <= utcnow())):
+                    reason = (
+                        "deleted" if document.deleted
+                        else "not_uploaded" if version.state != "uploaded"
+                        else "expired"
+                    )
+                    sources.append(base | {"state": "invalidated", "reason": reason})
                     continue
                 sources.append(base | {"state": "active"})
             return run, sources
+
+    def _source_current(self, owner: str, source: dict) -> bool:
+        """Check retained owner/version/hash/expiry before and after object reading."""
+        with self.sessions() as db:
+            record = db.execute(
+                select(DocumentVersion, Document)
+                .join(Document, Document.id == DocumentVersion.document_id)
+                .where(
+                    DocumentVersion.id == source["version_id"],
+                    DocumentVersion.owner_id == owner,
+                    Document.owner_id == owner,
+                    Document.id == source["document_id"],
+                )
+            ).first()
+            if record is None:
+                return False
+            version, document = record
+            return (
+                not document.deleted
+                and version.state == "uploaded"
+                and version.sha256 == source["sha256"]
+                and int(version.byte_size) == source["byte_size"]
+                and (version.expires_at is None or aware(version.expires_at) > utcnow())
+            )
 
     def _resolved(self, owner: str, run_id: str) -> dict:
         run, sources = self._run_and_sources(owner, run_id)
@@ -242,6 +269,12 @@ class ContextService:
                     "reason": source["reason"],
                 })
                 continue
+            if not self._source_current(owner, source):
+                invalidated.append({
+                    "source_id": source["source_id"], "label": source["label"],
+                    "reason": "unavailable_or_changed",
+                })
+                continue
             body = self.storage.get(source["object_key"], source["byte_size"])
             if (
                 len(body) != source["byte_size"]
@@ -257,6 +290,14 @@ class ContextService:
                 source["kind"],
                 self.settings.max_source_chars,
             )
+            # Deletion/revocation during storage or extraction must not reach
+            # the model even if a previously authorized read returned bytes.
+            if not self._source_current(owner, source):
+                invalidated.append({
+                    "source_id": source["source_id"], "label": source["label"],
+                    "reason": "unavailable_or_changed",
+                })
+                continue
             added = add_item(
                 source_id=source["source_id"],
                 label=source["label"],

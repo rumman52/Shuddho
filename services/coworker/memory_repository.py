@@ -91,6 +91,10 @@ class MemoryRepository:
             ).with_for_update())
             if row is None:
                 raise not_found()
+            if request.expected_version is not None and row.version != request.expected_version:
+                raise CoworkerError(
+                    "memory_revision_conflict", "Memory changed. Review its latest version before editing.", 409,
+                )
             if request.expires_at is not None and aware(request.expires_at) <= utcnow():
                 raise CoworkerError("memory_expiry", "Memory expiry must be in the future.", 422)
             row.value = request.value

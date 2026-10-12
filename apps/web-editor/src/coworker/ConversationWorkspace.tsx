@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   CoworkerClient, WorkspaceError, type ConversationRecord,
-  type ConversationMessageRecord, type ConversationActivityRecord,
+  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
@@ -12,6 +12,14 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [selected, setSelected] = useState("");
   const [messages, setMessages] = useState<ConversationMessageRecord[]>([]);
   const [activity, setActivity] = useState<ConversationActivityRecord[]>([]);
+  const [manifest, setManifest] = useState<WorkspaceManifest | null>(null);
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  const [manifestError, setManifestError] = useState("");
+  const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
+  const [memoryEnabled, setMemoryEnabled] = useState(false);
+  const [memoryError, setMemoryError] = useState("");
+  const [editingMemory, setEditingMemory] = useState("");
+  const [memoryDraft, setMemoryDraft] = useState("");
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
   const [working, setWorking] = useState(false);
@@ -35,6 +43,68 @@ export default function ConversationWorkspace({ client, openAgent }: {
     });
     return () => controller.abort();
   }, [client]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    client.workspaceManifest(controller.signal).then(result => {
+      if (!controller.signal.aborted) { setManifest(result); setManifestError(""); }
+    }).catch(cause => {
+      if (!controller.signal.aborted) setManifestError(
+        cause instanceof Error ? cause.message : "Workspace sources are unavailable."
+      );
+    });
+    return () => controller.abort();
+  }, [client]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    client.memory(controller.signal).then(reply => {
+      if (!controller.signal.aborted) {
+        setMemoryEnabled(reply.enabled);
+        setMemoryFacts(reply.enabled ? reply.facts : []);
+      }
+    }).catch(cause => {
+      if (!controller.signal.aborted) setMemoryError(
+        cause instanceof Error ? cause.message : "Memory review is unavailable."
+      );
+    });
+    return () => controller.abort();
+  }, [client]);
+
+  async function refreshMemory() {
+    const reply = await client.memory();
+    setMemoryEnabled(reply.enabled);
+    setMemoryFacts(reply.enabled ? reply.facts : []);
+  }
+
+  async function saveMemory(fact: MemoryFact) {
+    if (working || !memoryDraft.trim()) return;
+    setWorking(true); setMemoryError("");
+    try {
+      await client.updateMemoryFact(
+        fact.id, memoryDraft.trim(), fact.language, fact.version, fact.expires_at ?? null,
+      );
+      await refreshMemory();
+      setEditingMemory(""); setMemoryDraft("");
+      setNotice("Memory updated with version check.");
+    } catch (cause) {
+      setMemoryError(cause instanceof Error ? cause.message : "Memory update failed.");
+      await refreshMemory().catch(() => undefined);
+    } finally { setWorking(false); }
+  }
+
+  async function removeMemory(fact: MemoryFact) {
+    if (working || !window.confirm("Delete this saved memory fact?")) return;
+    setWorking(true); setMemoryError("");
+    try {
+      await client.deleteMemoryFact(fact.id);
+      await refreshMemory();
+      setEditingMemory(""); setMemoryDraft("");
+      setNotice("Selected memory fact deleted.");
+    } catch (cause) {
+      setMemoryError(cause instanceof Error ? cause.message : "Memory deletion failed.");
+    } finally { setWorking(false); }
+  }
 
   async function reloadConversation(id: string) {
     const [messagesResponse, activityResponse, listResponse] = await Promise.all([
@@ -97,9 +167,12 @@ export default function ConversationWorkspace({ client, openAgent }: {
     try {
       const key = messageKey.current ?? crypto.randomUUID();
       messageKey.current = key;
-      await client.appendConversationMessage(selected, draft.trim(), key);
+      await client.appendConversationMessage(selected, draft.trim(), key, selectedSources);
       setDraft("");
+      setSelectedSources([]);
       messageKey.current = null;
+      const currentManifest = await client.workspaceManifest().catch(() => null);
+      if (currentManifest) setManifest(currentManifest);
       await reloadConversation(selected);
       setNotice("Message saved. Starting a task requires a separate action.");
     } catch (cause) {
@@ -163,10 +236,32 @@ export default function ConversationWorkspace({ client, openAgent }: {
       </form>
       <label htmlFor="cw-conversation-select">Conversation</label>
       <select id="cw-conversation-select" value={selected}
-        onChange={event => { setSelected(event.target.value); setDraft(""); messageKey.current = null; }}>
+        onChange={event => { setSelected(event.target.value); setDraft(""); setSelectedSources([]); messageKey.current = null; }}>
         <option value="">Choose a conversation</option>
         {conversations.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
       </select>
+      {memoryEnabled && <details>
+        <summary>Review saved memory ({memoryFacts.length})</summary>
+        {memoryError && <p role="alert">{memoryError}</p>}
+        <p>Memory is separate from conversation messages and never authorizes external actions.</p>
+        <ul>{memoryFacts.map(fact => <li key={fact.id}>
+          <strong>{fact.namespace} / {fact.key}</strong> · version {fact.version}
+          <p dir="auto">{fact.value}</p>
+          {!fact.active && <p>Expired</p>}
+          {editingMemory === fact.id ? <>
+            <label htmlFor="cw-memory-edit">Edit memory fact</label>
+            <textarea id="cw-memory-edit" value={memoryDraft} maxLength={2000} rows={3}
+              disabled={working} onChange={event => setMemoryDraft(event.target.value)} />
+            <button type="button" onClick={() => { void saveMemory(fact); }}
+              disabled={working || !memoryDraft.trim()}>Save reviewed edit</button>
+            <button type="button" onClick={() => { setEditingMemory(""); setMemoryDraft(""); }}
+              disabled={working}>Cancel edit</button>
+          </> : <button type="button" disabled={working} onClick={() => {
+            setEditingMemory(fact.id); setMemoryDraft(fact.value);
+          }}>Edit</button>}
+          <button type="button" disabled={working} onClick={() => { void removeMemory(fact); }}>Delete</button>
+        </li>)}</ul>
+      </details>}
       {selectedConversation && <>
         <button type="button" onClick={() => { void remove(); }} disabled={working}>Delete and redact</button>
         <ol aria-label="Conversation messages">
@@ -190,6 +285,26 @@ export default function ConversationWorkspace({ client, openAgent }: {
           })}
         </ol>
         <form onSubmit={send}>
+          {manifestError && <p role="status">Document selection unavailable: {manifestError}</p>}
+          {manifest && <fieldset>
+            <legend>Owned document context (optional, at most five)</legend>
+            <p>Workspace revision: <code>{manifest.revision_sha256.slice(0, 12)}</code>. Documents are rechecked when work starts.</p>
+            {manifest.truncated.documents && <p role="status">Only the first document page is shown. Review sources before selecting.</p>}
+            {manifest.documents.filter(doc => doc.available).map(doc =>
+              <label key={doc.version_id}>
+                <input type="checkbox" checked={selectedSources.includes(doc.version_id)}
+                  disabled={working || (!selectedSources.includes(doc.version_id) && selectedSources.length >= 5)}
+                  onChange={event => {
+                    setSelectedSources(current => event.target.checked
+                      ? [...current, doc.version_id].slice(0, 5)
+                      : current.filter(id => id !== doc.version_id));
+                    messageKey.current = null;
+                  }} />
+                {doc.name} · version {doc.version}
+              </label>
+            )}
+            <small>Selected files are untrusted inputs, not instructions or permissions. Memory and artifacts cannot authorize external actions.</small>
+          </fieldset>}
           <label htmlFor="cw-conversation-message">New message</label>
           <textarea id="cw-conversation-message" dir="auto" value={draft} minLength={1} maxLength={12000}
             rows={4} disabled={working} required onChange={event => setDraft(event.target.value)} />
