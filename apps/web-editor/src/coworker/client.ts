@@ -408,6 +408,20 @@ export function pause(ms: number, signal: AbortSignal) {
   });
 }
 
+export type ConversationRecord = {
+  id: string; title: string; message_sequence: number; created_at: string; updated_at: string;
+};
+export type ConversationMessageRecord = {
+  id: string; conversation_id: string; sequence: number; text: string;
+  selected_sources: Array<Record<string, unknown>>;
+  resource_links: Array<{ resource_type: string; resource_id: string }>;
+  created_at: string;
+};
+export type ConversationActivityRecord = {
+  message_id: string; sequence: number; run_id: string; state: string; phase: string;
+  cancel_requested: boolean; event_sequence: number; updated_at: string; detail: string;
+};
+
 export class CoworkerClient {
   private readonly base: string;
   constructor(base: string, private readonly getToken: () => Promise<string | null>) {
@@ -438,6 +452,62 @@ export class CoworkerClient {
 
   private async json<T>(path: string, options: RequestInit = {}): Promise<T> {
     return (await this.response(path, options)).json() as Promise<T>;
+  }
+  conversations(signal?: AbortSignal) {
+    return this.json<{ items: ConversationRecord[] }>("/api/v1/conversations", { signal });
+  }
+  createConversation(title: string, key: string) {
+    return this.json<ConversationRecord>("/api/v1/conversations", {
+      method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+      body: JSON.stringify({ title }),
+    });
+  }
+  conversationMessages(id: string, signal?: AbortSignal) {
+    return this.json<{ items: ConversationMessageRecord[]; next_cursor: number }>(
+      `/api/v1/conversations/${identifier(id)}/messages`, { signal });
+  }
+  async conversationHistory(id: string, signal?: AbortSignal) {
+    // Existing API is cursor-paginated; never silently hide recent messages
+    // once the first page reaches 50 items.
+    const items: ConversationMessageRecord[] = [];
+    let cursor = 0;
+    for (let page = 0; page < 20; page += 1) {
+      const batch = await this.json<{ items: ConversationMessageRecord[]; next_cursor: number }>(
+        `/api/v1/conversations/${identifier(id)}/messages?after=${cursor}&limit=100`, { signal });
+      items.push(...batch.items);
+      if (batch.items.length < 100) return { items, next_cursor: batch.next_cursor };
+      if (batch.next_cursor <= cursor) throw new WorkspaceError("Conversation pagination did not advance.");
+      cursor = batch.next_cursor;
+    }
+    return { items, next_cursor: cursor };
+  }
+  appendConversationMessage(id: string, text: string, key: string) {
+    return this.json<ConversationMessageRecord>(`/api/v1/conversations/${identifier(id)}/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, client_request_key: key, selected_resource_ids: [] }),
+    });
+  }
+  dispatchConversationMessage(id: string, messageId: string, sequence: number) {
+    return this.json<{ run_id: string; state: string; replayed: boolean }>(
+      `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/dispatch`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_sequence: sequence, output_language: "auto" }),
+      });
+  }
+  cancelConversationAgent(id: string, messageId: string, sequence: number, eventSequence: number) {
+    return this.json<{ run_id: string; state: string; event_sequence: number }>(
+      `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/cancel`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_sequence: sequence, expected_event_sequence: eventSequence }),
+      });
+  }
+  conversationActivity(id: string, signal?: AbortSignal) {
+    return this.json<{ items: ConversationActivityRecord[]; message_sequence: number }>(
+      `/api/v1/conversations/${identifier(id)}/activity`, { signal });
+  }
+  deleteConversation(id: string) {
+    return this.json<{ id: string; deleted: boolean }>(
+      `/api/v1/conversations/${identifier(id)}`, { method: "DELETE" });
   }
   me(signal?: AbortSignal) { return this.json<Workspace>("/api/v1/me", { signal }); }
   skills(signal?: AbortSignal) { return this.json<{ skills: WorkSkill[]; upload_formats?: string[] }>("/api/v1/skills", { signal }); }

@@ -9,7 +9,8 @@ from sqlalchemy import func, select
 
 from .conversation_schemas import ConversationCreate, MessageCreate
 from .errors import CoworkerError
-from .models import Account, Artifact, AuditEvent, Conversation, ConversationMessage, Document, DocumentVersion, utcnow
+from .models import Account, AgentRun, Artifact, AuditEvent, Conversation, ConversationMessage, Document, DocumentVersion, utcnow
+from .agent_repository import ACTIVE_RUN_STATES
 from .repository import iso, not_found
 
 
@@ -131,8 +132,21 @@ class ConversationRepository:
         with self.sessions.begin() as db:
             self._lock_account(db, owner)
             row = self._conversation(db, owner, conversation_id, lock=True)
+            messages = list(db.scalars(select(ConversationMessage).where(
+                ConversationMessage.conversation_id == row.id, ConversationMessage.owner_id == owner,
+            )))
+            linked_ids = [link.get("resource_id") for message in messages
+                          for link in (message.resource_links or [])
+                          if link.get("resource_type") == "agent_run"]
+            if linked_ids and db.scalar(select(AgentRun.id).where(
+                AgentRun.owner_id == owner, AgentRun.id.in_(linked_ids),
+                AgentRun.state.in_(ACTIVE_RUN_STATES),
+            ).limit(1)) is not None:
+                raise CoworkerError(
+                    "conversation_active_work", "Cancel active Agent work before deleting this conversation.", 409,
+                )
             row.deleted, row.title, row.updated_at = True, "", utcnow()
-            for message in db.scalars(select(ConversationMessage).where(ConversationMessage.conversation_id == row.id, ConversationMessage.owner_id == owner)):
+            for message in messages:
                 message.text, message.selected_sources, message.resource_links = "", [], []
             self._audit(db, owner, row.id, "conversation.deleted")
         return {"id": conversation_id, "deleted": True}

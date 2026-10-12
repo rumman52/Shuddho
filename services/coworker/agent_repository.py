@@ -1265,32 +1265,40 @@ class AgentRepository:
 
     def cancel(self, owner: str, run_id: str) -> dict:
         with self.sessions.begin() as db:
-            run = self._run(db, owner, run_id, lock=True)
-            if run.state in AGENT_TERMINAL_STATES:
-                return self._dto(db, run)
-            run.cancel_requested = True
-            for step in db.scalars(select(AgentStep).where(
-                AgentStep.run_id == run.id, AgentStep.owner_id == owner,
-                AgentStep.state.in_({"queued", "planned", "running", "awaiting_approval"}),
-            )):
-                if step.output.get("resource_type") == "action":
-                    action_row = db.scalar(select(ExternalAction).where(
-                        ExternalAction.id == step.output.get("resource_id"), ExternalAction.owner_id == owner,
-                    ).with_for_update())
-                    if action_row is not None and action_row.state in {"awaiting_approval", "queued"}:
-                        action_row.state, action_row.finished_at = "cancelled", utcnow()
-                        self._audit(db, owner, action_row.id, "action.cancelled_agent")
-                if step.state == "running" and step.output.get("resource_type") == "task":
-                    task_row = db.scalar(select(Task).where(
-                        Task.id == step.output.get("resource_id"), Task.owner_id == owner,
-                    ).with_for_update())
-                    if task_row is not None and task_row.state not in {"completed", "failed", "cancelled", "needs_input"}:
-                        task_row.cancel_requested = True
-                step.state = "cancelled"
-                step.finished_at = utcnow()
-            self._event(db, run, "cancelled", "cancelled", "Agent run cancelled.")
-            self._audit(db, owner, run.id, "agent_run_cancelled")
+            return self.cancel_in_session(db, owner, run_id)
+
+    def cancel_in_session(self, db, owner: str, run_id: str) -> dict:
+        """Cancel through the existing state/tool ledger inside an owned transaction."""
+        run = self._run(db, owner, run_id, lock=True)
+        if run.state in AGENT_TERMINAL_STATES:
             return self._dto(db, run)
+        run.cancel_requested = True
+        for step in db.scalars(select(AgentStep).where(
+            AgentStep.run_id == run.id, AgentStep.owner_id == owner,
+            AgentStep.state.in_({"queued", "planned", "running", "awaiting_approval"}),
+        )):
+            if step.output.get("resource_type") == "action":
+                action_row = db.scalar(select(ExternalAction).where(
+                    ExternalAction.id == step.output.get("resource_id"), ExternalAction.owner_id == owner,
+                ).with_for_update())
+                if action_row is not None and action_row.state in {"awaiting_approval", "queued"}:
+                    action_row.state, action_row.finished_at = "cancelled", utcnow()
+                    self._audit(db, owner, action_row.id, "action.cancelled_agent")
+            if step.state == "running" and step.output.get("resource_type") == "task":
+                task_row = db.scalar(select(Task).where(
+                    Task.id == step.output.get("resource_id"), Task.owner_id == owner,
+                ).with_for_update())
+                if task_row is not None and task_row.state not in {"completed", "failed", "cancelled", "needs_input"}:
+                    task_row.cancel_requested = True
+            step.state = "cancelled"
+            step.finished_at = utcnow()
+        self._event(db, run, "cancelled", "cancelled", "Agent run cancelled.")
+        # Cancelled queued runs must not be admitted by a still-pending outbox.
+        outbox = db.get(AgentOutbox, run.id)
+        if outbox is not None:
+            outbox.delivered = True
+        self._audit(db, owner, run.id, "agent_run_cancelled")
+        return self._dto(db, run)
 
     def tools(self) -> list[dict]:
         if not self.settings.agent_runtime_enabled:
