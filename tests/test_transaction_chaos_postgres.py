@@ -158,6 +158,15 @@ def test_postgres_terminated_backend_rolls_back_uncommitted_claim(repository):
             assert row.state == "queued"
             row.state = "executing"
             db.flush()
+            # Never run backend-termination injection against an accidental
+            # production/staging URL. Both DB name and role must match CI's
+            # dedicated disposable PostgreSQL service.
+            database_name, database_role = db.execute(
+                text("SELECT current_database(), current_user")
+            ).one()
+            assert (database_name, database_role) == (
+                "shuddho_coworker_test", "shuddho_test"
+            ), "Fault injection requires the disposable CI PostgreSQL database and role"
             pid = db.scalar(text("SELECT pg_backend_pid()"))
             with engine.connect() as killer:
                 assert killer.scalar(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid}) is True
