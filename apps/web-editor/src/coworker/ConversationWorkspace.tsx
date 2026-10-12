@@ -38,7 +38,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
 
   async function reloadConversation(id: string) {
     const [messagesResponse, activityResponse, listResponse] = await Promise.all([
-      client.conversationMessages(id), client.conversationActivity(id), client.conversations(),
+      client.conversationHistory(id), client.conversationActivity(id), client.conversations(),
     ]);
     setMessages(messagesResponse.items);
     setActivity(activityResponse.items);
@@ -53,7 +53,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
     const reload = async () => {
       try {
         const [chat, projection, latestList] = await Promise.all([
-          client.conversationMessages(selected, controller.signal),
+          client.conversationHistory(selected, controller.signal),
           client.conversationActivity(selected, controller.signal),
           client.conversations(controller.signal),
         ]);
