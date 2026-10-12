@@ -1293,6 +1293,10 @@ class AgentRepository:
             step.state = "cancelled"
             step.finished_at = utcnow()
         self._event(db, run, "cancelled", "cancelled", "Agent run cancelled.")
+        # Cancelled queued runs must not be admitted by a still-pending outbox.
+        outbox = db.get(AgentOutbox, run.id)
+        if outbox is not None:
+            outbox.delivered = True
         self._audit(db, owner, run.id, "agent_run_cancelled")
         return self._dto(db, run)
 
