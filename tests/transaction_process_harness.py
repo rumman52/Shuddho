@@ -164,7 +164,7 @@ def service_for(settings, sessions, origin):
     return ActionService(repo, providers, permission_gateway=gateway, credential_broker=broker)
 
 
-def action_worker(settings, origin, action_id, boundary, entered, release, temporal_address=None):
+def action_worker(settings, origin, action_id, boundary, entered, release, ready, temporal_address=None):
     """A disposable process with a new pool; never inherit parent's DB sockets."""
     sessions = session_factory(settings.database_url)
     try:
@@ -212,7 +212,11 @@ def action_worker(settings, origin, action_id, boundary, entered, release, tempo
                 activities=[activities.execute, activities.interrupted],
                 max_cached_workflows=0, graceful_shutdown_timeout=timedelta(seconds=1),
             )
-            await worker.run()
+            async with worker:
+                # A restarted worker must already poll before the parent unlocks
+                # virtual time; otherwise a slow CI spawn can race all timeouts.
+                ready.set()
+                await asyncio.Event().wait()
 
         asyncio.run(execute())
     finally:
@@ -291,15 +295,17 @@ class WorkerProcesses:
         return process, origin
 
     def start(self, settings, origin, action_id, boundary="none", temporal_address=None):
-        entered, release = CONTEXT.Event(), CONTEXT.Event()
+        entered, release, ready = CONTEXT.Event(), CONTEXT.Event(), CONTEXT.Event()
         # Spawn deserializes these asynchronously. Keep both controls alive
         # until children exit so their semaphore names cannot be unlinked by GC.
-        self.controls.append((entered, release))
+        self.controls.append((entered, release, ready))
         process = CONTEXT.Process(target=action_worker, args=(
-            settings, origin, action_id, boundary, entered, release, temporal_address,
+            settings, origin, action_id, boundary, entered, release, ready, temporal_address,
         ))
         process.start()
         self.processes.append(process)
+        if temporal_address is not None:
+            assert ready.wait(25), "Temporal worker did not start polling before recovery"
         return process, entered
 
     @staticmethod

@@ -13,6 +13,11 @@ failure/uncertainty cases, PostgreSQL public-API duplicate admission, hard API l
 commit and actual Temporal-server unavailability/outbox recovery. Seventeen executable
 tests are mandatory in the heavy CI job, with PostgreSQL required and zero skips allowed.
 
+Review PR: [#375](https://github.com/rumman52/Shuddho/pull/375). Initial implementation
+commit: `b8a5a2b2130991b383cc8a9bfd16472b903a8ed4`; the follow-up also binds restarted
+Temporal worker readiness before unlocking its virtual retry clock. The PR check suite
+records the exact final head and required CI evidence; this checkpoint precedes that result.
+
 The final focused local process/Temporal/HTTP plus existing safety/matrix run passed
 35 tests with one explicitly PostgreSQL-only skip (46.14 seconds). The new module itself
 passed sixteen tests and skipped its PostgreSQL admission race. Surrounding transaction/
