@@ -109,6 +109,9 @@ def test_postgres_different_action_cannot_steal_reviewed_transaction(repository)
             identity, binding["transaction_id"], binding["transaction_revision"], second["id"],
         )
     assert conflict.value.code == "transaction_execution_already_bound"
+    with pytest.raises(CoworkerError) as unbound:
+        services.actions.repo.approve(identity, second["id"], second["preview_hash"])
+    assert unbound.value.code == "transaction_action_binding_changed"
     assert services.actions.repo.claim_execution(second["id"]) is None
 
 
