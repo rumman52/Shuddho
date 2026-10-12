@@ -44,6 +44,9 @@ def transaction_services(repository):
     settings = replace(
         repository.settings,
         actions_enabled=True,
+        google_client_id="simulated-client-id",
+        google_client_secret="simulated-client-secret",
+        google_redirect_uri="http://127.0.0.1:5173/oauth/google/callback",
         connector_trust_boundary_enabled=True,
         personal_transactions_enabled=True,
         transaction_operations=frozenset({"google:negotiation_commitment_email"}),
