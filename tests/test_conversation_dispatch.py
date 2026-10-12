@@ -16,7 +16,7 @@ from services.coworker.models import AgentOutbox, AgentRun, ConversationMessage
 
 
 def setup(container, *, key="cw06"):
-    settings = replace(container.settings, conversations_enabled=True, agent_runtime_enabled=True)
+    settings = replace(container.settings, conversations_enabled=True, agent_runtime_enabled=True, work_services_enabled=True)
     conversations = ConversationRepository(container.repository.sessions, settings)
     dispatch = ConversationDispatchService(container.repository.sessions, settings, container.agent)
     owner = account(container, key)
@@ -140,7 +140,7 @@ def test_cancel_wrong_owner_is_hidden(container):
 
 
 def test_http_conversation_dispatch_and_activity_contract(container, signed_client):
-    container.settings = replace(container.settings, conversations_enabled=True, agent_runtime_enabled=True)
+    container.settings = replace(container.settings, conversations_enabled=True, agent_runtime_enabled=True, work_services_enabled=True)
     container.conversations.settings = container.settings
     container.conversation_dispatch.settings = container.settings
     client, headers = signed_client
