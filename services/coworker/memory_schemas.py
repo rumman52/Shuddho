@@ -34,6 +34,7 @@ class MemoryFactCreate(MemoryModel):
 
 
 class MemoryFactUpdate(MemoryModel):
+    expected_version: int | None = Field(default=None, ge=1)
     value: str = Field(min_length=1, max_length=2000)
     language: str = Field(default="auto", pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35)
     expires_at: datetime | None = None
