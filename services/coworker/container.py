@@ -37,6 +37,7 @@ from .browser import BrowserRepository
 from .sandbox import SandboxRepository
 from .conversation_repository import ConversationRepository
 from .conversation_dispatch import ConversationDispatchService
+from .workspace_manifest import WorkspaceManifestService
 
 
 @dataclass
@@ -69,10 +70,13 @@ class Container:
     sandbox: SandboxRepository | None = None
     conversations: ConversationRepository | None = None
     conversation_dispatch: ConversationDispatchService | None = None
+    workspace_manifest: WorkspaceManifestService | None = None
 
     def __post_init__(self):
         if self.conversations is None:
             self.conversations = ConversationRepository(self.repository.sessions, self.settings)
+        if self.workspace_manifest is None:
+            self.workspace_manifest = WorkspaceManifestService(self.repository.sessions, self.settings)
         if self.actions is None:
             providers = {"google": GoogleActions(self.settings)}
             if self.settings.microsoft_actions_enabled:
