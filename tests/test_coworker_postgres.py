@@ -584,7 +584,7 @@ def test_concurrent_conversation_dispatch_is_one_agent_run_and_one_outbox(reposi
     from services.coworker.conversation_repository import ConversationRepository
     from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
     from services.coworker.models import AgentOutbox, AgentRun
-    settings = replace(repository.settings, conversations_enabled=True, agent_runtime_enabled=True)
+    settings = replace(repository.settings, conversations_enabled=True, agent_runtime_enabled=True, work_services_enabled=True)
     agent = AgentRepository(repository.sessions, settings)
     conversations = ConversationRepository(repository.sessions, settings)
     dispatch = ConversationDispatchService(repository.sessions, settings, agent)
