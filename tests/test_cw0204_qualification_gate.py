@@ -151,7 +151,9 @@ def test_tampered_witness_rejected(tmp_path):
 def test_tampered_checkpoint_fails_frozen_hash(tmp_path):
     args = _bundle(tmp_path)
     obj = json.loads(args["checkpoint_path"].read_bytes())
-    obj["workflows"][0]["observation_ref"] = "replaced"
+    # Keep workflow file identities valid; tamper only with checkpoint-side
+    # infrastructure evidence so the independent signature must reject it.
+    obj["infrastructure"]["temporal"]["observation_ref"] = "replaced"
     _save(args["checkpoint_path"], obj)
     assert any("checkpoint_sha256 mismatch" in value for value in qualify_release(**args))
 
