@@ -572,3 +572,37 @@ def test_conversation_mutations_wait_for_account_lock_before_child_lock(reposito
             result = future.result(timeout=10)
             assert result is not None
             assert observed == ["account"]
+
+
+def test_concurrent_conversation_dispatch_is_one_agent_run_and_one_outbox(repository):
+    """PostgreSQL owner lock serializes repeated admission of one reviewed message."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from sqlalchemy import select
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.conversation_dispatch import ConversationDispatchService
+    from services.coworker.conversation_repository import ConversationRepository
+    from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
+    from services.coworker.models import AgentOutbox, AgentRun
+    settings = replace(repository.settings, conversations_enabled=True, agent_runtime_enabled=True)
+    agent = AgentRepository(repository.sessions, settings)
+    conversations = ConversationRepository(repository.sessions, settings)
+    dispatch = ConversationDispatchService(repository.sessions, settings, agent)
+    identity = owner(repository)
+    conversation, _ = conversations.create(identity, ConversationCreate(title="Report"), "postgres-cw06-conversation")
+    message, _ = conversations.append_message(
+        identity, conversation["id"],
+        MessageCreate(text="Create a detailed report about quarterly sales", client_request_key="postgres-cw06-message"),
+    )
+    gate = Barrier(6)
+    def launch(_):
+        gate.wait(timeout=10)
+        return dispatch.dispatch(identity, conversation["id"], message["id"], expected_sequence=1)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(launch, range(6)))
+    ids = [item[0]["run_id"] for item in results]
+    assert len(set(ids)) == 1
+    assert sum(item[1] for item in results) == 1
+    with repository.sessions() as db:
+        assert db.scalar(select(AgentRun.id).where(AgentRun.owner_id == identity)) == ids[0]
+        assert db.get(AgentOutbox, ids[0]) is not None
