@@ -408,6 +408,21 @@ export function pause(ms: number, signal: AbortSignal) {
   });
 }
 
+export type WorkspaceManifest = {
+  schema_version: number; workspace_id: string; workspace_name: string;
+  revision_sha256: string;
+  documents: Array<{
+    document_id: string; version_id: string; name: string;
+    version: number; sha256: string; available: boolean; trust: "untrusted_source";
+  }>;
+  artifacts: Array<{
+    artifact_id: string; name: string; sha256: string;
+    available: boolean; trust: "untrusted_source";
+  }>;
+  memory: Array<{ fact_id: string; namespace: string; key: string; version: number; active: boolean }>;
+  truncated: { documents: boolean; artifacts: boolean; memory: boolean };
+};
+
 export type ConversationRecord = {
   id: string; title: string; message_sequence: number; created_at: string; updated_at: string;
 };
@@ -453,6 +468,9 @@ export class CoworkerClient {
   private async json<T>(path: string, options: RequestInit = {}): Promise<T> {
     return (await this.response(path, options)).json() as Promise<T>;
   }
+  workspaceManifest(signal?: AbortSignal) {
+    return this.json<WorkspaceManifest>("/api/v1/workspace-manifest", { signal });
+  }
   conversations(signal?: AbortSignal) {
     return this.json<{ items: ConversationRecord[] }>("/api/v1/conversations", { signal });
   }
@@ -481,10 +499,10 @@ export class CoworkerClient {
     }
     return { items, next_cursor: cursor };
   }
-  appendConversationMessage(id: string, text: string, key: string) {
+  appendConversationMessage(id: string, text: string, key: string, selectedResourceIds: string[] = []) {
     return this.json<ConversationMessageRecord>(`/api/v1/conversations/${identifier(id)}/messages`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, client_request_key: key, selected_resource_ids: [] }),
+      body: JSON.stringify({ text, client_request_key: key, selected_resource_ids: selectedResourceIds }),
     });
   }
   dispatchConversationMessage(id: string, messageId: string, sequence: number) {
