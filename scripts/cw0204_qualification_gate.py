@@ -88,11 +88,15 @@ def validate_checkpoint(checkpoint, *, source_revision, rollout_id):
     # A workflow cannot qualify a release that was not yet observed deployed.
     # The later of the two API/worker readiness observations is the floor.
     deployment_times = [
-        _time(item.get("observed_at"))
-        for item in deployments.values()
-        if isinstance(item, dict) and _time(item.get("observed_at")) is not None
+        _time(deployments[role].get("observed_at"))
+        for role in ("api", "worker")
+        if isinstance(deployments.get(role), dict)
     ]
-    deployment_ready_at = max(deployment_times) if len(deployment_times) == 2 else None
+    deployment_ready_at = (
+        max(deployment_times)
+        if len(deployment_times) == 2 and all(time is not None for time in deployment_times)
+        else None
+    )
     infrastructure = checkpoint.get("infrastructure")
     infrastructure = infrastructure if isinstance(infrastructure, dict) else {}
     for name in sorted(INFRASTRUCTURE):
