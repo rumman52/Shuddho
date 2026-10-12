@@ -86,7 +86,7 @@ class ConversationRepository:
         sources = []
         for resource_id in resource_ids:
             identity = str(resource_id)
-            version = db.scalar(select(DocumentVersion).join(Document, Document.id == DocumentVersion.document_id).where(DocumentVersion.id == identity, DocumentVersion.owner_id == owner, Document.owner_id == owner, Document.deleted.is_(False), DocumentVersion.state == "uploaded"))
+            version = db.scalar(select(DocumentVersion).join(Document, Document.id == DocumentVersion.document_id).where(DocumentVersion.id == identity, DocumentVersion.owner_id == owner, Document.owner_id == owner, Document.deleted.is_(False), DocumentVersion.state == "uploaded", DocumentVersion.expires_at > utcnow()))
             if version is not None:
                 sources.append({"resource_type": "document_version", "resource_id": identity, "document_id": version.document_id, "version": version.version, "sha256": version.sha256, "trust": "untrusted_source"})
                 continue
