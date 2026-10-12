@@ -307,3 +307,11 @@ def test_workflow_after_both_deployments_is_accepted():
     checkpoint = _checkpoint()
     checkpoint["deployments"]["worker"]["observed_at"] = "2026-10-12T08:59:00Z"
     assert validate_checkpoint(checkpoint, source_revision=REV, rollout_id=ROLLOUT) == []
+
+
+def test_extra_deployment_metadata_cannot_bypass_workflow_chronology():
+    checkpoint = _checkpoint()
+    checkpoint["deployments"]["worker"]["observed_at"] = "2026-10-12T09:05:00Z"
+    checkpoint["deployments"]["documentation"] = {"observed_at": OBSERVED}
+    errors = validate_checkpoint(checkpoint, source_revision=REV, rollout_id=ROLLOUT)
+    assert any("workflow observed before frozen" in error for error in errors)
