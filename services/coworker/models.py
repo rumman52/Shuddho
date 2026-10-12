@@ -33,6 +33,42 @@ class Workspace(Base):
     name: Mapped[str] = mapped_column(String(100), default="My workspace")
 
 
+class Conversation(Base):
+    __tablename__ = "cw_conversations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(160))
+    message_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_conversations_owner_key"),
+        UniqueConstraint("id", "owner_id", name="uq_cw_conversations_id_owner"),
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "cw_conversation_messages"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    client_request_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    sequence: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    selected_sources: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    resource_links: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(["conversation_id", "owner_id"], ["cw_conversations.id", "cw_conversations.owner_id"]),
+        UniqueConstraint("conversation_id", "client_request_key", name="uq_cw_messages_conversation_key"),
+        UniqueConstraint("conversation_id", "sequence", name="uq_cw_messages_conversation_sequence"),
+    )
+
+
 class Document(Base):
     __tablename__ = "cw_documents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
