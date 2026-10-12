@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from scripts.cw0204_qualification_gate import (
     INFRASTRUCTURE, WORKFLOWS, canonical_bytes, fault_tree_sha256,
     qualify_release, read_json_file, sha256, validate_checkpoint,
+    verify_workflow_evidence_files,
 )
 from scripts.transaction_chaos_matrix import SCENARIOS
 
@@ -73,7 +74,24 @@ def _bundle(folder):
     _save(folder / "manifest.json", {
         "schema_version": 1, "source_revision": REV, "rollout_id": ROLLOUT, "scenarios": entries,
     })
-    _save(folder / "checkpoint.json", _checkpoint())
+    checkpoint = _checkpoint()
+    workflow_dir = folder / "workflow-evidence"
+    workflow_dir.mkdir()
+    for row in checkpoint["workflows"]:
+        name = row["id"]
+        row["evidence_file"] = name + ".json"
+        record = {k: row[k] for k in (
+            "id", "test_run_id", "observed_at", "result", "source_revision",
+            "rollout_id", "api_deployment_id", "worker_deployment_id", "observation_ref",
+        )}
+        record["environment"] = "staging"
+        record["observation_source"] = "synthetic-ci-observation"
+        raw = canonical_bytes(record)
+        (workflow_dir / (name + ".json")).write_bytes(raw)
+        row["evidence_sha256"] = sha256(raw)
+    _save(folder / "checkpoint.json", checkpoint)
+    workflow_errors, workflow_tree = verify_workflow_evidence_files(checkpoint, workflow_dir)
+    assert workflow_errors == [] and workflow_tree
     key = Ed25519PrivateKey.generate()
     pub = key.public_key()
     (folder / "pub.pem").write_bytes(pub.public_bytes(
@@ -87,6 +105,7 @@ def _bundle(folder):
         "manifest_sha256": sha256((folder / "manifest.json").read_bytes()),
         "checkpoint_sha256": sha256((folder / "checkpoint.json").read_bytes()),
         "evidence_tree_sha256": fault_tree_sha256(directory),
+        "workflow_tree_sha256": workflow_tree,
     }
     witness["signature_base64"] = base64.b64encode(key.sign(canonical_bytes(witness))).decode()
     _save(folder / "witness.json", witness)
@@ -94,6 +113,7 @@ def _bundle(folder):
         "manifest_path": folder / "manifest.json",
         "checkpoint_path": folder / "checkpoint.json",
         "evidence_dir": directory,
+        "workflow_evidence_dir": workflow_dir,
         "attestation_path": folder / "witness.json",
         "trusted_public_key": folder / "pub.pem",
         "trusted_key_sha256": sha256(der),
@@ -131,7 +151,9 @@ def test_tampered_witness_rejected(tmp_path):
 def test_tampered_checkpoint_fails_frozen_hash(tmp_path):
     args = _bundle(tmp_path)
     obj = json.loads(args["checkpoint_path"].read_bytes())
-    obj["workflows"][0]["observation_ref"] = "replaced"
+    # Keep workflow file identities valid; tamper only with checkpoint-side
+    # infrastructure evidence so the independent signature must reject it.
+    obj["infrastructure"]["temporal"]["observation_ref"] = "replaced"
     _save(args["checkpoint_path"], obj)
     assert any("checkpoint_sha256 mismatch" in value for value in qualify_release(**args))
 
@@ -196,3 +218,100 @@ def test_bogus_manifest_rollout_denied(tmp_path):
     args = _bundle(tmp_path)
     args["rollout_id"] = "wrong-release"
     assert qualify_release(**args)
+
+
+def test_missing_workflow_file_denied_even_with_valid_reviewer_signature(tmp_path):
+    args = _bundle(tmp_path)
+    (args["workflow_evidence_dir"] / "goal.json").unlink()
+    assert any("CW-04" in error for error in qualify_release(**args))
+
+
+def test_changed_workflow_file_denied_even_when_other_evidence_is_untouched(tmp_path):
+    args = _bundle(tmp_path)
+    target = args["workflow_evidence_dir"] / "reminder.json"
+    target.write_bytes(target.read_bytes() + b" ")
+    assert any("evidence hash mismatch" in error for error in qualify_release(**args))
+
+
+def test_replaced_workflow_file_and_updated_checkpoint_still_require_new_signature(tmp_path):
+    args = _bundle(tmp_path)
+    target = args["workflow_evidence_dir"] / "worker_restart.json"
+    record = json.loads(target.read_bytes())
+    record["observation_source"] = "substituted-observer"
+    raw = canonical_bytes(record)
+    target.write_bytes(raw)
+    checkpoint = json.loads(args["checkpoint_path"].read_bytes())
+    item = next(row for row in checkpoint["workflows"] if row["id"] == "worker_restart")
+    item["evidence_sha256"] = sha256(raw)
+    _save(args["checkpoint_path"], checkpoint)
+    failures = qualify_release(**args)
+    assert any("checkpoint_sha256 mismatch" in problem for problem in failures)
+
+
+def test_workflow_record_identity_mismatch_denied(tmp_path):
+    args = _bundle(tmp_path)
+    target = args["workflow_evidence_dir"] / "backup_restore.json"
+    data = json.loads(target.read_bytes())
+    data["api_deployment_id"] = "fake-api-deployment"
+    raw = canonical_bytes(data)
+    target.write_bytes(raw)
+    checkpoint = json.loads(args["checkpoint_path"].read_bytes())
+    item = next(row for row in checkpoint["workflows"] if row["id"] == "backup_restore")
+    item["evidence_sha256"] = sha256(raw)
+    _save(args["checkpoint_path"], checkpoint)
+    assert any("api_deployment_id evidence identity mismatch" in problem
+               for problem in qualify_release(**args))
+
+
+def test_workflow_symlink_or_unexpected_file_denied(tmp_path):
+    args = _bundle(tmp_path)
+    directory = args["workflow_evidence_dir"]
+    (directory / "extra.json").write_text("{}")
+    assert any("exactly seven" in problem for problem in qualify_release(**args))
+    (directory / "extra.json").unlink()
+    target = directory / "draft.json"
+    target.unlink()
+    target.symlink_to(directory / "goal.json")
+    assert any("unsafe" in problem for problem in qualify_release(**args))
+
+
+def test_workflow_missing_observation_source_denied(tmp_path):
+    args = _bundle(tmp_path)
+    target = args["workflow_evidence_dir"] / "read.json"
+    record = json.loads(target.read_bytes())
+    record.pop("observation_source")
+    raw = canonical_bytes(record)
+    target.write_bytes(raw)
+    checkpoint = json.loads(args["checkpoint_path"].read_bytes())
+    item = next(row for row in checkpoint["workflows"] if row["id"] == "read")
+    item["evidence_sha256"] = sha256(raw)
+    _save(args["checkpoint_path"], checkpoint)
+    assert any("missing observation source" in problem for problem in qualify_release(**args))
+
+
+def test_workflow_evidence_directory_required(tmp_path):
+    args = _bundle(tmp_path)
+    missing = tmp_path / "missing-workflows"
+    args["workflow_evidence_dir"] = missing
+    assert any("workflow evidence directory missing" in problem for problem in qualify_release(**args))
+
+
+def test_workflow_cannot_predate_frozen_worker_deployment():
+    checkpoint = _checkpoint()
+    checkpoint["deployments"]["worker"]["observed_at"] = "2026-10-12T09:01:00Z"
+    problems = validate_checkpoint(checkpoint, source_revision=REV, rollout_id=ROLLOUT)
+    assert any("workflow observed before frozen" in problem for problem in problems)
+
+
+def test_workflow_after_both_deployments_is_accepted():
+    checkpoint = _checkpoint()
+    checkpoint["deployments"]["worker"]["observed_at"] = "2026-10-12T08:59:00Z"
+    assert validate_checkpoint(checkpoint, source_revision=REV, rollout_id=ROLLOUT) == []
+
+
+def test_extra_deployment_metadata_cannot_bypass_workflow_chronology():
+    checkpoint = _checkpoint()
+    checkpoint["deployments"]["worker"]["observed_at"] = "2026-10-12T09:05:00Z"
+    checkpoint["deployments"]["documentation"] = {"observed_at": OBSERVED}
+    errors = validate_checkpoint(checkpoint, source_revision=REV, rollout_id=ROLLOUT)
+    assert any("workflow observed before frozen" in error for error in errors)

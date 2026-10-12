@@ -6,9 +6,9 @@ This offline gate adds three explicit checks:
 
 1. CW-02: All sixteen entries and their actual evidence file bytes must pass the existing scenario and SHA-256 checks, and the complete evidence-file tree digest is bound to the reviewer signature.
 2. CW-03: Both API and worker must report the same full forty-character source revision and individual deployment IDs. PostgreSQL, Temporal, private storage, model and synthetic identity must have observed passing prerequisites with nonempty references.
-3. CW-04: Seven independently reviewed staged workflow records (read, draft, goal, reminder, worker_restart, backup_restore and flag_rollback) must match the exact release, rollout and deployment IDs, and include unique run IDs and evidence hashes.
+3. CW-04: Seven independently reviewed staged workflow records (read, draft, goal, reminder, worker_restart, backup_restore and flag_rollback) must match the exact release, rollout and deployment IDs, and include unique run IDs plus checksums of seven actual workflow evidence files.
 
-A separate release reviewer signs canonical compact sorted JSON containing the raw CW-02 manifest hash, CW-03/04 checkpoint hash and actual evidence tree hash. The verifier requires Ed25519 and the independently pinned SHA-256 of the public key's DER SubjectPublicKeyInfo. Do not accept a key or fingerprint obtained only from the evidence submitter.
+A separate release reviewer signs canonical compact sorted JSON containing the raw CW-02 manifest hash, CW-03/04 checkpoint hash, actual CW-02 fault tree hash and actual CW-04 workflow tree hash. The verifier requires Ed25519 and the independently pinned SHA-256 of the public key's DER SubjectPublicKeyInfo. Do not accept a key or fingerprint obtained only from the evidence submitter.
 
 ### Operating procedure
 
@@ -20,16 +20,23 @@ The verifier is intentionally **read-only**. Example:
       --manifest /secure/cw02-manifest.json \
       --checkpoint /secure/cw0304-checkpoint.json \
       --evidence-dir /secure/cw02-evidence \
+      --workflow-evidence-dir /secure/cw04-workflow-evidence \
       --attestation /secure/reviewer-attestation.json \
       --trusted-public-key /secure/approved-reviewer-public.pem \
       --trusted-key-sha256 INDEPENDENTLY_PINNED_PUBLIC_KEY_FINGERPRINT \
       --source-revision FULL_FROZEN_40_CHARACTER_GIT_SHA \
       --rollout-id EXACT_STAGING_ROLLOUT
 
-The attestation has: schema_version=1, role=independent_release_reviewer, reviewer_id, timezone-aware attested_at, source_revision, rollout_id, manifest_sha256, checkpoint_sha256, evidence_tree_sha256, and a base64 Ed25519 signature over all fields except signature_base64.
+The attestation has: schema_version=1, role=independent_release_reviewer, reviewer_id, timezone-aware attested_at, source_revision, rollout_id, manifest_sha256, checkpoint_sha256, evidence_tree_sha256, workflow_tree_sha256, and a base64 Ed25519 signature over all fields except signature_base64.
 
 CI runs *synthetic* positive/negative tests using ephemeral reviewer keys, rejecting missing workflow data, modified evidence, mismatched deployments, duplicate JSON keys, altered signatures, and substituted reviewer keys. Synthetic tests cannot certify actual staging outcomes.
 
 **Scope limitations:** The verifier authenticates a configured reviewer approval of a given byte-for-byte bundle. It does NOT prove a provider mutation count, the truth of the staging observations, the reviewer organization's key custody, clock accuracy, or real process recovery. Independently inspect those facts before operational release. Do not fabricate receipts, enable unqualified transactions or bypass the existing provider/action kill switches.
 
 CW-01–08 remain not fully production-qualified pending operated CW-02–04 staging, and CW-08 end-to-end and revocation/reconnect testing.
+
+### CW-04 workflow evidence files (mandatory)
+
+The `--workflow-evidence-dir` must contain **exactly seven** UTF-8 JSON files named `read.json`, `draft.json`, `goal.json`, `reminder.json`, `worker_restart.json`, `backup_restore.json` and `flag_rollback.json`. Each checkpoint workflow row must declare `evidence_file` matching its exact filename and `evidence_sha256` matching its real bytes. Each file binds `id`, `test_run_id`, `observed_at`, `result`, `source_revision`, `rollout_id`, `api_deployment_id`, `worker_deployment_id` and `observation_ref` to the checkpoint row, and records `environment: staging` plus an `observation_source` string.
+
+The gate checks hashes and identities, rejects missing/extra/symlink/oversized files, requires each workflow observation to occur no earlier than **both** API and worker deployment readiness observations, and includes the actual seven-file tree digest in the independent reviewer signature. Reviewer-signed self-reports still do not establish the truth of provider events or worker restarts; release engineering must independently inspect real systems and provider mutation counters.

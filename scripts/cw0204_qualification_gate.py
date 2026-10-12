@@ -85,6 +85,18 @@ def validate_checkpoint(checkpoint, *, source_revision, rollout_id):
             errors.append(f"{role}: missing deployment ID")
         elif not _time(item.get("observed_at")):
             errors.append(f"{role}: missing timezone-aware observation")
+    # A workflow cannot qualify a release that was not yet observed deployed.
+    # The later of the two API/worker readiness observations is the floor.
+    deployment_times = [
+        _time(deployments[role].get("observed_at"))
+        for role in ("api", "worker")
+        if isinstance(deployments.get(role), dict)
+    ]
+    deployment_ready_at = (
+        max(deployment_times)
+        if len(deployment_times) == 2 and all(time is not None for time in deployment_times)
+        else None
+    )
     infrastructure = checkpoint.get("infrastructure")
     infrastructure = infrastructure if isinstance(infrastructure, dict) else {}
     for name in sorted(INFRASTRUCTURE):
@@ -119,8 +131,11 @@ def validate_checkpoint(checkpoint, *, source_revision, rollout_id):
         ):
             if not required or item.get(key) != required:
                 errors.append(f"{name}: {key} binding mismatch")
-        if item.get("result") != "passed" or not _time(item.get("observed_at")):
+        observed_at = _time(item.get("observed_at"))
+        if item.get("result") != "passed" or not observed_at:
             errors.append(f"{name}: incomplete workflow observation")
+        elif deployment_ready_at is not None and observed_at < deployment_ready_at:
+            errors.append(f"{name}: workflow observed before frozen API/worker deployment was ready")
         if not isinstance(item.get("evidence_sha256"), str) or not SHA256.fullmatch(item["evidence_sha256"]):
             errors.append(f"{name}: invalid workflow evidence SHA-256")
         if not isinstance(item.get("observation_ref"), str) or not item["observation_ref"].strip():
@@ -144,8 +159,67 @@ def fault_tree_sha256(folder):
     return sha256(canonical_bytes(entries))
 
 
+def verify_workflow_evidence_files(checkpoint, folder):
+    """Bind actual CW-04 bytes, exact rollout/run IDs and observer to reviewer approval.
+
+    This is an integrity/consistency check, NOT a claim that observations are
+    independently true. Release engineering must inspect source systems.
+    """
+    errors = []
+    if folder.is_symlink() or not folder.is_dir():
+        return ["CW-04 workflow evidence directory missing or unsafe"], None
+    expected_files = {name + ".json" for name in WORKFLOWS}
+    try:
+        actual_files = {entry.name for entry in folder.iterdir()}
+    except OSError as exc:
+        return [f"CW-04 workflow evidence directory unreadable: {exc}"], None
+    if actual_files != expected_files:
+        errors.append("CW-04 requires exactly seven named workflow evidence files")
+    rows = checkpoint.get("workflows")
+    if not isinstance(rows, list):
+        return errors + ["CW-04 workflows must be a list"], None
+    by_name = {
+        row["id"]: row for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"] in WORKFLOWS
+    }
+    tree = []
+    for name in sorted(WORKFLOWS):
+        row = by_name.get(name)
+        if row is None:
+            errors.append(f"CW-04 {name}: missing manifest row")
+            continue
+        filename = name + ".json"
+        if row.get("evidence_file") != filename:
+            errors.append(f"CW-04 {name}: expected evidence_file {filename}")
+        try:
+            document, raw = read_json_file(folder / filename)
+        except (OSError, ValueError, TypeError) as exc:
+            errors.append(f"CW-04 {name}: unreadable/unsafe evidence file: {exc}")
+            continue
+        digest = sha256(raw)
+        tree.append({"file": filename, "sha256": digest})
+        if row.get("evidence_sha256") != digest:
+            errors.append(f"CW-04 {name}: evidence hash mismatch")
+        for field in (
+            "id", "source_revision", "rollout_id", "api_deployment_id",
+            "worker_deployment_id", "test_run_id", "observed_at", "result",
+            "observation_ref",
+        ):
+            expected = name if field == "id" else row.get(field)
+            if document.get(field) != expected:
+                errors.append(f"CW-04 {name}: {field} evidence identity mismatch")
+        if document.get("environment") != "staging":
+            errors.append(f"CW-04 {name}: staging observation required")
+        observer = document.get("observation_source")
+        if not isinstance(observer, str) or not observer.strip():
+            errors.append(f"CW-04 {name}: missing observation source")
+    if errors or len(tree) != len(WORKFLOWS):
+        return errors or ["CW-04 workflow evidence incomplete"], None
+    return [], sha256(canonical_bytes(tree))
+
+
 def verify_witness(witness, *, pem, trusted_key_sha256, manifest_sha256,
-                   checkpoint_sha256, tree_sha256, source_revision, rollout_id, latest_observation):
+                   checkpoint_sha256, tree_sha256, workflow_tree_sha256, source_revision, rollout_id, latest_observation):
     errors = []
     try:
         key = serialization.load_pem_public_key(pem)
@@ -161,6 +235,7 @@ def verify_witness(witness, *, pem, trusted_key_sha256, manifest_sha256,
         "source_revision": source_revision, "rollout_id": rollout_id,
         "manifest_sha256": manifest_sha256, "checkpoint_sha256": checkpoint_sha256,
         "evidence_tree_sha256": tree_sha256,
+        "workflow_tree_sha256": workflow_tree_sha256,
     }
     for field, value in required.items():
         if witness.get(field) != value:
@@ -182,7 +257,7 @@ def verify_witness(witness, *, pem, trusted_key_sha256, manifest_sha256,
     return errors
 
 
-def qualify_release(*, manifest_path, checkpoint_path, evidence_dir,
+def qualify_release(*, manifest_path, checkpoint_path, evidence_dir, workflow_evidence_dir,
                     attestation_path, trusted_public_key, trusted_key_sha256,
                     source_revision, rollout_id):
     try:
@@ -195,8 +270,10 @@ def qualify_release(*, manifest_path, checkpoint_path, evidence_dir,
         errors = qualify(manifest, expected_revision=source_revision, expected_rollout=rollout_id)
         errors += verify_evidence_files(manifest, evidence_dir)
         errors += validate_checkpoint(checkpoint, source_revision=source_revision, rollout_id=rollout_id)
-        if errors:
-            return errors
+        workflow_errors, workflow_tree = verify_workflow_evidence_files(checkpoint, workflow_evidence_dir)
+        errors += workflow_errors
+        if errors or workflow_tree is None:
+            return errors or ["CW-04 workflow evidence incomplete"]
         timestamps = [_time(item.get("observed_at")) for item in manifest["scenarios"] + checkpoint["workflows"]]
         timestamps += [_time(row.get("observed_at")) for row in checkpoint["deployments"].values()]
         latest = max((t for t in timestamps if t is not None), default=None)
@@ -204,6 +281,7 @@ def qualify_release(*, manifest_path, checkpoint_path, evidence_dir,
                               manifest_sha256=sha256(manifest_raw),
                               checkpoint_sha256=sha256(checkpoint_raw),
                               tree_sha256=fault_tree_sha256(evidence_dir),
+                              workflow_tree_sha256=workflow_tree,
                               source_revision=source_revision, rollout_id=rollout_id,
                               latest_observation=latest)
     except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -212,7 +290,7 @@ def qualify_release(*, manifest_path, checkpoint_path, evidence_dir,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for key in ("manifest", "checkpoint", "evidence-dir", "attestation", "trusted-public-key"):
+    for key in ("manifest", "checkpoint", "evidence-dir", "workflow-evidence-dir", "attestation", "trusted-public-key"):
         parser.add_argument("--" + key, required=True, type=Path)
     parser.add_argument("--trusted-key-sha256", required=True)
     parser.add_argument("--source-revision", required=True)
@@ -220,7 +298,8 @@ def main():
     args = parser.parse_args()
     failures = qualify_release(
         manifest_path=args.manifest, checkpoint_path=args.checkpoint,
-        evidence_dir=args.evidence_dir, attestation_path=args.attestation,
+        evidence_dir=args.evidence_dir, workflow_evidence_dir=args.workflow_evidence_dir,
+        attestation_path=args.attestation,
         trusted_public_key=args.trusted_public_key,
         trusted_key_sha256=args.trusted_key_sha256,
         source_revision=args.source_revision, rollout_id=args.rollout_id,
