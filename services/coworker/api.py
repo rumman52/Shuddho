@@ -1535,6 +1535,13 @@ def agent_tools(identity: Identity, services: Services):
     return {"enabled": services.settings.agent_runtime_enabled, "tools": services.agent.tools()}
 
 
+@router.get("/workspace-manifest")
+def get_workspace_manifest(identity: Identity, services: Services, response: Response):
+    """Owner-scoped context inventory; never includes object-storage keys or memory values."""
+    response.headers["Cache-Control"] = "no-store"
+    return services.workspace_manifest.get(identity.account_id)
+
+
 @router.post("/conversations", status_code=201)
 def create_conversation(payload: ConversationCreate, identity: Identity, services: Services, response: Response,
                         idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
