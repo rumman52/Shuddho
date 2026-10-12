@@ -7,7 +7,7 @@ pytest.importorskip("temporalio")
 
 from sqlalchemy import select
 
-from test_coworker import account, container
+from test_coworker import account, container, signed_client
 from services.coworker.conversation_dispatch import ConversationDispatchService
 from services.coworker.conversation_repository import ConversationRepository
 from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
