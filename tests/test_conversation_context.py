@@ -3,6 +3,11 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+
+# Lightweight CI does not install coworker extras; mandatory coworker CI does.
+pytest.importorskip("sqlalchemy")
+pytest.importorskip("temporalio")
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
