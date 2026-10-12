@@ -33,3 +33,10 @@ class MessageCreate(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("Select each resource once")
         return value
+
+
+class ConversationDispatchCreate(BaseModel):
+    """Optimistic revision binding; no action IDs or approval authority."""
+    model_config = ConfigDict(extra="forbid")
+    expected_sequence: int = Field(ge=1)
+    output_language: str = Field(default="auto", max_length=35, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
