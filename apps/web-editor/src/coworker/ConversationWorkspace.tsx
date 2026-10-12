@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   CoworkerClient, WorkspaceError, type ConversationRecord,
-  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest,
+  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
@@ -15,6 +15,11 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [manifest, setManifest] = useState<WorkspaceManifest | null>(null);
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [manifestError, setManifestError] = useState("");
+  const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
+  const [memoryEnabled, setMemoryEnabled] = useState(false);
+  const [memoryError, setMemoryError] = useState("");
+  const [editingMemory, setEditingMemory] = useState("");
+  const [memoryDraft, setMemoryDraft] = useState("");
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
   const [working, setWorking] = useState(false);
@@ -50,6 +55,56 @@ export default function ConversationWorkspace({ client, openAgent }: {
     });
     return () => controller.abort();
   }, [client]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    client.memory(controller.signal).then(reply => {
+      if (!controller.signal.aborted) {
+        setMemoryEnabled(reply.enabled);
+        setMemoryFacts(reply.enabled ? reply.facts : []);
+      }
+    }).catch(cause => {
+      if (!controller.signal.aborted) setMemoryError(
+        cause instanceof Error ? cause.message : "Memory review is unavailable."
+      );
+    });
+    return () => controller.abort();
+  }, [client]);
+
+  async function refreshMemory() {
+    const reply = await client.memory();
+    setMemoryEnabled(reply.enabled);
+    setMemoryFacts(reply.enabled ? reply.facts : []);
+  }
+
+  async function saveMemory(fact: MemoryFact) {
+    if (working || !memoryDraft.trim()) return;
+    setWorking(true); setMemoryError("");
+    try {
+      await client.updateMemoryFact(
+        fact.id, memoryDraft.trim(), fact.language, fact.version, fact.expires_at ?? null,
+      );
+      await refreshMemory();
+      setEditingMemory(""); setMemoryDraft("");
+      setNotice("Memory updated with version check.");
+    } catch (cause) {
+      setMemoryError(cause instanceof Error ? cause.message : "Memory update failed.");
+      await refreshMemory().catch(() => undefined);
+    } finally { setWorking(false); }
+  }
+
+  async function removeMemory(fact: MemoryFact) {
+    if (working || !window.confirm("Delete this saved memory fact?")) return;
+    setWorking(true); setMemoryError("");
+    try {
+      await client.deleteMemoryFact(fact.id);
+      await refreshMemory();
+      setEditingMemory(""); setMemoryDraft("");
+      setNotice("Selected memory fact deleted.");
+    } catch (cause) {
+      setMemoryError(cause instanceof Error ? cause.message : "Memory deletion failed.");
+    } finally { setWorking(false); }
+  }
 
   async function reloadConversation(id: string) {
     const [messagesResponse, activityResponse, listResponse] = await Promise.all([
@@ -185,6 +240,28 @@ export default function ConversationWorkspace({ client, openAgent }: {
         <option value="">Choose a conversation</option>
         {conversations.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
       </select>
+      {memoryEnabled && <details>
+        <summary>Review saved memory ({memoryFacts.length})</summary>
+        {memoryError && <p role="alert">{memoryError}</p>}
+        <p>Memory is separate from conversation messages and never authorizes external actions.</p>
+        <ul>{memoryFacts.map(fact => <li key={fact.id}>
+          <strong>{fact.namespace} / {fact.key}</strong> · version {fact.version}
+          <p dir="auto">{fact.value}</p>
+          {!fact.active && <p>Expired</p>}
+          {editingMemory === fact.id ? <>
+            <label htmlFor="cw-memory-edit">Edit memory fact</label>
+            <textarea id="cw-memory-edit" value={memoryDraft} maxLength={2000} rows={3}
+              disabled={working} onChange={event => setMemoryDraft(event.target.value)} />
+            <button type="button" onClick={() => { void saveMemory(fact); }}
+              disabled={working || !memoryDraft.trim()}>Save reviewed edit</button>
+            <button type="button" onClick={() => { setEditingMemory(""); setMemoryDraft(""); }}
+              disabled={working}>Cancel edit</button>
+          </> : <button type="button" disabled={working} onClick={() => {
+            setEditingMemory(fact.id); setMemoryDraft(fact.value);
+          }}>Edit</button>}
+          <button type="button" disabled={working} onClick={() => { void removeMemory(fact); }}>Delete</button>
+        </li>)}</ul>
+      </details>}
       {selectedConversation && <>
         <button type="button" onClick={() => { void remove(); }} disabled={working}>Delete and redact</button>
         <ol aria-label="Conversation messages">
