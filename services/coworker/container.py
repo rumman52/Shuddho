@@ -36,6 +36,7 @@ from .retention import RetentionService
 from .browser import BrowserRepository
 from .sandbox import SandboxRepository
 from .conversation_repository import ConversationRepository
+from .conversation_dispatch import ConversationDispatchService
 
 
 @dataclass
@@ -67,6 +68,7 @@ class Container:
     browser: BrowserRepository | None = None
     sandbox: SandboxRepository | None = None
     conversations: ConversationRepository | None = None
+    conversation_dispatch: ConversationDispatchService | None = None
 
     def __post_init__(self):
         if self.conversations is None:
@@ -114,6 +116,8 @@ class Container:
             )
         if self.agent is None:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
+        if self.conversation_dispatch is None:
+            self.conversation_dispatch = ConversationDispatchService(self.repository.sessions, self.settings, self.agent)
         if self.goals is None:
             self.goals = GoalRepository(self.repository.sessions, self.settings)
         if self.notifications is None:
