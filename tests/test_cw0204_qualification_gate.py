@@ -3,6 +3,11 @@ import base64
 import json
 
 import pytest
+
+# The lightweight CI job installs no coworker extras; the mandatory coworker
+# job must collect and execute every test with no skips.
+pytest.importorskip("cryptography")
+
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
