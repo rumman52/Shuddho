@@ -13,6 +13,10 @@ heavyweight transaction safety command.
 
 Branch `codex/transactions-ci-recovery-20261013` repairs that qualification boundary:
 
+Review: [PR #380](https://github.com/rumman52/Shuddho/pull/380). Initial implementation
+head: `7ae84f757a696116f3aade9aaeeced296b7078a3`. This checkpoint precedes the final
+required CI result; the PR records its final head/run and review readiness.
+
 - Optional-dependency collection follows the existing lightweight/heavyweight split.
 - All newly merged execution, reconciliation and mutation-guard test modules are
   mandatory in the safety JUnit report, with collection and zero-skip checks.

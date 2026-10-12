@@ -14,6 +14,7 @@
 
 - Base: main `fb1a08059cd242f5da4d72dbf72da0c6971bfe30`, PR #379.
 - Branch: `codex/transactions-ci-recovery-20261013`.
+- Review: [PR #380](https://github.com/rumman52/Shuddho/pull/380); initial implementation `7ae84f757a696116f3aade9aaeeced296b7078a3`. Required final-head CI is pending at this checkpoint.
 - Initial evidence: [main CI 38292932568](https://github.com/rumman52/Shuddho/actions/runs/38292932568) failed lightweight collection (`ModuleNotFoundError: sqlalchemy`) and Temporal `before_claim` recovery (`Workflow timed out`).
 - Lightweight reproduction: the boundary module errors in a frozen dev-only environment before collecting its tests.
 - Interfaces: reuse `ActionRepository.claim_execution`, `ActionService.execute`, `ApprovedActionWorkflow`, `WorkflowEnvironment.sleep`, `auto_time_skipping_disabled` and `scripts.mandatory_test_gate`. Test-only polling control remains in `tests/transaction_process_harness.py`.
@@ -48,7 +49,7 @@
 - [x] Add optional-dependency collection protection and require the execution/reconciliation tests in the heavyweight safety report. This exposed a nonexistent `SimulatedGoogle.provider` fixture field; replace it with the literal configured provider and check real cross-owner denial.
 - [x] Advance only the interrupted activity's retry interval, then disable automatic skipping while the restarted real worker executes; preserve all independent state/receipt/counter assertions.
 - [ ] Run focused Temporal/transaction checks, the lightweight project suite and applicable full CI; reject mandatory skips.
-- [ ] Review the final diff, publish a draft PR and record exact-head results and remaining live gates.
+- [x] Review the final diff and publish a draft PR with the verified local counts and remaining live gates; append exact-head CI results when available.
 
 ## Completion evidence
 
