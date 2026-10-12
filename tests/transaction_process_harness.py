@@ -164,12 +164,26 @@ def service_for(settings, sessions, origin):
     return ActionService(repo, providers, permission_gateway=gateway, credential_broker=broker)
 
 
-def action_worker(settings, origin, action_id, boundary, entered, release, ready, temporal_address=None):
+def action_worker(settings, origin, action_id, boundary, entered, release, ready,
+                  temporal_address=None, polling_gate=None):
     """A disposable process with a new pool; never inherit parent's DB sockets."""
     sessions = session_factory(settings.database_url)
     try:
         require_disposable_database(sessions)
         service = service_for(settings, sessions, origin)
+        original_execute = service.execute
+
+        async def diagnosed_execute(identity):
+            try:
+                return await original_execute(identity)
+            except Exception as error:
+                # Production activities intentionally redact exception details.
+                # A class name identifies setup failures without printing an
+                # OAuth token, SQL parameters or recipient/message contents.
+                print("Transaction test worker exception: " + type(error).__name__, flush=True)
+                raise
+
+        service.execute = diagnosed_execute
         claim = service.repo.claim_execution
         finish = service.repo.finish
 
@@ -207,14 +221,20 @@ def action_worker(settings, origin, action_id, boundary, entered, release, ready
 
             client = await Client.connect(temporal_address)
             activities = ActionActivities(service)
+            if polling_gate is not None:
+                # Keep this restarted process connected but not polling until
+                # the parent finishes advancing only the lost activity timer.
+                ready.set()
+                if not polling_gate.wait(25):
+                    raise RuntimeError("Parent did not release restarted worker polling")
             worker = Worker(
                 client, task_queue=settings.task_queue, workflows=[ApprovedActionWorkflow],
                 activities=[activities.execute, activities.interrupted],
                 max_cached_workflows=0, graceful_shutdown_timeout=timedelta(seconds=1),
             )
             async with worker:
-                # A restarted worker must already poll before the parent unlocks
-                # virtual time; otherwise a slow CI spawn can race all timeouts.
+                # Context entry schedules the SDK pollers; it does not prove
+                # that a workflow/activity task has reached this process.
                 ready.set()
                 await asyncio.Event().wait()
 
@@ -294,18 +314,19 @@ class WorkerProcesses:
         wait_api_ready(origin, process)
         return process, origin
 
-    def start(self, settings, origin, action_id, boundary="none", temporal_address=None):
+    def start(self, settings, origin, action_id, boundary="none", temporal_address=None,
+              *, polling_gate=None):
         entered, release, ready = CONTEXT.Event(), CONTEXT.Event(), CONTEXT.Event()
         # Spawn deserializes these asynchronously. Keep both controls alive
         # until children exit so their semaphore names cannot be unlinked by GC.
-        self.controls.append((entered, release, ready))
+        self.controls.append((entered, release, ready, polling_gate))
         process = CONTEXT.Process(target=action_worker, args=(
-            settings, origin, action_id, boundary, entered, release, ready, temporal_address,
+            settings, origin, action_id, boundary, entered, release, ready, temporal_address, polling_gate,
         ))
         process.start()
         self.processes.append(process)
         if temporal_address is not None:
-            assert ready.wait(25), "Temporal worker did not start polling before recovery"
+            assert ready.wait(25), "Temporal worker did not initialize before recovery"
         return process, entered
 
     @staticmethod

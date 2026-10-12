@@ -14,6 +14,7 @@ pytest.importorskip("temporalio")
 from test_permission_gateway import enable_boundary
 from test_coworker import account, container
 from test_transaction_reconciliation import bound_action, enable_transactions, reviewed_transaction
+from services.coworker.errors import CoworkerError
 
 
 
@@ -61,4 +62,13 @@ def test_reconciliation_receipt_binding_remains_owner_scoped(container):
     )
 
     assert surface["evidence"]["external_action_id"] == action["id"]
-    assert surface["evidence"]["provider"] == provider.provider
+    assert surface["evidence"]["provider"] == "google"
+    assert surface["transaction"]["state"] == "confirmed"
+    assert len(provider.sent) == 1
+
+    other = account(container, "tx-owner-scope-other")
+    with pytest.raises(CoworkerError) as hidden:
+        container.transactions.sync_external_action(
+            other, review["review_binding"]["transaction_id"],
+        )
+    assert hidden.value.status_code == 404

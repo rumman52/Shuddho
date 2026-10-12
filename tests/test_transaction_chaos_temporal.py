@@ -26,7 +26,7 @@ from test_permission_gateway import enable_boundary
 from test_transaction_api import create_payload, terms_payload
 from test_transaction_reconciliation import bound_action, enable_transactions
 from transaction_process_harness import (
-    BOUNDARIES, CountedProvider, WorkerProcesses, require_disposable_database, service_for,
+    BOUNDARIES, CONTEXT, CountedProvider, WorkerProcesses, require_disposable_database, service_for,
 )
 from services.coworker.action_registry import stable_digest
 from services.coworker.container import Container
@@ -205,8 +205,26 @@ def test_transaction_temporal_activity_recovery_after_worker_sigkill(
             assert await asyncio.to_thread(barrier.wait, 25)
             processes.kill(process)
             provider.release.set()
-            processes.start(value.settings, provider.origin, action["id"], temporal_address=address)
+            polling_gate = CONTEXT.Event()
+            processes.start(value.settings, provider.origin, action["id"],
+                            temporal_address=address, polling_gate=polling_gate)
+            history = await handle.fetch_history()
+            scheduled = next(event.activity_task_scheduled_event_attributes
+                             for event in history.events
+                             if event.HasField("activity_task_scheduled_event_attributes"))
+            retry_after = (scheduled.start_to_close_timeout.ToTimedelta()
+                           + scheduled.retry_policy.initial_interval.ToTimedelta())
+            # SIGKILL leaves the activity unacknowledged. Advance its timeout
+            # and first retry only, with the restart deliberately not polling.
+            # An unbounded result() unlock can race all the way to the workflow
+            # deadline before a newly spawned worker receives its first task.
+            # The killed activity retains a test-server time lock: sleep alone
+            # blocks in real time. Balance that extra unlock around the bounded
+            # sleep, then keep the clock locked throughout restarted polling.
             async with env.time_skipping_unlocked():
+                await asyncio.wait_for(env.sleep(retry_after), 20)
+            polling_gate.set()
+            with env.auto_time_skipping_disabled():
                 await asyncio.wait_for(handle.result(), 35)
             expected_state = "succeeded" if boundary in {"before_claim", "after_receipt_commit"} else "outcome_unknown"
             expected_count = (0, 0) if boundary == "after_claim" else (1, 1)
@@ -325,7 +343,7 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
                             temporal_address=recovered.client.service_client.config.target_host)
             await Dispatcher(value, recovered.client).tick()
             handle = recovered.client.get_workflow_handle("shuddho-action-" + action["id"])
-            async with recovered.time_skipping_unlocked():
+            with recovered.auto_time_skipping_disabled():
                 await asyncio.wait_for(handle.result(), 30)
         assert_evidence(value, provider, owner, transaction_id, action, "succeeded", (1, 1),
                         record_property, "temporal_outage")
