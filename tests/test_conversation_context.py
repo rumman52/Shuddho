@@ -124,3 +124,91 @@ def test_malformed_duplicate_and_oversized_selections_fail_closed(records):
 def test_empty_selection_safe_but_creates_no_authority(records):
     db, owner, *_ = records
     assert require_current_selected_sources(db, owner, []) == []
+
+
+def test_workspace_manifest_tracks_source_changes_without_exposing_object_keys(records):
+    """Revision digest follows authoritative records; it grants no file read."""
+    from types import SimpleNamespace
+    from sqlalchemy.orm import sessionmaker
+    from services.coworker.workspace_manifest import WorkspaceManifestService
+
+    db, owner, other, doc_id, version_id, artifact_id = records
+    sessions = sessionmaker(bind=db.bind)
+    service = WorkspaceManifestService(sessions, SimpleNamespace(
+        conversations_enabled=True, agent_memory_enabled=False,
+    ))
+    first = service.get(owner)
+    assert first["schema_version"] == 1
+    assert len(first["revision_sha256"]) == 64
+    assert first["documents"][0]["version_id"] == version_id
+    assert first["artifacts"][0]["artifact_id"] == artifact_id
+    assert first["memory"] == []
+    assert first["truncated"] == {"documents": False, "artifacts": False, "memory": False}
+    assert service.get(owner) == first
+    assert "private/object" not in str(first) and "private/output" not in str(first)
+
+    db.get(DocumentVersion, version_id).expires_at = utcnow() - timedelta(seconds=5)
+    db.commit()
+    changed = service.get(owner)
+    assert changed["revision_sha256"] != first["revision_sha256"]
+    assert changed["documents"][0]["available"] is False
+
+    db.get(Document, doc_id).deleted = True
+    db.commit()
+    removed = service.get(owner)
+    assert removed["documents"] == []
+    assert removed["revision_sha256"] != changed["revision_sha256"]
+    with pytest.raises(CoworkerError):
+        service.get(other)
+
+
+def test_runtime_context_invalidates_expired_document_after_admission(records):
+    """CW-08 expiry must be enforced at worker-time read, not just task admission."""
+    from types import SimpleNamespace
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+    from services.coworker.context import ContextService
+    from services.coworker.models import AgentRun
+
+    db, owner, _, doc_id, version_id, _ = records
+    workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
+    run_id = new_id()
+    db.add(AgentRun(
+        id=run_id, owner_id=owner, workspace_id=workspace_id,
+        idempotency_key="ctx-expiry-case", fingerprint="c" * 64,
+        goal="Create a report about the selected document",
+        output_language="en", input_versions=[version_id],
+        action_ids=[], memory_namespaces=[], connector_read_grant_ids=[],
+        connector_snapshot_ids=[], tool_allowlist=[],
+        deadline_at=utcnow() + timedelta(minutes=20),
+    ))
+    db.commit()
+    service = ContextService(sessionmaker(bind=db.bind), SimpleNamespace(), None, None)
+    _, sources = service._run_and_sources(owner, run_id)
+    assert len(sources) == 1 and sources[0]["state"] == "active"
+    assert service._source_current(owner, sources[0])
+
+    db.get(DocumentVersion, version_id).expires_at = utcnow() - timedelta(seconds=5)
+    db.commit()
+    _, expired = service._run_and_sources(owner, run_id)
+    assert expired[0]["state"] == "invalidated"
+    assert expired[0]["reason"] == "expired"
+    assert not service._source_current(owner, sources[0])
+
+    db.get(DocumentVersion, version_id).expires_at = utcnow() + timedelta(days=1)
+    db.get(DocumentVersion, version_id).sha256 = "d" * 64
+    db.commit()
+    assert not service._source_current(owner, sources[0])
+
+
+def test_manifest_stays_disabled_without_conversations(records):
+    from types import SimpleNamespace
+    from sqlalchemy.orm import sessionmaker
+    from services.coworker.workspace_manifest import WorkspaceManifestService
+    db, owner, *_ = records
+    service = WorkspaceManifestService(sessionmaker(bind=db.bind), SimpleNamespace(
+        conversations_enabled=False, agent_memory_enabled=False,
+    ))
+    with pytest.raises(CoworkerError) as failure:
+        service.get(owner)
+    assert failure.value.code == "conversations_unavailable"
