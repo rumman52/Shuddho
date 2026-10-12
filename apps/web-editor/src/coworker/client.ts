@@ -479,6 +479,13 @@ export class CoworkerClient {
         body: JSON.stringify({ expected_sequence: sequence, output_language: "auto" }),
       });
   }
+  cancelConversationAgent(id: string, messageId: string, sequence: number, eventSequence: number) {
+    return this.json<{ run_id: string; state: string; event_sequence: number }>(
+      `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/cancel`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_sequence: sequence, expected_event_sequence: eventSequence }),
+      });
+  }
   conversationActivity(id: string, signal?: AbortSignal) {
     return this.json<{ items: ConversationActivityRecord[]; message_sequence: number }>(
       `/api/v1/conversations/${identifier(id)}/activity`, { signal });
