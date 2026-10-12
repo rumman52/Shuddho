@@ -8,12 +8,14 @@ Reviewed base: `631b1f1c2b3cd3cca9b38a4d650950dd955e4580`, merged PR #371.
 2. **Owned workspace inventory:** `GET /api/v1/workspace-manifest` returns owner-scoped document-version and artifact metadata, memory *metadata only* when memory is enabled, and a canonical SHA-256 revision digest. Storage object keys and memory values are never included. Lists are explicitly bounded and report truncation. This digest is a change detector, not a signing key, authorization token, durable version history, or proof of provider-side state.
 3. **UI context selection:** The Conversations workspace can select up to five available version-pinned documents. The backend revalidates each selected version independently both when a message is saved and when an Agent run is admitted. No chat message or source selection authorizes email sending, booking, payment or purchase.
 
+4. **Memory review safety:** Existing owner-scoped memory can now be listed, explicitly edited and deleted from the Conversations view when the memory capability is enabled. Edits supply the fact's observed revision; a stale revision is rejected inside the database row lock. This is opt-in optimistic locking for old clients and does not activate memory automatically.
+
 ## Tests and qualification
 
 The existing heavy coworker CI mandate for `tests.test_conversation_context` now covers worker-time expiry/revocation and manifest identity/revision regression tests. Backend and frontend CI of the exact branch must both pass before merging.
 
 ## Remaining CW-01..08 exit conditions
 
-CW-01 safety code and CW-05–07 foundations are on main. CW-02 requires 16 real failure-injection outcomes and independently trusted provider mutation evidence. CW-03 requires a qualified external staging freeze, and CW-04 needs an operated read/draft/goal/reminder/restore/rollback workflow trace. CW-08 still needs durable reviewed memory lifecycle, browser accessibility/reconnect qualification, provider- and process-crash observations, and exact rollout evidence.
+CW-01 safety code and CW-05–07 foundations are on main. CW-02 requires 16 real failure-injection outcomes and independently trusted provider mutation evidence. CW-03 requires a qualified external staging freeze, and CW-04 needs an operated read/draft/goal/reminder/restore/rollback workflow trace. CW-08 still needs a durable historical workspace-manifest version store (this branch has a revisioned live projection), browser accessibility/reconnect qualification, end-to-end memory revocation checks, provider- and process-crash observations, and exact rollout evidence.
 
 Do **not** activate unqualified transaction, automation or external-action providers from this branch. No live credentials, external staging failure injection, deployment or production mutation were performed.
