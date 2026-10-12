@@ -151,6 +151,40 @@ class ConversationDispatchService:
             return {"run_id": run.id, "state": run.state, "message_id": message.id,
                     "conversation_id": conversation.id, "replayed": False}, True
 
+    def cancel(self, owner: str, conversation_id: str, message_id: str, *,
+               expected_sequence: int, expected_event_sequence: int) -> dict:
+        """Revision-check and cancel the linked run in the SAME DB transaction.
+
+        This reuses the established Agent cancellation path (child task/action
+        invalidation included) and cannot silently create a replacement run.
+        """
+        self._enabled()
+        with self.sessions.begin() as db:
+            self._lock_account(db, owner)
+            conversation = self._conversation(db, owner, conversation_id)
+            message = self._message(db, owner, conversation_id, message_id)
+            if conversation.message_sequence != expected_sequence:
+                raise CoworkerError(
+                    "conversation_revision_conflict", "The conversation changed. Reload before steering.", 409,
+                )
+            links = [link for link in (message.resource_links or [])
+                     if link.get("resource_type") == "agent_run"]
+            if len(links) != 1:
+                raise CoworkerError("conversation_run_missing", "This message has no linked Agent run.", 409)
+            run = db.scalar(select(AgentRun).where(
+                AgentRun.id == links[0].get("resource_id"), AgentRun.owner_id == owner,
+            ).with_for_update())
+            if run is None:
+                raise not_found()
+            if run.cancel_requested and run.state == "cancelled":
+                return {"run_id": run.id, "state": run.state, "event_sequence": run.event_sequence}
+            if run.event_sequence != expected_event_sequence:
+                raise CoworkerError(
+                    "agent_revision_conflict", "Agent progress changed. Refresh activity before cancelling.", 409,
+                )
+            self.agent.cancel_in_session(db, owner, run.id)
+            return {"run_id": run.id, "state": run.state, "event_sequence": run.event_sequence}
+
     def activity(self, owner: str, conversation_id: str, *, limit: int = 50) -> dict:
         """Read-only projection over existing message and Agent event ledgers."""
         if not self.settings.conversations_enabled:
