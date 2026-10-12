@@ -47,7 +47,7 @@ def transaction_services(repository):
         connector_trust_boundary_enabled=True,
         personal_transactions_enabled=True,
         transaction_operations=frozenset({"google:negotiation_commitment_email"}),
-        connector_encryption_key=base64.urlsafe_b64encode(b"\\x22" * 32).decode(),
+        connector_encryption_key=base64.urlsafe_b64encode(bytes([0x22]) * 32).decode(),
     )
     settings.validate()
     return SimpleNamespace(
