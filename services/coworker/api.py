@@ -1633,6 +1633,10 @@ def qualify_agent_route(payload: AgentRunCreate, identity: Identity, services: S
 @router.post("/agent-runs", status_code=202)
 def create_agent_run(payload: AgentRunCreate, identity: Identity, services: Services, response: Response,
                      idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
+    if idempotency_key.startswith("conversation:"):
+        raise CoworkerError(
+            "reserved_request_key", "This request key is reserved for reviewed conversation dispatch.", 409,
+        )
     if not services.settings.agent_runtime_enabled:
         raise CoworkerError(
             "agent_runtime_unavailable",
