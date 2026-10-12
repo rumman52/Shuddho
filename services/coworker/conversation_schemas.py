@@ -40,3 +40,10 @@ class ConversationDispatchCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_sequence: int = Field(ge=1)
     output_language: str = Field(default="auto", max_length=35, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
+
+
+class ConversationCancelRequest(BaseModel):
+    """Exact owner-visible message and Agent progress revisions."""
+    model_config = ConfigDict(extra="forbid")
+    expected_sequence: int = Field(ge=1)
+    expected_event_sequence: int = Field(ge=0)
