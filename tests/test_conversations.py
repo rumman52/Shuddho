@@ -148,3 +148,33 @@ def test_conversation_message_budget_has_no_partial_acceptance(container):
         repo.append_message(owner, conversation["id"], MessageCreate(text="Second", client_request_key="message-second"))
     assert limit.value.code == "conversation_message_limit"
     assert repo.get(owner, conversation["id"])["message_sequence"] == 1
+
+
+def test_expired_document_version_cannot_be_pinned_or_admitted(container):
+    """A source that is uploaded but past its retention expiry has no read authority."""
+    from datetime import timedelta
+    from services.coworker.schemas import UploadRequest
+    from services.coworker.models import DocumentVersion, utcnow
+
+    repo, owner = conversations(container), account(container)
+    uploaded = container.repository.create_upload(
+        owner, UploadRequest(filename="expired.txt", byte_size=5, sha256="a" * 64),
+    )
+    container.repository.finish_upload(owner, uploaded["id"])
+    conversation, _ = repo.create(owner, ConversationCreate(title="Review"), "expired-doc-conversation")
+
+    with repo.sessions.begin() as db:
+        db.get(DocumentVersion, uploaded["version_id"]).expires_at = utcnow() - timedelta(minutes=1)
+
+    with pytest.raises(CoworkerError) as denied:
+        repo.append_message(
+            owner, conversation["id"],
+            MessageCreate(
+                text="Use expired document",
+                client_request_key="expired-document-message",
+                selected_resource_ids=[uploaded["version_id"]],
+            ),
+        )
+    assert denied.value.code == "not_found"
+    assert repo.get(owner, conversation["id"])["message_sequence"] == 0
+    assert repo.messages(owner, conversation["id"])["items"] == []
