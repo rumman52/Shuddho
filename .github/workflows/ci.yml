@@ -118,6 +118,19 @@ jobs:
         with:
           name: transaction-postgres-evidence
           path: /tmp/transaction-postgres.xml
+      - name: Qualify transaction HTTP and hard worker recovery without skips
+        env:
+          SHUDDHO_TRANSACTION_CHAOS_POSTGRES_REQUIRED: "true"
+          SHUDDHO_TRANSACTION_CHAOS_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          uv run --extra coworker pytest tests/test_transaction_chaos_temporal.py -q -rs -o junit_family=xunit1 --junitxml=/tmp/transaction-process.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/transaction-process.xml --required-module tests.test_transaction_chaos_temporal
+      - name: Keep transaction process and Temporal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transaction-process-evidence
+          path: /tmp/transaction-process.xml
       - name: Check reviewer-attested CW-02 to CW-04 release gate without skips
         run: |
           uv run --extra coworker pytest tests/test_cw0204_qualification_gate.py -q -rs --junitxml=/tmp/cw0204-gate.xml

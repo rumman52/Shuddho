@@ -1,5 +1,45 @@
 # Coworker evolution progress
 
+## Current Transactions continuation — 12 October 2026
+
+Reviewed main `1c41907594dd8dd93a6eac747494d5491587b709` (PR #373); merged-main CI #1368
+passed `test-and-build`, `coworker` and `ci-merge-gate`. Draft PR #374 remains a separate
+offline CW-02–04 witness-gate proposal. Historical entries below predate newer merges.
+
+Branch `codex/cw02-transaction-process-recovery-20261012` implements the next CW-02 slice:
+counted real HTTP to a loopback provider, abrupt disposable worker loss at four commit/
+dispatch boundaries, the same four boundaries in real Temporal activities, six provider
+failure/uncertainty cases, PostgreSQL public-API duplicate admission, hard API loss after
+commit and actual Temporal-server unavailability/outbox recovery. Seventeen executable
+tests are mandatory in the heavy CI job, with PostgreSQL required and zero skips allowed.
+
+Review PR: [#375](https://github.com/rumman52/Shuddho/pull/375). Initial implementation
+commit: `b8a5a2b2130991b383cc8a9bfd16472b903a8ed4`; the follow-up also binds restarted
+Temporal worker readiness before unlocking its virtual retry clock. The PR check suite
+records the exact final head and required CI evidence; this checkpoint precedes that result.
+CI run `38240791655` remained in rendering dependency installation for more than fifteen
+minutes. The final follow-up makes apt/debconf/needrestart noninteractive and bounds the
+installer to ten minutes, triggering a fresh runner without removing any required check.
+The cause of the stalled installer was not observable from unfinished GitHub job logs.
+
+The final focused local process/Temporal/HTTP plus existing safety/matrix run passed
+35 tests with one explicitly PostgreSQL-only skip (46.14 seconds). The new module itself
+passed sixteen tests and skipped its PostgreSQL admission race. Surrounding transaction/
+permission/action checks passed 97 tests (38.63 seconds). Exact-head full CI with real
+PostgreSQL and zero mandatory skips remains required before repository qualification.
+
+No production source interface, migration, provider authority or activation changed.
+JUnit records are integration evidence with a simulated provider, not live certification.
+CW-01 and CW-05–07 foundations are on main; CW-08 continuity remains partially qualified.
+CW-02–04 full operated staging, exact provider reviews and CW-14–20 release requirements
+remain unfinished. Do not activate transactions from this slice alone.
+
+Next: review the new source/test/CI changes, verify exact-head CI, then execute the full
+sixteen-fault matrix on a frozen controlled staging release with independent provider
+counters. See [the task contract](CW02_PROCESS_RECOVERY_TASK_2026-10-12.md).
+
+## Historical checkpoints
+
 Updated: 11 October 2026 UTC. Base: `c6389b3702aae93019c2ec5643f4e4d5dd76ea2a`.
 The coding kit from PR #362 is merged.
 
