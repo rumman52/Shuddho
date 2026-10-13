@@ -404,6 +404,28 @@ def _ambiguous_high_impact(text: str) -> bool:
     }
 
 
+def _explicit_browser_read_url(goal: str, text: str, settings: Settings) -> str | None:
+    """Distinguish an explicit web read from a conceptual question.
+
+    The destination comes from the user's goal, never the model. No browser
+    dependency is imported in default-off lightweight routing.
+    """
+    if not settings.agent_browser_read_enabled or "https://" not in goal:
+        return None
+    read_verbs = (
+        "read", "browse", "inspect", "visit page", "visit the page",
+        "পড়ুন", "পড়ুন", "পড়ো", "পড়ো", "পড়ে", "পড়ে", "পড়বেন", "পড়বেন",
+        "পাতাটি দেখুন", "ওয়েবসাইট দেখুন", "পেইজটা দেখুন", "খুলে দেখুন",
+        "ওয়েবপেজ পড়ুন", "ওয়েবপেজ পড়ুন", "দেখে বলুন", "পড়ে বলুন",
+        "পড়ে বলুন", "ওয়েবসাইট দেখে", "ওয়েবসাইট দেখে",
+        "lee", "leer", "visita", "consulta", "اقرأ", "تصفح", "افتح الصفحة",
+    )
+    if not _has_any(text, read_verbs):
+        return None
+    from .agent_planner import explicit_browser_url
+    return explicit_browser_url(goal)
+
+
 def qualify_agent_goal(
     goal: str,
     settings: Settings,
@@ -428,10 +450,11 @@ def qualify_agent_goal(
         )
 
     research_requested = _research_requested(text)
+    browser_target = _explicit_browser_read_url(goal, text, settings)
 
     # Clear explanatory questions are direct even when they mention an action
     # as a concept (for example, "How do I book a flight?").
-    if _question_like(text) and not research_requested:
+    if _question_like(text) and not research_requested and browser_target is None:
         return _decision(
             intent="direct_question",
             complexity="simple",
@@ -558,19 +581,7 @@ def qualify_agent_goal(
     # question/direct-answer fallback and all document/tool phrase matching.
     # Consequential routes above continue to win. The optional broker import
     # is unreachable while the independent feature flag is off.
-    browser_intents = (
-        "read", "browse", "inspect", "visit page", "visit the page",
-        "পড়ুন", "পড়ুন", "পড়ো", "পড়ো", "পাতাটি দেখুন", "ওয়েবসাইট দেখুন",
-        "পেইজটা দেখুন", "খুলে দেখুন", "ওয়েবপেজ পড়ুন", "ওয়েবপেজ পড়ুন",
-        "lee", "leer", "visita", "consulta", "اقرأ", "تصفح", "افتح الصفحة",
-    )
-    if (
-        settings.agent_browser_read_enabled
-        and "https://" in goal
-        and _has_any(text, browser_intents)
-    ):
-        from .agent_planner import explicit_browser_url
-        if explicit_browser_url(goal) is not None:
+    if browser_target is not None:
             browser = tool("browser.read")
             if not browser.enabled(settings):
                 return _decision(
