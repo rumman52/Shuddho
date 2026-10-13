@@ -51,6 +51,20 @@ def test_core_agent_phase1_required_routes(goal, execution, capability, tools):
     assert route.tools == tools
 
 
+def test_report_route_uses_public_capability_not_legacy_task_skill():
+    from services.coworker.agent_tools import tool
+
+    spec = tool("report.create")
+    assert spec.capability == "report"
+    assert spec.skill_id == "report_email"  # Retain the durable legacy execution contract.
+
+    route = qualify_agent_goal("Create a concise project status report.", settings())
+    assert route.execution == "agent_run"
+    assert route.capability == spec.capability
+    assert route.tools == [spec.name]
+    assert route.consequential is False
+
+
 def test_current_sources_do_not_force_web_research_for_meeting_pack():
     route = qualify_agent_goal(
         "Prepare an investor meeting pack from my current sources.",
