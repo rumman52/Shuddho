@@ -381,7 +381,13 @@ class AgentRuntime:
             result = command.get("result") or {}
             final_url, _final_origin = normalize_browser_target(result.get("final_url", ""))
             title = result.get("title")
-            if not isinstance(title, str) or len(title) > 300 or result.get("submission_performed") is not False:
+            if (
+                not isinstance(title, str) or len(title) > 300
+                or result.get("submission_performed") is not False
+                or bool(result.get("interaction_performed"))
+                or bool(result.get("prepared_fields"))
+                or result.get("takeover_frame_version") is not None
+            ):
                 raise CoworkerError(
                     "browser_observation_invalid", "The broker did not verify read-only page metadata.", 409,
                 )
