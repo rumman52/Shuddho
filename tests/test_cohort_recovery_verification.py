@@ -108,6 +108,7 @@ def settings(members, *, microsoft=False, action_selection=False, action_proposa
         action_email_threading_enabled=action_email_threading,
         action_social_publishing_enabled=(action_social_publishing or agent_linkedin_proposals),
         agent_linkedin_proposals_enabled=agent_linkedin_proposals,
+        agent_browser_read_enabled=False,
     )
 
 
@@ -147,6 +148,24 @@ def test_recovery_configuration_rejects_flag_drift(monkeypatch, tmp_path):
             current_stage="canary-5",
             deployed_at=datetime(2026, 9, 22, 7, 5, tzinfo=timezone.utc),
         )
+
+
+
+def test_recovery_rejects_agent_browser_read_flag_drift_even_when_rollout_omits_it(monkeypatch, tmp_path):
+    manifest = rollout()  # historical manifests omit the independently default-off flag
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rollback_value, _ = rollback_completion(tmp_path, rollout_path)
+    monkeypatch.setenv("SHUDDHO_COWORKER_ENABLED", "true")
+    active = settings({"a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64})
+    active.agent_browser_read_enabled = True
+    with pytest.raises(recovery.RecoveryVerificationError, match="agent_browser_read"):
+        recovery.validate_recovery_configuration(
+            active, manifest, plan(), rollback_value,
+            rollout_path=rollout_path, current_stage="canary-5",
+            deployed_at=datetime(2026, 9, 22, 7, 5, tzinfo=timezone.utc),
+        )
+
 
 
 def test_recovery_configuration_rejects_cohort_stage_overflow(monkeypatch, tmp_path):

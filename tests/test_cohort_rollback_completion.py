@@ -41,6 +41,24 @@ def test_global_switch_must_actually_be_disabled(monkeypatch):
         rollback.require_switch_state("global", rollout())
 
 
+def test_agent_browser_read_rollback_needs_exact_switch_and_disabled_environment(monkeypatch):
+    value = rollout()
+    value["rollback"]["agent_browser_read_kill_switch"] = (
+        "SHUDDHO_AGENT_BROWSER_READ_ENABLED=false"
+    )
+    monkeypatch.setenv("SHUDDHO_AGENT_BROWSER_READ_ENABLED", "false")
+    assert rollback.require_switch_state("agent_browser_read", value) == (
+        "SHUDDHO_AGENT_BROWSER_READ_ENABLED=false"
+    )
+    monkeypatch.setenv("SHUDDHO_AGENT_BROWSER_READ_ENABLED", "true")
+    with pytest.raises(rollback.RollbackCompletionError, match="still enabled"):
+        rollback.require_switch_state("agent_browser_read", value)
+    monkeypatch.setenv("SHUDDHO_AGENT_BROWSER_READ_ENABLED", "false")
+    value["rollback"]["agent_browser_read_kill_switch"] = "SHUDDHO_BROWSER_ENABLED=false"
+    with pytest.raises(rollback.RollbackCompletionError, match="does not match"):
+        rollback.require_switch_state("agent_browser_read", value)
+
+
 def test_post_status_must_be_fresh_and_healthy():
     deployed = datetime(2026, 9, 22, 7, 0, tzinfo=timezone.utc)
     status = {

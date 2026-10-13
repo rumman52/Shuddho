@@ -2,7 +2,7 @@
 
 ## CW-10 first inert review-envelope contract — 14 October 2026
 
-**Source bootstrap:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`. CW-09 merged PR #390 has three P1 attestation findings; independent corrective [draft PR #391](https://github.com/rumman52/Shuddho/pull/391) implements recovery/rollback/runtime manifest/schema34 ledger fixes, mandatory final-head CI and independent review pending. Do not conflate this dependent CW-09 safety review with CW-10 work.
+**Source bootstrap:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`. CW-09 corrective [PR #391](https://github.com/rumman52/Shuddho/pull/391) was merged into main at `905a09c3a5e2931be46d9053ba4af09ecd331125`, while exact-final-head mandatory CI and security review still require confirmation; do not infer production qualification. Do not conflate this dependent CW-09 safety review with CW-10 work.
 
 **Independent dependency-ready CW-10 preparatory slice:** `codex/cw10-immutable-proposal-envelope-20261014`, base `76a07600328d0c6ff0ed73b69d2c7933d38bf927`, initial source/test head `cd5463231a9a18043f26363b33777c2a251d7b4d`, latest source/test head `970f828fdcde75eff9b4cad8ae93a9b2038cdfb3` before final docs after [independent P2 future-validity review](https://github.com/rumman52/Shuddho/pull/392#discussion_r4263712225) and not-before test; [draft PR #392](https://github.com/rumman52/Shuddho/pull/392), not merged; new frozen, strict `CodeProposalEnvelope`, exact source/content and owner-version SHA, full canonical review digest, offline `verify_reviewed_code_identity` comparing live owner/run/input versions, expiry and sandbox policy ceiling; zero grant or execution. Regressions: cross owner/run, modified code/input/limits/expiry, network expansion, bad hash. [Task contract](CW10_IMMUTABLE_INERT_PROPOSAL_ENVELOPE_2026-10-14.md). Draft PR and final-head checks pending. **This satisfies only the immutable-envelope contract precursor, not CW-10 operational completion.**
 
@@ -23,6 +23,33 @@
 | Activated | No: no generated-code route or approval exists |
 
 **Next exact action:** Open CW-10 draft PR, request independent review, inspect exact-head Python tests, coworker mandatory gates and ci-merge-gate. Correct findings before code acceptance. Continue first actual persisted proposal+approval slice separately; never equate a pure validator with an execution permission.
+
+
+## CW-09 merged release contract P1 corrective slice — 14 October 2026
+
+**Current baseline at bootstrap:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`. [PR #390](https://github.com/rumman52/Shuddho/pull/390) is **merged** despite three unresolved P1 automated-review findings and exact-final-head [CI #38458791465](https://github.com/rumman52/Shuddho/actions/runs/38458791465) still in progress on inspection. Historical section below refers to the PR as draft; that is superseded by live GitHub evidence. Previously merged #389 [CI #38456526299](https://github.com/rumman52/Shuddho/actions/runs/38456526299) passed required gates, but did not prove the new release contract.
+
+**Repair:** `codex/cw09-release-attestation-repair-20261014`, base `76a07600328d0c6ff0ed73b69d2c7933d38bf927`, initial code/tests head `2e03cb331a8833826d9ffd5a92a015713fe57bb3`; latest source/test head `f07b6da0d416e0794f36155a1473bed0367bfee8` before final docs; exact enabled manifest and newly added deployment rollout digest, strict timestamp ordering, mandatory dedicated kill-switch regressions. PR #391 independent first review flagged [rollout binding P1](https://github.com/rumman52/Shuddho/pull/391#discussion_r4263640759), [stale status P1](https://github.com/rumman52/Shuddho/pull/391#discussion_r4263640771) and [rollback P2](https://github.com/rumman52/Shuddho/pull/391#discussion_r4263640779); all addressed in new source/tests, pending exact-head CI and renewed review. **Draft PR [#391](https://github.com/rumman52/Shuddho/pull/391)**, unmerged. Earlier PR-head `test-and-build` succeeded but was superseded by this test addition; requalify exact final head. Independent review of #390: (1) [P1 recovery/rollback](https://github.com/rumman52/Shuddho/pull/390#discussion_r4263411541), (2) [P1 schema34 missing](https://github.com/rumman52/Shuddho/pull/390#discussion_r4263411549), (3) [P1 manifest missing](https://github.com/rumman52/Shuddho/pull/390#discussion_r4263411559). The repair updates the existing recovery mapping, rollback mode, runtime manifest, HMAC schema 34 validation/append CLI and negative regressions. [Task contract](CW09_RELEASE_ATTESTATION_P1_REPAIR_2026-10-14.md). **No deployment, release proof or production activation.**
+
+| Acceptance | Current source/PR integration | Remaining proof |
+| --- | --- | --- |
+| CW-05 owned conversations | Integrated source, prior repository checks | Operated owner erasure/duplicate replay |
+| CW-06 dispatch, steering, cancellation | Integrated runtime | Real Temporal/recovery/late observation |
+| CW-07 active chat/reconnect | #385 merged | Mobile/keyboard/events/reconnect |
+| CW-08 context and memory | #384/#386 merged | Owned deletion and source revocation staging |
+| **CW-09** read-only brokered Agent browser | #387-#390 merged; new P1 corrective review branch | **Exact-head full CI and independent review of schema34 repair**; bounded webpage text/private digest; isolated egress/SSRF/redirect staging; runtime release eligibility; human acceptance |
+| CW-10 inert reviewed generated code | Existing sandbox accepts exact *user-provided* fenced Python | Immutable model-code proposal and exact owner/run/input/limits/egress approval |
+| CW-11 reviewed versioned skills | Static code-owned tools | Manifest hashes/grant subset/version rollback |
+
+| Evidence type | Release repair |
+| --- | --- |
+| Implemented | Branch source/tests/docs checkpoint |
+| Repository-verified | **Pending final implementation SHA CI** |
+| Staging-verified | Not performed |
+| Production-qualified | Not established |
+| Activated | No; `agent_browser_read` remains default off |
+
+**Next exact action:** Open draft P1 repair PR and inspect full mandatory CI, especially `tests/test_agent_browser_release_attestation.py`, `tests/test_cohort_recovery_verification.py`, `tests/test_cohort_rollback_completion.py`, `tests/test_coworker.py`, and existing full browser/Temporal/PG suites. Request independent review, resolve findings on actual final SHA, keep no-merge/activation boundary. Continue independent CW-09/CW-10 work only after maintaining this checkpoint.
 
 ## CW-09 independent browser.read release gate — 14 October 2026
 
