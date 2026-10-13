@@ -104,6 +104,8 @@ def verify_reviewed_code_identity(
     """
     if now.tzinfo is None:
         raise CoworkerError("code_review_time_invalid", "Review time must include a timezone.", 409)
+    if now.astimezone(timezone.utc) < proposal.created_at.astimezone(timezone.utc):
+        raise CoworkerError("code_proposal_not_yet_valid", "Code proposals cannot be reviewed before creation.", 409)
     if now.astimezone(timezone.utc) >= proposal.expires_at.astimezone(timezone.utc):
         raise CoworkerError("code_proposal_expired", "The code proposal is no longer valid.", 409)
     if proposal.owner_id != owner_id or proposal.run_id != run_id:
