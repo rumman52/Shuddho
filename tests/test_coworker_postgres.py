@@ -141,7 +141,7 @@ def action_repository(repository):
     import base64
     from services.coworker.action_repository import ActionRepository
     settings = replace(repository.settings, actions_enabled=True,
-        connector_encryption_key=base64.urlsafe_b64encode(b"1" * 32).decode(),
+                       connector_encryption_key=base64.urlsafe_b64encode(bytes([0x22]) * 32).decode())
     return ActionRepository(repository.sessions, settings)
 
 
@@ -620,7 +620,7 @@ def test_agent_browser_cancel_and_worker_control_are_serialized_on_postgres(repo
     settings = replace(
         repository.settings,
         actions_enabled=True,
-        connector_encryption_key=base64.urlsafe_b64encode(b"\\x31" * 32).decode(),
+        connector_encryption_key=base64.urlsafe_b64encode(b"1" * 32).decode(),
         connector_trust_boundary_enabled=True,
         agent_runtime_enabled=True,
         intelligent_planner_enabled=True,
