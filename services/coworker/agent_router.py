@@ -554,6 +554,52 @@ def qualify_agent_goal(
             message="Route this request through the bound action preview/approval path; do not let the planner invent a connector or endpoint.",
         )
 
+    # Explicit, user-authored browser reads take priority over generic
+    # question/direct-answer fallback and all document/tool phrase matching.
+    # Consequential routes above continue to win. The optional broker import
+    # is unreachable while the independent feature flag is off.
+    browser_intents = (
+        "read", "browse", "inspect", "visit page", "visit the page",
+        "পড়ুন", "পড়ুন", "পড়ো", "পড়ো", "পাতাটি দেখুন", "ওয়েবসাইট দেখুন",
+        "পেইজটা দেখুন", "খুলে দেখুন", "ওয়েবপেজ পড়ুন", "ওয়েবপেজ পড়ুন",
+        "lee", "leer", "visita", "consulta", "اقرأ", "تصفح", "افتح الصفحة",
+    )
+    if (
+        settings.agent_browser_read_enabled
+        and "https://" in goal
+        and _has_any(text, browser_intents)
+    ):
+        from .agent_planner import explicit_browser_url
+        if explicit_browser_url(goal) is not None:
+            browser = tool("browser.read")
+            if not browser.enabled(settings):
+                return _decision(
+                    intent="browser",
+                    complexity="single_step",
+                    execution="unsupported",
+                    capability="browser",
+                    provider="none",
+                    access="read",
+                    capability_available=False,
+                    confidence=0.99,
+                    fallback_policy="unsupported",
+                    reason_code="capability_disabled",
+                    message="The supervised Agent browser read capability is disabled.",
+                )
+            return _decision(
+                intent="browser",
+                complexity="single_step",
+                execution="agent_run",
+                capability="browser",
+                tools=["browser.read"],
+                provider="supervised_browser",
+                access="read",
+                confidence=0.99,
+                fallback_policy="deterministic_agent",
+                reason_code="registered_agent_capability",
+                message="Create a bounded supervised read-only Agent run.",
+            )
+
     if text.endswith("?"):
         return _decision(
             intent="direct_question",
@@ -602,30 +648,6 @@ def qualify_agent_goal(
             )
         selected.append(name)
         intents.append(intent)
-
-    # A read-only browser goal must remain accessible through the public Agent
-    # admission router; a planner-only registration is not user-visible.
-    # No URL/session/credentials originate in model output.
-    if settings.agent_browser_read_enabled and "https://" in goal and _has_any(text, ("read", "browse", "inspect", "visit page")):
-        from .agent_planner import explicit_browser_url
-        if explicit_browser_url(goal) is not None:
-            browser = tool("browser.read")
-            if not browser.enabled(settings):
-                return _decision(
-                    intent="browser",
-                    complexity="single_step",
-                    execution="unsupported",
-                    capability=browser.capability,
-                    provider="none",
-                    access="read",
-                    capability_available=False,
-                    confidence=0.99,
-                    fallback_policy="unsupported",
-                    reason_code="capability_disabled",
-                    message="The supervised Agent browser read capability is disabled.",
-                )
-            selected.append(browser.name)
-            intents.append("browser")
 
     selected = list(dict.fromkeys(selected))[:3]
     intents = list(dict.fromkeys(intents))
