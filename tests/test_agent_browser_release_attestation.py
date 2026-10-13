@@ -67,6 +67,7 @@ def fixture(tmp_path: Path):
         "release_id": RELEASE_ID, "environment": "production",
         "capabilities": flags, "cohort": {"max_users": 5},
         "action_providers": [],
+        "rollback": {"agent_browser_read_kill_switch": "SHUDDHO_AGENT_BROWSER_READ_ENABLED=false"},
     })
     staged = write(tmp_path / "staging.json", {
         "agent_browser_read": {
@@ -79,6 +80,7 @@ def fixture(tmp_path: Path):
         "current_stage": STAGE, "change_reference": "synthetic-change",
         "deployed_at": "2026-10-14T00:06:00+00:00",
         "staging_evidence_sha256": digest(staged),
+        "rollout_manifest_sha256": digest(rollout),
     })
     status = write(tmp_path / "status.json", {
         "release_id": RELEASE_ID, "decision": "CONTINUE_COHORT",
@@ -178,3 +180,45 @@ def test_schema34_rejects_wrong_event_or_artifact_shape_even_if_signed(tmp_path)
         altered.update(entry_hash=head, hmac_sha256=tag)
         with pytest.raises(ReleaseLedgerError):
             verify_entries([original[0], altered], KEY)
+
+
+@pytest.mark.parametrize("invalid", [
+    "missing_rollout_binding",
+    "wrong_rollout_binding",
+    "operator_before_deployment",
+    "invalid_status_time",
+    "rollback_missing",
+    "rollback_wrong",
+])
+def test_agent_browser_read_denies_mismatched_operated_release_evidence(tmp_path, invalid):
+    args = fixture(tmp_path)
+    if invalid in {"missing_rollout_binding", "wrong_rollout_binding"}:
+        deployment = json.loads(args["deployment_change"].read_text())
+        if invalid == "missing_rollout_binding":
+            deployment.pop("rollout_manifest_sha256")
+        else:
+            deployment["rollout_manifest_sha256"] = "f" * 64
+        write(args["deployment_change"], deployment)
+    elif invalid in {"operator_before_deployment", "invalid_status_time"}:
+        status = json.loads(args["operator_status"].read_text())
+        status["generated_at"] = (
+            "2026-10-14T00:04:00+00:00"
+            if invalid == "operator_before_deployment" else "2026-10-14T00:07:00"
+        )
+        write(args["operator_status"], status)
+        activation = json.loads(args["activation_evidence"].read_text())
+        activation["operator_status_generated_at"] = status["generated_at"]
+        activation["artifact_sha256"]["operator_status"] = digest(args["operator_status"])
+        activation.pop("activation_sha256")
+        activation["activation_sha256"] = hashlib.sha256(canonical(activation)).hexdigest()
+        write(args["activation_evidence"], activation)
+    else:
+        rollout = json.loads(args["rollout_manifest"].read_text())
+        if invalid == "rollback_missing":
+            rollout.pop("rollback")
+        else:
+            rollout["rollback"]["agent_browser_read_kill_switch"] = "SHUDDHO_BROWSER_ENABLED=false"
+        write(args["rollout_manifest"], rollout)
+    with pytest.raises(ReleaseLedgerError):
+        append_agent_browser_read_event(**args)
+    assert verify_entries(read_entries(args["ledger"]), KEY)["entries"] == 1
