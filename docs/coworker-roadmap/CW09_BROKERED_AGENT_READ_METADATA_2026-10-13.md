@@ -4,7 +4,7 @@
 - **Workstream:** Architecture/Core Agent, CW-09.
 - **Repository/default branch at bootstrap:** `rumman52/Shuddho` `main` `f5c11ec7db35721190b67212695e7612af63f09f`.
 - **Previous evidence:** CW-08 explicit context [PR #386](https://github.com/rumman52/Shuddho/pull/386) merged; exact final-head [CI 38404758754](https://github.com/rumman52/Shuddho/actions/runs/38404758754) succeeded. Main CI 38408371736 was in progress when inspected. No open PR was returned at bootstrap.
-- **Branch:** `codex/cw09-brokered-read-metadata-20261013` (draft PR pending).
+- **Branch:** `codex/cw09-brokered-read-metadata-20261013`; **draft review PR:** [#387](https://github.com/rumman52/Shuddho/pull/387), unmerged. Last implementation+test SHA prior to documentation: `c596a3e9ed4af211fbfaf4e65e3413079d53ae45`. Verify current PR head and exact-head CI.
 - **Defect:** The existing supervised browser broker, DNS/SSRF policy and isolated worker are separately built, but `browser.read` is absent from the typed Agent tool registry and Runtime v3 dispatch, so the planner cannot consume authorized browser observations.
 
 ## Design, authority and scope
