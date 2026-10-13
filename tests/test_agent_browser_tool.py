@@ -19,6 +19,7 @@ from test_browser_broker import enable_browser
 from test_coworker import account, container
 
 from services.coworker.agent_planner import explicit_browser_url, intelligent_tool_names
+from services.coworker.agent_router import qualify_agent_goal
 from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.agent_tools import available_tools, tool
@@ -47,6 +48,8 @@ def test_agent_browser_is_independently_default_off_and_requires_browser(contain
     assert browser.consequential is False
     assert browser.approval_required is False
     assert browser.read_write_classification == "read"
+    with pytest.raises(ValueError, match="supervised browser"):
+        replace(container.settings, agent_browser_read_enabled=True).validate()
     with pytest.raises(CoworkerError) as denied:
         browser.validate({"url": "https://example.com/", "purpose": "form_prepare"})
     assert denied.value.code == "invalid_tool_input"
@@ -77,6 +80,12 @@ def test_browser_v3_dispatch_replay_worker_verification_and_untrusted_observatio
     assert "browser.read" in intelligent_tool_names(
         settings, [], goal=goal, runtime_version=3,
     )
+    route = qualify_agent_goal(goal, settings)
+    assert route.execution == "agent_run"
+    assert route.capability == "browser"
+    assert route.tools == ["browser.read"]
+    assert route.provider == "supervised_browser"
+    assert route.access == "read"
     assert "browser.read" not in intelligent_tool_names(
         settings, [], goal=goal, runtime_version=2,
     )
