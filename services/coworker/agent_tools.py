@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .action_registry import action_spec
 from .agent_schemas import (
     ApprovedActionToolInput,
+    BrowserReadToolInput,
     ResearchToolInput,
     SandboxPythonToolInput,
     TaskToolInput,
@@ -17,7 +18,7 @@ from .config import Settings
 from .errors import CoworkerError
 
 
-ToolKind = Literal["task", "approved_action", "sandbox"]
+ToolKind = Literal["task", "approved_action", "sandbox", "browser_read"]
 ReadWriteClass = Literal["read", "write", "read_write", "compute"]
 RiskClass = Literal["low", "medium", "high", "critical"]
 ApprovalRequirement = Literal["none", "explicit_user_approval"]
@@ -156,6 +157,13 @@ class ToolSpec:
         }
 
     def enabled(self, settings: Settings) -> bool:
+        if self.name == "browser.read":
+            return (
+                settings.agent_browser_read_enabled
+                and settings.browser_enabled
+                and settings.agent_runtime_v3_enabled
+                and settings.intelligent_planner_enabled
+            )
         if self.name == "sandbox.execute_python":
             return (
                 settings.code_execution_enabled
@@ -272,6 +280,21 @@ TOOLS = {
             read_write_classification="read",
             permissions=("public_web:read", "workspace:write"),
             risk_class="medium",
+        ),
+        ToolSpec(
+            "browser.read",
+            "1",
+            "browser_read",
+            BrowserReadToolInput,
+            capability="browser",
+            permissions=("supervised_browser:read",),
+            read_write_classification="read",
+            risk_class="medium",
+            retry_policy=NO_RETRY,
+            idempotency_policy=SERVER_TASK_IDEMPOTENCY,
+            approval_requirement="none",
+            timeout_seconds=90,
+            max_result_bytes=4096,
         ),
         ToolSpec(
             "sandbox.execute_python",
