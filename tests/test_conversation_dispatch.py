@@ -165,6 +165,16 @@ def test_http_conversation_dispatch_and_activity_contract(container, signed_clie
     assert activity.status_code == 200
     event = activity.json()["items"][0]
     assert event["run_id"] == admitted.json()["run_id"]
+    page = client.get(path + "/activity?after=start&limit=1", headers=headers())
+    assert page.status_code == 200, page.text
+    assert page.json()["items"][0]["run_id"] == admitted.json()["run_id"]
+    assert page.json()["has_more"] is False
+    resumed = client.get(
+        path + "/activity", params={"after": page.json()["next_cursor"]}, headers=headers(),
+    )
+    assert resumed.status_code == 200 and resumed.json()["items"] == []
+    invalid = client.get(path + "/activity?after=not-a-real-cursor", headers=headers())
+    assert invalid.status_code == 422
     cancel = client.post(path + "/messages/" + msg["id"] + "/cancel", json={
         "expected_sequence": 1, "expected_event_sequence": event["event_sequence"],
     }, headers=headers())
