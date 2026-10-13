@@ -102,7 +102,7 @@ def explicit_browser_url(goal: str) -> str | None:
     """Never let a planner invent browser destinations or sessions."""
     candidates = [
         raw.rstrip(".,;!?)]}")
-        for raw in re.findall(r'https://[^\\s<>"\\']+', goal)
+        for raw in re.findall(r"https://[^\s<>\"']+", goal)
     ]
     if len(candidates) != 1:
         return None
