@@ -1486,6 +1486,9 @@ class AgentRepository:
                         "sandbox_state", "exit_code", "stdout_excerpt", "stderr_excerpt",
                         "stdout_sha256", "stderr_sha256", "sandbox_destroyed", "output_trust",
                         "artifact_id", "artifact_sha256",
+                        "browser_state", "observation_scope", "observation_trust",
+                        "source_url", "source_sha256", "capture_time",
+                        "untrusted_page_title", "submission_performed",
                     )
                     if key in summary and isinstance(summary[key], (str, int, bool, type(None)))
                 }
