@@ -606,3 +606,63 @@ def test_concurrent_conversation_dispatch_is_one_agent_run_and_one_outbox(reposi
     with repository.sessions() as db:
         assert db.scalar(select(AgentRun.id).where(AgentRun.owner_id == identity)) == ids[0]
         assert db.get(AgentOutbox, ids[0]) is not None
+
+
+def test_agent_browser_cancel_and_worker_control_are_serialized_on_postgres(repository):
+    """Cancellation and worker polls share session-first row locking, not deadlocks."""
+    import base64
+    from threading import Barrier
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.browser import BrowserRepository
+    from services.coworker.browser_schemas import BrowserSessionCreate
+
+    settings = replace(
+        repository.settings,
+        actions_enabled=True,
+        connector_encryption_key=base64.urlsafe_b64encode(b"\\x31" * 32).decode(),
+        connector_trust_boundary_enabled=True,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_runtime_v3_enabled=True,
+        browser_enabled=True,
+        agent_browser_read_enabled=True,
+        browser_worker_token="postgres-browser-worker-token-0123456789abcdef",
+    )
+    settings.validate()
+    identity = owner(repository)
+    agent = AgentRepository(repository.sessions, settings)
+    browser = BrowserRepository(repository.sessions, settings)
+    run, _ = agent.create(
+        identity, AgentRunCreate(goal="Read https://example.com/article"), str(uuid4()),
+    )
+    ordinal = agent.append_v3_step(
+        identity, run["id"], "browser.read", "Read the user's exact URL",
+    )
+    agent.begin_invocation(run["id"], ordinal)
+    session, _ = browser.create(
+        identity, BrowserSessionCreate(purpose="research", start_url="https://example.com/article"),
+        f"agent:{run['id']}:{ordinal}", agent_origin=True,
+    )
+    agent.link_invocation_resource(run["id"], ordinal, "browser_session", session["id"])
+    command = browser.prepare_agent_read(identity, session["id"], "https://example.com/article")
+    assert [item["id"] for item in browser.claim_commands("postgres-worker")] == [command["id"]]
+
+    ready = Barrier(2)
+    def cancel():
+        ready.wait(timeout=10)
+        return agent.cancel(identity, run["id"])
+    def poll():
+        ready.wait(timeout=10)
+        return browser.worker_control("postgres-worker", command["id"])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        cancelled = pool.submit(cancel)
+        control = pool.submit(poll)
+        result_cancel = cancelled.result(timeout=20)
+        result_control = control.result(timeout=20)
+    assert result_cancel["state"] == "cancelled"
+    assert result_control["action"] in {"continue", "stop"}
+    assert browser.get(identity, session["id"])["state"] == "cancelled"
+    assert browser.list_commands(identity, session["id"])[0]["state"] == "cancelled"
+    assert browser.worker_control("postgres-worker", command["id"])["action"] == "stop"
