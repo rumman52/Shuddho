@@ -1847,16 +1847,17 @@ class AgentRepository:
 
     def link_invocation_resource(self, run_id: str, ordinal: int, resource_type: str, resource_id: str):
         with self.sessions.begin() as db:
+            # Match cancel_in_session's run -> step locking order.
+            run = db.scalar(select(AgentRun).where(
+                AgentRun.id == run_id,
+            ).with_for_update())
+            if run is None or run.cancel_requested or run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError("agent_cancelled", "The Agent run is no longer active.", 409)
             step = db.scalar(select(AgentStep).where(
                 AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
             ).with_for_update())
             if step is None:
                 raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
-            run = db.scalar(select(AgentRun).where(
-                AgentRun.id == step.run_id,
-            ).with_for_update())
-            if run is None or run.cancel_requested or run.state in AGENT_TERMINAL_STATES:
-                raise CoworkerError("agent_cancelled", "The Agent run is no longer active.", 409)
             step.output = {"resource_type": resource_type, "resource_id": resource_id}
             invocation = db.scalar(select(ToolInvocation).where(
                 ToolInvocation.step_id == step.id,
