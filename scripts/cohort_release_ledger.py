@@ -43,6 +43,7 @@ BROWSER_PUSH_SCHEMA_VERSION = 29
 RESTAURANT_RESERVATIONS_SCHEMA_VERSION = 30
 SHOPPING_CHECKOUT_SCHEMA_VERSION = 31
 TRAVEL_BOOKING_SCHEMA_VERSION = 32
+AGENT_BROWSER_READ_SCHEMA_VERSION = 34
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -191,6 +192,13 @@ BROWSER_ARTIFACT_KEYS = {
     "deployment_change",
     "operator_status",
     "browser_activation",
+}
+AGENT_BROWSER_READ_ARTIFACT_KEYS = {
+    "staging_evidence",
+    "rollout_manifest",
+    "deployment_change",
+    "operator_status",
+    "agent_browser_read_activation",
 }
 CODE_EXECUTION_ARTIFACT_KEYS = {
     "staging_evidence",
@@ -586,6 +594,7 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             RESTAURANT_RESERVATIONS_SCHEMA_VERSION,
             SHOPPING_CHECKOUT_SCHEMA_VERSION,
             TRAVEL_BOOKING_SCHEMA_VERSION,
+            AGENT_BROWSER_READ_SCHEMA_VERSION,
         }:
             raise ReleaseLedgerError(f"Ledger entry {index} has an unsupported schema version.")
         if entry["sequence"] != index:
@@ -749,6 +758,13 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             raise ReleaseLedgerError(
                 f"Ledger entry {index} has an unsupported schema-v32 event type."
             )
+        if (
+            version == AGENT_BROWSER_READ_SCHEMA_VERSION
+            and event_type != "agent_browser_read_verified"
+        ):
+            raise ReleaseLedgerError(
+                f"Ledger entry {index} has an unsupported schema-v34 event type."
+            )
         if not isinstance(entry["actor_reference"], str) or not entry["actor_reference"].strip():
             raise ReleaseLedgerError(f"Ledger entry {index} has no actor reference.")
         if not isinstance(entry["change_reference"], str) or not entry["change_reference"].strip():
@@ -817,6 +833,8 @@ def verify_entries(entries: list[dict], key: bytes) -> dict:
             if version == SHOPPING_CHECKOUT_SCHEMA_VERSION
             else TRAVEL_BOOKING_ARTIFACT_KEYS
             if version == TRAVEL_BOOKING_SCHEMA_VERSION
+            else AGENT_BROWSER_READ_ARTIFACT_KEYS
+            if version == AGENT_BROWSER_READ_SCHEMA_VERSION
             else RELEASE_ACTIVATION_BUNDLE_ARTIFACT_KEYS
         )
         if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
@@ -5396,6 +5414,199 @@ def append_personal_transactions_event(
 
 
 
+def append_agent_browser_read_event(
+    *,
+    ledger: Path,
+    key: bytes,
+    release_id: str,
+    actor_reference: str,
+    change_reference: str,
+    current_stage: str,
+    staging_evidence: Path,
+    rollout_manifest: Path,
+    deployment_change: Path,
+    operator_status: Path,
+    activation_evidence: Path,
+    created_at: str | None = None,
+) -> dict:
+    """Append only exact, reviewable CW-09 read-only Agent browser evidence.
+
+    Operated staging evidence and release-eligible runtime state are prerequisites.
+    The command never generates or claims the underlying staging proof.
+    """
+    if not isinstance(actor_reference, str) or not 0 < len(actor_reference.strip()) <= 500:
+        raise ReleaseLedgerError("Agent browser read requires a bounded actor reference.")
+    if not isinstance(change_reference, str) or not 0 < len(change_reference.strip()) <= 500:
+        raise ReleaseLedgerError("Agent browser read requires a bounded change reference.")
+    if not isinstance(current_stage, str) or not 0 < len(current_stage.strip()) <= 100:
+        raise ReleaseLedgerError("Agent browser read requires an exact current_stage.")
+
+    staging = load_json_object(staging_evidence, "Agent browser read staging evidence")
+    rollout = load_json_object(rollout_manifest, "reviewed Agent browser read rollout")
+    deployment = load_json_object(deployment_change, "Agent browser read deployment")
+    status = load_json_object(operator_status, "Agent browser read operator status")
+    activation = load_json_object(activation_evidence, "Agent browser read activation")
+    if any(
+        item.get("release_id") != release_id
+        for item in (rollout, deployment, status, activation)
+    ):
+        raise ReleaseLedgerError("Agent browser read release identities do not match.")
+
+    caps = rollout.get("capabilities")
+    if not isinstance(caps, dict) or any(
+        caps.get(name) is not True
+        for name in ("agent_browser_read", "browser", "runtime_v3", "connector_trust_boundary")
+    ):
+        raise ReleaseLedgerError("Agent browser read is not enabled in the reviewed dependency chain.")
+    rollback_controls = rollout.get("rollback")
+    if (
+        not isinstance(rollback_controls, dict)
+        or rollback_controls.get("agent_browser_read_kill_switch")
+        != "SHUDDHO_AGENT_BROWSER_READ_ENABLED=false"
+    ):
+        raise ReleaseLedgerError(
+            "Agent browser read requires an exact independent rollback kill switch."
+        )
+    staged = staging.get("agent_browser_read")
+    if (
+        not isinstance(staged, dict)
+        or staged.get("status") != "passed"
+        or not isinstance(staged.get("evidence"), str)
+        or not staged["evidence"].strip()
+        or not isinstance(staged.get("verified_at"), str)
+        or not staged["verified_at"].strip()
+    ):
+        raise ReleaseLedgerError("Agent browser read requires passed, timestamped isolated-worker staging evidence.")
+    if (
+        deployment.get("change_reference") != change_reference
+        or deployment.get("current_stage") != current_stage
+        or deployment.get("staging_evidence_sha256") != file_sha256(staging_evidence)
+        or deployment.get("rollout_manifest_sha256") != file_sha256(rollout_manifest)
+    ):
+        raise ReleaseLedgerError(
+            "Agent browser deployment does not bind the exact reviewed rollout and staging evidence."
+        )
+    if status.get("decision") != "CONTINUE_COHORT" or status.get("breaches") != []:
+        raise ReleaseLedgerError("Agent browser read requires a clean post-deployment operator status.")
+
+    def verified_time(value: object, label: str) -> datetime:
+        if not isinstance(value, str):
+            raise ReleaseLedgerError(f"Agent browser read {label} timestamp is required.")
+        try:
+            stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise ReleaseLedgerError(f"Agent browser read {label} timestamp is invalid.") from None
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            raise ReleaseLedgerError(f"Agent browser read {label} timestamp must be timezone-aware.")
+        return stamp.astimezone(timezone.utc)
+
+    staged_at = verified_time(staged["verified_at"], "staging")
+    deployed_at = verified_time(deployment.get("deployed_at"), "deployment")
+    status_at = verified_time(status.get("generated_at"), "operator status")
+    if staged_at > deployed_at or status_at <= deployed_at:
+        raise ReleaseLedgerError(
+            "Agent browser read requires staging evidence before deployment "
+            "and fresh operator status strictly after deployment."
+        )
+    revision = deployment.get("source_revision")
+    if not isinstance(revision, str) or not revision or revision != activation.get("source_revision"):
+        raise ReleaseLedgerError("Agent browser read deployment/source revision differs from activation.")
+    if (
+        activation.get("status") != "agent_browser_read_verified"
+        or activation.get("change_reference") != change_reference
+        or activation.get("current_stage") != current_stage
+        or activation.get("deployed_at") != deployment.get("deployed_at")
+        or activation.get("operator_status_generated_at") != status.get("generated_at")
+    ):
+        raise ReleaseLedgerError("Agent browser read activation does not bind this deployment and status.")
+
+    runtime = activation.get("runtime")
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("schema_version") != 1
+        or runtime.get("source_revision") != revision
+        or runtime.get("environment") != rollout.get("environment")
+        or not isinstance(runtime.get("capabilities"), dict)
+        or normalize_capabilities(runtime["capabilities"]) != normalize_capabilities(caps)
+        or runtime["capabilities"].get("agent_browser_read") is not True
+        or runtime["capabilities"].get("browser") is not True
+    ):
+        raise ReleaseLedgerError("Agent browser read activation does not prove reviewed runtime authority.")
+    if activation.get("runtime_manifest_sha256") != hashlib.sha256(canonical(runtime)).hexdigest():
+        raise ReleaseLedgerError("Agent browser read runtime manifest digest does not match.")
+    if (
+        not isinstance(runtime.get("action_providers"), list)
+        or sorted(runtime["action_providers"]) != sorted(rollout.get("action_providers", []))
+    ):
+        raise ReleaseLedgerError("Agent browser read runtime providers differ from the rollout.")
+    runtime_cohort = runtime.get("cohort")
+    rollout_cohort = rollout.get("cohort")
+    if (
+        not isinstance(runtime_cohort, dict)
+        or not isinstance(rollout_cohort, dict)
+        or runtime_cohort.get("enforced") is not True
+        or runtime_cohort.get("max_users") != rollout_cohort.get("max_users")
+        or type(runtime_cohort.get("configured_members")) is not int
+        or not 1 <= runtime_cohort["configured_members"] <= runtime_cohort["max_users"]
+    ):
+        raise ReleaseLedgerError("Agent browser read activation has no verified cohort isolation.")
+
+    bound = {
+        "staging_evidence": file_sha256(staging_evidence),
+        "rollout_manifest": file_sha256(rollout_manifest),
+        "deployment_change": file_sha256(deployment_change),
+        "operator_status": file_sha256(operator_status),
+    }
+    hashes = activation.get("artifact_sha256")
+    if not isinstance(hashes, dict) or hashes != bound:
+        raise ReleaseLedgerError("Agent browser read activation does not bind exact source artifacts.")
+    unsigned = dict(activation)
+    stored_digest = unsigned.pop("activation_sha256", None)
+    if (
+        not valid_hash(stored_digest)
+        or stored_digest != hashlib.sha256(canonical(unsigned)).hexdigest()
+    ):
+        raise ReleaseLedgerError("Agent browser read activation digest is invalid.")
+
+    entries = read_entries(ledger)
+    state = verify_entries(entries, key)
+    if state["release_id"] not in {None, release_id}:
+        raise ReleaseLedgerError("Agent browser read ledger release identity differs.")
+    if not entries or not any(
+        entry.get("current_stage") == current_stage or entry.get("next_stage") == current_stage
+        for entry in entries
+    ):
+        raise ReleaseLedgerError("Agent browser read requires an attested existing stage.")
+    activation_hash = file_sha256(activation_evidence)
+    if any(
+        entry.get("schema_version") == AGENT_BROWSER_READ_SCHEMA_VERSION
+        and entry.get("artifact_sha256", {}).get("agent_browser_read_activation") == activation_hash
+        for entry in entries
+    ):
+        raise ReleaseLedgerError("Agent browser read activation has already been recorded.")
+
+    core = {
+        "schema_version": AGENT_BROWSER_READ_SCHEMA_VERSION,
+        "sequence": len(entries) + 1,
+        "created_at": created_at or utc_timestamp(),
+        "release_id": release_id,
+        "event_type": "agent_browser_read_verified",
+        "actor_reference": actor_reference,
+        "change_reference": change_reference,
+        "current_stage": current_stage,
+        "next_stage": None,
+        "artifact_sha256": {**bound, "agent_browser_read_activation": activation_hash},
+        "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
+    }
+    entry_hash, tag = sign_entry(core, key)
+    entry = {**core, "entry_hash": entry_hash, "hmac_sha256": tag}
+    atomic_write(ledger, "".join(
+        json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        for item in [*entries, entry]
+    ))
+    return entry
+
+
 def append_transaction_capability_event(
     *,
     ledger: Path,
@@ -6843,6 +7054,18 @@ def main() -> None:
         "--activation", type=Path, required=True
     )
 
+    agent_browser_read_parser = sub.add_parser("append-agent-browser-read")
+    agent_browser_read_parser.add_argument("--ledger", type=Path, required=True)
+    agent_browser_read_parser.add_argument("--release-id", required=True)
+    agent_browser_read_parser.add_argument("--actor-reference", required=True)
+    agent_browser_read_parser.add_argument("--change-reference", required=True)
+    agent_browser_read_parser.add_argument("--current-stage", required=True)
+    agent_browser_read_parser.add_argument("--staging-evidence", type=Path, required=True)
+    agent_browser_read_parser.add_argument("--rollout", type=Path, required=True)
+    agent_browser_read_parser.add_argument("--deployment-change", type=Path, required=True)
+    agent_browser_read_parser.add_argument("--operator-status", type=Path, required=True)
+    agent_browser_read_parser.add_argument("--activation", type=Path, required=True)
+
     negotiation_promotion_parser = sub.add_parser(
         "append-negotiation-proposal-promotion"
     )
@@ -7185,6 +7408,27 @@ def main() -> None:
                 ledger=args.ledger,
                 key=key,
                 capability=args.capability,
+                release_id=args.release_id,
+                actor_reference=args.actor_reference,
+                change_reference=args.change_reference,
+                current_stage=args.current_stage,
+                staging_evidence=args.staging_evidence,
+                rollout_manifest=args.rollout,
+                deployment_change=args.deployment_change,
+                operator_status=args.operator_status,
+                activation_evidence=args.activation,
+            )
+            result = {
+                "appended": True,
+                "sequence": entry["sequence"],
+                "release_id": entry["release_id"],
+                "event_type": entry["event_type"],
+                "head_entry_hash": entry["entry_hash"],
+            }
+        elif args.command == "append-agent-browser-read":
+            entry = append_agent_browser_read_event(
+                ledger=args.ledger,
+                key=key,
                 release_id=args.release_id,
                 actor_reference=args.actor_reference,
                 change_reference=args.change_reference,

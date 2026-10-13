@@ -47,6 +47,7 @@ CAPABILITY_ATTRS = {
     "connector_trust_boundary": "connector_trust_boundary_enabled",
     "connector_reads": "connector_reads_enabled",
     "browser": "browser_enabled",
+    "agent_browser_read": "agent_browser_read_enabled",
     "code_execution": "code_execution_enabled",
     "agent_sandbox_tool": "agent_sandbox_tool_enabled",
     "personal_transactions": "personal_transactions_enabled",

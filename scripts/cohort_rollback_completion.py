@@ -37,6 +37,7 @@ ROLLBACK_MODES = {
     "connector_trust_boundary": ("connector_trust_boundary_kill_switch", "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED"),
     "connector_reads": ("connector_reads_kill_switch", "SHUDDHO_CONNECTOR_READS_ENABLED"),
     "browser": ("browser_kill_switch", "SHUDDHO_BROWSER_ENABLED"),
+    "agent_browser_read": ("agent_browser_read_kill_switch", "SHUDDHO_AGENT_BROWSER_READ_ENABLED"),
     "code_execution": ("code_execution_kill_switch", "SHUDDHO_CODE_EXECUTION_ENABLED"),
     "agent_sandbox_tool": ("agent_sandbox_tool_kill_switch", "SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED"),
     "personal_transactions": ("personal_transactions_kill_switch", "SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED"),

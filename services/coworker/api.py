@@ -1040,6 +1040,7 @@ def runtime_manifest(
         "connector_trust_boundary": settings.connector_trust_boundary_enabled,
         "connector_reads": settings.connector_reads_enabled,
         "browser": settings.browser_enabled,
+        "agent_browser_read": settings.agent_browser_read_enabled,
         "code_execution": settings.code_execution_enabled,
         "agent_sandbox_tool": settings.agent_sandbox_tool_enabled,
         "action_attachments": settings.action_attachments_enabled,

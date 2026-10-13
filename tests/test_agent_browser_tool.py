@@ -39,6 +39,24 @@ def enabled_agent_browser(container):
     return settings
 
 
+
+def test_agent_browser_runtime_manifest_attests_enabled_code_owned_flag(
+    container, signed_client, monkeypatch,
+):
+    settings = enabled_agent_browser(container)
+    client, headers = signed_client
+    monkeypatch.setenv("SHUDDHO_COWORKER_ENABLED", "true")
+    assert settings.browser_enabled
+    assert settings.agent_browser_read_enabled
+    result = client.get("/api/v1/runtime-manifest", headers=headers())
+    assert result.status_code == 200
+    assert result.headers["Cache-Control"] == "no-store"
+    assert result.json()["capabilities"]["browser"] is True
+    assert result.json()["capabilities"]["agent_browser_read"] is True
+    assert client.get("/api/v1/runtime-manifest").status_code == 401
+
+
+
 def test_agent_browser_is_independently_default_off_and_requires_browser(container):
     assert "browser.read" not in [item["name"] for item in available_tools(container.settings)]
     with pytest.raises(ValueError, match="supervised browser"):

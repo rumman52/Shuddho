@@ -1903,6 +1903,7 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     assert value["source_revision"] == "a" * 40
     assert value["capabilities"]["coworker"] is True
     assert value["capabilities"]["action_proposals"] is True
+    assert value["capabilities"]["agent_browser_read"] is False
     assert value["capabilities"]["action_selection"] is False
     assert value["capabilities"]["action_reminders"] is False
     assert value["capabilities"]["action_document_sharing"] is False
