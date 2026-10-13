@@ -519,9 +519,27 @@ export class CoworkerClient {
         body: JSON.stringify({ expected_sequence: sequence, expected_event_sequence: eventSequence }),
       });
   }
-  conversationActivity(id: string, signal?: AbortSignal) {
-    return this.json<{ items: ConversationActivityRecord[]; message_sequence: number }>(
-      `/api/v1/conversations/${identifier(id)}/activity`, { signal });
+  conversationActivity(id: string, signal?: AbortSignal, after?: string, limit = 50) {
+    const query = after === undefined ? "" : `?after=${encodeURIComponent(after)}&limit=${limit}`;
+    return this.json<{ items: ConversationActivityRecord[]; message_sequence: number; next_cursor: string; has_more: boolean }>(
+      `/api/v1/conversations/${identifier(id)}/activity${query}`, { signal });
+  }
+  async conversationActivityHistory(id: string, signal?: AbortSignal) {
+    // Keyset-replay all activity cards (including older than the latest 50).
+    // Re-fetching is intentionally read-only: run states may change without
+    // a new message, so a message cursor is not a run-event subscription.
+    const items: ConversationActivityRecord[] = [];
+    let cursor = "start";
+    for (let page = 0; page < 20; page += 1) {
+      const result = await this.conversationActivity(id, signal, cursor, 100);
+      items.push(...result.items);
+      if (!result.has_more) return { items, message_sequence: result.message_sequence };
+      if (result.next_cursor === cursor) {
+        throw new WorkspaceError("Conversation activity pagination did not advance.");
+      }
+      cursor = result.next_cursor;
+    }
+    throw new WorkspaceError("Conversation activity exceeds the supported page limit.");
   }
   deleteConversation(id: string) {
     return this.json<{ id: string; deleted: boolean }>(
