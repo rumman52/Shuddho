@@ -121,6 +121,20 @@ OPTIONAL_CAPABILITIES = (
             ),
         ),
     ),
+    # CW-09 has its own revocable activation identity. Merely verifying the
+    # interactive browser broker does not certify autonomous Agent reads.
+    OptionalCapability(
+        capability="agent_browser_read",
+        rollback_key="agent_browser_read_kill_switch",
+        kill_switch="SHUDDHO_AGENT_BROWSER_READ_ENABLED=false",
+        dependencies=("browser", "runtime_v3", "connector_trust_boundary"),
+        staging_gates=(
+            StagingGate(
+                "agent_browser_read",
+                "An exact frozen Agent browser.read revision passed owned run/session identity and receipt binding, PostgreSQL cancellation/revocation and retry races, strict read-only/no-submit/no-interaction worker evidence, bounded untrusted captured page content with private object storage and source URL/time/content digest, adversarial prompt-injection rejection, HTTPS/DNS/IP/redirect/metadata-network egress bypass denial in the isolated browser worker, expired-session cleanup, rollback and runtime release eligibility enforcement. Metadata-only title hashes do not satisfy page-content capture.",
+            ),
+        ),
+    ),
     OptionalCapability(
         capability="browser",
         rollback_key="browser_kill_switch",
@@ -499,6 +513,14 @@ ACTIVATION_REQUIREMENTS = (
         ledger_event_type="code_execution_verified",
         ledger_artifact_key="code_execution_activation",
         capability="code_execution",
+    ),
+    ActivationRequirement(
+        key="agent_browser_read",
+        status="agent_browser_read_verified",
+        ledger_schema_version=34,
+        ledger_event_type="agent_browser_read_verified",
+        ledger_artifact_key="agent_browser_read_activation",
+        capability="agent_browser_read",
     ),
     ActivationRequirement(
         key="browser",

@@ -323,6 +323,7 @@ def test_action_selection_requires_its_own_live_gate_and_kill_switch():
         "connector_trust_boundary": False,
         "connector_reads": False,
         "browser": False,
+        "agent_browser_read": False,
         "code_execution": False,
         "agent_sandbox_tool": False,
         "personal_transactions": False,

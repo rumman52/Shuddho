@@ -83,6 +83,10 @@
     "status": "pending",
     "evidence": ""
   },
+  "agent_browser_read": {
+    "status": "pending",
+    "evidence": ""
+  },
   "code_execution": {
     "status": "pending",
     "evidence": ""
