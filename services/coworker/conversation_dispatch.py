@@ -185,8 +185,41 @@ class ConversationDispatchService:
             self.agent.cancel_in_session(db, owner, run.id)
             return {"run_id": run.id, "state": run.state, "event_sequence": run.event_sequence}
 
-    def activity(self, owner: str, conversation_id: str, *, limit: int = 50) -> dict:
-        """Read-only projection over existing message and Agent event ledgers."""
+    @staticmethod
+    def _activity_cursor(owner: str, conversation_id: str, sequence: int) -> str:
+        """Opaque-ish, scope-bound checkpoint, not a permission token or grant."""
+        scope = hashlib.sha256(f"{owner}:{conversation_id}".encode("utf-8")).hexdigest()[:24]
+        return f"v1:{scope}:{sequence}"
+
+    @classmethod
+    def _activity_sequence(cls, owner: str, conversation_id: str, after: str, maximum: int) -> int:
+        """Validate a cursor against the already authorized conversation owner."""
+        if after == "start":
+            return 0
+        pieces = after.split(":")
+        if (
+            len(after) > 64 or len(pieces) != 3 or pieces[0] != "v1"
+            or not pieces[2].isascii() or not pieces[2].isdecimal()
+            or pieces[2].startswith("0") and pieces[2] != "0"
+        ):
+            raise CoworkerError("invalid_cursor", "Invalid conversation activity cursor.", 422)
+        sequence = int(pieces[2])
+        if (
+            pieces[1] != cls._activity_cursor(owner, conversation_id, sequence).split(":")[1]
+            or sequence > maximum
+        ):
+            raise CoworkerError("invalid_cursor", "Activity cursor is outside this conversation.", 422)
+        return sequence
+
+    def activity(self, owner: str, conversation_id: str, *, after: str | None = None,
+                 limit: int = 50) -> dict:
+        """Read-only, owner-bound resumable projection over existing Agent records.
+
+        No `after` retains legacy latest-N polling (so run progress can change
+        without a new message). `after=start` then `next_cursor` walks owned
+        messages forward; its checkpoint advances over messages without Agent work.
+        The cursor is a read position, never an authority or dispatch identity.
+        """
         if not self.settings.conversations_enabled:
             raise CoworkerError("conversations_unavailable", "Conversations are not enabled.", 409)
         if not 1 <= limit <= 100:
@@ -198,13 +231,31 @@ class ConversationDispatchService:
             ))
             if row is None:
                 raise not_found()
-            messages = list(db.scalars(select(ConversationMessage).where(
-                ConversationMessage.conversation_id == row.id,
-                ConversationMessage.owner_id == owner,
-            ).order_by(ConversationMessage.sequence.desc()).limit(limit)))
-            messages.reverse()
+
+            if after is None:
+                # Preserve the previous polling contract for live changes on
+                # existing Agent runs even when no message has been appended.
+                messages = list(db.scalars(select(ConversationMessage).where(
+                    ConversationMessage.conversation_id == row.id,
+                    ConversationMessage.owner_id == owner,
+                ).order_by(ConversationMessage.sequence.desc()).limit(limit)))
+                messages.reverse()
+                more = False
+                last_sequence = messages[-1].sequence if messages else row.message_sequence
+            else:
+                sequence = self._activity_sequence(owner, conversation_id, after, row.message_sequence)
+                page = list(db.scalars(select(ConversationMessage).where(
+                    ConversationMessage.conversation_id == row.id,
+                    ConversationMessage.owner_id == owner,
+                    ConversationMessage.sequence > sequence,
+                ).order_by(ConversationMessage.sequence).limit(limit + 1)))
+                more = len(page) > limit
+                messages = page[:limit]
+                last_sequence = messages[-1].sequence if messages else sequence
+
             ids = [link["resource_id"] for msg in messages for link in (msg.resource_links or [])
-                   if link.get("resource_type") == "agent_run"]
+                   if isinstance(link, dict) and link.get("resource_type") == "agent_run"
+                   and isinstance(link.get("resource_id"), str)]
             runs = {run.id: run for run in db.scalars(select(AgentRun).where(
                 AgentRun.owner_id == owner, AgentRun.id.in_(ids),
             ))} if ids else {}
@@ -218,7 +269,7 @@ class ConversationDispatchService:
             items = []
             for msg in messages:
                 for link in (msg.resource_links or []):
-                    if link.get("resource_type") != "agent_run":
+                    if not isinstance(link, dict) or link.get("resource_type") != "agent_run":
                         continue
                     run = runs.get(link.get("resource_id"))
                     if run is None:
@@ -230,4 +281,9 @@ class ConversationDispatchService:
                                   "event_sequence": run.event_sequence,
                                   "updated_at": iso(run.updated_at),
                                   "detail": event.message if event is not None else run.message})
-            return {"items": items, "message_sequence": row.message_sequence}
+            return {
+                "items": items,
+                "message_sequence": row.message_sequence,
+                "next_cursor": self._activity_cursor(owner, conversation_id, last_sequence),
+                "has_more": more,
+            }

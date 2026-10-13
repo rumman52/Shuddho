@@ -165,6 +165,16 @@ def test_http_conversation_dispatch_and_activity_contract(container, signed_clie
     assert activity.status_code == 200
     event = activity.json()["items"][0]
     assert event["run_id"] == admitted.json()["run_id"]
+    page = client.get(path + "/activity?after=start&limit=1", headers=headers())
+    assert page.status_code == 200, page.text
+    assert page.json()["items"][0]["run_id"] == admitted.json()["run_id"]
+    assert page.json()["has_more"] is False
+    resumed = client.get(
+        path + "/activity", params={"after": page.json()["next_cursor"]}, headers=headers(),
+    )
+    assert resumed.status_code == 200 and resumed.json()["items"] == []
+    invalid = client.get(path + "/activity?after=not-a-real-cursor", headers=headers())
+    assert invalid.status_code == 422
     cancel = client.post(path + "/messages/" + msg["id"] + "/cancel", json={
         "expected_sequence": 1, "expected_event_sequence": event["event_sequence"],
     }, headers=headers())
@@ -173,3 +183,70 @@ def test_http_conversation_dispatch_and_activity_contract(container, signed_clie
     assert client.post("/api/v1/agent-runs", json={"goal": msg["text"]}, headers={
         **headers(), "Idempotency-Key": "conversation:" + msg["id"],
     }).status_code == 409
+
+
+def test_activity_cursor_replays_pages_and_skips_unlaunched_messages(container):
+    """Reading paginated activity must never launch or duplicate Agent work."""
+    owner, conv, conversations, dispatch = setup(container, key="cw07-cursor")
+    first = message(conversations, owner, conv)
+    first_run, _ = dispatch.dispatch(owner, conv["id"], first["id"], expected_sequence=1)
+    idle, _ = conversations.append_message(
+        owner, conv["id"], MessageCreate(
+            text="Keep this note without launching work", client_request_key="cw07-idle-message",
+        ),
+    )
+    third, _ = conversations.append_message(
+        owner, conv["id"], MessageCreate(
+            text="Create a detailed report about annual sales", client_request_key="cw07-third-message",
+        ),
+    )
+    last_run, _ = dispatch.dispatch(owner, conv["id"], third["id"], expected_sequence=3)
+
+    one = dispatch.activity(owner, conv["id"], after="start", limit=1)
+    assert one["has_more"] is True
+    assert [item["run_id"] for item in one["items"]] == [first_run["run_id"]]
+    two = dispatch.activity(owner, conv["id"], after=one["next_cursor"], limit=1)
+    assert two["has_more"] is True and two["items"] == []
+    three = dispatch.activity(owner, conv["id"], after=two["next_cursor"], limit=1)
+    assert three["has_more"] is False
+    assert [item["run_id"] for item in three["items"]] == [last_run["run_id"]]
+    final = dispatch.activity(owner, conv["id"], after=three["next_cursor"], limit=1)
+    assert final["items"] == [] and final["next_cursor"] == three["next_cursor"]
+    assert final["has_more"] is False
+    assert idle["sequence"] == 2
+    with dispatch.sessions() as db:
+        assert len(db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()) == 2
+
+    # Without a cursor, the legacy snapshot still observes new run-state changes
+    # on old messages; a message-only cursor cannot represent Agent event revisions.
+    snapshot = dispatch.activity(owner, conv["id"])
+    assert [item["run_id"] for item in snapshot["items"]] == [first_run["run_id"], last_run["run_id"]]
+    current_event_sequence = snapshot["items"][-1]["event_sequence"]
+    dispatch.cancel(owner, conv["id"], third["id"], expected_sequence=3,
+                    expected_event_sequence=current_event_sequence)
+    refreshed = dispatch.activity(owner, conv["id"])
+    assert refreshed["items"][-1]["state"] == "cancelled"
+
+
+def test_activity_cursors_reject_wrong_conversation_and_malformed_input(container):
+    owner, conv, conversations, dispatch = setup(container, key="cw07-cursor-scope")
+    first = message(conversations, owner, conv)
+    dispatch.dispatch(owner, conv["id"], first["id"], expected_sequence=1)
+    cursor = dispatch.activity(owner, conv["id"], after="start", limit=1)["next_cursor"]
+    another, _ = conversations.create(
+        owner, ConversationCreate(title="Other"), "cw07-cursor-other-conversation",
+    )
+    with pytest.raises(CoworkerError) as wrong_conversation:
+        dispatch.activity(owner, another["id"], after=cursor)
+    assert wrong_conversation.value.code == "invalid_cursor"
+
+    foreign = account(container, "cw07-cursor-foreign")
+    with pytest.raises(CoworkerError) as wrong_owner:
+        dispatch.activity(foreign, conv["id"], after=cursor)
+    assert wrong_owner.value.code == "not_found"
+
+    for invalid in ["1", "v1:anything:1", "v1:bad:99999", "v1:bad:-1", "v1:bad:00", "a" * 128]:
+        with pytest.raises(CoworkerError) as bad:
+            dispatch.activity(owner, conv["id"], after=invalid)
+        assert bad.value.code == "invalid_cursor"
+

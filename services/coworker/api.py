@@ -1620,9 +1620,12 @@ def cancel_conversation_agent(
 def conversation_activity(
     conversation_id: UUID, identity: Identity, services: Services,
     response: Response, limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    after: Annotated[str | None, Query(max_length=64)] = None,
 ):
     response.headers["Cache-Control"] = "no-store"
-    return services.conversation_dispatch.activity(identity.account_id, str(conversation_id), limit=limit)
+    return services.conversation_dispatch.activity(
+        identity.account_id, str(conversation_id), after=after, limit=limit,
+    )
 
 
 @router.post("/agent-route")
