@@ -4,7 +4,7 @@
 **Repository:** `rumman52/Shuddho`  
 **Baseline:** `main` `d6ba9c183860284207cafd5f8cc2052205080837`  
 **Branch:** `codex/cw09-agent-browser-release-contract-20261014`  
-**Source and contract regression SHA before docs:** `a069daf5d2567e84d5bff3c1e525553e1d98d9b4`
+**Initial source and contract regression SHA:** `a069daf5d2567e84d5bff3c1e525553e1d98d9b4`. **Current code+test SHA prior to this final checkpoint:** `f2c8c4099674000a0930c60d09560efe4a2b7e4f`. **Draft PR:** [#390](https://github.com/rumman52/Shuddho/pull/390), unmerged. First CI failed an exact gate-map expectation in `tests/test_cohort_release_gate.py` (1 failed of 1,054, new `agent_browser_read: false` entry), corrected without weakening the equality assertion. Mandatory full CI must be rechecked on the newest head.
 
 ## Existing evidence and gap
 
