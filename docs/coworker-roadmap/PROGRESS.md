@@ -1,5 +1,29 @@
 # Coworker evolution progress
 
+## CW-10 first inert review-envelope contract — 14 October 2026
+
+**Source bootstrap:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`. CW-09 merged PR #390 has three P1 attestation findings; independent corrective [draft PR #391](https://github.com/rumman52/Shuddho/pull/391) implements recovery/rollback/runtime manifest/schema34 ledger fixes, mandatory final-head CI and independent review pending. Do not conflate this dependent CW-09 safety review with CW-10 work.
+
+**Independent dependency-ready CW-10 preparatory slice:** `codex/cw10-immutable-proposal-envelope-20261014`, base `76a07600328d0c6ff0ed73b69d2c7933d38bf927`, source/test head `cd5463231a9a18043f26363b33777c2a251d7b4d` before docs; new frozen, strict `CodeProposalEnvelope`, exact source/content and owner-version SHA, full canonical review digest, offline `verify_reviewed_code_identity` comparing live owner/run/input versions, expiry and sandbox policy ceiling; zero grant or execution. Regressions: cross owner/run, modified code/input/limits/expiry, network expansion, bad hash. [Task contract](CW10_IMMUTABLE_INERT_PROPOSAL_ENVELOPE_2026-10-14.md). Draft PR and final-head checks pending. **This satisfies only the immutable-envelope contract precursor, not CW-10 operational completion.**
+
+| Acceptance | Integrated/source evidence | Remaining proof |
+| --- | --- | --- |
+| CW-05–CW-07 conversation/activity | Existing integrated source and prior CI | Staging reconnection/erasure/steering |
+| CW-08 selected context/memory | Integrated source | Operated revocation and retention |
+| CW-09 brokered read-only browser | #387–#390 merged; #391 unmerged P1 repair | #391 final-head CI/review, private webpage content provenance, isolated egress staging and runtime release gate |
+| **CW-10 reviewed generated code** | Inert schema/test review branch only | Database proposal authority, exact human approval, claim validation in existing sandbox, UI, isolation tests and release gate |
+| CW-11 versioned skills | Existing fixed static registry | Versioned reviewed manifests after CW-10 core dependencies |
+
+| Evidence level | CW-10 prep |
+| --- | --- |
+| Implemented | Bounded isolated source/tests/docs |
+| Repository-verified | Not yet: draft PR exact-head CI pending |
+| Staging-verified | No |
+| Production-qualified | No |
+| Activated | No: no generated-code route or approval exists |
+
+**Next exact action:** Open CW-10 draft PR, request independent review, inspect exact-head Python tests, coworker mandatory gates and ci-merge-gate. Correct findings before code acceptance. Continue first actual persisted proposal+approval slice separately; never equate a pure validator with an execution permission.
+
 ## CW-09 independent browser.read release gate — 14 October 2026
 
 **Authoritative repository bootstrap:** `main` `d6ba9c183860284207cafd5f8cc2052205080837`; no open PRs at bootstrap. [PR #389](https://github.com/rumman52/Shuddho/pull/389) was already **merged** (the earlier 14 October checkpoint below calling it an unmerged draft is historical and superseded). The exact-head [CI #38456526299](https://github.com/rumman52/Shuddho/actions/runs/38456526299) had successful `test-and-build`, mandatory PostgreSQL/conversation race checks **and** dedicated CW-09 brokered Agent browser suite; its broader `coworker` and merge gate were still in progress when last inspected. Main [CI #38457535194](https://github.com/rumman52/Shuddho/actions/runs/38457535194) also remained in progress. CI success is not staging qualification or permission to activate.
