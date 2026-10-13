@@ -340,6 +340,7 @@ class AgentRuntime:
                     run["owner_id"],
                     BrowserSessionCreate(purpose="research", start_url=target_url),
                     f"agent:{run_id}:{ordinal}",
+                    agent_origin=True,
                 )
                 self.repo.link_invocation_resource(
                     run_id, ordinal, "browser_session", session["id"],
