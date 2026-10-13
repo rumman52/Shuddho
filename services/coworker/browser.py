@@ -1631,36 +1631,52 @@ class BrowserRepository:
                 "session_expires_at": iso(session.expires_at),
             }
 
+    @staticmethod
+    def _lock_command_session_for_completion(db, command_id: str):
+        """Use the session-before-command order shared with Agent cancellation."""
+        session_id = db.scalar(select(BrowserCommand.session_id).where(
+            BrowserCommand.id == command_id,
+        ))
+        if session_id is None:
+            raise not_found()
+        session = db.scalar(select(BrowserSession).where(
+            BrowserSession.id == session_id,
+        ).with_for_update())
+        if session is None:
+            raise not_found()
+        command = db.scalar(select(BrowserCommand).where(
+            BrowserCommand.id == command_id,
+            BrowserCommand.session_id == session.id,
+            BrowserCommand.owner_id == session.owner_id,
+        ).with_for_update())
+        if command is None:
+            raise not_found()
+        return command, session
+
     def complete_command(self, worker_id: str, command_id: str, observation: dict) -> dict:
         self._require_enabled()
-        checked = _bounded_observation(observation)
+        # Raw interaction signals must terminally fail an Agent navigation,
+        # even if auxiliary URL, DNS or frame evidence is malformed.
+        reported_interaction = isinstance(observation, dict) and (
+            bool(observation.get("prepared_fields"))
+            or bool(observation.get("submission_performed"))
+            or bool(observation.get("interaction_performed"))
+            or observation.get("takeover_frame_b64") is not None
+        )
         now = utcnow()
         # This must be a *committed terminal failure*. Raising inside the
         # normal begin() block would roll it back, allowing the same worker to
         # resubmit a clean observation after performing an interaction.
-        if (
-            checked["prepared_fields"] or checked["submission_performed"]
-            or checked["interaction_performed"] or checked["takeover_frame"] is not None
-        ):
+        if reported_interaction:
             rejected_agent_read = False
             with self.sessions.begin() as db:
-                command = db.scalar(select(BrowserCommand).where(
-                    BrowserCommand.id == command_id,
-                ).with_for_update())
-                if command is None:
-                    raise not_found()
+                command, session = self._lock_command_session_for_completion(db, command_id)
                 if (command.payload or {}).get("agent_read_only") is True:
                     if command.state != "running" or command.claimed_by != worker_id:
                         raise CoworkerError(
                             "browser_worker_claim_invalid",
                             "This worker no longer owns the browser command.", 409,
                         )
-                    session = db.scalar(select(BrowserSession).where(
-                        BrowserSession.id == command.session_id,
-                        BrowserSession.owner_id == command.owner_id,
-                    ).with_for_update())
-                    if session is None:
-                        raise not_found()
                     command.state = "failed"
                     command.error_code = "browser_agent_read_not_read_only"
                     command.finished_at = now
@@ -1688,18 +1704,9 @@ class BrowserRepository:
                     "The supervised Agent read reported an unauthorized interaction.",
                     409,
                 )
+        checked = _bounded_observation(observation)
         with self.sessions.begin() as db:
-            command = db.scalar(select(BrowserCommand).where(
-                BrowserCommand.id == command_id,
-            ).with_for_update())
-            if command is None:
-                raise not_found()
-            session = db.scalar(select(BrowserSession).where(
-                BrowserSession.id == command.session_id,
-                BrowserSession.owner_id == command.owner_id,
-            ).with_for_update())
-            if session is None:
-                raise not_found()
+            command, session = self._lock_command_session_for_completion(db, command_id)
             checked["storage_state"] = _bounded_storage_state(
                 checked.get("storage_state"),
                 list(session.allowed_origins or []),
@@ -1951,17 +1958,9 @@ class BrowserRepository:
             error_code = "navigation_failed"
         now = utcnow()
         with self.sessions.begin() as db:
-            command = db.scalar(select(BrowserCommand).where(
-                BrowserCommand.id == command_id,
-            ).with_for_update())
-            if command is None:
-                raise not_found()
+            command, session = self._lock_command_session_for_completion(db, command_id)
             if command.state != "running" or command.claimed_by != worker_id:
                 raise CoworkerError("browser_worker_claim_invalid", "This browser command is not owned by this worker.", 409)
-            session = db.scalar(select(BrowserSession).where(
-                BrowserSession.id == command.session_id,
-                BrowserSession.owner_id == command.owner_id,
-            ).with_for_update())
             command.state = "failed"
             command.error_code = error_code
             _scrub_form_payload(command)
