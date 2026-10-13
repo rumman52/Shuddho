@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -112,6 +113,23 @@ def test_future_created_at_cannot_extend_proposal_validity_window():
     })
     with pytest.raises(CoworkerError, match="before creation"):
         verified(future, now, reviewed_sha256=future.review_sha256())
+
+
+
+
+def test_dst_fall_back_cannot_extend_proposal_expiry_beyond_utc_limit():
+    envelope, _ = setup_envelope()
+    zone = ZoneInfo("America/New_York")
+    # At the 2026 fall-back, 01:45 EDT -> 02:00 EST is 75 elapsed
+    # minutes, although wall-time subtraction returns only 15.
+    created = datetime(2026, 11, 1, 1, 45, tzinfo=zone, fold=0)
+    expires = datetime(2026, 11, 1, 2, 0, tzinfo=zone)
+    assert (expires.astimezone(timezone.utc) - created.astimezone(timezone.utc)).total_seconds() == 4500
+    with pytest.raises(ValidationError, match="bounded in UTC"):
+        CodeProposalEnvelope.model_validate({
+            **envelope.model_dump(mode="python"),
+            "created_at": created, "expires_at": expires,
+        })
 
 
 
