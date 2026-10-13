@@ -51,6 +51,7 @@ class Settings:
     connector_trust_boundary_enabled: bool = False
     connector_reads_enabled: bool = False
     browser_enabled: bool = False
+    agent_browser_read_enabled: bool = False
     code_execution_enabled: bool = False
     agent_sandbox_tool_enabled: bool = False
     action_attachments_enabled: bool = False
@@ -222,6 +223,7 @@ class Settings:
             connector_trust_boundary_enabled=os.getenv("SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED", "false").lower() == "true",
             connector_reads_enabled=os.getenv("SHUDDHO_CONNECTOR_READS_ENABLED", "false").lower() == "true",
             browser_enabled=os.getenv("SHUDDHO_BROWSER_ENABLED", "false").lower() == "true",
+            agent_browser_read_enabled=os.getenv("SHUDDHO_AGENT_BROWSER_READ_ENABLED", "false").lower() == "true",
             code_execution_enabled=os.getenv("SHUDDHO_CODE_EXECUTION_ENABLED", "false").lower() == "true",
             agent_sandbox_tool_enabled=os.getenv("SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED", "false").lower() == "true",
             action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
@@ -424,6 +426,14 @@ class Settings:
                     callback.username or callback.password or callback.query or callback.fragment or
                     callback.path != "/oauth/google/callback"):
                 raise ValueError("Actions require Google OAuth credentials and an HTTPS frontend /oauth/google/callback redirect URI")
+        if self.agent_browser_read_enabled and (
+            not self.browser_enabled
+            or not self.agent_runtime_v3_enabled
+            or not self.intelligent_planner_enabled
+        ):
+            raise ValueError(
+                "Agent browser read requires the supervised browser, Agent Runtime v3, and the intelligent planner"
+            )
         if self.browser_enabled:
             if not self.agent_runtime_v3_enabled:
                 raise ValueError("Browser broker requires Agent Runtime v3 (SHUDDHO_AGENT_RUNTIME_V3_ENABLED=true)")
