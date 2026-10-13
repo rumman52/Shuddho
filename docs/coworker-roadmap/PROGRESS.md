@@ -1,5 +1,35 @@
 # Coworker evolution progress
 
+## CW-09 default-off Agent browser metadata read — 13 October 2026
+
+**Refreshed baseline:** `main` at `f5c11ec7db35721190b67212695e7612af63f09f`, with [CW-08 source-consent PR #386](https://github.com/rumman52/Shuddho/pull/386) merged and exact-head [CI #38404758754](https://github.com/rumman52/Shuddho/actions/runs/38404758754) successful; latest main [CI #38408371736](https://github.com/rumman52/Shuddho/actions/runs/38408371736) still in progress when inspected. No open PRs at bootstrap.
+
+**Current bounded CW-09 task:** Register default-off typed `browser.read` as a Runtime v3 tool and connect it to the existing owner-scoped supervised broker and worker. Deterministic `explicit_browser_url` derives one HTTPS URL from the user's *original run goal*, not a model-chosen destination. Runtime creates/reuses a reserved `agent:<run_id>:<ordinal>` browser session, atomically prepares one read-only navigate command, and persists the broker-verified page URL/title/time/hash as **untrusted metadata-only**, not full page text or HTML capture. No new run or transaction ledger. A separate `SHUDDHO_AGENT_BROWSER_READ_ENABLED` flag defaults off and requires existing browser/v3/intelligent planner dependencies.
+
+**Base:** `f5c11ec7db35721190b67212695e7612af63f09f`. **Branch:** `codex/cw09-brokered-read-metadata-20261013`. **Initial source + regression SHA:** `4d7c2521bdf083177c9f34cd8693007cf75ef535` before frontend/tool contract and doc commits. **Contract:** [CW09_BROKERED_AGENT_READ_METADATA_2026-10-13.md](CW09_BROKERED_AGENT_READ_METADATA_2026-10-13.md). Confirm draft PR/current SHA and exact-head CI from GitHub.
+
+| Item | Verified/current state | Pending acceptance |
+| --- | --- | --- |
+| CW-05 owned messages | Merged ledger/owner source + prior repository tests | Staging races/replay and deletion |
+| CW-06 dispatch/cancel | Merged routing/dispatch, revision cancellation | Operating steering and terminal precedence |
+| CW-07 activity continuity | PR #385 merged, full final-head CI passed | Mobile/keyboard/reconnect operated evidence, event-level cursor |
+| CW-08 pinned context/memory | PR #384 and #386 merged, exact-head PR CI passed; prior-task implicit read sealed for conversations | Full lifecycle/revocation races, broader purpose consent, multilingual human acceptance |
+| CW-09 browser read | Current branch: metadata-only typed v3 tool with default-off flag/broker command+receipt | Exact-head CI, actual page-body/private digest, real worker/SSRF/redirect/egress and release gates |
+| CW-10 generated code | Sandbox foundation exists; approval-bound immutable code proposal not completed | Independent code-proposal and sandbox approval route |
+| CW-11 skill manifests | Static skill registry; reviewed manifests not completed | Version/hash, authority subsets, compatible rollback |
+
+| Evidence | CW-09 metadata slice |
+| --- | --- |
+| Implemented | Branch-only code + synthetic worker/broker tests |
+| Repository-verified | Pending exact-final-head no-skip GitHub Actions |
+| Staging-verified | Unverified |
+| Production-qualified | Not established |
+| Activated | **No** — flag remains default-off |
+
+**Review:** Self-review only. Explicit user URL and reserved server resource identity reduce planner authority; test covers denied destinations and replay. A separate full content capture and canonical release eligibility policy still need integration; metadata hash is explicitly not claimed as web content hash. An independent security reviewer and frozen live isolated-worker evidence are mandatory before activation. Existing PHP/Node/web dependencies, transaction provider and writing/DeepSeek configuration remain unchanged.
+
+**Next exact action:** Open draft PR and verify current-head `test-and-build`, `coworker`, `ci-merge-gate`, and targeted `tests/test_agent_browser_tool.py`. Resolve any failure, obtain independent review, then implement CW-09 bounded page-body capture/private checksum on its own review slice or advance independent CW-10 proposal contract. Do not merge or activate automatically.
+
 ## CW-08 explicit conversation source-selection boundary — 13 October 2026 (Asia/Dhaka)
 
 **Repository bootstrap:** `main` `b2a6920d2fea10dfc5a813746e19c7241597846b`. [CW-07 PR #385](https://github.com/rumman52/Shuddho/pull/385) was **merged**; its final-head [CI #38402405574](https://github.com/rumman52/Shuddho/actions/runs/38402405574) was still in progress as inspected, so completion of its broad checks is not inferred. New main [CI #38403290676](https://github.com/rumman52/Shuddho/actions/runs/38403290676) also in progress. No other open PRs at bootstrap.
