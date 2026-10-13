@@ -209,8 +209,10 @@ def test_browser_tool_kill_switch_blocks_existing_prepared_invocation(container)
 @pytest.mark.parametrize("goal", [
     "Read https://example.com/article and inspect its page title.",
     "Could you read https://example.com/article?",
+    "How about you read https://example.com/article?",
     "এই পাতাটি পড়ুন https://example.com/article",
     "এই পাতাটি পড়ুন https://example.com/article",
+    "https://example.com পাতাটি পড়ে বলুন",
     "Lee https://example.com/article",
     "اقرأ https://example.com/article",
 ])
@@ -253,7 +255,8 @@ def test_agent_browser_cancel_revokes_pending_worker_command(container):
     assert container.agent.get(owner, run["id"])["state"] == "cancelled"
 
 
-def test_agent_browser_interaction_does_not_allow_rewritten_worker_evidence(container):
+@pytest.mark.parametrize("malformed", [False, True])
+def test_agent_browser_interaction_does_not_allow_rewritten_worker_evidence(container, malformed):
     enabled_agent_browser(container)
     owner = account(container, "cw09-interaction-terminal")
     session, _ = container.browser.create(
@@ -262,12 +265,13 @@ def test_agent_browser_interaction_does_not_allow_rewritten_worker_evidence(cont
     )
     first = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/")
     assert [item["id"] for item in container.browser.claim_commands("cw09-reject-worker")] == [first["id"]]
+    evidence = {"interaction_performed": True} if malformed else {
+        "final_url": "https://example.com/", "title": "Attempted click",
+        "redirect_chain": [], "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "interaction_performed": True,
+    }
     with pytest.raises(CoworkerError) as rejected:
-        container.browser.complete_command("cw09-reject-worker", first["id"], {
-            "final_url": "https://example.com/", "title": "Attempted click",
-            "redirect_chain": [], "resolved_ips": {"example.com": ["93.184.216.34"]},
-            "interaction_performed": True,
-        })
+        container.browser.complete_command("cw09-reject-worker", first["id"], evidence)
     assert rejected.value.code == "browser_agent_read_not_read_only"
     assert container.browser.get(owner, session["id"])["state"] == "failed"
     command = container.browser.list_commands(owner, session["id"])[0]
