@@ -755,3 +755,80 @@ def test_agent_browser_receipt_and_revocation_share_session_first_locks_on_postg
         assert final_state == "cancelled"
         assert agent.verified_observations(identity, run["id"]) == []
     assert len(browser.list_commands(identity, session["id"])) == 1
+
+
+def test_agent_browser_receipt_sql_locks_session_before_command_on_postgres(repository):
+    """Inspect real PostgreSQL SELECT FOR UPDATE order; prevent the previous P1 inversion."""
+    import base64
+    import re
+    from sqlalchemy import event
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.browser import BrowserRepository
+    from services.coworker.browser_schemas import BrowserSessionCreate
+
+    settings = replace(
+        repository.settings,
+        actions_enabled=True,
+        google_client_id="simulated-client-id",
+        google_client_secret="simulated-client-secret",
+        google_redirect_uri="http://127.0.0.1:5173/oauth/google/callback",
+        connector_encryption_key=base64.urlsafe_b64encode(b"1" * 32).decode(),
+        connector_trust_boundary_enabled=True,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_runtime_v3_enabled=True,
+        browser_enabled=True,
+        agent_browser_read_enabled=True,
+        browser_worker_token="postgres-browser-worker-token-0123456789abcdef",
+    )
+    settings.validate()
+    identity = owner(repository)
+    agent = AgentRepository(repository.sessions, settings)
+    browser = BrowserRepository(repository.sessions, settings)
+    run, _ = agent.create(
+        identity, AgentRunCreate(goal="Read https://example.com/article"), str(uuid4()),
+    )
+    ordinal = agent.append_v3_step(identity, run["id"], "browser.read", "Read source")
+    agent.begin_invocation(run["id"], ordinal)
+    session, _ = browser.create(
+        identity, BrowserSessionCreate(purpose="research", start_url="https://example.com/article"),
+        f"agent:{run['id']}:{ordinal}", agent_origin=True,
+    )
+    agent.link_invocation_resource(run["id"], ordinal, "browser_session", session["id"])
+    cmd = browser.prepare_agent_read(identity, session["id"], "https://example.com/article")
+    assert [item["id"] for item in browser.claim_commands("pg-order-worker")] == [cmd["id"]]
+    assert browser.complete_command("pg-order-worker", cmd["id"], {
+        "final_url": "https://example.com/article",
+        "title": "Source title",
+        "redirect_chain": [],
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "submission_performed": False,
+    })["state"] == "succeeded"
+
+    locks = []
+    def on_execute(_connection, _cursor, statement, _parameters, _context, _many):
+        sql = " ".join(statement.lower().split())
+        if "for update" not in sql:
+            return
+        for kind in ("session", "command"):
+            table = "cw_browser_sessions" if kind == "session" else "cw_browser_commands"
+            if re.search(r"\\bfrom\\s+(?:[a-z0-9_]+\\.)?" + table + r"\\b", sql):
+                locks.append(kind)
+                break
+
+    engine = repository.sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", on_execute)
+    try:
+        agent.finish_invocation(
+            run["id"], ordinal, "browser_command", cmd["id"],
+            {"observation_scope": "metadata_only", "observation_trust": "untrusted"},
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", on_execute)
+
+    assert "session" in locks, locks
+    assert "command" in locks, locks
+    assert locks.index("session") < locks.index("command"), locks
+    assert browser.get(identity, session["id"])["state"] == "completed"
+    assert len(agent.verified_observations(identity, run["id"])) == 1
