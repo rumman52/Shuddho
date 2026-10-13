@@ -620,6 +620,12 @@ def test_agent_browser_cancel_and_worker_control_are_serialized_on_postgres(repo
     settings = replace(
         repository.settings,
         actions_enabled=True,
+        # Browser use requires the existing connector trust boundary, which
+        # in turn requires a syntactically valid development OAuth config.
+        # These values are inert test fixtures, never usable provider secrets.
+        google_client_id="simulated-client-id",
+        google_client_secret="simulated-client-secret",
+        google_redirect_uri="http://127.0.0.1:5173/oauth/google/callback",
         connector_encryption_key=base64.urlsafe_b64encode(b"1" * 32).decode(),
         connector_trust_boundary_enabled=True,
         agent_runtime_enabled=True,
