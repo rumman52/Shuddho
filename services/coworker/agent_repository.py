@@ -12,6 +12,7 @@ from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, A
 from .agent_tools import available_tools, tool
 from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
+from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
 from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
@@ -1330,6 +1331,7 @@ class AgentRepository:
             run = db.get(AgentRun, run_id)
             if run is None:
                 raise not_found()
+            require_admitted_conversation_run_sources(db, run)
             documents = list(db.scalars(select(DocumentVersion.document_id).where(
                 DocumentVersion.id.in_(run.input_versions), DocumentVersion.owner_id == run.owner_id,
             ))) if run.input_versions else []
