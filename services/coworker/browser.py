@@ -591,8 +591,13 @@ class BrowserRepository:
             "resolved_ips": checked,
         }
 
-    def create(self, owner: str, request: BrowserSessionCreate, idempotency_key: str) -> tuple[dict, bool]:
+    def create(self, owner: str, request: BrowserSessionCreate, idempotency_key: str, *,
+               agent_origin: bool = False) -> tuple[dict, bool]:
         self._require_enabled()
+        if idempotency_key.startswith("agent:") and not agent_origin:
+            raise CoworkerError(
+                "browser_agent_scope", "Agent browser session identities are server-reserved.", 409,
+            )
         start_url, origin = normalize_browser_target(request.start_url)
         fingerprint = _digest({"purpose": request.purpose, "start_url": start_url})
         with self.sessions.begin() as db:
