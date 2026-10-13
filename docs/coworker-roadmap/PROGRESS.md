@@ -1,5 +1,33 @@
 # Coworker evolution progress
 
+## CW-09 post-merge safety recovery — 13 October 2026
+
+**Authoritative bootstrap:** current `main` `8de8aa9bb672f0b77ddb250e3718bc3ae060dfbd`. [PR #387](https://github.com/rumman52/Shuddho/pull/387) was merged at this revision **with failed required exact-head CI** ([run 38412412901](https://github.com/rumman52/Shuddho/actions/runs/38412412901): `test-and-build` pass; `coworker` fail, 1/9 CW-09 mandatory test failed; merge gate fail). Postmerge main [CI 38414646497](https://github.com/rumman52/Shuddho/actions/runs/38414646497) also failed the same gate. Historical lower entries that say PR #387 was unmerged are superseded by this dated correction. No open PR existed when this repair was selected.
+
+**First dependency-ready task:** CW-09 correctness and safety repair before CW-10/11. Five unresolved automated review findings from PR #387 were triaged: (1) cancel broker command with owning Agent, (2) release Agent sessions after receipt, (3) terminally persist attempted worker interaction, (4) Bangla read intents, (5) browser-read questions. The failing test observed an eligible read classified as `unsupported` because previous route ordering allowed other rules to block it.
+
+**Work branch:** `codex/cw09-postmerge-safety-repair-20261013`, based on `8de8aa9bb672f0b77ddb250e3718bc3ae060dfbd`. **Initial implementation/test SHA:** `4a3698db81c00a65c3865f5b93567e23aceb7f34`. **Latest implementation/test SHA:** `d742870d2ce3deef9c1af27518722f9c975f606b` before this checkpoint, also aligning the browser worker-control poll to canonical BrowserSession→BrowserCommand locks and adding a concurrent PostgreSQL Agent cancellation/work-control regression. Earlier source `581f5b63c0db02a1ee59c682c2a3a4acb0062dff` addressed malformed interaction evidence and multilingual intent. The prior revision `e1068cbfea9389a45de5e2d793c8630d43e3496a` added a revoked-session receipt race regression. **Draft PR [#388](https://github.com/rumman52/Shuddho/pull/388)**, still unmerged. **Contract:** [CW09_POSTMERGE_SAFETY_REPAIR_2026-10-13.md](CW09_POSTMERGE_SAFETY_REPAIR_2026-10-13.md). Verify mandatory CI against the latest exact PR head **after this documentation checkpoint**; earlier workflow attempts may be cancelled. The patch strengthens the **existing** Agent and browser ledgers; no replacement engine, migration, live egress or provider actions.
+
+| Workstream item | Current source/integration | Missing evidence and next work |
+| --- | --- | --- |
+| CW-05 owner message ledger | Merged established source | Operated race/retention and source lifecycle |
+| CW-06 conversation dispatch | Merged established source | Operated cancellation/steering and late worker checks |
+| CW-07 owned activity cursor | Merged PR #385, prior successful PR CI | Real UI reconnect/mobile/keyboard/event cursor |
+| CW-08 selected context/memory | Merged PRs #384/#386, prior successful PR CI | Staging revocation/use races, broader consent lifecycle |
+| **CW-09 typed browser** | PR #387 merged **without passing CI**; corrective code on isolated branch only | Final-head CI with no skips, independent review of five findings, real isolated-worker/egress tests, captured webpage content/source digest, canonical release eligibility |
+| CW-10 reviewed generated code | Sandbox exists, no immutable approved proposal | Store review/immutable hash envelope and sandbox claim in independent branch |
+| CW-11 reviewed skills | Static registry, no reviewed manifest | Validated versioned manifests and authority subset |
+
+| Evidence level | CW-09 correction |
+| --- | --- |
+| Implemented | Branch only, review pending |
+| Repository-verified | **No**; exact-final-head GitHub checks required |
+| Staging-verified | Unverified |
+| Production-qualified | Not established |
+| Activated | No new activation; browser tool still defaults off |
+
+**Verification and next exact action:** Open corrective draft PR, verify `test-and-build`, `coworker` including required `tests/test_agent_browser_tool.py` without skips, and `ci-merge-gate` on the final PR implementation revision. Inspect logs for any failed assertions and adjust code/tests only to preserve documented intent. Obtain an independent security review, then run frozen real isolated-worker staging SSRF/cancel/takeover/egress tests. Do not auto-merge or activate. Follow CW-09 with independent dependency-ready CW-10/CW-11 review work when this is repository-verified.
+
 ## CW-09 default-off Agent browser metadata read — 13 October 2026
 
 **Refreshed baseline:** `main` at `f5c11ec7db35721190b67212695e7612af63f09f`, with [CW-08 source-consent PR #386](https://github.com/rumman52/Shuddho/pull/386) merged and exact-head [CI #38404758754](https://github.com/rumman52/Shuddho/actions/runs/38404758754) successful; latest main [CI #38408371736](https://github.com/rumman52/Shuddho/actions/runs/38408371736) still in progress when inspected. No open PRs at bootstrap.

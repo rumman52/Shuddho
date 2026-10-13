@@ -14,12 +14,61 @@ from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
 from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
 AGENT_TERMINAL_STATES = {"completed", "failed", "cancelled", "needs_input", "blocked"}
+
+
+def _settle_agent_browser_session(db, owner: str, session_id: str, *, completed: bool) -> None:
+    """Atomically release one-use broker sessions with the owning Agent ledger."""
+    session = db.scalar(select(BrowserSession).where(
+        BrowserSession.id == session_id,
+        BrowserSession.owner_id == owner,
+        BrowserSession.idempotency_key.like("agent:%"),
+    ).with_for_update())
+    if session is None or session.state in {"cancelled", "completed", "expired", "failed"} or session.cancel_requested:
+        if completed:
+            raise CoworkerError(
+                "browser_session_closed",
+                "The supervised browser session was revoked before its receipt could settle.",
+                409,
+            )
+        return
+    now = utcnow()
+    session.state = "completed" if completed else "cancelled"
+    session.cancel_requested = not completed
+    session.takeover_required = False
+    session.takeover_reason = None
+    session.worker_session_ref = None
+    session.takeover_worker_ref = None
+    session.takeover_worker_lease_until = None
+    session.storage_state_sealed = None
+    session.storage_state_version = 0
+    session.storage_state_updated_at = None
+    session.takeover_frame_sealed = None
+    session.takeover_frame_version = 0
+    session.takeover_frame_content_type = None
+    session.takeover_frame_byte_size = None
+    session.takeover_frame_sha256 = None
+    session.takeover_frame_updated_at = None
+    session.updated_at = now
+    for cmd in db.scalars(select(BrowserCommand).where(
+        BrowserCommand.session_id == session.id,
+        BrowserCommand.owner_id == owner,
+        BrowserCommand.state.in_(("prepared", "running")),
+    ).with_for_update()):
+        cmd.state = "cancelled"
+        cmd.error_code = "session_cancelled"
+        cmd.finished_at = now
+        cmd.lease_until = None
+        cmd.claimed_by = None
+    db.add(AuditEvent(
+        id=str(uuid4()), owner_id=owner, resource_id=session.id,
+        action="browser_agent_read.completed" if completed else "browser_agent_read.cancelled",
+    ))
 
 
 class AgentRepository:
@@ -1278,6 +1327,10 @@ class AgentRepository:
             AgentStep.run_id == run.id, AgentStep.owner_id == owner,
             AgentStep.state.in_({"queued", "planned", "running", "awaiting_approval"}),
         )):
+            if step.output.get("resource_type") == "browser_session":
+                _settle_agent_browser_session(
+                    db, owner, step.output["resource_id"], completed=False,
+                )
             if step.output.get("resource_type") == "action":
                 action_row = db.scalar(select(ExternalAction).where(
                     ExternalAction.id == step.output.get("resource_id"), ExternalAction.owner_id == owner,
@@ -1800,13 +1853,18 @@ class AgentRepository:
 
     def link_invocation_resource(self, run_id: str, ordinal: int, resource_type: str, resource_id: str):
         with self.sessions.begin() as db:
+            # Match cancel_in_session's run -> step locking order.
+            run = db.scalar(select(AgentRun).where(
+                AgentRun.id == run_id,
+            ).with_for_update())
+            if run is None or run.cancel_requested or run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError("agent_cancelled", "The Agent run is no longer active.", 409)
             step = db.scalar(select(AgentStep).where(
                 AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
             ).with_for_update())
             if step is None:
                 raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
             step.output = {"resource_type": resource_type, "resource_id": resource_id}
-            run = db.get(AgentRun, step.run_id)
             invocation = db.scalar(select(ToolInvocation).where(
                 ToolInvocation.step_id == step.id,
             ))
@@ -1905,6 +1963,25 @@ class AgentRepository:
                     resource_type=resource_type, resource_id=resource_id, summary=summary,
                 ))
             now = utcnow()
+            if resource_type == "browser_command":
+                command = db.scalar(select(BrowserCommand).where(
+                    BrowserCommand.id == resource_id,
+                    BrowserCommand.owner_id == run.owner_id,
+                    BrowserCommand.state == "succeeded",
+                ).with_for_update())
+                if command is None:
+                    raise CoworkerError(
+                        "browser_observation_unverified",
+                        "The owned broker observation has not succeeded.", 409,
+                    )
+                bound = step.output or {}
+                if bound.get("resource_type") != "browser_session" or bound.get("resource_id") != command.session_id:
+                    raise CoworkerError(
+                        "browser_agent_scope", "The Agent receipt has no matching broker session.", 409,
+                    )
+                _settle_agent_browser_session(
+                    db, run.owner_id, command.session_id, completed=True,
+                )
             invocation.state = "completed"
             invocation.finished_at = now
             step.state = "completed"
@@ -1941,6 +2018,10 @@ class AgentRepository:
                 ToolInvocation.run_id == run_id,
                 ToolInvocation.state.in_({"prepared", "running", "awaiting_approval"}),
             )):
+                if (step.output or {}).get("resource_type") == "browser_session":
+                    _settle_agent_browser_session(
+                        db, run.owner_id, step.output["resource_id"], completed=False,
+                    )
                 invocation.state = "failed"
                 invocation.finished_at = now
                 step.state = "failed"

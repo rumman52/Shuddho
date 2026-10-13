@@ -342,9 +342,15 @@ class AgentRuntime:
                     f"agent:{run_id}:{ordinal}",
                     agent_origin=True,
                 )
-                self.repo.link_invocation_resource(
-                    run_id, ordinal, "browser_session", session["id"],
-                )
+                try:
+                    self.repo.link_invocation_resource(
+                        run_id, ordinal, "browser_session", session["id"],
+                    )
+                except Exception:
+                    # Cancellation can win between broker create and Agent link.
+                    # Clear its orphaned slot; the Agent ledger remains terminal.
+                    self.container.browser.cancel(run["owner_id"], session["id"])
+                    raise
                 resource = {"resource_type": "browser_session", "resource_id": session["id"]}
             if resource.get("resource_type") != "browser_session":
                 raise CoworkerError(
