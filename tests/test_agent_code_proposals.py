@@ -103,6 +103,18 @@ def test_expiry_and_limit_reductions_invalidate_previously_reviewed_compute():
         ))
 
 
+
+def test_future_created_at_cannot_extend_proposal_validity_window():
+    envelope, now = setup_envelope()
+    future = envelope.model_copy(update={
+        "created_at": now + timedelta(days=365),
+        "expires_at": now + timedelta(days=365, minutes=10),
+    })
+    with pytest.raises(CoworkerError, match="before creation"):
+        verified(future, now, reviewed_sha256=future.review_sha256())
+
+
+
 def test_invalid_sources_cross_owner_inputs_and_network_destinations_rejected():
     envelope, _ = setup_envelope()
     with pytest.raises(ValidationError):
