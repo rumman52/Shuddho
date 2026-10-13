@@ -16,7 +16,7 @@ Once the trusted broker marks navigation succeeded, Runtime verifies no submissi
 
 ## Reviewable affected paths
 - `services/coworker/config.py`: default-off independent flag and dependency validation.
-- `services/coworker/agent_schemas.py`, `agent_tools.py`, `agent_planner.py`: typed input, registry and safe goal URL selector.
+- `services/coworker/agent_schemas.py`, `agent_tools.py`, `agent_planner.py`, `agent_router.py`: typed input, registry, safe goal URL selector, and public explicit-read intent qualification without model-created destinations.
 - `services/coworker/agent_repository.py`: server-derived v3 step arguments and bounded receipt propagation.
 - `services/coworker/browser.py`: reserved session namespace and locked idempotent read command.
 - `services/coworker/agent_runtime.py`: bounded prepare/observe/verify/receipt path.
