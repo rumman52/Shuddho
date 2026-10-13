@@ -25,6 +25,7 @@
     "connector_trust_boundary": false,
     "connector_reads": false,
     "browser": false,
+    "agent_browser_read": false,
     "code_execution": false,
     "agent_sandbox_tool": false,
     "personal_transactions": false,
