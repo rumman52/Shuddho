@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 
-from .browser import normalize_browser_target
 
 from .agent_schemas import AgentPlanStep, AgentPlannerProposal
 from .approval_boundary import assert_model_tool_surface
@@ -107,6 +106,9 @@ def explicit_browser_url(goal: str) -> str | None:
     if len(candidates) != 1:
         return None
     try:
+        # The lightweight Agent evaluation suite intentionally omits SQLAlchemy.
+        # Import the supervised broker only for an actually eligible browser URL.
+        from .browser import normalize_browser_target
         normalized, _origin = normalize_browser_target(candidates[0])
     except CoworkerError:
         return None
