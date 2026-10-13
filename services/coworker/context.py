@@ -17,6 +17,7 @@ from .context_policy import (
 )
 from .errors import CoworkerError
 from .extraction import extract_in_subprocess
+from .conversation_context import require_admitted_conversation_run_sources
 from .models import AgentRun, ConnectorSnapshot, Document, DocumentVersion, Step, Task, utcnow
 from .repository import aware, iso, not_found
 
@@ -92,6 +93,7 @@ class ContextService:
             ))
             if run is None:
                 raise not_found()
+            require_admitted_conversation_run_sources(db, run)
             sources: list[dict] = []
             for index, version_id in enumerate(list(run.input_versions or []), start=1):
                 source_id = f"ctx-{index}"

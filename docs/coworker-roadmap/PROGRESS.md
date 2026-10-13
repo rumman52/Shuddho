@@ -1,5 +1,34 @@
 # Coworker evolution progress
 
+## CW-08 Architecture/Core Agent continuation — 13 October 2026 (Asia/Dhaka)
+
+**Source baseline:** `main` at `fb3c8994edc2d6a7db2781b9a798a21a7a9beec6`. Main CI [38393963804](https://github.com/rumman52/Shuddho/actions/runs/38393963804) was in progress when inspected; no claim of successful final-head CI is made for it. Earlier CW-06 [PR #383](https://github.com/rumman52/Shuddho/pull/383) is **merged**; final PR SHA `1312877604520fec49e00970d12ff14a4b9c7294` passed [CI 38391641647](https://github.com/rumman52/Shuddho/actions/runs/38391641647). No open PRs appeared before this CW-08 work.
+
+**Selected task:** CW-08 worker-time conversation source-pin enforcement, scoped to a single reviewable code slice. `ConversationMessage.selected_sources` already preserves exact version/hash/owner selection, but `AgentRun.input_versions` records only IDs and `ContextService._run_and_sources` previously trusted the *current* DocumentVersion row at worker time. A same-ID in-place changed digest/version could bypass the admitted selection. The new shared validator revalidates the original owner-scoped message, document pin, run link and live resource status both at `AgentRepository.worker_run` entry (v1/v2/v3) and at planner context load; pre-existing non-conversation runs retain their former logic.
+
+**Branch:** `codex/cw08-conversation-pinned-context-20261013` from `fb3c8994edc2d6a7db2781b9a798a21a7a9beec6`. **Implementation/test head:** `cea2c57eeb1ddd2c38526c9a2e8475333526a11f` before checkpoint update. **Task contract:** [CW08_CONVERSATION_SOURCE_BINDING_2026-10-13.md](CW08_CONVERSATION_SOURCE_BINDING_2026-10-13.md). **Review PR:** [draft #384](https://github.com/rumman52/Shuddho/pull/384); exact final head and CI are verified on the PR.
+
+| Acceptance task | Source evidence level | Remaining gate |
+| --- | --- | --- |
+| CW-05 owner-scoped messages | Existing implementation and prior main CI | Staging race/replay/deletion qualification |
+| CW-06 bounded message dispatch/cancel | Merged CW-06 routing repair, previously green exact-head CI | Full steering and operational cancellation proof |
+| CW-07 continuous activity | Existing UI and owner-scoped activity projection | Cursor/reconnect/mobile and staging qualification |
+| CW-08 context/memory | Existing source and memory controls; new exact conversation pin worker check on review branch | Final-head CI, live revoke/replacement race, remaining bounded context/memory lifecycle and quality review |
+| CW-09 browser read | Existing broker/isolated worker, no registered Agent `browser.read` | Gated typed integration and isolated-worker testing |
+| CW-10 reviewed generated code | Existing sandbox control plane | Immutable reviewed code proposal/approval/execution binding |
+| CW-11 skill manifests | Existing static versioned work skills | Reviewed manifest hashes, authority subsets and compatible rollback |
+
+| Evidence level | CW-08 source-pin task |
+| --- | --- |
+| Implemented | Branch-only implementation + focused regression cases |
+| Repository-verified | Pending required exact-final-head PR CI; local full-repository pytest not run |
+| Staging-verified | Unverified |
+| Production-qualified | Not established |
+| Activated | None; no grant, provider or rollout changed |
+
+**Next exact action:** Inspect draft PR #384 exact-PR-head `coworker`, `test-and-build` and `ci-merge-gate`; fix source defects without silencing tests; obtain independent review. Then continue remaining dependency-ready CW-08 and CW-09 code slices in separate PRs. No merge or production activation is authorized by this execution prompt.
+
+
 ## Current Architecture/Core Agent checkpoint — 13 October 2026
 
 Refreshed default branch: `main` at `339d6924b244c0bb1641764dabd68c4f55488bb3`. Exact-main CI [run 38338728994](https://github.com/rumman52/Shuddho/actions/runs/38338728994) passed its coworker, test-and-build and merge-gate jobs. No open PR was returned before beginning this slice.

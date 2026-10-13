@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .errors import CoworkerError
-from .models import Artifact, Document, DocumentVersion, utcnow
+from .models import AgentRun, Artifact, Conversation, ConversationMessage, Document, DocumentVersion, utcnow
 from .repository import aware
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -96,3 +96,51 @@ def require_current_selected_sources(db: Session, owner_id: str, selected_source
             409,
         )
     return result["active"]
+
+
+def require_admitted_conversation_run_sources(db: Session, run: AgentRun) -> None:
+    """Recheck conversation-selected pins at *every* Agent worker entrypoint.
+
+    A conversation run stores IDs in input_versions but the originating message
+    stores immutable admission-time versions and digests. Never treat the current
+    DocumentVersion row as the originally authorized source.
+    """
+    if not run.idempotency_key.startswith("conversation:"):
+        return  # Preserve historical and direct Agent run semantics.
+    owner = run.owner_id
+    message_id = run.idempotency_key[len("conversation:"):]
+    message = db.scalar(
+        select(ConversationMessage)
+        .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+        .where(
+            ConversationMessage.id == message_id,
+            ConversationMessage.owner_id == owner,
+            Conversation.owner_id == owner,
+            Conversation.deleted.is_(False),
+        )
+    )
+    if (
+        message is None
+        or not any(
+            isinstance(link, dict)
+            and link.get("resource_type") == "agent_run"
+            and link.get("resource_id") == run.id
+            for link in (message.resource_links or [])
+        )
+    ):
+        raise CoworkerError(
+            "context_sources_changed",
+            "The original conversation source binding is unavailable. Review the message before running.",
+            409,
+        )
+
+    pins = require_current_selected_sources(db, owner, message.selected_sources or [])
+    if (
+        [pin["resource_id"] for pin in pins] != list(run.input_versions or [])
+        or any(pin["resource_type"] != "document_version" for pin in pins)
+    ):
+        raise CoworkerError(
+            "context_sources_changed",
+            "The conversation's admitted document selection changed. Reselect sources before running.",
+            409,
+        )
