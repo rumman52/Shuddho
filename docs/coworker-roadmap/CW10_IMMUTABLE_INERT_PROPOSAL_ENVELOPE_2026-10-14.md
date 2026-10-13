@@ -3,7 +3,7 @@
 **Date:** 14 October 2026 (Asia/Dhaka)  
 **Base:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`  
 **Branch:** `codex/cw10-immutable-proposal-envelope-20261014`  
-**Initial code/tests revision:** `cd5463231a9a18043f26363b33777c2a251d7b4d`. **Updated source/tests head before final checkpoint:** `970f828fdcde75eff9b4cad8ae93a9b2038cdfb3`; [draft PR #392](https://github.com/rumman52/Shuddho/pull/392). Independent review [P2](https://github.com/rumman52/Shuddho/pull/392#discussion_r4263712225) found future-created proposals accepted before their validity window; now verified against server-provided `now >= created_at` and new future-date regression. Full exact-head CI/re-review required.
+**Initial code/tests revision:** `cd5463231a9a18043f26363b33777c2a251d7b4d`. **Updated source/tests head before final checkpoint:** `804a875ddfa4f3a104b21c301a6d039eb7131084` after fixing both [P2 future-validity](https://github.com/rumman52/Shuddho/pull/392#discussion_r4263712225) and [P2 DST-duration](https://github.com/rumman52/Shuddho/pull/392#discussion_r4263771173) findings, with future-date and DST fall-back regression. The branch was reconciled to merged CW-09 main `905a09c3a5e2931be46d9053ba4af09ecd331125` using a two-parent reviewed-history-preserving merge commit; exact latest CI must rerun.; [draft PR #392](https://github.com/rumman52/Shuddho/pull/392). Independent review [P2](https://github.com/rumman52/Shuddho/pull/392#discussion_r4263712225) found future-created proposals accepted before their validity window; now verified against server-provided `now >= created_at` and new future-date regression. Full exact-head CI/re-review required.
 
 ## Requirement and initial gap
 
