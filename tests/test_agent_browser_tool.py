@@ -279,3 +279,40 @@ def test_agent_browser_interaction_does_not_allow_rewritten_worker_evidence(cont
             "redirect_chain": [], "resolved_ips": {"example.com": ["93.184.216.34"]},
         })
     assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+
+
+def test_revoked_browser_session_cannot_settle_agent_tool_receipt(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-revoked-verified-read")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"),
+        "cw09-revoked-receipt",
+    )
+    ordinal = container.agent.append_v3_step(
+        owner, run["id"], "browser.read", "Read the owned URL",
+    )
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal))["status"] == "executing"
+    session_id = container.agent.step_resource(run["id"], ordinal)["resource_id"]
+    command = container.browser.list_commands(owner, session_id)[0]
+    claimed = container.browser.claim_commands("cw09-revocation-worker")
+    assert [item["id"] for item in claimed] == [command["id"]]
+    completed = container.browser.complete_command(
+        "cw09-revocation-worker", command["id"], {
+            "final_url": "https://example.com/article",
+            "title": "Read-only metadata",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        },
+    )
+    assert completed["state"] == "succeeded"
+    # The user closes the supervised session between broker observation and
+    # Agent receipt commit: a verified command does not override revocation.
+    container.browser.cancel(owner, session_id)
+    with pytest.raises(CoworkerError) as revoked:
+        container.agent.finish_invocation(
+            run["id"], ordinal, "browser_command", command["id"],
+            {"observation_trust": "untrusted", "observation_scope": "metadata_only"},
+        )
+    assert revoked.value.code == "browser_session_closed"
+    assert container.agent.verified_observations(owner, run["id"]) == []
