@@ -94,6 +94,13 @@ class ResearchToolInput(TaskToolInput):
         return _safe_text(value)
 
 
+class BrowserReadToolInput(AgentModel):
+    """Only explicit current-user URL: session and command identity are server-owned."""
+
+    url: str = Field(min_length=8, max_length=4096)
+    purpose: Literal["research"] = "research"
+
+
 class SandboxPythonToolInput(AgentModel):
     # Source is copied by deterministic server code from one exact user-supplied
     # fenced Python block. The planner never authors or edits these bytes.

@@ -1486,6 +1486,9 @@ class AgentRepository:
                         "sandbox_state", "exit_code", "stdout_excerpt", "stderr_excerpt",
                         "stdout_sha256", "stderr_sha256", "sandbox_destroyed", "output_trust",
                         "artifact_id", "artifact_sha256",
+                        "browser_state", "observation_scope", "observation_trust",
+                        "source_url", "source_sha256", "capture_time",
+                        "untrusted_page_title", "submission_performed",
                     )
                     if key in summary and isinstance(summary[key], (str, int, bool, type(None)))
                 }
@@ -1552,7 +1555,7 @@ class AgentRepository:
 
     def append_v3_step(self, owner: str, run_id: str, tool_name: str, objective: str) -> int:
         """Translate one model-selected registered tool into server-owned arguments."""
-        from .agent_planner import action_selection_candidates, exact_user_python_source, intelligent_tool_names
+        from .agent_planner import action_selection_candidates, exact_user_python_source, explicit_browser_url, intelligent_tool_names
 
         with self.sessions.begin() as db:
             run = self._run(db, owner, run_id, lock=True)
@@ -1598,7 +1601,16 @@ class AgentRepository:
                 arguments = {"action_id": selected["id"]}
             else:
                 actual_name = tool_name
-                if actual_name == "sandbox.execute_python":
+                if actual_name == "browser.read":
+                    url = explicit_browser_url(run.goal)
+                    if url is None:
+                        raise CoworkerError(
+                            "planner_tool_scope",
+                            "Browser reading requires one explicit safe HTTPS URL in the user request.",
+                            409,
+                        )
+                    arguments = {"url": url, "purpose": "research"}
+                elif actual_name == "sandbox.execute_python":
                     source = exact_user_python_source(run.goal, self.settings)
                     if source is None:
                         raise CoworkerError(

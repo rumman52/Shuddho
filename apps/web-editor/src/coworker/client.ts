@@ -29,7 +29,7 @@ export type AgentFinalState = "completed" | "partially_completed" | "waiting_for
 export type AgentTool = {
   name: string;
   version: string;
-  kind: "task" | "approved_action" | "sandbox";
+  kind: "task" | "approved_action" | "sandbox" | "browser_read";
   capability: string;
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;

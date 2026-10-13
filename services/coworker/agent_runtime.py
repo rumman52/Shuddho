@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
+from .browser import normalize_browser_target
+from .browser_schemas import BrowserSessionCreate
+
 from .agent_planner import deterministic_plan, intelligent_tool_names, proposal_to_plan
 from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
@@ -316,6 +322,102 @@ class AgentRuntime:
             return {"status": status}
         if spec.consequential or spec.approval_required:
             raise CoworkerError("approval_required", "This consequential tool must use the approved-action path.", 409)
+
+        if spec.kind == "browser_read":
+            if (
+                run["runtime_version"] != 3
+                or not self.container.settings.agent_browser_read_enabled
+                or not spec.enabled(self.container.settings)
+            ):
+                raise CoworkerError("tool_not_supported", "Agent browser reading is not enabled.", 409)
+            if args.purpose != "research":
+                raise CoworkerError("browser_agent_scope", "Only read-only research is permitted.", 409)
+            target_url, _origin = normalize_browser_target(args.url)
+            self.repo.begin_invocation(run_id, ordinal)
+            resource = self.repo.step_resource(run_id, ordinal)
+            if resource is None:
+                session, _created = self.container.browser.create(
+                    run["owner_id"],
+                    BrowserSessionCreate(purpose="research", start_url=target_url),
+                    f"agent:{run_id}:{ordinal}",
+                    agent_origin=True,
+                )
+                self.repo.link_invocation_resource(
+                    run_id, ordinal, "browser_session", session["id"],
+                )
+                resource = {"resource_type": "browser_session", "resource_id": session["id"]}
+            if resource.get("resource_type") != "browser_session":
+                raise CoworkerError(
+                    "browser_agent_scope", "The run is not bound to a browser session.", 409,
+                )
+            session_id = str(resource["resource_id"])
+            session = self.container.browser.get(run["owner_id"], session_id)
+            if (
+                session["purpose"] != "research"
+                or session["start_url"] != target_url
+                or session["cancel_requested"]
+                or session["takeover_required"]
+                or session["state"] in {"takeover", "cancelled", "expired", "failed", "completed"}
+            ):
+                raise CoworkerError(
+                    "browser_agent_scope", "The supervised browser session is unavailable for this run.", 409,
+                )
+            command = self.container.browser.prepare_agent_read(
+                run["owner_id"], session_id, target_url,
+            )
+            if command["state"] in {"prepared", "running"}:
+                validate_tool_result(spec, {
+                    "status": "executing",
+                    "resource_type": "browser_command",
+                    "resource_id": command["id"],
+                    "summary": {"browser_state": command["state"], "observation_scope": "metadata_only"},
+                })
+                return {"status": "executing"}
+            if command["state"] != "succeeded":
+                raise CoworkerError(
+                    command.get("error_code") or "browser_observation_unavailable",
+                    "The supervised read-only browser command did not succeed.", 409,
+                )
+            result = command.get("result") or {}
+            final_url, _final_origin = normalize_browser_target(result.get("final_url", ""))
+            title = result.get("title")
+            if (
+                not isinstance(title, str) or len(title) > 300
+                or result.get("submission_performed") is not False
+                or bool(result.get("interaction_performed"))
+                or bool(result.get("prepared_fields"))
+                or result.get("takeover_frame_version") is not None
+            ):
+                raise CoworkerError(
+                    "browser_observation_invalid", "The broker did not verify read-only page metadata.", 409,
+                )
+            # The broker validates DNS/IP, redirects, origin and no submission
+            # before marking the command succeeded. This is a hash of exactly
+            # the released *metadata*, not a claim to have captured page HTML.
+            metadata_bytes = json.dumps(
+                {"url": final_url, "title": title},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8")
+            summary = {
+                "browser_state": "succeeded",
+                "observation_scope": "metadata_only",
+                "observation_trust": "untrusted",
+                "source_url": final_url,
+                "capture_time": command["finished_at"],
+                "source_sha256": hashlib.sha256(metadata_bytes).hexdigest(),
+                "untrusted_page_title": title,
+                "submission_performed": False,
+            }
+            self.repo.finish_invocation(
+                run_id, ordinal, "browser_command", command["id"], summary,
+            )
+            validate_tool_result(spec, {
+                "status": "completed",
+                "resource_type": "browser_command",
+                "resource_id": command["id"],
+                "summary": summary,
+            })
+            return {"status": "completed"}
 
         if spec.kind == "sandbox":
             if run["runtime_version"] != 3 or not self.container.settings.agent_sandbox_tool_enabled:

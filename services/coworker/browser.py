@@ -591,8 +591,13 @@ class BrowserRepository:
             "resolved_ips": checked,
         }
 
-    def create(self, owner: str, request: BrowserSessionCreate, idempotency_key: str) -> tuple[dict, bool]:
+    def create(self, owner: str, request: BrowserSessionCreate, idempotency_key: str, *,
+               agent_origin: bool = False) -> tuple[dict, bool]:
         self._require_enabled()
+        if idempotency_key.startswith("agent:") and not agent_origin:
+            raise CoworkerError(
+                "browser_agent_scope", "Agent browser session identities are server-reserved.", 409,
+            )
         start_url, origin = normalize_browser_target(request.start_url)
         fingerprint = _digest({"purpose": request.purpose, "start_url": start_url})
         with self.sessions.begin() as db:
@@ -773,6 +778,68 @@ class BrowserRepository:
                 "state": command.state,
                 "policy": command.payload,
             }
+
+    def prepare_agent_read(self, owner: str, session_id: str, url: str) -> dict:
+        """Claim one read-only navigation per server-origin Agent browser session.
+
+        Idempotent under the existing session row lock across concurrent workers.
+        The browser worker remains the sole network egress authority.
+        """
+        self._require_enabled()
+        target_url, origin = normalize_browser_target(url)
+        with self.sessions.begin() as db:
+            row = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == session_id,
+                BrowserSession.owner_id == owner,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if (
+                not row.idempotency_key.startswith("agent:")
+                or row.purpose != "research"
+                or target_url != row.start_url
+                or origin not in set(row.allowed_origins or [])
+            ):
+                raise CoworkerError(
+                    "browser_agent_scope",
+                    "The Agent may read only the original server-bound browser destination.",
+                    409,
+                )
+            if aware(row.expires_at) <= utcnow():
+                raise CoworkerError("browser_session_expired", "The browser session expired.", 410)
+            if row.cancel_requested or row.state in TERMINAL_BROWSER_STATES:
+                raise CoworkerError("browser_session_closed", "The browser session is closed.", 409)
+            if row.takeover_required or row.state == "takeover":
+                raise CoworkerError("browser_takeover_active", "The browser is paused for takeover.", 409)
+            commands = list(db.scalars(select(BrowserCommand).where(
+                BrowserCommand.session_id == session_id, BrowserCommand.owner_id == owner,
+            ).order_by(BrowserCommand.sequence).limit(2)))
+            if commands:
+                if len(commands) != 1 or commands[0].kind != "navigate" or commands[0].target_url != target_url:
+                    raise CoworkerError("browser_agent_scope", "The Agent browser session changed.", 409)
+                return self._command_dto(commands[0])
+            command = BrowserCommand(
+                id=str(uuid4()), session_id=session_id, owner_id=owner,
+                sequence=1, kind="navigate", target_url=target_url,
+                target_origin=origin,
+                payload={
+                    "policy_version": "browser-v1",
+                    "requires_dns_ip_validation": True,
+                    "redirect_validation": True,
+                    "allow_downloads": False,
+                    "allow_script_injection": False,
+                    "agent_read_only": True,
+                },
+                state="prepared",
+            )
+            db.add(command)
+            row.updated_at = utcnow()
+            db.add(AuditEvent(
+                id=str(uuid4()), owner_id=owner, resource_id=row.id,
+                action="browser_agent_read.prepared",
+            ))
+            db.flush()
+            return self._command_dto(command)
 
     def prepare_form(self, owner: str, session_id: str, request: BrowserFormPrepareCreate) -> dict:
         self._require_enabled()
@@ -1677,6 +1744,17 @@ class BrowserRepository:
                 raise CoworkerError(
                     "browser_form_submission_blocked",
                     "The browser worker reported a form submission, which is not authorized.",
+                    409,
+                )
+            if (command.payload or {}).get("agent_read_only") is True and (
+                checked["prepared_fields"]
+                or checked["submission_performed"]
+                or checked["interaction_performed"]
+                or checked["takeover_frame"] is not None
+            ):
+                raise CoworkerError(
+                    "browser_agent_read_not_read_only",
+                    "The supervised Agent read reported an unauthorized browser interaction.",
                     409,
                 )
             if command.kind == "prepare_form":
