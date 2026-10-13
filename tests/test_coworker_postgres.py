@@ -813,7 +813,7 @@ def test_agent_browser_receipt_sql_locks_session_before_command_on_postgres(repo
             return
         for kind in ("session", "command"):
             table = "cw_browser_sessions" if kind == "session" else "cw_browser_commands"
-            if re.search(r"\\bfrom\\s+(?:[a-z0-9_]+\\.)?" + table + r"\\b", sql):
+            if re.search(r"\bfrom\s+(?:[a-z0-9_]+\.)?" + table + r"\b", sql):
                 locks.append(kind)
                 break
 
