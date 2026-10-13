@@ -672,3 +672,86 @@ def test_agent_browser_cancel_and_worker_control_are_serialized_on_postgres(repo
     assert browser.get(identity, session["id"])["state"] == "cancelled"
     assert browser.list_commands(identity, session["id"])[0]["state"] == "cancelled"
     assert browser.worker_control("postgres-worker", command["id"])["action"] == "stop"
+
+
+def test_agent_browser_receipt_and_revocation_share_session_first_locks_on_postgres(repository):
+    """One concurrent winner: browser receipt commits OR revocation, never a deadlock."""
+    import base64
+    from threading import Barrier
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.browser import BrowserRepository
+    from services.coworker.browser_schemas import BrowserSessionCreate
+
+    settings = replace(
+        repository.settings,
+        actions_enabled=True,
+        google_client_id="simulated-client-id",
+        google_client_secret="simulated-client-secret",
+        google_redirect_uri="http://127.0.0.1:5173/oauth/google/callback",
+        connector_encryption_key=base64.urlsafe_b64encode(b"1" * 32).decode(),
+        connector_trust_boundary_enabled=True,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_runtime_v3_enabled=True,
+        browser_enabled=True,
+        agent_browser_read_enabled=True,
+        browser_worker_token="postgres-browser-worker-token-0123456789abcdef",
+    )
+    settings.validate()
+    identity = owner(repository)
+    agent = AgentRepository(repository.sessions, settings)
+    browser = BrowserRepository(repository.sessions, settings)
+    run, _ = agent.create(
+        identity, AgentRunCreate(goal="Read https://example.com/article"), str(uuid4()),
+    )
+    ordinal = agent.append_v3_step(
+        identity, run["id"], "browser.read", "Read the exact user URL",
+    )
+    agent.begin_invocation(run["id"], ordinal)
+    session, _ = browser.create(
+        identity, BrowserSessionCreate(purpose="research", start_url="https://example.com/article"),
+        f"agent:{run['id']}:{ordinal}", agent_origin=True,
+    )
+    agent.link_invocation_resource(run["id"], ordinal, "browser_session", session["id"])
+    command = browser.prepare_agent_read(identity, session["id"], "https://example.com/article")
+    assert [item["id"] for item in browser.claim_commands("pg-receipt-worker")] == [command["id"]]
+    completed = browser.complete_command("pg-receipt-worker", command["id"], {
+        "final_url": "https://example.com/article", "title": "Read-only source",
+        "redirect_chain": [], "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "submission_performed": False,
+    })
+    assert completed["state"] == "succeeded"
+
+    ready = Barrier(2)
+    def settle():
+        ready.wait(timeout=10)
+        try:
+            agent.finish_invocation(
+                run["id"], ordinal, "browser_command", command["id"],
+                {"observation_scope": "metadata_only", "observation_trust": "untrusted"},
+            )
+            return "verified"
+        except CoworkerError as error:
+            return error.code
+    def revoke():
+        ready.wait(timeout=10)
+        return browser.cancel(identity, session["id"])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        settled = pool.submit(settle)
+        revoked = pool.submit(revoke)
+        result = settled.result(timeout=20)
+        revoked_result = revoked.result(timeout=20)
+    final_state = browser.get(identity, session["id"])["state"]
+    assert final_state == revoked_result["state"]
+    if result == "verified":
+        assert final_state == "completed"
+        receipts = agent.verified_observations(identity, run["id"])
+        assert len(receipts) == 1
+        assert receipts[0]["tool"] == "browser.read"
+    else:
+        assert result == "browser_session_closed"
+        assert final_state == "cancelled"
+        assert agent.verified_observations(identity, run["id"]) == []
+    assert len(browser.list_commands(identity, session["id"])) == 1
