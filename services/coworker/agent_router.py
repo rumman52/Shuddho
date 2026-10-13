@@ -603,6 +603,30 @@ def qualify_agent_goal(
         selected.append(name)
         intents.append(intent)
 
+    # A read-only browser goal must remain accessible through the public Agent
+    # admission router; a planner-only registration is not user-visible.
+    # No URL/session/credentials originate in model output.
+    if "https://" in goal and _has_any(text, ("read", "browse", "inspect", "visit page")):
+        from .agent_planner import explicit_browser_url
+        if explicit_browser_url(goal) is not None:
+            browser = tool("browser.read")
+            if not browser.enabled(settings):
+                return _decision(
+                    intent="browser",
+                    complexity="single_step",
+                    execution="unsupported",
+                    capability=browser.capability,
+                    provider="none",
+                    access="read",
+                    capability_available=False,
+                    confidence=0.99,
+                    fallback_policy="unsupported",
+                    reason_code="capability_disabled",
+                    message="The supervised Agent browser read capability is disabled.",
+                )
+            selected.append(browser.name)
+            intents.append("browser")
+
     selected = list(dict.fromkeys(selected))[:3]
     intents = list(dict.fromkeys(intents))
 
@@ -614,8 +638,15 @@ def qualify_agent_goal(
             complexity = "single_step"
             intent = intents[0]
         has_research = "research.search" in selected
-        access = "read_write" if has_research and len(selected) > 1 else "read" if has_research else "write"
-        if has_research and len(selected) > 1:
+        has_browser = "browser.read" in selected
+        has_read = has_research or has_browser
+        has_write = any(tool(name).read_write_classification != "read" for name in selected)
+        access = "read_write" if has_read and has_write else "read" if has_read else "write"
+        if has_browser and len(selected) == 1:
+            provider = "supervised_browser"
+        elif has_browser:
+            provider = "supervised_browser+coworker_model"
+        elif has_research and len(selected) > 1:
             provider = f"{settings.search_provider}+coworker_model"
         elif has_research:
             provider = settings.search_provider
