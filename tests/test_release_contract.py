@@ -63,6 +63,7 @@ def test_every_optional_capability_has_a_registered_staging_gate():
         "connector_reads",
         "connector_reads_microsoft",
         "browser",
+        "agent_browser_read",
         "code_execution",
         "agent_sandbox_tool",
         "personal_transactions",
@@ -149,6 +150,57 @@ def test_browser_requires_runtime_v3_trust_boundary_and_staging_evidence():
     assert "browser_dependency" in validate_rollout(
         rollout, max_cohort_users=25
     )
+
+
+def test_agent_browser_read_is_independently_default_off_and_release_gated():
+    rollout = load("docs/cohort-rollout.template.json")
+    staging = load("docs/staging-evidence.template.json")
+    assert rollout["capabilities"]["browser"] is False
+    assert rollout["capabilities"]["agent_browser_read"] is False
+    assert staging["agent_browser_read"] == {"status": "pending", "evidence": ""}
+    assert "agent_browser_read" not in required_conditional_gate_ids(rollout["capabilities"], set())
+    assert "agent_browser_read" not in {
+        item.key for item in required_activation_requirements(rollout["capabilities"], set())
+    }
+
+    # Merely enabling the generic supervised browser is not an Agent grant.
+    flags = rollout["capabilities"]
+    flags.update({
+        "actions": True,
+        "connector_trust_boundary": True,
+        "agent_runtime": True,
+        "intelligent_planner": True,
+        "runtime_v3": True,
+        "browser": True,
+        "agent_browser_read": True,
+    })
+    rollout["action_providers"] = ["google"]
+    rollout["monitoring"]["actions"] = "actions-dashboard"
+    gates = required_conditional_gate_ids(flags, {"google"})
+    assert "browser" in gates
+    assert "agent_browser_read" in gates
+    requirements = required_activation_requirements(flags, {"google"})
+    browser = next(item for item in requirements if item.key == "agent_browser_read")
+    assert browser.capability == "agent_browser_read"
+    assert browser.status == "agent_browser_read_verified"
+    assert browser.ledger_event_type == "agent_browser_read_verified"
+    assert browser.ledger_artifact_key == "agent_browser_read_activation"
+    assert browser.ledger_schema_version == 34
+    assert "agent_browser_read_dependency" not in validate_rollout(
+        rollout, max_cohort_users=25,
+    )
+
+    flags["browser"] = False
+    assert "agent_browser_read_dependency" in validate_rollout(
+        rollout, max_cohort_users=25,
+    )
+    flags["browser"] = True
+    rollout["rollback"]["agent_browser_read_kill_switch"] = "SHUDDHO_BROWSER_ENABLED=false"
+    assert "agent_browser_read_kill_switch" in validate_rollout(
+        rollout, max_cohort_users=25,
+    )
+    assert staging["agent_browser_read"]["status"] == "pending"
+
 
 
 def test_code_execution_requires_runtime_v3_artifacts_and_staging_evidence():
