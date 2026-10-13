@@ -1,5 +1,33 @@
 # Coworker evolution progress
 
+## CW-09 independent browser.read release gate — 14 October 2026
+
+**Authoritative repository bootstrap:** `main` `d6ba9c183860284207cafd5f8cc2052205080837`; no open PRs at bootstrap. [PR #389](https://github.com/rumman52/Shuddho/pull/389) was already **merged** (the earlier 14 October checkpoint below calling it an unmerged draft is historical and superseded). The exact-head [CI #38456526299](https://github.com/rumman52/Shuddho/actions/runs/38456526299) had successful `test-and-build`, mandatory PostgreSQL/conversation race checks **and** dedicated CW-09 brokered Agent browser suite; its broader `coworker` and merge gate were still in progress when last inspected. Main [CI #38457535194](https://github.com/rumman52/Shuddho/actions/runs/38457535194) also remained in progress. CI success is not staging qualification or permission to activate.
+
+**First dependency-ready gap:** the code-owned `browser.read` flag exists, but controlled release had no independent staging/capability/rollback/activation evidence entry. **Branch:** `codex/cw09-agent-browser-release-contract-20261014`, based on `d6ba9c183860284207cafd5f8cc2052205080837`. **Implementation/test SHA:** `a069daf5d2567e84d5bff3c1e525553e1d98d9b4` before docs. **Task contract:** [CW09_AGENT_BROWSER_RELEASE_CONTRACT_2026-10-14.md](CW09_AGENT_BROWSER_RELEASE_CONTRACT_2026-10-14.md). Draft PR not yet opened at this checkpoint; inspect actual GitHub head and CI when reviewing.
+
+**Change:** the canonical rollout gate now recognizes **default-off** `agent_browser_read`, requiring the existing `browser`, `runtime_v3` and `connector_trust_boundary` capabilities, a distinct staged browser Agent read evidence gate, a separate `SHUDDHO_AGENT_BROWSER_READ_ENABLED=false` rollback, and `agent_browser_read_verified` activation ledger proof. Templates remain pending/false. Tests cover absence/default-off, dependency, rollback, and independent activation proof. This patch **does not** add page content capture, mint approval, or enforce live release proof at tool execution; no authority is granted by documentation or rollout registration alone.
+
+| Architecture/core acceptance | Integration evidence | Remaining acceptance |
+| --- | --- | --- |
+| CW-05 owned conversation | Merged existing source and prior repository checks | Staging replay/privacy/erasure |
+| CW-06 dispatch and steering | Merged source and durable dispatch | Operated cancellations/races and UX |
+| CW-07 active chat/reconnect | Merged #385, prior exact-head PR CI | UI mobile/keyboard/event cursor |
+| CW-08 context/memory | Merged #384/#386, previous exact-head CI | Staging source revocation and memory lifecycle |
+| **CW-09 read-only browser** | Merged #387/#388/#389; #389 core safety tests green, full checks pending | New release contract in isolated branch, full content capture and private hash, execution-time canonical eligibility, isolated worker egress/cancel security evidence |
+| CW-10 reviewed generated Python | No signed inert code proposal envelope | Proposal hash/approval/sandbox claim and tests |
+| CW-11 versioned skills | Static tool contracts only | Reviewed manifest + version/grant subset |
+
+| Evidence level | CW-09 release contract |
+| --- | --- |
+| Implemented | Review branch with source/templates/tests/docs |
+| Repository-verified | **Pending exact final-head CI** |
+| Staging-verified | **No** |
+| Production-qualified | **No** |
+| Activated | **No**; both broker and Agent read flags remain default off |
+
+**Review/next action:** Open independent draft PR; verify exact-head `test-and-build`, `coworker` and `ci-merge-gate`, plus explicit `tests/test_release_contract.py`. Obtain independent review and resolve findings without weakening tests. No auto-merge or flag activation. Continue CW-09 content-capture/private provenance and runtime release enforcement after this contract, and subsequently CW-10/CW-11 in dependency order.
+
 ## CW-09 receipt/cancellation correction — 14 October 2026
 
 **Refreshed main:** `fd4cb99a2d7925bcdd0faafad5a3eae041496a80`, after merged [PR #388](https://github.com/rumman52/Shuddho/pull/388). Unlike the historical entry below that calls #388 draft/unmerged, **it is merged**, but [exact-head CI #38432751315](https://github.com/rumman52/Shuddho/actions/runs/38432751315) and [main CI #38436567016](https://github.com/rumman52/Shuddho/actions/runs/38436567016) failed. In PR CI `test-and-build` passed; mandatory PostgreSQL conversation step failed (59 pass, 1 failure, OAuth test setup missing); `coworker` stopped before mandatory CW-09 browser tests; `ci-merge-gate` failed. The merged PR's final automated review identified a remaining **P1 BrowserCommand-before-BrowserSession row-lock inversion** in `finish_invocation`.
