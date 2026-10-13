@@ -17,8 +17,8 @@ from .context_policy import (
 )
 from .errors import CoworkerError
 from .extraction import extract_in_subprocess
-from .conversation_context import require_current_selected_sources
-from .models import AgentRun, ConnectorSnapshot, Conversation, ConversationMessage, Document, DocumentVersion, Step, Task, utcnow
+from .conversation_context import require_admitted_conversation_run_sources
+from .models import AgentRun, ConnectorSnapshot, Document, DocumentVersion, Step, Task, utcnow
 from .repository import aware, iso, not_found
 
 
@@ -93,48 +93,7 @@ class ContextService:
             ))
             if run is None:
                 raise not_found()
-            # CW-08: Conversation messages retain the user's exact version/hash pins.
-            # A run's input_versions intentionally stores IDs only; do not interpret
-            # the *current* version row as the source admitted by that message.
-            # This is a worker-use boundary, independent of initial dispatch checks.
-            if run.idempotency_key.startswith("conversation:"):
-                message_id = run.idempotency_key[len("conversation:"):]
-                message = db.scalar(
-                    select(ConversationMessage)
-                    .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
-                    .where(
-                        ConversationMessage.id == message_id,
-                        ConversationMessage.owner_id == owner,
-                        Conversation.owner_id == owner,
-                        Conversation.deleted.is_(False),
-                    )
-                )
-                linked = (
-                    message is not None
-                    and any(
-                        link.get("resource_type") == "agent_run"
-                        and link.get("resource_id") == run.id
-                        for link in (message.resource_links or [])
-                        if isinstance(link, dict)
-                    )
-                )
-                if not linked:
-                    raise CoworkerError(
-                        "context_sources_changed",
-                        "The original conversation source binding is unavailable. Review the message before running.",
-                        409,
-                    )
-                pins = require_current_selected_sources(db, owner, message.selected_sources or [])
-                if (
-                    len(pins) != len(run.input_versions or [])
-                    or [pin["resource_id"] for pin in pins] != list(run.input_versions or [])
-                    or any(pin["resource_type"] != "document_version" for pin in pins)
-                ):
-                    raise CoworkerError(
-                        "context_sources_changed",
-                        "The conversation's admitted document selection changed. Reselect sources before running.",
-                        409,
-                    )
+            require_admitted_conversation_run_sources(db, run)
             sources: list[dict] = []
             for index, version_id in enumerate(list(run.input_versions or []), start=1):
                 source_id = f"ctx-{index}"
