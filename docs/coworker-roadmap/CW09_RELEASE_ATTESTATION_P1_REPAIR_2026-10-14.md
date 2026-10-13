@@ -3,7 +3,7 @@
 **Scope:** review-blocking correctness repair to merged [PR #390](https://github.com/rumman52/Shuddho/pull/390), not a new browser capability.
 **Base:** main `76a07600328d0c6ff0ed73b69d2c7933d38bf927`.
 **Branch:** `codex/cw09-release-attestation-repair-20261014`.
-**Initial implementation/tests commit:** `2e03cb331a8833826d9ffd5a92a015713fe57bb3`. **Latest source/test commit before final docs:** `78908cabdc7108a9211aafc416f49ab6d50ff63f` (includes authenticated enabled-manifest regression). **Draft PR:** [#391](https://github.com/rumman52/Shuddho/pull/391), unmerged. First PR-head `test-and-build` succeeded; subsequent source edit superseded that head, so require complete exact-final-head CI.
+**Initial implementation/tests commit:** `2e03cb331a8833826d9ffd5a92a015713fe57bb3`. **Latest source/test commit:** `f07b6da0d416e0794f36155a1473bed0367bfee8` before final docs; independent PR #391 review found additional P1 rollout-digest binding and stale operator timestamp gaps and P2 missing rollback proof. The repair now binds exact rollout SHA in deployment, enforces timezone-aware staging <= deployment < clean operator status, and requires the exact dedicated rollback switch. Six negative operated-evidence regressions were added. Full exact-head CI and renewed review required. **Latest source/test commit before final docs:** `78908cabdc7108a9211aafc416f49ab6d50ff63f` (includes authenticated enabled-manifest regression). **Draft PR:** [#391](https://github.com/rumman52/Shuddho/pull/391), unmerged. First PR-head `test-and-build` succeeded; subsequent source edit superseded that head, so require complete exact-final-head CI.
 
 ## Reproduced findings
 
