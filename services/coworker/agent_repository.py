@@ -29,7 +29,13 @@ def _settle_agent_browser_session(db, owner: str, session_id: str, *, completed:
         BrowserSession.owner_id == owner,
         BrowserSession.idempotency_key.like("agent:%"),
     ).with_for_update())
-    if session is None or session.state in {"cancelled", "completed", "expired", "failed"}:
+    if session is None or session.state in {"cancelled", "completed", "expired", "failed"} or session.cancel_requested:
+        if completed:
+            raise CoworkerError(
+                "browser_session_closed",
+                "The supervised browser session was revoked before its receipt could settle.",
+                409,
+            )
         return
     now = utcnow()
     session.state = "completed" if completed else "cancelled"
