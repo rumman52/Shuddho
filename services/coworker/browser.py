@@ -1635,6 +1635,59 @@ class BrowserRepository:
         self._require_enabled()
         checked = _bounded_observation(observation)
         now = utcnow()
+        # This must be a *committed terminal failure*. Raising inside the
+        # normal begin() block would roll it back, allowing the same worker to
+        # resubmit a clean observation after performing an interaction.
+        if (
+            checked["prepared_fields"] or checked["submission_performed"]
+            or checked["interaction_performed"] or checked["takeover_frame"] is not None
+        ):
+            rejected_agent_read = False
+            with self.sessions.begin() as db:
+                command = db.scalar(select(BrowserCommand).where(
+                    BrowserCommand.id == command_id,
+                ).with_for_update())
+                if command is None:
+                    raise not_found()
+                if (command.payload or {}).get("agent_read_only") is True:
+                    if command.state != "running" or command.claimed_by != worker_id:
+                        raise CoworkerError(
+                            "browser_worker_claim_invalid",
+                            "This worker no longer owns the browser command.", 409,
+                        )
+                    session = db.scalar(select(BrowserSession).where(
+                        BrowserSession.id == command.session_id,
+                        BrowserSession.owner_id == command.owner_id,
+                    ).with_for_update())
+                    if session is None:
+                        raise not_found()
+                    command.state = "failed"
+                    command.error_code = "browser_agent_read_not_read_only"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                    self._clear_command_secret(command)
+                    session.state = "failed"
+                    session.error_code = "browser_agent_read_not_read_only"
+                    session.cancel_requested = True
+                    session.takeover_required = False
+                    session.takeover_reason = None
+                    session.worker_session_ref = None
+                    self._clear_storage_state(session)
+                    self._clear_takeover_affinity(session)
+                    self._clear_takeover_frame(session)
+                    session.updated_at = now
+                    db.add(AuditEvent(
+                        id=str(uuid4()), owner_id=session.owner_id, resource_id=session.id,
+                        action="browser_agent_read.interaction_rejected",
+                    ))
+                    rejected_agent_read = True
+            if rejected_agent_read:
+                raise CoworkerError(
+                    "browser_agent_read_not_read_only",
+                    "The supervised Agent read reported an unauthorized interaction.",
+                    409,
+                )
         with self.sessions.begin() as db:
             command = db.scalar(select(BrowserCommand).where(
                 BrowserCommand.id == command_id,
