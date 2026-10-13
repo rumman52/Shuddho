@@ -5458,6 +5458,15 @@ def append_agent_browser_read_event(
         for name in ("agent_browser_read", "browser", "runtime_v3", "connector_trust_boundary")
     ):
         raise ReleaseLedgerError("Agent browser read is not enabled in the reviewed dependency chain.")
+    rollback_controls = rollout.get("rollback")
+    if (
+        not isinstance(rollback_controls, dict)
+        or rollback_controls.get("agent_browser_read_kill_switch")
+        != "SHUDDHO_AGENT_BROWSER_READ_ENABLED=false"
+    ):
+        raise ReleaseLedgerError(
+            "Agent browser read requires an exact independent rollback kill switch."
+        )
     staged = staging.get("agent_browser_read")
     if (
         not isinstance(staged, dict)
@@ -5472,10 +5481,33 @@ def append_agent_browser_read_event(
         deployment.get("change_reference") != change_reference
         or deployment.get("current_stage") != current_stage
         or deployment.get("staging_evidence_sha256") != file_sha256(staging_evidence)
+        or deployment.get("rollout_manifest_sha256") != file_sha256(rollout_manifest)
     ):
-        raise ReleaseLedgerError("Agent browser deployment does not bind the reviewed staging evidence.")
+        raise ReleaseLedgerError(
+            "Agent browser deployment does not bind the exact reviewed rollout and staging evidence."
+        )
     if status.get("decision") != "CONTINUE_COHORT" or status.get("breaches") != []:
         raise ReleaseLedgerError("Agent browser read requires a clean post-deployment operator status.")
+
+    def verified_time(value: object, label: str) -> datetime:
+        if not isinstance(value, str):
+            raise ReleaseLedgerError(f"Agent browser read {label} timestamp is required.")
+        try:
+            stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise ReleaseLedgerError(f"Agent browser read {label} timestamp is invalid.") from None
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            raise ReleaseLedgerError(f"Agent browser read {label} timestamp must be timezone-aware.")
+        return stamp.astimezone(timezone.utc)
+
+    staged_at = verified_time(staged["verified_at"], "staging")
+    deployed_at = verified_time(deployment.get("deployed_at"), "deployment")
+    status_at = verified_time(status.get("generated_at"), "operator status")
+    if staged_at > deployed_at or status_at <= deployed_at:
+        raise ReleaseLedgerError(
+            "Agent browser read requires staging evidence before deployment "
+            "and fresh operator status strictly after deployment."
+        )
     revision = deployment.get("source_revision")
     if not isinstance(revision, str) or not revision or revision != activation.get("source_revision"):
         raise ReleaseLedgerError("Agent browser read deployment/source revision differs from activation.")
