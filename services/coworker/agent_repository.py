@@ -1964,9 +1964,33 @@ class AgentRepository:
                 ))
             now = utcnow()
             if resource_type == "browser_command":
+                bound = step.output or {}
+                if bound.get("resource_type") != "browser_session" or not bound.get("resource_id"):
+                    raise CoworkerError(
+                        "browser_agent_scope", "The Agent receipt has no matching broker session.", 409,
+                    )
+                # Canonical order is AgentRun -> AgentStep -> ToolInvocation
+                # -> BrowserSession -> BrowserCommand. Browser cancellation,
+                # worker control and worker completion all lock the session
+                # before its commands. Resolve only from the already-owned
+                # Agent step; never trust a model-supplied session identity.
+                session_id = bound["resource_id"]
+                session = db.scalar(select(BrowserSession).where(
+                    BrowserSession.id == session_id,
+                    BrowserSession.owner_id == run.owner_id,
+                    BrowserSession.idempotency_key.like("agent:%"),
+                ).with_for_update())
+                if session is None or session.cancel_requested or session.state in {
+                    "cancelled", "completed", "expired", "failed",
+                }:
+                    raise CoworkerError(
+                        "browser_session_closed",
+                        "The supervised browser session was revoked before its receipt could settle.", 409,
+                    )
                 command = db.scalar(select(BrowserCommand).where(
                     BrowserCommand.id == resource_id,
                     BrowserCommand.owner_id == run.owner_id,
+                    BrowserCommand.session_id == session_id,
                     BrowserCommand.state == "succeeded",
                 ).with_for_update())
                 if command is None:
@@ -1974,13 +1998,8 @@ class AgentRepository:
                         "browser_observation_unverified",
                         "The owned broker observation has not succeeded.", 409,
                     )
-                bound = step.output or {}
-                if bound.get("resource_type") != "browser_session" or bound.get("resource_id") != command.session_id:
-                    raise CoworkerError(
-                        "browser_agent_scope", "The Agent receipt has no matching broker session.", 409,
-                    )
                 _settle_agent_browser_session(
-                    db, run.owner_id, command.session_id, completed=True,
+                    db, run.owner_id, session_id, completed=True,
                 )
             invocation.state = "completed"
             invocation.finished_at = now
