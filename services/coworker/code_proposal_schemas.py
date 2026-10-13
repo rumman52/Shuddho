@@ -63,13 +63,14 @@ class CodeProposalEnvelope(ImmutableReviewModel):
             or hashlib.sha256(self.source.encode("utf-8")).hexdigest() != self.source_sha256
         ):
             raise ValueError("Exact code source bytes/digest are invalid")
-        if (
-            self.created_at.tzinfo is None
-            or self.expires_at.tzinfo is None
-            or self.expires_at <= self.created_at
-            or (self.expires_at - self.created_at).total_seconds() > 1800
-        ):
-            raise ValueError("Proposal timestamps must be aware, increasing and bounded")
+        if self.created_at.tzinfo is None or self.expires_at.tzinfo is None:
+            raise ValueError("Proposal timestamps must be timezone-aware")
+        # Same-zone subtraction can use wall time across DST. Check elapsed
+        # instants in UTC to prevent extending the approved lifetime.
+        created_utc = self.created_at.astimezone(timezone.utc)
+        expires_utc = self.expires_at.astimezone(timezone.utc)
+        if expires_utc <= created_utc or (expires_utc - created_utc).total_seconds() > 1800:
+            raise ValueError("Proposal timestamps must be increasing and bounded in UTC")
         ids = [str(x.version_id) for x in self.input_versions]
         if len(set(ids)) != len(ids):
             raise ValueError("Duplicate input document versions are forbidden")
