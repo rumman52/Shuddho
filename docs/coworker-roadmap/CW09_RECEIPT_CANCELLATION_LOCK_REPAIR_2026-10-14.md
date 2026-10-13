@@ -4,7 +4,7 @@
 **Workstream:** Architecture design / Core agent / CW-09  
 **Base:** `main` `fd4cb99a2d7925bcdd0faafad5a3eae041496a80`  
 **Branch:** `codex/cw09-receipt-lock-postgres-fixture-20261014`  
-**Code/test revision before documentation:** `7afabac1dc6c1fdada5ffdfe20994c60a0cc3aa9`
+**Initial code/test revision:** `7afabac1dc6c1fdada5ffdfe20994c60a0cc3aa9`. **Current code/test revision before this checkpoint:** `67df97ab0e125e48e18d3b36a143cf59af98d6b5`; includes additional PostgreSQL SQL `FOR UPDATE` lock-order assertion following an independent P2 test-coverage finding.
 
 ## Source and reproduced failure
 
