@@ -240,11 +240,16 @@ def _conversation_context_run(records, *, selected=True):
 
 @pytest.mark.parametrize("changed_field", ["sha256", "version", "deleted", "expired"])
 def test_worker_context_rechecks_exact_admitted_conversation_pin(records, changed_field):
-    """A re-written or revoked version cannot be substituted between admission and worker use."""
+    """All Agent runtime versions must reject substituted conversation source bytes."""
+    from types import SimpleNamespace
+    from services.coworker.agent_repository import AgentRepository
+
     service, owner, run_id, _, version_id, doc_id = _conversation_context_run(records)
     db = records[0]
+    repository = AgentRepository(service.sessions, SimpleNamespace())
     _, sources = service._run_and_sources(owner, run_id)
     assert len(sources) == 1 and sources[0]["state"] == "active"
+    assert repository.worker_run(run_id)["document_ids"] == [doc_id]
 
     version = db.get(DocumentVersion, version_id)
     if changed_field == "sha256":
@@ -260,6 +265,10 @@ def test_worker_context_rechecks_exact_admitted_conversation_pin(records, change
     with pytest.raises(CoworkerError) as failure:
         service._run_and_sources(owner, run_id)
     assert failure.value.code == "context_sources_changed"
+    # Runtime v1/v2 may bypass planner context; their worker entry must deny too.
+    with pytest.raises(CoworkerError) as worker_failure:
+        repository.worker_run(run_id)
+    assert worker_failure.value.code == "context_sources_changed"
 
 
 def test_worker_context_requires_original_owned_message_and_exact_run_link(records):
