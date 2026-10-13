@@ -1746,6 +1746,17 @@ class BrowserRepository:
                     "The browser worker reported a form submission, which is not authorized.",
                     409,
                 )
+            if (command.payload or {}).get("agent_read_only") is True and (
+                checked["prepared_fields"]
+                or checked["submission_performed"]
+                or checked["interaction_performed"]
+                or checked["takeover_frame"] is not None
+            ):
+                raise CoworkerError(
+                    "browser_agent_read_not_read_only",
+                    "The supervised Agent read reported an unauthorized browser interaction.",
+                    409,
+                )
             if command.kind == "prepare_form":
                 expected = [item.get("field") for item in (command.payload or {}).get("fields", [])]
                 if checked["prepared_fields"] != expected:
