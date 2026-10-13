@@ -582,34 +582,34 @@ def qualify_agent_goal(
     # Consequential routes above continue to win. The optional broker import
     # is unreachable while the independent feature flag is off.
     if browser_target is not None:
-            browser = tool("browser.read")
-            if not browser.enabled(settings):
-                return _decision(
-                    intent="browser",
-                    complexity="single_step",
-                    execution="unsupported",
-                    capability="browser",
-                    provider="none",
-                    access="read",
-                    capability_available=False,
-                    confidence=0.99,
-                    fallback_policy="unsupported",
-                    reason_code="capability_disabled",
-                    message="The supervised Agent browser read capability is disabled.",
-                )
+        browser = tool("browser.read")
+        if not browser.enabled(settings):
             return _decision(
                 intent="browser",
                 complexity="single_step",
-                execution="agent_run",
+                execution="unsupported",
                 capability="browser",
-                tools=["browser.read"],
-                provider="supervised_browser",
+                provider="none",
                 access="read",
+                capability_available=False,
                 confidence=0.99,
-                fallback_policy="deterministic_agent",
-                reason_code="registered_agent_capability",
-                message="Create a bounded supervised read-only Agent run.",
+                fallback_policy="unsupported",
+                reason_code="capability_disabled",
+                message="The supervised Agent browser read capability is disabled.",
             )
+        return _decision(
+            intent="browser",
+            complexity="single_step",
+            execution="agent_run",
+            capability="browser",
+            tools=["browser.read"],
+            provider="supervised_browser",
+            access="read",
+            confidence=0.99,
+            fallback_policy="deterministic_agent",
+            reason_code="registered_agent_capability",
+            message="Create a bounded supervised read-only Agent run.",
+        )
 
     if text.endswith("?"):
         return _decision(
