@@ -1,5 +1,31 @@
 # Coworker evolution progress
 
+## CW-09 receipt/cancellation correction — 14 October 2026
+
+**Refreshed main:** `fd4cb99a2d7925bcdd0faafad5a3eae041496a80`, after merged [PR #388](https://github.com/rumman52/Shuddho/pull/388). Unlike the historical entry below that calls #388 draft/unmerged, **it is merged**, but [exact-head CI #38432751315](https://github.com/rumman52/Shuddho/actions/runs/38432751315) and [main CI #38436567016](https://github.com/rumman52/Shuddho/actions/runs/38436567016) failed. In PR CI `test-and-build` passed; mandatory PostgreSQL conversation step failed (59 pass, 1 failure, OAuth test setup missing); `coworker` stopped before mandatory CW-09 browser tests; `ci-merge-gate` failed. The merged PR's final automated review identified a remaining **P1 BrowserCommand-before-BrowserSession row-lock inversion** in `finish_invocation`.
+
+**Chosen first dependency-ready task:** Repair exact-session-before-command locking at browser receipt settlement, and correctly configure the real PostgreSQL race tests. **Base:** main `fd4cb99a2d7925bcdd0faafad5a3eae041496a80`. **Branch:** `codex/cw09-receipt-lock-postgres-fixture-20261014`. **Implementation+test SHA:** `7afabac1dc6c1fdada5ffdfe20994c60a0cc3aa9` before docs. **Task contract:** [CW09_RECEIPT_CANCELLATION_LOCK_REPAIR_2026-10-14.md](CW09_RECEIPT_CANCELLATION_LOCK_REPAIR_2026-10-14.md). A draft PR will link this branch; never assume it is merged. Configuration uses the existing simulated test OAuth values without bypassing validation; added actual concurrent PostgreSQL receipt/revoke regression, preserving no late receipt and one command invariants.
+
+| Acceptance item | Source / integration status | Unmet evidence / next action |
+| --- | --- | --- |
+| CW-05 owner messages | Existing integrated ledger | Staging identity/replay and deletion |
+| CW-06 dispatch/cancel | Existing integrated source | Operated revocation/steering recovery |
+| CW-07 activity continuity | PR #385 merged; prior final-head CI successful | Accessibility/reconnect/event-level cursor |
+| CW-08 owner-scoped context | PRs #384/#386 merged with prior successful PR-head CI | Full memory and source-retention qualification |
+| **CW-09 brokered read** | PR #387/#388 **merged despite failing mandatory CI**; current receipt/fixture safety repair isolated on review branch | Exact-head CI including real PostgreSQL/browser with no skips; human security review; bounded actual page content + private hash; isolated-worker staging and release eligibility |
+| CW-10 generated-code proposals | Only existing sandbox foundation | Immutable inert code review/approval envelope |
+| CW-11 reviewed skill manifests | Static tool registry | Version/hash/rollback with fixed authority |
+
+| Evidence level | CW-09 current correction |
+| --- | --- |
+| Implemented | Review branch, code/test/doc changes |
+| Repository-verified | **No**; final-head CI pending |
+| Staging-verified | Unverified |
+| Production-qualified | Not established |
+| Activated | No change; independent browser tool flag remains default off |
+
+**Next exact action:** Open the draft PR, inspect exact-head GitHub `test-and-build`, `coworker` PostgreSQL & Agent browser no-skip gates, `ci-merge-gate`, obtain independent review, fix failures, retain blocked production state. Then continue independently dependency-ready CW-08/CW-10 preparation if infrastructure prevents operating CW-09.
+
 ## CW-09 post-merge safety recovery — 13 October 2026
 
 **Authoritative bootstrap:** current `main` `8de8aa9bb672f0b77ddb250e3718bc3ae060dfbd`. [PR #387](https://github.com/rumman52/Shuddho/pull/387) was merged at this revision **with failed required exact-head CI** ([run 38412412901](https://github.com/rumman52/Shuddho/actions/runs/38412412901): `test-and-build` pass; `coworker` fail, 1/9 CW-09 mandatory test failed; merge gate fail). Postmerge main [CI 38414646497](https://github.com/rumman52/Shuddho/actions/runs/38414646497) also failed the same gate. Historical lower entries that say PR #387 was unmerged are superseded by this dated correction. No open PR existed when this repair was selected.
