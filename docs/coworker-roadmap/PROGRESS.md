@@ -1,5 +1,40 @@
 # Coworker evolution progress
 
+## Current Architecture/Core Agent checkpoint — 13 October 2026
+
+Refreshed default branch: `main` at `339d6924b244c0bb1641764dabd68c4f55488bb3`. Exact-main CI [run 38338728994](https://github.com/rumman52/Shuddho/actions/runs/38338728994) passed its coworker, test-and-build and merge-gate jobs. No open PR was returned before beginning this slice.
+
+CW-06 contract gap: the `report.create` registered tool declares public capability `report` but internal durable task skill `report_email`. The old single-tool router emitted the internal skill into public route decisions while `tests/fixtures/core_agent_route_cases.jsonl` expects `report`. This finding is based on current canonical tool/route source, not historical completion percentages.
+
+Review branch `codex/cw-core-router-report-contract-20261013`, [draft PR #383](https://github.com/rumman52/Shuddho/pull/383), initial implementation/test head `aeb00b2cdd5994e3e8236bc049d2f916f9ad7862`. Changed only the single-tool router capability mapping to server-owned route intent and added a regression asserting that the public `report` route still uses `report.create` and the legacy `report_email` skill. The reviewed task contract is [CW06_REPORT_ROUTE_CONTRACT_2026-10-13.md](CW06_REPORT_ROUTE_CONTRACT_2026-10-13.md).
+
+| Evidence level | Status |
+| --- | --- |
+| Implemented | On isolated review branch; not integrated into `main` |
+| Repository-verified | Pending exact-final-head PR CI; local package tests not run in this GitHub connector environment |
+| Staging-verified | Unverified |
+| Production-qualified | Not established |
+| Activated | No provider, capability, or production activation |
+
+Scope: CW-05–CW-11 Architecture/Core Agent. CW-01–04 supply prerequisite evidence, not renewed assignments. The merged CW-09–14 qualification registry is a default-off metadata foundation, not a working browser/generated-code/skill runtime or live release qualification. Preserve prior transaction checkpoints below as historical. Pending CW-08 context/memory integration and CW-09–11 actual implementations must be rechecked against live source; staging/billing/provider/human evidence cannot be inferred from CI.
+
+Acceptance inventory based on inspected `main` source and available CI (per-task staging and full acceptance remain separate):
+
+| Task | Main source / current state | Next unmet acceptance / evidence |
+| --- | --- | --- |
+| CW-05 | Conversation schemas, repository and durable message tests exist; main CI includes PostgreSQL conversation races | Complete operated owner/deletion/replay qualification on a frozen staging release |
+| CW-06 | Atomic conversation dispatch and revision-checked cancellation exist; one report public-route mismatch repaired only on PR #383 | Verify PR exact-head CI; inspect missing/non-mutating steering contract and late-result precedence |
+| CW-07 | Conversation UI and read-only activity projection exist | Verify reconnect/mobile flows and add durable owner-scoped activity cursor if canonical contract remains unmet |
+| CW-08 | Source admission validation and read-only workspace manifest exist | Prove worker-use revocation/version checks, reviewable memory edits/deletion and bounded multilingual context |
+| CW-09 | Isolated browser broker/worker foundation exists; no `browser.read` in core `agent_tools.py` | Register and safely wire typed default-off read-only tool; prove SSRF/ownership/takeover boundaries |
+| CW-10 | Isolated sandbox control plane exists | Store immutable generated-code proposals and exact reviewed approval binding before execution |
+| CW-11 | Static versioned `WorkSkill` definitions exist | Validate reviewed manifest hashes, tool authority subset and compatible rollback after CW-09/10 |
+
+These are discovery statuses, not assertions that each full CW acceptance suite has passed. A successful green CI run on a revision does not substitute for missing staging, adversarial or human quality evidence.
+
+Next exact action: inspect exact-head GitHub Actions on PR #383 and obtain independent review; if a check fails, repair code without weakening expected behavior. Then choose the next smallest dependency-ready CW-08/09/10/11 capability slice while keeping external activation gated.
+
+
 ## Current Transactions qualification recovery — 13 October 2026 (Asia/Dhaka)
 
 Refreshed main: `fb1a08059cd242f5da4d72dbf72da0c6971bfe30`, latest merge PR #379.

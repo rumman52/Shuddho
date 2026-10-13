@@ -625,7 +625,7 @@ def qualify_agent_goal(
             intent=intent,
             complexity=complexity,
             execution="agent_run",
-            capability="agent_workflow" if len(selected) > 1 else (tool(selected[0]).skill_id or selected[0]),
+            capability="agent_workflow" if len(selected) > 1 else intents[0],
             tools=selected,
             provider=provider,
             access=access,
