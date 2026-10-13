@@ -1543,17 +1543,7 @@ class BrowserRepository:
         self._require_enabled()
         now = utcnow()
         with self.sessions.begin() as db:
-            command = db.scalar(select(BrowserCommand).where(
-                BrowserCommand.id == command_id,
-            ).with_for_update())
-            if command is None:
-                raise not_found()
-            session = db.scalar(select(BrowserSession).where(
-                BrowserSession.id == command.session_id,
-                BrowserSession.owner_id == command.owner_id,
-            ).with_for_update())
-            if session is None:
-                raise not_found()
+            command, session = self._lock_command_session_for_completion(db, command_id)
 
             if session.cancel_requested or session.state == "cancelled":
                 if command.state in {"prepared", "running"}:
