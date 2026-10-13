@@ -606,7 +606,7 @@ def qualify_agent_goal(
     # A read-only browser goal must remain accessible through the public Agent
     # admission router; a planner-only registration is not user-visible.
     # No URL/session/credentials originate in model output.
-    if "https://" in goal and _has_any(text, ("read", "browse", "inspect", "visit page")):
+    if settings.agent_browser_read_enabled and "https://" in goal and _has_any(text, ("read", "browse", "inspect", "visit page")):
         from .agent_planner import explicit_browser_url
         if explicit_browser_url(goal) is not None:
             browser = tool("browser.read")
