@@ -18,6 +18,20 @@ Review branch `codex/cw-core-router-report-contract-20261013`, [draft PR #383](h
 
 Scope: CW-05–CW-11 Architecture/Core Agent. CW-01–04 supply prerequisite evidence, not renewed assignments. The merged CW-09–14 qualification registry is a default-off metadata foundation, not a working browser/generated-code/skill runtime or live release qualification. Preserve prior transaction checkpoints below as historical. Pending CW-08 context/memory integration and CW-09–11 actual implementations must be rechecked against live source; staging/billing/provider/human evidence cannot be inferred from CI.
 
+Acceptance inventory based on inspected `main` source and available CI (per-task staging and full acceptance remain separate):
+
+| Task | Main source / current state | Next unmet acceptance / evidence |
+| --- | --- | --- |
+| CW-05 | Conversation schemas, repository and durable message tests exist; main CI includes PostgreSQL conversation races | Complete operated owner/deletion/replay qualification on a frozen staging release |
+| CW-06 | Atomic conversation dispatch and revision-checked cancellation exist; one report public-route mismatch repaired only on PR #383 | Verify PR exact-head CI; inspect missing/non-mutating steering contract and late-result precedence |
+| CW-07 | Conversation UI and read-only activity projection exist | Verify reconnect/mobile flows and add durable owner-scoped activity cursor if canonical contract remains unmet |
+| CW-08 | Source admission validation and read-only workspace manifest exist | Prove worker-use revocation/version checks, reviewable memory edits/deletion and bounded multilingual context |
+| CW-09 | Isolated browser broker/worker foundation exists; no `browser.read` in core `agent_tools.py` | Register and safely wire typed default-off read-only tool; prove SSRF/ownership/takeover boundaries |
+| CW-10 | Isolated sandbox control plane exists | Store immutable generated-code proposals and exact reviewed approval binding before execution |
+| CW-11 | Static versioned `WorkSkill` definitions exist | Validate reviewed manifest hashes, tool authority subset and compatible rollback after CW-09/10 |
+
+These are discovery statuses, not assertions that each full CW acceptance suite has passed. A successful green CI run on a revision does not substitute for missing staging, adversarial or human quality evidence.
+
 Next exact action: inspect exact-head GitHub Actions on PR #383 and obtain independent review; if a check fails, repair code without weakening expected behavior. Then choose the next smallest dependency-ready CW-08/09/10/11 capability slice while keeping external activation gated.
 
 
