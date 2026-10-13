@@ -1,5 +1,33 @@
 # Coworker evolution progress
 
+## CW-07 Architecture/Core Agent — owned activity cursor continuation (13 October 2026)
+
+**Fresh repository evidence:** `main` at `4b369fa99b9a7c4784f5060aa3399a58e340815f`. [CW-08 source-pin PR #384](https://github.com/rumman52/Shuddho/pull/384) is **merged**, and its exact-final-head [CI #38395801164](https://github.com/rumman52/Shuddho/actions/runs/38395801164) passed. Main CI [38400940687](https://github.com/rumman52/Shuddho/actions/runs/38400940687) was in progress at bootstrap; a skipped separate run does not count as green. There were no open PRs when selecting this new bounded slice.
+
+**Active task:** CW-07 — durable owner-bound cursor pagination for the read-only continuous-chat activity projection. Main only exposed latest-N activity, so older launched work cards were missing on reconnect for longer conversations. The current slice adds `after=start` + forward owner/conversation-bound cursor, `next_cursor`, `has_more`, HTTP support, frontend paginated replay and regression tests, without another run ledger or side effect. Omitted `after` retains latest-N polling for run-state changes with no new message. The cursor is an owned read checkpoint, not a permission grant or durable all-events stream.
+
+**Review branch:** `codex/cw07-owner-bound-activity-cursors-20261013`. **Base:** `4b369fa99b9a7c4784f5060aa3399a58e340815f`. **Initial implementation/test:** `99d3934803227721f4d2e0dac71b65686be52329` (prior to documentation). **Contract:** [CW07_OWNER_SCOPED_ACTIVITY_CURSOR_2026-10-13.md](CW07_OWNER_SCOPED_ACTIVITY_CURSOR_2026-10-13.md). PR and final exact-head CI must be read from GitHub once created.
+
+| Acceptance item | Current code/integration | Remaining qualification |
+| --- | --- | --- |
+| CW-05 message ownership | Existing main source and prior CI | Operated replay, deletion and PostgreSQL races |
+| CW-06 routing/admission/cancel | Merged CW-06 #383 and durable dispatch | Steering, terminal-order and operated cancellation |
+| CW-07 unified activity | Owner cursor + frontend history replay on current review branch only | Exact-head CI, independent review, mobile/keyboard/reconnect and live run-state proof |
+| CW-08 workspace/memory | Merged pinned-source #384; existing memory edit/delete and manifest | Source-use races, bounded context + human multilingual acceptance |
+| CW-09 browser | Broker/workers exist but no registered v3 `browser.read` | Gated typed tool, SSRF, takeover, worker tests |
+| CW-10 reviewed generated code | Sandbox exists | Immutable approved proposal-to-execution envelope |
+| CW-11 skill manifests | Static skills exist | Reviewed manifest validation and authority subset |
+
+| Evidence level | CW-07 cursor slice |
+| --- | --- |
+| Implemented | Yes, only on isolated review branch |
+| Repository-verified | Pending exact-final-head mandatory GitHub Actions; no local full-repo pytest/build |
+| Staging-verified | Not established |
+| Production-qualified | Not established |
+| Activated | No authority, provider, flag, paid resources or production changes |
+
+**Next exact action:** Open draft PR for CW-07 branch, inspect final-head `coworker`, `test-and-build` and `ci-merge-gate`, correct test/source issues and seek independent code review. Do not merge automatically. Continue remaining dependency-ready CW-08/CW-09 implementation separately after evidence checkpoint. No success percentage inferred from task labels.
+
 ## CW-08 Architecture/Core Agent continuation — 13 October 2026 (Asia/Dhaka)
 
 **Source baseline:** `main` at `fb3c8994edc2d6a7db2781b9a798a21a7a9beec6`. Main CI [38393963804](https://github.com/rumman52/Shuddho/actions/runs/38393963804) was in progress when inspected; no claim of successful final-head CI is made for it. Earlier CW-06 [PR #383](https://github.com/rumman52/Shuddho/pull/383) is **merged**; final PR SHA `1312877604520fec49e00970d12ff14a4b9c7294` passed [CI 38391641647](https://github.com/rumman52/Shuddho/actions/runs/38391641647). No open PRs appeared before this CW-08 work.
