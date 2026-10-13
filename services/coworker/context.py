@@ -321,12 +321,19 @@ class ContextService:
         # 3) Relevant prior completed task context from the same owner/workspace.
         # It is read-only context and can never grant tool/provider authority.
         with self.sessions() as db:
-            prior_tasks = list(db.scalars(select(Task).where(
-                Task.owner_id == owner,
-                Task.workspace_id == run.workspace_id,
-                or_(Task.agent_run_id.is_(None), Task.agent_run_id != run.id),
-                Task.state.in_(["completed", "needs_input"]),
-            ).order_by(Task.updated_at.desc()).limit(12)).all())
+            # A conversation run is admitted against the message's explicit
+            # selected_sources. Previously this query silently searched *all*
+            # prior owner tasks in the workspace; lexical relevance is not a
+            # source authorization. Keep legacy direct Agent task continuity
+            # intact until it has its own explicit source-selection contract.
+            prior_tasks = []
+            if not run.idempotency_key.startswith("conversation:"):
+                prior_tasks = list(db.scalars(select(Task).where(
+                    Task.owner_id == owner,
+                    Task.workspace_id == run.workspace_id,
+                    or_(Task.agent_run_id.is_(None), Task.agent_run_id != run.id),
+                    Task.state.in_(["completed", "needs_input"]),
+                ).order_by(Task.updated_at.desc()).limit(12)).all())
             prior_candidates = []
             for task in prior_tasks:
                 draft = db.get(Step, (task.id, "draft"))

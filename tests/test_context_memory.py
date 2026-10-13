@@ -457,3 +457,75 @@ def test_indirect_topic_does_not_collide_with_direct_style_axis(container):
 
     memory = container.memory.context_for_run(alice, run["id"])
     assert len(memory["facts"]) == 1
+
+
+def test_conversation_context_never_imports_unselected_prior_workspace_tasks(container):
+    """CW-08: owner-level lexical matching is not conversation source consent."""
+    from services.coworker.conversation_dispatch import ConversationDispatchService
+    from services.coworker.conversation_repository import ConversationRepository
+    from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
+
+    settings = replace(enable_pa04(container), conversations_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.agent.settings = settings
+    container.context.settings = settings
+    container.memory.settings = settings
+    container.repository.settings = settings
+
+    alice = owner(container, "cw08-unselected-task")
+    task, _ = container.repository.create_task(
+        alice,
+        TaskCreate(
+            instruction="Prepare the Project Alpha weekly status.",
+            notes="Project Alpha private deadline is Friday.",
+            output_language="en",
+        ),
+        "cw08-unselected-prior-task",
+        enqueue=False,
+    )
+    with container.repository.sessions.begin() as db:
+        record = db.get(Task, task["id"])
+        record.state = "completed"
+        record.phase = "complete"
+        record.updated_at = utcnow()
+        db.add(Step(
+            task_id=record.id, phase="draft",
+            output={"draft": {"summary": "Project Alpha private deadline is Friday."}},
+        ))
+
+    goal = "Create a detailed report about Project Alpha weekly status."
+    # Pre-existing standalone Agent runs retain their prior-task continuity.
+    direct, _ = container.agent.create(
+        alice, AgentRunCreate(goal=goal, output_language="en"),
+        "cw08-standalone-prior-task",
+    )
+    direct_context = container.context.for_run(alice, direct["id"])
+    assert any(item["precedence"] == "prior_task" for item in direct_context["items"])
+
+    # Dispatch a conversation message with NO selected source. Before this
+    # repair, the same prior task was included solely from lexical matching.
+    conversations = ConversationRepository(container.repository.sessions, settings)
+    dispatch = ConversationDispatchService(container.repository.sessions, settings, container.agent)
+    conversation, _ = conversations.create(
+        alice, ConversationCreate(title="Unselected sources"),
+        "cw08-explicit-conversation",
+    )
+    message, _ = conversations.append_message(
+        alice, conversation["id"],
+        MessageCreate(text=goal, client_request_key="cw08-explicit-message"),
+    )
+    assert message["selected_sources"] == []
+    admitted, created = dispatch.dispatch(
+        alice, conversation["id"], message["id"], expected_sequence=1,
+    )
+    assert created
+    context = container.context.for_run(alice, admitted["run_id"])
+    planner_context, source_map = container.context.planner_context(alice, admitted["run_id"])
+    assert not [item for item in context["items"] if item["precedence"] == "prior_task"]
+    assert "Project Alpha private deadline is Friday" not in str(context)
+    assert not [item for item in planner_context["items"] if item["precedence"] == "prior_task"]
+    assert not [item for item in source_map.values() if item.get("type") == "prior_task"]
+    assert context["budget"]["used_bytes"] == 0
+    assert admitted["run_id"] != direct["id"]
+

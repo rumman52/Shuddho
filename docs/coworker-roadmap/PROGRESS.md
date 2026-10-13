@@ -1,5 +1,35 @@
 # Coworker evolution progress
 
+## CW-08 explicit conversation source-selection boundary — 13 October 2026 (Asia/Dhaka)
+
+**Repository bootstrap:** `main` `b2a6920d2fea10dfc5a813746e19c7241597846b`. [CW-07 PR #385](https://github.com/rumman52/Shuddho/pull/385) was **merged**; its final-head [CI #38402405574](https://github.com/rumman52/Shuddho/actions/runs/38402405574) was still in progress as inspected, so completion of its broad checks is not inferred. New main [CI #38403290676](https://github.com/rumman52/Shuddho/actions/runs/38403290676) also in progress. No other open PRs at bootstrap.
+
+**Selected dependency-ready task:** CW-08's selected-only conversation planning context. Source finding: `ContextService._resolved` included lexical-matching prior completed/needs-input `Task` content from the owner workspace even when a conversation message carried `selected_sources=[]`. The conversation admission ledger bound only selected document versions; this prior-task inclusion lacked message source consent. **Repair** bypasses implicit prior-task retrieval for server-created conversation Agent runs, retaining standalone Agent compatibility and already-enforced conversation document pin, owner, revocation and checksum checks.
+
+**Base and branch:** `main` `b2a6920d2fea10dfc5a813746e19c7241597846b`; `codex/cw08-explicit-conversation-context-20261013`. **Implementation/regression SHA:** `00cbe0d8dbe32a242dc458c83fc37ed383941d52` before documentation. **Task contract:** [CW08_EXPLICIT_CONVERSATION_CONTEXT_2026-10-13.md](CW08_EXPLICIT_CONVERSATION_CONTEXT_2026-10-13.md). **Review:** [draft PR #386](https://github.com/rumman52/Shuddho/pull/386), original review head `bd5e5bfaa7fdbc545e22e13d9b2a6e61e55ea308` before this final checkpoint; required exact-current-head CI [run 38404234208](https://github.com/rumman52/Shuddho/actions/runs/38404234208) was in progress and will be superseded by new commits. Always refresh the actual PR head and checks before closure. A same-owner real completed task with private notes/draft is excluded from an unselected conversation's planner and context while remaining available to existing direct Agent continuity.
+
+| Scope requirement | Integration/evidence | Unmet acceptance |
+| --- | --- | --- |
+| CW-05 messages | Existing merged implementation, prior tests | Operated consent/replay/race/deletion qualification |
+| CW-06 routing and revisioned cancellation | Existing merged implementation | Steering and late/cancel operational checks |
+| CW-07 resumable activity and UI | PR #385 merged; final-head broad CI pending when inspected | Verify exact-main CI, independent/mobile/reconnect and combined event cursor |
+| CW-08 context and reviewable memory | Pinned source integrity #384 merged; new prior-task consent repair only on review branch; memory edit/delete UI exists | Exact-head CI, source revocation race, explicit whole-context consent, Bangla/English task evidence |
+| CW-09 typed browser read | Isolated browser broker/worker but no Agent `browser.read` registered at inspection | Typed default-off dispatch and isolated SSRF/takeover validation |
+| CW-10 reviewed generated code | Sandbox foundation only | Stored immutable approved code-to-execution envelope |
+| CW-11 versioned skill manifests | Static skill registry only | Validated reviewed manifest and rollback after CW-09/10 |
+
+| Evidence level | This CW-08 slice |
+| --- | --- |
+| Implemented | On isolated branch only |
+| Repository-verified | Pending exact-final-head PR `test-and-build`, `coworker`, `ci-merge-gate`; local full-repo execution unavailable |
+| Staging-verified | Unverified |
+| Production-qualified | Not established |
+| Activated | No flags or external authority changed |
+
+**Review:** Self review before PR; no independent review claimed. Owner-bound conversation prefix only comes from server dispatcher and is already protected at worker-use context source validation. Existing standalone Agent retrieval intentionally unchanged. The cursor in merged CW-07 remains message-based, not per-Agent-event. No new schema, orchestration engine, ledger, provider credential, grant or rollout.
+
+**Next exact action:** Open draft PR for `codex/cw08-explicit-conversation-context-20261013`, compare exact PR SHA and required CI, resolve failures without weakening tests, seek independent review and only then classify repository verification. Continue an independent CW-08 lifecycle or CW-09 browser capability slice without merging or production activation.
+
 ## CW-07 Architecture/Core Agent — owned activity cursor continuation (13 October 2026)
 
 **Fresh repository evidence:** `main` at `4b369fa99b9a7c4784f5060aa3399a58e340815f`. [CW-08 source-pin PR #384](https://github.com/rumman52/Shuddho/pull/384) is **merged**, and its exact-final-head [CI #38395801164](https://github.com/rumman52/Shuddho/actions/runs/38395801164) passed. Main CI [38400940687](https://github.com/rumman52/Shuddho/actions/runs/38400940687) was in progress at bootstrap; a skipped separate run does not count as green. There were no open PRs when selecting this new bounded slice.
