@@ -1,5 +1,30 @@
 # Coworker evolution progress
 
+## CW-10 first inert review-envelope contract — 14 October 2026
+
+**Source bootstrap:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`. CW-09 corrective [PR #391](https://github.com/rumman52/Shuddho/pull/391) was merged into main at `905a09c3a5e2931be46d9053ba4af09ecd331125`, while exact-final-head mandatory CI and security review still require confirmation; do not infer production qualification. Do not conflate this dependent CW-09 safety review with CW-10 work.
+
+**Independent dependency-ready CW-10 preparatory slice:** `codex/cw10-immutable-proposal-envelope-20261014`, base `76a07600328d0c6ff0ed73b69d2c7933d38bf927`, initial source/test head `cd5463231a9a18043f26363b33777c2a251d7b4d`, latest source/test head `804a875ddfa4f3a104b21c301a6d039eb7131084` before final docs; second independent [P2 DST lifetime issue](https://github.com/rumman52/Shuddho/pull/392#discussion_r4263771173) fixed with UTC-normalized lifetime and regression. CW-10 branch reconciled onto main `905a09c3a5e2931be46d9053ba4af09ecd331125` using a two-parent merge preserving CW-09 progress after [independent P2 future-validity review](https://github.com/rumman52/Shuddho/pull/392#discussion_r4263712225) and not-before test; [draft PR #392](https://github.com/rumman52/Shuddho/pull/392), not merged; new frozen, strict `CodeProposalEnvelope`, exact source/content and owner-version SHA, full canonical review digest, offline `verify_reviewed_code_identity` comparing live owner/run/input versions, expiry and sandbox policy ceiling; zero grant or execution. Regressions: cross owner/run, modified code/input/limits/expiry, network expansion, bad hash. [Task contract](CW10_IMMUTABLE_INERT_PROPOSAL_ENVELOPE_2026-10-14.md). Draft PR and final-head checks pending. **This satisfies only the immutable-envelope contract precursor, not CW-10 operational completion.**
+
+| Acceptance | Integrated/source evidence | Remaining proof |
+| --- | --- | --- |
+| CW-05–CW-07 conversation/activity | Existing integrated source and prior CI | Staging reconnection/erasure/steering |
+| CW-08 selected context/memory | Integrated source | Operated revocation and retention |
+| CW-09 brokered read-only browser | #387–#390 merged; #391 unmerged P1 repair | #391 final-head CI/review, private webpage content provenance, isolated egress staging and runtime release gate |
+| **CW-10 reviewed generated code** | Inert schema/test review branch only | Database proposal authority, exact human approval, claim validation in existing sandbox, UI, isolation tests and release gate |
+| CW-11 versioned skills | Existing fixed static registry | Versioned reviewed manifests after CW-10 core dependencies |
+
+| Evidence level | CW-10 prep |
+| --- | --- |
+| Implemented | Bounded isolated source/tests/docs |
+| Repository-verified | Not yet: draft PR exact-head CI pending |
+| Staging-verified | No |
+| Production-qualified | No |
+| Activated | No: no generated-code route or approval exists |
+
+**Next exact action:** Open CW-10 draft PR, request independent review, inspect exact-head Python tests, coworker mandatory gates and ci-merge-gate. Correct findings before code acceptance. Continue first actual persisted proposal+approval slice separately; never equate a pure validator with an execution permission.
+
+
 ## CW-09 merged release contract P1 corrective slice — 14 October 2026
 
 **Current baseline at bootstrap:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`. [PR #390](https://github.com/rumman52/Shuddho/pull/390) is **merged** despite three unresolved P1 automated-review findings and exact-final-head [CI #38458791465](https://github.com/rumman52/Shuddho/actions/runs/38458791465) still in progress on inspection. Historical section below refers to the PR as draft; that is superseded by live GitHub evidence. Previously merged #389 [CI #38456526299](https://github.com/rumman52/Shuddho/actions/runs/38456526299) passed required gates, but did not prove the new release contract.
