@@ -2011,6 +2011,10 @@ class AgentRepository:
                 ToolInvocation.run_id == run_id,
                 ToolInvocation.state.in_({"prepared", "running", "awaiting_approval"}),
             )):
+                if (step.output or {}).get("resource_type") == "browser_session":
+                    _settle_agent_browser_session(
+                        db, run.owner_id, step.output["resource_id"], completed=False,
+                    )
                 invocation.state = "failed"
                 invocation.finished_at = now
                 step.state = "failed"
