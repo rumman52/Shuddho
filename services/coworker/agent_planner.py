@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from .browser import normalize_browser_target
+
 from .agent_schemas import AgentPlanStep, AgentPlannerProposal
 from .approval_boundary import assert_model_tool_surface
 from .agent_tools import TOOLS, tool
@@ -96,6 +98,21 @@ def exact_user_python_source(goal: str, settings: Settings) -> str | None:
     return source
 
 
+def explicit_browser_url(goal: str) -> str | None:
+    """Never let a planner invent browser destinations or sessions."""
+    candidates = [
+        raw.rstrip(".,;!?)]}")
+        for raw in re.findall(r'https://[^\\s<>"\\']+', goal)
+    ]
+    if len(candidates) != 1:
+        return None
+    try:
+        normalized, _origin = normalize_browser_target(candidates[0])
+    except CoworkerError:
+        return None
+    return normalized
+
+
 def intelligent_tool_names(
     settings: Settings,
     actions: list[dict] | None = None,
@@ -123,6 +140,16 @@ def intelligent_tool_names(
         and (not allowed or sandbox.name in allowed)
     ):
         names.append(sandbox.name)
+    browser = TOOLS.get("browser.read")
+    if (
+        runtime_version == 3
+        and goal is not None
+        and browser is not None
+        and browser.enabled(settings)
+        and explicit_browser_url(goal) is not None
+        and (not allowed or browser.name in allowed)
+    ):
+        names.append(browser.name)
     if settings.agent_action_selection_enabled and not allowed:
         names.extend(action_selection_candidates(actions))
     assert_model_tool_surface(names)
