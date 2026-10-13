@@ -141,7 +141,7 @@ def action_repository(repository):
     import base64
     from services.coworker.action_repository import ActionRepository
     settings = replace(repository.settings, actions_enabled=True,
-                       connector_encryption_key=base64.urlsafe_b64encode(bytes([0x22]) * 32).decode())
+                       connector_encryption_key=base64.urlsafe_b64encode(b"\x22" * 32).decode())
     return ActionRepository(repository.sessions, settings)
 
 
