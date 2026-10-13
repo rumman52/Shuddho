@@ -201,6 +201,100 @@ def test_runtime_context_invalidates_expired_document_after_admission(records):
     assert not service._source_current(owner, sources[0])
 
 
+def _conversation_context_run(records, *, selected=True):
+    """A real owner-scoped conversation message bound to its persisted run identity."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+    from types import SimpleNamespace
+
+    from services.coworker.context import ContextService
+    from services.coworker.models import AgentRun, Conversation, ConversationMessage
+
+    db, owner, _, doc_id, version_id, _ = records
+    workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
+    conversation_id, message_id, run_id = new_id(), new_id(), new_id()
+    db.add(Conversation(
+        id=conversation_id, owner_id=owner, idempotency_key="cw08-conv-" + conversation_id,
+        fingerprint="a" * 64, title="Pinned document", message_sequence=1,
+    ))
+    db.add(AgentRun(
+        id=run_id, owner_id=owner, workspace_id=workspace_id,
+        idempotency_key="conversation:" + message_id, fingerprint="c" * 64,
+        goal="Create a report about the selected document",
+        output_language="en", input_versions=[version_id] if selected else [],
+        action_ids=[], memory_namespaces=[], connector_read_grant_ids=[],
+        connector_snapshot_ids=[], tool_allowlist=[],
+        deadline_at=utcnow() + timedelta(minutes=20),
+    ))
+    db.add(ConversationMessage(
+        id=message_id, conversation_id=conversation_id, owner_id=owner,
+        client_request_key="cw08-message-key", fingerprint="b" * 64,
+        sequence=1, text="Create a report about the selected document",
+        selected_sources=[doc_pin(doc_id, version_id)] if selected else [],
+        resource_links=[{"resource_type": "agent_run", "resource_id": run_id}],
+    ))
+    db.commit()
+    service = ContextService(sessionmaker(bind=db.bind), SimpleNamespace(), None, None)
+    return service, owner, run_id, message_id, version_id, doc_id
+
+
+@pytest.mark.parametrize("changed_field", ["sha256", "version", "deleted", "expired"])
+def test_worker_context_rechecks_exact_admitted_conversation_pin(records, changed_field):
+    """A re-written or revoked version cannot be substituted between admission and worker use."""
+    service, owner, run_id, _, version_id, doc_id = _conversation_context_run(records)
+    db = records[0]
+    _, sources = service._run_and_sources(owner, run_id)
+    assert len(sources) == 1 and sources[0]["state"] == "active"
+
+    version = db.get(DocumentVersion, version_id)
+    if changed_field == "sha256":
+        version.sha256 = "f" * 64
+    elif changed_field == "version":
+        version.version = 2
+    elif changed_field == "deleted":
+        db.get(Document, doc_id).deleted = True
+    else:
+        version.expires_at = utcnow() - timedelta(seconds=1)
+    db.commit()
+
+    with pytest.raises(CoworkerError) as failure:
+        service._run_and_sources(owner, run_id)
+    assert failure.value.code == "context_sources_changed"
+
+
+def test_worker_context_requires_original_owned_message_and_exact_run_link(records):
+    from services.coworker.models import AgentRun, Conversation, ConversationMessage
+
+    service, owner, run_id, message_id, version_id, _ = _conversation_context_run(records)
+    db = records[0]
+    message = db.get(ConversationMessage, message_id)
+    message.resource_links = []
+    db.commit()
+    with pytest.raises(CoworkerError) as unlinked:
+        service._run_and_sources(owner, run_id)
+    assert unlinked.value.code == "context_sources_changed"
+
+    message.resource_links = [{"resource_type": "agent_run", "resource_id": run_id}]
+    db.get(AgentRun, run_id).input_versions = []
+    db.commit()
+    with pytest.raises(CoworkerError) as changed:
+        service._run_and_sources(owner, run_id)
+    assert changed.value.code == "context_sources_changed"
+
+    db.get(AgentRun, run_id).input_versions = [version_id]
+    db.get(Conversation, message.conversation_id).deleted = True
+    db.commit()
+    with pytest.raises(CoworkerError) as deleted:
+        service._run_and_sources(owner, run_id)
+    assert deleted.value.code == "context_sources_changed"
+
+
+def test_worker_context_accepts_conversation_without_attached_sources(records):
+    service, owner, run_id, _, _, _ = _conversation_context_run(records, selected=False)
+    run, sources = service._run_and_sources(owner, run_id)
+    assert run.id == run_id and sources == []
+
+
 def test_manifest_stays_disabled_without_conversations(records):
     from types import SimpleNamespace
     from sqlalchemy.orm import sessionmaker
