@@ -1528,11 +1528,15 @@ async def complete_browser_command(command_id: UUID, request: Request, services:
     try:
         payload = BrowserWorkerObservation.model_validate(raw)
     except ValidationError:
-        services.browser.reject_invalid_agent_worker_completion(worker.worker_id, str(command_id))
+        await run_in_threadpool(
+            services.browser.reject_invalid_agent_worker_completion,
+            worker.worker_id, str(command_id),
+        )
         raise CoworkerError(
             "browser_observation_invalid", "The browser worker sent an invalid observation.", 422,
         ) from None
-    return services.browser.complete_command(
+    return await run_in_threadpool(
+        services.browser.complete_command,
         payload.worker_id,
         str(command_id),
         {
