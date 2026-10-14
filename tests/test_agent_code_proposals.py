@@ -256,16 +256,19 @@ def test_review_rejects_copied_datetime_and_run_uuid_subclasses_before_hashing(f
         changed = UntrustedUUID(hex=envelope.run_id.hex)
     else:
         original = getattr(envelope, field)
+        # Expiry appears ten minutes out when astimezone() lies, while
+        # its underlying clock stores an additional three hours.
+        disguised = original + timedelta(hours=3)
         changed = MisleadingDatetime(
-            original.year, original.month, original.day, original.hour,
-            original.minute, original.second, original.microsecond,
-            tzinfo=original.tzinfo,
+            disguised.year, disguised.month, disguised.day, disguised.hour,
+            disguised.minute, disguised.second, disguised.microsecond,
+            tzinfo=disguised.tzinfo,
         )
     suspect = envelope.model_copy(update={field: changed})
     assert type(getattr(suspect, field)) is type(changed)
     with pytest.raises(CoworkerError) as error:
         # A copied model can serialize plausibly; it is never a grant.
-        verified(suspect, now, reviewed_sha256="0" * 64)
+        verified(suspect, now, reviewed_sha256=suspect.review_sha256())
     assert error.value.code == "code_proposal_invalid"
 
 
@@ -278,7 +281,7 @@ def test_review_rejects_subclassed_input_uuids_with_unchanged_document_identity(
     })
     suspect = envelope.model_copy(update={"input_versions": (altered,)})
     with pytest.raises(CoworkerError) as error:
-        verified(suspect, now, reviewed_sha256="0" * 64)
+        verified(suspect, now, reviewed_sha256=suspect.review_sha256())
     assert error.value.code == "code_proposal_invalid"
 
 
