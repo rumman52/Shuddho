@@ -4,7 +4,7 @@
 **Workstream:** Architecture and core-agent / CW-10 reviewed generated code  
 **Baseline:** main `3505c5029891d488678b1f2e8b302694ce0a96e4`  
 **Branch:** `codex/cw10-exact-timestamp-uuid-review-20261014`  
-**Code and adversarial test head before docs:** `6624209e7f7b2b778a9897e005fcc1aef39733e2`
+**Initial code and adversarial tests:** `6624209e7f7b2b778a9897e005fcc1aef39733e2`. **Review P2 corrections source/tests SHA:** `b5b49bc9e9e1f7855cd6475cfee1bbdd07751682` before final docs. [Draft PR #395](https://github.com/rumman52/Shuddho/pull/395), unmerged. The first final-head independent review found further custom `tzinfo` and subclassed UUID-integer payload bypasses; code now permits only exact stdlib `datetime.timezone` or exact `ZoneInfo`, exact review clock, and UUIDs with exact bounded integer payloads. Added self-hashed adversarial tests; the earlier passing `test-and-build` is superseded and must be rerun.
 
 ## Reproduced/independently reviewed finding
 
