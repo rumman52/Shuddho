@@ -3,7 +3,7 @@
 **14 October 2026.** Workstream: Architecture/core agent CW-10.  
 **Base:** `main` `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`.  
 **Branch:** `codex/cw10-review-envelope-revalidate-20261014`.  
-**Code/tests SHA before docs:** `d3740983443bdf450422ebcab9b60e8ca9cdb9f7`.
+**Initial code/tests SHA:** `d3740983443bdf450422ebcab9b60e8ca9cdb9f7`. **Final source/test SHA before this documentation:** `db2aafa7feca94a399c816f1fc0437da51dded65`. Independent [PR #394 P2 review](https://github.com/rumman52/Shuddho/pull/394#discussion_r4266890920) observed ordinary model validation silently coerces copied JSON-like types; corrected with `strict=True`, explicit boolean schema-version rejection, and three additional malformed-but-self-hashed regressions. Require **exact new head** CI and fresh review. [Draft PR #394](https://github.com/rumman52/Shuddho/pull/394), unmerged.
 
 ## Source-backed correctness gap
 
