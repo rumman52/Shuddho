@@ -36,6 +36,7 @@ class CoworkerSkillManifest:
     instruction_sha256: str
     input_schema_sha256: str
     output_schema_sha256: str
+    tool_contract_sha256: str
     tool_names: tuple[str, ...]
     resource_limits: SkillResourceLimits
     rollback_version: str
@@ -77,6 +78,10 @@ def pilot_skill_manifest() -> CoworkerSkillManifest:
         instruction_sha256=_reviewed_instruction_identity(skill),
         input_schema_sha256=_schema_identity(spec, output=False),
         output_schema_sha256=_schema_identity(spec, output=True),
+        # Includes permissions, consequences, retry, risk, budgets and
+        # registered schema versions; any code-owned policy expansion
+        # invalidates a stored review rather than silently inheriting it.
+        tool_contract_sha256=_digest(spec.public()),
         tool_names=_PILOT_TOOLS,
         resource_limits=_PILOT_LIMITS,
         rollback_version=skill.version,
