@@ -393,6 +393,58 @@ def test_agent_browser_interaction_does_not_allow_rewritten_worker_evidence(cont
     assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
 
 
+@pytest.mark.parametrize("invalid_observation", [
+    None,
+    ["not", "an", "object"],
+    {"title": "Missing final_url"},
+    {
+        "final_url": "https://example.com/", "title": "Bad DNS evidence",
+        "resolved_ips": ["93.184.216.34"],
+    },
+    {
+        "final_url": "https://example.com/", "title": 123,
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+    },
+])
+def test_agent_browser_malformed_receipt_is_terminal_and_cannot_be_rewritten(
+    container, invalid_observation,
+):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-agent-invalid-evidence")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:synthetic-invalid-evidence:1", agent_origin=True,
+    )
+    command = container.browser.prepare_agent_read(
+        owner, session["id"], "https://example.com/",
+    )
+    assert [item["id"] for item in container.browser.claim_commands(
+        "cw09-malformed-worker",
+    )] == [command["id"]]
+    with pytest.raises(CoworkerError) as rejected:
+        container.browser.complete_command(
+            "cw09-malformed-worker", command["id"], invalid_observation,
+        )
+    assert rejected.value.code == "browser_observation_invalid"
+    ended = container.browser.get(owner, session["id"])
+    assert ended["state"] == "failed"
+    assert ended["cancel_requested"] is True
+    recorded = container.browser.list_commands(owner, session["id"])[0]
+    assert recorded["state"] == "failed"
+    assert recorded["error_code"] == rejected.value.code
+    assert recorded["claimed_by"] is None
+    assert recorded["lease_until"] is None
+    with pytest.raises(CoworkerError):
+        container.browser.complete_command("cw09-malformed-worker", command["id"], {
+            "final_url": "https://example.com/",
+            "title": "Clean rewritten page",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "submission_performed": False,
+        })
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+
+
 def test_revoked_browser_session_cannot_settle_agent_tool_receipt(container):
     enabled_agent_browser(container)
     owner = account(container, "cw09-revoked-verified-read")
