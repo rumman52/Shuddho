@@ -428,3 +428,47 @@ def test_revoked_browser_session_cannot_settle_agent_tool_receipt(container):
         )
     assert revoked.value.code == "browser_session_closed"
     assert container.agent.verified_observations(owner, run["id"]) == []
+
+
+def test_agent_browser_kill_switch_after_success_denies_final_verified_receipt(container):
+    """A completed broker read is not an authority grant after revocation."""
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-receipt-switch-off")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"),
+        "cw09-receipt-switch-off",
+    )
+    ordinal = container.agent.append_v3_step(
+        owner, run["id"], "browser.read", "Read the owned URL",
+    )
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    session_id = container.agent.step_resource(run["id"], ordinal)["resource_id"]
+    command = container.browser.list_commands(owner, session_id)[0]
+    assert [item["id"] for item in container.browser.claim_commands("cw09-receipt-worker")] == [command["id"]]
+    completed = container.browser.complete_command(
+        "cw09-receipt-worker", command["id"], {
+            "final_url": "https://example.com/article",
+            "title": "Observed before revocation",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "submission_performed": False,
+        },
+    )
+    assert completed["state"] == "succeeded"
+
+    # Revoke after successful worker completion but before the final Agent
+    # receipt transaction. This intentionally bypasses the runtime's earlier
+    # tool check so the repository's own enforcement is exercised.
+    disabled = replace(container.agent.settings, agent_browser_read_enabled=False)
+    disabled.validate()
+    container.agent.settings = disabled
+    with pytest.raises(CoworkerError) as rejected:
+        container.agent.finish_invocation(
+            run["id"], ordinal, "browser_command", command["id"],
+            {"observation_trust": "untrusted", "observation_scope": "metadata_only"},
+        )
+    assert rejected.value.code == "browser_agent_read_disabled"
+    assert container.agent.verified_observations(owner, run["id"]) == []
+    assert container.agent.step_resource(run["id"], ordinal)["resource_type"] == "browser_session"
+    assert container.browser.list_commands(owner, session_id)[0]["state"] == "succeeded"
