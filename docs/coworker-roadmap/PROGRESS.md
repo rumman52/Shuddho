@@ -14,7 +14,7 @@
 | CW-10 | Inert reviewed code-envelope source merged; main CI green | Persisted proposal+exact approval+isolated claim |
 | **CW-11** | Inert reviewed manifest **on PR #396, not integrated** | Re-review and exact-head CI on pinned generator deps; persisted reviewed publish/rollback and runtime grant filter |
 
-**Next exact action:** inspect PR #396 latest-head CI, mandatory no-skip tests and independent review. Repair actual failures on that branch without automatic merge or activation. Read-only synthetic tests do not qualify production.
+**CI correction:** [#38540161508](https://github.com/rumman52/Shuddho/actions/runs/38540161508) had 1 failed/1143 passed/66 skipped in broad Python checks solely because the generator drift test used literal backslash-n rather than a newline in its TOML fixture string. Corrected to `chr(10)` without weakening the negative assertion; exact-final-head CI still required. **Next exact action:** inspect PR #396 latest-head CI, mandatory no-skip tests and independent review. Repair actual failures on that branch without automatic merge or activation. Read-only synthetic tests do not qualify production.
 
 ## CW-11 first code-owned reviewed manifest pilot — 14 October 2026
 
