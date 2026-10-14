@@ -162,6 +162,12 @@ def test_invalid_sources_cross_owner_inputs_and_network_destinations_rejected():
     {"egress_profile": "internet"},
     {"destinations": ("https://example.com/",)},
     {"source_sha256": "b" * 64},
+    {"expires_at": "2026-10-14T12:10:00Z"},
+    {"schema_version": True},
+    {"limits": CodeComputeLimits(
+        cpu_seconds=5, wall_seconds=15, memory_mb=128,
+        disk_mb=32, stdout_bytes=1024,
+    ).model_copy(update={"cpu_seconds": 5.0})},
     {"limits": CodeComputeLimits(
         cpu_seconds=5, wall_seconds=15, memory_mb=128,
         disk_mb=32, stdout_bytes=1024,
