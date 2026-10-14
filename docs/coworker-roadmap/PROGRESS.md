@@ -1,5 +1,9 @@
 # Coworker evolution progress
 
+## CW-09 PR #393 independent P2 review fix — 14 October 2026
+
+[#393](https://github.com/rumman52/Shuddho/pull/393) review [P2](https://github.com/rumman52/Shuddho/pull/393#discussion_r4266861068) found a malformed activation with JSON `true` or `1.0` could pass `schema_version == 1` through Python bool/float equality; corrected with exact integer type check and two synthetic negative regressions, source/test SHA `121280e82b9856366dec8ccf1f0a20ff810b2356`. Earlier CI on `6ec683d5` passed `test-and-build` and PG safety, but was superseded. **Require final-head `coworker` browser no-skip, `test-and-build`, `ci-merge-gate` and final review.** CW-10 independent [draft PR #394](https://github.com/rumman52/Shuddho/pull/394) closes a copied Pydantic immutable-schema trust-boundary bypass separately; do not conflate branches. No merge/deployment/activation in this continuation.
+
 ## 14 October 2026 — CW-09 merged-red mandatory CI and ledger review correction
 
 **Verified at bootstrap:** `main` `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`; [PR #391](https://github.com/rumman52/Shuddho/pull/391) **merged** (`0e6ea7182ffae6e5bf8dbdfc4e229cb6472dcd46`), [PR #392](https://github.com/rumman52/Shuddho/pull/392) **merged** (`4248966e445f535a19027f6c3aa2d11a213ddd8e`), **no open PRs** before this correction. Historical entries below calling #391/#392 unmerged are superseded. PR #391 [exact-head workflow #38463696028](https://github.com/rumman52/Shuddho/actions/runs/38463696028) failed mandatory Agent browser test gate (21 passed, one `signed_client` **fixture not found** setup error); latest main [workflow #38465787058](https://github.com/rumman52/Shuddho/actions/runs/38465787058) also failed that gate. `test-and-build` passed in both, but `coworker` and `ci-merge-gate` failed. Production is **not qualified**.
