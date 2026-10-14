@@ -7,10 +7,15 @@ grant, selects a provider, or changes runtime dispatch.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
+import math
+import re
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from .agent_tools import TOOLS, ToolSpec
+from .agent_schemas import ResearchToolInput
 from .errors import CoworkerError
 from .skills import SKILLS, WorkSkill
 
@@ -65,11 +70,13 @@ def _schema_identity(tool: ToolSpec, *, output: bool) -> str:
 _PILOT_NAME = "research"
 _PILOT_TOOLS = ("research.search",)
 _PILOT_LIMITS = SkillResourceLimits(
-    max_tool_calls=1, max_wall_seconds=240, max_output_bytes=65536,
+    # Two 240-second attempts plus a 0.25s backoff. This is an inert
+    # manifest budget, not a new runtime deadline or permission.
+    max_tool_calls=1, max_wall_seconds=481, max_output_bytes=65536,
 )
 
 
-def pilot_skill_manifest() -> CoworkerSkillManifest:
+def _current_pilot_skill_manifest() -> CoworkerSkillManifest:
     skill = SKILLS[_PILOT_NAME]
     spec = TOOLS[_PILOT_TOOLS[0]]
     return CoworkerSkillManifest(
@@ -88,6 +95,39 @@ def pilot_skill_manifest() -> CoworkerSkillManifest:
     )
 
 
+# Explicitly reviewed source snapshots, pinned to GitHub blob identities
+# from baseline 3505c502. Updating WorkSkill, tools or input schemas
+# REQUIRES reviewing and changing this file (not regenerating on startup).
+_REVIEWED_SOURCE_BLOBS = (
+    (WorkSkill, "035293bd732a78daba8d7a96dbce48260f6c26d8"),
+    (ToolSpec, "72ba55683daf74f582b51e21649e1ec94070f4c8"),
+    (ResearchToolInput, "6d1933313e7a5abef1a6a35c36742623154f1a76"),
+)
+
+
+def _require_reviewed_source_blobs() -> None:
+    for code_type, reviewed_blob in _REVIEWED_SOURCE_BLOBS:
+        path = inspect.getsourcefile(code_type)
+        if not path:
+            raise ValueError("No audited code-owned source available")
+        data = Path(path).read_bytes()
+        git_blob = hashlib.sha1(
+            b"blob " + str(len(data)).encode("ascii") + b"\\0" + data
+        ).hexdigest()
+        if git_blob != reviewed_blob:
+            raise ValueError("Skill/tool/schema source changed without review")
+
+
+# This object is constructed once from the separately reviewed source
+# snapshot and must not dynamically change when policy changes at runtime.
+_REVIEWED_PILOT_MANIFEST = _current_pilot_skill_manifest()
+
+
+def pilot_skill_manifest() -> CoworkerSkillManifest:
+    _require_reviewed_source_blobs()
+    return _REVIEWED_PILOT_MANIFEST
+
+
 def validate_manifest(
     manifest: CoworkerSkillManifest, allowed_tools: frozenset[str],
 ) -> None:
@@ -100,6 +140,21 @@ def validate_manifest(
     try:
         if type(manifest) is not CoworkerSkillManifest:
             raise ValueError("unrecognized manifest type")
+        if set(vars(manifest)) != set(CoworkerSkillManifest.__dataclass_fields__):
+            raise ValueError("manifest contains undeclared state")
+        for field in (
+            "name", "version", "instruction_sha256",
+            "input_schema_sha256", "output_schema_sha256",
+            "tool_contract_sha256", "rollback_version",
+        ):
+            if type(getattr(manifest, field)) is not str:
+                raise ValueError("manifest contains untrusted identity subclasses")
+        for field in (
+            "instruction_sha256", "input_schema_sha256",
+            "output_schema_sha256", "tool_contract_sha256",
+        ):
+            if re.fullmatch(r"[0-9a-f]{64}", getattr(manifest, field)) is None:
+                raise ValueError("manifest contains malformed reviewed hash")
         if type(allowed_tools) is not frozenset or any(
             type(name) is not str for name in allowed_tools
         ):
@@ -111,7 +166,11 @@ def validate_manifest(
             or len(set(manifest.tool_names)) != len(manifest.tool_names)
         ):
             raise ValueError("manifest contains unexpected tool identities")
-        if type(manifest.resource_limits) is not SkillResourceLimits:
+        if (
+            type(manifest.resource_limits) is not SkillResourceLimits
+            or set(vars(manifest.resource_limits))
+            != set(SkillResourceLimits.__dataclass_fields__)
+        ):
             raise ValueError("manifest resource limits must be immutable")
         if any(
             type(value) is not int or value <= 0
@@ -119,9 +178,9 @@ def validate_manifest(
         ):
             raise ValueError("manifest limits must be positive integers")
         expected = pilot_skill_manifest()
-        if type(manifest.name) is not str or type(manifest.version) is not str:
-            raise ValueError("manifest name/version must be plain strings")
-        if manifest != expected:
+        # Recompute from live code only to catch runtime monkeypatching.
+        # Never use that recomputation as the "reviewed" manifest.
+        if _current_pilot_skill_manifest() != expected or manifest != expected:
             raise ValueError("manifest is not the code-reviewed version")
         if not set(manifest.tool_names).issubset(allowed_tools):
             raise ValueError("manifest exceeds caller's server-owned grant")
@@ -133,7 +192,13 @@ def validate_manifest(
                 or spec.consequential
                 or spec.approval_required
                 or spec.kind != "task"
-                or manifest.resource_limits.max_wall_seconds > spec.timeout_seconds
+                or manifest.resource_limits.max_wall_seconds
+                < math.ceil(
+                    spec.timeout_seconds * spec.retry_policy.max_attempts
+                    + spec.retry_policy.initial_backoff_seconds
+                    * max(0, spec.retry_policy.max_attempts - 1)
+                )
+                or manifest.resource_limits.max_wall_seconds > 500
                 or manifest.resource_limits.max_output_bytes > spec.max_result_bytes
             ):
                 raise ValueError("pilot tool exceeds code-owned resource or authority")
