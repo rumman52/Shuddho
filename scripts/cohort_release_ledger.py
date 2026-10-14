@@ -5530,7 +5530,7 @@ def append_agent_browser_read_event(
         raise ReleaseLedgerError(
             "Agent browser read deployment/source revision differs from activation."
         )
-    if activation.get("schema_version") != 1:
+    if type(activation.get("schema_version")) is not int or activation["schema_version"] != 1:
         raise ReleaseLedgerError(
             "Agent browser read activation evidence has an unsupported schema."
         )
