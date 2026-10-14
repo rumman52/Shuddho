@@ -1,5 +1,33 @@
 # Coworker evolution progress
 
+## 14 October 2026 — CW-09 merged-red mandatory CI and ledger review correction
+
+**Verified at bootstrap:** `main` `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`; [PR #391](https://github.com/rumman52/Shuddho/pull/391) **merged** (`0e6ea7182ffae6e5bf8dbdfc4e229cb6472dcd46`), [PR #392](https://github.com/rumman52/Shuddho/pull/392) **merged** (`4248966e445f535a19027f6c3aa2d11a213ddd8e`), **no open PRs** before this correction. Historical entries below calling #391/#392 unmerged are superseded. PR #391 [exact-head workflow #38463696028](https://github.com/rumman52/Shuddho/actions/runs/38463696028) failed mandatory Agent browser test gate (21 passed, one `signed_client` **fixture not found** setup error); latest main [workflow #38465787058](https://github.com/rumman52/Shuddho/actions/runs/38465787058) also failed that gate. `test-and-build` passed in both, but `coworker` and `ci-merge-gate` failed. Production is **not qualified**.
+
+**Review findings:** latest #391 [P1/P1/P2 security review](https://github.com/rumman52/Shuddho/pull/391#pullrequestreview-5509664548) identified missing canonical rollout `incident.change_reference` semantic match, acceptance of arbitrary non-Git deployment revision and acceptance of activation without version 1 schema. Prior rollout digest, post-deploy status chronology and kill-switch checks remain in place.
+
+**Corrective source branch:** `codex/cw09-main-red-ci-ledger-review-repair-20261014` based on `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`, source/tests head `b4f5e0c32fcaa96c05c73aaf7b971a7481f7bb42` before documentation. [Task contract](CW09_MAIN_CI_RELEASE_LEDGER_CORRECTION_2026-10-14.md). Move the out-of-module authenticated manifest assertion into the actual API test fixture; browser mandatory suite remains no-skip. Add schema 34 review-bound incident, canonical Git SHA-1 and activation v1 enforcement, synthetic adversarial tests with rehashed documents. **No generated proof, provider operation, activation or changed model grants.**
+
+| CW item | Integrated status | Unfinished verification/acceptance |
+| --- | --- | --- |
+| CW-05 owner-bound conversation | Existing integrated implementation | Actual staging replay, deletion and recovery |
+| CW-06 steering/durable dispatch | Existing integrated implementation | Operated Temporal/late observation |
+| CW-07 activity and reconnect | Merged previous PRs | Browser/mobile keyboard and reconnection staging |
+| CW-08 context and memory | Merged previous PRs | Retention, source revocation and ownership staging |
+| **CW-09 read-only browser** | Broker/read and controlled-release contracts merged, but **main CI red and schema34 review P1**; corrective isolated branch implemented | Final-head no-skip CI, reviewed release changes, bounded actual page content with private checksum/provenance, isolated worker DNS/SSRF/redirect tests and execution-time canonical eligibility |
+| CW-10 immutable generated-code proposal | Initial inert envelope merged #392 | Actual immutable persistence, grant/approval binding and sandbox claim tests |
+| CW-11 versioned skills | Existing static tool contracts only | Versioned reviewed manifest, constraints and budget authority controls |
+
+| Evidence level | CW-09 merged-red correction |
+| --- | --- |
+| Implemented | Source/test changes on isolated branch |
+| Repository verified | **Pending final-head CI + independent review** |
+| Staging verified | **No** |
+| Production qualified | **No** |
+| Activated | **No**; defaults remain off |
+
+**Next exact action:** Open draft PR; inspect full final-head `test-and-build`, `coworker` (PostgreSQL/Temporal/transactions/browser no-skip) and `ci-merge-gate`; request independent security review, correct any failures without loosening mandatory tests. Continue only other independent CW-09/CW-10/CW-11 work while release is gated. **No automatic merge, deploy or activation.**
+
 ## CW-10 first inert review-envelope contract — 14 October 2026
 
 **Source bootstrap:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`. CW-09 corrective [PR #391](https://github.com/rumman52/Shuddho/pull/391) was merged into main at `905a09c3a5e2931be46d9053ba4af09ecd331125`, while exact-final-head mandatory CI and security review still require confirmation; do not infer production qualification. Do not conflate this dependent CW-09 safety review with CW-10 work.
