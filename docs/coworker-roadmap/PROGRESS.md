@@ -1,5 +1,9 @@
 # Coworker evolution progress
 
+## CW-09 #393 embedded runtime typed-schema P2 repair — 14 October 2026
+
+Second independent [P2](https://github.com/rumman52/Shuddho/pull/393#discussion_r4266898374) on #393 found `runtime.schema_version = true` or `1.0` accepted by Python equality even after outer activation type hardening. Added `type(runtime.schema_version) is int and runtime.schema_version == 1` and two synthetic self-rehashed runtime-manifest negative tests, source/test SHA `06a172051e951b3a832374087d617d8a3353f8b2` before docs. Earlier tests on old head are **superseded**; request a fresh independent review and exact-final-head CI of browser no-skip, PostgreSQL, full coworker, test-and-build and merge gate. Branch remains draft/unmerged and default-off. CW-10 separate #394 is likewise draft and requires its own checks.
+
 ## CW-09 PR #393 independent P2 review fix — 14 October 2026
 
 [#393](https://github.com/rumman52/Shuddho/pull/393) review [P2](https://github.com/rumman52/Shuddho/pull/393#discussion_r4266861068) found a malformed activation with JSON `true` or `1.0` could pass `schema_version == 1` through Python bool/float equality; corrected with exact integer type check and two synthetic negative regressions, source/test SHA `121280e82b9856366dec8ccf1f0a20ff810b2356`. Earlier CI on `6ec683d5` passed `test-and-build` and PG safety, but was superseded. **Require final-head `coworker` browser no-skip, `test-and-build`, `ci-merge-gate` and final review.** CW-10 independent [draft PR #394](https://github.com/rumman52/Shuddho/pull/394) closes a copied Pydantic immutable-schema trust-boundary bypass separately; do not conflate branches. No merge/deployment/activation in this continuation.
