@@ -1,5 +1,26 @@
 # Coworker evolution progress
 
+## CW-09 Agent browser worker-time kill-switch — 14 October 2026
+
+**Refreshed default branch:** `main` `7da39a13e0207b96a2b05dde72e1fb876a970a5c`; no open PRs at bootstrap. Main `test-and-build` passed while `coworker` and `ci-merge-gate` were not yet complete on [CI #38546539014](https://github.com/rumman52/Shuddho/actions/runs/38546539014). The previous CW-11 #396/#397 work has been merged; earlier PROGRESS notes treating it as draft are historical. No deployed release or staging evidence was established.
+
+**Current task:** CW-09 autonomous browser read revocation at the actual worker/broker boundary. [Contract](CW09_AGENT_READ_REVOCATION_BOUNDARY_2026-10-14.md). Review branch `codex/cw09-agent-read-revocation-boundary-20261014`; base as above; initial source commit `28ebf7a7f2edc3e84d3a15ab977aa9ac8de71981`, regression tests commit `605b65cf180784645b31043e9d54474e9520560a`, task-contract commit `fa21d61a54720fe66464ee1f5b5ded3d0ac680d1`, before this progress update. Exact final implementation SHA and PR number must be obtained from GitHub after this checkpoint.
+
+**Gap:** Existing runtime/tool gating was not enough: a prepared `agent_read_only` browser command could be claimed by a worker after the Agent-specific switch was disabled; an already-claimed command could still pass independent broker network preflight and submit a late verified receipt. The broker now denies new server-agent sessions and preparation when disabled, terminally fails queued/claimed Agent reads at claim/control and completion, and explicitly rejects network egress preflight after revocation. Human-supervised browser reads retain their separate capability. Tests cover queued revocation, claimed network/control/receipt and supervised non-regression. No migration, second ledger, external provider, human approval bypass or production activation.
+
+| Architecture/core acceptance | Integrated evidence | Remaining |
+| --- | --- | --- |
+| CW-05–CW-07 | Conversation and activity foundations merged | Owned operated replay/reconnect/UX qualification |
+| CW-08 | Selected-source validation and memory controls merged | Staging revocation/deletion and retention |
+| **CW-09** | Broker and tool foundations on main; new revocation repair on isolated branch | **Final-head CI/review**, private bounded page text provenance, worker egress staging, canonical runtime release eligibility |
+| CW-10 | Inert reviewed code-proposal envelope merged | Persisted immutable proposal, explicit reviewed approval and sandbox worker claim |
+| CW-11 | Inert reviewed manifest integrated via #396/#397 | Trusted publication/rollback enforcement, runtime grant-selection and staging evaluations |
+
+**Evidence:** implemented on isolated review branch, repository-verified **pending exact-head CI and independent review**, staging-verified **no**, production-qualified **no**, activated **no**. An in-flight request already allowed just before a revocation cannot be undone; the worker stop/egress and shutdown staging boundary still needs testing. Flags unchanged and default-off.
+
+**Next exact action:** Open draft PR for the review branch, inspect `tests/test_agent_browser_tool.py`, `tests/test_browser_broker.py`, exact-head `test-and-build`, `coworker` and `ci-merge-gate` (zero mandatory skips), repair any failures, obtain independent review. Then take a separate CW-09 page-content/private receipt and runtime release-gate slice without treating this guard as CW-09 closure.
+
+
 ## CW-11 schema-generator dependency-pinning repair — 14 October 2026
 
 **Live verified bootstrap:** `main` `4acea1d245030101aff657d80f89b1c66c7ca097`, CI [#38527867446](https://github.com/rumman52/Shuddho/actions/runs/38527867446) **success** (`test-and-build`, mandatory `coworker` incl. browser, `ci-merge-gate`). Historical merged-red CW-09 notes below are superseded by this newer integrated CI. **Open #396:** CW-11 inert manifest pilot was green on `9b80e39ddb3c129726ec85f2779f52b5bd4bbf1b` ([CI #38527404758](https://github.com/rumman52/Shuddho/actions/runs/38527404758)) but unmerged; [P2 review](https://github.com/rumman52/Shuddho/pull/396#discussion_r4267904354) found a dependency-upgrade bypass. The other three P2 findings were addressed in that earlier branch revision.
