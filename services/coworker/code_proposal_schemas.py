@@ -113,6 +113,17 @@ def verify_reviewed_code_identity(
         # Python bool compares equal to 1; it is not a schema version.
         if type(proposal.schema_version) is not int:
             raise ValueError("Proposal schema_version must be an integer")
+        # A strict round trip is not enough to prove the *original* copy is
+        # immutable: Pydantic accepts nested mappings as construction inputs.
+        # Future callers must never inherit mutable limits/input refs after
+        # this verifier returns.
+        if (
+            type(proposal.limits) is not CodeComputeLimits
+            or type(proposal.input_versions) is not tuple
+            or any(type(item) is not CodeInputVersion for item in proposal.input_versions)
+            or type(proposal.destinations) is not tuple
+        ):
+            raise ValueError("Proposal contains mutable nested fields")
         proposal = CodeProposalEnvelope.model_validate(
             proposal.model_dump(mode="python"), strict=True,
         )
