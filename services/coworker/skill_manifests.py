@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+from importlib import metadata
 import json
 import math
 import re
@@ -98,6 +99,16 @@ def _current_pilot_skill_manifest() -> CoworkerSkillManifest:
 # Explicitly reviewed source snapshots, pinned to GitHub blob identities
 # from baseline 3505c502. Updating WorkSkill, tools or input schemas
 # REQUIRES reviewing and changing this file (not regenerating on startup).
+# The model_json_schema() generator is dependency-sensitive. Pin the exact
+# reviewed uv.lock and the generator packages used at runtime, otherwise a
+# lockfile refresh can silently regenerate the expected manifest at import.
+_REVIEWED_UV_LOCK_BLOB = "6b19816f0fe2aa1e5e51a9e88bc03b171608cd0f"
+_REVIEWED_SCHEMA_GENERATORS = (
+    ("pydantic", "2.12.5"),
+    ("pydantic-core", "2.41.5"),
+    ("typing-extensions", "4.15.0"),
+    ("typing-inspection", "0.4.2"),
+)
 _REVIEWED_SOURCE_BLOBS = (
     (WorkSkill, "035293bd732a78daba8d7a96dbce48260f6c26d8"),
     (ToolSpec, "72ba55683daf74f582b51e21649e1ec94070f4c8"),
@@ -116,6 +127,24 @@ def _require_reviewed_source_blobs() -> None:
         ).hexdigest()
         if git_blob != reviewed_blob:
             raise ValueError("Skill/tool/schema source changed without review")
+
+    # A different Pydantic implementation can produce different JSON Schema
+    # with identical WorkSkill/ToolSpec source. Reject drift before trusting
+    # the import-time reviewed manifest as a fixed policy snapshot.
+    lockfile = Path(__file__).resolve().parents[2] / "uv.lock"
+    lock_bytes = lockfile.read_bytes()
+    lock_digest = hashlib.sha1(
+        b"blob " + str(len(lock_bytes)).encode("ascii") + b"\\0" + lock_bytes
+    ).hexdigest()
+    if lock_digest != _REVIEWED_UV_LOCK_BLOB:
+        raise ValueError("Skill schema dependency lockfile changed without review")
+    for distribution, expected_version in _REVIEWED_SCHEMA_GENERATORS:
+        try:
+            version = metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            raise ValueError("Audited schema generator dependency unavailable") from None
+        if version != expected_version:
+            raise ValueError("Skill schema generator version changed without review")
 
 
 # This object is constructed once from the separately reviewed source
