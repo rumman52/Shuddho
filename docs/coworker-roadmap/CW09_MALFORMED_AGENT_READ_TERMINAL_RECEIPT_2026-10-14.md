@@ -4,7 +4,7 @@
 **Workstream:** Architecture and core agent; read-only browser broker  
 **Base main:** `607b828274f9f4c580cd3dbd2ea5889d947904fc`  
 **Branch:** `codex/cw09-terminal-malformed-agent-browser-evidence-20261014`  
-**Source/test commit before documentation:** `846f7f5a72edef2025fbcfed496594605a84c8c1`
+**Source/test commit before documentation:** `846f7f5a72edef2025fbcfed496594605a84c8c1` (initial); revised test/implementation head `14e818c88371dcc314fcfec5aaad2f27bf2760b9`
 
 ## Reproduced invariant gap
 
