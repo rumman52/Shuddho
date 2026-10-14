@@ -67,6 +67,7 @@ def fixture(tmp_path: Path):
         "release_id": RELEASE_ID, "environment": "production",
         "capabilities": flags, "cohort": {"max_users": 5},
         "action_providers": [],
+        "incident": {"change_reference": "synthetic-change"},
         "rollback": {"agent_browser_read_kill_switch": "SHUDDHO_AGENT_BROWSER_READ_ENABLED=false"},
     })
     staged = write(tmp_path / "staging.json", {
@@ -94,6 +95,7 @@ def fixture(tmp_path: Path):
         },
     }
     activation = {
+        "schema_version": 1,
         "release_id": RELEASE_ID, "status": "agent_browser_read_verified",
         "current_stage": STAGE, "change_reference": "synthetic-change",
         "source_revision": REV, "deployed_at": "2026-10-14T00:06:00+00:00",
@@ -220,5 +222,75 @@ def test_agent_browser_read_denies_mismatched_operated_release_evidence(tmp_path
             rollout["rollback"]["agent_browser_read_kill_switch"] = "SHUDDHO_BROWSER_ENABLED=false"
         write(args["rollout_manifest"], rollout)
     with pytest.raises(ReleaseLedgerError):
+        append_agent_browser_read_event(**args)
+    assert verify_entries(read_entries(args["ledger"]), KEY)["entries"] == 1
+
+
+@pytest.mark.parametrize("invalid", [
+    "wrong_reviewed_change_reference",
+    "missing_reviewed_incident",
+    "non_git_deployment_revision",
+    "missing_activation_schema",
+    "unsupported_activation_schema",
+    "boolean_activation_schema",
+    "float_activation_schema",
+    "boolean_runtime_schema",
+    "float_runtime_schema",
+])
+def test_agent_browser_attestation_rejects_cross_change_or_invalid_schema_even_with_matching_hashes(
+    tmp_path, invalid,
+):
+    args = fixture(tmp_path)
+    rollout = json.loads(args["rollout_manifest"].read_text())
+    deployment = json.loads(args["deployment_change"].read_text())
+    activation = json.loads(args["activation_evidence"].read_text())
+    if invalid == "wrong_reviewed_change_reference":
+        rollout["incident"]["change_reference"] = "different-reviewed-change"
+        write(args["rollout_manifest"], rollout)
+        deployment["rollout_manifest_sha256"] = digest(args["rollout_manifest"])
+        write(args["deployment_change"], deployment)
+        activation["artifact_sha256"]["rollout_manifest"] = digest(args["rollout_manifest"])
+        activation["artifact_sha256"]["deployment_change"] = digest(args["deployment_change"])
+    elif invalid == "missing_reviewed_incident":
+        rollout.pop("incident")
+        write(args["rollout_manifest"], rollout)
+        deployment["rollout_manifest_sha256"] = digest(args["rollout_manifest"])
+        write(args["deployment_change"], deployment)
+        activation["artifact_sha256"]["rollout_manifest"] = digest(args["rollout_manifest"])
+        activation["artifact_sha256"]["deployment_change"] = digest(args["deployment_change"])
+    elif invalid == "non_git_deployment_revision":
+        deployment["source_revision"] = "not-a-git-revision"
+        write(args["deployment_change"], deployment)
+        activation["source_revision"] = "not-a-git-revision"
+        activation["runtime"]["source_revision"] = "not-a-git-revision"
+        activation["runtime_manifest_sha256"] = hashlib.sha256(
+            canonical(activation["runtime"])
+        ).hexdigest()
+        activation["artifact_sha256"]["deployment_change"] = digest(args["deployment_change"])
+    elif invalid == "missing_activation_schema":
+        activation.pop("schema_version")
+    elif invalid == "boolean_activation_schema":
+        activation["schema_version"] = True
+    elif invalid == "float_activation_schema":
+        activation["schema_version"] = 1.0
+    elif invalid in {"boolean_runtime_schema", "float_runtime_schema"}:
+        activation["runtime"]["schema_version"] = (
+            True if invalid == "boolean_runtime_schema" else 1.0
+        )
+        activation["runtime_manifest_sha256"] = hashlib.sha256(
+            canonical(activation["runtime"])
+        ).hexdigest()
+    else:
+        activation["schema_version"] = 2
+
+    activation.pop("activation_sha256")
+    activation["activation_sha256"] = hashlib.sha256(canonical(activation)).hexdigest()
+    write(args["activation_evidence"], activation)
+    with pytest.raises(ReleaseLedgerError, match=(
+        "change reference" if "change" in invalid or "incident" in invalid
+        else "Git SHA-1" if "revision" in invalid
+        else "reviewed runtime authority" if "runtime_schema" in invalid
+        else "unsupported schema"
+    )):
         append_agent_browser_read_event(**args)
     assert verify_entries(read_entries(args["ledger"]), KEY)["entries"] == 1

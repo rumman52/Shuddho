@@ -22,3 +22,10 @@ Require `tests/test_agent_code_proposals.py`, general Python tests, full require
 **Independent dependency:** merged CW-09 main CI is red and being repaired in [draft PR #393](https://github.com/rumman52/Shuddho/pull/393); this CW-10 slice does not depend on that branch but cannot make the whole repository green until #393 is also resolved. Do not auto-merge.
 
 **Next exact action:** open a separate draft PR, inspect exact-head CI and review, fix any findings, checkpoint the result. Then proceed with persisted owner/run immutable proposal and exact human-reviewed approval through existing sandbox.
+
+
+## 14 October 2026 — copied undeclared state / subclass P2 corrections
+
+Independent #394 review additionally identified two residual P2 paths: a subclass can override `model_dump()` to conceal state, and a base-type `model_copy(update={"approved": True})` keeps undeclared instance keys that frozen Pydantic serialization silently drops. The stricter verifier requires **exact** `CodeProposalEnvelope` runtime type and exact declared `__dict__`/field-set membership, no extra/private state, and the equivalent declared-state checks on nested limits and input references. Tests cover three top-level unknown field injection cases, two nested extra-field copies, and a serializer-overriding subclass. Source/test commit: `4f060279cc38895e1f04f7ab5255724b1451ba8b`.
+
+Reconciled with main `81cc0cd9d679b568a98722ca6cb53b91c9170eb2` containing CW-09 [#393](https://github.com/rumman52/Shuddho/pull/393), which fixes the unrelated signed-client fixture problem exposed by old PR #394 CI. Final reconciled PR-head CI and independent review still required. No mutation, network access or production authority introduced.
