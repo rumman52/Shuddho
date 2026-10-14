@@ -103,6 +103,52 @@ def verify_reviewed_code_identity(
     A future worker claim must also verify a persisted exact human review and
     server-owned run, source, inputs, permission and release identity.
     """
+    # Frozen Pydantic models are not necessarily valid: model_copy(update=...)
+    # deliberately bypasses field and model validators, including the egress
+    # and source-hash restrictions. Reconstruct from primitives at this
+    # authority boundary; never trust an in-memory type alone.
+    try:
+        # A copied or subclassed Pydantic model can contain unreviewed state:
+        # model_copy(update=...) writes unknown keys to __dict__, while
+        # model_dump() silently omits them for extra="forbid" models. Require
+        # exact runtime classes and exactly the declared instance fields
+        # before invoking any overridable serialization or hash method.
+        if type(proposal) is not CodeProposalEnvelope:
+            raise ValueError("Unexpected proposal type")
+        def only_declared_fields(value, expected_type):
+            fields = set(expected_type.model_fields)
+            return (
+                type(value) is expected_type
+                and set(value.__dict__) == fields
+                and value.__pydantic_fields_set__ <= fields
+                and not value.__pydantic_extra__
+                and not value.__pydantic_private__
+            )
+        if not only_declared_fields(proposal, CodeProposalEnvelope):
+            raise ValueError("Unexpected proposal fields")
+        # Python bool compares equal to 1; it is not a schema version.
+        if type(proposal.schema_version) is not int:
+            raise ValueError("Proposal schema_version must be an integer")
+        # A strict round trip is not enough to prove the *original* copy is
+        # immutable: Pydantic accepts nested mappings as construction inputs.
+        # Future callers must never inherit mutable limits/input refs after
+        # this verifier returns.
+        if (
+            not only_declared_fields(proposal.limits, CodeComputeLimits)
+            or type(proposal.input_versions) is not tuple
+            or any(not only_declared_fields(item, CodeInputVersion) for item in proposal.input_versions)
+            or type(proposal.destinations) is not tuple
+        ):
+            raise ValueError("Proposal contains mutable nested fields")
+        proposal = CodeProposalEnvelope.model_validate(
+            proposal.model_dump(mode="python"), strict=True,
+        )
+    except Exception:
+        raise CoworkerError(
+            "code_proposal_invalid",
+            "The reviewed code proposal does not satisfy its immutable schema.",
+            409,
+        ) from None
     if now.tzinfo is None:
         raise CoworkerError("code_review_time_invalid", "Review time must include a timezone.", 409)
     if now.astimezone(timezone.utc) < proposal.created_at.astimezone(timezone.utc):

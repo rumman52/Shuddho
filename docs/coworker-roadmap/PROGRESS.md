@@ -1,6 +1,42 @@
 # Coworker evolution progress
 
-## CW-09 #393 embedded runtime typed-schema P2 repair — 14 October 2026
+## CW-10 #394 copied-state and subclass integrity repair — 14 October 2026
+
+**Source/PR:** [#394](https://github.com/rumman52/Shuddho/pull/394), branch `codex/cw10-review-envelope-revalidate-20261014`; source/regression commit `4f060279cc38895e1f04f7ab5255724b1451ba8b`. Original branch baseline `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`; reconciled with main `81cc0cd9d679b568a98722ca6cb53b91c9170eb2` (merged [#393](https://github.com/rumman52/Shuddho/pull/393)). Current PR head is resolved from GitHub at review and CI time; do not substitute older SHA checks.
+
+**Reproduced risk and fix:** Review on #394 found inherited/subclass serializers can disguise original proposal state, and `model_copy(update={"approved": True})` can add an undeclared field that `model_dump` omits, while a matching review hash still verifies. `verify_reviewed_code_identity` now rejects subclasses and requires exact declared stored fields (including nested limits and input versions), with no hidden Pydantic extra/private state before strict reconstruction. Added six negative parameter cases covering copied undeclared top-level fields, nested extras and subclass overrides. These remain inert checks; no code execution, approval, grants or rollout.
+
+**Previous CI diagnosis:** [old #394 CI](https://github.com/rumman52/Shuddho/actions/runs/38514097821) had successful `test-and-build`, 1340 general coworker tests passed, but mandatory CW-09 browser gate failed `21 passed, 1 error` on missing `signed_client` fixture, therefore `ci-merge-gate` failed. This was a pre-#393 base; #393 deleted/relocated the fixture-dependent test. The new combined head needs its own complete required CI. Do **not** claim it green yet.
+
+**Evidence levels:** implemented on a GitHub review branch; repository-verified **pending exact-head no-skip CI** and review; staging-verified **no**; production-qualified **no**; activated **no**. Existing CW-09 and CW-10 incomplete operational requirements remain separate.
+
+**Next exact action:** Inspect the reconciled PR head, run `uv run --extra coworker pytest tests/test_agent_code_proposals.py -q`, require `test-and-build`, `coworker` and `ci-merge-gate` on the final head with zero mandatory skips. Resolve outstanding review threads only on evidence; do not merge, deploy or activate. Then implement CW-10 persisted code proposal, exact human approval and sandbox claim as a separate reviewed slice.
+
+## CW-10 #394 immutable nested copy integrity — 14 October 2026
+
+Second independent [P2](https://github.com/rumman52/Shuddho/pull/394#discussion_r4266920978) found that strict Pydantic reconstruction can accept a valid `limits`/input plain mapping and normalize it, leaving the original copied proposal mutable for downstream use. Added checks for exact `CodeComputeLimits`, `CodeInputVersion` and immutable tuple types **on the original object** before the strict round trip. Three new self-hashed negative cases test same-value limits/input mappings and mutable empty destinations. Latest source/test SHA `9285ff38408f9099bcf3d80c3794169589700507` before docs. Draft [PR #394](https://github.com/rumman52/Shuddho/pull/394), unmerged; exact final-head full required CI, review and authority/compatibility checks pending. No execution grant.
+
+## CW-10 #394 strict typed validation review correction — 14 October 2026
+
+CW-10 [draft PR #394](https://github.com/rumman52/Shuddho/pull/394) independent review [P2](https://github.com/rumman52/Shuddho/pull/394#discussion_r4266890920) found `model_validate()` can coerce untrusted copied timestamps and other field types instead of proving immutable typed identity. Revalidation now uses `strict=True`, rejects boolean schema version explicitly, and includes rehashed copied string-expiry/boolean-schema/float-CPU negative cases; latest source/test commit `db2aafa7feca94a399c816f1fc0437da51dded65` before documentation. Earlier `test-and-build` success was on an older SHA. Exact-final-head `test-and-build`, `coworker`, `ci-merge-gate` and independent review remain required. No code execution or production flag enabled.
+
+## CW-10 copied inert review-envelope validation — 14 October 2026
+
+**Live main baseline:** `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`, #392 immutable schema merged. New **independent** branch `codex/cw10-review-envelope-revalidate-20261014`; code/tests SHA `d3740983443bdf450422ebcab9b60e8ca9cdb9f7` before docs. [Task contract](CW10_COPIED_REVIEW_ENVELOPE_VALIDATION_2026-10-14.md).
+
+**Bug and change:** although Pydantic `CodeProposalEnvelope` is frozen, unvalidated `model_copy(update=...)` can change forbidden egress/destinations/source checksum/nested CPU policy/expiry without model validators. `verify_reviewed_code_identity` now reconstructs and validates the entire existing proposal object before digest/owner/run/time/input ceiling checks, rejecting invalid copies even when a newly recomputed hash matches them; five corresponding no-authority regressions added. No DB approval, grant, credential, generated-code execution or production flag is created.
+
+**Verification:** exact-final-head task tests and full required CI **pending**; independent review **pending**. CW-09 remains separately red on merged main, addressed by [draft PR #393](https://github.com/rumman52/Shuddho/pull/393) with its own mandatory CI and review. These are two independent draft changes; both must pass before claiming an integrated green repository.
+
+| Evidence | CW-10 copied-envelope validator |
+| --- | --- |
+| Implemented | Separate source/test/docs branch |
+| Repository verified | **Not yet: exact-head CI pending** |
+| Staging verified | Not attempted |
+| Production qualified | Not established |
+| Activated | No; inert contract only |
+
+**Next exact action:** Open CW-10 independent draft PR, run `tests/test_agent_code_proposals.py` and exact full CI, obtain independent review and fix any findings. Then move to persisted owner/run immutable proposal, human approval and sandbox worker claim (still unimplemented), only after preserving existing no-grant and user-supplied-Python behavior. No automatic merge/deploy/activation.## CW-09 #393 embedded runtime typed-schema P2 repair — 14 October 2026
 
 Second independent [P2](https://github.com/rumman52/Shuddho/pull/393#discussion_r4266898374) on #393 found `runtime.schema_version = true` or `1.0` accepted by Python equality even after outer activation type hardening. Added `type(runtime.schema_version) is int and runtime.schema_version == 1` and two synthetic self-rehashed runtime-manifest negative tests, source/test SHA `06a172051e951b3a832374087d617d8a3353f8b2` before docs. Earlier tests on old head are **superseded**; request a fresh independent review and exact-final-head CI of browser no-skip, PostgreSQL, full coworker, test-and-build and merge gate. Branch remains draft/unmerged and default-off. CW-10 separate #394 is likewise draft and requires its own checks.
 
