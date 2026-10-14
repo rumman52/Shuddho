@@ -1,5 +1,29 @@
 # Coworker evolution progress
 
+## CW-10 exact timestamp / UUID class review repair — 14 October 2026
+
+**Live bootstrap:** `main` `3505c5029891d488678b1f2e8b302694ce0a96e4`, after merges [#393](https://github.com/rumman52/Shuddho/pull/393) and [#394](https://github.com/rumman52/Shuddho/pull/394); **no open PRs** at bootstrap. #393 exact-head [CI 38513869839](https://github.com/rumman52/Shuddho/actions/runs/38513869839) passed `test-and-build`, all `coworker` (including mandatory browser tests) and `ci-merge-gate`; merged source corrects exact integer schema versions. #394 exact-head [CI 38521982865](https://github.com/rumman52/Shuddho/actions/runs/38521982865) passed, but the latest independent [P2 review](https://github.com/rumman52/Shuddho/pull/394#discussion_r4267484974) documented an unguarded subclassed `datetime.astimezone` bypass during immutable proposal review. Main [CI 38524741451](https://github.com/rumman52/Shuddho/actions/runs/38524741451) was still in progress at bootstrap.
+
+**Coherent correction:** branch `codex/cw10-exact-timestamp-uuid-review-20261014`, baseline `3505c5029891d488678b1f2e8b302694ce0a96e4`, initial code/test head `6624209e7f7b2b778a9897e005fcc1aef39733e2`; earlier reviewed source/test head `b5b49bc9e9e1f7855cd6475cfee1bbdd07751682`; latest test-only correction head `cdc1fb1338ca57b2ce744365760780ffabfd69d2` before final docs. Prior CI `a018236` had 3 **test fixture setup** failures from stdlib UUID construction receiving an equality-overriding `int` subclass. The fixture now constructs a standard UUID and injects the hostile payload directly; exact latest-head CI and independent review remain mandatory, after final-head review found [P2 hostile tzinfo](https://github.com/rumman52/Shuddho/pull/395#discussion_r4267754497) and [P2 UUID integer subclass](https://github.com/rumman52/Shuddho/pull/395#discussion_r4267754504) bypasses. Code now checks exact canonical timezone/clock and UUID integer payload; matching-digest negative tests added. **Draft [#395](https://github.com/rumman52/Shuddho/pull/395)**, unmerged; refreshed exact-head CI/review required; [task contract](CW10_SUBCLASSED_REVIEW_IDENTITY_REPAIR_2026-10-14.md). Verifier now requires exact `datetime` and `UUID` types on original proposal and nested input identities **before invoking subclass-overridable normalization or serialization**; tests use self-consistent hashes with adversarial subclassed three-hour expiry and UUID references. Unchanged finite limits, source hash, owner, version, immutable nested type, and `egress_profile=none` gates. No new authority.
+
+| Acceptance item | Integration | Unmet acceptance / next action |
+| --- | --- | --- |
+| CW-05/CW-06/CW-07 | Existing merged implementation | Operated owned chat, steering, resume and deletion |
+| CW-08 context/memory | Existing merged core | Revocation, expiry, retention staging |
+| CW-09 brokered browser | #387–#393 integrated; #393 final CI green | Actual bounded webpage text/private digest, isolated-worker egress/DNS/SSRF proof, execution-time eligibility, staging |
+| **CW-10 reviewed code** | #392/#394 integrated inert envelope, current subclass correction on new review branch | Exact-head CI/review, persisted immutable proposal/approval, sandbox worker claim and execution safety |
+| CW-11 reviewed skills | Static registered code-owned tools | Strict versioned manifests, no authority expansion, rollback + qualification |
+
+| Evidence | Current CW-10 correction |
+| --- | --- |
+| Implemented | Source/test/docs in isolated review branch |
+| Repository-verified | **Pending exact-final-head mandatory CI and independent review** |
+| Staging-verified | Not run |
+| Production-qualified | Not established |
+| Activated | No: code proposals remain inert and browser.read default-off |
+
+**Next exact action:** Open draft PR, verify `test-and-build`, `coworker`, `ci-merge-gate`, and `tests/test_agent_code_proposals.py` on that final SHA, obtain independent review; correct failures without reducing guard/test strength. Then select next dependency-ready CW-09/10/11 coherent slice. No automatic merge, credential change or activation.
+
 ## CW-10 #394 copied-state and subclass integrity repair — 14 October 2026
 
 **Source/PR:** [#394](https://github.com/rumman52/Shuddho/pull/394), branch `codex/cw10-review-envelope-revalidate-20261014`; source/regression commit `4f060279cc38895e1f04f7ab5255724b1451ba8b`. Original branch baseline `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`; reconciled with main `81cc0cd9d679b568a98722ca6cb53b91c9170eb2` (merged [#393](https://github.com/rumman52/Shuddho/pull/393)). Current PR head is resolved from GitHub at review and CI time; do not substitute older SHA checks.
