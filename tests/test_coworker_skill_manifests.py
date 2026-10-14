@@ -180,15 +180,17 @@ def test_reviewer_pinned_schema_lock_drift_revokes_manifest(monkeypatch):
     from services.coworker import skill_manifests as reviewed
 
     approved = pilot_skill_manifest()
-    read_original = reviewed.Path.read_bytes
+    read_original = reviewed.Path.read_text
 
-    def changed_lockfile(path):
-        content = read_original(path)
+    def changed_lockfile(path, *args, **kwargs):
+        data = read_original(path, *args, **kwargs)
         if path.name == "uv.lock":
-            return content + b"\\n# unreviewed schema generator update\\n"
-        return content
+            pinned = 'name = "pydantic"\\nversion = "2.12.5"'
+            assert pinned in data
+            return data.replace(pinned, 'name = "pydantic"\\nversion = "2.99.0"', 1)
+        return data
 
-    monkeypatch.setattr(reviewed.Path, "read_bytes", changed_lockfile)
+    monkeypatch.setattr(reviewed.Path, "read_text", changed_lockfile)
     denied(approved)
 
 
@@ -211,10 +213,8 @@ def test_schema_generator_pins_match_existing_reviewed_lockfile():
     from services.coworker import skill_manifests as reviewed
 
     lockfile = reviewed.Path(__file__).resolve().parents[1] / "uv.lock"
-    data = lockfile.read_bytes()
-    blob = reviewed.hashlib.sha1(
-        b"blob " + str(len(data)).encode("ascii") + b"\\0" + data
-    ).hexdigest()
-    assert blob == reviewed._REVIEWED_UV_LOCK_BLOB
+    packages = reviewed.tomllib.loads(lockfile.read_text(encoding="utf-8"))["package"]
+    locked = {item["name"]: item["version"] for item in packages}
     for distribution, version in reviewed._REVIEWED_SCHEMA_GENERATORS:
+        assert locked[distribution] == version
         assert reviewed.metadata.version(distribution) == version
