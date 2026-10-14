@@ -194,3 +194,44 @@ def test_model_copy_bypass_cannot_persuade_review_identity(invalid_change):
     with pytest.raises(CoworkerError) as denied:
         verified(forged, now, reviewed_sha256=forged.review_sha256())
     assert denied.value.code == "code_proposal_invalid"
+
+
+@pytest.mark.parametrize("field", ["approved", "network_grant", "model_dump"])
+def test_copied_envelope_undeclared_state_fails_even_with_matching_digest(field):
+    original, now = setup_envelope()
+    # Pydantic silently ignores unknown copied fields when serializing, so
+    # the forged review hash can equal the original despite the extra state.
+    value = (lambda **kw: original.model_dump(**kw)) if field == "model_dump" else True
+    copied = original.model_copy(update={field: value})
+    with pytest.raises(CoworkerError) as denied:
+        verified(copied, now, reviewed_sha256=original.review_sha256())
+    assert denied.value.code == "code_proposal_invalid"
+
+
+@pytest.mark.parametrize("field", ["limits", "input_versions"])
+def test_nested_copied_models_with_extra_state_are_not_immutable(field):
+    original, now = setup_envelope()
+    if field == "limits":
+        replaced = original.limits.model_copy(update={"grant": "unreviewed"})
+        copied = original.model_copy(update={"limits": replaced})
+    else:
+        replaced = original.input_versions[0].model_copy(update={"grant": "unreviewed"})
+        copied = original.model_copy(update={"input_versions": (replaced,)})
+    with pytest.raises(CoworkerError) as denied:
+        verified(copied, now, reviewed_sha256=copied.review_sha256())
+    assert denied.value.code == "code_proposal_invalid"
+
+
+def test_envelope_subclass_is_not_a_reviewed_base_envelope():
+    original, now = setup_envelope()
+
+    class UntrustedSubclass(CodeProposalEnvelope):
+        def model_dump(self, *args, **kwargs):
+            # Overridden serializers cannot establish the original object's
+            # claimed identity, even if they return benign-looking content.
+            return original.model_dump(*args, **kwargs)
+
+    subclass = UntrustedSubclass.model_validate(original.model_dump(mode="python"))
+    with pytest.raises(CoworkerError) as denied:
+        verified(subclass, now, reviewed_sha256=original.review_sha256())
+    assert denied.value.code == "code_proposal_invalid"
