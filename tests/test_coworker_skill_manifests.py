@@ -32,6 +32,7 @@ def test_reviewed_research_manifest_is_versioned_inert_and_uses_code_owned_tool(
     assert manifest.version == skill_for_version("work_research_v1").version
     assert manifest.tool_names == ("research.search",)
     assert manifest.resource_limits.max_tool_calls == 1
+    assert manifest.resource_limits.max_wall_seconds == 481  # 2 x 240s + backoff
     assert manifest.rollback_version == manifest.version
     assert len(manifest.review_sha256()) == 64
     validate_manifest(manifest, GRANT)
@@ -90,6 +91,8 @@ def test_live_tool_schema_change_revokes_existing_review(monkeypatch):
 @pytest.mark.parametrize("limits", [
     SkillResourceLimits(max_tool_calls=2, max_wall_seconds=240, max_output_bytes=65536),
     SkillResourceLimits(max_tool_calls=1, max_wall_seconds=241, max_output_bytes=65536),
+    SkillResourceLimits(max_tool_calls=1, max_wall_seconds=480, max_output_bytes=65536),
+    SkillResourceLimits(max_tool_calls=1, max_wall_seconds=501, max_output_bytes=65536),
     SkillResourceLimits(max_tool_calls=1, max_wall_seconds=240, max_output_bytes=65537),
     SkillResourceLimits(max_tool_calls=True, max_wall_seconds=240, max_output_bytes=65536),
 ])
@@ -123,3 +126,51 @@ def test_existing_review_does_not_inherit_new_tool_permissions(monkeypatch):
     # Even though the caller still passes the same tool name, the reviewed
     # contract fingerprint now differs from the code-owned registry.
     denied(manifest)
+
+
+class AlwaysEqualString(str):
+    def __eq__(self, _other):
+        return True
+
+
+@pytest.mark.parametrize("field", [
+    "instruction_sha256", "input_schema_sha256", "output_schema_sha256",
+    "tool_contract_sha256", "rollback_version", "version", "name",
+])
+def test_identity_subclasses_cannot_override_reviewed_equality(field):
+    approved = pilot_skill_manifest()
+    suspect = replace(approved, **{
+        field: AlwaysEqualString(str(getattr(approved, field))),
+    })
+    denied(suspect)
+
+
+def test_unreviewed_copied_extra_state_cannot_be_hidden():
+    manifest = pilot_skill_manifest()
+    object.__setattr__(manifest, "secret_provider_override", "connected_email")
+    try:
+        denied(manifest)
+    finally:
+        object.__delattr__(manifest, "secret_provider_override")
+
+
+def test_pinned_source_digest_cannot_be_regenerated_on_code_change(monkeypatch):
+    from services.coworker import skill_manifests as reviewed
+
+    approved = pilot_skill_manifest()
+    changed = (
+        (reviewed.WorkSkill, "0" * 40),
+        *reviewed._REVIEWED_SOURCE_BLOBS[1:],
+    )
+    monkeypatch.setattr(reviewed, "_REVIEWED_SOURCE_BLOBS", changed)
+    denied(approved)
+
+
+def test_retry_duration_cannot_be_underreported_as_one_attempt():
+    approved = pilot_skill_manifest()
+    assert TOOLS["research.search"].retry_policy.max_attempts == 2
+    assert TOOLS["research.search"].timeout_seconds == 240
+    shortened = replace(approved, resource_limits=replace(
+        approved.resource_limits, max_wall_seconds=240,
+    ))
+    denied(shortened)
