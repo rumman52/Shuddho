@@ -1,5 +1,26 @@
 # Coworker evolution progress
 
+## Architecture/core status refresh — 14 October 2026, PR #399
+
+**Default branch:** `main` `ddc81711c8ccb4475d3a0053b26b5955a5be35b1`; [CI #38548692557](https://github.com/rumman52/Shuddho/actions/runs/38548692557) passed `test-and-build`, `coworker` and `ci-merge-gate`. [#398](https://github.com/rumman52/Shuddho/pull/398) merged (CW-09 autonomous browser kill-switch broker repair), [PR CI #38547893525](https://github.com/rumman52/Shuddho/actions/runs/38547893525) all three required jobs passed. No open PR at bootstrap. No fresh staging/production evidence established.
+
+**Selected unfinished task:** CW-09 typed worker receipt shape validation; malformed JSON arrays/scalars/null triggered unhandled `AttributeError` at `_bounded_observation`. [Contract](CW09_BROWSER_RECEIPT_TYPE_VALIDATION_2026-10-14.md). On branch `codex/cw09-observation-type-validation-20261014` based on main SHA above. Test commit `a0601c01e1ddd770ef5a4632a8570223ff588fdf`; source commit `edd7fa8bb9dfaccccd19de6edd6c3bdd9646ee01`; this documentation checkpoint follows. [Draft PR #399](https://github.com/rumman52/Shuddho/pull/399) is **unmerged**, its exact-final-head CI and independent review remain **pending**. Five regression values exercise real worker claim and valid subsequent completion. No authority or feature flags changed.
+
+| Canonical acceptance | Integrated on main | Remaining acceptance |
+| --- | --- | --- |
+| CW-05–CW-07 | Owner-bound chat, routing/activity foundations | Operated replay/reconnect, keyboard/mobile and ownership verification |
+| CW-08 | Selected source/context foundations | Fresh staging deletion/revocation/retention |
+| CW-09 | Metadata read broker and Agent kill-switch repair #398 | New malformed-receipt fix #399 review/CI; private page-text/hash/provenance, egress staging, canonical release eligibility |
+| CW-10 | Inert source/proposal schema | Persisted immutable proposal, reviewed identity/approval and isolated compute claim |
+| CW-11 | Inert reviewed manifest validator | Trusted publish/rollback, runtime grant selection, evaluations and staging |
+
+**Evidence separation:** New #399 slice implemented on draft branch, **not integrated main or repository-verified** pending CI/review. Staging-verified no; production-qualified no; activated no. Historical checkpoints below describe their respective earlier branch states.
+
+**Next exact action:** Retrieve PR #399 exact head and all three required GitHub CI job conclusions; self/independent review and correct any failed check. Maintain draft status. Then implement independently gated CW-09 private browser content capture and provenance, not infer a working page reader from metadata.
+
+---
+
+
 ## CW-09 Agent browser worker-time kill-switch — 14 October 2026
 
 **Refreshed default branch:** `main` `7da39a13e0207b96a2b05dde72e1fb876a970a5c`; no open PRs at bootstrap. Main `test-and-build` passed while `coworker` and `ci-merge-gate` were not yet complete on [CI #38546539014](https://github.com/rumman52/Shuddho/actions/runs/38546539014). The previous CW-11 #396/#397 work has been merged; earlier PROGRESS notes treating it as draft are historical. No deployed release or staging evidence was established.
