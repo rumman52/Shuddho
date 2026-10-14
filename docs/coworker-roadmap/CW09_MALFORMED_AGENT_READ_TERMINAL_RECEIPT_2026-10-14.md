@@ -4,7 +4,7 @@
 **Workstream:** Architecture and core agent; read-only browser broker  
 **Base main:** `607b828274f9f4c580cd3dbd2ea5889d947904fc`  
 **Branch:** `codex/cw09-terminal-malformed-agent-browser-evidence-20261014`  
-**Source/test commit before documentation:** `846f7f5a72edef2025fbcfed496594605a84c8c1` (initial); revised test/implementation head `14e818c88371dcc314fcfec5aaad2f27bf2760b9`
+**Source/test baseline:** `846f7f5a72edef2025fbcfed496594605a84c8c1`; **P1 review correction through source/test commit:** `5832dce5eff5bdb04a8efab07f3861e8fb7d27b0`
 
 ## Reproduced invariant gap
 
@@ -26,7 +26,7 @@ This is a bounded broker receipt correctness/safety defect, not a change in brow
 2. `tests/test_browser_broker.py` preserves normal session ownership and malformed-observation retry contract.
 3. Exact final PR revision passes `test-and-build`, `coworker`, mandatory PostgreSQL/browser tests and `ci-merge-gate`, with independent review findings resolved. A green older revision does not count.
 4. The failure path does not leak worker secrets/content into ordinary receipts/logs; no misleading “verified read” is created.
-5. **Out-of-scope known gap:** validation after `_bounded_observation` (e.g. DNS evidence missing for a normalized final URL, invalid redirect or storage state) still needs separate terminal-failure assessment under the transaction. Do not claim this patch qualifies every malformed worker outcome or CW-09 as complete.
+5. **P1 independent review resolution:** reviewer identified post-envelope errors inside the broker transaction that rolled back attempted terminal states. The corrective patch now wraps completion in a rollback-first `try/except CoworkerError`, then commits Agent-only failed/cancelled state through the same session-before-command helper for observation errors. State-control exceptions (cancelled/expired/takeover, lost claim, disabled flag) do not reactivate or overwrite terminal states. Tests include invalid storage, URL, missing DNS and cross-origin redirect, rewritten receipt denial, and wrong-worker claims. This addresses bounded broker observation-validation errors, **not** actual page content, egress staging or production qualification.
 
 ## Rollback and remaining work
 
