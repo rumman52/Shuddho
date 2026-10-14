@@ -185,9 +185,9 @@ def test_reviewer_pinned_schema_lock_drift_revokes_manifest(monkeypatch):
     def changed_lockfile(path, *args, **kwargs):
         data = read_original(path, *args, **kwargs)
         if path.name == "uv.lock":
-            pinned = 'name = "pydantic"\\nversion = "2.12.5"'
+            pinned = 'name = "pydantic"' + chr(10) + 'version = "2.12.5"'
             assert pinned in data
-            return data.replace(pinned, 'name = "pydantic"\\nversion = "2.99.0"', 1)
+            return data.replace(pinned, 'name = "pydantic"' + chr(10) + 'version = "2.99.0"', 1)
         return data
 
     monkeypatch.setattr(reviewed.Path, "read_text", changed_lockfile)
