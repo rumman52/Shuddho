@@ -110,7 +110,9 @@ def verify_reviewed_code_identity(
     try:
         if not isinstance(proposal, CodeProposalEnvelope):
             raise ValueError("Unexpected proposal type")
-        proposal = CodeProposalEnvelope.model_validate(proposal.model_dump(mode="python"))
+        proposal = CodeProposalEnvelope.model_validate(
+            proposal.model_dump(mode="python"), strict=True,
+        )
     except Exception:
         raise CoworkerError(
             "code_proposal_invalid",
