@@ -5546,7 +5546,8 @@ def append_agent_browser_read_event(
     runtime = activation.get("runtime")
     if (
         not isinstance(runtime, dict)
-        or runtime.get("schema_version") != 1
+        or type(runtime.get("schema_version")) is not int
+        or runtime["schema_version"] != 1
         or runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
         or not isinstance(runtime.get("capabilities"), dict)
