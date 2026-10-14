@@ -232,6 +232,8 @@ def test_agent_browser_read_denies_mismatched_operated_release_evidence(tmp_path
     "non_git_deployment_revision",
     "missing_activation_schema",
     "unsupported_activation_schema",
+    "boolean_activation_schema",
+    "float_activation_schema",
 ])
 def test_agent_browser_attestation_rejects_cross_change_or_invalid_schema_even_with_matching_hashes(
     tmp_path, invalid,
@@ -265,6 +267,10 @@ def test_agent_browser_attestation_rejects_cross_change_or_invalid_schema_even_w
         activation["artifact_sha256"]["deployment_change"] = digest(args["deployment_change"])
     elif invalid == "missing_activation_schema":
         activation.pop("schema_version")
+    elif invalid == "boolean_activation_schema":
+        activation["schema_version"] = True
+    elif invalid == "float_activation_schema":
+        activation["schema_version"] = 1.0
     else:
         activation["schema_version"] = 2
 
