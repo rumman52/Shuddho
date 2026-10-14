@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -235,3 +235,58 @@ def test_envelope_subclass_is_not_a_reviewed_base_envelope():
     with pytest.raises(CoworkerError) as denied:
         verified(subclass, now, reviewed_sha256=original.review_sha256())
     assert denied.value.code == "code_proposal_invalid"
+
+
+class MisleadingDatetime(datetime):
+    """Represents a late expiry but can claim a shorter one when normalized."""
+
+    def astimezone(self, tz=None):
+        # This is not valid evidence of the underlying actual instant.
+        return super().astimezone(tz) - timedelta(hours=3)
+
+
+class UntrustedUUID(UUID):
+    """The verifier must accept only the ordinary, non-overridden identity type."""
+
+
+@pytest.mark.parametrize("field", ["created_at", "expires_at", "run_id"])
+def test_review_rejects_copied_datetime_and_run_uuid_subclasses_before_hashing(field):
+    envelope, now = setup_envelope()
+    if field == "run_id":
+        changed = UntrustedUUID(hex=envelope.run_id.hex)
+    else:
+        original = getattr(envelope, field)
+        changed = MisleadingDatetime(
+            original.year, original.month, original.day, original.hour,
+            original.minute, original.second, original.microsecond,
+            tzinfo=original.tzinfo,
+        )
+    suspect = envelope.model_copy(update={field: changed})
+    assert type(getattr(suspect, field)) is type(changed)
+    with pytest.raises(CoworkerError) as error:
+        # A copied model can serialize plausibly; it is never a grant.
+        verified(suspect, now, reviewed_sha256="0" * 64)
+    assert error.value.code == "code_proposal_invalid"
+
+
+@pytest.mark.parametrize("field", ["document_id", "version_id"])
+def test_review_rejects_subclassed_input_uuids_with_unchanged_document_identity(field):
+    envelope, now = setup_envelope()
+    original = envelope.input_versions[0]
+    altered = original.model_copy(update={
+        field: UntrustedUUID(hex=getattr(original, field).hex),
+    })
+    suspect = envelope.model_copy(update={"input_versions": (altered,)})
+    with pytest.raises(CoworkerError) as error:
+        verified(suspect, now, reviewed_sha256="0" * 64)
+    assert error.value.code == "code_proposal_invalid"
+
+
+def test_normal_datetime_and_uuids_remain_reviewable():
+    envelope, now = setup_envelope()
+    assert type(envelope.created_at) is datetime
+    assert type(envelope.expires_at) is datetime
+    assert type(envelope.run_id) is UUID
+    assert all(type(item.document_id) is UUID and type(item.version_id) is UUID
+               for item in envelope.input_versions)
+    assert verified(envelope, now) is None
