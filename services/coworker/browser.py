@@ -164,7 +164,7 @@ def _bounded_storage_state(value: dict | None, allowed_origins: list[str]) -> di
         raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid session state.", 409)
     try:
         encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, UnicodeError):
         raise CoworkerError("browser_storage_state_invalid", "The browser worker returned invalid session state.", 409) from None
     if len(encoded) > MAX_BROWSER_STORAGE_STATE_BYTES:
         raise CoworkerError("browser_storage_state_too_large", "The browser session state exceeded its bounded size.", 409)
@@ -1738,6 +1738,20 @@ class BrowserRepository:
                 action="browser_agent_read.invalid_observation_rejected",
             ))
             return True
+
+    def reject_invalid_agent_worker_completion(
+        self, worker_id: str, command_id: str,
+    ) -> bool:
+        """Terminally fail a claimed Agent read on authenticated HTTP schema denial.
+
+        The API's strict Pydantic model would otherwise return 422 before the
+        normal broker completion validation can commit its failure. This does
+        not grant a claim, mutate unrelated browser commands or accept data.
+        """
+        self._require_enabled()
+        return self._commit_rejected_agent_observation(
+            worker_id, command_id, utcnow(),
+        )
 
     def complete_command(self, worker_id: str, command_id: str, observation: dict) -> dict:
         self._require_enabled()
