@@ -1699,6 +1699,46 @@ class BrowserRepository:
             raise not_found()
         return command, session
 
+    def _commit_rejected_agent_observation(
+        self, worker_id: str, command_id: str, now,
+    ) -> bool:
+        """Commit a terminal Agent receipt denial after failed validation.
+
+        Never run while the completion transaction still holds row locks:
+        its validation error must roll back first. Preserve ordinary broker
+        retries and never revive a cancelled/expired/lost-claim session.
+        """
+        with self.sessions.begin() as db:
+            command, session = self._lock_command_session_for_completion(db, command_id)
+            if (command.payload or {}).get("agent_read_only") is not True:
+                return False
+            if command.state != "running" or command.claimed_by != worker_id:
+                return False
+            if session.cancel_requested or session.state in TERMINAL_BROWSER_STATES:
+                return False
+            command.state = "failed"
+            command.error_code = "browser_observation_invalid"
+            command.finished_at = now
+            command.lease_until = None
+            command.claimed_by = None
+            self._clear_command_secret(command)
+            session.state = "failed"
+            session.error_code = "browser_observation_invalid"
+            session.cancel_requested = True
+            session.takeover_required = False
+            session.takeover_reason = None
+            session.worker_session_ref = None
+            self._clear_storage_state(session)
+            self._clear_takeover_affinity(session)
+            self._clear_takeover_frame(session)
+            session.updated_at = now
+            db.add(AuditEvent(
+                id=str(uuid4()), owner_id=session.owner_id,
+                resource_id=session.id,
+                action="browser_agent_read.invalid_observation_rejected",
+            ))
+            return True
+
     def complete_command(self, worker_id: str, command_id: str, observation: dict) -> dict:
         self._require_enabled()
         # Raw interaction signals must terminally fail an Agent navigation,
@@ -1765,266 +1805,243 @@ class BrowserRepository:
         try:
             checked = _bounded_observation(observation)
         except CoworkerError:
-            # A malformed Agent navigation is not retryable evidence. Without
-            # a committed terminal transition a worker could submit malformed
-            # DNS/URL data, then rewrite the *same* claimed read as successful.
-            # Preserve the legacy browser broker's independent validation path.
+            self._commit_rejected_agent_observation(worker_id, command_id, now)
+            raise
+        try:
             with self.sessions.begin() as db:
                 command, session = self._lock_command_session_for_completion(db, command_id)
-                if (command.payload or {}).get("agent_read_only") is True:
-                    if command.state != "running" or command.claimed_by != worker_id:
-                        raise CoworkerError(
-                            "browser_worker_claim_invalid",
-                            "This worker no longer owns the browser command.", 409,
-                        )
-                    command.state = "failed"
-                    command.error_code = "browser_observation_invalid"
-                    command.finished_at = now
-                    command.lease_until = None
-                    command.claimed_by = None
-                    self._clear_command_secret(command)
-                    session.state = "failed"
-                    session.error_code = "browser_observation_invalid"
-                    session.cancel_requested = True
-                    session.takeover_required = False
-                    session.takeover_reason = None
+                checked["storage_state"] = _bounded_storage_state(
+                    checked.get("storage_state"),
+                    list(session.allowed_origins or []),
+                )
+                if (session.takeover_required or session.state == "takeover") and command.kind not in TAKEOVER_COMMAND_KINDS:
+                    if command.state == "running":
+                        command.state = "cancelled"
+                        command.error_code = "takeover_requested"
+                        command.finished_at = now
+                        command.lease_until = None
+                        command.claimed_by = None
                     session.worker_session_ref = None
-                    self._clear_storage_state(session)
+                    raise CoworkerError("browser_takeover_active", "Browser execution paused for user takeover.", 409)
+                if session.cancel_requested or session.state in TERMINAL_BROWSER_STATES:
+                    if command.state == "running":
+                        command.state = "cancelled"
+                        command.error_code = "session_cancelled"
+                        command.finished_at = now
+                        command.lease_until = None
+                        command.claimed_by = None
+                    self._clear_command_secret(command)
                     self._clear_takeover_affinity(session)
                     self._clear_takeover_frame(session)
-                    session.updated_at = now
-                    db.add(AuditEvent(
-                        id=str(uuid4()), owner_id=session.owner_id,
-                        resource_id=session.id,
-                        action="browser_agent_read.invalid_observation_rejected",
-                    ))
-            raise
-        with self.sessions.begin() as db:
-            command, session = self._lock_command_session_for_completion(db, command_id)
-            checked["storage_state"] = _bounded_storage_state(
-                checked.get("storage_state"),
-                list(session.allowed_origins or []),
-            )
-            if (session.takeover_required or session.state == "takeover") and command.kind not in TAKEOVER_COMMAND_KINDS:
-                if command.state == "running":
-                    command.state = "cancelled"
-                    command.error_code = "takeover_requested"
-                    command.finished_at = now
-                    command.lease_until = None
-                    command.claimed_by = None
-                session.worker_session_ref = None
-                raise CoworkerError("browser_takeover_active", "Browser execution paused for user takeover.", 409)
-            if session.cancel_requested or session.state in TERMINAL_BROWSER_STATES:
-                if command.state == "running":
-                    command.state = "cancelled"
-                    command.error_code = "session_cancelled"
-                    command.finished_at = now
-                    command.lease_until = None
-                    command.claimed_by = None
-                self._clear_command_secret(command)
-                self._clear_takeover_affinity(session)
-                self._clear_takeover_frame(session)
-                session.worker_session_ref = None
-                raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
-            if command.state != "running" or command.claimed_by != worker_id:
-                raise CoworkerError("browser_worker_claim_invalid", "This browser command is not owned by this worker.", 409)
-            if command.kind in TAKEOVER_AFFINITY_KINDS and session.takeover_worker_ref != worker_id:
-                raise CoworkerError(
-                    "browser_takeover_worker_mismatch",
-                    "This live takeover context belongs to another browser worker.",
-                    409,
-                )
-            if aware(session.expires_at) <= now:
-                session.state = "expired"
-                command.state = "failed"
-                self._clear_command_secret(command)
-                self._clear_takeover_affinity(session)
-                self._clear_storage_state(session)
-                self._clear_takeover_frame(session)
-                command.error_code = "session_expired"
-                command.finished_at = now
-                command.lease_until = None
-                command.claimed_by = None
-                raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
-
-            urls = [*checked["redirect_chain"], checked["final_url"]]
-            normalized_chain: list[str] = []
-            for raw_url in urls:
-                normalized, origin = normalize_browser_target(raw_url)
-                if origin not in set(session.allowed_origins or []):
+                    session.worker_session_ref = None
+                    raise CoworkerError("browser_session_closed", "This browser session is no longer active.", 409)
+                if command.state != "running" or command.claimed_by != worker_id:
+                    raise CoworkerError("browser_worker_claim_invalid", "This browser command is not owned by this worker.", 409)
+                if command.kind in TAKEOVER_AFFINITY_KINDS and session.takeover_worker_ref != worker_id:
+                    raise CoworkerError(
+                        "browser_takeover_worker_mismatch",
+                        "This live takeover context belongs to another browser worker.",
+                        409,
+                    )
+                if aware(session.expires_at) <= now:
+                    session.state = "expired"
                     command.state = "failed"
-                    command.error_code = "redirect_origin_blocked"
+                    self._clear_command_secret(command)
+                    self._clear_takeover_affinity(session)
+                    self._clear_storage_state(session)
+                    self._clear_takeover_frame(session)
+                    command.error_code = "session_expired"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                    raise CoworkerError("browser_session_expired", "This browser session expired.", 410)
+
+                urls = [*checked["redirect_chain"], checked["final_url"]]
+                normalized_chain: list[str] = []
+                for raw_url in urls:
+                    normalized, origin = normalize_browser_target(raw_url)
+                    if origin not in set(session.allowed_origins or []):
+                        command.state = "failed"
+                        command.error_code = "redirect_origin_blocked"
+                        command.finished_at = now
+                        command.lease_until = None
+                        command.claimed_by = None
+                        session.state = "failed"
+                        session.takeover_required = False
+                        session.takeover_reason = None
+                        session.error_code = "redirect_origin_blocked"
+                        session.worker_session_ref = None
+                        session.updated_at = now
+                        self._clear_command_secret(command)
+                        self._clear_storage_state(session)
+                        self._clear_takeover_frame(session)
+                        raise CoworkerError("browser_origin_not_allowed", "The browser worker observed a redirect outside the approved origin.", 409)
+                    hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
+                    if hostname not in checked["resolved_ips"]:
+                        raise CoworkerError(
+                            "browser_dns_evidence_missing",
+                            "The browser worker did not provide DNS evidence for every observed host.",
+                            409,
+                        )
+                    normalized_chain.append(normalized)
+
+                if checked["submission_performed"] and not (
+                    command.kind == "takeover_input"
+                    and bool((command.payload or {}).get("allow_auth_submission"))
+                ):
+                    command.state = "failed"
+                    command.error_code = "form_submission_blocked"
                     command.finished_at = now
                     command.lease_until = None
                     command.claimed_by = None
                     session.state = "failed"
                     session.takeover_required = False
                     session.takeover_reason = None
-                    session.error_code = "redirect_origin_blocked"
+                    session.error_code = "form_submission_blocked"
                     session.worker_session_ref = None
                     session.updated_at = now
                     self._clear_command_secret(command)
+                    self._clear_takeover_affinity(session)
                     self._clear_storage_state(session)
                     self._clear_takeover_frame(session)
-                    raise CoworkerError("browser_origin_not_allowed", "The browser worker observed a redirect outside the approved origin.", 409)
-                hostname = (urlsplit(normalized).hostname or "").lower().rstrip(".")
-                if hostname not in checked["resolved_ips"]:
                     raise CoworkerError(
-                        "browser_dns_evidence_missing",
-                        "The browser worker did not provide DNS evidence for every observed host.",
+                        "browser_form_submission_blocked",
+                        "The browser worker reported a form submission, which is not authorized.",
                         409,
                     )
-                normalized_chain.append(normalized)
+                if (command.payload or {}).get("agent_read_only") is True and (
+                    checked["prepared_fields"]
+                    or checked["submission_performed"]
+                    or checked["interaction_performed"]
+                    or checked["takeover_frame"] is not None
+                ):
+                    raise CoworkerError(
+                        "browser_agent_read_not_read_only",
+                        "The supervised Agent read reported an unauthorized browser interaction.",
+                        409,
+                    )
+                if command.kind == "prepare_form":
+                    expected = [item.get("field") for item in (command.payload or {}).get("fields", [])]
+                    if checked["prepared_fields"] != expected:
+                        raise CoworkerError(
+                            "browser_form_evidence_mismatch",
+                            "The browser worker did not prepare exactly the requested fields.",
+                            409,
+                        )
 
-            if checked["submission_performed"] and not (
-                command.kind == "takeover_input"
-                and bool((command.payload or {}).get("allow_auth_submission"))
-            ):
-                command.state = "failed"
-                command.error_code = "form_submission_blocked"
+                if command.kind == "takeover_input":
+                    expected = [(command.payload or {}).get("field")]
+                    if checked["prepared_fields"] != expected:
+                        raise CoworkerError(
+                            "browser_takeover_evidence_mismatch",
+                            "The browser worker did not apply exactly the requested sensitive field.",
+                            409,
+                        )
+
+                if command.kind == "takeover_frame":
+                    if checked["prepared_fields"] or checked["submission_performed"] or checked["interaction_performed"]:
+                        raise CoworkerError(
+                            "browser_takeover_frame_invalid",
+                            "The visual takeover command reported an unauthorized mutation.",
+                            409,
+                        )
+                    if checked["takeover_frame"] is None or checked["takeover_frame_content_type"] != "image/jpeg":
+                        raise CoworkerError(
+                            "browser_takeover_frame_missing",
+                            "The browser worker did not return a visual takeover frame.",
+                            409,
+                        )
+                    self._store_takeover_frame(
+                        session,
+                        checked["takeover_frame"],
+                        checked["takeover_frame_content_type"],
+                        now,
+                    )
+                elif command.kind == "takeover_interaction":
+                    if checked["prepared_fields"] or checked["submission_performed"] or not checked["interaction_performed"]:
+                        raise CoworkerError(
+                            "browser_takeover_interaction_invalid",
+                            "The browser worker returned invalid human-interaction evidence.",
+                            409,
+                        )
+                    if checked["takeover_frame"] is None or checked["takeover_frame_content_type"] != "image/jpeg":
+                        raise CoworkerError(
+                            "browser_takeover_frame_missing",
+                            "The browser worker did not return a fresh visual frame after the interaction.",
+                            409,
+                        )
+                    self._store_takeover_frame(
+                        session,
+                        checked["takeover_frame"],
+                        checked["takeover_frame_content_type"],
+                        now,
+                    )
+                elif checked["takeover_frame"] is not None or checked["interaction_performed"]:
+                    raise CoworkerError(
+                        "browser_takeover_frame_invalid",
+                        "Takeover interaction evidence was returned for a command that did not request it.",
+                        409,
+                    )
+
+                self._store_storage_state(session, checked.get("storage_state"), now)
+                _scrub_form_payload(command)
+                self._clear_command_secret(command)
+                command.result = {
+                    "final_url": normalized_chain[-1],
+                    "title": checked["title"],
+                    "redirect_chain": normalized_chain[:-1],
+                    "resolved_ips": checked["resolved_ips"],
+                    "prepared_fields": checked["prepared_fields"],
+                    "submission_performed": bool(checked["submission_performed"]) if command.kind == "takeover_input" else False,
+                    **({"takeover_frame_version": int(session.takeover_frame_version or 0)} if command.kind in {"takeover_frame", "takeover_interaction"} else {}),
+                    **({"interaction_performed": True} if command.kind == "takeover_interaction" else {}),
+                }
+                command.state = "succeeded"
+                command.error_code = None
                 command.finished_at = now
                 command.lease_until = None
                 command.claimed_by = None
-                session.state = "failed"
-                session.takeover_required = False
-                session.takeover_reason = None
-                session.error_code = "form_submission_blocked"
                 session.worker_session_ref = None
+                if command.kind in {"takeover_frame", "takeover_interaction"}:
+                    session.state = "takeover"
+                    session.takeover_worker_ref = worker_id
+                    session.takeover_worker_lease_until = min(
+                        aware(session.expires_at),
+                        now + timedelta(seconds=self.settings.browser_takeover_affinity_seconds),
+                    )
+                else:
+                    session.state = "prepared"
+                if command.kind == "takeover_input":
+                    session.takeover_required = False
+                    session.takeover_reason = None
+                    self._clear_takeover_affinity(session)
+                    self._clear_takeover_frame(session)
+                session.last_url = normalized_chain[-1]
+                session.last_title = checked["title"]
                 session.updated_at = now
-                self._clear_command_secret(command)
-                self._clear_takeover_affinity(session)
-                self._clear_storage_state(session)
-                self._clear_takeover_frame(session)
-                raise CoworkerError(
-                    "browser_form_submission_blocked",
-                    "The browser worker reported a form submission, which is not authorized.",
-                    409,
-                )
-            if (command.payload or {}).get("agent_read_only") is True and (
-                checked["prepared_fields"]
-                or checked["submission_performed"]
-                or checked["interaction_performed"]
-                or checked["takeover_frame"] is not None
-            ):
-                raise CoworkerError(
-                    "browser_agent_read_not_read_only",
-                    "The supervised Agent read reported an unauthorized browser interaction.",
-                    409,
-                )
-            if command.kind == "prepare_form":
-                expected = [item.get("field") for item in (command.payload or {}).get("fields", [])]
-                if checked["prepared_fields"] != expected:
-                    raise CoworkerError(
-                        "browser_form_evidence_mismatch",
-                        "The browser worker did not prepare exactly the requested fields.",
-                        409,
-                    )
+                db.add(AuditEvent(
+                    id=str(uuid4()), owner_id=session.owner_id, resource_id=session.id,
+                    action=(
+                        "browser_form.prepared" if command.kind == "prepare_form"
+                        else "browser_takeover.input_completed" if command.kind == "takeover_input"
+                        else "browser_takeover.frame_captured" if command.kind == "takeover_frame"
+                        else "browser_takeover.interaction_completed" if command.kind == "takeover_interaction"
+                        else "browser_navigation.succeeded"
+                    ),
+                ))
+                return {
+                    "id": command.id,
+                    "state": command.state,
+                    "result": dict(command.result or {}),
+                }
 
-            if command.kind == "takeover_input":
-                expected = [(command.payload or {}).get("field")]
-                if checked["prepared_fields"] != expected:
-                    raise CoworkerError(
-                        "browser_takeover_evidence_mismatch",
-                        "The browser worker did not apply exactly the requested sensitive field.",
-                        409,
-                    )
-
-            if command.kind == "takeover_frame":
-                if checked["prepared_fields"] or checked["submission_performed"] or checked["interaction_performed"]:
-                    raise CoworkerError(
-                        "browser_takeover_frame_invalid",
-                        "The visual takeover command reported an unauthorized mutation.",
-                        409,
-                    )
-                if checked["takeover_frame"] is None or checked["takeover_frame_content_type"] != "image/jpeg":
-                    raise CoworkerError(
-                        "browser_takeover_frame_missing",
-                        "The browser worker did not return a visual takeover frame.",
-                        409,
-                    )
-                self._store_takeover_frame(
-                    session,
-                    checked["takeover_frame"],
-                    checked["takeover_frame_content_type"],
-                    now,
-                )
-            elif command.kind == "takeover_interaction":
-                if checked["prepared_fields"] or checked["submission_performed"] or not checked["interaction_performed"]:
-                    raise CoworkerError(
-                        "browser_takeover_interaction_invalid",
-                        "The browser worker returned invalid human-interaction evidence.",
-                        409,
-                    )
-                if checked["takeover_frame"] is None or checked["takeover_frame_content_type"] != "image/jpeg":
-                    raise CoworkerError(
-                        "browser_takeover_frame_missing",
-                        "The browser worker did not return a fresh visual frame after the interaction.",
-                        409,
-                    )
-                self._store_takeover_frame(
-                    session,
-                    checked["takeover_frame"],
-                    checked["takeover_frame_content_type"],
-                    now,
-                )
-            elif checked["takeover_frame"] is not None or checked["interaction_performed"]:
-                raise CoworkerError(
-                    "browser_takeover_frame_invalid",
-                    "Takeover interaction evidence was returned for a command that did not request it.",
-                    409,
-                )
-
-            self._store_storage_state(session, checked.get("storage_state"), now)
-            _scrub_form_payload(command)
-            self._clear_command_secret(command)
-            command.result = {
-                "final_url": normalized_chain[-1],
-                "title": checked["title"],
-                "redirect_chain": normalized_chain[:-1],
-                "resolved_ips": checked["resolved_ips"],
-                "prepared_fields": checked["prepared_fields"],
-                "submission_performed": bool(checked["submission_performed"]) if command.kind == "takeover_input" else False,
-                **({"takeover_frame_version": int(session.takeover_frame_version or 0)} if command.kind in {"takeover_frame", "takeover_interaction"} else {}),
-                **({"interaction_performed": True} if command.kind == "takeover_interaction" else {}),
-            }
-            command.state = "succeeded"
-            command.error_code = None
-            command.finished_at = now
-            command.lease_until = None
-            command.claimed_by = None
-            session.worker_session_ref = None
-            if command.kind in {"takeover_frame", "takeover_interaction"}:
-                session.state = "takeover"
-                session.takeover_worker_ref = worker_id
-                session.takeover_worker_lease_until = min(
-                    aware(session.expires_at),
-                    now + timedelta(seconds=self.settings.browser_takeover_affinity_seconds),
-                )
-            else:
-                session.state = "prepared"
-            if command.kind == "takeover_input":
-                session.takeover_required = False
-                session.takeover_reason = None
-                self._clear_takeover_affinity(session)
-                self._clear_takeover_frame(session)
-            session.last_url = normalized_chain[-1]
-            session.last_title = checked["title"]
-            session.updated_at = now
-            db.add(AuditEvent(
-                id=str(uuid4()), owner_id=session.owner_id, resource_id=session.id,
-                action=(
-                    "browser_form.prepared" if command.kind == "prepare_form"
-                    else "browser_takeover.input_completed" if command.kind == "takeover_input"
-                    else "browser_takeover.frame_captured" if command.kind == "takeover_frame"
-                    else "browser_takeover.interaction_completed" if command.kind == "takeover_interaction"
-                    else "browser_navigation.succeeded"
-                ),
-            ))
-            return {
-                "id": command.id,
-                "state": command.state,
-                "result": dict(command.result or {}),
-            }
+        except CoworkerError as error:
+            # Any rejected *observation* is terminal for a still-owned Agent
+            # browser read. Transaction rollback happens before the new lock;
+            # ordinary browser commands keep their historical semantics.
+            if error.code not in {'browser_session_closed','browser_session_expired','browser_worker_claim_invalid','browser_takeover_active','browser_takeover_worker_mismatch','browser_agent_read_disabled'}:
+                self._commit_rejected_agent_observation(worker_id, command_id, now)
+            raise
 
     def fail_command(self, worker_id: str, command_id: str, error_code: str) -> dict:
         self._require_enabled()
