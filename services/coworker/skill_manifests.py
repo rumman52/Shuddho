@@ -112,7 +112,7 @@ def _require_reviewed_source_blobs() -> None:
             raise ValueError("No audited code-owned source available")
         data = Path(path).read_bytes()
         git_blob = hashlib.sha1(
-            b"blob " + str(len(data)).encode("ascii") + b"\\0" + data
+            b"blob " + str(len(data)).encode("ascii") + b"\0" + data
         ).hexdigest()
         if git_blob != reviewed_blob:
             raise ValueError("Skill/tool/schema source changed without review")
