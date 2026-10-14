@@ -432,8 +432,12 @@ def test_agent_browser_malformed_receipt_is_terminal_and_cannot_be_rewritten(
     recorded = container.browser.list_commands(owner, session["id"])[0]
     assert recorded["state"] == "failed"
     assert recorded["error_code"] == rejected.value.code
-    assert recorded["claimed_by"] is None
-    assert recorded["lease_until"] is None
+    # Worker lease identity is intentionally absent from the public command
+    # DTO. Assert cleanup against the existing owned SQLAlchemy ledger.
+    with container.repository.sessions.begin() as db:
+        persisted = db.get(BrowserCommand, command["id"])
+        assert persisted.claimed_by is None
+        assert persisted.lease_until is None
     with pytest.raises(CoworkerError):
         container.browser.complete_command("cw09-malformed-worker", command["id"], {
             "final_url": "https://example.com/",
