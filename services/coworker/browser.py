@@ -532,6 +532,34 @@ class BrowserRepository:
             )
 
 
+    def _revoke_disabled_agent_read(self, command: BrowserCommand, session: BrowserSession, now) -> bool:
+        """Persist a terminal denial for an Agent read after its kill switch changes.
+
+        Do not affect human-supervised broker commands. This check is repeated
+        at claim, control and completion, independently of the Agent planner.
+        """
+        if (
+            self.settings.agent_browser_read_enabled
+            or (command.payload or {}).get("agent_read_only") is not True
+        ):
+            return False
+        if command.state in {"prepared", "running"}:
+            command.state = "failed"
+            command.error_code = "browser_agent_read_disabled"
+            command.finished_at = now
+            command.lease_until = None
+            command.claimed_by = None
+            session.state = "failed"
+            session.cancel_requested = True
+            session.error_code = "browser_agent_read_disabled"
+            session.worker_session_ref = None
+            session.updated_at = now
+            self._clear_command_secret(command)
+            self._clear_storage_state(session)
+            self._clear_takeover_affinity(session)
+            self._clear_takeover_frame(session)
+        return True
+
     def validate_worker_network_target(
         self,
         worker_id: str,
@@ -578,6 +606,15 @@ class BrowserRepository:
                     "This browser session is not available for network access.",
                     409,
                 )
+            if (
+                (command.payload or {}).get("agent_read_only") is True
+                and not self.settings.agent_browser_read_enabled
+            ):
+                raise CoworkerError(
+                    "browser_agent_read_disabled",
+                    "The Agent browser-read capability was revoked before network access.",
+                    409,
+                )
             if origin not in set(session.allowed_origins or []):
                 raise CoworkerError(
                     "browser_origin_not_allowed",
@@ -594,6 +631,10 @@ class BrowserRepository:
     def create(self, owner: str, request: BrowserSessionCreate, idempotency_key: str, *,
                agent_origin: bool = False) -> tuple[dict, bool]:
         self._require_enabled()
+        if agent_origin and not self.settings.agent_browser_read_enabled:
+            raise CoworkerError(
+                "browser_agent_read_disabled", "Agent browser reading is disabled.", 409,
+            )
         if idempotency_key.startswith("agent:") and not agent_origin:
             raise CoworkerError(
                 "browser_agent_scope", "Agent browser session identities are server-reserved.", 409,
@@ -786,6 +827,10 @@ class BrowserRepository:
         The browser worker remains the sole network egress authority.
         """
         self._require_enabled()
+        if not self.settings.agent_browser_read_enabled:
+            raise CoworkerError(
+                "browser_agent_read_disabled", "Agent browser reading is disabled.", 409,
+            )
         target_url, origin = normalize_browser_target(url)
         with self.sessions.begin() as db:
             row = db.scalar(select(BrowserSession).where(
@@ -1484,6 +1529,8 @@ class BrowserRepository:
                 if earlier_pending:
                     continue
                 session = db.get(BrowserSession, command.session_id)
+                if self._revoke_disabled_agent_read(command, session, now):
+                    continue
                 if command.kind in TAKEOVER_AFFINITY_KINDS:
                     active_affinity = self._takeover_affinity_active(session, now)
                     requires_live = bool((command.payload or {}).get("require_live_context")) or command.kind == "takeover_interaction"
@@ -1555,6 +1602,9 @@ class BrowserRepository:
                     self._clear_command_secret(command)
                 session.worker_session_ref = None
                 return {"action": "stop", "reason": "session_cancelled"}
+
+            if self._revoke_disabled_agent_read(command, session, now):
+                return {"action": "stop", "reason": "browser_agent_read_disabled"}
 
             if (session.takeover_required or session.state == "takeover") and command.kind not in TAKEOVER_COMMAND_KINDS:
                 if command.state == "running":
@@ -1692,6 +1742,18 @@ class BrowserRepository:
                 raise CoworkerError(
                     "browser_agent_read_not_read_only",
                     "The supervised Agent read reported an unauthorized interaction.",
+                    409,
+                )
+        # A worker may finish after an Agent-specific feature kill switch
+        # changes. Do not accept even a well-formed late read as a receipt.
+        if not self.settings.agent_browser_read_enabled:
+            with self.sessions.begin() as db:
+                command, session = self._lock_command_session_for_completion(db, command_id)
+                denied = self._revoke_disabled_agent_read(command, session, now)
+            if denied:
+                raise CoworkerError(
+                    "browser_agent_read_disabled",
+                    "The Agent browser-read capability was revoked before completion.",
                     409,
                 )
         checked = _bounded_observation(observation)
