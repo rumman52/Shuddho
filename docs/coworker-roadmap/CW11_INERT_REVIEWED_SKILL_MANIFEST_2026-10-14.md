@@ -4,7 +4,7 @@
 **Workstream:** Architecture/core / CW-11 reviewed skills  
 **Base:** `main` `3505c5029891d488678b1f2e8b302694ce0a96e4`  
 **Branch:** `codex/cw11-inert-reviewed-skill-manifest-20261014`  
-**Initial implementation/tests SHA before docs:** `6f11f841c8427620d62b9e897eda96fe80fda57c`
+**Initial implementation/tests SHA:** `6f11f841c8427620d62b9e897eda96fe80fda57c`. **Reviewed P2 source/test correction SHA:** `d0264e22cf4c6ae6a606f8f6bafb8e36b7270bc6` before final docs. **Draft PR:** [#396](https://github.com/rumman52/Shuddho/pull/396), unmerged. Independent first-head review found three P2 defects: dynamic policy re-review, copied identity subclass equality and retry-unaware wall budget. Added separately pinned source Git blob identities for skills/tools/input schemas, a module-import fixed pilot reviewed manifest and live-code mismatch checks, exact identity/field types, and 481-second retry-aware declared wall ceiling. All changes require final-head CI/review.
 
 ## Requirement and current gap
 
