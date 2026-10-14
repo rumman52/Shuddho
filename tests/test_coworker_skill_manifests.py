@@ -174,3 +174,47 @@ def test_retry_duration_cannot_be_underreported_as_one_attempt():
         approved.resource_limits, max_wall_seconds=240,
     ))
     denied(shortened)
+
+
+def test_reviewer_pinned_schema_lock_drift_revokes_manifest(monkeypatch):
+    from services.coworker import skill_manifests as reviewed
+
+    approved = pilot_skill_manifest()
+    read_original = reviewed.Path.read_bytes
+
+    def changed_lockfile(path):
+        content = read_original(path)
+        if path.name == "uv.lock":
+            return content + b"\\n# unreviewed schema generator update\\n"
+        return content
+
+    monkeypatch.setattr(reviewed.Path, "read_bytes", changed_lockfile)
+    denied(approved)
+
+
+def test_reviewer_pinned_generator_version_drift_revokes_manifest(monkeypatch):
+    from services.coworker import skill_manifests as reviewed
+
+    approved = pilot_skill_manifest()
+    version_original = reviewed.metadata.version
+    monkeypatch.setattr(
+        reviewed.metadata, "version",
+        lambda distribution: (
+            "2.99.0" if distribution == "pydantic"
+            else version_original(distribution)
+        ),
+    )
+    denied(approved)
+
+
+def test_schema_generator_pins_match_existing_reviewed_lockfile():
+    from services.coworker import skill_manifests as reviewed
+
+    lockfile = reviewed.Path(__file__).resolve().parents[1] / "uv.lock"
+    data = lockfile.read_bytes()
+    blob = reviewed.hashlib.sha1(
+        b"blob " + str(len(data)).encode("ascii") + b"\\0" + data
+    ).hexdigest()
+    assert blob == reviewed._REVIEWED_UV_LOCK_BLOB
+    for distribution, version in reviewed._REVIEWED_SCHEMA_GENERATORS:
+        assert reviewed.metadata.version(distribution) == version
