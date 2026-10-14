@@ -4,7 +4,7 @@
 
 **Bootstrap/main:** `607b828274f9f4c580cd3dbd2ea5889d947904fc`. CW-09 [PR #399](https://github.com/rumman52/Shuddho/pull/399) **merged**; the historical section below calling it a draft is superseded. Its preceding main `ddc81711` [CI #38548692557](https://github.com/rumman52/Shuddho/actions/runs/38548692557) passed all three required jobs; the latest main `607b828` [run #38600101218](https://github.com/rumman52/Shuddho/actions/runs/38600101218) was still in progress at bootstrap. No staging or production qualification established. No open PRs at bootstrap.
 
-**Selected first dependency-ready gap:** `_bounded_observation` rejects a malformed Agent worker result before committing a failed command; the same worker could resubmit a clean result. This differs from already fixed interaction signals, which terminally fail. **Branch:** `codex/cw09-terminal-malformed-agent-browser-evidence-20261014`, base `607b828274f9f4c580cd3dbd2ea5889d947904fc`; source and regression SHA `846f7f5a72edef2025fbcfed496594605a84c8c1` (initial); revised test/implementation head `14e818c88371dcc314fcfec5aaad2f27bf2760b9` before docs. [Task contract](CW09_MALFORMED_AGENT_READ_TERMINAL_RECEIPT_2026-10-14.md).
+**Selected first dependency-ready gap:** `_bounded_observation` rejects a malformed Agent worker result before committing a failed command; the same worker could resubmit a clean result. This differs from already fixed interaction signals, which terminally fail. **Branch:** `codex/cw09-terminal-malformed-agent-browser-evidence-20261014`, base `607b828274f9f4c580cd3dbd2ea5889d947904fc`; source and regression SHA `846f7f5a72edef2025fbcfed496594605a84c8c1` (initial); post-P1 source/test head `5832dce5eff5bdb04a8efab07f3861e8fb7d27b0` before latest docs. [Task contract](CW09_MALFORMED_AGENT_READ_TERMINAL_RECEIPT_2026-10-14.md).
 
 **Change:** in code-owned broker completion, after malformed receipt detection lock BrowserSession then BrowserCommand; for the claimed Agent read only, commit failure, revoke session, clean claims/state/frame and audit, then propagate original error. Non-Agent sessions keep original validation/retry semantics. New regressions cover malformed object shape, missing URL, malformed DNS/title, terminality and no resubmission, plus ordinary browser retry acceptance. No feature or authority granted.
 
@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | CW-05–CW-07 | Owner-scoped messages, dispatch/activity foundations | Operated replay/reconnect/deletion and UI acceptance |
 | CW-08 | Selected source/context foundations | Revocation, expiry, erasure and versioned memory staging |
-| **CW-09** | Metadata broker, Agent kill switch, verified prior changes including #399; this terminality fix isolated on review branch | Final-head tests/review; remaining post-envelope invalid evidence, private page text and hash, egress/SSRF redirect worker staging, runtime release eligibility |
+| **CW-09** | Metadata broker, Agent kill switch, verified prior changes including #399; this terminality fix isolated on review branch | Final-head tests/review; private page text and hash, egress/SSRF redirect worker staging, runtime release eligibility |
 | CW-10 | Inert immutable proposal schema merged | DB persistence, exact human approval, sandbox claim enforcement, isolation tests |
 | CW-11 | Inert reviewed manifest validator merged | Trusted publish/version rollback/runtime grant selection and evaluation |
 
@@ -24,7 +24,7 @@
 | Production qualified | Not established |
 | Activated | No; Agent browser flag remains default-off |
 
-**Next exact action:** Open draft PR, examine exact-final-head required `test-and-build`, `coworker` with no-skip browser/PG/Temporal, and `ci-merge-gate`; request independent review and correct blockers. Then assess transactional validation errors after `_bounded_observation`, and independently implement private page text capture/operated worker tests. Do not auto-merge, deploy or activate.
+**Review and resolution:** On [draft PR #400](https://github.com/rumman52/Shuddho/pull/400), the independent reviewer found a **P1**: post-envelope validation exceptions rolled back and allowed rewritten Agent reads. Added a shared committed terminal transition after the failed completion transaction, excluding legitimate cancellation/worker-claim/revocation control errors. Added DB-backed invalid storage, DNS, URL and redirect cases, and wrong-worker regression. **Next exact action:** Verify newest PR #400 exact-head `test-and-build`, no-skip `coworker` browser/PG/Temporal, `ci-merge-gate` and independent re-review; correct findings. Continue private page content capture and operated worker tests. Do not auto-merge, deploy or activate.
 
 ## Architecture/core status refresh — 14 October 2026, PR #399
 
