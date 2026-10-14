@@ -1762,7 +1762,43 @@ class BrowserRepository:
                     "The Agent browser-read capability was revoked before completion.",
                     409,
                 )
-        checked = _bounded_observation(observation)
+        try:
+            checked = _bounded_observation(observation)
+        except CoworkerError:
+            # A malformed Agent navigation is not retryable evidence. Without
+            # a committed terminal transition a worker could submit malformed
+            # DNS/URL data, then rewrite the *same* claimed read as successful.
+            # Preserve the legacy browser broker's independent validation path.
+            with self.sessions.begin() as db:
+                command, session = self._lock_command_session_for_completion(db, command_id)
+                if (command.payload or {}).get("agent_read_only") is True:
+                    if command.state != "running" or command.claimed_by != worker_id:
+                        raise CoworkerError(
+                            "browser_worker_claim_invalid",
+                            "This worker no longer owns the browser command.", 409,
+                        )
+                    command.state = "failed"
+                    command.error_code = "browser_observation_invalid"
+                    command.finished_at = now
+                    command.lease_until = None
+                    command.claimed_by = None
+                    self._clear_command_secret(command)
+                    session.state = "failed"
+                    session.error_code = "browser_observation_invalid"
+                    session.cancel_requested = True
+                    session.takeover_required = False
+                    session.takeover_reason = None
+                    session.worker_session_ref = None
+                    self._clear_storage_state(session)
+                    self._clear_takeover_affinity(session)
+                    self._clear_takeover_frame(session)
+                    session.updated_at = now
+                    db.add(AuditEvent(
+                        id=str(uuid4()), owner_id=session.owner_id,
+                        resource_id=session.id,
+                        action="browser_agent_read.invalid_observation_rejected",
+                    ))
+            raise
         with self.sessions.begin() as db:
             command, session = self._lock_command_session_for_completion(db, command_id)
             checked["storage_state"] = _bounded_storage_state(
