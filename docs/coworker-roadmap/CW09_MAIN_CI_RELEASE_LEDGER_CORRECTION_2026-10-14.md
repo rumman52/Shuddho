@@ -1,6 +1,6 @@
 # CW-09 — Repair merged mandatory browser CI and release attestation contract
 
-**14 October 2026.** Repository `rumman52/Shuddho`. Branch `codex/cw09-main-red-ci-ledger-review-repair-20261014`. Baseline main `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`. Source/test SHA before this documentation: `b4f5e0c32fcaa96c05c73aaf7b971a7481f7bb42`.
+**14 October 2026.** Independent review [P2](https://github.com/rumman52/Shuddho/pull/393#discussion_r4266861068) found Python equality accepted JSON boolean `true` or numeric `1.0` as activation schema version 1. Corrected to `type(value) is int` plus two self-rehashed negatives at source/tests commit `121280e82b9856366dec8ccf1f0a20ff810b2356`. Exact final-head CI remains required. Repository `rumman52/Shuddho`. Branch `codex/cw09-main-red-ci-ledger-review-repair-20261014`. Baseline main `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`. Source/test SHA before this documentation: `b4f5e0c32fcaa96c05c73aaf7b971a7481f7bb42`.
 
 ## Reproduced defects and authority
 
