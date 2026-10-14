@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -293,3 +293,72 @@ def test_normal_datetime_and_uuids_remain_reviewable():
     assert all(type(item.document_id) is UUID and type(item.version_id) is UUID
                for item in envelope.input_versions)
     assert verified(envelope, now) is None
+
+
+class AdversarialTimezone(tzinfo):
+    def utcoffset(self, _datetime):
+        return -timedelta(hours=3)
+
+    def dst(self, _datetime):
+        return timedelta(0)
+
+    def tzname(self, _datetime):
+        return "untrusted-offset"
+
+
+class AdversarialInt(int):
+    def __eq__(self, _other):
+        return True
+
+
+def test_self_hashed_proposal_with_custom_tzinfo_cannot_redefine_expiry_window():
+    envelope, now = setup_envelope()
+    # A legitimate timezone is handled by ZoneInfo, not arbitrary tzinfo
+    # implementations whose utcoffset() can vary between hash and claim.
+    suspect = envelope.model_copy(update={
+        "created_at": envelope.created_at.replace(tzinfo=AdversarialTimezone()),
+        "expires_at": envelope.expires_at.replace(tzinfo=AdversarialTimezone()),
+    })
+    assert type(suspect.created_at) is datetime
+    assert type(suspect.expires_at) is datetime
+    with pytest.raises(CoworkerError) as error:
+        verified(suspect, now + timedelta(hours=3),
+                 reviewed_sha256=suspect.review_sha256())
+    assert error.value.code == "code_proposal_invalid"
+
+
+@pytest.mark.parametrize("which", ["now_subclass", "now_custom_timezone"])
+def test_review_clock_must_not_use_overridden_time_operations(which):
+    envelope, now = setup_envelope()
+    if which == "now_subclass":
+        time = MisleadingDatetime(
+            now.year, now.month, now.day, now.hour, now.minute,
+            tzinfo=now.tzinfo,
+        )
+    else:
+        time = now.replace(tzinfo=AdversarialTimezone())
+    with pytest.raises(CoworkerError) as error:
+        verified(envelope, time)
+    assert error.value.code == "code_review_time_invalid"
+
+
+@pytest.mark.parametrize("field", ["run_id", "document_id", "version_id"])
+def test_review_rejects_uuid_with_subclassed_integer_payload_and_matching_digest(field):
+    envelope, now = setup_envelope()
+    if field == "run_id":
+        # Different underlying run id; hostile integer claims to equal every
+        # other run identity. The outer class is *exactly* UUID.
+        disguised = UUID(int=AdversarialInt(uuid4().int))
+        assert type(disguised) is UUID
+        assert type(disguised.int) is AdversarialInt
+        suspect = envelope.model_copy(update={"run_id": disguised})
+    else:
+        first = envelope.input_versions[0]
+        disguised = UUID(int=AdversarialInt(uuid4().int))
+        assert type(disguised) is UUID
+        assert type(disguised.int) is AdversarialInt
+        modified = first.model_copy(update={field: disguised})
+        suspect = envelope.model_copy(update={"input_versions": (modified,)})
+    with pytest.raises(CoworkerError) as error:
+        verified(suspect, now, reviewed_sha256=suspect.review_sha256())
+    assert error.value.code == "code_proposal_invalid"
