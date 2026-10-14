@@ -1,5 +1,9 @@
 # Coworker evolution progress
 
+## CW-10 #394 immutable nested copy integrity — 14 October 2026
+
+Second independent [P2](https://github.com/rumman52/Shuddho/pull/394#discussion_r4266920978) found that strict Pydantic reconstruction can accept a valid `limits`/input plain mapping and normalize it, leaving the original copied proposal mutable for downstream use. Added checks for exact `CodeComputeLimits`, `CodeInputVersion` and immutable tuple types **on the original object** before the strict round trip. Three new self-hashed negative cases test same-value limits/input mappings and mutable empty destinations. Latest source/test SHA `9285ff38408f9099bcf3d80c3794169589700507` before docs. Draft [PR #394](https://github.com/rumman52/Shuddho/pull/394), unmerged; exact final-head full required CI, review and authority/compatibility checks pending. No execution grant.
+
 ## CW-10 #394 strict typed validation review correction — 14 October 2026
 
 CW-10 [draft PR #394](https://github.com/rumman52/Shuddho/pull/394) independent review [P2](https://github.com/rumman52/Shuddho/pull/394#discussion_r4266890920) found `model_validate()` can coerce untrusted copied timestamps and other field types instead of proving immutable typed identity. Revalidation now uses `strict=True`, rejects boolean schema version explicitly, and includes rehashed copied string-expiry/boolean-schema/float-CPU negative cases; latest source/test commit `db2aafa7feca94a399c816f1fc0437da51dded65` before documentation. Earlier `test-and-build` success was on an older SHA. Exact-final-head `test-and-build`, `coworker`, `ci-merge-gate` and independent review remain required. No code execution or production flag enabled.
