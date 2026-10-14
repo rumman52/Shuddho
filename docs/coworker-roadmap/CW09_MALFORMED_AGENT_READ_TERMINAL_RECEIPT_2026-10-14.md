@@ -33,3 +33,14 @@ This is a bounded broker receipt correctness/safety defect, not a change in brow
 Retain `SHUDDHO_AGENT_BROWSER_READ_ENABLED=false`. Do not automatically merge/deploy/activate. Remaining CW-09 requirements: bounded actual page text persisted privately with source checksum/provenance, worker network/redirect SSRF bypass qualification and canonical release eligibility enforced at execution. CW-10 requires persisted immutable exact-reviewed generated-code approvals, CW-11 requires reviewed manifest publication/runtime grant constraints; these are not completed here.
 
 **Next exact action:** Open draft PR, inspect exact head CI and independent review, diagnose any fail from actual logs, then update `PROGRESS.md` with exact evidence and next unmet task.
+
+
+## HTTP and Unicode P1 review corrections
+
+The final-head automated review found two additional P1 bypasses: Pydantic's `BrowserWorkerObservation` schema returned HTTP 422 before reaching the repo's failure commit, and invalid lone-surrogate Unicode in `storage_state` raised `UnicodeEncodeError` outside the typed error handler.
+
+The existing authenticated `/api/v1/internal/browser-worker/commands/{command_id}/complete` now parses the body after token validation, validates the exact worker identifier independently, then runs the **same strict BrowserWorkerObservation model**. If its schema fails, a dedicated broker method uses existing session-first locks to fail a still-claimed Agent read, then the API responds 422. An ordinary browser command and a different worker's claim remain unaffected. A non-object request without a validated worker identifier is rejected without touching an owned command; ownership cannot safely be inferred from a global service token alone.
+
+The existing `_bounded_storage_state` now converts Unicode encoding failures into `CoworkerError(browser_storage_state_invalid)`, reaching the terminal broker failure path. Blocking broker operations execute through FastAPI's threadpool rather than the async event loop. New tests cover invalid HTTP final URL, title type, DNS shape, storage type and injected extra fields, correct-worker terminality, wrong-worker non-interference, non-Agent retry, and a lone UTF-8 surrogate with later successful rewrite rejected.
+
+**Newest implementation+test commit before final documentation:** `3c05b2161b836010dc14d411eb3463101706c8b5`. No release flags or permission grants changed. The latest exact-head mandatory CI and refreshed independent review remain required.
