@@ -126,6 +126,21 @@ def verify_reviewed_code_identity(
             )
         if not only_declared_fields(proposal, CodeProposalEnvelope):
             raise ValueError("Unexpected proposal fields")
+        # Strict Pydantic reconstruction preserves datetime/UUID subclasses.
+        # An adversarial datetime may override astimezone() to disguise its
+        # expiry, while a UUID subclass may override string/hex identity.
+        # Inspect the *original* values before invoking their methods.
+        if (
+            type(proposal.created_at) is not datetime
+            or type(proposal.expires_at) is not datetime
+            or type(proposal.run_id) is not UUID
+        ):
+            raise ValueError("Proposal contains non-canonical timestamp or run identity")
+        if any(
+            type(item.document_id) is not UUID or type(item.version_id) is not UUID
+            for item in proposal.input_versions
+        ):
+            raise ValueError("Proposal contains non-canonical input identity")
         # Python bool compares equal to 1; it is not a schema version.
         if type(proposal.schema_version) is not int:
             raise ValueError("Proposal schema_version must be an integer")
