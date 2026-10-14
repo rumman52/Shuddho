@@ -13,7 +13,7 @@ import json
 import math
 import re
 import tomllib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from .agent_tools import TOOLS, ToolSpec
@@ -71,11 +71,13 @@ def _schema_identity(tool: ToolSpec, *, output: bool) -> str:
 # and runtime feature flags; the reviewed manifest grants nothing itself.
 _PILOT_NAME = "research"
 _PILOT_TOOLS = ("research.search",)
-_PILOT_LIMITS = SkillResourceLimits(
-    # Two 240-second attempts plus a 0.25s backoff. This is an inert
-    # manifest budget, not a new runtime deadline or permission.
-    max_tool_calls=1, max_wall_seconds=481, max_output_bytes=65536,
-)
+# Two 240-second attempts plus 0.25s backoff; frozen scalar review
+# ceilings. Materialize a new limits object for every manifest, rather
+# than sharing a frozen-dataclass instance that object.__setattr__ can alter.
+def _pilot_limits() -> SkillResourceLimits:
+    return SkillResourceLimits(
+        max_tool_calls=1, max_wall_seconds=481, max_output_bytes=65536,
+    )
 
 
 def _current_pilot_skill_manifest() -> CoworkerSkillManifest:
@@ -92,7 +94,7 @@ def _current_pilot_skill_manifest() -> CoworkerSkillManifest:
         # invalidates a stored review rather than silently inheriting it.
         tool_contract_sha256=_digest(spec.public()),
         tool_names=_PILOT_TOOLS,
-        resource_limits=_PILOT_LIMITS,
+        resource_limits=_pilot_limits(),
         rollback_version=skill.version,
     )
 
@@ -162,7 +164,10 @@ _REVIEWED_PILOT_MANIFEST = _current_pilot_skill_manifest()
 
 def pilot_skill_manifest() -> CoworkerSkillManifest:
     _require_reviewed_source_blobs()
-    return _REVIEWED_PILOT_MANIFEST
+    # Never expose the reference object or its nested limits to the caller.
+    return replace(
+        _REVIEWED_PILOT_MANIFEST, resource_limits=_pilot_limits(),
+    )
 
 
 def validate_manifest(
@@ -214,6 +219,14 @@ def validate_manifest(
             for value in asdict(manifest.resource_limits).values()
         ):
             raise ValueError("manifest limits must be positive integers")
+        # Never infer approved limits from a caller-owned or mutable nested
+        # object, even if it can compare equal to the reviewed manifest.
+        if (
+            manifest.resource_limits.max_tool_calls != 1
+            or manifest.resource_limits.max_wall_seconds != 481
+            or manifest.resource_limits.max_output_bytes != 65536
+        ):
+            raise ValueError("manifest limits exceed fixed reviewed ceiling")
         expected = pilot_skill_manifest()
         # Recompute from live code only to catch runtime monkeypatching.
         # Never use that recomputation as the "reviewed" manifest.
