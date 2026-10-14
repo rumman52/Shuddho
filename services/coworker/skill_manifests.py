@@ -202,7 +202,7 @@ def validate_manifest(
                 or manifest.resource_limits.max_output_bytes > spec.max_result_bytes
             ):
                 raise ValueError("pilot tool exceeds code-owned resource or authority")
-    except (ValueError, TypeError, KeyError, AttributeError):
+    except (ValueError, TypeError, KeyError, AttributeError, OSError):
         raise CoworkerError(
             "skill_manifest_unreviewed",
             "This skill manifest is not a supported, reviewed, server-owned version.",
