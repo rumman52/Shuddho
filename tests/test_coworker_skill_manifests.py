@@ -218,3 +218,21 @@ def test_schema_generator_pins_match_existing_reviewed_lockfile():
     for distribution, version in reviewed._REVIEWED_SCHEMA_GENERATORS:
         assert locked[distribution] == version
         assert reviewed.metadata.version(distribution) == version
+
+
+def test_returned_manifest_limits_mutation_cannot_widen_review():
+    approved = pilot_skill_manifest()
+    another = pilot_skill_manifest()
+    assert approved is not another
+    assert approved.resource_limits is not another.resource_limits
+
+    # frozen=True does not prevent a determined caller using object.__setattr__.
+    object.__setattr__(approved.resource_limits, "max_tool_calls", 2)
+    denied(approved)
+    assert another.resource_limits.max_tool_calls == 1
+    validate_manifest(another, GRANT)
+
+    # The stored reference must also stay detached from every issued manifest.
+    from services.coworker import skill_manifests as reviewed
+    assert reviewed._REVIEWED_PILOT_MANIFEST.resource_limits.max_tool_calls == 1
+    assert reviewed._REVIEWED_PILOT_MANIFEST.resource_limits is not another.resource_limits
