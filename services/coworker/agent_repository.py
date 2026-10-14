@@ -1964,6 +1964,16 @@ class AgentRepository:
                 ))
             now = utcnow()
             if resource_type == "browser_command":
+                # Revalidate authority at the final receipt boundary, not
+                # only at planner selection, broker claim or worker completion.
+                # A command may have succeeded before the Agent-specific
+                # switch was revoked; that is not a new verified Agent receipt.
+                if not self.settings.agent_browser_read_enabled:
+                    raise CoworkerError(
+                        "browser_agent_read_disabled",
+                        "Agent browser reading was revoked before receipt settlement.",
+                        409,
+                    )
                 bound = step.output or {}
                 if bound.get("resource_type") != "browser_session" or not bound.get("resource_id"):
                     raise CoworkerError(
