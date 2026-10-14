@@ -110,6 +110,9 @@ def verify_reviewed_code_identity(
     try:
         if not isinstance(proposal, CodeProposalEnvelope):
             raise ValueError("Unexpected proposal type")
+        # Python bool compares equal to 1; it is not a schema version.
+        if type(proposal.schema_version) is not int:
+            raise ValueError("Proposal schema_version must be an integer")
         proposal = CodeProposalEnvelope.model_validate(
             proposal.model_dump(mode="python"), strict=True,
         )
