@@ -161,6 +161,9 @@ def test_invalid_sources_cross_owner_inputs_and_network_destinations_rejected():
 @pytest.mark.parametrize("invalid_change", [
     {"egress_profile": "internet"},
     {"destinations": ("https://example.com/",)},
+    {"destinations": []},
+    "limits_mapping_same_values",
+    "inputs_mapping_same_values",
     {"source_sha256": "b" * 64},
     {"expires_at": "2026-10-14T12:10:00Z"},
     {"schema_version": True},
@@ -177,6 +180,14 @@ def test_invalid_sources_cross_owner_inputs_and_network_destinations_rejected():
 def test_model_copy_bypass_cannot_persuade_review_identity(invalid_change):
     """Even a matching digest of an invalid copied object is never approval."""
     original, now = setup_envelope()
+    if invalid_change == "limits_mapping_same_values":
+        invalid_change = {"limits": original.limits.model_dump(mode="python")}
+    elif invalid_change == "inputs_mapping_same_values":
+        invalid_change = {
+            "input_versions": (
+                original.input_versions[0].model_dump(mode="python"),
+            )
+        }
     forged = original.model_copy(update=invalid_change)
     # Pydantic intentionally skips validation for model_copy(update=...).
     # The attacker supplies a self-consistent digest of the forged instance.
