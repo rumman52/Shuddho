@@ -12,6 +12,7 @@ from importlib import metadata
 import json
 import math
 import re
+import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -100,9 +101,9 @@ def _current_pilot_skill_manifest() -> CoworkerSkillManifest:
 # from baseline 3505c502. Updating WorkSkill, tools or input schemas
 # REQUIRES reviewing and changing this file (not regenerating on startup).
 # The model_json_schema() generator is dependency-sensitive. Pin the exact
-# reviewed uv.lock and the generator packages used at runtime, otherwise a
-# lockfile refresh can silently regenerate the expected manifest at import.
-_REVIEWED_UV_LOCK_BLOB = "6b19816f0fe2aa1e5e51a9e88bc03b171608cd0f"
+# reviewed generator package versions in both the environment and lockfile.
+# Whole-file byte checks are unsuitable because uv may rewrite unrelated
+# lockfile metadata during installation; a generator upgrade must still deny.
 _REVIEWED_SCHEMA_GENERATORS = (
     ("pydantic", "2.12.5"),
     ("pydantic-core", "2.41.5"),
@@ -132,13 +133,20 @@ def _require_reviewed_source_blobs() -> None:
     # with identical WorkSkill/ToolSpec source. Reject drift before trusting
     # the import-time reviewed manifest as a fixed policy snapshot.
     lockfile = Path(__file__).resolve().parents[2] / "uv.lock"
-    lock_bytes = lockfile.read_bytes()
-    lock_digest = hashlib.sha1(
-        b"blob " + str(len(lock_bytes)).encode("ascii") + b"\\0" + lock_bytes
-    ).hexdigest()
-    if lock_digest != _REVIEWED_UV_LOCK_BLOB:
-        raise ValueError("Skill schema dependency lockfile changed without review")
+    try:
+        lock = tomllib.loads(lockfile.read_text(encoding="utf-8"))
+        versions = {
+            item["name"]: item["version"]
+            for item in lock["package"]
+            if type(item) is dict
+            and type(item.get("name")) is str
+            and type(item.get("version")) is str
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ValueError("Audited schema generator lockfile unavailable") from None
     for distribution, expected_version in _REVIEWED_SCHEMA_GENERATORS:
+        if versions.get(distribution) != expected_version:
+            raise ValueError("Skill schema generator lock version changed without review")
         try:
             version = metadata.version(distribution)
         except metadata.PackageNotFoundError:
