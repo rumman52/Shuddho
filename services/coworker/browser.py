@@ -67,6 +67,12 @@ def validate_resolved_addresses(hostname: str, addresses: list[str]) -> list[str
 
 
 def _bounded_observation(value: dict) -> dict:
+    if not isinstance(value, dict):
+        raise CoworkerError(
+            "browser_observation_invalid",
+            "The browser worker must return an observation object.",
+            409,
+        )
     final_url = value.get("final_url")
     title = value.get("title")
     redirects = value.get("redirect_chain", [])
