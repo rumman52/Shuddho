@@ -504,6 +504,35 @@ def test_agent_browser_post_envelope_rejections_cannot_be_resubmitted(
     assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
 
 
+def test_agent_browser_invalid_unicode_storage_state_fails_closed(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-agent-invalid-unicode")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:synthetic-invalid-unicode:1", agent_origin=True,
+    )
+    cmd = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/")
+    assert [item["id"] for item in container.browser.claim_commands(
+        "unicode-worker",
+    )] == [cmd["id"]]
+    with pytest.raises(CoworkerError) as malformed:
+        container.browser.complete_command("unicode-worker", cmd["id"], {
+            "final_url": "https://example.com/", "title": "Bad storage text",
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            # A lone surrogate is valid in a Python str, but cannot be encoded
+            # as UTF-8 for the sealed browser storage payload.
+            "storage_state": {"x": "\\ud800"},
+        })
+    assert malformed.value.code == "browser_storage_state_invalid"
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+    assert container.browser.get(owner, session["id"])["state"] == "failed"
+    with pytest.raises(CoworkerError):
+        container.browser.complete_command("unicode-worker", cmd["id"], {
+            "final_url": "https://example.com/", "title": "Forged replacement",
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        })
+
+
 def test_wrong_worker_cannot_terminally_reject_owned_agent_browser_read(container):
     enabled_agent_browser(container)
     owner = account(container, "cw09-agent-claim-bound")
