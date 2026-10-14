@@ -24,6 +24,8 @@
 | Production qualified | Not established |
 | Activated | No; Agent browser flag remains default-off |
 
+**Additional P1 review resolution:** The reviewer found FastAPI `BrowserWorkerObservation` returning HTTP 422 before the broker could terminally fail a claimed Agent read, and `UnicodeEncodeError` bypassing the typed failure from `storage_state`. Corrected in source/test commit `3c05b2161b836010dc14d411eb3463101706c8b5` before final docs: authenticated endpoint retains strict Pydantic model validation, uses broker session-before-command failure for a correctly claimed Agent command, preserves non-Agent and wrong-worker behavior, handles invalid Unicode as a typed error, and calls blocking repository operations via threadpool. HTTP tests cover bad final URL/title/DNS/storage/extra fields and denial of a successful rewrite. **Newest exact-head CI and independent re-review required.** No release evidence granted.
+
 **Review and resolution:** On [draft PR #400](https://github.com/rumman52/Shuddho/pull/400), the independent reviewer found a **P1**: post-envelope validation exceptions rolled back and allowed rewritten Agent reads. Added a shared committed terminal transition after the failed completion transaction, excluding legitimate cancellation/worker-claim/revocation control errors. Added DB-backed invalid storage, DNS, URL and redirect cases, and wrong-worker regression. **Next exact action:** Verify newest PR #400 exact-head `test-and-build`, no-skip `coworker` browser/PG/Temporal, `ci-merge-gate` and independent re-review; correct findings. Continue private page content capture and operated worker tests. Do not auto-merge, deploy or activate.
 
 ## Architecture/core status refresh — 14 October 2026, PR #399
