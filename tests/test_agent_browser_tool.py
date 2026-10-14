@@ -23,7 +23,7 @@ from services.coworker.agent_router import qualify_agent_goal
 from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.agent_tools import available_tools, tool
-from services.coworker.browser_schemas import BrowserSessionCreate
+from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate
 from services.coworker.errors import CoworkerError
 from services.coworker.models import BrowserCommand
 
@@ -205,6 +205,113 @@ def test_browser_tool_kill_switch_blocks_existing_prepared_invocation(container)
         asyncio.run(AgentRuntime(container, None).execute_step(run["id"], ordinal))
     assert failure.value.code == "tool_not_supported"
     assert container.agent.step_resource(run["id"], ordinal) is None
+
+
+def test_agent_browser_revocation_before_claim_fails_pending_command_closed(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-disable-before-claim")
+    session, _ = container.browser.create(
+        owner,
+        BrowserSessionCreate(purpose="research", start_url="https://example.com/article"),
+        "agent:read-switch-prepared:1", agent_origin=True,
+    )
+    command = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/article")
+    assert command["state"] == "prepared"
+
+    disabled = replace(container.browser.settings, agent_browser_read_enabled=False)
+    disabled.validate()
+    container.browser.settings = disabled
+    container.settings = disabled
+    container.agent.settings = disabled
+
+    assert container.browser.claim_commands("cw09-disabled-worker") == []
+    saved = container.browser.list_commands(owner, session["id"])[0]
+    assert saved["state"] == "failed"
+    assert saved["error_code"] == "browser_agent_read_disabled"
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "failed"
+    assert current["cancel_requested"] is True
+    with pytest.raises(CoworkerError) as denied_prepare:
+        container.browser.prepare_agent_read(owner, session["id"], "https://example.com/article")
+    assert denied_prepare.value.code == "browser_agent_read_disabled"
+    with pytest.raises(CoworkerError) as denied_create:
+        container.browser.create(
+            owner,
+            BrowserSessionCreate(purpose="research", start_url="https://example.com/article"),
+            "agent:new-disabled-run:1", agent_origin=True,
+        )
+    assert denied_create.value.code == "browser_agent_read_disabled"
+
+
+def test_agent_browser_revocation_after_claim_denies_network_and_late_receipt(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-disable-after-claim")
+    session, _ = container.browser.create(
+        owner,
+        BrowserSessionCreate(purpose="research", start_url="https://example.com/article"),
+        "agent:read-switch-running:1", agent_origin=True,
+    )
+    command = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/article")
+    assert [item["id"] for item in container.browser.claim_commands("cw09-live-worker")] == [command["id"]]
+
+    disabled = replace(container.browser.settings, agent_browser_read_enabled=False)
+    disabled.validate()
+    container.browser.settings = disabled
+    container.settings = disabled
+    container.agent.settings = disabled
+
+    with pytest.raises(CoworkerError) as denied_egress:
+        container.browser.validate_worker_network_target(
+            "cw09-live-worker", command["id"], "https://example.com/article", ["93.184.216.34"],
+        )
+    assert denied_egress.value.code == "browser_agent_read_disabled"
+    assert container.browser.worker_control("cw09-live-worker", command["id"]) == {
+        "action": "stop", "reason": "browser_agent_read_disabled",
+    }
+    with pytest.raises(CoworkerError) as late_receipt:
+        container.browser.complete_command(
+            "cw09-live-worker", command["id"], {
+                "final_url": "https://example.com/article",
+                "title": "Late but well-formed page metadata",
+                "redirect_chain": [],
+                "resolved_ips": {"example.com": ["93.184.216.34"]},
+            },
+        )
+    assert late_receipt.value.code == "browser_agent_read_disabled"
+    saved = container.browser.list_commands(owner, session["id"])[0]
+    assert saved["state"] == "failed"
+    assert saved["error_code"] == "browser_agent_read_disabled"
+    assert container.browser.get(owner, session["id"])["state"] == "failed"
+
+
+def test_agent_browser_kill_switch_preserves_supervised_browser_reads(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-supervised-unaffected")
+    supervised, _ = container.browser.create(
+        owner,
+        BrowserSessionCreate(purpose="research", start_url="https://example.com/start"),
+        "human-broker-read",
+    )
+    command = container.browser.prepare_navigation(
+        owner, supervised["id"], BrowserNavigateCreate(url="https://example.com/start"),
+    )
+
+    disabled = replace(container.browser.settings, agent_browser_read_enabled=False)
+    disabled.validate()
+    container.browser.settings = disabled
+    assert [item["id"] for item in container.browser.claim_commands("cw09-human-worker")] == [command["id"]]
+    checked = container.browser.validate_worker_network_target(
+        "cw09-human-worker", command["id"], "https://example.com/start", ["93.184.216.34"],
+    )
+    assert checked["url"] == "https://example.com/start"
+    assert container.browser.complete_command(
+        "cw09-human-worker", command["id"], {
+            "final_url": "https://example.com/start",
+            "title": "Supervised read remains allowed",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        },
+    )["state"] == "succeeded"
 
 
 @pytest.mark.parametrize("goal", [
