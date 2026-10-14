@@ -130,6 +130,33 @@ def test_browser_session_is_idempotent_owner_scoped_and_same_origin(container):
     assert cross_origin.value.code == "browser_origin_not_allowed"
 
 
+def test_non_agent_browser_malformed_receipt_keeps_existing_retry_semantics(container):
+    enable_browser(container)
+    owner = account(container, "browser-observation-legacy")
+    session = create_session(container, owner)
+    navigation = container.browser.prepare_navigation(
+        owner, session["id"],
+        BrowserNavigateCreate(url="https://example.com/worker"),
+    )
+    assert [item["id"] for item in container.browser.claim_commands(
+        "legacy-worker",
+    )] == [navigation["id"]]
+    with pytest.raises(CoworkerError) as rejected:
+        container.browser.complete_command("legacy-worker", navigation["id"], [])
+    assert rejected.value.code == "browser_observation_invalid"
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "running"
+    assert container.browser.get(owner, session["id"])["state"] != "failed"
+    completed = container.browser.complete_command(
+        "legacy-worker", navigation["id"], {
+            "final_url": "https://example.com/worker",
+            "title": "Validated normal browser observation",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        },
+    )
+    assert completed["state"] == "succeeded"
+
+
 def test_browser_takeover_cancel_and_expiry_are_deterministic(container):
     enable_browser(container)
     owner = account(container)
