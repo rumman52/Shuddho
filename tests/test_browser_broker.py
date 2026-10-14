@@ -130,6 +130,145 @@ def test_browser_session_is_idempotent_owner_scoped_and_same_origin(container):
     assert cross_origin.value.code == "browser_origin_not_allowed"
 
 
+def test_non_agent_browser_malformed_receipt_keeps_existing_retry_semantics(container):
+    enable_browser(container)
+    owner = account(container, "browser-observation-legacy")
+    session = create_session(container, owner)
+    navigation = container.browser.prepare_navigation(
+        owner, session["id"],
+        BrowserNavigateCreate(url="https://example.com/worker"),
+    )
+    assert [item["id"] for item in container.browser.claim_commands(
+        "legacy-worker",
+    )] == [navigation["id"]]
+    with pytest.raises(CoworkerError) as rejected:
+        container.browser.complete_command("legacy-worker", navigation["id"], [])
+    assert rejected.value.code == "browser_observation_invalid"
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "running"
+    assert container.browser.get(owner, session["id"])["state"] != "failed"
+    completed = container.browser.complete_command(
+        "legacy-worker", navigation["id"], {
+            "final_url": "https://example.com/worker",
+            "title": "Validated normal browser observation",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        },
+    )
+    assert completed["state"] == "succeeded"
+
+
+@pytest.mark.parametrize("malformed", [
+    {"title": "Missing required final_url"},
+    {"final_url": "https://example.com/", "title": 999},
+    {"final_url": "https://example.com/", "resolved_ips": []},
+    {"final_url": "https://example.com/", "storage_state": []},
+    {"final_url": "https://example.com/", "page_text": "unreviewed extra field"},
+])
+def test_agent_browser_http_schema_rejection_is_terminal_before_fastapi_422(
+    container, signed_client, malformed,
+):
+    settings = enable_browser(container)
+    enabled = replace(settings, agent_browser_read_enabled=True)
+    enabled.validate()
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.browser.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container, "cw09-http-invalid-agent")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:synthetic-http-invalid:1", agent_origin=True,
+    )
+    command = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/")
+    assert [item["id"] for item in container.browser.claim_commands(
+        "http-schema-worker",
+    )] == [command["id"]]
+    client, _ = signed_client
+    endpoint = f'/api/v1/internal/browser-worker/commands/{command["id"]}/complete'
+    headers = {"X-Shuddho-Browser-Worker-Token": enabled.browser_worker_token}
+    response = client.post(
+        endpoint, headers=headers,
+        json={"worker_id": "http-schema-worker", **malformed},
+    )
+    assert response.status_code == 422
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+    assert container.browser.get(owner, session["id"])["state"] == "failed"
+    assert container.browser.get(owner, session["id"])["cancel_requested"] is True
+    replay = client.post(endpoint, headers=headers, json={
+        "worker_id": "http-schema-worker",
+        "final_url": "https://example.com/", "title": "Rewritten success",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+    })
+    assert replay.status_code == 409
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+
+
+def test_non_agent_browser_http_422_preserves_owner_retry_and_worker_claim(
+    container, signed_client,
+):
+    settings = enable_browser(container)
+    owner = account(container, "cw09-http-normal-browser")
+    session = create_session(container, owner)
+    command = container.browser.prepare_navigation(
+        owner, session["id"], BrowserNavigateCreate(url="https://example.com/normal"),
+    )
+    assert [item["id"] for item in container.browser.claim_commands(
+        "normal-http-worker",
+    )] == [command["id"]]
+    client, _ = signed_client
+    url = f'/api/v1/internal/browser-worker/commands/{command["id"]}/complete'
+    headers = {"X-Shuddho-Browser-Worker-Token": settings.browser_worker_token}
+    invalid = client.post(url, headers=headers, json={
+        "worker_id": "normal-http-worker",
+        "final_url": "https://example.com/normal", "title": 42,
+    })
+    assert invalid.status_code == 422
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "running"
+    valid = client.post(url, headers=headers, json={
+        "worker_id": "normal-http-worker",
+        "final_url": "https://example.com/normal", "title": "Normal browser",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+    })
+    assert valid.status_code == 200
+    assert valid.json()["state"] == "succeeded"
+
+
+def test_agent_browser_http_schema_error_cannot_be_used_by_wrong_worker(
+    container, signed_client,
+):
+    settings = enable_browser(container)
+    enabled = replace(settings, agent_browser_read_enabled=True)
+    enabled.validate()
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.browser.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container, "cw09-http-wrong-worker")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:synthetic-http-wrong-worker:1", agent_origin=True,
+    )
+    command = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/")
+    assert [item["id"] for item in container.browser.claim_commands(
+        "valid-http-worker",
+    )] == [command["id"]]
+    client, _ = signed_client
+    url = f'/api/v1/internal/browser-worker/commands/{command["id"]}/complete'
+    headers = {"X-Shuddho-Browser-Worker-Token": enabled.browser_worker_token}
+    error = client.post(url, headers=headers, json={
+        "worker_id": "different-http-worker", "title": 1,
+    })
+    assert error.status_code == 422
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "running"
+    accepted = client.post(url, headers=headers, json={
+        "worker_id": "valid-http-worker",
+        "final_url": "https://example.com/", "title": "Valid owner",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+    })
+    assert accepted.status_code == 200
+    assert accepted.json()["state"] == "succeeded"
+
+
 def test_browser_takeover_cancel_and_expiry_are_deterministic(container):
     enable_browser(container)
     owner = account(container)

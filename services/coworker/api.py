@@ -14,6 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .auth import Principal, require_principal
@@ -1505,9 +1506,37 @@ def browser_worker_control(
 
 
 @router.post("/internal/browser-worker/commands/{command_id}/complete")
-def complete_browser_command(command_id: UUID, payload: BrowserWorkerObservation, request: Request, services: Services):
+async def complete_browser_command(command_id: UUID, request: Request, services: Services):
+    # Parse *after* service-token authentication so the existing broker can
+    # persist a terminal failure for a legitimately claimed Agent read even
+    # when the strict HTTP schema denies its observation with 422.
     require_browser_worker(request, services)
-    return services.browser.complete_command(
+    try:
+        raw = await request.json()
+    except (ValueError, UnicodeError):
+        raise CoworkerError(
+            "browser_observation_invalid", "The browser worker sent invalid JSON.", 422,
+        ) from None
+    if type(raw) is not dict:
+        raise CoworkerError(
+            "browser_observation_invalid", "The browser worker must send an observation object.", 422,
+        )
+    try:
+        worker = BrowserWorkerIdentity.model_validate({"worker_id": raw.get("worker_id")})
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from None
+    try:
+        payload = BrowserWorkerObservation.model_validate(raw)
+    except ValidationError:
+        await run_in_threadpool(
+            services.browser.reject_invalid_agent_worker_completion,
+            worker.worker_id, str(command_id),
+        )
+        raise CoworkerError(
+            "browser_observation_invalid", "The browser worker sent an invalid observation.", 422,
+        ) from None
+    return await run_in_threadpool(
+        services.browser.complete_command,
         payload.worker_id,
         str(command_id),
         {

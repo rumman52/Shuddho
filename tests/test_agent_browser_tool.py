@@ -393,6 +393,170 @@ def test_agent_browser_interaction_does_not_allow_rewritten_worker_evidence(cont
     assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
 
 
+@pytest.mark.parametrize("invalid_observation", [
+    None,
+    ["not", "an", "object"],
+    {"title": "Missing final_url"},
+    {
+        "final_url": "https://example.com/", "title": "Bad DNS evidence",
+        "resolved_ips": ["93.184.216.34"],
+    },
+    {
+        "final_url": "https://example.com/", "title": 123,
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+    },
+])
+def test_agent_browser_malformed_receipt_is_terminal_and_cannot_be_rewritten(
+    container, invalid_observation,
+):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-agent-invalid-evidence")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:synthetic-invalid-evidence:1", agent_origin=True,
+    )
+    command = container.browser.prepare_agent_read(
+        owner, session["id"], "https://example.com/",
+    )
+    assert [item["id"] for item in container.browser.claim_commands(
+        "cw09-malformed-worker",
+    )] == [command["id"]]
+    with pytest.raises(CoworkerError) as rejected:
+        container.browser.complete_command(
+            "cw09-malformed-worker", command["id"], invalid_observation,
+        )
+    assert rejected.value.code == "browser_observation_invalid"
+    ended = container.browser.get(owner, session["id"])
+    assert ended["state"] == "failed"
+    assert ended["cancel_requested"] is True
+    recorded = container.browser.list_commands(owner, session["id"])[0]
+    assert recorded["state"] == "failed"
+    assert recorded["error_code"] == rejected.value.code
+    # Worker lease identity is intentionally absent from the public command
+    # DTO. Assert cleanup against the existing owned SQLAlchemy ledger.
+    with container.repository.sessions.begin() as db:
+        persisted = db.get(BrowserCommand, command["id"])
+        assert persisted.claimed_by is None
+        assert persisted.lease_until is None
+    with pytest.raises(CoworkerError):
+        container.browser.complete_command("cw09-malformed-worker", command["id"], {
+            "final_url": "https://example.com/",
+            "title": "Clean rewritten page",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "submission_performed": False,
+        })
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+
+
+@pytest.mark.parametrize("invalid_observation", [
+    {
+        "final_url": "https://example.com/", "title": "Invalid storage state",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "storage_state": [],
+    },
+    {
+        "final_url": "https://localhost/private", "title": "Invalid destination",
+        "resolved_ips": {},
+    },
+    {
+        "final_url": "https://example.com/", "title": "Missing DNS proof",
+        "resolved_ips": {},
+    },
+    {
+        "final_url": "https://example.com/", "title": "Redirect escaped origin",
+        "redirect_chain": ["https://different.example/private"],
+        "resolved_ips": {
+            "example.com": ["93.184.216.34"],
+            "different.example": ["93.184.216.35"],
+        },
+    },
+])
+def test_agent_browser_post_envelope_rejections_cannot_be_resubmitted(
+    container, invalid_observation,
+):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-agent-after-envelope")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:synthetic-invalid-post-envelope:1", agent_origin=True,
+    )
+    cmd = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/")
+    assert [item["id"] for item in container.browser.claim_commands(
+        "post-envelope-worker",
+    )] == [cmd["id"]]
+    with pytest.raises(CoworkerError):
+        container.browser.complete_command(
+            "post-envelope-worker", cmd["id"], invalid_observation,
+        )
+    assert container.browser.get(owner, session["id"])["state"] == "failed"
+    assert container.browser.get(owner, session["id"])["cancel_requested"] is True
+    failed = container.browser.list_commands(owner, session["id"])[0]
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "browser_observation_invalid"
+    with pytest.raises(CoworkerError):
+        container.browser.complete_command("post-envelope-worker", cmd["id"], {
+            "final_url": "https://example.com/",
+            "title": "Forged second receipt",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        })
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+
+
+def test_agent_browser_invalid_unicode_storage_state_fails_closed(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-agent-invalid-unicode")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:synthetic-invalid-unicode:1", agent_origin=True,
+    )
+    cmd = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/")
+    assert [item["id"] for item in container.browser.claim_commands(
+        "unicode-worker",
+    )] == [cmd["id"]]
+    with pytest.raises(CoworkerError) as malformed:
+        container.browser.complete_command("unicode-worker", cmd["id"], {
+            "final_url": "https://example.com/", "title": "Bad storage text",
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            # A lone surrogate is valid in a Python str, but cannot be encoded
+            # as UTF-8 for the sealed browser storage payload.
+            "storage_state": {"x": "\\ud800"},
+        })
+    assert malformed.value.code == "browser_storage_state_invalid"
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+    assert container.browser.get(owner, session["id"])["state"] == "failed"
+    with pytest.raises(CoworkerError):
+        container.browser.complete_command("unicode-worker", cmd["id"], {
+            "final_url": "https://example.com/", "title": "Forged replacement",
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        })
+
+
+def test_wrong_worker_cannot_terminally_reject_owned_agent_browser_read(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-agent-claim-bound")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:synthetic-worker-claim:1", agent_origin=True,
+    )
+    cmd = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/")
+    assert [item["id"] for item in container.browser.claim_commands(
+        "claim-owner-worker",
+    )] == [cmd["id"]]
+    evidence = {
+        "final_url": "https://example.com/", "title": "Clean title",
+        "redirect_chain": [], "resolved_ips": {"example.com": ["93.184.216.34"]},
+    }
+    with pytest.raises(CoworkerError) as denied:
+        container.browser.complete_command("different-worker", cmd["id"], evidence)
+    assert denied.value.code == "browser_worker_claim_invalid"
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "running"
+    assert container.browser.complete_command(
+        "claim-owner-worker", cmd["id"], evidence,
+    )["state"] == "succeeded"
+
+
 def test_revoked_browser_session_cannot_settle_agent_tool_receipt(container):
     enabled_agent_browser(container)
     owner = account(container, "cw09-revoked-verified-read")
