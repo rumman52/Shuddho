@@ -1,5 +1,26 @@
 # Coworker evolution progress
 
+## CW-09 final Agent receipt revocation — 14 October 2026
+
+**Bootstrap evidence:** `main` `ddc81711c8ccb4475d3a0053b26b5955a5be35b1`, PR [#398](https://github.com/rumman52/Shuddho/pull/398) **merged**. Previous main [CI #38546539014](https://github.com/rumman52/Shuddho/actions/runs/38546539014) completed green with `test-and-build`, `coworker` and `ci-merge-gate`. More recent main SHA CI may still be running and must be rechecked. No open PRs at bootstrap.
+
+**Reproduced source-level gap:** Worker-time switch checks from #398 did not cover `AgentRepository.finish_invocation` after an already-successful broker command. A previously completed read could become a *new* verified Agent receipt after the Agent browser switch was turned off. Selected smallest dependency-ready follow-up: direct final receipt-time guard without introducing another grant store.
+
+**Review branch:** `codex/cw09-final-receipt-revocation-20261014`, based on integrated main above. Implementation commit `ee6228035b43dc1ccccc58742880e65e06b5cb3b`; regression commit `7e6dc9380dff1c45e0d90ed8e16c543655013e88`; contract commit `315f3de11efac577731d998cf66cb1cd5a3fc6a4` before this checkpoint. [Contract](CW09_FINAL_RECEIPT_REVOCATION_2026-10-14.md). PR URL, final checkpoint SHA and CI must be refreshed from GitHub.
+
+| CW-05–11 | Current integrated foundation | Missing verified acceptance |
+| --- | --- | --- |
+| CW-05–07 | Owner-scoped conversation/activity/runtime | Operated replay, steering/reconnect, accessibility/mobile |
+| CW-08 | Pinned context and reviewable memory contracts | Operated revocation, retention/deletion, multilingual outcomes |
+| **CW-09** | Read-only broker/tool and previous kill-switch patch #398 merged; new final-receipt guard on separate branch | Exact-head CI and review of final receipt guard; **still missing** bounded private page content and checksum, real worker egress isolation staging, canonical execution-time release authorization |
+| CW-10 | Inert immutable proposal envelope | Persisted proposal and human approval, immutable sandbox claim with isolated worker |
+| CW-11 | Inert reviewed manifest via #396/#397 | Controlled publishing/rollback and server-owned runtime skill selection, evaluation |
+
+**Evidence:** implemented **on isolated branch** only; repository-verified **pending required exact-head CI + independent review**; staging **not established**; production-qualified **not established**; activated **no**. No migration, external mutation, broader permission, paid provisioning, merge or production flag enabled.
+
+**Next exact action:** Open draft PR for branch, require `tests/test_agent_browser_tool.py`, `test-and-build`, `coworker` and `ci-merge-gate` at exact final head, obtain independent security review. Correct concrete failures, preserve mandatory tests, then proceed to next CW-09 capability in a separate reviewable slice.
+
+
 ## CW-09 Agent browser worker-time kill-switch — 14 October 2026
 
 **Refreshed default branch:** `main` `7da39a13e0207b96a2b05dde72e1fb876a970a5c`; no open PRs at bootstrap. Main `test-and-build` passed while `coworker` and `ci-merge-gate` were not yet complete on [CI #38546539014](https://github.com/rumman52/Shuddho/actions/runs/38546539014). The previous CW-11 #396/#397 work has been merged; earlier PROGRESS notes treating it as draft are historical. No deployed release or staging evidence was established.
