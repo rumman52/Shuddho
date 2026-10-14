@@ -348,13 +348,19 @@ def test_review_rejects_uuid_with_subclassed_integer_payload_and_matching_digest
     if field == "run_id":
         # Different underlying run id; hostile integer claims to equal every
         # other run identity. The outer class is *exactly* UUID.
-        disguised = UUID(int=AdversarialInt(uuid4().int))
+        disguised = UUID(int=uuid4().int)
+        # UUID.__init__ counts None parameters using equality; create a
+        # normal UUID before injecting the adversarial integer subclass.
+        object.__setattr__(disguised, "int", AdversarialInt(uuid4().int))
         assert type(disguised) is UUID
         assert type(disguised.int) is AdversarialInt
         suspect = envelope.model_copy(update={"run_id": disguised})
     else:
         first = envelope.input_versions[0]
-        disguised = UUID(int=AdversarialInt(uuid4().int))
+        disguised = UUID(int=uuid4().int)
+        # UUID.__init__ counts None parameters using equality; create a
+        # normal UUID before injecting the adversarial integer subclass.
+        object.__setattr__(disguised, "int", AdversarialInt(uuid4().int))
         assert type(disguised) is UUID
         assert type(disguised.int) is AdversarialInt
         modified = first.model_copy(update={field: disguised})
