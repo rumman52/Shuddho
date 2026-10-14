@@ -104,8 +104,8 @@ def _current_pilot_skill_manifest() -> CoworkerSkillManifest:
 # REQUIRES reviewing and changing this file (not regenerating on startup).
 # The model_json_schema() generator is dependency-sensitive. Pin the exact
 # reviewed generator package versions in both the environment and lockfile.
-# Whole-file byte checks are unsuitable because uv may rewrite unrelated
-# lockfile metadata during installation; a generator upgrade must still deny.
+# Generator identity is checked semantically; unrelated lock metadata
+# does not authorize schema-generator upgrades.
 _REVIEWED_SCHEMA_GENERATORS = (
     ("pydantic", "2.12.5"),
     ("pydantic-core", "2.41.5"),
