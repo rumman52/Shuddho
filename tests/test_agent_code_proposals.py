@@ -156,3 +156,24 @@ def test_invalid_sources_cross_owner_inputs_and_network_destinations_rejected():
         CodeProposalEnvelope.model_validate({
             **envelope.model_dump(mode="python"), "expires_at": envelope.created_at,
         })
+
+
+@pytest.mark.parametrize("invalid_change", [
+    {"egress_profile": "internet"},
+    {"destinations": ("https://example.com/",)},
+    {"source_sha256": "b" * 64},
+    {"limits": CodeComputeLimits(
+        cpu_seconds=5, wall_seconds=15, memory_mb=128,
+        disk_mb=32, stdout_bytes=1024,
+    ).model_copy(update={"cpu_seconds": 120})},
+    {"expires_at": datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc)},
+])
+def test_model_copy_bypass_cannot_persuade_review_identity(invalid_change):
+    """Even a matching digest of an invalid copied object is never approval."""
+    original, now = setup_envelope()
+    forged = original.model_copy(update=invalid_change)
+    # Pydantic intentionally skips validation for model_copy(update=...).
+    # The attacker supplies a self-consistent digest of the forged instance.
+    with pytest.raises(CoworkerError) as denied:
+        verified(forged, now, reviewed_sha256=forged.review_sha256())
+    assert denied.value.code == "code_proposal_invalid"
