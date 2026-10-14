@@ -1889,3 +1889,31 @@ def test_browser_takeover_frame_is_user_only_not_model_content(container):
     assert current["execution"]["takeover_frame_exposed_to_planner"] is False
     history = container.browser.list_commands(owner, session["id"])
     assert "takeover_frame_b64" not in history[0]["result"]
+
+
+@pytest.mark.parametrize("bad_observation", [None, [], "not an object", 17, True])
+def test_browser_worker_rejects_non_object_receipts_without_losing_claim(container, bad_observation):
+    """Malformed worker JSON must return a typed 409, not an unhandled 500."""
+    enable_browser(container)
+    owner = account(container, "browser-observation-type")
+    session = create_session(container, owner)
+    command = container.browser.prepare_navigation(
+        owner, session["id"], BrowserNavigateCreate(url="https://example.com/receipt"),
+    )
+    assert [item["id"] for item in container.browser.claim_commands("worker-typed")] == [command["id"]]
+
+    with pytest.raises(CoworkerError) as rejected:
+        container.browser.complete_command("worker-typed", command["id"], bad_observation)
+    assert rejected.value.code == "browser_observation_invalid"
+    assert rejected.value.status_code == 409
+    assert container.browser.list_commands(owner, session["id"])[0]["state"] == "running"
+
+    completed = container.browser.complete_command(
+        "worker-typed", command["id"], {
+            "final_url": "https://example.com/receipt",
+            "title": "A read-only receipt",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        },
+    )
+    assert completed["state"] == "succeeded"
