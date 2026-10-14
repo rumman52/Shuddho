@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Literal
 from uuid import UUID
 
@@ -130,14 +131,33 @@ def verify_reviewed_code_identity(
         # An adversarial datetime may override astimezone() to disguise its
         # expiry, while a UUID subclass may override string/hex identity.
         # Inspect the *original* values before invoking their methods.
+        def canonical_datetime(value):
+            # The exact datetime class may still hold an arbitrary tzinfo
+            # capable of lying in utcoffset()/astimezone()/isoformat().
+            # Accept only immutable stdlib timezone or canonical tzdata zones.
+            return (
+                type(value) is datetime
+                and type(value.tzinfo) in {timezone, ZoneInfo}
+            )
+
+        def canonical_uuid(value):
+            # CPython's UUID(int=...) can retain a subclassed integer whose
+            # __eq__/hash/format implementation misrepresents its identity.
+            return (
+                type(value) is UUID
+                and type(value.int) is int
+                and 0 <= value.int < (1 << 128)
+            )
+
         if (
-            type(proposal.created_at) is not datetime
-            or type(proposal.expires_at) is not datetime
-            or type(proposal.run_id) is not UUID
+            not canonical_datetime(proposal.created_at)
+            or not canonical_datetime(proposal.expires_at)
+            or not canonical_uuid(proposal.run_id)
         ):
             raise ValueError("Proposal contains non-canonical timestamp or run identity")
         if any(
-            type(item.document_id) is not UUID or type(item.version_id) is not UUID
+            not canonical_uuid(item.document_id)
+            or not canonical_uuid(item.version_id)
             for item in proposal.input_versions
         ):
             raise ValueError("Proposal contains non-canonical input identity")
@@ -164,8 +184,12 @@ def verify_reviewed_code_identity(
             "The reviewed code proposal does not satisfy its immutable schema.",
             409,
         ) from None
-    if now.tzinfo is None:
-        raise CoworkerError("code_review_time_invalid", "Review time must include a timezone.", 409)
+    if type(now) is not datetime or type(now.tzinfo) not in {timezone, ZoneInfo}:
+        raise CoworkerError(
+            "code_review_time_invalid",
+            "Review time must use a canonical timezone-aware datetime.",
+            409,
+        )
     if now.astimezone(timezone.utc) < proposal.created_at.astimezone(timezone.utc):
         raise CoworkerError("code_proposal_not_yet_valid", "Code proposals cannot be reviewed before creation.", 409)
     if now.astimezone(timezone.utc) >= proposal.expires_at.astimezone(timezone.utc):
