@@ -1923,6 +1923,21 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
         if secret:
             assert secret not in encoded
 
+    # Exercise the enabled case in the API module that actually owns the
+    # signed_client fixture; the isolated browser gate has no such fixture.
+    activated_settings = replace(
+        current, browser_enabled=True, agent_browser_read_enabled=True,
+    )
+    container.settings = activated_settings
+    container.repository.settings = activated_settings
+    container.agent.settings = activated_settings
+    enabled_response = client.get("/api/v1/runtime-manifest", headers=headers())
+    assert enabled_response.status_code == 200
+    assert enabled_response.headers["Cache-Control"] == "no-store"
+    assert enabled_response.json()["capabilities"]["browser"] is True
+    assert enabled_response.json()["capabilities"]["agent_browser_read"] is True
+    assert client.get("/api/v1/runtime-manifest").status_code == 401
+
 
 def test_transaction_authority_manifest_is_authenticated_scoped_and_exact(
     signed_client,

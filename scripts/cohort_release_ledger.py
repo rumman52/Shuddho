@@ -5458,6 +5458,14 @@ def append_agent_browser_read_event(
         for name in ("agent_browser_read", "browser", "runtime_v3", "connector_trust_boundary")
     ):
         raise ReleaseLedgerError("Agent browser read is not enabled in the reviewed dependency chain.")
+    incident = rollout.get("incident")
+    if (
+        not isinstance(incident, dict)
+        or incident.get("change_reference") != change_reference
+    ):
+        raise ReleaseLedgerError(
+            "Agent browser read reviewed rollout change reference does not match."
+        )
     rollback_controls = rollout.get("rollback")
     if (
         not isinstance(rollback_controls, dict)
@@ -5509,8 +5517,23 @@ def append_agent_browser_read_event(
             "and fresh operator status strictly after deployment."
         )
     revision = deployment.get("source_revision")
-    if not isinstance(revision, str) or not revision or revision != activation.get("source_revision"):
-        raise ReleaseLedgerError("Agent browser read deployment/source revision differs from activation.")
+    if (
+        not isinstance(revision, str)
+        or len(revision) != 40
+        or revision != revision.lower()
+        or any(char not in "0123456789abcdef" for char in revision)
+    ):
+        raise ReleaseLedgerError(
+            "Agent browser read deployment source_revision must be a full lowercase Git SHA-1."
+        )
+    if revision != activation.get("source_revision"):
+        raise ReleaseLedgerError(
+            "Agent browser read deployment/source revision differs from activation."
+        )
+    if type(activation.get("schema_version")) is not int or activation["schema_version"] != 1:
+        raise ReleaseLedgerError(
+            "Agent browser read activation evidence has an unsupported schema."
+        )
     if (
         activation.get("status") != "agent_browser_read_verified"
         or activation.get("change_reference") != change_reference
@@ -5523,7 +5546,8 @@ def append_agent_browser_read_event(
     runtime = activation.get("runtime")
     if (
         not isinstance(runtime, dict)
-        or runtime.get("schema_version") != 1
+        or type(runtime.get("schema_version")) is not int
+        or runtime["schema_version"] != 1
         or runtime.get("source_revision") != revision
         or runtime.get("environment") != rollout.get("environment")
         or not isinstance(runtime.get("capabilities"), dict)
