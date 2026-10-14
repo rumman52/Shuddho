@@ -1,5 +1,23 @@
 # Coworker evolution progress
 
+## CW-10 copied inert review-envelope validation — 14 October 2026
+
+**Live main baseline:** `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`, #392 immutable schema merged. New **independent** branch `codex/cw10-review-envelope-revalidate-20261014`; code/tests SHA `d3740983443bdf450422ebcab9b60e8ca9cdb9f7` before docs. [Task contract](CW10_COPIED_REVIEW_ENVELOPE_VALIDATION_2026-10-14.md).
+
+**Bug and change:** although Pydantic `CodeProposalEnvelope` is frozen, unvalidated `model_copy(update=...)` can change forbidden egress/destinations/source checksum/nested CPU policy/expiry without model validators. `verify_reviewed_code_identity` now reconstructs and validates the entire existing proposal object before digest/owner/run/time/input ceiling checks, rejecting invalid copies even when a newly recomputed hash matches them; five corresponding no-authority regressions added. No DB approval, grant, credential, generated-code execution or production flag is created.
+
+**Verification:** exact-final-head task tests and full required CI **pending**; independent review **pending**. CW-09 remains separately red on merged main, addressed by [draft PR #393](https://github.com/rumman52/Shuddho/pull/393) with its own mandatory CI and review. These are two independent draft changes; both must pass before claiming an integrated green repository.
+
+| Evidence | CW-10 copied-envelope validator |
+| --- | --- |
+| Implemented | Separate source/test/docs branch |
+| Repository verified | **Not yet: exact-head CI pending** |
+| Staging verified | Not attempted |
+| Production qualified | Not established |
+| Activated | No; inert contract only |
+
+**Next exact action:** Open CW-10 independent draft PR, run `tests/test_agent_code_proposals.py` and exact full CI, obtain independent review and fix any findings. Then move to persisted owner/run immutable proposal, human approval and sandbox worker claim (still unimplemented), only after preserving existing no-grant and user-supplied-Python behavior. No automatic merge/deploy/activation.
+
 ## CW-10 first inert review-envelope contract — 14 October 2026
 
 **Source bootstrap:** `main` `76a07600328d0c6ff0ed73b69d2c7933d38bf927`. CW-09 corrective [PR #391](https://github.com/rumman52/Shuddho/pull/391) was merged into main at `905a09c3a5e2931be46d9053ba4af09ecd331125`, while exact-final-head mandatory CI and security review still require confirmation; do not infer production qualification. Do not conflate this dependent CW-09 safety review with CW-10 work.
