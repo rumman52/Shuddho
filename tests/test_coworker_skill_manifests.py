@@ -57,6 +57,7 @@ def test_unreviewed_tools_and_permission_expansion_fail_before_any_grant():
     {"instruction_sha256": "f" * 64},
     {"input_schema_sha256": "f" * 64},
     {"output_schema_sha256": "f" * 64},
+    {"tool_contract_sha256": "f" * 64},
     {"rollback_version": "obsolete"},
 ])
 def test_changed_version_or_instruction_or_schema_hash_invalidates_review(change):
@@ -110,3 +111,15 @@ def test_exact_legacy_skill_version_remains_available_without_dynamic_installati
     manifest = pilot_skill_manifest()
     assert skill_for_version(manifest.rollback_version).id == manifest.name
     denied(replace(manifest, version="work_research_v99"))
+
+
+def test_existing_review_does_not_inherit_new_tool_permissions(monkeypatch):
+    manifest = pilot_skill_manifest()
+    spec = TOOLS["research.search"]
+    monkeypatch.setitem(
+        TOOLS, "research.search",
+        replace(spec, permissions=spec.permissions + ("connected_email:write",)),
+    )
+    # Even though the caller still passes the same tool name, the reviewed
+    # contract fingerprint now differs from the code-owned registry.
+    denied(manifest)
