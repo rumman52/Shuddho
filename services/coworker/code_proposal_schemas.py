@@ -103,6 +103,20 @@ def verify_reviewed_code_identity(
     A future worker claim must also verify a persisted exact human review and
     server-owned run, source, inputs, permission and release identity.
     """
+    # Frozen Pydantic models are not necessarily valid: model_copy(update=...)
+    # deliberately bypasses field and model validators, including the egress
+    # and source-hash restrictions. Reconstruct from primitives at this
+    # authority boundary; never trust an in-memory type alone.
+    try:
+        if not isinstance(proposal, CodeProposalEnvelope):
+            raise ValueError("Unexpected proposal type")
+        proposal = CodeProposalEnvelope.model_validate(proposal.model_dump(mode="python"))
+    except Exception:
+        raise CoworkerError(
+            "code_proposal_invalid",
+            "The reviewed code proposal does not satisfy its immutable schema.",
+            409,
+        ) from None
     if now.tzinfo is None:
         raise CoworkerError("code_review_time_invalid", "Review time must include a timezone.", 409)
     if now.astimezone(timezone.utc) < proposal.created_at.astimezone(timezone.utc):
