@@ -1,5 +1,29 @@
 # Coworker evolution progress
 
+## CW-11 first code-owned reviewed manifest pilot — 14 October 2026
+
+**Live reference:** `main` `3505c5029891d488678b1f2e8b302694ce0a96e4`; merged #393 exact-head [CI #38513869839](https://github.com/rumman52/Shuddho/actions/runs/38513869839) green. #394 merged initial CW-10 envelope, with new independent datetime-subclass P2 addressed on separate [draft PR #395](https://github.com/rumman52/Shuddho/pull/395), **not a dependency automatically merged here**. Main CI #38524741451 and #395 CI #38525432542 were in progress at this checkpoint.
+
+**Independent first CW-11 dependency-ready slice:** branch `codex/cw11-inert-reviewed-skill-manifest-20261014`, base `3505c5029891d488678b1f2e8b302694ce0a96e4`, source/tests SHA `6f11f841c8427620d62b9e897eda96fe80fda57c` before docs. [Task contract](CW11_INERT_REVIEWED_SKILL_MANIFEST_2026-10-14.md). New **pure, inert** `CoworkerSkillManifest` pilot for existing `research` / `research.search`; pins current WorkSkill version and instruction/guidance hash, exact ToolSpec input and output schema hashes, full registered tool-policy hash (including permissions), immutable resource ceilings, rollback version and code-owned `allowed_tools` subset. Negative tests reject new tools, connected email/browser escalation, changed source/schema/policy, permission drift, subclass/mutable values and wider limits. No dynamic skill install/loader, feature flag or production capability change.
+
+| Task | Integrated code | Missing acceptance |
+| --- | --- | --- |
+| CW-05–07 | Owned conversation/run/activity integrated | Staging replay and UX/accessibility |
+| CW-08 | Owned source/context foundation integrated | Revocation/deletion retention staging |
+| CW-09 | #393 merged with exact CI pass | Page text private checksum, worker/network SSRF staging, runtime release eligibility |
+| CW-10 | #392/#394 merged inert envelope; #395 draft correction | #395 final-head CI/review; persisted proposal/approval and isolated worker claim |
+| **CW-11** | Static WorkSkill/ToolSpec registry; inert pilot manifest **on isolated review branch** | Final-head CI and review, publication/rollback authority, skill-selection gate, quality/cost evaluation and operated staging |
+
+| Evidence level | CW-11 pilot |
+| --- | --- |
+| Implemented | Isolated source/test/doc changes |
+| Repository-verified | **Pending exact-final-head CI** |
+| Staging-verified | No |
+| Production-qualified | No |
+| Activated | No (no registry/dispatch/permission mutation) |
+
+**Next exact action:** open CW-11 draft PR, inspect `tests/test_coworker_skill_manifests.py`, full `test-and-build`, `coworker`, `ci-merge-gate`, and independent review on exact final head. Fix failures without weakening checks; no merge/activation. Continue CW-09/10 operational contracts in separate dependency-reviewed slices.
+
 ## CW-10 #394 copied-state and subclass integrity repair — 14 October 2026
 
 **Source/PR:** [#394](https://github.com/rumman52/Shuddho/pull/394), branch `codex/cw10-review-envelope-revalidate-20261014`; source/regression commit `4f060279cc38895e1f04f7ab5255724b1451ba8b`. Original branch baseline `9f8cf53a422ba5eee7d5a0772b2943328d3faaaa`; reconciled with main `81cc0cd9d679b568a98722ca6cb53b91c9170eb2` (merged [#393](https://github.com/rumman52/Shuddho/pull/393)). Current PR head is resolved from GitHub at review and CI time; do not substitute older SHA checks.
