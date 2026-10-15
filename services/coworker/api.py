@@ -26,7 +26,7 @@ from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
-from .code_proposal_schemas import CodeProposalEnvelope, CodeProposalRevocation
+from .code_proposal_schemas import CodeProposalEnvelope, CodeProposalHumanDecision, CodeProposalRevocation
 from .agent_router import qualify_agent_goal
 from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
 from .suggestion_schemas import PersonalSuggestionPreferences
@@ -1772,6 +1772,22 @@ def revoke_agent_code_proposal(
     response.headers["Cache-Control"] = "no-store"
     return services.agent.revoke_code_proposal(
         identity.account_id, str(run_id), str(proposal_id), payload.review_sha256,
+    )
+
+
+@router.post("/agent-runs/{run_id}/code-proposals/{proposal_id}/review")
+def review_agent_code_proposal(
+    run_id: UUID,
+    proposal_id: UUID,
+    payload: CodeProposalHumanDecision,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    """Owner's exact human decision; does not authorize any sandbox worker."""
+    response.headers["Cache-Control"] = "no-store"
+    return services.agent.decide_code_proposal(
+        identity.account_id, str(run_id), str(proposal_id), payload,
     )
 
 
