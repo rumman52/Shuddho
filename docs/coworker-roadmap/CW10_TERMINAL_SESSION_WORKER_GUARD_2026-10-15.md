@@ -14,6 +14,12 @@ A SandboxSession can contain more than one SandboxExecution. One worker may hold
 - In the `SandboxRepository.complete_execution` transaction, reject any terminal session, not just cancellation/timeout. Preserve the actual `failed` state for a sibling-induced integrity failure; scrub and revoke the previous execution and reuse PR #414's commit-before-typed-409 mechanism.
 - Keep exact current policy hashes, owner grant, worker identity, no-network isolation, receipt validation and default-off switches unchanged. No schema migration, new approval/action ledger or auto-generated-code execution path.
 
+## Same-batch claim isolation
+
+The worker's claim query materializes multiple eligible rows before inspecting each row. If the first selected execution fails the source-integrity check, its shared SandboxSession becomes terminal during that same transaction. A later row must recheck current session state and **must not** set it back to `running`, receive code, or retain a claim. Selected pending/running siblings are failed and their source scrubbed. This prevents same-batch reopening but is not a complete cleanup protocol for every unselected sibling; staging/reconciliation and other pending cleanup are separate verification obligations.
+
+`tests/test_sandbox_control_plane.py::test_batched_sandbox_claim_does_not_reopen_failed_sibling_session` prepares two jobs, corrupts the first, requests a batch of two and checks that no source is released, both selected jobs fail durably, the session remains failed and no later claim succeeds.
+
 ## Reproduction and acceptance
 
 - `tests/test_sandbox_control_plane.py::test_terminal_session_failure_stops_other_claimed_sandbox_worker`: parameterized real repository worker control and completion. Claim code A, then prepare code B, alter its stored source, invoke the real integrity-gated claim, observe shared terminal failure while A remains leased; both heartbeat and completion must terminate A, scrub, revoke and deny further claims.
