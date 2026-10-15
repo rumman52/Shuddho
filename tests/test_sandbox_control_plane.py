@@ -1115,3 +1115,58 @@ def test_sandbox_preview_configuration_fails_closed(container):
         replace(base, sandbox_preview_origin="https://sandbox-preview.example.test/path").validate()
     with pytest.raises(ValueError, match="PREVIEW_SECRET"):
         replace(base, sandbox_preview_secret="short").validate()
+
+
+@pytest.mark.parametrize("close_mode", ["expired", "cancelled"])
+def test_late_sandbox_worker_completion_persists_terminal_failure(container, close_mode):
+    """A rejected late receipt must durably revoke its claim and erase source."""
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    prepared = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print('private source')"),
+    )
+    claimed = container.sandbox.claim_executions("late-completion-worker")
+    assert [item["id"] for item in claimed] == [prepared["id"]]
+
+    # Reproduce a close between a valid worker claim and worker completion.
+    # Do not call get()/list_executions() before inspecting the database:
+    # their expiry scavenger would conceal rollback at the receipt boundary.
+    with container.repository.sessions.begin() as db:
+        stored_session = db.get(SandboxSession, session["id"])
+        if close_mode == "expired":
+            stored_session.expires_at = utcnow() - timedelta(seconds=1)
+        else:
+            stored_session.cancel_requested = True
+            stored_session.state = "cancelled"
+
+    with pytest.raises(CoworkerError) as rejection:
+        container.sandbox.complete_execution(
+            "late-completion-worker", prepared["id"], completion_observation(),
+        )
+    assert rejection.value.code == "sandbox_session_closed"
+
+    # The original implementation raised *inside* sessions.begin(), rolling
+    # all of these state changes back and leaving the source retrievable.
+    with container.repository.sessions() as db:
+        execution = db.get(SandboxExecution, prepared["id"])
+        stored_session = db.get(SandboxSession, session["id"])
+        assert execution.state == ("failed" if close_mode == "expired" else "cancelled")
+        assert execution.error_code == (
+            "session_expired" if close_mode == "expired" else "session_cancelled"
+        )
+        assert execution.request_spec == {"source_scrubbed": True}
+        assert execution.lease_until is None
+        assert execution.claimed_by is None
+        assert execution.finished_at is not None
+        assert execution.result == {}
+        assert stored_session.state == close_mode
+        assert stored_session.cleanup_state == "required"
+        assert stored_session.cancel_requested is True
+
+    assert container.sandbox.claim_executions("another-worker") == []
+    with pytest.raises(CoworkerError) as stale:
+        container.sandbox.complete_execution(
+            "late-completion-worker", prepared["id"], completion_observation(),
+        )
+    assert stale.value.code == "sandbox_worker_claim_invalid"
