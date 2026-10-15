@@ -1137,8 +1137,9 @@ def test_late_sandbox_worker_completion_persists_terminal_failure(container, clo
         if close_mode == "expired":
             stored_session.expires_at = utcnow() - timedelta(seconds=1)
         else:
+            # A cancellation request may be durable before state flips.
             stored_session.cancel_requested = True
-            stored_session.state = "cancelled"
+            assert stored_session.state == "running"
 
     with pytest.raises(CoworkerError) as rejection:
         container.sandbox.complete_execution(
