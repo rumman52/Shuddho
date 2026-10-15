@@ -221,7 +221,7 @@ def test_agent_empty_page_remains_metadata_only(container):
 
 
 
-def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container, signed_client):
+def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container, signed_client, monkeypatch):
     """Real worker-shaped text reaches Runtime v3, never public broker result."""
     enabled_agent_browser(container)
     owner = account(container, "cw09-owned-capture")
@@ -292,6 +292,19 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container,
     assert container.storage.get(object_key, 8192).decode("utf-8") == page_text
     assert object_key in container.retention.referenced_object_keys()
     client, headers = signed_client
+    # Private browser source artifacts must never mint a reusable signed S3
+    # URL; only the owner-authenticated content endpoint is eligible.
+    def reject_presigned_url(*_args, **_kwargs):
+        raise AssertionError("Private browser source must not request a presigned URL")
+
+    monkeypatch.setattr(container.storage, "download_url", reject_presigned_url)
+    download = client.get(
+        f"/api/v1/artifacts/{artifact_id}/download",
+        headers=headers("cw09-owned-capture"),
+    )
+    assert download.status_code == 200
+    assert download.json()["url"] is None
+    assert download.json()["content_path"] == f"/api/v1/artifacts/{artifact_id}/content"
     owned_http = client.get(
         f"/api/v1/artifacts/{artifact_id}/content",
         headers=headers("cw09-owned-capture"),
