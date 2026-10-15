@@ -311,6 +311,12 @@ class SandboxRepository:
                     or execution.source_sha256 != hashlib.sha256(encoded).hexdigest()
                     or spec.get("source_trust") != "untrusted"
                     or spec.get("policy_version") != SANDBOX_POLICY_VERSION
+                    or not isinstance(session.execution_policy, dict)
+                    or session.execution_policy != self._policy()
+                    or session.fingerprint != _digest({
+                        "purpose": session.purpose,
+                        "runtime": session.runtime,
+                    })
                 ):
                     execution.state = "failed"
                     execution.error_code = "sandbox_source_integrity_failed"
