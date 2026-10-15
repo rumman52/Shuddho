@@ -365,6 +365,21 @@ def test_agent_sandbox_resume_refuses_source_substitution(container, worker_alre
         asyncio.run(runtime.execute_step(run["id"], ordinal))
     assert error.value.code == "sandbox_source_binding_mismatch"
     assert error.value.status_code == 409
+    if worker_already_completed:
+        # Bypass the earlier AgentRuntime poll to prove final ToolReceipt
+        # enforcement independently checks the same exact source under DB lock.
+        with pytest.raises(CoworkerError) as settlement:
+            container.agent.finish_invocation(
+                run["id"], ordinal, "sandbox_execution", completed["id"],
+                {
+                    "sandbox_state": "succeeded",
+                    "sandbox_destroyed": True,
+                    "stdout_sha256": completed["result"]["stdout_sha256"],
+                    "stderr_sha256": completed["result"]["stderr_sha256"],
+                },
+            )
+        assert settlement.value.code == "sandbox_source_binding_mismatch"
+        assert settlement.value.status_code == 409
     assert [x["id"] for x in container.sandbox.list_executions(
         owner, container.agent.step_resource(run["id"], ordinal)["resource_id"],
     )] == [original_execution["id"]]
