@@ -128,6 +128,7 @@ class AgentRepository:
             version, document = record
             if (
                 version.state != "uploaded"
+                or version.expires_at is None
                 or aware(version.expires_at) <= utcnow()
                 or str(document.id) != str(item.document_id)
                 or version.sha256 != item.source_sha256
