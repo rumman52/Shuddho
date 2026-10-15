@@ -324,6 +324,15 @@ class BrowserRepository:
     def _agent_capture_binding(command: BrowserCommand) -> str:
         return f"agent-page-text:{command.owner_id}:{command.session_id}:{command.id}"
 
+    @staticmethod
+    def _clear_agent_capture(command: BrowserCommand) -> None:
+        # Keep only the digest and size provenance after transient body deletion.
+        if "agent_page_text_sealed" in (command.result or {}):
+            command.result = {
+                key: value for key, value in command.result.items()
+                if key != "agent_page_text_sealed"
+            }
+
     def _store_takeover_frame(self, row: BrowserSession, value: bytes, content_type: str, now) -> None:
         if self._session_vault is None:
             raise CoworkerError("browser_takeover_frame_unavailable", "The visual takeover frame is unavailable.", 503)
@@ -491,8 +500,10 @@ class BrowserRepository:
             self._clear_takeover_frame(row)
             for command in db.scalars(select(BrowserCommand).where(
                 BrowserCommand.session_id == row.id,
-                BrowserCommand.state.in_(("prepared", "running")),
             ).with_for_update()).all():
+                self._clear_agent_capture(command)
+                if command.state not in {"prepared", "running"}:
+                    continue
                 command.state = "failed"
                 command.error_code = "session_expired"
                 command.finished_at = now
@@ -1450,8 +1461,11 @@ class BrowserRepository:
                 row.updated_at = now
                 for command in db.scalars(select(BrowserCommand).where(
                     BrowserCommand.session_id == session_id,
-                    BrowserCommand.state.in_(("prepared", "running")),
+                    BrowserCommand.owner_id == owner,
                 ).with_for_update()).all():
+                    self._clear_agent_capture(command)
+                    if command.state not in {"prepared", "running"}:
+                        continue
                     command.state = "cancelled"
                     command.error_code = "session_cancelled"
                     command.finished_at = now
@@ -2152,7 +2166,7 @@ class BrowserRepository:
                 return {
                     "id": command.id,
                     "state": command.state,
-                    "result": dict(command.result or {}),
+                    "result": self._command_dto(command)["result"],
                 }
 
         except CoworkerError as error:
