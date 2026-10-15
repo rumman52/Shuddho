@@ -278,6 +278,26 @@ class SandboxRepository:
                 session = db.get(SandboxSession, execution.session_id)
                 if session is None:
                     continue
+                # The query selected all rows before this loop. An earlier
+                # sibling may have failed source integrity and closed the
+                # shared session *during this same transaction*. Never let a
+                # later candidate reset it to running or receive source.
+                if (
+                    session.state in TERMINAL_SANDBOX_STATES
+                    or session.cancel_requested
+                    or aware(session.expires_at) <= now
+                ):
+                    if execution.state in {"prepared", "running"}:
+                        if execution.state == "running":
+                            session.cleanup_state = "required"
+                        execution.state = "failed"
+                        execution.error_code = "sandbox_session_closed"
+                        execution.request_spec = {"source_scrubbed": True}
+                        execution.finished_at = now
+                        execution.lease_until = None
+                        execution.claimed_by = None
+                        session.updated_at = now
+                    continue
                 if execution.state == "running" and execution.lease_until and aware(execution.lease_until) < now:
                     db.add(AuditEvent(
                         id=str(uuid4()),
