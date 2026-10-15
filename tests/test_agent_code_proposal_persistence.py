@@ -238,3 +238,44 @@ def test_unbound_private_context_cannot_be_silently_reviewed_as_code(
         assert not db.scalars(select(AgentCodeProposal).where(
             AgentCodeProposal.run_id == run_id,
         )).all()
+
+def test_actual_document_version_binding_rejects_deleted_source_on_read(
+    container, signed_client,
+):
+    from services.coworker.schemas import UploadRequest
+    from services.coworker.models import Document
+
+    owner, run_id = active_agent(container)
+    upload = container.repository.create_upload(
+        owner, UploadRequest(filename="source.txt", byte_size=5, sha256="a" * 64),
+    )
+    container.repository.finish_upload(owner, upload["id"])
+    with container.repository.sessions.begin() as db:
+        run = db.get(AgentRun, run_id)
+        run.input_versions = [upload["version_id"]]
+
+    ref = CodeInputVersion(
+        owner_id=owner, document_id=UUID(upload["id"]),
+        version_id=UUID(upload["version_id"]), source_sha256="a" * 64,
+    )
+    client, headers = signed_client
+    prepared = prepare(
+        client, headers, run_id, sample_proposal(owner, run_id, input_versions=(ref,)),
+        key="bound-upload-review-key",
+    )
+    assert prepared.status_code == 201, prepared.text
+    proposal_id = prepared.json()["id"]
+    assert client.get(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}",
+        headers=headers(),
+    ).status_code == 200
+
+    with container.repository.sessions.begin() as db:
+        db.get(Document, upload["id"]).deleted = True
+
+    denied = client.get(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}",
+        headers=headers(),
+    )
+    assert denied.status_code == 409
+    assert denied.json()["error"]["code"] == "code_input_revoked"
