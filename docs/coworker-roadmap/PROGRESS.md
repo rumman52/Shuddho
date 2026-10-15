@@ -1,3 +1,20 @@
+## CW-09 mandatory browser CI repair — 15 October 2026
+
+**Fresh default branch:** `main` `a305652a0be05b6d6a3768afbe6a14a029bd91c8`; PR #400 merged, no open PRs at task bootstrap. [Exact-main CI #38612375324](https://github.com/rumman52/Shuddho/actions/runs/38612375324): `test-and-build` success; `coworker` failed mandatory Agent browser gate (**2 failed, 33 passed**); `ci-merge-gate` failed. Earlier notes about #400 remaining draft or repository-green are superseded.
+
+**Contract:** [CW09_MAIN_BROWSER_CI_TEST_CONTRACT_REPAIR_2026-10-15.md](CW09_MAIN_BROWSER_CI_TEST_CONTRACT_REPAIR_2026-10-15.md). **Branch:** `codex/cw09-browser-ci-regression-repair-20261015` based on `a305652a`. Focused correction commit `fe989fffb46116d4c24d46d9b521b19c4f749a07` before documentation. Invalid DNS terminality now tested in a dedicated negative scenario, not followed by success on the same failed command; authorized clean browser route still tested. The malformed-Unicode fixture now uses a real lone surrogate `chr(0xD800)` rather than literal escape text. Test-only fix, no relaxed assertions or broker change.
+
+| Architecture/core part | Source status | Required remaining evidence |
+| --- | --- | --- |
+| Part 1: Architecture/contracts | Durable owner-bound, Temporal/outbox, permission boundaries exist in merged foundations; design not exhaustively qualified | Resolve and evidence residual state/trust/migration and operated boundaries |
+| Part 2: Core agent/tool execution | CW-05–CW-08 foundations integrated, CW-09 metadata-only browser and inert CW-10/11 contracts; this browser test correction on isolated branch | Required exact-head CI; private page content/digest, generated-code stored approval+sandbox, reviewed skill runtime selection |
+| Part 3: Context/coworker continuity | Owned context, message/activity and memory foundations present | Operated reconnect, erasure, purpose isolation, steering and resume |
+| Part 4: Verification/release | Main mandatory Agent browser red at bootstrap | Corrected PR exact-final-head required CI and review; staging/operated release evidence absent |
+
+**Evidence for this change:** implemented on branch; repository verified **pending exact-final-head tests**; staging verified **no**; production qualified **no**; activated **no**. **Next exact action:** inspect branch CI jobs and review comments, fix findings while retaining fail-closed tests. Then tackle next remaining CW-09 private-content worker receipt slice. No automatic merge, deployment, flag activation, provider action, or production claim.
+
+---
+
 # Coworker evolution progress
 
 ## CW-09 malformed Agent read receipt terminality — 14 October 2026
