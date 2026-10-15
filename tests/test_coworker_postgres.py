@@ -967,3 +967,100 @@ def test_postgres_agent_source_artifact_commits_with_verified_browser_receipt(tm
             service.storage.get(object_key, 8192)
     finally:
         service.repository.sessions.kw["bind"].dispose()
+
+
+def test_postgres_agent_sandbox_receipt_rechecks_exact_source_and_output_atomically(tmp_path):
+    """Final receipt commit must deny altered Agent code and forged observation."""
+    import asyncio
+
+    from sqlalchemy import select
+    from test_coworker import account
+    from test_sandbox_control_plane import enable_sandbox, completion_observation
+    from services.coworker.container import Container
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.models import ToolInvocation, ToolReceipt
+
+    url = os.environ["SHUDDHO_TEST_POSTGRES_URL"]
+    settings = Settings(
+        database_url=url, auth_issuer="https://identity.example.test/auth/v1",
+        environment="development", storage_backend="local",
+        local_storage_path=tmp_path / "sandbox-source-objects",
+    )
+    upgrade(url)
+    service = Container.create(settings)
+    try:
+        base = enable_sandbox(service)
+        enabled = replace(base, agent_sandbox_tool_enabled=True)
+        enabled.validate()
+        service.settings = enabled
+        service.repository.settings = enabled
+        service.agent.settings = enabled
+        service.sandbox.settings = enabled
+
+        identity = account(service, "cw10-source-binding-pg-" + str(uuid4()))
+        original = "print(101)"
+        run, _ = service.agent.create(
+            identity,
+            AgentRunCreate(goal="Run exactly this code.\\n\\n```python\\n" + original + "\\n```"),
+            "cw10-identity-pg-" + str(uuid4()),
+        )
+        ordinal = service.agent.append_v3_step(
+            identity, run["id"], "sandbox.execute_python", "Execute exact source",
+        )
+        runtime = AgentRuntime(service, None)
+        assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+        claim = service.sandbox.claim_executions("cw10-pg-sandbox-worker", limit=10)
+        resource = service.agent.step_resource(run["id"], ordinal)
+        prepared_id = service.sandbox.list_executions(identity, resource["resource_id"])[0]["id"]
+        own_claim = next(item for item in claim if item["id"] == prepared_id)
+        assert own_claim["source"] == original
+        completed = service.sandbox.complete_execution(
+            "cw10-pg-sandbox-worker", own_claim["id"], {
+                **completion_observation(), "stdout": "101\\n",
+            },
+        )
+        assert completed["state"] == "succeeded"
+        result = completed["result"]
+        bound_summary = {
+            "sandbox_state": "succeeded", "exit_code": 0,
+            "sandbox_destroyed": True,
+            "stdout_sha256": result["stdout_sha256"],
+            "stderr_sha256": result["stderr_sha256"],
+            "stdout_excerpt": "101\\n", "stderr_excerpt": "",
+            "output_trust": "untrusted", "artifact_id": None,
+            "artifact_sha256": None,
+        }
+
+        with service.repository.sessions.begin() as db:
+            invocation = db.scalar(select(ToolInvocation).where(
+                ToolInvocation.run_id == run["id"],
+                ToolInvocation.owner_id == identity,
+            ))
+            assert invocation is not None
+            invocation_id = invocation.id
+            invocation.arguments = {"source": "print(999)"}
+
+        with pytest.raises(CoworkerError) as altered:
+            service.agent.finish_invocation(
+                run["id"], ordinal, "sandbox_execution", own_claim["id"], bound_summary,
+            )
+        assert altered.value.code == "sandbox_source_binding_mismatch"
+
+        with service.repository.sessions.begin() as db:
+            invocation = db.get(ToolInvocation, invocation_id)
+            invocation.arguments = {"source": original}
+
+        with pytest.raises(CoworkerError) as forged:
+            service.agent.finish_invocation(
+                run["id"], ordinal, "sandbox_execution", own_claim["id"],
+                {**bound_summary, "stdout_excerpt": "FORGED"},
+            )
+        assert forged.value.code == "sandbox_receipt_unverified"
+        with service.repository.sessions() as db:
+            assert db.get(ToolReceipt, invocation_id) is None
+
+        assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+        assert service.agent.verified_observations(identity, run["id"])[0]["summary"]["stdout_excerpt"] == "101\\n"
+    finally:
+        service.repository.sessions.kw["bind"].dispose()
