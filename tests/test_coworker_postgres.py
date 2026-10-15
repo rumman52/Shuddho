@@ -1199,3 +1199,69 @@ def test_postgres_terminal_sandbox_session_blocks_prior_worker_result(tmp_path):
             assert parent.cleanup_state == "required"
     finally:
         service.repository.sessions.kw["bind"].dispose()
+
+def test_postgres_cw10_inert_code_proposal_replay_is_atomic(repository):
+    """Same review identity cannot produce two persisted code rows under racing workers."""
+    import hashlib
+    from datetime import timedelta
+    from uuid import UUID
+
+    from sqlalchemy import select
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.code_proposal_schemas import CodeComputeLimits, CodeProposalEnvelope
+    from services.coworker.models import AgentCodeProposal, utcnow
+
+    settings = replace(
+        repository.settings,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_runtime_v3_enabled=True,
+        artifact_services_enabled=True,
+        code_execution_enabled=True,
+        agent_sandbox_tool_enabled=True,
+        sandbox_worker_token="postgres-sandbox-worker-token-0123456789abcdef",
+        sandbox_preview_origin="https://sandbox-preview.example.test",
+        sandbox_preview_secret="postgres-sandbox-preview-secret-0123456789abcdef",
+    )
+    settings.validate()
+    agent = AgentRepository(repository.sessions, settings)
+    identity = owner(repository)
+    run, created = agent.create(
+        identity, AgentRunCreate(goal="Compute owned source data in a sandbox."),
+        "postgres-code-run-" + str(uuid4()),
+    )
+    assert created is True
+    source = "print('inert')\n"
+    created_at = utcnow()
+    proposal = CodeProposalEnvelope(
+        owner_id=identity, run_id=UUID(run["id"]),
+        source=source, source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        input_versions=(),
+        limits=CodeComputeLimits(
+            cpu_seconds=5, wall_seconds=15, memory_mb=128,
+            disk_mb=32, stdout_bytes=1024,
+        ),
+        created_at=created_at,
+        expires_at=created_at + timedelta(minutes=5),
+    )
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(
+            lambda _: agent.prepare_code_proposal(
+                identity, run["id"], proposal, "identical-postgres-code",
+            ),
+            range(4),
+        ))
+    assert len({item["id"] for item, _created in results}) == 1
+    assert sum(created for _item, created in results) == 1
+    assert all(item["approval_granted"] is False for item, _created in results)
+    assert all(item["code_executed"] is False for item, _created in results)
+
+    with repository.sessions() as db:
+        rows = db.scalars(select(AgentCodeProposal).where(
+            AgentCodeProposal.run_id == run["id"],
+            AgentCodeProposal.owner_id == identity,
+        )).all()
+        assert len(rows) == 1
+        assert rows[0].state == "unreviewed"
+        assert rows[0].snapshot["source"] == source
