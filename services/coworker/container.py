@@ -35,6 +35,7 @@ from .recipient_repository import RecipientRepository
 from .retention import RetentionService
 from .browser import BrowserRepository
 from .sandbox import SandboxRepository
+from .reviewed_code import ReviewedCodeRepository
 from .conversation_repository import ConversationRepository
 from .conversation_dispatch import ConversationDispatchService
 from .workspace_manifest import WorkspaceManifestService
@@ -68,11 +69,15 @@ class Container:
     retention: RetentionService | None = None
     browser: BrowserRepository | None = None
     sandbox: SandboxRepository | None = None
+    reviewed_code: ReviewedCodeRepository | None = None
     conversations: ConversationRepository | None = None
     conversation_dispatch: ConversationDispatchService | None = None
     workspace_manifest: WorkspaceManifestService | None = None
 
     def __post_init__(self):
+        if self.reviewed_code is None:
+            # Initialized after the regular sandbox instance below.
+            pass
         if self.conversations is None:
             self.conversations = ConversationRepository(self.repository.sessions, self.settings)
         if self.workspace_manifest is None:
