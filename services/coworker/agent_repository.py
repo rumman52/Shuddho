@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -223,6 +224,10 @@ class AgentRepository:
                     raise CoworkerError(
                         "idempotency_conflict", "This code proposal key belongs to different source.", 409,
                     )
+                if previous.state != "unreviewed":
+                    raise CoworkerError(
+                        "code_proposal_revoked", "This code proposal is no longer available.", 409,
+                    )
                 try:
                     saved = canonicalize_transport_code_proposal(
                         CodeProposalEnvelope.model_validate(previous.snapshot)
@@ -281,6 +286,11 @@ class AgentRepository:
             ))
             if row is None:
                 raise not_found()
+            if row.state in {"revoked", "expired"}:
+                raise CoworkerError(
+                    "code_proposal_revoked" if row.state == "revoked" else "code_proposal_expired",
+                    "This code proposal is no longer available.", 409,
+                )
             try:
                 proposal = canonicalize_transport_code_proposal(
                     CodeProposalEnvelope.model_validate(row.snapshot)
@@ -297,6 +307,51 @@ class AgentRepository:
                 raise CoworkerError("code_proposal_changed", "Stored proposal identity is invalid.", 409)
             self._verify_code_proposal(db, run, proposal, digest)
             return self._code_proposal_dto(row)
+
+    @staticmethod
+    def _code_proposal_erased_dto(row: AgentCodeProposal) -> dict:
+        """Only non-private tombstone metadata survives owner revocation."""
+        return {
+            "id": row.id,
+            "run_id": row.run_id,
+            "state": row.state,
+            "review_sha256": row.review_sha256,
+            "source_erased": True,
+            "approval_granted": False,
+            "code_executed": False,
+        }
+
+    def revoke_code_proposal(
+        self, owner: str, run_id: str, proposal_id: str, expected_review_sha256: str,
+    ) -> dict:
+        """Revoke and erase private code even when its owning run has stopped.
+
+        The owner reviews the exact immutable digest. Revocation cannot approve,
+        dispatch or authorize the worker. The tombstone retains its idempotency
+        key so a concurrent/retried create cannot resurrect the same proposal.
+        """
+        with self.sessions.begin() as db:
+            run = self._run(db, owner, run_id, lock=True)
+            row = db.scalar(select(AgentCodeProposal).where(
+                AgentCodeProposal.id == proposal_id,
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.owner_id == owner,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if not hmac.compare_digest(expected_review_sha256, row.review_sha256):
+                raise CoworkerError(
+                    "code_proposal_changed", "The proposal review identity changed.", 409,
+                )
+            if row.state not in {"unreviewed", "revoked", "expired"}:
+                raise CoworkerError(
+                    "code_proposal_changed", "This proposal has an unsupported review state.", 409,
+                )
+            if row.state != "revoked" or row.snapshot:
+                row.state = "revoked"
+                row.snapshot = {}
+                self._audit(db, owner, row.id, "agent.code_proposal.revoked")
+            return self._code_proposal_erased_dto(row)
 
     def _workspace(self, db, owner: str) -> str:
         value = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
