@@ -92,6 +92,19 @@ export function browserRequestAllowed({ kind, method, preparingForm, humanIntera
 
 // An autonomous read never imports cookies or persists an authenticated browsing context.
 // Human-supervised commands retain their existing encrypted continuity contract.
+// Hashes are computed over exactly the UTF-8 text returned to the broker,
+// including when a visible page must be truncated at a codepoint boundary.
+export function boundVisiblePageText(value, wasTruncated = false) {
+  if (typeof value !== "string" || typeof wasTruncated !== "boolean" || value.includes("\0")) {
+    throw new Error("browser_page_text_invalid");
+  }
+  const encoded = Buffer.from(value, "utf8");
+  if (encoded.length <= 8192) return { text: value, truncated: wasTruncated };
+  let end = 8192;
+  while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
+  return { text: encoded.subarray(0, end).toString("utf8"), truncated: true };
+}
+
 export function browserWorkerMayReuseStorageState(command) {
   return command?.policy?.agent_read_only !== true;
 }
