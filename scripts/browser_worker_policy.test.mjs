@@ -138,3 +138,23 @@ test("Agent browser reads cannot replay or persist browser cookies", () => {
     browserWorkerMayReuseStorageState(supervised) ? supervised.storage_state : null,
   ).storageState, existingState);
 });
+
+test("Agent read browser denies auto-submitted POST and PUT from the page", () => {
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    assert.equal(browserRequestAllowed({
+      kind: "navigate", method, agentReadOnly: true,
+      preparingForm: false, navigationRequest: false, mainFrame: false,
+    }), false);
+  }
+  for (const method of ["GET", "HEAD"]) {
+    assert.equal(browserRequestAllowed({
+      kind: "navigate", method, agentReadOnly: true,
+      preparingForm: false, navigationRequest: true, mainFrame: true,
+    }), true);
+  }
+  // Existing human-supervised navigation keeps its separate contract.
+  assert.equal(browserRequestAllowed({
+    kind: "navigate", method: "POST", agentReadOnly: false,
+    preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), true);
+});
