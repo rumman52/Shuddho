@@ -7,7 +7,7 @@ import json
 import time
 from datetime import timedelta
 from urllib.parse import quote
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from sqlalchemy import func, or_, select
 
@@ -17,7 +17,7 @@ from .interactive_artifacts import (
     validate_static_preview_html,
     verify_preview_token,
 )
-from .models import Account, Artifact, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
+from .models import Account, AgentRun, Artifact, AuditEvent, ReviewedCodeProposal, SandboxExecution, SandboxSession, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
@@ -221,6 +221,59 @@ class SandboxRepository:
             db.flush()
             return self._session_dto(row), True
 
+    def _review_claim_invalid(self, db, execution, session, spec, now) -> bool:
+        """Recheck approved exact code under the claimed execution row lock."""
+        review_id = spec.get("review_id")
+        if review_id is None:
+            return False  # Existing user-authored sandbox path remains separate.
+        if not self.settings.reviewed_code_execution_enabled:
+            return True
+        if not isinstance(review_id, str):
+            return True
+        review = db.scalar(select(ReviewedCodeProposal).where(
+            ReviewedCodeProposal.id == review_id,
+            ReviewedCodeProposal.owner_id == execution.owner_id,
+        ).with_for_update())
+        if (
+            review is None or review.state != "approved"
+            or review.execution_id != execution.id or review.session_id != session.id
+            or aware(review.expires_at) <= now
+            or spec.get("review_sha256") != review.review_sha256
+            or session.idempotency_key != f"review:{review_id}"
+        ):
+            return True
+        run = db.scalar(select(AgentRun).where(
+            AgentRun.id == review.agent_run_id,
+            AgentRun.owner_id == execution.owner_id,
+        ))
+        if run is None or run.cancel_requested or run.state in {"completed", "failed", "cancelled", "expired", "blocked"} or aware(run.deadline_at) <= now:
+            return True
+        try:
+            from .code_proposal_schemas import CodeComputeLimits, CodeProposalEnvelope, verify_reviewed_code_identity
+            proposal = CodeProposalEnvelope.model_validate(review.envelope)
+            verify_reviewed_code_identity(
+                proposal, review.review_sha256,
+                owner_id=execution.owner_id,
+                run_id=UUID(review.agent_run_id),
+                input_versions=(),
+                maximum_limits=CodeComputeLimits(
+                    cpu_seconds=self.settings.sandbox_cpu_seconds,
+                    wall_seconds=self.settings.sandbox_wall_seconds,
+                    memory_mb=self.settings.sandbox_memory_mb,
+                    disk_mb=self.settings.sandbox_disk_mb,
+                    stdout_bytes=self.settings.sandbox_max_output_bytes,
+                ),
+                now=now,
+            )
+            return bool(
+                proposal.input_versions or proposal.destinations
+                or proposal.egress_profile != "none"
+                or proposal.source != spec.get("source")
+                or proposal.source_sha256 != execution.source_sha256
+            )
+        except (CoworkerError, ValueError, TypeError):
+            return True
+
     def claim_executions(self, worker_id: str, limit: int = 1) -> list[dict]:
         self._require_enabled()
         if not worker_id or len(worker_id) > 64:
@@ -317,6 +370,7 @@ class SandboxRepository:
                         "purpose": session.purpose,
                         "runtime": session.runtime,
                     })
+                    or self._review_claim_invalid(db, execution, session, spec, now)
                 ):
                     execution.state = "failed"
                     execution.error_code = "sandbox_source_integrity_failed"
