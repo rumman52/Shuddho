@@ -16,6 +16,11 @@ export async function createPinnedProxy(state, { validateHost, dial = net.connec
   });
 
   server.on("connect", async (req, clientSocket, head) => {
+    // Register pending CONNECT sockets before the awaited DNS/broker check.
+    // pause()/destroy() must terminate even sockets which have not yet
+    // authorized an upstream connection; otherwise they escape cleanup.
+    sockets.add(clientSocket);
+    clientSocket.once("close", () => sockets.delete(clientSocket));
     let target;
     try {
       const claim = {
@@ -37,7 +42,6 @@ export async function createPinnedProxy(state, { validateHost, dial = net.connec
       const pinnedIp = checked.resolved_ips[0];
       const upstream = dial({ host: pinnedIp, port: 443 });
       sockets.add(upstream);
-      sockets.add(clientSocket);
       upstream.setTimeout(navigationTimeoutMs);
 
       upstream.once("connect", () => {
@@ -55,7 +59,6 @@ export async function createPinnedProxy(state, { validateHost, dial = net.connec
       });
       upstream.once("timeout", () => upstream.destroy(new Error("upstream_timeout")));
       upstream.once("close", () => sockets.delete(upstream));
-      clientSocket.once("close", () => sockets.delete(clientSocket));
       upstream.once("error", () => clientSocket.destroy());
       clientSocket.once("error", () => upstream.destroy());
     } catch {
