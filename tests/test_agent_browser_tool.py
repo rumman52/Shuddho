@@ -187,6 +187,37 @@ def test_agent_page_text_envelope_preserves_exact_utf8_whitespace():
     assert envelope.page_text == original
 
 
+
+def test_agent_empty_page_remains_metadata_only(container):
+    """An empty body cannot turn a successful navigation into grounded research."""
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-empty-page")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"),
+        "cw09-empty-page-run",
+    )
+    ordinal = container.agent.append_v3_step(
+        owner, run["id"], "browser.read", "Read the selected page",
+    )
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    session_id = container.agent.step_resource(run["id"], ordinal)["resource_id"]
+    command = container.browser.claim_commands("empty-page-worker")[0]
+    container.browser.complete_command("empty-page-worker", command["id"], {
+        "final_url": "https://example.com/article",
+        "title": "Empty page",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "page_text": "   ",
+        "page_text_truncated": False,
+    })
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    summary = container.agent.verified_observations(owner, run["id"])[0]["summary"]
+    assert summary["observation_scope"] == "metadata_only"
+    assert "untrusted_page_text_excerpt" not in summary
+    assert container.browser.get(owner, session_id)["state"] == "completed"
+
+
+
 def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container):
     """Real worker-shaped text reaches Runtime v3, never public broker result."""
     enabled_agent_browser(container)
