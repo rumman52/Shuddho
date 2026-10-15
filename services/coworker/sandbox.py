@@ -319,7 +319,11 @@ class SandboxRepository:
                     execution.lease_until = None
                     execution.claimed_by = None
                     session.state = "failed"
-                    session.cleanup_state = "not_required"
+                    # A previous worker can still be tearing down after its
+                    # lease expires; never claim cleanup is unnecessary then.
+                    session.cleanup_state = (
+                        "required" if execution.attempts > 1 else "not_required"
+                    )
                     session.updated_at = now
                     db.add(AuditEvent(
                         id=str(uuid4()),
