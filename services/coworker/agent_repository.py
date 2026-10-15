@@ -235,6 +235,18 @@ class AgentRepository:
                         "code_proposal_changed", "Stored proposal identity is invalid.", 409,
                     )
                 return self._code_proposal_dto(previous), False
+            # Cap retained private code snapshots per bounded run. The run
+            # row is locked above, so concurrent submissions cannot evade it.
+            count = db.scalar(select(func.count()).select_from(AgentCodeProposal).where(
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.owner_id == owner,
+            )) or 0
+            if count >= 8:
+                raise CoworkerError(
+                    "code_proposal_limit",
+                    "This Agent run already has the maximum review proposals.",
+                    429,
+                )
             row = AgentCodeProposal(
                 id=str(uuid4()),
                 run_id=run.id,
