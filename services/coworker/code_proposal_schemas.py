@@ -245,3 +245,18 @@ class CodeProposalRevocation(ImmutableReviewModel):
     review_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+
+
+class CodeProposalHumanDecision(ImmutableReviewModel):
+    """An authenticated owner's exact review decision, not sandbox authority."""
+    review_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decision: Literal["approve", "reject"]
+    expires_at: datetime
+
+    @model_validator(mode="after")
+    def check_time(self):
+        if self.expires_at.tzinfo is None:
+            raise ValueError("A timezone-aware human review expiry is required")
+        return self
+
+
