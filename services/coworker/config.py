@@ -54,6 +54,7 @@ class Settings:
     agent_browser_read_enabled: bool = False
     code_execution_enabled: bool = False
     agent_sandbox_tool_enabled: bool = False
+    reviewed_code_execution_enabled: bool = False
     action_attachments_enabled: bool = False
     action_reminders_enabled: bool = False
     action_recipients_enabled: bool = False
@@ -226,6 +227,7 @@ class Settings:
             agent_browser_read_enabled=os.getenv("SHUDDHO_AGENT_BROWSER_READ_ENABLED", "false").lower() == "true",
             code_execution_enabled=os.getenv("SHUDDHO_CODE_EXECUTION_ENABLED", "false").lower() == "true",
             agent_sandbox_tool_enabled=os.getenv("SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED", "false").lower() == "true",
+            reviewed_code_execution_enabled=os.getenv("SHUDDHO_REVIEWED_CODE_EXECUTION_ENABLED", "false").lower() == "true",
             action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
             action_reminders_enabled=os.getenv("SHUDDHO_ACTION_REMINDERS_ENABLED", "false").lower() == "true",
             action_recipients_enabled=os.getenv("SHUDDHO_ACTION_RECIPIENTS_ENABLED", "false").lower() == "true",
@@ -506,6 +508,8 @@ class Settings:
                 raise ValueError("SHUDDHO_SANDBOX_PREVIEW_ORIGIN must be a clean isolated HTTPS origin")
             if len(self.sandbox_preview_secret) < 32:
                 raise ValueError("SHUDDHO_SANDBOX_PREVIEW_SECRET must contain at least 32 characters when sandbox execution is enabled")
+        if self.reviewed_code_execution_enabled and not self.code_execution_enabled:
+            raise ValueError("Reviewed code execution requires SHUDDHO_CODE_EXECUTION_ENABLED=true")
         if self.agent_sandbox_tool_enabled:
             if not self.code_execution_enabled:
                 raise ValueError("Agent sandbox planner tool requires SHUDDHO_CODE_EXECUTION_ENABLED=true")
