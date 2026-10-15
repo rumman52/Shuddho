@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 
@@ -25,7 +26,7 @@ from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.agent_tools import available_tools, tool
 from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserWorkerObservation
 from services.coworker.errors import CoworkerError
-from services.coworker.models import BrowserCommand, BrowserSession
+from services.coworker.models import BrowserCommand, BrowserSession, utcnow
 
 
 def enabled_agent_browser(container):
@@ -179,7 +180,7 @@ def test_browser_v3_dispatch_replay_worker_verification_and_untrusted_observatio
 
 
 def test_agent_page_text_envelope_preserves_exact_utf8_whitespace():
-    original = "  বাংলা গবেষণা.  \\n"
+    original = "  বাংলা গবেষণা.  "
     envelope = BrowserWorkerObservation(
         worker_id="capture-worker", final_url="https://example.com/article",
         page_text=original,
@@ -283,6 +284,34 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container)
         after = db.get(BrowserCommand, command["id"])
         assert "agent_page_text_sealed" not in after.result
         assert after.result["agent_page_text_sha256"] == text_hash
+
+
+
+def test_unconsumed_expired_capture_is_scrubbed_on_read(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-expired-text")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        "agent:expired-capture:1", agent_origin=True,
+    )
+    command = container.browser.prepare_agent_read(owner, session["id"], "https://example.com/")
+    assert container.browser.claim_commands("expiry-capture-worker")[0]["id"] == command["id"]
+    container.browser.complete_command("expiry-capture-worker", command["id"], {
+        "final_url": "https://example.com/", "title": "Expired source",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "page_text": "No stale replay after expiry",
+    })
+    with container.repository.sessions.begin() as db:
+        saved = db.get(BrowserSession, session["id"])
+        saved.expires_at = utcnow() - timedelta(seconds=1)
+    with pytest.raises(CoworkerError) as stale:
+        container.browser.read_agent_capture(owner, session["id"], command["id"])
+    assert stale.value.code == "browser_session_closed"
+    with container.repository.sessions() as db:
+        saved_command = db.get(BrowserCommand, command["id"])
+        assert "agent_page_text_sealed" not in saved_command.result
+        assert db.get(BrowserSession, session["id"]).state == "expired"
+
 
 
 def test_agent_text_cancel_removes_sealed_body_and_blocks_late_use(container):
