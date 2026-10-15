@@ -290,6 +290,7 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container,
     assert stored["sha256"] == text_hash
     assert stored["byte_size"] == len(page_text.encode("utf-8"))
     assert container.storage.get(object_key, 8192).decode("utf-8") == page_text
+    assert object_key in container.retention.referenced_object_keys()
     client, headers = signed_client
     owned_http = client.get(
         f"/api/v1/artifacts/{artifact_id}/content",
