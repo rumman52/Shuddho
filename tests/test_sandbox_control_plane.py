@@ -694,7 +694,7 @@ def test_sandbox_worker_claim_fails_closed_on_changed_persisted_source(
         assert execution.claimed_by is None
         assert execution.lease_until is None
         assert owned_session.state == "failed"
-        assert owned_session.cleanup_state == "not_required"
+        assert owned_session.cleanup_state == ("required" if recovery_claim else "not_required")
     if recovery_claim:
         with pytest.raises(CoworkerError) as prior:
             container.sandbox.worker_control("sandbox-before-tamper", prepared["id"])
