@@ -293,16 +293,50 @@ class SandboxRepository:
                 session.state = "running"
                 session.cleanup_state = "pending"
                 session.updated_at = now
-                source = (execution.request_spec or {}).get("source")
-                if not isinstance(source, str):
+                # Authority is consumed when the worker claims an execution,
+                # not when a request was first prepared. Never hand the
+                # sandbox altered stored source even when its length matches.
+                spec = execution.request_spec if isinstance(execution.request_spec, dict) else {}
+                source = spec.get("source")
+                try:
+                    encoded = source.encode("utf-8") if isinstance(source, str) else None
+                except UnicodeError:
+                    encoded = None
+                if (
+                    not isinstance(source, str)
+                    or not source
+                    or encoded is None
+                    or len(encoded) > self.settings.sandbox_max_source_bytes
+                    or execution.source_bytes != len(encoded)
+                    or execution.source_sha256 != hashlib.sha256(encoded).hexdigest()
+                    or spec.get("source_trust") != "untrusted"
+                    or spec.get("policy_version") != SANDBOX_POLICY_VERSION
+                    or not isinstance(session.execution_policy, dict)
+                    or session.execution_policy != self._policy()
+                    or session.fingerprint != _digest({
+                        "purpose": session.purpose,
+                        "runtime": session.runtime,
+                    })
+                ):
                     execution.state = "failed"
-                    execution.error_code = "sandbox_source_missing"
+                    execution.error_code = "sandbox_source_integrity_failed"
+                    execution.request_spec = {"source_scrubbed": True}
                     execution.finished_at = now
                     execution.lease_until = None
                     execution.claimed_by = None
-                    session.state = "prepared"
-                    session.cleanup_state = "not_required"
+                    session.state = "failed"
+                    # A previous worker can still be tearing down after its
+                    # lease expires; never claim cleanup is unnecessary then.
+                    session.cleanup_state = (
+                        "required" if execution.attempts > 1 else "not_required"
+                    )
                     session.updated_at = now
+                    db.add(AuditEvent(
+                        id=str(uuid4()),
+                        owner_id=execution.owner_id,
+                        resource_id=session.id,
+                        action="sandbox_execution.source_integrity_rejected",
+                    ))
                     continue
                 claimed.append({
                     "id": execution.id,

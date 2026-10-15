@@ -1080,3 +1080,55 @@ def test_postgres_agent_sandbox_receipt_rechecks_exact_source_and_output_atomica
         assert service.agent.verified_observations(identity, run["id"])[0]["summary"]["stdout_excerpt"] == "101\n"
     finally:
         service.repository.sessions.kw["bind"].dispose()
+
+
+def test_postgres_sandbox_worker_claim_rejects_changed_source_before_execution(tmp_path):
+    """Real PostgreSQL claim refuses altered queued code even at equal length."""
+    from test_coworker import account
+    from test_sandbox_control_plane import enable_sandbox, create_session
+    from services.coworker.container import Container
+    from services.coworker.models import SandboxExecution, SandboxSession
+    from services.coworker.sandbox_schemas import SandboxExecutionCreate
+
+    url = os.environ["SHUDDHO_TEST_POSTGRES_URL"]
+    settings = Settings(
+        database_url=url,
+        auth_issuer="https://identity.example.test/auth/v1",
+        environment="development",
+        storage_backend="local",
+        local_storage_path=tmp_path / "claim-integrity-objects",
+    )
+    upgrade(url)
+    service = Container.create(settings)
+    try:
+        enable_sandbox(service)
+        identity = account(service, "cw10-claim-integrity-pg-" + str(uuid4()))
+        session = create_session(service, identity, "claim-integrity-" + str(uuid4()))
+        original = "print(101)"
+        execution = service.sandbox.prepare_execution(
+            identity, session["id"], SandboxExecutionCreate(source=original),
+        )
+        with service.repository.sessions.begin() as db:
+            row = db.get(SandboxExecution, execution["id"])
+            spec = dict(row.request_spec)
+            spec["source"] = "print(999)"
+            assert len(spec["source"].encode("utf-8")) == row.source_bytes
+            row.request_spec = spec
+
+        claims = service.sandbox.claim_executions("cw10-claim-integrity-worker", limit=10)
+        assert all(item["id"] != execution["id"] for item in claims)
+        with service.repository.sessions() as db:
+            row = db.get(SandboxExecution, execution["id"])
+            assert row.state == "failed"
+            assert row.error_code == "sandbox_source_integrity_failed"
+            assert row.request_spec == {"source_scrubbed": True}
+            assert row.claimed_by is None
+            assert row.lease_until is None
+            owned = db.get(SandboxSession, session["id"])
+            assert owned.state == "failed"
+        assert all(
+            item["id"] != execution["id"]
+            for item in service.sandbox.claim_executions("cw10-claim-integrity-retry", limit=10)
+        )
+    finally:
+        service.repository.sessions.kw["bind"].dispose()
