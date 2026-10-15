@@ -1831,6 +1831,15 @@ class BrowserRepository:
                     checked.get("storage_state"),
                     list(session.allowed_origins or []),
                 )
+                if (
+                    (command.payload or {}).get("agent_read_only") is True
+                    and checked["storage_state"] is not None
+                ):
+                    raise CoworkerError(
+                        "browser_agent_storage_state_forbidden",
+                        "An Agent browser read cannot retain authenticated browser state.",
+                        409,
+                    )
                 if (session.takeover_required or session.state == "takeover") and command.kind not in TAKEOVER_COMMAND_KINDS:
                     if command.state == "running":
                         command.state = "cancelled"
