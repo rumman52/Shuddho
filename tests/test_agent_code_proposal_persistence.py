@@ -741,3 +741,51 @@ def test_account_erasure_removes_exact_human_review_before_parent_proposal(
         assert db.get(AgentCodeProposal, proposal_id) is None
         assert db.get(AgentRun, run_id) is None
         assert db.get(Account, owner) is None
+
+def test_human_approval_rechecks_admitted_conversation_source_and_denies_drift(
+    container, signed_client,
+):
+    from services.coworker.models import DocumentVersion
+
+    proposal, _, _, version_id = conversation_proposal(container)
+    client, headers = signed_client
+    run_id = str(proposal.run_id)
+    saved = prepare(client, headers, run_id, proposal)
+    assert saved.status_code == 201, saved.text
+    proposal_id = saved.json()["id"]
+    with container.repository.sessions.begin() as db:
+        db.get(DocumentVersion, version_id).sha256 = "e" * 64
+
+    denied = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+    )
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["error"]["code"] == "context_sources_changed"
+    assert proposal.source not in denied.text
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id) is None
+        assert db.get(AgentCodeProposal, proposal_id).state == "unreviewed"
+
+
+def test_human_approval_denies_tampered_persisted_source_and_does_not_store_decision(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201
+    proposal_id = created.json()["id"]
+    with container.repository.sessions.begin() as db:
+        row = db.get(AgentCodeProposal, proposal_id)
+        snapshot = dict(row.snapshot)
+        snapshot["source"] = "print('substituted')"
+        row.snapshot = snapshot
+
+    denied = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+    )
+    assert denied.status_code == 409
+    assert denied.json()["error"]["code"] == "code_proposal_invalid"
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id) is None
