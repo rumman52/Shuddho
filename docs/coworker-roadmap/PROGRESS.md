@@ -1,3 +1,15 @@
+## CW-10 C-04 inert owned code-proposal storage and inspection — 15 October 2026
+
+**Base and separation:** `main` `ce76803eb20e8383bb507f02e2cad17d9ff77d3f` (merged [PR #416](https://github.com/rumman52/Shuddho/pull/416), green exact-head [CI #38770425863](https://github.com/rumman52/Shuddho/actions/runs/38770425863)). Sandbox worker heartbeat mainline repair is separately in draft [PR #418](https://github.com/rumman52/Shuddho/pull/418). This review branch `codex/cw10-inert-owned-proposal-persistence-20261015` is independent and based on that same main. Do not assume either branch is merged.
+
+**Implemented slice:** New additive migration `0056` and `AgentCodeProposal` table persist an exact inert `CodeProposalEnvelope` for an authenticated owner and runtime-v3 run with scope-, hash-, expiry- and limit-bound validation and per-run idempotency. `POST/GET /agent-runs/{run_id}/code-proposals` supports inspectable unreviewed source with owner isolation and fail-closed source-deletion/drift checks. No human approval, sandbox execution, tool permission, provider or external action created. Feature remains default off. Mandatory no-skip tests added for ownership, idempotency, forged storage, source-scope change, expiry and closed run. [CW-10 contract](CW10_OWNED_INERT_CODE_PROPOSALS_2026-10-15.md).
+
+**Evidence:** Source changes committed to review branch; **final-head CI pending** and no independent security review, staging proof or activation. Run `test-and-build`, `coworker` (including `tests/test_agent_code_proposal_persistence.py` and existing proposal verification) and `ci-merge-gate` at exact PR head. Old green SHA does not qualify this new migration/API.
+
+**Next:** Add genuine coordinating-Agent model-generated proposal input, owner human decision with expiry/revocation and atomic worker-claim enforcement. Until that complete lifecycle and operated security tests exist, C-04 remains **INCOMPLETE**. CW-11 skills, CW-09 browser operated network security and P/V coworker scenarios remain independently unverified.
+
+---
+
 ## CW-10 source-integrity recovery worker-control CI contract repair — 15 October 2026
 
 **Refreshed main:** `baa484ef861e41daf7653a29f6aaa07720932055`, merged [PR #415](https://github.com/rumman52/Shuddho/pull/415); [main CI #38760717140](https://github.com/rumman52/Shuddho/actions/runs/38760717140) `test-and-build` successful, `coworker` failed eight stale-claim assertions (1,375 other tests passed in that invocation), `ci-merge-gate` failed. No open PRs at bootstrap. The integrity denial, terminal failure, source scrub and lease revocation assertions all passed; the outdated expectation that `worker_control` **raises** disagreed with the newer explicit `stop/session_closed` terminal protocol.
