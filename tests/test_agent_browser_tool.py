@@ -317,6 +317,15 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container,
         assert "agent_page_text_sealed" not in after.result
         assert after.result["agent_page_text_sha256"] == text_hash
 
+    # Terminal account erasure must remove source metadata and private bytes,
+    # rather than leaving a permanent unaccounted browser-source object.
+    container.agent.complete_run(run["id"])
+    erased = container.retention.erase_account(owner)
+    assert erased["database_erased"] is True
+    assert erased["objects_failed"] == []
+    with pytest.raises(FileNotFoundError):
+        container.storage.get(object_key, 8192)
+
 
 
 
