@@ -1,3 +1,13 @@
+## CW-10 sandbox worker heartbeat control fail-closed — 15 October 2026
+
+**Confirmed source boundary:** `scripts/sandbox_worker.py::execute_claim` previously swallowed control heartbeat `WorkerError` except lost-claim 409, and let missing/unknown `action` proceed as if approved. A cancelled/revoked execution could therefore continue during a control API outage for part or all of its remaining sandbox wall budget; operated exploitation is unverified.
+
+**Stacked work branch:** `codex/cw10-sandbox-heartbeat-fail-closed-20261015` based on draft [PR #416](https://github.com/rumman52/Shuddho/pull/416) head `e6902c6efe784dd1fbd93ad088357645eb3048b7`. Terminate the sandbox subprocess whenever a heartbeat fails or its response is not explicit `continue`. New fake-process tests cover timeout, HTTP error, revoked worker token, empty and unexpected action and explicit stop, asserting process-group termination path and no completion call. [CW-10 task contract](CW10_SANDBOX_HEARTBEAT_FAIL_CLOSED_2026-10-15.md). **Code and tests committed, exact branch-head CI and independent review pending.** No feature activation, runtime privileges or policy changes.
+
+**Next:** Verify PR #416's original recovery-claim fix; then verify this stacked branch's exact-head mandatory `test-and-build`, `coworker`, `ci-merge-gate` and independent security review. Operated bubblewrap/process interruption, generated-code approval lifecycle C-04 and other CW-09/CW-11/P/V acceptance gates remain incomplete.
+
+---
+
 ## CW-10 source-integrity recovery worker-control CI contract repair — 15 October 2026
 
 **Refreshed main:** `baa484ef861e41daf7653a29f6aaa07720932055`, merged [PR #415](https://github.com/rumman52/Shuddho/pull/415); [main CI #38760717140](https://github.com/rumman52/Shuddho/actions/runs/38760717140) `test-and-build` successful, `coworker` failed eight stale-claim assertions (1,375 other tests passed in that invocation), `ci-merge-gate` failed. No open PRs at bootstrap. The integrity denial, terminal failure, source scrub and lease revocation assertions all passed; the outdated expectation that `worker_control` **raises** disagreed with the newer explicit `stop/session_closed` terminal protocol.
