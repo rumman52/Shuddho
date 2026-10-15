@@ -221,7 +221,7 @@ def test_agent_empty_page_remains_metadata_only(container):
 
 
 
-def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container):
+def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container, signed_client):
     """Real worker-shaped text reaches Runtime v3, never public broker result."""
     enabled_agent_browser(container)
     owner = account(container, "cw09-owned-capture")
@@ -290,6 +290,18 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container)
     assert stored["sha256"] == text_hash
     assert stored["byte_size"] == len(page_text.encode("utf-8"))
     assert container.storage.get(object_key, 8192).decode("utf-8") == page_text
+    client, headers = signed_client
+    owned_http = client.get(
+        f"/api/v1/artifacts/{artifact_id}/content",
+        headers=headers("cw09-owned-capture"),
+    )
+    assert owned_http.status_code == 200
+    assert owned_http.content == page_text.encode("utf-8")
+    cross_owner_http = client.get(
+        f"/api/v1/artifacts/{artifact_id}/content",
+        headers=headers("cw09-other-capture"),
+    )
+    assert cross_owner_http.status_code == 404
     with pytest.raises(CoworkerError) as other_source:
         container.repository.artifact(other, artifact_id)
     assert other_source.value.status_code == 404
