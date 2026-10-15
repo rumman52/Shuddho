@@ -1,10 +1,9 @@
-import http from "node:http";
-import net from "node:net";
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { createPinnedProxy } from "./browser_pinned_proxy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
 const WORKER_TOKEN = process.env.SHUDDHO_BROWSER_WORKER_TOKEN || "";
@@ -54,91 +53,6 @@ async function validateHost(commandId, host) {
     url: `https://${host}/`,
     resolved_ips: addresses,
   });
-}
-
-async function createPinnedProxy(state) {
-  const sockets = new Set();
-  const server = http.createServer((_req, res) => {
-    res.writeHead(403, { "Content-Type": "text/plain", "Connection": "close" });
-    res.end("HTTPS CONNECT only");
-  });
-
-  server.on("connect", async (req, clientSocket, head) => {
-    let target;
-    try {
-      const claim = {
-        commandId: state.commandId,
-        epoch: state.proxyClaimEpoch,
-        evidence: state.evidence,
-      };
-      if (!browserProxyClaimValid(state, claim)) throw new Error("browser_command_not_active");
-      target = parseConnectAuthority(req.url || "");
-      // Never let an old async DNS result authorize a CONNECT after a
-      // cancel/pause/claim replacement. Bind the request to the captured ID.
-      const checked = await validateHost(claim.commandId, target.host);
-      if (!browserProxyClaimValid(state, claim)) throw new Error("browser_claim_expired");
-      state.evidence[checked.hostname] = checked.resolved_ips;
-      const pinnedIp = checked.resolved_ips[0];
-      const upstream = net.connect({ host: pinnedIp, port: 443 });
-      sockets.add(upstream);
-      sockets.add(clientSocket);
-      upstream.setTimeout(NAVIGATION_TIMEOUT_MS);
-
-      upstream.once("connect", () => {
-        // Revocation can also occur while the TCP connection is pending.
-        // Never acknowledge the CONNECT or attach pipes for stale claims.
-        if (!browserProxyClaimValid(state, claim)) {
-          upstream.destroy();
-          clientSocket.destroy();
-          return;
-        }
-        clientSocket.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: shuddho-browser-worker\r\n\r\n");
-        if (head?.length) upstream.write(head);
-        clientSocket.pipe(upstream);
-        upstream.pipe(clientSocket);
-      });
-      upstream.once("timeout", () => upstream.destroy(new Error("upstream_timeout")));
-      upstream.once("close", () => sockets.delete(upstream));
-      clientSocket.once("close", () => sockets.delete(clientSocket));
-      upstream.once("error", () => clientSocket.destroy());
-      clientSocket.once("error", () => upstream.destroy());
-    } catch {
-      clientSocket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
-      clientSocket.destroy();
-    }
-  });
-
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("proxy_bind_failed");
-  function closeSockets() {
-    for (const socket of sockets) socket.destroy();
-    sockets.clear();
-  }
-  return {
-    server,
-    url: `http://127.0.0.1:${address.port}`,
-    setCommand(commandId, evidence) {
-      state.proxyClaimEpoch += 1;
-      state.commandId = commandId;
-      state.evidence = evidence;
-    },
-    pause() {
-      state.proxyClaimEpoch += 1;
-      state.commandId = null;
-      state.evidence = null;
-      closeSockets();
-    },
-    destroy() {
-      state.proxyClaimEpoch += 1;
-      state.commandId = null;
-      state.evidence = null;
-      closeSockets();
-    },
-  };
 }
 
 async function monitorControl(commandId, onStop) {
@@ -305,7 +219,7 @@ async function createRuntime(command, evidence) {
     surfaceViolation: null,
     navigationUrls: [],
   };
-  const proxy = await createPinnedProxy(state);
+  const proxy = await createPinnedProxy(state, { validateHost, navigationTimeoutMs: NAVIGATION_TIMEOUT_MS });
   let browser;
   try {
     browser = await chromium.launch({
