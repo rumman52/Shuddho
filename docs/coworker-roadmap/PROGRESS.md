@@ -1,3 +1,13 @@
+## CW-10 source-integrity recovery worker-control CI contract repair — 15 October 2026
+
+**Refreshed main:** `baa484ef861e41daf7653a29f6aaa07720932055`, merged [PR #415](https://github.com/rumman52/Shuddho/pull/415); [main CI #38760717140](https://github.com/rumman52/Shuddho/actions/runs/38760717140) `test-and-build` successful, `coworker` failed eight stale-claim assertions (1,375 other tests passed in that invocation), `ci-merge-gate` failed. No open PRs at bootstrap. The integrity denial, terminal failure, source scrub and lease revocation assertions all passed; the outdated expectation that `worker_control` **raises** disagreed with the newer explicit `stop/session_closed` terminal protocol.
+
+**Isolated review branch:** `codex/cw10-recovery-claim-stop-ci-repair-20261015`. Test-only repair keeps all 16 initial/recovery tamper cases, asserts worker receives `stop/session_closed`, then submits a stale success receipt to the real completion boundary and verifies typed rejection with no change to durable integrity failure, session terminal state or source/lease cleanup. Production code unchanged. [Task contract](CW10_RECOVERY_CLAIM_STOP_CONTRACT_2026-10-15.md). **Exact branch-head mandatory CI pending; no independent security review, operated sandbox/network proof, staging or activation.**
+
+**Next:** Obtain exact-head `test-and-build`, `coworker` and `ci-merge-gate` on the draft PR; inspect no-skip sandbox/PG/Temporal/browser/transaction checks and review. Do not merge or activate automatically. Continue missing immutable model-generated proposal, human owner approval with expiry/revocation and atomic sandbox claim gate (C-04), followed by reviewed skill publication (CW-11) and operated coworker scenarios.
+
+---
+
 ## CW-10 terminal-session worker authority guard — 15 October 2026
 
 **Latest repository baseline:** `main` `4015dc9fc30525b2344f522d5e0b195ed5d35fd3`, merged [PR #414](https://github.com/rumman52/Shuddho/pull/414) at 2026-10-15 14:36 UTC. PR-head `test-and-build` passed, but mandatory `coworker` and new main CI were still in progress at initial refresh. No submitted independent PR #414 review was found. The merge does not establish full operated safety.
