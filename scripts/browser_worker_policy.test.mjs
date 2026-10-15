@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { browserContextOptions, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -119,4 +119,42 @@ test("hostile popup and download surfaces fail closed with stable error codes", 
   assert.equal(browserSurfaceViolation("popup"), "browser_popup_blocked");
   assert.equal(browserSurfaceViolation("download"), "browser_download_blocked");
   assert.equal(browserSurfaceViolation("dialog"), null);
+});
+
+test("Agent browser reads cannot replay or persist browser cookies", () => {
+  const existingState = {
+    cookies: [{ name: "session", value: "private-cookie", domain: "example.com", path: "/" }],
+    origins: [],
+  };
+  const agent = { policy: { agent_read_only: true }, storage_state: existingState };
+  const supervised = { policy: { agent_read_only: false }, storage_state: existingState };
+  assert.equal(browserWorkerMayReuseStorageState(agent), false);
+  assert.equal(browserWorkerMayReuseStorageState(supervised), true);
+  assert.equal(browserWorkerMayReuseStorageState({ storage_state: existingState }), true);
+  assert.equal(browserContextOptions(
+    browserWorkerMayReuseStorageState(agent) ? agent.storage_state : null,
+  ).storageState, undefined);
+  assert.deepEqual(browserContextOptions(
+    browserWorkerMayReuseStorageState(supervised) ? supervised.storage_state : null,
+  ).storageState, existingState);
+});
+
+test("Agent read browser denies auto-submitted POST and PUT from the page", () => {
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    assert.equal(browserRequestAllowed({
+      kind: "navigate", method, agentReadOnly: true,
+      preparingForm: false, navigationRequest: false, mainFrame: false,
+    }), false);
+  }
+  for (const method of ["GET", "HEAD"]) {
+    assert.equal(browserRequestAllowed({
+      kind: "navigate", method, agentReadOnly: true,
+      preparingForm: false, navigationRequest: true, mainFrame: true,
+    }), true);
+  }
+  // Existing human-supervised navigation keeps its separate contract.
+  assert.equal(browserRequestAllowed({
+    kind: "navigate", method: "POST", agentReadOnly: false,
+    preparingForm: false, navigationRequest: false, mainFrame: false,
+  }), true);
 });

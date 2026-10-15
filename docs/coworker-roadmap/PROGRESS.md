@@ -1,3 +1,16 @@
+## CW-09 Agent browser credential and HTTP mutation isolation — 15 October 2026
+
+**Current main at bootstrap:** `45906f87cf2eba9f6abb5afc654f834166fa5820`; [PR #402](https://github.com/rumman52/Shuddho/pull/402) **merged**. Its exact-PR-head [CI #38685207628](https://github.com/rumman52/Shuddho/actions/runs/38685207628) `test-and-build` passed and mandatory `coworker` was **in progress** at initial review; merged-main [push CI #38685347836](https://github.com/rumman52/Shuddho/actions/runs/38685347836) also in progress. Do not report these green until refreshed. No other open PRs at bootstrap.
+
+**Next security slice:** The browser worker previously replayed and persisted storage state for Agent reads and did not block page-originated POST/PUT/PATCH/DELETE for the Agent `navigate` command. Isolated implementation branch `codex/cw09-agent-read-cookie-isolation-20261015`, based on main SHA above. Added broker and worker defense-in-depth plus JS policy and real PostgreSQL-backed broker regression coverage. Human-supervised state continuity and takeover policy unchanged. [Contract](CW09_AGENT_BROWSER_CREDENTIAL_AND_MUTATION_ISOLATION_2026-10-15.md).
+
+**Latest focused regression commit:** `90b38cdeef39f7faba5a1196daf4cbd75c3b102e` tests that even deliberately injected legacy encrypted session state never reaches an Agent worker claim. **PR:** [#403](https://github.com/rumman52/Shuddho/pull/403) (draft; not merged).
+\n**Evidence (this new slice):** Source/test implemented and committed on branch; **required exact-final-head CI pending**, independent reviewer pending; **staging no, production qualification no, activation no**. Confirm JS worker policy runs via `test-and-build` and Python cookie-receipt terminality via `coworker`. Next: investigate failures and review PR without weakening checks. Then implement private bounded page text and real provenance/egress, not metadata as content. See the [versioned architecture/core acceptance inventory](ARCHITECTURE_CORE_ACCEPTANCE_INVENTORY_V1.md).
+
+**Security:** Agent browser remains disabled unless separately qualified/authorized; no merge, deployment, paid provision, external action or activation performed.
+
+---
+
 ## CW-09 post-#401 exact server-bound destination fixture — 15 October 2026
 
 **Source truth:** PR #401 merged at `main` `052194a2b27eafc13d37b701cd90d25e887993eb` but its [CI #38681248077](https://github.com/rumman52/Shuddho/actions/runs/38681248077) had **1 failed, 35 passed** on mandatory Agent browser; `test-and-build` passed, `coworker` and `ci-merge-gate` failed. Original test remediation did not complete CI. Root cause: new DNS terminal-receipt test session start URL `/` differed from locked `/article` prepare command, provoking the intended `browser_agent_scope` guard before DNS was tested.

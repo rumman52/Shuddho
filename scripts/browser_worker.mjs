@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { browserContextOptions, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
 const WORKER_TOKEN = process.env.SHUDDHO_BROWSER_WORKER_TOKEN || "";
@@ -279,6 +279,7 @@ async function createRuntime(command, evidence) {
     commandId: command.id,
     evidence,
     kind: command.kind,
+    agentReadOnly: command.policy?.agent_read_only === true,
     preparingForm: false,
     humanInteractionArmed: false,
     formMutationBlocked: false,
@@ -293,7 +294,9 @@ async function createRuntime(command, evidence) {
       proxy: { server: proxy.url },
       env: { HOME: process.env.HOME || "/tmp" },
     });
-    const context = await browser.newContext(browserContextOptions(command.storage_state));
+    const context = await browser.newContext(browserContextOptions(
+      browserWorkerMayReuseStorageState(command) ? command.storage_state : null,
+    ));
     const page = await context.newPage();
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
   page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
@@ -302,6 +305,7 @@ async function createRuntime(command, evidence) {
     const request = route.request();
     const allowed = browserRequestAllowed({
       kind: state.kind,
+      agentReadOnly: state.agentReadOnly,
       method: request.method(),
       preparingForm: state.preparingForm,
       humanInteractionArmed: state.humanInteractionArmed,
@@ -343,6 +347,7 @@ function activateRuntime(runtime, command, evidence) {
   runtime.state.commandId = command.id;
   runtime.state.evidence = evidence;
   runtime.state.kind = command.kind;
+  runtime.state.agentReadOnly = command.policy?.agent_read_only === true;
   runtime.state.preparingForm = false;
   runtime.state.humanInteractionArmed = false;
   runtime.state.formMutationBlocked = false;
@@ -352,6 +357,7 @@ function activateRuntime(runtime, command, evidence) {
 
 function pauseRuntime(runtime) {
   runtime.state.kind = "idle";
+  runtime.state.agentReadOnly = false;
   runtime.state.preparingForm = false;
   runtime.state.humanInteractionArmed = false;
   runtime.state.navigationUrls = [];
@@ -533,7 +539,9 @@ async function execute(command) {
     const redirectChain = runtime.state.navigationUrls
       .filter((url, index, values) => url !== finalUrl && values.indexOf(url) === index)
       .slice(0, 10);
-    const storageState = await runtime.context.storageState();
+    const storageState = browserWorkerMayReuseStorageState(command)
+      ? await runtime.context.storageState()
+      : null;
 
     if (control) {
       await control.finish().catch(() => {});

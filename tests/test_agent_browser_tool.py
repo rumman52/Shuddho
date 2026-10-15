@@ -25,7 +25,7 @@ from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.agent_tools import available_tools, tool
 from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate
 from services.coworker.errors import CoworkerError
-from services.coworker.models import BrowserCommand
+from services.coworker.models import BrowserCommand, BrowserSession
 
 
 def enabled_agent_browser(container):
@@ -527,6 +527,65 @@ def test_agent_browser_post_envelope_rejections_cannot_be_resubmitted(
             "resolved_ips": {"example.com": ["93.184.216.34"]},
         })
     assert container.browser.list_commands(owner, session["id"])[0]["state"] == "failed"
+
+
+
+def test_agent_browser_rejects_cookie_receipt_terminally_and_never_replays_state(container):
+    """Autonomous reads must neither receive nor persist authenticated browser state."""
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-agent-no-cookies")
+    session, _ = container.browser.create(
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/article"),
+        "agent:synthetic-cookie-denial:1", agent_origin=True,
+    )
+    cmd = container.browser.prepare_agent_read(
+        owner, session["id"], "https://example.com/article",
+    )
+    # Simulate an unexpected legacy/session-contamination state: Agent claims
+    # must still never disclose it to the browser worker.
+    with container.repository.sessions.begin() as db:
+        row = db.get(BrowserSession, session["id"])
+        assert row is not None
+        row.storage_state_sealed = container.browser._session_vault.seal(
+            {
+                "cookies": [
+                    {"name": "legacy-sid", "value": "never-replay", "domain": "example.com", "path": "/"},
+                ],
+                "origins": [],
+            },
+            container.browser._storage_binding(row),
+        )
+        row.storage_state_version = 1
+    claimed = container.browser.claim_commands("cookie-denial-worker")
+    assert len(claimed) == 1 and claimed[0]["id"] == cmd["id"]
+    assert claimed[0]["storage_state"] is None
+    assert claimed[0]["storage_state_version"] == 1
+
+    with pytest.raises(CoworkerError) as denied:
+        container.browser.complete_command("cookie-denial-worker", cmd["id"], {
+            "final_url": "https://example.com/article", "title": "Cookie test",
+            "redirect_chain": [],
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "storage_state": {
+                "cookies": [
+                    {"name": "sid", "value": "must-not-persist", "domain": "example.com", "path": "/"},
+                ],
+                "origins": [],
+            },
+        })
+    assert denied.value.code == "browser_agent_storage_state_forbidden"
+    current = container.browser.get(owner, session["id"])
+    assert current["state"] == "failed"
+    assert current["cancel_requested"] is True
+    assert current["execution"]["authenticated_state_available"] is False
+    failed = container.browser.list_commands(owner, session["id"])[0]
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "browser_observation_invalid"
+    with pytest.raises(CoworkerError):
+        container.browser.complete_command("cookie-denial-worker", cmd["id"], {
+            "final_url": "https://example.com/article", "title": "Forged clean retry",
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+        })
 
 
 def test_agent_browser_invalid_unicode_storage_state_fails_closed(container):
