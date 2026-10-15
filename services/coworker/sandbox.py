@@ -298,10 +298,14 @@ class SandboxRepository:
                 # sandbox altered stored source even when its length matches.
                 spec = execution.request_spec or {}
                 source = spec.get("source")
-                encoded = source.encode("utf-8") if isinstance(source, str) else b""
+                try:
+                    encoded = source.encode("utf-8") if isinstance(source, str) else None
+                except UnicodeError:
+                    encoded = None
                 if (
                     not isinstance(source, str)
                     or not source
+                    or encoded is None
                     or len(encoded) > self.settings.sandbox_max_source_bytes
                     or execution.source_bytes != len(encoded)
                     or execution.source_sha256 != hashlib.sha256(encoded).hexdigest()
