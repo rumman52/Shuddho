@@ -2019,7 +2019,11 @@ class AgentRepository:
                     SandboxExecution.session_id == session_id,
                     SandboxExecution.owner_id == run.owner_id,
                     SandboxExecution.state == "succeeded",
-                ).with_for_update())
+                ).with_for_update(skip_locked=True))
+                # Sandbox worker completion locks execution before session,
+                # whereas an Agent cancellation can lock session first. Do not
+                # block holding the session lock while a concurrent worker
+                # holds the execution lock: skip and retry after it settles.
                 current_source = (invocation.arguments or {}).get("source")
                 if not isinstance(current_source, str) or not current_source:
                     raise CoworkerError(
