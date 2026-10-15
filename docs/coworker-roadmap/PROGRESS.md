@@ -1,3 +1,13 @@
+## CW-09 post-#401 exact server-bound destination fixture — 15 October 2026
+
+**Source truth:** PR #401 merged at `main` `052194a2b27eafc13d37b701cd90d25e887993eb` but its [CI #38681248077](https://github.com/rumman52/Shuddho/actions/runs/38681248077) had **1 failed, 35 passed** on mandatory Agent browser; `test-and-build` passed, `coworker` and `ci-merge-gate` failed. Original test remediation did not complete CI. Root cause: new DNS terminal-receipt test session start URL `/` differed from locked `/article` prepare command, provoking the intended `browser_agent_scope` guard before DNS was tested.
+
+**Correction:** One-line fixture binding on `codex/cw09-bound-destination-ci-fixture-20261015` based on main SHA above. Set session start URL to exact `https://example.com/article` (matching prepare and final URL). No runtime or authorization changes. [Task contract](CW09_EXACT_AGENT_BROWSER_DESTINATION_FIXTURE_2026-10-15.md). Initial source commit `1e629fb47842d6fdbd32cdc314c4d8a0e8aadd10`.
+
+**Evidence:** source implementation on branch; **exact final-head CI, no-skip PostgreSQL/Temporal/browser/transactions and independent safety review pending**; staging no; production qualified no; activated no. **Next:** get all three required CI jobs green, review, then address actual CW-09 content capture/SSRF worker staging and CW-10/11 missing real integration. No auto-merge, deployment or runtime activation.
+
+---
+
 ## CW-09 mandatory browser CI repair — 15 October 2026
 
 **Fresh default branch:** `main` `a305652a0be05b6d6a3768afbe6a14a029bd91c8`; PR #400 merged, no open PRs at task bootstrap. [Exact-main CI #38612375324](https://github.com/rumman52/Shuddho/actions/runs/38612375324): `test-and-build` success; `coworker` failed mandatory Agent browser gate (**2 failed, 33 passed**); `ci-merge-gate` failed. Earlier notes about #400 remaining draft or repository-green are superseded.
