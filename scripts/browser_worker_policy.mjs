@@ -81,6 +81,7 @@ export function browserSurfaceViolation(eventType) {
 export function browserRequestAllowed({ kind, method, preparingForm, humanInteractionArmed = false, navigationRequest, mainFrame, agentReadOnly = false }) {
   const verb = String(method || "").toUpperCase();
   if (kind === "idle") return false;
+  if (agentReadOnly && !["GET", "HEAD"].includes(verb)) return false;
   if (kind === "prepare_form" && !["GET", "HEAD"].includes(verb)) return false;
   if (kind === "prepare_form" && preparingForm && navigationRequest && mainFrame) return false;
   if (kind === "takeover_frame" && !["GET", "HEAD"].includes(verb)) return false;
