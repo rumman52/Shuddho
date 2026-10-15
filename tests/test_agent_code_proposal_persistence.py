@@ -298,3 +298,109 @@ def test_review_proposal_snapshots_are_bounded_per_run(container, signed_client)
         assert len(db.scalars(select(AgentCodeProposal).where(
             AgentCodeProposal.run_id == run_id,
         )).all()) == 8
+
+
+def conversation_proposal(container):
+    """Admit a real selected-source conversation through the normal dispatcher."""
+    from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
+    from services.coworker.schemas import UploadRequest
+
+    owner, _ = active_agent(container)
+    settings = replace(container.settings, conversations_enabled=True, work_services_enabled=True)
+    container.conversations.settings = settings
+    container.conversation_dispatch.settings = settings
+    upload = container.repository.create_upload(
+        owner, UploadRequest(filename="selected.txt", byte_size=5, sha256="a" * 64),
+    )
+    container.repository.finish_upload(owner, upload["id"])
+    conversation, _ = container.conversations.create(
+        owner, ConversationCreate(title="Reviewed analysis"), "proposal-conversation",
+    )
+    message, _ = container.conversations.append_message(
+        owner, conversation["id"], MessageCreate(
+            text="Create a detailed report about the selected document",
+            client_request_key="proposal-message",
+            selected_resource_ids=[UUID(upload["version_id"])],
+        ),
+    )
+    admitted, _ = container.conversation_dispatch.dispatch(
+        owner, conversation["id"], message["id"], expected_sequence=1,
+    )
+    ref = CodeInputVersion(
+        owner_id=owner, document_id=UUID(upload["id"]),
+        version_id=UUID(upload["version_id"]), source_sha256="a" * 64,
+    )
+    proposal = sample_proposal(owner, admitted["run_id"], input_versions=(ref,))
+    return proposal, conversation["id"], message["id"], upload["version_id"]
+
+
+@pytest.mark.parametrize("operation", ["create", "replay", "read"])
+@pytest.mark.parametrize("change", [
+    "version", "conversation_deleted", "message_unlinked", "message_owner", "message_selection",
+])
+def test_code_proposal_rechecks_original_conversation_scope(
+    container, signed_client, operation, change,
+):
+    """Skipping admitted pins must never expose or retain code under stale scope."""
+    from services.coworker.models import Conversation, ConversationMessage, DocumentVersion
+
+    proposal, conversation_id, message_id, version_id = conversation_proposal(container)
+    client, headers = signed_client
+    run_id = str(proposal.run_id)
+    first = prepare(client, headers, run_id, proposal)
+    assert first.status_code == 201, first.text
+    proposal_id = first.json()["id"]
+    path = f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}"
+    assert client.get(path, headers=headers()).status_code == 200
+
+    if change == "message_owner":
+        from services.coworker.conversation_schemas import ConversationCreate
+        other = account(container, "bob")
+        foreign_conversation, _ = container.conversations.create(
+            other, ConversationCreate(title="Other workspace"), "foreign-proposal-conversation",
+        )
+    with container.repository.sessions.begin() as db:
+        message = db.get(ConversationMessage, message_id)
+        if change == "version":
+            db.get(DocumentVersion, version_id).version += 1
+        elif change == "conversation_deleted":
+            db.get(Conversation, conversation_id).deleted = True
+        elif change == "message_unlinked":
+            message.resource_links = []
+        elif change == "message_owner":
+            message.owner_id = other
+            message.conversation_id = foreign_conversation["id"]
+        else:
+            message.selected_sources = []
+
+    if operation == "read":
+        denied = client.get(path, headers=headers())
+    else:
+        key = "new-stale-scope-proposal" if operation == "create" else "code-proposal-identity"
+        denied = prepare(client, headers, run_id, proposal, key=key)
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["error"]["code"] == "context_sources_changed"
+    assert proposal.source not in denied.text
+    with container.repository.sessions() as db:
+        rows = db.scalars(select(AgentCodeProposal).where(AgentCodeProposal.run_id == run_id)).all()
+        assert len(rows) == 1
+        assert rows[0].state == "unreviewed"
+
+
+def test_new_proposal_cannot_adopt_substituted_conversation_source_digest(container, signed_client):
+    """Current DB hashes cannot replace the document digest pinned at admission."""
+    from services.coworker.models import DocumentVersion
+
+    proposal, _, _, version_id = conversation_proposal(container)
+    with container.repository.sessions.begin() as db:
+        db.get(DocumentVersion, version_id).sha256 = "b" * 64
+    replacement_ref = proposal.input_versions[0].model_copy(update={"source_sha256": "b" * 64})
+    replacement = proposal.model_copy(update={"input_versions": (replacement_ref,)})
+    client, headers = signed_client
+    denied = prepare(client, headers, str(proposal.run_id), replacement)
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["error"]["code"] == "context_sources_changed"
+    with container.repository.sessions() as db:
+        assert not db.scalars(select(AgentCodeProposal).where(
+            AgentCodeProposal.run_id == str(proposal.run_id),
+        )).all()

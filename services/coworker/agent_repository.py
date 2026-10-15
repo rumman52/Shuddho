@@ -153,6 +153,10 @@ class AgentRepository:
             raise CoworkerError("code_proposals_disabled", "Code proposals are not enabled.", 409)
         if run.runtime_version != 3 or run.cancel_requested or run.state not in ACTIVE_RUN_STATES:
             raise CoworkerError("code_run_closed", "This Agent run cannot accept code proposals.", 409)
+        # Creation, replay and reads consume the original conversation scope,
+        # just like worker/context entry. Live version rows alone cannot prove
+        # the source hash/version and message/run link admitted by the owner.
+        require_admitted_conversation_run_sources(db, run)
         # The first proposal envelope only binds owned document versions.
         # Decline runs with other private/permissioned inputs rather than
         # silently treating memory or connector context as reviewed code data.
