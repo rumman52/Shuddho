@@ -14,6 +14,7 @@ from services.coworker.code_proposal_schemas import (
     CodeInputVersion,
     CodeProposalEnvelope,
     verify_reviewed_code_identity,
+    canonicalize_transport_code_proposal,
 )
 from services.coworker.errors import CoworkerError
 
@@ -368,3 +369,27 @@ def test_review_rejects_uuid_with_subclassed_integer_payload_and_matching_digest
     with pytest.raises(CoworkerError) as error:
         verified(suspect, now, reviewed_sha256=suspect.review_sha256())
     assert error.value.code == "code_proposal_invalid"
+
+def test_api_json_datetime_roundtrip_is_canonical_without_changing_review_hash():
+    from pydantic_core import TzInfo
+
+    envelope, now = setup_envelope()
+    parsed = CodeProposalEnvelope.model_validate(envelope.model_dump(mode="json"))
+    assert type(parsed.created_at.tzinfo) is TzInfo
+    assert type(parsed.expires_at.tzinfo) is TzInfo
+
+    normalized = canonicalize_transport_code_proposal(parsed)
+    assert type(normalized.created_at.tzinfo) is timezone
+    assert type(normalized.expires_at.tzinfo) is timezone
+    assert normalized.review_sha256() == envelope.review_sha256()
+    assert verified(normalized, now) is None
+
+
+def test_transport_normalization_does_not_launder_forged_envelope_fields():
+    envelope, now = setup_envelope()
+    parsed = CodeProposalEnvelope.model_validate(envelope.model_dump(mode="json"))
+    forged = parsed.model_copy(update={"unreviewed_approval": True})
+    normalized = canonicalize_transport_code_proposal(forged)
+    with pytest.raises(CoworkerError) as denied:
+        verified(normalized, now, reviewed_sha256=envelope.review_sha256())
+    assert denied.value.code == "code_proposal_invalid"
