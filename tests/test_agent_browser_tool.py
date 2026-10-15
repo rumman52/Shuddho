@@ -25,7 +25,7 @@ from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.agent_tools import available_tools, tool
 from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate
 from services.coworker.errors import CoworkerError
-from services.coworker.models import BrowserCommand
+from services.coworker.models import BrowserCommand, BrowserSession
 
 
 def enabled_agent_browser(container):
@@ -541,10 +541,25 @@ def test_agent_browser_rejects_cookie_receipt_terminally_and_never_replays_state
     cmd = container.browser.prepare_agent_read(
         owner, session["id"], "https://example.com/article",
     )
+    # Simulate an unexpected legacy/session-contamination state: Agent claims
+    # must still never disclose it to the browser worker.
+    with container.repository.sessions.begin() as db:
+        row = db.get(BrowserSession, session["id"])
+        assert row is not None
+        row.storage_state_sealed = container.browser._session_vault.seal(
+            {
+                "cookies": [
+                    {"name": "legacy-sid", "value": "never-replay", "domain": "example.com", "path": "/"},
+                ],
+                "origins": [],
+            },
+            container.browser._storage_binding(row),
+        )
+        row.storage_state_version = 1
     claimed = container.browser.claim_commands("cookie-denial-worker")
     assert len(claimed) == 1 and claimed[0]["id"] == cmd["id"]
     assert claimed[0]["storage_state"] is None
-    assert claimed[0]["storage_state_version"] == 0
+    assert claimed[0]["storage_state_version"] == 1
 
     with pytest.raises(CoworkerError) as denied:
         container.browser.complete_command("cookie-denial-worker", cmd["id"], {
