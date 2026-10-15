@@ -105,6 +105,23 @@ export function boundVisiblePageText(value, wasTruncated = false) {
   return { text: encoded.subarray(0, end).toString("utf8"), truncated: true };
 }
 
+// DNS/network-check is asynchronous. The worker may pause, cancel or switch
+// commands while a CONNECT awaits server authorization. A matching command id
+// alone is insufficient (a resumed command can reuse that id); the monotonic
+// claim epoch and evidence identity must also still be current.
+export function browserProxyClaimValid(state, claim) {
+  return (
+    typeof claim?.commandId === "string"
+    && claim.commandId.length > 0
+    && Number.isSafeInteger(claim.epoch)
+    && claim.evidence !== null
+    && claim.evidence !== undefined
+    && state?.commandId === claim.commandId
+    && state?.proxyClaimEpoch === claim.epoch
+    && state?.evidence === claim.evidence
+  );
+}
+
 export function browserWorkerMayReuseStorageState(command) {
   return command?.policy?.agent_read_only !== true;
 }

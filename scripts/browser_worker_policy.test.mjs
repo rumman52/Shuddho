@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -169,3 +169,42 @@ test("Agent read browser denies auto-submitted POST and PUT from the page", () =
     preparingForm: false, navigationRequest: false, mainFrame: false,
   }), true);
 });
+
+
+test("Proxy rejects CONNECT authorized for a claim cancelled during DNS await", async () => {
+  const evidence = {};
+  const state = { commandId: "cmd-A", proxyClaimEpoch: 4, evidence };
+  const captured = { commandId: state.commandId, epoch: state.proxyClaimEpoch, evidence: state.evidence };
+  assert.equal(browserProxyClaimValid(state, captured), true);
+
+  // Model a suspended server network-check promise: the cancellation happens
+  // before its result is consumed by the worker's proxy CONNECT handler.
+  const pendingDns = Promise.resolve({ hostname: "example.com", resolved_ips: ["93.184.216.34"] });
+  state.proxyClaimEpoch += 1;
+  state.commandId = null;
+  state.evidence = null;
+  await pendingDns;
+  assert.equal(browserProxyClaimValid(state, captured), false);
+});
+
+test("Proxy rejects ABA reuse and evidence replacement across commands", () => {
+  const evidence = {};
+  const state = { commandId: "cmd-A", proxyClaimEpoch: 10, evidence };
+  const snapshot = { commandId: "cmd-A", epoch: 10, evidence };
+  assert.equal(browserProxyClaimValid(state, snapshot), true);
+
+  // Even if the same command is resumed after a pause, old authorization
+  // cannot be transferred to the new lifetime.
+  state.proxyClaimEpoch = 12;
+  assert.equal(browserProxyClaimValid(state, snapshot), false);
+  state.proxyClaimEpoch = 10;
+  state.evidence = {};
+  assert.equal(browserProxyClaimValid(state, snapshot), false);
+  state.evidence = evidence;
+  state.commandId = "cmd-B";
+  assert.equal(browserProxyClaimValid(state, snapshot), false);
+  assert.equal(browserProxyClaimValid(state, { commandId: "", epoch: 10, evidence }), false);
+  assert.equal(browserProxyClaimValid(state, { commandId: "cmd-B", epoch: NaN, evidence }), false);
+  assert.equal(browserProxyClaimValid(null, snapshot), false);
+});
+
