@@ -956,5 +956,14 @@ def test_postgres_agent_source_artifact_commits_with_verified_browser_receipt(tm
         assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
         with service.repository.sessions() as db:
             assert db.get(Artifact, source_id).sha256 == summary["artifact_sha256"]
+        service.agent.complete_run(run["id"])
+        deleted = service.retention.erase_browser_source(identity, source_id)
+        assert deleted["metadata_erased"] is True
+        assert deleted["object_deleted"] is True
+        with pytest.raises(CoworkerError):
+            service.repository.artifact(identity, source_id)
+        assert service.agent.verified_observations(identity, run["id"])[0]["summary"]["source_deleted"] is True
+        with pytest.raises(FileNotFoundError):
+            service.storage.get(object_key, 8192)
     finally:
         service.repository.sessions.kw["bind"].dispose()
