@@ -1,3 +1,13 @@
+## CW-10 proposal persistence CI repair and mainline integration — 15 October 2026
+
+**Fresh main:** `be78fe057bce6d6d09271d1e0fb135b4b422bd74`; [PR #418](https://github.com/rumman52/Shuddho/pull/418) merged after final PR-head [CI #38775100942](https://github.com/rumman52/Shuddho/actions/runs/38775100942) passed `test-and-build`, mandatory `coworker` and `ci-merge-gate`. The original [PR #419](https://github.com/rumman52/Shuddho/pull/419) was not mergeable after #418 and [CI #38777496427](https://github.com/rumman52/Shuddho/actions/runs/38777496427) failed seven stored-code-proposal assertions, leaving mandatory `coworker` and merge gate red; `test-and-build` passed.
+
+**Cause, repair, new branch:** The strict immutable reviewer accepts standard `datetime.timezone`/`ZoneInfo` values but API/JSON Pydantic parsing generates `pydantic_core.TzInfo`. Valid code proposals were rejected as `code_proposal_invalid`. A narrow `canonicalize_transport_code_proposal` converts this exact trusted parser timezone to a standard immutable timezone before **unchanged** review validation for POST, replay and stored GET. The normalization preserves JSON review identity, malicious extra fields and validator rejection; focused Pydantic-only local reproduction confirmed parser types and copied-field preservation. The replacement branch `codex/cw10-proposal-persistence-ci-repair-main-20261015` ports the entire owner-scoped inert proposal model, additive migration `0056`, API, PostgreSQL race tests, no-skip CI and all regressions onto the merged mainline. No human approval or worker-execution grant exists.
+
+**Evidence:** Source patches and tests committed, but required exact-head `test-and-build`, `coworker`, `ci-merge-gate`, independent security/migration review and operated sandbox proof remain **unverified**. Full local repo tests unavailable because local GitHub clone/network access failed. Do not merge/deploy/activate. Next C-04: persist owner approval with expiry/revocation and enforce exact source/input/limits binding atomically at sandbox claim; CW-11 and P/V scenarios remain independent.
+
+---
+
 ## CW-10 fail-closed sandbox heartbeat — actual mainline integration — 15 October 2026
 
 **Fresh repo truth:** `main` `ce76803eb20e8383bb507f02e2cad17d9ff77d3f` contains [PR #416](https://github.com/rumman52/Shuddho/pull/416), whose exact [PR CI #38770425863](https://github.com/rumman52/Shuddho/actions/runs/38770425863) passed all three mandatory jobs. [PR #417](https://github.com/rumman52/Shuddho/pull/417) was marked merged into the earlier review branch, not `main`, and `main:scripts/sandbox_worker.py` still had the unguarded worker heartbeat behavior. #417's own earlier CI cannot qualify a new mainline integration.

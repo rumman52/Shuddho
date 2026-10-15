@@ -1525,6 +1525,27 @@ class SandboxExecution(Base):
     )
 
 
+class AgentCodeProposal(Base):
+    """Inert, immutable source snapshot awaiting an explicit review decision.
+
+    No sandbox execution, approval or release authority is represented here.
+    """
+    __tablename__ = "cw_agent_code_proposals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    review_sha256: Mapped[str] = mapped_column(String(64))
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(24), default="unreviewed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("run_id", "idempotency_key", name="uq_cw_agent_code_proposal_run_key"),
+        Index("cw_agent_code_proposals_owner_run", "owner_id", "run_id"),
+    )
+
+
 class AgentRun(Base):
     __tablename__ = "cw_agent_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
