@@ -278,6 +278,26 @@ class SandboxRepository:
                 session = db.get(SandboxSession, execution.session_id)
                 if session is None:
                     continue
+                # The query selected all rows before this loop. An earlier
+                # sibling may have failed source integrity and closed the
+                # shared session *during this same transaction*. Never let a
+                # later candidate reset it to running or receive source.
+                if (
+                    session.state in TERMINAL_SANDBOX_STATES
+                    or session.cancel_requested
+                    or aware(session.expires_at) <= now
+                ):
+                    if execution.state in {"prepared", "running"}:
+                        if execution.state == "running":
+                            session.cleanup_state = "required"
+                        execution.state = "failed"
+                        execution.error_code = "sandbox_session_closed"
+                        execution.request_spec = {"source_scrubbed": True}
+                        execution.finished_at = now
+                        execution.lease_until = None
+                        execution.claimed_by = None
+                        session.updated_at = now
+                    continue
                 if execution.state == "running" and execution.lease_until and aware(execution.lease_until) < now:
                     db.add(AuditEvent(
                         id=str(uuid4()),
@@ -390,6 +410,20 @@ class SandboxRepository:
                     execution.lease_until = None
                     execution.claimed_by = None
                 return {"action": "stop", "reason": "session_expired"}
+            if session.state in TERMINAL_SANDBOX_STATES:
+                # A different execution can fail the shared session after
+                # this worker acquired its lease. A terminal session must
+                # never renew that lease, even if cancellation/expiry is false.
+                if execution.state in {"prepared", "running"}:
+                    execution.state = "failed"
+                    execution.error_code = "sandbox_session_closed"
+                    execution.request_spec = {"source_scrubbed": True}
+                    execution.finished_at = now
+                    execution.lease_until = None
+                    execution.claimed_by = None
+                session.cleanup_state = "required"
+                session.updated_at = now
+                return {"action": "stop", "reason": "session_closed"}
             if (
                 execution.state != "running"
                 or execution.claimed_by != worker_id
@@ -495,9 +529,19 @@ class SandboxRepository:
                     "This sandbox execution is not actively owned by this worker.",
                     409,
                 )
-            if session.cancel_requested or session.state == "cancelled" or aware(session.expires_at) <= now:
-                execution.state = "cancelled" if session.cancel_requested or session.state == "cancelled" else "failed"
-                execution.error_code = "session_cancelled" if execution.state == "cancelled" else "session_expired"
+            if (
+                session.cancel_requested
+                or session.state in TERMINAL_SANDBOX_STATES
+                or aware(session.expires_at) <= now
+            ):
+                cancelled = session.cancel_requested or session.state == "cancelled"
+                expired = session.state == "expired" or aware(session.expires_at) <= now
+                execution.state = "cancelled" if cancelled else "failed"
+                execution.error_code = (
+                    "session_cancelled" if cancelled
+                    else "session_expired" if expired
+                    else "sandbox_session_closed"
+                )
                 execution.request_spec = {"source_scrubbed": True}
                 execution.finished_at = now
                 execution.lease_until = None
@@ -506,11 +550,12 @@ class SandboxRepository:
                 if aware(session.expires_at) <= now:
                     session.state = "expired"
                     session.cancel_requested = True
-                else:
+                elif cancelled:
                     # A cancellation flag may race ahead of the session state.
-                    # Never commit a cancelled execution under a running session.
                     session.state = "cancelled"
                     session.cancel_requested = True
+                # Otherwise preserve the failed/completed/expired terminal
+                # session state set by the competing execution.
                 session.updated_at = now
                 db.add(AuditEvent(
                     id=str(uuid4()),

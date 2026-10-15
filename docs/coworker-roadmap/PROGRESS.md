@@ -1,3 +1,15 @@
+## CW-10 terminal-session worker authority guard — 15 October 2026
+
+**Latest repository baseline:** `main` `4015dc9fc30525b2344f522d5e0b195ed5d35fd3`, merged [PR #414](https://github.com/rumman52/Shuddho/pull/414) at 2026-10-15 14:36 UTC. PR-head `test-and-build` passed, but mandatory `coworker` and new main CI were still in progress at initial refresh. No submitted independent PR #414 review was found. The merge does not establish full operated safety.
+
+**Additional same-batch finding:** Claim rows are selected as a batch before the loop. After one corrupted job fails the owning session, an already-selected sibling could previously reset that session to `running` and still receive source. The same PR now rechecks terminal state for every selected claim row, fails/scrubs ineligible siblings and includes a batch regression. Unselected abandoned jobs still need general retention/reconciliation review.\n\n**New source-level CW-10 safety finding:** A first execution can remain leased after a *sibling* source-integrity failure makes the owning sandbox session `failed`. The real worker heartbeat and completion paths previously checked cancellation or wall-clock expiry only. With no cancel flag and future expiry, stale worker execution and result acceptance could continue under a failed session.
+
+**Isolated implementation:** `codex/cw10-terminal-session-worker-guards-20261015` hardens `SandboxRepository.worker_control` and `complete_execution` to reject **all terminal session states**, with durable scrub/lease cleanup and no altered happy path. Parameterized SQLite real-worker regression and PostgreSQL persistence regression added. [Task contract](CW10_TERMINAL_SESSION_WORKER_GUARD_2026-10-15.md). **Code/tests committed; exact-head PR CI, independent security review and staging qualification pending at this checkpoint.** The model-generated code proposal/owner approval/worker claim lifecycle remains **absent**; C-04 not complete.
+
+**Next:** Finish exact-head CI and review on the new isolated PR, preserve default-off sandbox and avoid auto-merge. Then implement reviewed generated-code proposal/approval and worker claim enforcement; qualify CW-09 live Chromium/DNS/SSRF, CW-11 reviewed skill publisher/grants and P/V operated coworker evidence separately.
+
+---
+
 ## CW-10 late sandbox completion rollback repair — 15 October 2026
 
 **Refreshed evidence:** `main` `9bdb73a9142bce6e9e9848373dddde44514ca144`, merged [PR #413](https://github.com/rumman52/Shuddho/pull/413), matching [CI #38746278784](https://github.com/rumman52/Shuddho/actions/runs/38746278784) passed `test-and-build`, `coworker`, `ci-merge-gate`. No open PRs at task start. Earlier CW-10 source/policy worker-claim integrity is merged and verified at repository CI level; actual model-generated proposal/approval and operated isolation remain absent.

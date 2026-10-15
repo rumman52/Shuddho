@@ -1132,3 +1132,70 @@ def test_postgres_sandbox_worker_claim_rejects_changed_source_before_execution(t
         )
     finally:
         service.repository.sessions.kw["bind"].dispose()
+
+
+def test_postgres_terminal_sandbox_session_blocks_prior_worker_result(tmp_path):
+    """A sibling integrity failure closes the real PostgreSQL worker authority."""
+    from test_coworker import account
+    from test_sandbox_control_plane import (
+        completion_observation, create_session, enable_sandbox,
+    )
+    from services.coworker.container import Container
+    from services.coworker.models import SandboxExecution, SandboxSession
+    from services.coworker.sandbox_schemas import SandboxExecutionCreate
+
+    url = os.environ["SHUDDHO_TEST_POSTGRES_URL"]
+    settings = Settings(
+        database_url=url,
+        auth_issuer="https://identity.example.test/auth/v1",
+        environment="development",
+        storage_backend="local",
+        local_storage_path=tmp_path / "cw10-terminal-guard",
+    )
+    upgrade(url)
+    service = Container.create(settings)
+    try:
+        enable_sandbox(service)
+        identity = account(service, "terminal-worker-pg-" + str(uuid4()))
+        session = create_session(service, identity, "terminal-worker-" + str(uuid4()))
+        first = service.sandbox.prepare_execution(
+            identity, session["id"], SandboxExecutionCreate(source="print(101)"),
+        )
+        claimed = service.sandbox.claim_executions("cw10-terminal-first", limit=10)
+        assert any(item["id"] == first["id"] for item in claimed)
+
+        second = service.sandbox.prepare_execution(
+            identity, session["id"], SandboxExecutionCreate(source="print(202)"),
+        )
+        with service.repository.sessions.begin() as db:
+            row = db.get(SandboxExecution, second["id"])
+            spec = dict(row.request_spec)
+            spec["source"] = "print(999)"
+            row.request_spec = spec
+
+        assert all(
+            item["id"] != second["id"]
+            for item in service.sandbox.claim_executions("cw10-terminal-second", limit=10)
+        )
+        with service.repository.sessions() as db:
+            assert db.get(SandboxSession, session["id"]).state == "failed"
+
+        with pytest.raises(CoworkerError) as rejected:
+            service.sandbox.complete_execution(
+                "cw10-terminal-first", first["id"], completion_observation(),
+            )
+        assert rejected.value.code == "sandbox_session_closed"
+
+        with service.repository.sessions() as db:
+            former = db.get(SandboxExecution, first["id"])
+            parent = db.get(SandboxSession, session["id"])
+            assert former.state == "failed"
+            assert former.error_code == "sandbox_session_closed"
+            assert former.request_spec == {"source_scrubbed": True}
+            assert former.claimed_by is None
+            assert former.lease_until is None
+            assert former.result == {}
+            assert parent.state == "failed"
+            assert parent.cleanup_state == "required"
+    finally:
+        service.repository.sessions.kw["bind"].dispose()

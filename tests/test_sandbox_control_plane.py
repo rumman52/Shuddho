@@ -1171,3 +1171,105 @@ def test_late_sandbox_worker_completion_persists_terminal_failure(container, clo
             "late-completion-worker", prepared["id"], completion_observation(),
         )
     assert stale.value.code == "sandbox_worker_claim_invalid"
+
+
+@pytest.mark.parametrize("worker_path", ["heartbeat", "completion"])
+def test_terminal_session_failure_stops_other_claimed_sandbox_worker(container, worker_path):
+    """A failed sibling execution must revoke the older worker's authority."""
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner, "terminal-sibling-" + worker_path)
+    older = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print('first')"),
+    )
+    first_claims = container.sandbox.claim_executions("first-worker")
+    assert [item["id"] for item in first_claims] == [older["id"]]
+
+    # One sandbox session can have multiple prepared executions. A tampered
+    # second request terminates the owning session without cancelling the
+    # already-running first execution's lease; check the *real* worker boundary.
+    sibling = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print('second')"),
+    )
+    with container.repository.sessions.begin() as db:
+        row = db.get(SandboxExecution, sibling["id"])
+        spec = dict(row.request_spec)
+        spec["source"] = "print('tamper')"
+        row.request_spec = spec
+
+    assert container.sandbox.claim_executions("second-worker") == []
+    with container.repository.sessions() as db:
+        assert db.get(SandboxSession, session["id"]).state == "failed"
+        first = db.get(SandboxExecution, older["id"])
+        assert first.state == "running"
+        assert first.claimed_by == "first-worker"
+
+    if worker_path == "heartbeat":
+        stopped = container.sandbox.worker_control("first-worker", older["id"])
+        assert stopped == {"action": "stop", "reason": "session_closed"}
+    else:
+        with pytest.raises(CoworkerError) as rejected:
+            container.sandbox.complete_execution(
+                "first-worker", older["id"], completion_observation(),
+            )
+        assert rejected.value.code == "sandbox_session_closed"
+
+    # Do not use the scavenging API before checking persisted state.
+    with container.repository.sessions() as db:
+        first = db.get(SandboxExecution, older["id"])
+        second = db.get(SandboxExecution, sibling["id"])
+        owned = db.get(SandboxSession, session["id"])
+        assert owned.state == "failed"
+        assert owned.cleanup_state == "required"
+        assert first.state == "failed"
+        assert first.error_code == "sandbox_session_closed"
+        assert first.request_spec == {"source_scrubbed": True}
+        assert first.claimed_by is None
+        assert first.lease_until is None
+        assert first.finished_at is not None
+        assert first.result == {}
+        assert second.error_code == "sandbox_source_integrity_failed"
+
+    assert container.sandbox.claim_executions("third-worker") == []
+    with pytest.raises(CoworkerError) as stale:
+        container.sandbox.complete_execution(
+            "first-worker", older["id"], completion_observation(),
+        )
+    assert stale.value.code == "sandbox_worker_claim_invalid"
+
+
+def test_batched_sandbox_claim_does_not_reopen_failed_sibling_session(container):
+    """A later selected row must not reset a failed session to running."""
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner, "batch-failed-sibling")
+    first = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print(101)"),
+    )
+    second = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print(202)"),
+    )
+    with container.repository.sessions.begin() as db:
+        row = db.get(SandboxExecution, first["id"])
+        spec = dict(row.request_spec)
+        spec["source"] = "print(999)"
+        row.request_spec = spec
+
+    # Both jobs are selected before the claim loop; the first is poisoned.
+    # Without a per-row session-state recheck, the good second job runs
+    # despite its shared session having been terminally failed.
+    claims = container.sandbox.claim_executions("batch-worker", limit=2)
+    assert not any(item["id"] in {first["id"], second["id"]} for item in claims)
+    with container.repository.sessions() as db:
+        failed = db.get(SandboxExecution, first["id"])
+        skipped = db.get(SandboxExecution, second["id"])
+        owned = db.get(SandboxSession, session["id"])
+        assert owned.state == "failed"
+        assert failed.error_code == "sandbox_source_integrity_failed"
+        assert skipped.state == "failed"
+        assert skipped.error_code == "sandbox_session_closed"
+        assert skipped.request_spec == {"source_scrubbed": True}
+        assert skipped.claimed_by is None
+        assert skipped.lease_until is None
+
+    assert container.sandbox.claim_executions("reclaim-worker", limit=2) == []
