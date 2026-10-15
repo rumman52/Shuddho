@@ -17,7 +17,7 @@ pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
 
 from test_browser_broker import enable_browser
-from test_coworker import account, container
+from test_coworker import account, container, signed_client
 
 from services.coworker.agent_planner import explicit_browser_url, intelligent_tool_names
 from services.coworker.agent_router import qualify_agent_goal
