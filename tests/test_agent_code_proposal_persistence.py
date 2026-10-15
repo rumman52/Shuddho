@@ -404,3 +404,132 @@ def test_new_proposal_cannot_adopt_substituted_conversation_source_digest(contai
         assert not db.scalars(select(AgentCodeProposal).where(
             AgentCodeProposal.run_id == str(proposal.run_id),
         )).all()
+
+
+
+
+def test_exact_owner_revocation_erases_code_and_remains_idempotent(
+    container, signed_client,
+):
+    """Reviewing a code hash permits revocation, not running Python."""
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    saved = prepare(client, headers, run_id, proposal, key="revocable-code-key")
+    assert saved.status_code == 201, saved.text
+    row_id = saved.json()["id"]
+    path = f"/api/v1/agent-runs/{run_id}/code-proposals/{row_id}"
+    revoke = path + "/revoke"
+    payload = {"review_sha256": proposal.review_sha256()}
+
+    mismatch = client.post(
+        revoke, headers=headers(), json={"review_sha256": "b" * 64},
+    )
+    assert mismatch.status_code == 409
+    assert mismatch.json()["error"]["code"] == "code_proposal_changed"
+
+    foreign = account(container, "bob")
+    assert foreign != owner
+    inaccessible = client.post(revoke, headers=headers("bob"), json=payload)
+    assert inaccessible.status_code == 404
+    assert client.post(
+        f"/api/v1/agent-runs/{uuid4()}/code-proposals/{row_id}/revoke",
+        headers=headers(), json=payload,
+    ).status_code == 404
+
+    first = client.post(revoke, headers=headers(), json=payload)
+    assert first.status_code == 200, first.text
+    assert first.headers["Cache-Control"] == "no-store"
+    assert first.json()["state"] == "revoked"
+    assert first.json()["source_erased"] is True
+    assert first.json()["approval_granted"] is False
+    assert first.json()["code_executed"] is False
+    assert "proposal" not in first.json()
+    assert proposal.source not in first.text
+
+    again = client.post(revoke, headers=headers(), json=payload)
+    assert again.status_code == 200
+    assert again.json() == first.json()
+    denied = client.get(path, headers=headers())
+    assert denied.status_code == 409
+    assert denied.json()["error"]["code"] == "code_proposal_revoked"
+    replay = prepare(client, headers, run_id, proposal, key="revocable-code-key")
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "code_proposal_revoked"
+    with container.repository.sessions() as db:
+        row = db.get(AgentCodeProposal, row_id)
+        assert row.snapshot == {}
+        assert row.state == "revoked"
+        assert row.review_sha256 == proposal.review_sha256()
+
+
+def test_revocation_also_works_after_agent_run_cancellation(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    saved = prepare(client, headers, run_id, proposal)
+    assert saved.status_code == 201
+    row_id = saved.json()["id"]
+    with container.repository.sessions.begin() as db:
+        run = db.get(AgentRun, run_id)
+        run.state = "cancelled"
+        run.cancel_requested = True
+
+    revoked = client.post(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{row_id}/revoke",
+        headers=headers(), json={"review_sha256": proposal.review_sha256()},
+    )
+    assert revoked.status_code == 200
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeProposal, row_id).snapshot == {}
+
+
+def test_expired_code_snapshots_are_scrubbed_by_repeatable_maintenance(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    saved = prepare(client, headers, run_id, proposal)
+    assert saved.status_code == 201
+    row_id = saved.json()["id"]
+    with container.repository.sessions.begin() as db:
+        db.get(AgentCodeProposal, row_id).expires_at = utcnow() - timedelta(seconds=1)
+
+    assert container.retention.cleanup_expired_code_proposals() == {"expired": 1}
+    assert container.retention.cleanup_expired_code_proposals() == {"expired": 0}
+    assert client.get(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{row_id}",
+        headers=headers(),
+    ).json()["error"]["code"] == "code_proposal_expired"
+    with container.repository.sessions() as db:
+        row = db.get(AgentCodeProposal, row_id)
+        assert row.state == "expired"
+        assert row.snapshot == {}
+        assert row.review_sha256 == proposal.review_sha256()
+
+
+def test_account_erasure_removes_owned_code_proposal_before_parent_run(
+    container, signed_client,
+):
+    from services.coworker.models import Account
+
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    saved = prepare(client, headers, run_id, proposal)
+    assert saved.status_code == 201, saved.text
+    proposal_id = saved.json()["id"]
+    with container.repository.sessions.begin() as db:
+        run = db.get(AgentRun, run_id)
+        run.state = "cancelled"
+        run.cancel_requested = True
+
+    result = container.retention.erase_account(owner)
+    assert result["database_erased"] is True
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeProposal, proposal_id) is None
+        assert db.get(AgentRun, run_id) is None
+        assert db.get(Account, owner) is None

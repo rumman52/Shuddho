@@ -8,7 +8,7 @@ from sqlalchemy import delete, select
 from .errors import CoworkerError
 from .models import Conversation, ConversationMessage
 from .models import (
-    Account, ActionProposal, ActionRecipient, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
+    Account, ActionProposal, ActionRecipient, AgentCodeProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal,
@@ -266,6 +266,9 @@ class RetentionService:
             if run_ids:
                 db.execute(delete(AgentOutbox).where(AgentOutbox.run_id.in_(run_ids)))
             db.execute(delete(AgentStep).where(AgentStep.owner_id == owner))
+            # CW-10 stores private Python snapshots under the owning AgentRun.
+            # Delete them first: PostgreSQL's FK otherwise rejects account erasure.
+            db.execute(delete(AgentCodeProposal).where(AgentCodeProposal.owner_id == owner))
             db.execute(delete(AgentRun).where(AgentRun.owner_id == owner))
             db.execute(delete(PersonalGoalRevision).where(PersonalGoalRevision.owner_id == owner))
             db.execute(delete(PersonalGoal).where(PersonalGoal.owner_id == owner))
@@ -290,6 +293,30 @@ class RetentionService:
 
         deleted, failed = self._delete_objects(object_keys)
         return {"owner_id": owner, "database_erased": True, "objects_deleted": deleted, "objects_failed": failed}
+
+    def cleanup_expired_code_proposals(self, limit: int = 100) -> dict:
+        """Erase expired inert proposal source bytes without granting execution.
+
+        Retain only immutable review hashes, request keys and tombstone states.
+        This runs in the existing bounded worker maintenance pass and can be
+        safely repeated after process restart or concurrent worker delivery.
+        """
+        if not 1 <= limit <= 1000:
+            raise ValueError("The code-proposal expiry batch must contain 1-1000 rows")
+        with self.sessions.begin() as db:
+            due = list(db.scalars(select(AgentCodeProposal).where(
+                AgentCodeProposal.state == "unreviewed",
+                AgentCodeProposal.expires_at <= utcnow(),
+            ).order_by(AgentCodeProposal.expires_at, AgentCodeProposal.id)
+                .limit(limit).with_for_update(skip_locked=True)).all())
+            for row in due:
+                row.snapshot = {}
+                row.state = "expired"
+                db.add(AuditEvent(
+                    id=str(uuid4()), owner_id=row.owner_id,
+                    resource_id=row.id, action="agent.code_proposal.expired",
+                ))
+            return {"expired": len(due)}
 
     def cleanup_expired_sandbox_artifacts(self, limit: int = 100) -> dict:
         now = utcnow()

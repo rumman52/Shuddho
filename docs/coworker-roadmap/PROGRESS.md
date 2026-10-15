@@ -1,3 +1,17 @@
+## CW-10 inert proposal owner revocation and private source retention — 16 October 2026
+
+**Repo truth:** `main` `0c292f635cc27515c12a5ae0158dc8db3c222c1f`, merged [PR #420](https://github.com/rumman52/Shuddho/pull/420) (inert proposal persistence), [PR #421](https://github.com/rumman52/Shuddho/pull/421) (admitted conversation source scope), and [PR #422](https://github.com/rumman52/Shuddho/pull/422) (real direct-chat test). These are already merged, not unfinished tasks. Main push [CI #38788446857](https://github.com/rumman52/Shuddho/actions/runs/38788446857) was in progress when this new branch was created.
+
+**Safety/data-integrity gap:** `AgentCodeProposal.snapshot` retains untrusted private Python indefinitely after proposal expiry, has no owner revocation path, and `RetentionService.erase_account` did not remove proposal rows before the parent AgentRun. The latter violates the schema's foreign key and blocks full account erasure with code proposals present. No generated-code execution authority exists yet.
+
+**Isolated implementation:** branch `codex/cw10-proposal-revocation-erasure-20261016` forked from that exact main. New owner-authenticated exact-review-hash `POST .../code-proposals/{proposal_id}/revoke` atomically scrubs source and leaves a non-executing tombstone; repeat revocations are idempotent, cross-owner/wrong hash fail closed, and GET/POST replay cannot disclose/resurrect erased code. Bounded expiry retention is wired into the existing five-minute worker maintenance pass. Account erasure now removes proposals before runs. Regression tests cover wrong owner/hash/run, cancelled run, expiry, idempotency and account FK deletion. No new permissions, model decisions, approval fields, schema migration or sandbox execution. [Task contract](CW10_PROPOSAL_REVOCATION_ERASURE_2026-10-16.md).
+
+**Evidence:** Code and tests committed, final-head `test-and-build`, mandatory no-skip `coworker`, `ci-merge-gate` and independent review pending at this checkpoint. No direct local PostgreSQL/Temporal or operated worker/staging evidence. Keep default-off, draft and do not auto-merge/activate.
+
+**Next:** Obtain exact-HEAD CI and independent security/retention review. Then complete trusted model proposal admission, explicit human decision with expiry/revocation and atomic worker-claim validation. CW-11 reviewed skill publication and remaining operated CW-09/P/V scenarios remain independently incomplete.
+
+---
+
 ## CW-10 conversation-bound code proposal scope — 16 October 2026 (Asia/Dhaka)
 
 **Refreshed main:** `badc8bbb66c8ead4a43c3463e32112b1bfd7e996`, merged [PR #420](https://github.com/rumman52/Shuddho/pull/420). Exact #420 PR head `f1ddb5d45c0b62f70f95c84db00374541621f420` passed required `test-and-build`, `coworker`, and `ci-merge-gate` in [CI #38780057144](https://github.com/rumman52/Shuddho/actions/runs/38780057144). Main push [CI #38783568443](https://github.com/rumman52/Shuddho/actions/runs/38783568443) was still running at this bootstrap. No open PRs were returned. The older document's `baa484e` red recovery-claim checkpoint is historical; do not repeat its repair.

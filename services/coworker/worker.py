@@ -411,6 +411,9 @@ class Dispatcher:
                     await asyncio.to_thread(
                         self.container.retention.cleanup_expired_sandbox_artifacts
                     )
+                    await asyncio.to_thread(
+                        self.container.retention.cleanup_expired_code_proposals
+                    )
                     cleanup_at = now + 300
             except Exception:
                 logger.error("Coworker dispatch unavailable; pending tasks remain queued.")

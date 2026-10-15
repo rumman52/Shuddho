@@ -1265,3 +1265,47 @@ def test_postgres_cw10_inert_code_proposal_replay_is_atomic(repository):
         assert len(rows) == 1
         assert rows[0].state == "unreviewed"
         assert rows[0].snapshot["source"] == source
+
+def test_postgres_owned_code_proposal_erased_before_agent_run_fk(repository):
+    """Account erasure must remove retained private code before its parent run."""
+    from datetime import timedelta
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.models import (
+        Account, AgentCodeProposal, AgentRun, utcnow,
+    )
+    from services.coworker.retention import RetentionService
+
+    owned = owner(repository)
+    settings = replace(repository.settings, agent_runtime_enabled=True)
+    agent = AgentRepository(repository.sessions, settings)
+    run, created = agent.create(
+        owned,
+        AgentRunCreate(goal="Review privately scoped generated Python."),
+        "postgres-code-proposal-erasure-" + str(uuid4()),
+    )
+    assert created
+    row_id = str(uuid4())
+    with repository.sessions.begin() as db:
+        saved_run = db.get(AgentRun, run["id"])
+        saved_run.state = "cancelled"
+        saved_run.cancel_requested = True
+        db.add(AgentCodeProposal(
+            id=row_id,
+            run_id=run["id"],
+            owner_id=owned,
+            idempotency_key="private-code-" + str(uuid4()),
+            review_sha256="a" * 64,
+            snapshot={"source": "print('private source')"},
+            state="unreviewed",
+            created_at=utcnow(),
+            expires_at=utcnow() + timedelta(minutes=5),
+        ))
+
+    # No object-store rows are present, so the erasure does not touch this stub.
+    result = RetentionService(repository.sessions, object()).erase_account(owned)
+    assert result["database_erased"] is True
+    with repository.sessions() as db:
+        assert db.get(AgentCodeProposal, row_id) is None
+        assert db.get(AgentRun, run["id"]) is None
+        assert db.get(Account, owned) is None
