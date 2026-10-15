@@ -1556,7 +1556,7 @@ class AgentRepository:
                         "browser_state", "observation_scope", "observation_trust",
                         "source_url", "source_sha256", "capture_time",
                         "untrusted_page_title", "untrusted_page_text_excerpt",
-                        "source_byte_size", "source_truncated", "submission_performed",
+                        "source_byte_size", "source_truncated", "source_deleted", "submission_performed",
                     )
                     if key in summary and isinstance(summary[key], (str, int, bool, type(None)))
                 }

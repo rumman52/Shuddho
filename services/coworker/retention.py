@@ -50,6 +50,80 @@ class RetentionService:
             keys.update(self._step_object_keys(list(db.scalars(select(Step)).all())))
             return {key for key in keys if isinstance(key, str) and key}
 
+    def erase_browser_source(self, owner: str, artifact_id: str) -> dict:
+        """Revoke one finished run's private browser source, never another artifact.
+
+        Erase metadata + any untrusted excerpts atomically. Bytes are deleted
+        afterwards through ObjectStore; failed deletion is visible and eligible
+        for the existing orphan-reconciliation sweep.
+        """
+        with self.sessions.begin() as db:
+            # Resolve without granting visibility across owners or purposes.
+            owned = db.scalar(select(Artifact).where(
+                Artifact.id == artifact_id,
+                Artifact.owner_id == owner,
+                Artifact.artifact_class == "browser_source",
+            ))
+            if owned is None:
+                raise CoworkerError("not_found", "This item was not found in your workspace.", 404)
+            receipts = list(db.scalars(select(ToolReceipt).where(
+                ToolReceipt.owner_id == owner,
+                ToolReceipt.summary["artifact_id"].as_string() == artifact_id,
+            )).all())
+            if len(receipts) != 1 or receipts[0].tool_name != "browser.read":
+                raise CoworkerError("browser_source_reference_invalid", "The source ownership link cannot be verified.", 409)
+            # Lock AgentRun first, matching the Agent receipt lock order.
+            run = db.scalar(select(AgentRun).where(
+                AgentRun.id == receipts[0].run_id,
+                AgentRun.owner_id == owner,
+            ).with_for_update())
+            if run is None or run.state not in TERMINAL_AGENT_RUNS:
+                raise CoworkerError(
+                    "browser_source_active",
+                    "Finish or cancel the Agent run before deleting its source.", 409,
+                )
+            artifact = db.scalar(select(Artifact).where(
+                Artifact.id == artifact_id,
+                Artifact.owner_id == owner,
+                Artifact.artifact_class == "browser_source",
+            ).with_for_update())
+            receipt = db.scalar(select(ToolReceipt).where(
+                ToolReceipt.invocation_id == receipts[0].invocation_id,
+                ToolReceipt.owner_id == owner,
+            ).with_for_update())
+            if artifact is None or receipt is None or (receipt.summary or {}).get("artifact_id") != artifact_id:
+                raise CoworkerError("browser_source_reference_invalid", "The browser source changed before deletion.", 409)
+            object_key = artifact.object_key
+            summary = dict(receipt.summary or {})
+            for field in (
+                "artifact_id", "artifact_sha256", "source_url", "source_sha256",
+                "source_byte_size", "source_truncated", "untrusted_page_title",
+                "untrusted_page_text_excerpt",
+            ):
+                summary.pop(field, None)
+            summary["source_deleted"] = True
+            summary["observation_scope"] = "source_deleted"
+            receipt.summary = summary
+            db.delete(artifact)
+            db.add(AuditEvent(
+                id=str(uuid4()), owner_id=owner, resource_id=artifact_id,
+                action="browser_source.deleted",
+            ))
+
+        # Metadata/receipt revocation commits even when object deletion fails,
+        # so fresh owned downloads and further Agent retrieval fail closed.
+        try:
+            self.storage.delete(object_key)
+        except Exception:
+            return {
+                "artifact_id": artifact_id, "metadata_erased": True,
+                "object_deleted": False, "object_cleanup_pending": True,
+            }
+        return {
+            "artifact_id": artifact_id, "metadata_erased": True,
+            "object_deleted": True, "object_cleanup_pending": False,
+        }
+
     def erase_task(self, owner: str, task_id: str) -> dict:
         with self.sessions.begin() as db:
             task = db.scalar(select(Task).where(
