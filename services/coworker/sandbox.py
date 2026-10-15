@@ -293,16 +293,36 @@ class SandboxRepository:
                 session.state = "running"
                 session.cleanup_state = "pending"
                 session.updated_at = now
-                source = (execution.request_spec or {}).get("source")
-                if not isinstance(source, str):
+                # Authority is consumed when the worker claims an execution,
+                # not when a request was first prepared. Never hand the
+                # sandbox altered stored source even when its length matches.
+                spec = execution.request_spec or {}
+                source = spec.get("source")
+                encoded = source.encode("utf-8") if isinstance(source, str) else b""
+                if (
+                    not isinstance(source, str)
+                    or not source
+                    or len(encoded) > self.settings.sandbox_max_source_bytes
+                    or execution.source_bytes != len(encoded)
+                    or execution.source_sha256 != hashlib.sha256(encoded).hexdigest()
+                    or spec.get("source_trust") != "untrusted"
+                    or spec.get("policy_version") != SANDBOX_POLICY_VERSION
+                ):
                     execution.state = "failed"
-                    execution.error_code = "sandbox_source_missing"
+                    execution.error_code = "sandbox_source_integrity_failed"
+                    execution.request_spec = {"source_scrubbed": True}
                     execution.finished_at = now
                     execution.lease_until = None
                     execution.claimed_by = None
-                    session.state = "prepared"
+                    session.state = "failed"
                     session.cleanup_state = "not_required"
                     session.updated_at = now
+                    db.add(AuditEvent(
+                        id=str(uuid4()),
+                        owner_id=execution.owner_id,
+                        resource_id=session.id,
+                        action="sandbox_execution.source_integrity_rejected",
+                    ))
                     continue
                 claimed.append({
                     "id": execution.id,
