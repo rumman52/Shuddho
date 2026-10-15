@@ -203,6 +203,22 @@ class AgentRepository:
                     raise CoworkerError(
                         "idempotency_conflict", "This code proposal key belongs to different source.", 409,
                     )
+                try:
+                    saved = CodeProposalEnvelope.model_validate(previous.snapshot)
+                    saved_digest = saved.review_sha256()
+                except Exception:
+                    raise CoworkerError(
+                        "code_proposal_invalid", "Stored code proposal integrity failed.", 409,
+                    ) from None
+                if (
+                    saved_digest != digest
+                    or previous.state != "unreviewed"
+                    or aware(previous.created_at) != saved.created_at
+                    or aware(previous.expires_at) != saved.expires_at
+                ):
+                    raise CoworkerError(
+                        "code_proposal_changed", "Stored proposal identity is invalid.", 409,
+                    )
                 return self._code_proposal_dto(previous), False
             row = AgentCodeProposal(
                 id=str(uuid4()),
@@ -236,7 +252,12 @@ class AgentRepository:
                 digest = proposal.review_sha256()
             except Exception:
                 raise CoworkerError("code_proposal_invalid", "Stored code proposal integrity failed.", 409) from None
-            if digest != row.review_sha256 or row.state != "unreviewed":
+            if (
+                digest != row.review_sha256
+                or row.state != "unreviewed"
+                or aware(row.created_at) != proposal.created_at
+                or aware(row.expires_at) != proposal.expires_at
+            ):
                 raise CoworkerError("code_proposal_changed", "Stored proposal identity is invalid.", 409)
             self._verify_code_proposal(db, run, proposal, digest)
             return self._code_proposal_dto(row)
