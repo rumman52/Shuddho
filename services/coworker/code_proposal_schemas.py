@@ -15,6 +15,7 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import TzInfo
 
 from .errors import CoworkerError
 
@@ -86,6 +87,28 @@ class CodeProposalEnvelope(ImmutableReviewModel):
             self.model_dump(mode="json"),
             sort_keys=True, ensure_ascii=False, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
+
+
+
+def canonicalize_transport_code_proposal(proposal: CodeProposalEnvelope) -> CodeProposalEnvelope:
+    """Normalize only Pydantic's JSON-parser timezone, never arbitrary tzinfo.
+
+    Pydantic emits `TzInfo` from JSON datetime strings, whereas the existing
+    immutable review validator deliberately accepts only stdlib timezone and
+    ZoneInfo. Preserve the original field set and all nested objects so
+    `verify_reviewed_code_identity` still detects forged model_copy() state.
+    """
+    if type(proposal) is not CodeProposalEnvelope:
+        return proposal
+    updates = {}
+    for field in ("created_at", "expires_at"):
+        value = getattr(proposal, field)
+        if type(value) is datetime and type(value.tzinfo) is TzInfo:
+            # This exact type comes from Pydantic's bounded JSON datetime
+            # parser. datetime.fromisoformat supplies a stdlib fixed-offset
+            # timezone without changing the reviewed UTC instant.
+            updates[field] = datetime.fromisoformat(value.isoformat())
+    return proposal.model_copy(update=updates) if updates else proposal
 
 
 def verify_reviewed_code_identity(
