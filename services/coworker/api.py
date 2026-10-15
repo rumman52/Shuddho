@@ -26,6 +26,7 @@ from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
+from .code_proposal_schemas import CodeProposalEnvelope
 from .agent_router import qualify_agent_goal
 from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
 from .suggestion_schemas import PersonalSuggestionPreferences
@@ -1721,6 +1722,41 @@ def list_agent_runs(identity: Identity, services: Services):
 @router.get("/agent-runs/{run_id}")
 def get_agent_run(run_id: UUID, identity: Identity, services: Services):
     return services.agent.get(identity.account_id, str(run_id))
+
+
+@router.post("/agent-runs/{run_id}/code-proposals", status_code=201)
+def prepare_agent_code_proposal(
+    run_id: UUID,
+    payload: CodeProposalEnvelope,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[
+        str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    ],
+):
+    """Capture an exact code proposal for owner inspection, never approve it."""
+    value, created = services.agent.prepare_code_proposal(
+        identity.account_id, str(run_id), payload, idempotency_key,
+    )
+    response.headers["Location"] = f'/api/v1/agent-runs/{run_id}/code-proposals/{value["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["Cache-Control"] = "no-store"
+    return value
+
+
+@router.get("/agent-runs/{run_id}/code-proposals/{proposal_id}")
+def get_agent_code_proposal(
+    run_id: UUID,
+    proposal_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return services.agent.get_code_proposal(
+        identity.account_id, str(run_id), str(proposal_id),
+    )
 
 
 @router.get("/agent-runs/{run_id}/context")
