@@ -1,3 +1,17 @@
+## CW-09 async proxy CONNECT stale-claim race — 15 October 2026
+
+**Baseline:** `main` `896b5014bc371f5549fb9daa815338d932506a73`, #406 merged with successful exact-head + main CI. Concurrent direct-main [draft PR #408](https://github.com/rumman52/Shuddho/pull/408) is separately repairing PR #407's deletion functionality which merged into a historical feature branch, not main; its required CI is pending. **Isolated worker safety branch:** `codex/cw09-browser-proxy-revocation-race-20261015`, created directly from this main; no PR branch dependencies or production changes.
+
+**Observed source-level race:** HTTPS CONNECT pinned proxy asynchronously awaits DNS + server `network-check` and then opens an upstream socket; `pause`/cancel can happen during that await before client/upstream sockets are registered. An out-of-date authorized answer could open or acknowledge a tunnel after claim revocation. The original code did not revalidate worker claim generation after network check or on TCP connect.
+
+**Committed bounded fix:** monotonic `proxyClaimEpoch` increment on set/pause/destroy; snapshot `{commandId, epoch, evidence}` per CONNECT; revalidate before DNS call, after network-check before `net.connect`, and on socket connect before sending HTTP 200/forwarding bytes. Stale/reused same-command snapshots fail closed. Pure Node policy regression tests cover cancelled in-flight check, ABA resume, evidence swap, wrong command, malformed generation. [Task contract](CW09_PROXY_DNS_REVOCATION_RACE_2026-10-15.md). Browser stays default-off, supervised controls intact. No new tool grant, action/outbox ledger, API or migration.
+
+**Evidence:** GitHub source committed, exact-head required CI pending until PR checks; independent review not available; local full checkout/browser integration not available; **staging network race/SSRF/DNS rebinding not operated**, production qualification unavailable, activated no. Old proxy policy CI is not final revision evidence. No claim of observed live exploit.
+
+**Next:** draft independent PR; final-head `test-and-build`, zero-skip `coworker`, `ci-merge-gate` and adversarial review; inspect actual failures, fix without disabling tests; independently stage live proxy cancellation + rebinding and comprehensive CW-09 browser security, then CW-10 immutable human-approved generated-code and CW-11 reviewed skills. Do not auto-merge/deploy/activate.
+
+---
+
 ## CW-09 owner-bound durable visible source artifact — 15 October 2026
 
 **Repository bootstrap:** `main` `599002b8e80089ac658548fdd6ed9e3dafc5ec22`; [PR #405](https://github.com/rumman52/Shuddho/pull/405) merged, exact final-head [CI #38692852396](https://github.com/rumman52/Shuddho/actions/runs/38692852396) has mandatory `test-and-build`, `coworker`, and `ci-merge-gate` all **success**. [#404](https://github.com/rumman52/Shuddho/pull/404) exact-head full CI also passed. Merged #405 main push [CI #38694104016](https://github.com/rumman52/Shuddho/actions/runs/38694104016) still running at initial refresh. No open PRs at branch creation, and neither #405 nor #404 had an independent submitted review observed. No operated staging or release eligibility evidence.
