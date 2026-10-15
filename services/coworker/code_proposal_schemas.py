@@ -235,3 +235,13 @@ def verify_reviewed_code_identity(
         or expected.stdout_bytes > maximum_limits.stdout_bytes
     ):
         raise CoworkerError("code_resource_limit", "The reviewed code exceeds the sandbox policy.", 409)
+
+
+class CodeProposalRevocation(ImmutableReviewModel):
+    """Explicit owner decision to revoke one exact proposal identity.
+
+    No acceptance/approval or worker execution authority is expressible.
+    """
+    review_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
