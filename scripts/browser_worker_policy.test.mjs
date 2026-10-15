@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -137,6 +137,17 @@ test("Agent browser reads cannot replay or persist browser cookies", () => {
   assert.deepEqual(browserContextOptions(
     browserWorkerMayReuseStorageState(supervised) ? supervised.storage_state : null,
   ).storageState, existingState);
+});
+
+test("Agent visible text capture is UTF-8 bounded with truthful truncation", () => {
+  const sample = "বাংলা ".repeat(2000);
+  const captured = boundVisiblePageText(sample);
+  assert.ok(Buffer.byteLength(captured.text, "utf8") <= 8192);
+  assert.equal(captured.truncated, true);
+  assert.ok(captured.text.length < sample.length);
+  assert.deepEqual(boundVisiblePageText("Clear text"), { text: "Clear text", truncated: false });
+  assert.deepEqual(boundVisiblePageText("Short", true), { text: "Short", truncated: true });
+  assert.throws(() => boundVisiblePageText("bad\\0".replace("\\0", "\0")), /browser_page_text_invalid/);
 });
 
 test("Agent read browser denies auto-submitted POST and PUT from the page", () => {

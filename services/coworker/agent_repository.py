@@ -58,8 +58,16 @@ def _settle_agent_browser_session(db, owner: str, session_id: str, *, completed:
     for cmd in db.scalars(select(BrowserCommand).where(
         BrowserCommand.session_id == session.id,
         BrowserCommand.owner_id == owner,
-        BrowserCommand.state.in_(("prepared", "running")),
     ).with_for_update()):
+        # Captured source bytes are transient. Once the Agent receipt settles,
+        # scrub the sealed body from the browser ledger in the same transaction.
+        if "agent_page_text_sealed" in (cmd.result or {}):
+            cmd.result = {
+                key: value for key, value in cmd.result.items()
+                if key != "agent_page_text_sealed"
+            }
+        if cmd.state not in {"prepared", "running"}:
+            continue
         cmd.state = "cancelled"
         cmd.error_code = "session_cancelled"
         cmd.finished_at = now
@@ -1541,7 +1549,8 @@ class AgentRepository:
                         "artifact_id", "artifact_sha256",
                         "browser_state", "observation_scope", "observation_trust",
                         "source_url", "source_sha256", "capture_time",
-                        "untrusted_page_title", "submission_performed",
+                        "untrusted_page_title", "untrusted_page_text_excerpt",
+                        "source_byte_size", "source_truncated", "submission_performed",
                     )
                     if key in summary and isinstance(summary[key], (str, int, bool, type(None)))
                 }

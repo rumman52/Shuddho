@@ -162,7 +162,8 @@ def test_non_agent_browser_malformed_receipt_keeps_existing_retry_semantics(cont
     {"final_url": "https://example.com/", "title": 999},
     {"final_url": "https://example.com/", "resolved_ips": []},
     {"final_url": "https://example.com/", "storage_state": []},
-    {"final_url": "https://example.com/", "page_text": "unreviewed extra field"},
+    {"final_url": "https://example.com/", "page_html": "unreviewed extra field"},
+    {"final_url": "https://example.com/", "page_text": []},
 ])
 def test_agent_browser_http_schema_rejection_is_terminal_before_fastapi_422(
     container, signed_client, malformed,

@@ -414,6 +414,21 @@ class AgentRuntime:
                 "untrusted_page_title": title,
                 "submission_performed": False,
             }
+            captured = self.container.browser.read_agent_capture(
+                run["owner_id"], session_id, command["id"],
+            )
+            if captured is not None and captured["text"].strip():
+                # Blank/whitespace-only pages must not be reported as read content.
+                # Release only a short, untrusted excerpt to the bounded planner.
+                # The checksum is of exact captured UTF-8 bytes, NOT the URL/title.
+                excerpt = captured["text"].encode("utf-8")[:1200].decode("utf-8", "ignore")
+                summary.update({
+                    "observation_scope": "captured_text_excerpt",
+                    "source_sha256": captured["sha256"],
+                    "source_byte_size": captured["byte_size"],
+                    "source_truncated": captured["truncated"],
+                    "untrusted_page_text_excerpt": excerpt,
+                })
             self.repo.finish_invocation(
                 run_id, ordinal, "browser_command", command["id"], summary,
             )
