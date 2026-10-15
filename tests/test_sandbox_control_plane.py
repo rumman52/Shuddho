@@ -645,6 +645,7 @@ def test_sandbox_worker_claim_completion_and_api_auth(container, signed_client):
 @pytest.mark.parametrize("tamper_kind", [
     "same_length_source", "source_missing", "wrong_byte_count",
     "wrong_trust_label", "wrong_policy_version", "bad_utf8",
+    "session_policy_drift", "session_identity_drift",
 ])
 @pytest.mark.parametrize("recovery_claim", [False, True])
 def test_sandbox_worker_claim_fails_closed_on_changed_persisted_source(
@@ -679,6 +680,14 @@ def test_sandbox_worker_claim_fails_closed_on_changed_persisted_source(
             spec["policy_version"] = "replaced-policy"
         elif tamper_kind == "bad_utf8":
             spec["source"] = "\ud800"
+        elif tamper_kind == "session_policy_drift":
+            live_session = db.get(SandboxSession, session["id"])
+            changed_policy = dict(live_session.execution_policy)
+            changed_policy["network"] = "open"
+            live_session.execution_policy = changed_policy
+        elif tamper_kind == "session_identity_drift":
+            live_session = db.get(SandboxSession, session["id"])
+            live_session.purpose = "interactive_artifact"
         execution.request_spec = spec
         if recovery_claim:
             execution.lease_until = utcnow() - timedelta(seconds=1)
