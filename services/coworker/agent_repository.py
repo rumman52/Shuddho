@@ -29,7 +29,12 @@ def _settle_agent_browser_session(db, owner: str, session_id: str, *, completed:
         BrowserSession.owner_id == owner,
         BrowserSession.idempotency_key.like("agent:%"),
     ).with_for_update())
-    if session is None or session.state in {"cancelled", "completed", "expired", "failed"} or session.cancel_requested:
+    if (
+        session is None
+        or session.state in {"cancelled", "completed", "expired", "failed"}
+        or session.cancel_requested
+        or (completed and aware(session.expires_at) <= utcnow())
+    ):
         if completed:
             raise CoworkerError(
                 "browser_session_closed",
@@ -1991,7 +1996,7 @@ class AgentRepository:
                 ).with_for_update())
                 if session is None or session.cancel_requested or session.state in {
                     "cancelled", "completed", "expired", "failed",
-                }:
+                } or aware(session.expires_at) <= utcnow():
                     raise CoworkerError(
                         "browser_session_closed",
                         "The supervised browser session was revoked before its receipt could settle.", 409,

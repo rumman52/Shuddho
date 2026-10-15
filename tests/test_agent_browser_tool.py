@@ -864,3 +864,59 @@ def test_revoked_browser_session_cannot_settle_agent_tool_receipt(container):
         )
     assert revoked.value.code == "browser_session_closed"
     assert container.agent.verified_observations(owner, run["id"]) == []
+
+
+@pytest.mark.parametrize("page_text", [None, "Captured source that must not settle after expiry"])
+def test_agent_browser_final_receipt_rechecks_expiry_after_prior_observation(container, page_text):
+    """Source validation before expiry cannot authorize a later receipt commit."""
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-late-final-receipt")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"),
+        "cw09-late-final-receipt-run",
+    )
+    ordinal = container.agent.append_v3_step(
+        owner, run["id"], "browser.read", "Read the exact owned URL",
+    )
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    session_id = container.agent.step_resource(run["id"], ordinal)["resource_id"]
+    command = container.browser.list_commands(owner, session_id)[0]
+    assert container.browser.claim_commands("late-expiry-worker")[0]["id"] == command["id"]
+    evidence = {
+        "final_url": "https://example.com/article",
+        "title": "Already observed",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+    }
+    if page_text is not None:
+        evidence["page_text"] = page_text
+    assert container.browser.complete_command(
+        "late-expiry-worker", command["id"], evidence,
+    )["state"] == "succeeded"
+    # This read succeeds before the session expiry boundary. The subsequent
+    # receipt is a separate transaction and must check current authorization.
+    prior = container.browser.read_agent_capture(owner, session_id, command["id"])
+    assert (prior is not None) is (page_text is not None)
+    with container.repository.sessions.begin() as db:
+        row = db.get(BrowserSession, session_id)
+        assert row is not None
+        row.expires_at = utcnow() - timedelta(seconds=1)
+    with pytest.raises(CoworkerError) as denied:
+        container.agent.finish_invocation(
+            run["id"], ordinal, "browser_command", command["id"],
+            {"observation_scope": "captured_text_excerpt" if page_text else "metadata_only",
+             "observation_trust": "untrusted"},
+        )
+    assert denied.value.code == "browser_session_closed"
+    assert container.agent.verified_observations(owner, run["id"]) == []
+    # Broker expiration is still responsible for its own idempotent cleanup.
+    assert container.browser.get(owner, session_id)["state"] == "expired"
+    with container.repository.sessions() as db:
+        stored = db.get(BrowserCommand, command["id"])
+        assert "agent_page_text_sealed" not in (stored.result or {})
+    with pytest.raises(CoworkerError):
+        container.agent.finish_invocation(
+            run["id"], ordinal, "browser_command", command["id"],
+            {"observation_scope": "metadata_only", "observation_trust": "untrusted"},
+        )
+    assert container.agent.verified_observations(owner, run["id"]) == []
