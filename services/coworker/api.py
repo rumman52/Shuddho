@@ -2226,6 +2226,13 @@ def download(artifact_id: UUID, identity: Identity, services: Services):
     return {"filename": artifact["filename"], "url": url, "content_path": f"/api/v1/artifacts/{artifact_id}/content" if url is None else None}
 
 
+@router.delete("/browser-source-artifacts/{artifact_id}")
+def erase_browser_source_artifact(artifact_id: UUID, identity: Identity, services: Services):
+    # Only this class of server-captured source can be erased here. Other
+    # artifacts retain their own retention and approval contracts.
+    return services.retention.erase_browser_source(identity.account_id, str(artifact_id))
+
+
 @router.get("/artifacts/{artifact_id}/content")
 def content(artifact_id: UUID, identity: Identity, services: Services):
     artifact = services.repository.artifact(identity.account_id, str(artifact_id))
