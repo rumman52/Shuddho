@@ -357,6 +357,7 @@ function activateRuntime(runtime, command, evidence) {
 
 function pauseRuntime(runtime) {
   runtime.state.kind = "idle";
+  runtime.state.agentReadOnly = false;
   runtime.state.preparingForm = false;
   runtime.state.humanInteractionArmed = false;
   runtime.state.navigationUrls = [];
