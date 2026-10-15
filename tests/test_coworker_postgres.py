@@ -832,3 +832,64 @@ def test_agent_browser_receipt_sql_locks_session_before_command_on_postgres(repo
     assert locks.index("session") < locks.index("command"), locks
     assert browser.get(identity, session["id"])["state"] == "completed"
     assert len(agent.verified_observations(identity, run["id"])) == 1
+
+
+def test_postgres_agent_browser_expiry_between_capture_and_receipt_denies_stale_result(tmp_path):
+    """Exercise the CW-09 final receipt/expiry race under actual PostgreSQL locks."""
+    import asyncio
+
+    from test_agent_browser_tool import enabled_agent_browser
+    from test_coworker import account
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.container import Container
+    from services.coworker.models import BrowserCommand, BrowserSession, utcnow
+    from datetime import timedelta
+
+    url = os.environ["SHUDDHO_TEST_POSTGRES_URL"]
+    settings = Settings(
+        database_url=url, auth_issuer="https://identity.example.test/auth/v1",
+        environment="development", storage_backend="local",
+        local_storage_path=tmp_path / "objects",
+    )
+    upgrade(url)
+    service = Container.create(settings)
+    try:
+        enabled_agent_browser(service)
+        identity = account(service, "cw09-pg-expiry-" + str(uuid4()))
+        run, _ = service.agent.create(
+            identity, AgentRunCreate(goal="Read https://example.com/article"),
+            "cw09-postgres-late-receipt-" + str(uuid4()),
+        )
+        ordinal = service.agent.append_v3_step(
+            identity, run["id"], "browser.read", "Read exactly the owned public URL",
+        )
+        runtime = AgentRuntime(service, None)
+        assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+        session_id = service.agent.step_resource(run["id"], ordinal)["resource_id"]
+        command = service.browser.claim_commands("cw09-pg-expiry-worker")[0]
+        service.browser.complete_command("cw09-pg-expiry-worker", command["id"], {
+            "final_url": "https://example.com/article",
+            "title": "Already captured",
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "page_text": "Captured untrusted browser body",
+        })
+        assert service.browser.read_agent_capture(
+            identity, session_id, command["id"],
+        )["text"] == "Captured untrusted browser body"
+        with service.repository.sessions.begin() as db:
+            session = db.get(BrowserSession, session_id)
+            session.expires_at = utcnow() - timedelta(seconds=1)
+        with pytest.raises(CoworkerError) as denied:
+            service.agent.finish_invocation(
+                run["id"], ordinal, "browser_command", command["id"],
+                {"observation_scope": "captured_text_excerpt", "observation_trust": "untrusted"},
+            )
+        assert denied.value.code == "browser_session_closed"
+        assert service.agent.verified_observations(identity, run["id"]) == []
+        assert service.browser.get(identity, session_id)["state"] == "expired"
+        with service.repository.sessions() as db:
+            persisted = db.get(BrowserCommand, command["id"])
+            assert "agent_page_text_sealed" not in (persisted.result or {})
+    finally:
+        service.repository.sessions.kw["bind"].dispose()
