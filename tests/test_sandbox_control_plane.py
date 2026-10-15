@@ -1236,3 +1236,40 @@ def test_terminal_session_failure_stops_other_claimed_sandbox_worker(container, 
             "first-worker", older["id"], completion_observation(),
         )
     assert stale.value.code == "sandbox_worker_claim_invalid"
+
+
+def test_batched_sandbox_claim_does_not_reopen_failed_sibling_session(container):
+    """A later selected row must not reset a failed session to running."""
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner, "batch-failed-sibling")
+    first = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print(101)"),
+    )
+    second = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print(202)"),
+    )
+    with container.repository.sessions.begin() as db:
+        row = db.get(SandboxExecution, first["id"])
+        spec = dict(row.request_spec)
+        spec["source"] = "print(999)"
+        row.request_spec = spec
+
+    # Both jobs are selected before the claim loop; the first is poisoned.
+    # Without a per-row session-state recheck, the good second job runs
+    # despite its shared session having been terminally failed.
+    claims = container.sandbox.claim_executions("batch-worker", limit=2)
+    assert not any(item["id"] in {first["id"], second["id"]} for item in claims)
+    with container.repository.sessions() as db:
+        failed = db.get(SandboxExecution, first["id"])
+        skipped = db.get(SandboxExecution, second["id"])
+        owned = db.get(SandboxSession, session["id"])
+        assert owned.state == "failed"
+        assert failed.error_code == "sandbox_source_integrity_failed"
+        assert skipped.state == "failed"
+        assert skipped.error_code == "sandbox_session_closed"
+        assert skipped.request_spec == {"source_scrubbed": True}
+        assert skipped.claimed_by is None
+        assert skipped.lease_until is None
+
+    assert container.sandbox.claim_executions("reclaim-worker", limit=2) == []
