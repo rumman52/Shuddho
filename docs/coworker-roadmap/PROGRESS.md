@@ -1,15 +1,3 @@
-## Core routing authenticated API regression repair — 16 October 2026 (Asia/Dhaka)
-
-**Base:** main `badc8bbb66c8ead4a43c3463e32112b1bfd7e996`. Independent branch `codex/core-router-api-regression-20261016`; CW-10 conversation scope remains on separate [draft PR #421](https://github.com/rumman52/Shuddho/pull/421), source head `27c32e37a89da3af25b14d9757273329dd46e4e0` (164 focused passes; exact-head CI pending at this checkpoint).
-
-**Observed full-suite failure:** `tests/test_core_agent_router.py::test_simple_question_does_not_create_agent_run` raises AttributeError because the stale Agent test double lacks the actual API's `public_idempotent_replay` method. Independently reproduced on unchanged main. The lightweight CI skips the boundary without JWT and the heavy pytest list omits that module. This finding does not establish incorrect production routing.
-
-**Bounded repair:** move the single API boundary test to existing authenticated/DB `test_coworker.py` fixtures, assert two direct-answer refusals and no AgentRun/AgentOutbox/Task. Retain lightweight pure routing tests. Include the precise API test node and required-module gate in the already mandatory no-skip conversation/PG report. No product code or authority changed. [Contract](CORE_ROUTER_API_REGRESSION_2026-10-16.md).
-
-**Local evidence:** pure routing plus real API boundary **18 passed, zero skips**, mandatory JUnit gate passed. Initial real fixture enabled research without credentials; removed that unrelated flag and revalidated settings. Full branch pytest and exact new PR-head mandatory CI pending; independent review pending. Do not infer repository-wide qualification or merge/activation from this focused result. All C-04/CW-11 and operated A/P/V gates remain unfinished.
-
----
-
 ## CW-10 proposal persistence CI repair and mainline integration — 15 October 2026
 
 **Fresh main:** `be78fe057bce6d6d09271d1e0fb135b4b422bd74`; [PR #418](https://github.com/rumman52/Shuddho/pull/418) merged after final PR-head [CI #38775100942](https://github.com/rumman52/Shuddho/actions/runs/38775100942) passed `test-and-build`, mandatory `coworker` and `ci-merge-gate`. The original [PR #419](https://github.com/rumman52/Shuddho/pull/419) was not mergeable after #418 and [CI #38777496427](https://github.com/rumman52/Shuddho/actions/runs/38777496427) failed seven stored-code-proposal assertions, leaving mandatory `coworker` and merge gate red; `test-and-build` passed.
@@ -924,3 +912,19 @@ Reviewed main head `ec41ac8b55de99a50e8214a58b22bfc797ae5256` and the four prece
 - Do not turn on conversations, transactions, or external-action providers from this patch alone.
 
 Next: review/qualify this branch, merge through normal protections, implement CW-06 atomic admission/steering with source validation at the same transaction boundary, then CW-07 UI and complete CW-08 workspace/context lifecycle.
+
+
+---
+
+## Core routing authenticated API regression repair — 16 October 2026 (Asia/Dhaka)
+
+**Base:** main `badc8bbb66c8ead4a43c3463e32112b1bfd7e996`. Independent [PR #422](https://github.com/rumman52/Shuddho/pull/422), branch `codex/core-router-api-regression-20261016`; CW-10 conversation scope remains on separate [draft PR #421](https://github.com/rumman52/Shuddho/pull/421), source head `27c32e37a89da3af25b14d9757273329dd46e4e0` (164 focused passes; exact-head CI pending at this checkpoint).
+
+**Observed full-suite failure:** `tests/test_core_agent_router.py::test_simple_question_does_not_create_agent_run` raises AttributeError because the stale Agent test double lacks the actual API's `public_idempotent_replay` method. Independently reproduced on unchanged main. The lightweight CI skips the boundary without JWT and the heavy pytest list omits that module. This finding does not establish incorrect production routing.
+
+**Bounded repair:** move the single API boundary test to existing authenticated/DB `test_coworker.py` fixtures, assert two direct-answer refusals and no AgentRun/AgentOutbox/Task. Retain lightweight pure routing tests. Include the precise API test node and required-module gate in the already mandatory no-skip conversation/PG report. No product code or authority changed. [Contract](CORE_ROUTER_API_REGRESSION_2026-10-16.md).
+
+**Local evidence:** pure routing plus real API boundary **18 passed, zero skips**, mandatory JUnit gate passed. Initial real fixture enabled research without credentials; removed that unrelated flag and revalidated settings. Independent read-only agent review found no Critical/Important/Minor findings; this is not human security certification. Full branch pytest and exact new PR-head mandatory CI pending. The separate #421 full run finished 2068 passed, 70 service skips and the one stale test failure (480.60s). Do not infer repository-wide qualification or merge/activation from this focused result. All C-04/CW-11 and operated A/P/V gates remain unfinished.
+
+
+**Integration:** this entry is appended rather than prepended to avoid conflicting with #421's simultaneous canonical-progress prepend. Both PRs remain separately reviewable against the same base; refresh main/CI after either is integrated. Direct git push was unavailable (no transport credentials); authorized connector writes were used and remote/local Git tree identities verified.
