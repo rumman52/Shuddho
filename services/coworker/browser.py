@@ -818,9 +818,11 @@ class BrowserRepository:
             try:
                 captured = self._session_vault.open(sealed, self._agent_capture_binding(command))
                 raw_text = captured["text"]
+                if not isinstance(raw_text, str):
+                    raise ValueError()
                 encoded = raw_text.encode("utf-8")
                 if (
-                    not isinstance(raw_text, str) or len(encoded) > MAX_AGENT_PAGE_TEXT_BYTES
+                    "\x00" in raw_text or len(encoded) > MAX_AGENT_PAGE_TEXT_BYTES
                     or len(encoded) != result.get("agent_page_text_bytes")
                     or hashlib.sha256(encoded).hexdigest() != result.get("agent_page_text_sha256")
                     or not isinstance(result.get("agent_page_text_truncated"), bool)
