@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select
 
 from .agent_limits import AGENT_MAX_TOOL_STEPS
+from .code_proposal_schemas import CodeComputeLimits, CodeInputVersion, CodeProposalEnvelope, canonicalize_transport_code_proposal, verify_reviewed_code_identity
 from .browser_sources import BROWSER_SOURCE_MEDIA_TYPE, browser_source_identity
 from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, AgentV3Decision, action_proposal_hash
 from .agent_tools import available_tools, tool
@@ -15,7 +16,7 @@ from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
 from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentCodeProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -96,6 +97,202 @@ class AgentRepository:
     def __init__(self, sessions, settings: Settings):
         self.sessions = sessions
         self.settings = settings
+
+    def _code_proposal_inputs(self, db, run: AgentRun, proposal: CodeProposalEnvelope) -> tuple[CodeInputVersion, ...]:
+        """Rebuild every claimed input from live owner/run-scoped DB records."""
+        references = proposal.input_versions
+        expected = set(run.input_versions or ())
+        supplied = {str(item.version_id) for item in references}
+        if len(references) != len(expected) or supplied != expected:
+            raise CoworkerError(
+                "code_input_revoked",
+                "The proposal input versions no longer match the selected run sources.",
+                409,
+            )
+        verified: list[CodeInputVersion] = []
+        for item in references:
+            record = db.execute(
+                select(DocumentVersion, Document).join(
+                    Document, Document.id == DocumentVersion.document_id,
+                ).where(
+                    DocumentVersion.id == str(item.version_id),
+                    DocumentVersion.owner_id == run.owner_id,
+                    Document.owner_id == run.owner_id,
+                    Document.deleted.is_(False),
+                )
+            ).first()
+            if record is None:
+                raise CoworkerError(
+                    "code_input_revoked", "The proposal input is no longer available.", 409,
+                )
+            version, document = record
+            if (
+                version.state != "uploaded"
+                or version.expires_at is None
+                or aware(version.expires_at) <= utcnow()
+                or str(document.id) != str(item.document_id)
+                or version.sha256 != item.source_sha256
+            ):
+                raise CoworkerError(
+                    "code_input_revoked", "An exact proposal input was changed or revoked.", 409,
+                )
+            verified.append(CodeInputVersion(
+                owner_id=run.owner_id,
+                document_id=UUID(document.id),
+                version_id=UUID(version.id),
+                source_sha256=version.sha256,
+            ))
+        return tuple(verified)
+
+    def _verify_code_proposal(self, db, run: AgentRun, proposal: CodeProposalEnvelope, digest: str) -> None:
+        if not (
+            self.settings.agent_runtime_v3_enabled
+            and self.settings.agent_sandbox_tool_enabled
+            and self.settings.code_execution_enabled
+        ):
+            raise CoworkerError("code_proposals_disabled", "Code proposals are not enabled.", 409)
+        if run.runtime_version != 3 or run.cancel_requested or run.state not in ACTIVE_RUN_STATES:
+            raise CoworkerError("code_run_closed", "This Agent run cannot accept code proposals.", 409)
+        # The first proposal envelope only binds owned document versions.
+        # Decline runs with other private/permissioned inputs rather than
+        # silently treating memory or connector context as reviewed code data.
+        if (
+            run.memory_namespaces
+            or run.connector_read_grant_ids
+            or run.connector_snapshot_ids
+            or run.action_ids
+        ):
+            raise CoworkerError(
+                "code_context_unbound",
+                "This code proposal cannot bind every selected context source.",
+                409,
+            )
+        current_inputs = self._code_proposal_inputs(db, run, proposal)
+        verify_reviewed_code_identity(
+            proposal,
+            digest,
+            owner_id=run.owner_id,
+            run_id=UUID(run.id),
+            input_versions=current_inputs,
+            maximum_limits=CodeComputeLimits(
+                cpu_seconds=self.settings.sandbox_cpu_seconds,
+                wall_seconds=self.settings.sandbox_wall_seconds,
+                memory_mb=self.settings.sandbox_memory_mb,
+                disk_mb=self.settings.sandbox_disk_mb,
+                stdout_bytes=self.settings.sandbox_max_output_bytes,
+            ),
+            now=utcnow(),
+        )
+
+    @staticmethod
+    def _code_proposal_dto(row: AgentCodeProposal) -> dict:
+        return {
+            "id": row.id,
+            "run_id": row.run_id,
+            "state": row.state,
+            "review_sha256": row.review_sha256,
+            "proposal": dict(row.snapshot),
+            "created_at": iso(row.created_at),
+            "expires_at": iso(row.expires_at),
+            "approval_granted": False,
+            "code_executed": False,
+        }
+
+    def prepare_code_proposal(
+        self, owner: str, run_id: str, proposal: CodeProposalEnvelope, request_key: str,
+    ) -> tuple[dict, bool]:
+        """Persist an exact review snapshot only; no approval or sandbox claim."""
+        if proposal.owner_id != owner or str(proposal.run_id) != run_id:
+            raise not_found()
+        proposal = canonicalize_transport_code_proposal(proposal)
+        digest = proposal.review_sha256()
+        with self.sessions.begin() as db:
+            run = self._run(db, owner, run_id, lock=True)
+            self._verify_code_proposal(db, run, proposal, digest)
+            previous = db.scalar(select(AgentCodeProposal).where(
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.owner_id == owner,
+                AgentCodeProposal.idempotency_key == request_key,
+            ))
+            if previous is not None:
+                if previous.review_sha256 != digest:
+                    raise CoworkerError(
+                        "idempotency_conflict", "This code proposal key belongs to different source.", 409,
+                    )
+                try:
+                    saved = canonicalize_transport_code_proposal(
+                        CodeProposalEnvelope.model_validate(previous.snapshot)
+                    )
+                    saved_digest = saved.review_sha256()
+                except Exception:
+                    raise CoworkerError(
+                        "code_proposal_invalid", "Stored code proposal integrity failed.", 409,
+                    ) from None
+                if (
+                    saved_digest != digest
+                    or previous.state != "unreviewed"
+                    or aware(previous.created_at) != saved.created_at
+                    or aware(previous.expires_at) != saved.expires_at
+                ):
+                    raise CoworkerError(
+                        "code_proposal_changed", "Stored proposal identity is invalid.", 409,
+                    )
+                return self._code_proposal_dto(previous), False
+            # Cap retained private code snapshots per bounded run. The run
+            # row is locked above, so concurrent submissions cannot evade it.
+            count = db.scalar(select(func.count()).select_from(AgentCodeProposal).where(
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.owner_id == owner,
+            )) or 0
+            if count >= 8:
+                raise CoworkerError(
+                    "code_proposal_limit",
+                    "This Agent run already has the maximum review proposals.",
+                    429,
+                )
+            row = AgentCodeProposal(
+                id=str(uuid4()),
+                run_id=run.id,
+                owner_id=owner,
+                idempotency_key=request_key,
+                review_sha256=digest,
+                snapshot=proposal.model_dump(mode="json"),
+                state="unreviewed",
+                created_at=proposal.created_at,
+                expires_at=proposal.expires_at,
+            )
+            db.add(row)
+            self._audit(db, owner, row.id, "agent.code_proposal.prepared")
+            db.flush()
+            return self._code_proposal_dto(row), True
+
+    def get_code_proposal(self, owner: str, run_id: str, proposal_id: str) -> dict:
+        """Never return proposal code after an input revocation or expiry."""
+        with self.sessions() as db:
+            run = self._run(db, owner, run_id)
+            row = db.scalar(select(AgentCodeProposal).where(
+                AgentCodeProposal.id == proposal_id,
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.owner_id == owner,
+            ))
+            if row is None:
+                raise not_found()
+            try:
+                proposal = canonicalize_transport_code_proposal(
+                    CodeProposalEnvelope.model_validate(row.snapshot)
+                )
+                digest = proposal.review_sha256()
+            except Exception:
+                raise CoworkerError("code_proposal_invalid", "Stored code proposal integrity failed.", 409) from None
+            if (
+                digest != row.review_sha256
+                or row.state != "unreviewed"
+                or aware(row.created_at) != proposal.created_at
+                or aware(row.expires_at) != proposal.expires_at
+            ):
+                raise CoworkerError("code_proposal_changed", "Stored proposal identity is invalid.", 409)
+            self._verify_code_proposal(db, run, proposal, digest)
+            return self._code_proposal_dto(row)
 
     def _workspace(self, db, owner: str) -> str:
         value = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
