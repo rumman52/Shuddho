@@ -321,6 +321,7 @@ class AgentRepository:
             "decided_at": iso(review.decided_at),
             "expires_at": iso(review.expires_at),
             "revoked": review.revoked_at is not None,
+            "expired": aware(review.expires_at) <= utcnow(),
             # Human review is data until the sandbox claim validates it.
             "execution_authorized": False,
             "code_executed": False,
