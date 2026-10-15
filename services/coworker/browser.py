@@ -1580,7 +1580,10 @@ class BrowserRepository:
                     "expires_at": iso(session.expires_at),
                     "policy": dict(command.payload or {}),
                     "attempt": command.attempts,
-                    "storage_state": self._open_storage_state(session),
+                    "storage_state": (
+                        None if (command.payload or {}).get("agent_read_only") is True
+                        else self._open_storage_state(session)
+                    ),
                     "storage_state_version": int(session.storage_state_version or 0),
                     "takeover_input": ({
                         "by": (command.payload or {}).get("by"),
