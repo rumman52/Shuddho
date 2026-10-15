@@ -1,3 +1,15 @@
+## CW-10 exact owner human review decision, no worker authority — 16 October 2026
+
+**Fresh repo:** `main` `a8b60903268f4be4655fd8191305bc35c739a9bd`; [PR #423](https://github.com/rumman52/Shuddho/pull/423) has merged private code revocation/expiry/account erasure, but its exact-head [PR CI #38789767003](https://github.com/rumman52/Shuddho/actions/runs/38789767003) and merged-main [CI #38790723827](https://github.com/rumman52/Shuddho/actions/runs/38790723827) were **still running**, and therefore not qualified at this initial inspection. Older green jobs do not close the new revision. No other open PR was present.
+
+**New C-04 review-only slice:** `codex/cw10-exact-human-review-decision-20261016` based on this exact main. New additive migration `0057` stores one `AgentCodeReview` per private proposal (owner/run/whole-envelope hash, approve/reject, server decision time, bounded owner expiry, revocation). Owner-authenticated `POST .../code-proposals/{proposal_id}/review` checks exact hash, original selected owned scope, active runtime-v3 run and current limits for an approve; rejection scrubs source. Concurrent approval/revocation use shared run+row lock and one-decision PK. Replay of identical decisions is stable, changed decisions conflict. Existing revocation, expired maintenance and account deletion now handle review records. No schema/runtime activation or worker code-execution permission, with `execution_authorized=false` and `code_executed=false` in all review responses. New API/DB and PostgreSQL FK tests provided. [Acceptance contract](CW10_HUMAN_REVIEW_DECISION_2026-10-16.md).
+
+**Verification status:** Source committed on review branch, exact final-head mandatory `test-and-build`/`coworker`/`ci-merge-gate` still required; independent review and operated worker/staging unverified. Do not merge, deploy or activate.
+
+**Next:** Finish trusted model-generated proposal producer and inspected owner UI, then a **separate** security slice atomically validates this reviewed identity against source/input/limits/run/worker lease at sandbox claim. Unconsumed human decision is not execution authority. CW-11 reviewed skills, operated browser isolation and P/V realistic scenarios remain incomplete.
+
+---
+
 ## CW-10 inert proposal owner revocation and private source retention — 16 October 2026
 
 **Repo truth:** `main` `0c292f635cc27515c12a5ae0158dc8db3c222c1f`, merged [PR #420](https://github.com/rumman52/Shuddho/pull/420) (inert proposal persistence), [PR #421](https://github.com/rumman52/Shuddho/pull/421) (admitted conversation source scope), and [PR #422](https://github.com/rumman52/Shuddho/pull/422) (real direct-chat test). These are already merged, not unfinished tasks. Main push [CI #38788446857](https://github.com/rumman52/Shuddho/actions/runs/38788446857) was in progress when this new branch was created.
