@@ -387,6 +387,63 @@ def test_agent_sandbox_resume_refuses_source_substitution(container, worker_alre
         assert db.get(ToolReceipt, invocation.id) is None
 
 
+def test_agent_sandbox_receipt_rejects_forged_stdout_and_preserves_verified_result(container):
+    base = enable_sandbox(container)
+    enabled = replace(base, agent_sandbox_tool_enabled=True)
+    enabled.validate()
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.sandbox.settings = enabled
+
+    owner = account(container)
+    source = "print(8)"
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Execute my exact Python.\n\n```python\n" + source + "\n```"),
+        "sandbox-forged-receipt",
+    )
+    ordinal = container.agent.append_v3_step(
+        owner, run["id"], "sandbox.execute_python", "Run exact code",
+    )
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    claimed = container.sandbox.claim_executions("sandbox-forged-receipt-worker")[0]
+    completed = container.sandbox.complete_execution(
+        "sandbox-forged-receipt-worker", claimed["id"], {
+            **completion_observation(),
+            "stdout": "8\n",
+        },
+    )
+    assert completed["state"] == "succeeded"
+    result = completed["result"]
+    with pytest.raises(CoworkerError) as failure:
+        container.agent.finish_invocation(
+            run["id"], ordinal, "sandbox_execution", completed["id"], {
+                "sandbox_state": "succeeded",
+                "exit_code": 0,
+                "sandbox_destroyed": True,
+                "stdout_sha256": result["stdout_sha256"],
+                "stderr_sha256": result["stderr_sha256"],
+                "stdout_excerpt": "FAKE RESULT",  # Digest alone is not enough.
+                "stderr_excerpt": "",
+                "output_trust": "untrusted",
+                "artifact_id": None,
+                "artifact_sha256": None,
+            },
+        )
+    assert failure.value.code == "sandbox_receipt_unverified"
+    with container.repository.sessions() as db:
+        invocation = db.scalar(select(ToolInvocation).where(ToolInvocation.run_id == run["id"]))
+        assert db.get(ToolReceipt, invocation.id) is None
+
+    # The actual verified worker output is eligible on the same execution;
+    # rejecting a forged receipt must not poison an otherwise valid replay.
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    observed = container.agent.verified_observations(owner, run["id"])
+    assert observed[0]["summary"]["stdout_excerpt"] == "8\n"
+
+
 def test_agent_cancel_scrubs_prepared_planner_sandbox_source(container, signed_client):
     base = enable_sandbox(container)
     settings = replace(base, agent_sandbox_tool_enabled=True)
