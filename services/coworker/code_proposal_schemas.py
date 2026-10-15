@@ -212,3 +212,8 @@ def verify_reviewed_code_identity(
         or expected.stdout_bytes > maximum_limits.stdout_bytes
     ):
         raise CoworkerError("code_resource_limit", "The reviewed code exceeds the sandbox policy.", 409)
+
+
+class CodeReviewDecision(ImmutableReviewModel):
+    decision: Literal["approve", "reject"]
+    review_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
