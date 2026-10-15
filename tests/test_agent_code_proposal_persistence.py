@@ -215,3 +215,26 @@ def test_proposal_must_bind_exact_run_input_versions(container, signed_client):
     denied = prepare(client, headers, run_id, request, key="unselected-input-code")
     assert denied.status_code == 409
     assert denied.json()["error"]["code"] == "code_input_revoked"
+
+@pytest.mark.parametrize("unbound_field", [
+    "memory_namespaces", "connector_read_grant_ids",
+    "connector_snapshot_ids", "action_ids",
+])
+def test_unbound_private_context_cannot_be_silently_reviewed_as_code(
+    container, signed_client, unbound_field,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    with container.repository.sessions.begin() as db:
+        run = db.get(AgentRun, run_id)
+        setattr(run, unbound_field, ["unreviewed-private-reference"])
+    response = prepare(
+        client, headers, run_id, sample_proposal(owner, run_id),
+        key="unbound-context-" + unbound_field,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "code_context_unbound"
+    with container.repository.sessions() as db:
+        assert not db.scalars(select(AgentCodeProposal).where(
+            AgentCodeProposal.run_id == run_id,
+        )).all()
