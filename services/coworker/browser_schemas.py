@@ -69,6 +69,9 @@ class BrowserWorkerNetworkCheck(BrowserWorkerIdentity):
 class BrowserWorkerObservation(BrowserWorkerIdentity):
     final_url: str = Field(min_length=8, max_length=4096)
     title: str | None = Field(default=None, max_length=300)
+    # Only read-only Agent navigation may submit bounded, untrusted page text.
+    page_text: str | None = Field(default=None, max_length=8192)
+    page_text_truncated: bool = False
     redirect_chain: list[str] = Field(default_factory=list, max_length=10)
     resolved_ips: dict[str, list[str]] = Field(default_factory=dict)
     prepared_fields: list[str] = Field(default_factory=list, max_length=10)
