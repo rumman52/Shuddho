@@ -724,7 +724,7 @@ def test_sandbox_worker_claim_fails_closed_on_changed_persisted_source(
                     "policy_version": "sandbox-control-v1",
                     "executor_contract": "bwrap-python311-v1",
                     "exit_code": 0,
-                    "stdout": "101\\n",
+                    "stdout": "101\n",
                     "stderr": "",
                     "elapsed_ms": 1,
                     "sandbox_destroyed": True,
