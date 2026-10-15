@@ -789,3 +789,36 @@ def test_human_approval_denies_tampered_persisted_source_and_does_not_store_deci
     assert denied.json()["error"]["code"] == "code_proposal_invalid"
     with container.repository.sessions() as db:
         assert db.get(AgentCodeReview, proposal_id) is None
+
+def test_human_review_replay_fails_closed_when_original_source_is_revoked(
+    container, signed_client,
+):
+    from services.coworker.models import DocumentVersion
+
+    proposal, _, _, version_id = conversation_proposal(container)
+    client, headers = signed_client
+    run_id = str(proposal.run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201, created.text
+    proposal_id = created.json()["id"]
+    expiry = utcnow() + timedelta(seconds=60)
+    first = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        expires_at=expiry,
+    )
+    assert first.status_code == 200, first.text
+
+    with container.repository.sessions.begin() as db:
+        db.get(DocumentVersion, version_id).sha256 = "f" * 64
+    stale_replay = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        expires_at=expiry,
+    )
+    assert stale_replay.status_code == 409, stale_replay.text
+    assert stale_replay.json()["error"]["code"] == "context_sources_changed"
+    assert proposal.source not in stale_replay.text
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id).decision == "approve"
+        assert not db.scalars(select(SandboxExecution).where(
+            SandboxExecution.owner_id == proposal.owner_id,
+        )).all()
