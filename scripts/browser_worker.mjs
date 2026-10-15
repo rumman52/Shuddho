@@ -305,6 +305,7 @@ async function createRuntime(command, evidence) {
     const request = route.request();
     const allowed = browserRequestAllowed({
       kind: state.kind,
+      agentReadOnly: state.agentReadOnly,
       method: request.method(),
       preparingForm: state.preparingForm,
       humanInteractionArmed: state.humanInteractionArmed,
