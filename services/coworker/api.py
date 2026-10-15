@@ -2217,7 +2217,12 @@ async def events(task_id: UUID, request: Request, identity: Identity, services: 
 @router.get("/artifacts/{artifact_id}/download")
 def download(artifact_id: UUID, identity: Identity, services: Services):
     artifact = services.repository.artifact(identity.account_id, str(artifact_id))
-    url = services.storage.download_url(artifact["object_key"], artifact["filename"], artifact["content_type"])
+    # Captured browser text can contain private/sensitive content. Unlike
+    # ordinary exports, never issue a bearer S3 presigned URL that might
+    # remain usable after the source is revoked or the account is erased.
+    url = None if artifact.get("artifact_class") == "browser_source" else services.storage.download_url(
+        artifact["object_key"], artifact["filename"], artifact["content_type"],
+    )
     return {"filename": artifact["filename"], "url": url, "content_path": f"/api/v1/artifacts/{artifact_id}/content" if url is None else None}
 
 
