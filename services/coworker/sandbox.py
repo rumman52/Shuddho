@@ -457,6 +457,19 @@ class SandboxRepository:
         return body, declared_sha
 
     def complete_execution(self, worker_id: str, execution_id: str, observation: dict) -> dict:
+        # Reject a late worker result only *after* persisting the terminal state.
+        # Raising from inside sessions.begin() rolls back source scrubbing and
+        # lease revocation, leaving a cancelled/expired job incorrectly running.
+        outcome = self._complete_execution(worker_id, execution_id, observation)
+        if outcome.get("_rejected_session_closed") is True:
+            raise CoworkerError(
+                "sandbox_session_closed",
+                "The sandbox session closed before this result could be accepted.",
+                409,
+            )
+        return outcome
+
+    def _complete_execution(self, worker_id: str, execution_id: str, observation: dict) -> dict:
         self._require_enabled()
         now = utcnow()
         with self.sessions.begin() as db:
@@ -493,12 +506,21 @@ class SandboxRepository:
                 if aware(session.expires_at) <= now:
                     session.state = "expired"
                     session.cancel_requested = True
+                else:
+                    # A cancellation flag may race ahead of the session state.
+                    # Never commit a cancelled execution under a running session.
+                    session.state = "cancelled"
+                    session.cancel_requested = True
                 session.updated_at = now
-                raise CoworkerError(
-                    "sandbox_session_closed",
-                    "The sandbox session closed before this result could be accepted.",
-                    409,
-                )
+                db.add(AuditEvent(
+                    id=str(uuid4()),
+                    owner_id=execution.owner_id,
+                    resource_id=session.id,
+                    action="sandbox_execution.late_completion_rejected",
+                ))
+                # Return a private sentinel to commit terminalization before
+                # the public method raises the same typed 409 as before.
+                return {"_rejected_session_closed": True}
             if (
                 observation.get("policy_version") != SANDBOX_POLICY_VERSION
                 or observation.get("executor_contract") != "bwrap-python311-v1"
