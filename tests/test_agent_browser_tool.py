@@ -26,7 +26,8 @@ from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.agent_tools import available_tools, tool
 from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserWorkerObservation
 from services.coworker.errors import CoworkerError
-from services.coworker.models import BrowserCommand, BrowserSession, utcnow
+from services.coworker.models import Artifact, BrowserCommand, BrowserSession, utcnow
+from services.coworker.browser_sources import browser_source_identity
 
 
 def enabled_agent_browser(container):
@@ -215,6 +216,7 @@ def test_agent_empty_page_remains_metadata_only(container):
     summary = container.agent.verified_observations(owner, run["id"])[0]["summary"]
     assert summary["observation_scope"] == "metadata_only"
     assert "untrusted_page_text_excerpt" not in summary
+    assert "artifact_id" not in summary
     assert container.browser.get(owner, session_id)["state"] == "completed"
 
 
@@ -279,6 +281,23 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container)
     assert summary["source_byte_size"] == len(page_text.encode("utf-8"))
     assert summary["source_truncated"] is False
     assert summary["untrusted_page_text_excerpt"] == page_text
+    artifact_id, object_key, filename = browser_source_identity(owner, command["id"])
+    assert summary["artifact_id"] == artifact_id
+    assert summary["artifact_sha256"] == text_hash
+    stored = container.repository.artifact(owner, artifact_id)
+    assert stored["object_key"] == object_key
+    assert stored["filename"] == filename
+    assert stored["sha256"] == text_hash
+    assert stored["byte_size"] == len(page_text.encode("utf-8"))
+    assert container.storage.get(object_key, 8192).decode("utf-8") == page_text
+    with pytest.raises(CoworkerError) as other_source:
+        container.repository.artifact(other, artifact_id)
+    assert other_source.value.status_code == 404
+    with container.repository.sessions() as db:
+        source = db.get(Artifact, artifact_id)
+        assert source.artifact_class == "browser_source"
+        assert source.task_id is None
+        assert source.expires_at is None
     assert container.browser.get(owner, session_id)["state"] == "completed"
     with container.repository.sessions() as db:
         after = db.get(BrowserCommand, command["id"])
