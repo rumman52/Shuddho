@@ -296,7 +296,7 @@ class SandboxRepository:
                 # Authority is consumed when the worker claims an execution,
                 # not when a request was first prepared. Never hand the
                 # sandbox altered stored source even when its length matches.
-                spec = execution.request_spec or {}
+                spec = execution.request_spec if isinstance(execution.request_spec, dict) else {}
                 source = spec.get("source")
                 try:
                     encoded = source.encode("utf-8") if isinstance(source, str) else None
