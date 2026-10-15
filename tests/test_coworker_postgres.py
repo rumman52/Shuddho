@@ -1002,7 +1002,7 @@ def test_postgres_agent_sandbox_receipt_rechecks_exact_source_and_output_atomica
         original = "print(101)"
         run, _ = service.agent.create(
             identity,
-            AgentRunCreate(goal="Run exactly this code.\\n\\n```python\\n" + original + "\\n```"),
+            AgentRunCreate(goal="Run exactly this code.\n\n```python\n" + original + "\n```"),
             "cw10-identity-pg-" + str(uuid4()),
         )
         ordinal = service.agent.append_v3_step(
@@ -1017,7 +1017,7 @@ def test_postgres_agent_sandbox_receipt_rechecks_exact_source_and_output_atomica
         assert own_claim["source"] == original
         completed = service.sandbox.complete_execution(
             "cw10-pg-sandbox-worker", own_claim["id"], {
-                **completion_observation(), "stdout": "101\\n",
+                **completion_observation(), "stdout": "101\n",
             },
         )
         assert completed["state"] == "succeeded"
@@ -1027,7 +1027,7 @@ def test_postgres_agent_sandbox_receipt_rechecks_exact_source_and_output_atomica
             "sandbox_destroyed": True,
             "stdout_sha256": result["stdout_sha256"],
             "stderr_sha256": result["stderr_sha256"],
-            "stdout_excerpt": "101\\n", "stderr_excerpt": "",
+            "stdout_excerpt": "101\n", "stderr_excerpt": "",
             "output_trust": "untrusted", "artifact_id": None,
             "artifact_sha256": None,
         }
@@ -1061,6 +1061,6 @@ def test_postgres_agent_sandbox_receipt_rechecks_exact_source_and_output_atomica
             assert db.get(ToolReceipt, invocation_id) is None
 
         assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
-        assert service.agent.verified_observations(identity, run["id"])[0]["summary"]["stdout_excerpt"] == "101\\n"
+        assert service.agent.verified_observations(identity, run["id"])[0]["summary"]["stdout_excerpt"] == "101\n"
     finally:
         service.repository.sessions.kw["bind"].dispose()
