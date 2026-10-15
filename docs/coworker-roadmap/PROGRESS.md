@@ -1,3 +1,15 @@
+## CW-09 bounded visible page text content slice — 15 October 2026
+
+**Bootstrap truth:** `main` `e4a2e671ccaef9ab212f77cbd02521eec9866bd6`; [PR #403](https://github.com/rumman52/Shuddho/pull/403) was **merged**, its final-head [CI #38686360933](https://github.com/rumman52/Shuddho/actions/runs/38686360933) **passed all three** `test-and-build`, mandatory `coworker` and `ci-merge-gate` jobs. Matching main push [CI #38689490563](https://github.com/rumman52/Shuddho/actions/runs/38689490563) was running at bootstrap; no open PR at that point. No staging, production qualification or activation demonstrated.
+
+**Next selected gap:** Agent browser source output remained metadata-only title/URL, insufficient for grounded public-page research. **Implementation branch:** `codex/cw09-owned-page-text-capture-20261015` based on the above main revision. [Contract](CW09_VISIBLE_PAGE_TEXT_CAPTURE_2026-10-15.md). In real Runtime v3 broker read path, isolated worker now returns optional bounded visible text; PostgreSQL command stores text encrypted with owner/session/command TokenVault binding and true digest of captured UTF-8 bytes; only owned server runtime obtains a <=1,200-byte untrusted excerpt. Browser user DTO excludes ciphertext/plaintext; Agent settlement, cancellation and expiry scrub temporary sealed text; malformed claims remain terminal. Legacy metadata-only worker receipts retain truthful metadata scope. New Python/JS tests and strict worker HTTP schema fixture update provided.
+
+**Evidence levels:** Source implementation on review branch; **repository required exact-head CI and independent review still pending**, local checkout unavailable due GitHub DNS failure; **staging not tested**, **production not qualified**, **not activated**. The digest is of *bounded extracted visible text*, not complete HTML, and persistent private source artifacts remain a separate missing deliverable.
+
+**Remaining:** CW-09 real isolated worker egress, SSRF/redirect/rebinding, source artifact retention/provenance, prompt injection, cancellation/staging; CW-10 exact generated-code human-approval+sandbox claim; CW-11 versioned trusted publish/grants/rollback; context continuity/recovery operated scenarios and production release contracts. See [versioned acceptance inventory](ARCHITECTURE_CORE_ACCEPTANCE_INVENTORY_V1.md). No auto-merge, deployment, paid provisioning or runtime activation.
+
+---
+
 ## CW-09 Agent browser credential and HTTP mutation isolation — 15 October 2026
 
 **Current main at bootstrap:** `45906f87cf2eba9f6abb5afc654f834166fa5820`; [PR #402](https://github.com/rumman52/Shuddho/pull/402) **merged**. Its exact-PR-head [CI #38685207628](https://github.com/rumman52/Shuddho/actions/runs/38685207628) `test-and-build` passed and mandatory `coworker` was **in progress** at initial review; merged-main [push CI #38685347836](https://github.com/rumman52/Shuddho/actions/runs/38685347836) also in progress. Do not report these green until refreshed. No other open PRs at bootstrap.
