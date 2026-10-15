@@ -2034,7 +2034,12 @@ class AgentRepository:
                         or result.get("agent_page_text_bytes") != source_size
                         or summary.get("source_sha256") != source_hash
                         or summary.get("source_byte_size") != source_size
+                        or summary.get("source_truncated") != result.get("agent_page_text_truncated")
                         or summary.get("observation_scope") != "captured_text_excerpt"
+                        or summary.get("observation_trust") != "untrusted"
+                        or summary.get("browser_state") != "succeeded"
+                        or summary.get("submission_performed") is not False
+                        or summary.get("untrusted_page_text_excerpt") != browser_source_bytes[:1200].decode("utf-8", "ignore")
                         or summary.get("source_url") != result.get("final_url")
                     ):
                         raise CoworkerError(
