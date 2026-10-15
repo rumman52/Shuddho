@@ -327,6 +327,26 @@ class AgentRepository:
             "code_executed": False,
         }
 
+    def _verify_persisted_code_review_source(self, db, run: AgentRun, row: AgentCodeProposal) -> None:
+        """Recheck canonical source and every admitted scope on original AND replay."""
+        try:
+            proposal = canonicalize_transport_code_proposal(
+                CodeProposalEnvelope.model_validate(row.snapshot)
+            )
+        except Exception:
+            raise CoworkerError(
+                "code_proposal_invalid", "Stored code proposal integrity failed.", 409,
+            ) from None
+        if (
+            proposal.review_sha256() != row.review_sha256
+            or aware(row.created_at) != proposal.created_at
+            or aware(row.expires_at) != proposal.expires_at
+        ):
+            raise CoworkerError(
+                "code_proposal_changed", "Stored code proposal identity changed.", 409,
+            )
+        self._verify_code_proposal(db, run, proposal, row.review_sha256)
+
     def decide_code_proposal(
         self, owner: str, run_id: str, proposal_id: str, decision: CodeProposalHumanDecision,
     ) -> dict:
@@ -359,14 +379,16 @@ class AgentRepository:
                     raise CoworkerError(
                         "code_review_conflict", "An immutable human review already exists.", 409,
                     )
-                if previous.decision == "approve" and (
-                    row.state != "unreviewed"
-                    or previous.revoked_at is not None
-                    or aware(previous.expires_at) <= utcnow()
-                ):
-                    raise CoworkerError(
-                        "code_review_closed", "This human review is no longer usable.", 409,
-                    )
+                if previous.decision == "approve":
+                    if (
+                        row.state != "unreviewed"
+                        or previous.revoked_at is not None
+                        or aware(previous.expires_at) <= utcnow()
+                    ):
+                        raise CoworkerError(
+                            "code_review_closed", "This human review is no longer usable.", 409,
+                        )
+                    self._verify_persisted_code_review_source(db, run, row)
                 return self._human_review_dto(previous)
 
             if row.state != "unreviewed":
@@ -379,23 +401,7 @@ class AgentRepository:
                     "code_review_expiry", "The human review expiry exceeds the allowed period.", 409,
                 )
             if decision.decision == "approve":
-                try:
-                    proposal = canonicalize_transport_code_proposal(
-                        CodeProposalEnvelope.model_validate(row.snapshot)
-                    )
-                except Exception:
-                    raise CoworkerError(
-                        "code_proposal_invalid", "Stored code proposal integrity failed.", 409,
-                    ) from None
-                if (
-                    proposal.review_sha256() != row.review_sha256
-                    or aware(row.created_at) != proposal.created_at
-                    or aware(row.expires_at) != proposal.expires_at
-                ):
-                    raise CoworkerError(
-                        "code_proposal_changed", "Stored code proposal identity changed.", 409,
-                    )
-                self._verify_code_proposal(db, run, proposal, row.review_sha256)
+                self._verify_persisted_code_review_source(db, run, row)
             else:
                 # Denial is valid even if the source has since been withdrawn.
                 row.state = "revoked"
