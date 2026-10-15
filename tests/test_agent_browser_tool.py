@@ -342,6 +342,107 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container,
 
 
 
+
+def test_delete_browser_source_requires_terminal_run_and_redacts_observation(container, signed_client):
+    enabled_agent_browser(container)
+    owner_subject = "cw09-delete-source-owner"
+    other_subject = "cw09-delete-source-cross-owner"
+    owner = account(container, owner_subject)
+    account(container, other_subject)
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"),
+        "cw09-owned-source-delete",
+    )
+    ordinal = container.agent.append_v3_step(owner, run["id"], "browser.read", "Read the selected source")
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    command = container.browser.claim_commands("delete-source-worker")[0]
+    source_text = "Private bounded source available only until explicit deletion"
+    container.browser.complete_command("delete-source-worker", command["id"], {
+        "final_url": "https://example.com/article",
+        "title": "Source-to-delete",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "page_text": source_text,
+    })
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    source_id, object_key, _ = browser_source_identity(owner, command["id"])
+    assert container.storage.get(object_key, 8192) == source_text.encode("utf-8")
+    client, headers = signed_client
+    endpoint = f"/api/v1/browser-source-artifacts/{source_id}"
+    assert client.delete(endpoint, headers=headers(other_subject)).status_code == 404
+    # In-flight Agent processing might already hold a captured excerpt. The
+    # owner must stop/finish that run before erasure can take effect.
+    pending = client.delete(endpoint, headers=headers(owner_subject))
+    assert pending.status_code == 409
+    assert pending.json()["error"]["code"] == "browser_source_active"
+
+    container.agent.complete_run(run["id"])
+    erased = client.delete(endpoint, headers=headers(owner_subject))
+    assert erased.status_code == 200
+    assert erased.json()["metadata_erased"] is True
+    assert erased.json()["object_deleted"] is True
+    assert erased.json()["object_cleanup_pending"] is False
+    with pytest.raises(FileNotFoundError):
+        container.storage.get(object_key, 8192)
+    assert client.get(
+        f"/api/v1/artifacts/{source_id}/content", headers=headers(owner_subject),
+    ).status_code == 404
+    assert client.get(
+        f"/api/v1/artifacts/{source_id}/download", headers=headers(owner_subject),
+    ).status_code == 404
+    verified = container.agent.verified_observations(owner, run["id"])
+    assert len(verified) == 1
+    summary = verified[0]["summary"]
+    assert summary["observation_scope"] == "source_deleted"
+    assert summary["source_deleted"] is True
+    assert "artifact_id" not in summary
+    assert "source_sha256" not in summary
+    assert "untrusted_page_text_excerpt" not in summary
+    assert client.delete(endpoint, headers=headers(owner_subject)).status_code == 404
+
+
+def test_browser_source_storage_delete_outage_is_reported_and_access_revoked(container, monkeypatch):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-source-delete-outage")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"),
+        "cw09-delete-outage-run",
+    )
+    ordinal = container.agent.append_v3_step(owner, run["id"], "browser.read", "Read source")
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    command = container.browser.claim_commands("delete-outage-worker")[0]
+    container.browser.complete_command("delete-outage-worker", command["id"], {
+        "final_url": "https://example.com/article", "title": "Source",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "page_text": "Source for storage disconnect test",
+    })
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    container.agent.complete_run(run["id"])
+    source_id, key, _ = browser_source_identity(owner, command["id"])
+    original_delete = container.storage.delete
+
+    def unavailable(_key):
+        raise OSError("synthetic store delete unavailable")
+
+    monkeypatch.setattr(container.storage, "delete", unavailable)
+    result = container.retention.erase_browser_source(owner, source_id)
+    assert result["metadata_erased"] is True
+    assert result["object_deleted"] is False
+    assert result["object_cleanup_pending"] is True
+    with pytest.raises(CoworkerError) as missing:
+        container.repository.artifact(owner, source_id)
+    assert missing.value.status_code == 404
+    assert key not in container.retention.referenced_object_keys()
+    assert container.agent.verified_observations(owner, run["id"])[0]["summary"]["source_deleted"] is True
+    monkeypatch.setattr(container.storage, "delete", original_delete)
+    # Existing orphan cleanup owns retrying private-byte deletion.
+    container.storage.delete(key)
+    with pytest.raises(FileNotFoundError):
+        container.storage.get(key, 8192)
+
+
+
 def test_agent_browser_source_storage_failure_does_not_fabricate_receipt(container, monkeypatch):
     enabled_agent_browser(container)
     owner = account(container, "cw09-storage-fail")
