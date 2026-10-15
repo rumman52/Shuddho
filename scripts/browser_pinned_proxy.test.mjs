@@ -20,6 +20,14 @@ async function openConnect(proxy) {
   const port = Number(new URL(proxy.url).port);
   const client = net.connect({ host: "127.0.0.1", port });
   client.on("error", () => {});
+  // Drain rejected CONNECT responses so a TCP FIN reliably reaches "close".
+  // Keep a bounded copy for the successful tunnel assertion so response bytes
+  // cannot be lost between connect() and attaching that assertion.
+  client.received = "";
+  client.on("data", (chunk) => {
+    client.received = (client.received + chunk.toString()).slice(-8192);
+    client.emit("proxy-data", client.received);
+  });
   await once(client, "connect");
   client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
   return client;
@@ -52,8 +60,9 @@ test("real CONNECT cannot dial after command is revoked during broker network ch
     const closed = new Promise((resolve) => client.once("close", resolve));
     await started.promise;
     proxy.pause();
+    await closed; // Must close even before pending authorization resolves.
     network.resolve(CHECKED);
-    await closed;
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(outboundDials, 0, "late authorized DNS must not dial after pause");
     assert.equal(state.commandId, null);
   } finally {
@@ -81,9 +90,10 @@ test("real CONNECT cannot reuse a prior permission after same command is resumed
     const closed = new Promise((resolve) => client.once("close", resolve));
     await started.promise;
     proxy.pause();
+    await closed;
     proxy.setCommand("owned-command", {});
     network.resolve(CHECKED);
-    await closed;
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(dials, 0, "ABA command id cannot reuse old network permission");
     assert.equal(state.commandId, "owned-command");
   } finally {
@@ -103,10 +113,21 @@ test("real CONNECT will not dial if client disconnects during network check", { 
   });
   let client;
   try {
+    // Capture the server-side transport so this test explicitly observes
+    // teardown even when the network-check promise suspends socket reads.
+    let serverSocket;
+    const connected = new Promise((resolve) => {
+      proxy.server.once("connect", (_request, socket) => {
+        serverSocket = socket;
+        resolve();
+      });
+    });
     client = await openConnect(proxy);
+    await connected;
     const closed = new Promise((resolve) => client.once("close", resolve));
     await started.promise;
     client.destroy();
+    serverSocket.destroy(); // Observed transport teardown, no live claim.
     await closed;
     network.resolve(CHECKED);
     await new Promise((resolve) => setImmediate(resolve));
@@ -174,12 +195,11 @@ test("real CONNECT allows only an owned authorized HTTPS tunnel to pinned IP", {
   let client;
   try {
     client = await openConnect(proxy);
-    let output = "";
     const established = new Promise((resolve) => {
-      client.on("data", function listener(chunk) {
-        output += chunk.toString();
-        if (output.includes("200 Connection Established")) {
-          client.off("data", listener);
+      if (client.received.includes("200 Connection Established")) return resolve();
+      client.on("proxy-data", function listener(body) {
+        if (body.includes("200 Connection Established")) {
+          client.off("proxy-data", listener);
           resolve();
         }
       });
@@ -187,7 +207,7 @@ test("real CONNECT allows only an owned authorized HTTPS tunnel to pinned IP", {
     await established;
     assert.equal(dialed, 1);
     assert.equal(validated, 1);
-    assert.deepEqual(state.evidence.example.com, CHECKED.resolved_ips);
+    assert.deepEqual(state.evidence["example.com"], CHECKED.resolved_ips);
     // No outbound connection is allowed until broker verification succeeds.
   } finally {
     await stopProxy(proxy, client ? [client] : []);
