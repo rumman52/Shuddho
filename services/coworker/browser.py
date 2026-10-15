@@ -800,10 +800,11 @@ class BrowserRepository:
         restricted to the server-side Agent runtime before its receipt settles.
         """
         self._require_enabled()
+        # Commit expiration/cleanup independently: denial below must not
+        # roll back the deletion of stale encrypted source bytes.
         with self.sessions.begin() as db:
-            # A successful command must not retain source bytes indefinitely
-            # merely because the Agent did not return for its receipt.
             self._expire_stale_sessions(db, owner)
+        with self.sessions() as db:
             session = db.scalar(select(BrowserSession).where(
                 BrowserSession.id == session_id,
                 BrowserSession.owner_id == owner,
