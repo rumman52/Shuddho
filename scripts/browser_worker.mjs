@@ -279,6 +279,7 @@ async function createRuntime(command, evidence) {
     commandId: command.id,
     evidence,
     kind: command.kind,
+    agentReadOnly: command.policy?.agent_read_only === true,
     preparingForm: false,
     humanInteractionArmed: false,
     formMutationBlocked: false,
