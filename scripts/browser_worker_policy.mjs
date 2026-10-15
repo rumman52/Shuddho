@@ -89,6 +89,12 @@ export function browserRequestAllowed({ kind, method, preparingForm, humanIntera
 }
 
 
+// An autonomous read never imports cookies or persists an authenticated browsing context.
+// Human-supervised commands retain their existing encrypted continuity contract.
+export function browserWorkerMayReuseStorageState(command) {
+  return command?.policy?.agent_read_only !== true;
+}
+
 export function browserContextOptions(storageState) {
   return {
     acceptDownloads: false,
