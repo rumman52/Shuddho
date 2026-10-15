@@ -1,3 +1,15 @@
+## CW-10 late sandbox completion rollback repair — 15 October 2026
+
+**Refreshed evidence:** `main` `9bdb73a9142bce6e9e9848373dddde44514ca144`, merged [PR #413](https://github.com/rumman52/Shuddho/pull/413), matching [CI #38746278784](https://github.com/rumman52/Shuddho/actions/runs/38746278784) passed `test-and-build`, `coworker`, `ci-merge-gate`. No open PRs at task start. Earlier CW-10 source/policy worker-claim integrity is merged and verified at repository CI level; actual model-generated proposal/approval and operated isolation remain absent.
+
+**Defect:** A sandbox worker completion arriving after session expiry/cancellation updated terminal state, scrubbed source and revoked the lease, but raised typed `sandbox_session_closed` inside `sessions.begin()`, rolling all of that transaction back. SQLAlchemy rollback reproduced independently. This is a source-level data-integrity/race defect, not confirmed production exploitation.
+
+**Bounded fix:** `codex/cw10-late-completion-commit-20261015` commits the persisted closed-session transition inside the existing transaction and raises 409 only afterward. Adds owner-bound audit event, SQLite regression for post-claim expiry/cancellation, no repeat claim and no accepted receipt. [Contract](CW10_LATE_SANDBOX_COMPLETION_COMMIT_2026-10-15.md). **Committed branch; final-head CI, review and staging pending** at this entry. No schema/permissions/feature activation changes.
+
+**Next:** Open review PR; check exact-head required `test-and-build`, no-skip `coworker` and `ci-merge-gate`. Obtain review, avoid auto-merge. Then address CW-10 immutable *model-generated* proposal, human decision with expiry/revocation, atomic worker-claim recheck, and staging sandbox cleanup/isolation. Other architecture, personal context, CW-09 and CW-11 gates remain incomplete.
+
+---
+
 ## CW-10 worker-claim source integrity at authorization boundary — 15 October 2026
 
 **Bootstrap and dependency evidence:** `main` `e4381617fd51107b74b4aac25e76109caf1a0123`; [PR #412](https://github.com/rumman52/Shuddho/pull/412) merged the HTTPS CONNECT pending-socket cleanup after its rewritten exact-head [CI #38725411478](https://github.com/rumman52/Shuddho/actions/runs/38725411478) passed required `test-and-build`, `coworker`, and `ci-merge-gate`. [PR #411](https://github.com/rumman52/Shuddho/pull/411) exact user-code Agent replay/receipt protections were already merged. Latest post-merge main [CI #38727695049](https://github.com/rumman52/Shuddho/actions/runs/38727695049) had `test-and-build` success and `coworker` still running at refreshed checkpoint. No open PR at task bootstrap; no independent submitted security review or operated staging/production identity. Core, context and release acceptance remain incomplete.
