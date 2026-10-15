@@ -3,13 +3,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from datetime import timedelta
+from datetime import timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select
 
 from .agent_limits import AGENT_MAX_TOOL_STEPS
-from .code_proposal_schemas import CodeComputeLimits, CodeInputVersion, CodeProposalEnvelope, canonicalize_transport_code_proposal, verify_reviewed_code_identity
+from .code_proposal_schemas import CodeComputeLimits, CodeInputVersion, CodeProposalEnvelope, CodeProposalHumanDecision, canonicalize_transport_code_proposal, verify_reviewed_code_identity
 from .browser_sources import BROWSER_SOURCE_MEDIA_TYPE, browser_source_identity
 from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, AgentV3Decision, action_proposal_hash
 from .agent_tools import available_tools, tool
@@ -17,7 +17,7 @@ from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
 from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentCodeProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentCodeProposal, AgentCodeReview, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -306,7 +306,110 @@ class AgentRepository:
             ):
                 raise CoworkerError("code_proposal_changed", "Stored proposal identity is invalid.", 409)
             self._verify_code_proposal(db, run, proposal, digest)
-            return self._code_proposal_dto(row)
+            result = self._code_proposal_dto(row)
+            review = db.get(AgentCodeReview, row.id)
+            if review is not None:
+                result["human_review"] = self._human_review_dto(review)
+            return result
+
+    @staticmethod
+    def _human_review_dto(review: AgentCodeReview) -> dict:
+        return {
+            "proposal_id": review.proposal_id,
+            "review_sha256": review.review_sha256,
+            "decision": review.decision,
+            "decided_at": iso(review.decided_at),
+            "expires_at": iso(review.expires_at),
+            "revoked": review.revoked_at is not None,
+            # Human review is data until the sandbox claim validates it.
+            "execution_authorized": False,
+            "code_executed": False,
+        }
+
+    def decide_code_proposal(
+        self, owner: str, run_id: str, proposal_id: str, decision: CodeProposalHumanDecision,
+    ) -> dict:
+        """Persist one explicit owner review; NEVER admit a sandbox execution.
+
+        No model/planner/worker consumes this review. Any future sandbox claim
+        must atomically revalidate run, source, permission, hash and expiry.
+        """
+        with self.sessions.begin() as db:
+            run = self._run(db, owner, run_id, lock=True)
+            row = db.scalar(select(AgentCodeProposal).where(
+                AgentCodeProposal.id == proposal_id,
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.owner_id == owner,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if not hmac.compare_digest(row.review_sha256, decision.review_sha256):
+                raise CoworkerError(
+                    "code_proposal_changed", "The reviewed proposal identity changed.", 409,
+                )
+            previous = db.get(AgentCodeReview, row.id)
+            expiry = decision.expires_at.astimezone(timezone.utc)
+            if previous is not None:
+                if (
+                    previous.decision != decision.decision
+                    or previous.review_sha256 != decision.review_sha256
+                    or aware(previous.expires_at) != expiry
+                ):
+                    raise CoworkerError(
+                        "code_review_conflict", "An immutable human review already exists.", 409,
+                    )
+                if previous.decision == "approve" and (
+                    row.state != "unreviewed"
+                    or previous.revoked_at is not None
+                    or aware(previous.expires_at) <= utcnow()
+                ):
+                    raise CoworkerError(
+                        "code_review_closed", "This human review is no longer usable.", 409,
+                    )
+                return self._human_review_dto(previous)
+
+            if row.state != "unreviewed":
+                raise CoworkerError(
+                    "code_proposal_revoked", "This code proposal is no longer reviewable.", 409,
+                )
+            now = utcnow()
+            if expiry <= now or expiry > now + timedelta(minutes=10) or expiry > aware(row.expires_at):
+                raise CoworkerError(
+                    "code_review_expiry", "The human review expiry exceeds the allowed period.", 409,
+                )
+            if decision.decision == "approve":
+                try:
+                    proposal = canonicalize_transport_code_proposal(
+                        CodeProposalEnvelope.model_validate(row.snapshot)
+                    )
+                except Exception:
+                    raise CoworkerError(
+                        "code_proposal_invalid", "Stored code proposal integrity failed.", 409,
+                    ) from None
+                if (
+                    proposal.review_sha256() != row.review_sha256
+                    or aware(row.created_at) != proposal.created_at
+                    or aware(row.expires_at) != proposal.expires_at
+                ):
+                    raise CoworkerError(
+                        "code_proposal_changed", "Stored code proposal identity changed.", 409,
+                    )
+                self._verify_code_proposal(db, run, proposal, row.review_sha256)
+            else:
+                # Denial is valid even if the source has since been withdrawn.
+                row.state = "revoked"
+                row.snapshot = {}
+
+            review = AgentCodeReview(
+                proposal_id=row.id, run_id=run.id, owner_id=owner,
+                review_sha256=row.review_sha256, decision=decision.decision,
+                decided_at=now, expires_at=expiry,
+                revoked_at=now if decision.decision == "reject" else None,
+            )
+            db.add(review)
+            self._audit(db, owner, row.id, "agent.code_proposal.human_" + decision.decision)
+            db.flush()
+            return self._human_review_dto(review)
 
     @staticmethod
     def _code_proposal_erased_dto(row: AgentCodeProposal) -> dict:
@@ -351,6 +454,9 @@ class AgentRepository:
                 row.state = "revoked"
                 row.snapshot = {}
                 self._audit(db, owner, row.id, "agent.code_proposal.revoked")
+            review = db.get(AgentCodeReview, row.id)
+            if review is not None and review.revoked_at is None:
+                review.revoked_at = utcnow()
             return self._code_proposal_erased_dto(row)
 
     def _workspace(self, db, owner: str) -> str:
