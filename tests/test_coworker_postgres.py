@@ -979,7 +979,7 @@ def test_postgres_agent_sandbox_receipt_rechecks_exact_source_and_output_atomica
     from services.coworker.container import Container
     from services.coworker.agent_runtime import AgentRuntime
     from services.coworker.agent_schemas import AgentRunCreate
-    from services.coworker.models import ToolInvocation, ToolReceipt
+    from services.coworker.models import SandboxExecution, ToolInvocation, ToolReceipt
 
     url = os.environ["SHUDDHO_TEST_POSTGRES_URL"]
     settings = Settings(
@@ -1050,6 +1050,22 @@ def test_postgres_agent_sandbox_receipt_rechecks_exact_source_and_output_atomica
         with service.repository.sessions.begin() as db:
             invocation = db.get(ToolInvocation, invocation_id)
             invocation.arguments = {"source": original}
+
+        # Worker completion locks SandboxExecution before SandboxSession.
+        # Simulate an in-flight worker claim holding that row: Agent receipt
+        # must fail fast (SKIP LOCKED) instead of deadlocking or fabricating
+        # an observation while retaining the session lock.
+        with service.repository.sessions.begin() as locker:
+            held = locker.scalar(select(SandboxExecution).where(
+                SandboxExecution.id == own_claim["id"],
+            ).with_for_update())
+            assert held is not None
+            with pytest.raises(CoworkerError) as busy:
+                service.agent.finish_invocation(
+                    run["id"], ordinal, "sandbox_execution",
+                    own_claim["id"], bound_summary,
+                )
+            assert busy.value.code == "sandbox_source_binding_mismatch"
 
         with pytest.raises(CoworkerError) as forged:
             service.agent.finish_invocation(
