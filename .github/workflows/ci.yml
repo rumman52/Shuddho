@@ -150,6 +150,17 @@ jobs:
         with:
           name: transaction-safety-evidence
           path: /tmp/transaction-safety.xml
+      - name: Verify inert CW-10 code proposal persistence without skips
+        run: |
+          uv run --extra coworker pytest tests/test_agent_code_proposals.py tests/test_agent_code_proposal_persistence.py -q -rs --junitxml=/tmp/cw10-code-proposals.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/cw10-code-proposals.xml --required-module tests.test_agent_code_proposals
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/cw10-code-proposals.xml --required-module tests.test_agent_code_proposal_persistence
+      - name: Keep inert code proposal safety evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cw10-code-proposal-tests
+          path: /tmp/cw10-code-proposals.xml
       - name: Verify durable conversation ownership and PostgreSQL races
         run: |
           uv run --extra coworker pytest tests/test_conversations.py tests/test_conversation_context.py tests/test_conversation_dispatch.py tests/test_coworker_postgres.py -q -rs --junitxml=/tmp/conversations.xml
