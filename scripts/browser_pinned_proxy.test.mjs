@@ -49,7 +49,7 @@ test("real CONNECT cannot dial after command is revoked during broker network ch
   let client;
   try {
     client = await openConnect(proxy);
-    const closed = once(client, "close");
+    const closed = new Promise((resolve) => client.once("close", resolve));
     await started.promise;
     proxy.pause();
     network.resolve(CHECKED);
@@ -78,7 +78,7 @@ test("real CONNECT cannot reuse a prior permission after same command is resumed
   let client;
   try {
     client = await openConnect(proxy);
-    const closed = once(client, "close");
+    const closed = new Promise((resolve) => client.once("close", resolve));
     await started.promise;
     proxy.pause();
     proxy.setCommand("owned-command", {});
@@ -104,7 +104,7 @@ test("real CONNECT will not dial if client disconnects during network check", { 
   let client;
   try {
     client = await openConnect(proxy);
-    const closed = once(client, "close");
+    const closed = new Promise((resolve) => client.once("close", resolve));
     await started.promise;
     client.destroy();
     await closed;
@@ -134,7 +134,7 @@ test("real CONNECT rejects a paused claim before upstream TCP acknowledgement", 
   try {
     client = await openConnect(proxy);
     client.on("data", (chunk) => { response += chunk.toString(); });
-    const closed = once(client, "close");
+    const closed = new Promise((resolve) => client.once("close", resolve));
     await dialing.promise;
     proxy.pause();
     upstream.emit("connect");
