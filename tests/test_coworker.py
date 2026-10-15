@@ -129,6 +129,34 @@ def signed_client(container):
         yield client, headers
 
 
+def test_simple_question_does_not_create_agent_run(container, signed_client):
+    """The authenticated route rejects direct chat before durable admission."""
+    from services.coworker.models import AgentOutbox, AgentRun
+
+    settings = replace(
+        container.settings, work_services_enabled=True, artifact_services_enabled=True,
+        agent_runtime_enabled=True,
+        intelligent_planner_enabled=True,
+    )
+    settings.validate()
+    container.settings = settings
+    container.agent.settings = settings
+    account(container)
+    client, headers = signed_client
+    for _ in range(2):
+        response = client.post(
+            "/api/v1/agent-runs",
+            headers={**headers(), "Idempotency-Key": "question-must-not-run"},
+            json={"goal": "What is retrieval augmented generation?"},
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "agent_route_direct_answer"
+    with container.repository.sessions() as db:
+        assert db.scalars(select(AgentRun)).all() == []
+        assert db.scalars(select(AgentOutbox)).all() == []
+        assert db.scalars(select(Task)).all() == []
+
+
 
 
 def test_server_enforced_cohort_admission_precedes_account_creation(container, signed_client):
