@@ -29,6 +29,7 @@ from services.coworker.interactive_artifacts import (
 from services.coworker.models import Artifact, SandboxExecution, SandboxSession, ToolInvocation, ToolReceipt, utcnow
 from services.coworker.sandbox import SandboxRepository
 from services.coworker.sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
+from scripts import sandbox_worker as sandbox_worker_module
 from scripts.sandbox_worker import (
     WorkerError,
     build_bwrap_command,
@@ -1310,3 +1311,126 @@ def test_batched_sandbox_claim_does_not_reopen_failed_sibling_session(container)
         assert skipped.lease_until is None
 
     assert container.sandbox.claim_executions("reclaim-worker", limit=2) == []
+@pytest.mark.parametrize("control_response", [
+    pytest.param(WorkerError("sandbox_worker_api_unavailable"), id="control-timeout"),
+    pytest.param(WorkerError("http_500"), id="server-error"),
+    pytest.param(WorkerError("sandbox_worker_unauthorized"), id="revoked-worker-token"),
+    pytest.param({}, id="missing-action"),
+    pytest.param({"action": "retry"}, id="unknown-action"),
+    pytest.param({"action": "stop", "reason": "session_closed"}, id="explicit-stop"),
+])
+def test_sandbox_subprocess_stops_without_a_valid_control_heartbeat(
+    container, monkeypatch, control_response,
+):
+    """Lost or malformed authorization must kill code, not extend runtime."""
+    enable_sandbox(container)
+    source = "print(1)\n"
+    claim = {
+        "id": str(uuid4()),
+        "source": source,
+        "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        "source_bytes": len(source.encode("utf-8")),
+        "runtime": "python311",
+        "purpose": "code_task",
+        "policy": container.sandbox._policy(),
+    }
+
+    class FakeProcess:
+        pid = 123456
+
+        def __init__(self):
+            self.polls = 0
+            self.terminated = False
+
+        def poll(self):
+            self.polls += 1
+            if self.polls > 4:
+                pytest.fail("Untrusted code kept running without a valid heartbeat")
+            return -9 if self.terminated else None
+
+    process = FakeProcess()
+    control_calls: list[str] = []
+    terminations: list[FakeProcess] = []
+
+    class FakeClient:
+        def post(self, path, payload):
+            control_calls.append(path)
+            if isinstance(control_response, WorkerError):
+                raise WorkerError(control_response.code)
+            return control_response
+
+    def fake_spawn(*args, **kwargs):
+        return process
+
+    def fake_terminate(running):
+        terminations.append(running)
+        running.terminated = True
+
+    monkeypatch.setattr(sandbox_worker_module.subprocess, "Popen", fake_spawn)
+    monkeypatch.setattr(sandbox_worker_module, "terminate_group", fake_terminate)
+
+    with pytest.raises(WorkerError) as denied:
+        sandbox_worker_module.execute_claim(
+            FakeClient(), "sandbox-worker-heartbeat", claim, "/usr/bin/bwrap",
+        )
+    assert denied.value.code == "worker_interrupted"
+    assert process.terminated is True
+    assert terminations == [process]
+    assert len(control_calls) == 1
+    assert control_calls[0].endswith("/control")
+    assert not any(path.endswith("/complete") for path in control_calls)
+
+def test_sandbox_subprocess_accepts_explicit_control_continue_and_reports_result(
+    container, monkeypatch,
+):
+    """A valid lease renewal preserves the bounded success path."""
+    enable_sandbox(container)
+    source = "print(1)\n"
+    claim = {
+        "id": str(uuid4()),
+        "source": source,
+        "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        "source_bytes": len(source.encode("utf-8")),
+        "runtime": "python311",
+        "purpose": "code_task",
+        "policy": container.sandbox._policy(),
+    }
+
+    class FakeProcess:
+        def __init__(self):
+            self.polls = 0
+
+        def poll(self):
+            self.polls += 1
+            return None if self.polls == 1 else 0
+
+        def wait(self):
+            return 0
+
+    process = FakeProcess()
+    completion: list[dict] = []
+    calls: list[str] = []
+
+    class FakeClient:
+        def post(self, path, payload):
+            calls.append(path)
+            if path.endswith("/control"):
+                return {"action": "continue", "lease_until": "2099-01-01T00:00:00+00:00"}
+            if path.endswith("/complete"):
+                completion.append(payload)
+                return {"state": "succeeded"}
+            pytest.fail("Unexpected worker request")
+
+    monkeypatch.setattr(
+        sandbox_worker_module.subprocess, "Popen",
+        lambda *args, **kwargs: process,
+    )
+    sandbox_worker_module.execute_claim(
+        FakeClient(), "sandbox-worker-heartbeat", claim, "/usr/bin/bwrap",
+    )
+    assert len(calls) == 2
+    assert calls[0].endswith("/control")
+    assert calls[1].endswith("/complete")
+    assert completion[0]["exit_code"] == 0
+    assert completion[0]["sandbox_destroyed"] is True
+    assert completion[0]["network_isolated"] is True

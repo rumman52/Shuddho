@@ -1,3 +1,15 @@
+## CW-10 fail-closed sandbox heartbeat — actual mainline integration — 15 October 2026
+
+**Fresh repo truth:** `main` `ce76803eb20e8383bb507f02e2cad17d9ff77d3f` contains [PR #416](https://github.com/rumman52/Shuddho/pull/416), whose exact [PR CI #38770425863](https://github.com/rumman52/Shuddho/actions/runs/38770425863) passed all three mandatory jobs. [PR #417](https://github.com/rumman52/Shuddho/pull/417) was marked merged into the earlier review branch, not `main`, and `main:scripts/sandbox_worker.py` still had the unguarded worker heartbeat behavior. #417's own earlier CI cannot qualify a new mainline integration.
+
+**Source repair branch:** `codex/cw10-sandbox-heartbeat-mainline-20261015` created from that exact `main`. Ports the previously reviewed bounded `scripts/sandbox_worker.py` heartbeat fail-closed change and the associated negative/positive `tests/test_sandbox_control_plane.py` cases. Any control heartbeat error, unexpected/missing action or explicit `stop` terminates the subprocess; only explicit `continue` allows it to proceed. Keep default-off sandbox and deny model-created authorization. [Integration contract](CW10_SANDBOX_HEARTBEAT_MAINLINE_INTEGRATION_2026-10-15.md).
+
+**Verification:** GitHub source commits recorded; exact final-head `test-and-build`, `coworker`, `ci-merge-gate` pending until this review branch CI runs. No independently operated bubblewrap process-kill proof, staging or release evidence. Do not conflate existing tests with real network/worker operation or mark C-04 complete.
+
+**Next:** Review and qualify this **main-targeting** PR on final SHA, without auto-merging; then implement immutable model-generated proposal+owner decision+atomic claim approval under C-04. CW-09 operated browser/DNS/SSRF, CW-11 skill publisher, P-series coworker scenarios and V-series release checks remain independent blockers.
+
+---
+
 ## CW-10 source-integrity recovery worker-control CI contract repair — 15 October 2026
 
 **Refreshed main:** `baa484ef861e41daf7653a29f6aaa07720932055`, merged [PR #415](https://github.com/rumman52/Shuddho/pull/415); [main CI #38760717140](https://github.com/rumman52/Shuddho/actions/runs/38760717140) `test-and-build` successful, `coworker` failed eight stale-claim assertions (1,375 other tests passed in that invocation), `ci-merge-gate` failed. No open PRs at bootstrap. The integrity denial, terminal failure, source scrub and lease revocation assertions all passed; the outdated expectation that `worker_control` **raises** disagreed with the newer explicit `stop/session_closed` terminal protocol.
