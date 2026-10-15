@@ -2042,6 +2042,7 @@ class AgentRepository:
                         409,
                     )
                 result = execution.result or {}
+                result_artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else {}
                 if (
                     result.get("sandbox_destroyed") is not True
                     or result.get("network_isolated") is not True
@@ -2050,8 +2051,14 @@ class AgentRepository:
                     or result.get("exit_code") != 0
                     or summary.get("sandbox_state") != "succeeded"
                     or summary.get("sandbox_destroyed") is not True
+                    or summary.get("exit_code") != result.get("exit_code")
                     or summary.get("stdout_sha256") != result.get("stdout_sha256")
                     or summary.get("stderr_sha256") != result.get("stderr_sha256")
+                    or summary.get("stdout_excerpt") != str(result.get("stdout") or "")[:1800]
+                    or summary.get("stderr_excerpt") != str(result.get("stderr") or "")[:800]
+                    or summary.get("output_trust") != "untrusted"
+                    or summary.get("artifact_id") != result_artifact.get("id")
+                    or summary.get("artifact_sha256") != result_artifact.get("sha256")
                 ):
                     raise CoworkerError(
                         "sandbox_receipt_unverified",
