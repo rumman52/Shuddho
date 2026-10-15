@@ -23,7 +23,7 @@ from services.coworker.agent_router import qualify_agent_goal
 from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.agent_tools import available_tools, tool
-from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate
+from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserWorkerObservation
 from services.coworker.errors import CoworkerError
 from services.coworker.models import BrowserCommand, BrowserSession
 
@@ -176,6 +176,15 @@ def test_browser_v3_dispatch_replay_worker_verification_and_untrusted_observatio
         assert created["id"]
         container.browser.cancel(owner, created["id"])
 
+
+
+def test_agent_page_text_envelope_preserves_exact_utf8_whitespace():
+    original = "  বাংলা গবেষণা.  \\n"
+    envelope = BrowserWorkerObservation(
+        worker_id="capture-worker", final_url="https://example.com/article",
+        page_text=original,
+    )
+    assert envelope.page_text == original
 
 
 def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container):
