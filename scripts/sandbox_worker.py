@@ -402,13 +402,25 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
                             {"worker_id": worker_id},
                         )
                     except WorkerError as error:
-                        if error.code == "sandbox_worker_claim_invalid":
-                            interrupted = "claim_lost"
-                            terminate_group(process)
-                            break
+                        # A failed heartbeat cannot renew the worker's lease.
+                        # The server may already have revoked authorization,
+                        # and a lost/invalid response does not prove otherwise.
+                        interrupted = (
+                            "claim_lost"
+                            if error.code == "sandbox_worker_claim_invalid"
+                            else "control_unavailable"
+                        )
+                        terminate_group(process)
+                        break
                     else:
                         if control.get("action") == "stop":
                             interrupted = str(control.get("reason") or "worker_interrupted")
+                            terminate_group(process)
+                            break
+                        if control.get("action") != "continue":
+                            # Do not interpret an unexpected or empty response
+                            # as a grant to keep running untrusted code.
+                            interrupted = "control_invalid"
                             terminate_group(process)
                             break
                     next_control = now + CONTROL_SECONDS
