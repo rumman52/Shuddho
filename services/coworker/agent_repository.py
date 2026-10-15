@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, or_, select
 
 from .agent_limits import AGENT_MAX_TOOL_STEPS
-from .code_proposal_schemas import CodeComputeLimits, CodeInputVersion, CodeProposalEnvelope, verify_reviewed_code_identity
+from .code_proposal_schemas import CodeComputeLimits, CodeInputVersion, CodeProposalEnvelope, canonicalize_transport_code_proposal, verify_reviewed_code_identity
 from .browser_sources import BROWSER_SOURCE_MEDIA_TYPE, browser_source_identity
 from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, AgentV3Decision, action_proposal_hash
 from .agent_tools import available_tools, tool
@@ -204,6 +204,7 @@ class AgentRepository:
         """Persist an exact review snapshot only; no approval or sandbox claim."""
         if proposal.owner_id != owner or str(proposal.run_id) != run_id:
             raise not_found()
+        proposal = canonicalize_transport_code_proposal(proposal)
         digest = proposal.review_sha256()
         with self.sessions.begin() as db:
             run = self._run(db, owner, run_id, lock=True)
@@ -219,7 +220,9 @@ class AgentRepository:
                         "idempotency_conflict", "This code proposal key belongs to different source.", 409,
                     )
                 try:
-                    saved = CodeProposalEnvelope.model_validate(previous.snapshot)
+                    saved = canonicalize_transport_code_proposal(
+                        CodeProposalEnvelope.model_validate(previous.snapshot)
+                    )
                     saved_digest = saved.review_sha256()
                 except Exception:
                     raise CoworkerError(
@@ -275,7 +278,9 @@ class AgentRepository:
             if row is None:
                 raise not_found()
             try:
-                proposal = CodeProposalEnvelope.model_validate(row.snapshot)
+                proposal = canonicalize_transport_code_proposal(
+                    CodeProposalEnvelope.model_validate(row.snapshot)
+                )
                 digest = proposal.review_sha256()
             except Exception:
                 raise CoworkerError("code_proposal_invalid", "Stored code proposal integrity failed.", 409) from None
