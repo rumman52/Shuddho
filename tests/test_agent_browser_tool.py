@@ -306,6 +306,82 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container)
 
 
 
+
+def test_agent_browser_source_storage_failure_does_not_fabricate_receipt(container, monkeypatch):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-storage-fail")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"),
+        "cw09-artifact-storage-failure",
+    )
+    ordinal = container.agent.append_v3_step(owner, run["id"], "browser.read", "Read the source")
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    command = container.browser.claim_commands("source-fail-worker")[0]
+    container.browser.complete_command("source-fail-worker", command["id"], {
+        "final_url": "https://example.com/article", "title": "Source",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "page_text": "Captured public source text.",
+    })
+    artifact_id, key, _ = browser_source_identity(owner, command["id"])
+    original_put = container.storage.put
+
+    def fail_put(*_args, **_kwargs):
+        raise OSError("synthetic object-storage disconnect")
+
+    monkeypatch.setattr(container.storage, "put", fail_put)
+    with pytest.raises(CoworkerError) as unavailable:
+        asyncio.run(runtime.execute_step(run["id"], ordinal))
+    assert unavailable.value.code == "browser_source_storage_unavailable"
+    assert container.agent.verified_observations(owner, run["id"]) == []
+    with container.repository.sessions() as db:
+        assert db.get(Artifact, artifact_id) is None
+        assert "agent_page_text_sealed" in db.get(BrowserCommand, command["id"]).result
+    monkeypatch.setattr(container.storage, "put", original_put)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    assert container.agent.verified_observations(owner, run["id"])[0]["summary"]["artifact_id"] == artifact_id
+    assert container.storage.get(key, 8192) == b"Captured public source text."
+
+
+def test_agent_browser_source_mismatched_bytes_reject_atomically(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-source-hash-mismatch")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"), "cw09-source-hash-run",
+    )
+    ordinal = container.agent.append_v3_step(owner, run["id"], "browser.read", "Read the source")
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    command = container.browser.claim_commands("source-mismatch-worker")[0]
+    container.browser.complete_command("source-mismatch-worker", command["id"], {
+        "final_url": "https://example.com/article", "title": "Source",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "page_text": "Correct captured text.",
+    })
+    artifact_id, _key, _ = browser_source_identity(owner, command["id"])
+    forged = b"Forged content"
+    with pytest.raises(CoworkerError) as mismatch:
+        container.agent.finish_invocation(
+            run["id"], ordinal, "browser_command", command["id"], {
+                "source_url": "https://example.com/article",
+                "source_sha256": hashlib.sha256(forged).hexdigest(),
+                "source_byte_size": len(forged),
+                "observation_scope": "captured_text_excerpt",
+                "artifact_id": artifact_id,
+                "artifact_sha256": hashlib.sha256(forged).hexdigest(),
+            }, browser_source_bytes=forged,
+        )
+    assert mismatch.value.code == "browser_source_mismatch"
+    assert container.agent.verified_observations(owner, run["id"]) == []
+    with container.repository.sessions() as db:
+        assert db.get(Artifact, artifact_id) is None
+        assert db.get(BrowserCommand, command["id"]).state == "succeeded"
+    # A rejected forged receipt cannot poison a later legitimate source read.
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    assert container.agent.verified_observations(owner, run["id"])[0]["summary"]["artifact_id"] == artifact_id
+
+
+
 def test_unconsumed_expired_capture_is_scrubbed_on_read(container):
     enabled_agent_browser(container)
     owner = account(container, "cw09-expired-text")
