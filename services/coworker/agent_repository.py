@@ -152,6 +152,20 @@ class AgentRepository:
             raise CoworkerError("code_proposals_disabled", "Code proposals are not enabled.", 409)
         if run.runtime_version != 3 or run.cancel_requested or run.state not in ACTIVE_RUN_STATES:
             raise CoworkerError("code_run_closed", "This Agent run cannot accept code proposals.", 409)
+        # The first proposal envelope only binds owned document versions.
+        # Decline runs with other private/permissioned inputs rather than
+        # silently treating memory or connector context as reviewed code data.
+        if (
+            run.memory_namespaces
+            or run.connector_read_grant_ids
+            or run.connector_snapshot_ids
+            or run.action_ids
+        ):
+            raise CoworkerError(
+                "code_context_unbound",
+                "This code proposal cannot bind every selected context source.",
+                409,
+            )
         current_inputs = self._code_proposal_inputs(db, run, proposal)
         verify_reviewed_code_identity(
             proposal,
