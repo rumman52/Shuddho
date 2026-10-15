@@ -1368,7 +1368,6 @@ def test_sandbox_subprocess_stops_without_a_valid_control_heartbeat(
 
     monkeypatch.setattr(sandbox_worker_module.subprocess, "Popen", fake_spawn)
     monkeypatch.setattr(sandbox_worker_module, "terminate_group", fake_terminate)
-    monkeypatch.setattr(sandbox_worker_module.time, "sleep", lambda _delay: None)
 
     with pytest.raises(WorkerError) as denied:
         sandbox_worker_module.execute_claim(
