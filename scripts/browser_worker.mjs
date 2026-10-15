@@ -535,7 +535,9 @@ async function execute(command) {
     const redirectChain = runtime.state.navigationUrls
       .filter((url, index, values) => url !== finalUrl && values.indexOf(url) === index)
       .slice(0, 10);
-    const storageState = await runtime.context.storageState();
+    const storageState = browserWorkerMayReuseStorageState(command)
+      ? await runtime.context.storageState()
+      : null;
 
     if (control) {
       await control.finish().catch(() => {});
