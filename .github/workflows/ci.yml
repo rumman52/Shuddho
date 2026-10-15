@@ -187,8 +187,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20", cache: npm }
       - run: npm ci
-      - name: Test isolated browser worker policy
-        run: node --test scripts/browser_worker_policy.test.mjs
+      - name: Test isolated browser worker policy and real HTTPS CONNECT boundary
+        run: node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs
       - name: Install browser
         run: npx playwright install --with-deps chromium --only-shell
       - name: Check coworker workflow in the browser
