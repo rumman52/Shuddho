@@ -279,3 +279,22 @@ def test_actual_document_version_binding_rejects_deleted_source_on_read(
     )
     assert denied.status_code == 409
     assert denied.json()["error"]["code"] == "code_input_revoked"
+
+def test_review_proposal_snapshots_are_bounded_per_run(container, signed_client):
+    owner, run_id = active_agent(container)
+    proposal = sample_proposal(owner, run_id)
+    client, headers = signed_client
+    for i in range(8):
+        response = prepare(
+            client, headers, run_id, proposal, key=f"bounded-proposal-{i:02d}",
+        )
+        assert response.status_code == 201, response.text
+    exceeded = prepare(
+        client, headers, run_id, proposal, key="bounded-proposal-over-limit",
+    )
+    assert exceeded.status_code == 429
+    assert exceeded.json()["error"]["code"] == "code_proposal_limit"
+    with container.repository.sessions() as db:
+        assert len(db.scalars(select(AgentCodeProposal).where(
+            AgentCodeProposal.run_id == run_id,
+        )).all()) == 8
