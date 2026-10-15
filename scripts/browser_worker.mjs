@@ -347,6 +347,7 @@ function activateRuntime(runtime, command, evidence) {
   runtime.state.commandId = command.id;
   runtime.state.evidence = evidence;
   runtime.state.kind = command.kind;
+  runtime.state.agentReadOnly = command.policy?.agent_read_only === true;
   runtime.state.preparingForm = false;
   runtime.state.humanInteractionArmed = false;
   runtime.state.formMutationBlocked = false;
