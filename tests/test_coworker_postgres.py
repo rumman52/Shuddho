@@ -893,3 +893,68 @@ def test_postgres_agent_browser_expiry_between_capture_and_receipt_denies_stale_
             assert "agent_page_text_sealed" not in (persisted.result or {})
     finally:
         service.repository.sessions.kw["bind"].dispose()
+
+
+def test_postgres_agent_source_artifact_commits_with_verified_browser_receipt(tmp_path):
+    """A real PG Agent receipt points to precisely one owned private object."""
+    import asyncio
+    import hashlib
+
+    from test_agent_browser_tool import enabled_agent_browser
+    from test_coworker import account
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.browser_sources import browser_source_identity
+    from services.coworker.container import Container
+    from services.coworker.models import Artifact, BrowserCommand
+
+    url = os.environ["SHUDDHO_TEST_POSTGRES_URL"]
+    settings = Settings(
+        database_url=url, auth_issuer="https://identity.example.test/auth/v1",
+        environment="development", storage_backend="local",
+        local_storage_path=tmp_path / "source-objects",
+    )
+    upgrade(url)
+    service = Container.create(settings)
+    try:
+        enabled_agent_browser(service)
+        identity = account(service, "cw09-source-pg-" + str(uuid4()))
+        other = account(service, "cw09-source-other-" + str(uuid4()))
+        run, _ = service.agent.create(
+            identity, AgentRunCreate(goal="Read https://example.com/article"),
+            "cw09-source-artifact-" + str(uuid4()),
+        )
+        ordinal = service.agent.append_v3_step(
+            identity, run["id"], "browser.read", "Read and retain the exact source",
+        )
+        runtime = AgentRuntime(service, None)
+        assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+        command = service.browser.claim_commands("source-pg-worker")[0]
+        body = "বাংলা গবেষণা and an untrusted public page"
+        service.browser.complete_command("source-pg-worker", command["id"], {
+            "final_url": "https://example.com/article",
+            "title": "Captured",
+            "resolved_ips": {"example.com": ["93.184.216.34"]},
+            "page_text": body,
+        })
+        assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+        summaries = service.agent.verified_observations(identity, run["id"])
+        assert len(summaries) == 1
+        summary = summaries[0]["summary"]
+        source_id, object_key, _ = browser_source_identity(identity, command["id"])
+        assert summary["artifact_id"] == source_id
+        assert summary["artifact_sha256"] == hashlib.sha256(body.encode("utf-8")).hexdigest()
+        assert service.storage.get(object_key, 8192).decode("utf-8") == body
+        assert service.repository.artifact(identity, source_id)["object_key"] == object_key
+        with pytest.raises(CoworkerError) as denied:
+            service.repository.artifact(other, source_id)
+        assert denied.value.status_code == 404
+        with service.repository.sessions() as db:
+            artifact = db.get(Artifact, source_id)
+            assert artifact is not None and artifact.artifact_class == "browser_source"
+            assert "agent_page_text_sealed" not in db.get(BrowserCommand, command["id"]).result
+        assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+        with service.repository.sessions() as db:
+            assert db.get(Artifact, source_id).sha256 == summary["artifact_sha256"]
+    finally:
+        service.repository.sessions.kw["bind"].dispose()

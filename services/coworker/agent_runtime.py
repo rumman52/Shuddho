@@ -5,6 +5,7 @@ import json
 
 from .browser import normalize_browser_target
 from .browser_schemas import BrowserSessionCreate
+from .browser_sources import BROWSER_SOURCE_MEDIA_TYPE, browser_source_identity
 
 from .agent_planner import deterministic_plan, intelligent_tool_names, proposal_to_plan
 from .agent_tools import tool
@@ -417,20 +418,46 @@ class AgentRuntime:
             captured = self.container.browser.read_agent_capture(
                 run["owner_id"], session_id, command["id"],
             )
+            browser_source_bytes = None
             if captured is not None and captured["text"].strip():
                 # Blank/whitespace-only pages must not be reported as read content.
                 # Release only a short, untrusted excerpt to the bounded planner.
                 # The checksum is of exact captured UTF-8 bytes, NOT the URL/title.
                 excerpt = captured["text"].encode("utf-8")[:1200].decode("utf-8", "ignore")
+                # The retained source is the EXACT bounded worker capture,
+                # not upstream HTML. Persist outside the database under a
+                # deterministic owner/command key, never a model-chosen path.
+                browser_source_bytes = captured["text"].encode("utf-8")
+                artifact_id, object_key, _filename = browser_source_identity(
+                    run["owner_id"], command["id"],
+                )
+                try:
+                    self.container.storage.put(
+                        object_key, browser_source_bytes, BROWSER_SOURCE_MEDIA_TYPE,
+                    )
+                    stored = self.container.storage.get(object_key, len(browser_source_bytes))
+                except Exception as exc:
+                    raise CoworkerError(
+                        "browser_source_storage_unavailable",
+                        "The private source capture could not be stored or verified.", 503,
+                    ) from exc
+                if stored != browser_source_bytes:
+                    raise CoworkerError(
+                        "browser_source_storage_invalid",
+                        "The private source capture did not verify.", 503,
+                    )
                 summary.update({
                     "observation_scope": "captured_text_excerpt",
                     "source_sha256": captured["sha256"],
                     "source_byte_size": captured["byte_size"],
                     "source_truncated": captured["truncated"],
                     "untrusted_page_text_excerpt": excerpt,
+                    "artifact_id": artifact_id,
+                    "artifact_sha256": captured["sha256"],
                 })
             self.repo.finish_invocation(
                 run_id, ordinal, "browser_command", command["id"], summary,
+                browser_source_bytes=browser_source_bytes,
             )
             validate_tool_result(spec, {
                 "status": "completed",

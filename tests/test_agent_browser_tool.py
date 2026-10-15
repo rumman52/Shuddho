@@ -17,7 +17,7 @@ pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
 
 from test_browser_broker import enable_browser
-from test_coworker import account, container
+from test_coworker import account, container, signed_client
 
 from services.coworker.agent_planner import explicit_browser_url, intelligent_tool_names
 from services.coworker.agent_router import qualify_agent_goal
@@ -26,7 +26,8 @@ from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.agent_tools import available_tools, tool
 from services.coworker.browser_schemas import BrowserNavigateCreate, BrowserSessionCreate, BrowserWorkerObservation
 from services.coworker.errors import CoworkerError
-from services.coworker.models import BrowserCommand, BrowserSession, utcnow
+from services.coworker.models import Artifact, BrowserCommand, BrowserSession, utcnow
+from services.coworker.browser_sources import browser_source_identity
 
 
 def enabled_agent_browser(container):
@@ -215,11 +216,12 @@ def test_agent_empty_page_remains_metadata_only(container):
     summary = container.agent.verified_observations(owner, run["id"])[0]["summary"]
     assert summary["observation_scope"] == "metadata_only"
     assert "untrusted_page_text_excerpt" not in summary
+    assert "artifact_id" not in summary
     assert container.browser.get(owner, session_id)["state"] == "completed"
 
 
 
-def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container):
+def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container, signed_client, monkeypatch):
     """Real worker-shaped text reaches Runtime v3, never public broker result."""
     enabled_agent_browser(container)
     owner = account(container, "cw09-owned-capture")
@@ -279,11 +281,139 @@ def test_agent_visible_page_text_is_owned_sealed_hashed_and_excerpted(container)
     assert summary["source_byte_size"] == len(page_text.encode("utf-8"))
     assert summary["source_truncated"] is False
     assert summary["untrusted_page_text_excerpt"] == page_text
+    artifact_id, object_key, filename = browser_source_identity(owner, command["id"])
+    assert summary["artifact_id"] == artifact_id
+    assert summary["artifact_sha256"] == text_hash
+    stored = container.repository.artifact(owner, artifact_id)
+    assert stored["object_key"] == object_key
+    assert stored["filename"] == filename
+    assert stored["sha256"] == text_hash
+    assert stored["byte_size"] == len(page_text.encode("utf-8"))
+    assert container.storage.get(object_key, 8192).decode("utf-8") == page_text
+    assert object_key in container.retention.referenced_object_keys()
+    client, headers = signed_client
+    # Private browser source artifacts must never mint a reusable signed S3
+    # URL; only the owner-authenticated content endpoint is eligible.
+    def reject_presigned_url(*_args, **_kwargs):
+        raise AssertionError("Private browser source must not request a presigned URL")
+
+    monkeypatch.setattr(container.storage, "download_url", reject_presigned_url)
+    download = client.get(
+        f"/api/v1/artifacts/{artifact_id}/download",
+        headers=headers("cw09-owned-capture"),
+    )
+    assert download.status_code == 200
+    assert download.json()["url"] is None
+    assert download.json()["content_path"] == f"/api/v1/artifacts/{artifact_id}/content"
+    owned_http = client.get(
+        f"/api/v1/artifacts/{artifact_id}/content",
+        headers=headers("cw09-owned-capture"),
+    )
+    assert owned_http.status_code == 200
+    assert owned_http.content == page_text.encode("utf-8")
+    cross_owner_http = client.get(
+        f"/api/v1/artifacts/{artifact_id}/content",
+        headers=headers("cw09-other-capture"),
+    )
+    assert cross_owner_http.status_code == 404
+    with pytest.raises(CoworkerError) as other_source:
+        container.repository.artifact(other, artifact_id)
+    assert other_source.value.status_code == 404
+    with container.repository.sessions() as db:
+        source = db.get(Artifact, artifact_id)
+        assert source.artifact_class == "browser_source"
+        assert source.task_id is None
+        assert source.expires_at is None
     assert container.browser.get(owner, session_id)["state"] == "completed"
     with container.repository.sessions() as db:
         after = db.get(BrowserCommand, command["id"])
         assert "agent_page_text_sealed" not in after.result
         assert after.result["agent_page_text_sha256"] == text_hash
+
+    # Terminal account erasure must remove source metadata and private bytes,
+    # rather than leaving a permanent unaccounted browser-source object.
+    container.agent.complete_run(run["id"])
+    erased = container.retention.erase_account(owner)
+    assert erased["database_erased"] is True
+    assert erased["objects_failed"] == []
+    with pytest.raises(FileNotFoundError):
+        container.storage.get(object_key, 8192)
+
+
+
+
+def test_agent_browser_source_storage_failure_does_not_fabricate_receipt(container, monkeypatch):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-storage-fail")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"),
+        "cw09-artifact-storage-failure",
+    )
+    ordinal = container.agent.append_v3_step(owner, run["id"], "browser.read", "Read the source")
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    command = container.browser.claim_commands("source-fail-worker")[0]
+    container.browser.complete_command("source-fail-worker", command["id"], {
+        "final_url": "https://example.com/article", "title": "Source",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "page_text": "Captured public source text.",
+    })
+    artifact_id, key, _ = browser_source_identity(owner, command["id"])
+    original_put = container.storage.put
+
+    def fail_put(*_args, **_kwargs):
+        raise OSError("synthetic object-storage disconnect")
+
+    monkeypatch.setattr(container.storage, "put", fail_put)
+    with pytest.raises(CoworkerError) as unavailable:
+        asyncio.run(runtime.execute_step(run["id"], ordinal))
+    assert unavailable.value.code == "browser_source_storage_unavailable"
+    assert container.agent.verified_observations(owner, run["id"]) == []
+    with container.repository.sessions() as db:
+        assert db.get(Artifact, artifact_id) is None
+        assert "agent_page_text_sealed" in db.get(BrowserCommand, command["id"]).result
+    monkeypatch.setattr(container.storage, "put", original_put)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    assert container.agent.verified_observations(owner, run["id"])[0]["summary"]["artifact_id"] == artifact_id
+    assert container.storage.get(key, 8192) == b"Captured public source text."
+
+
+def test_agent_browser_source_mismatched_bytes_reject_atomically(container):
+    enabled_agent_browser(container)
+    owner = account(container, "cw09-source-hash-mismatch")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Read https://example.com/article"), "cw09-source-hash-run",
+    )
+    ordinal = container.agent.append_v3_step(owner, run["id"], "browser.read", "Read the source")
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    command = container.browser.claim_commands("source-mismatch-worker")[0]
+    container.browser.complete_command("source-mismatch-worker", command["id"], {
+        "final_url": "https://example.com/article", "title": "Source",
+        "resolved_ips": {"example.com": ["93.184.216.34"]},
+        "page_text": "Correct captured text.",
+    })
+    artifact_id, _key, _ = browser_source_identity(owner, command["id"])
+    forged = b"Forged content"
+    with pytest.raises(CoworkerError) as mismatch:
+        container.agent.finish_invocation(
+            run["id"], ordinal, "browser_command", command["id"], {
+                "source_url": "https://example.com/article",
+                "source_sha256": hashlib.sha256(forged).hexdigest(),
+                "source_byte_size": len(forged),
+                "observation_scope": "captured_text_excerpt",
+                "artifact_id": artifact_id,
+                "artifact_sha256": hashlib.sha256(forged).hexdigest(),
+            }, browser_source_bytes=forged,
+        )
+    assert mismatch.value.code == "browser_source_mismatch"
+    assert container.agent.verified_observations(owner, run["id"]) == []
+    with container.repository.sessions() as db:
+        assert db.get(Artifact, artifact_id) is None
+        assert db.get(BrowserCommand, command["id"]).state == "succeeded"
+    # A rejected forged receipt cannot poison a later legitimate source read.
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    assert container.agent.verified_observations(owner, run["id"])[0]["summary"]["artifact_id"] == artifact_id
 
 
 

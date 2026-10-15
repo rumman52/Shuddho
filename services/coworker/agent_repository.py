@@ -8,13 +8,14 @@ from uuid import uuid4
 from sqlalchemy import func, or_, select
 
 from .agent_limits import AGENT_MAX_TOOL_STEPS
+from .browser_sources import BROWSER_SOURCE_MEDIA_TYPE, browser_source_identity
 from .agent_schemas import AgentActionProposal, AgentPlanStep, AgentRunCreate, AgentV3Decision, action_proposal_hash
 from .agent_tools import available_tools, tool
 from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
 from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -1957,7 +1958,12 @@ class AgentRepository:
                 if changed:
                     self._event(db, run, "running", f"step_{ordinal}", "Approved action is executing.")
 
-    def finish_invocation(self, run_id: str, ordinal: int, resource_type: str, resource_id: str, summary: dict):
+    def finish_invocation(
+        self, run_id: str, ordinal: int, resource_type: str,
+        resource_id: str, summary: dict, *, browser_source_bytes: bytes | None = None,
+    ):
+        if browser_source_bytes is not None and resource_type != "browser_command":
+            raise CoworkerError("browser_source_scope", "Only browser reads can retain captured sources.", 409)
         with self.sessions.begin() as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
             step = db.scalar(select(AgentStep).where(
@@ -2011,6 +2017,58 @@ class AgentRepository:
                     raise CoworkerError(
                         "browser_observation_unverified",
                         "The owned broker observation has not succeeded.", 409,
+                    )
+                if browser_source_bytes is not None:
+                    # Bind private source bytes to this exact claimed command;
+                    # the Artifact and ToolReceipt commit atomically.
+                    if not isinstance(browser_source_bytes, bytes) or not browser_source_bytes:
+                        raise CoworkerError("browser_source_invalid", "The browser source is invalid.", 409)
+                    source_size = len(browser_source_bytes)
+                    source_hash = hashlib.sha256(browser_source_bytes).hexdigest()
+                    result = command.result or {}
+                    if (
+                        (command.payload or {}).get("agent_read_only") is not True
+                        or source_size > 8192
+                        or result.get("agent_page_text_sealed") is None
+                        or result.get("agent_page_text_sha256") != source_hash
+                        or result.get("agent_page_text_bytes") != source_size
+                        or summary.get("source_sha256") != source_hash
+                        or summary.get("source_byte_size") != source_size
+                        or summary.get("source_truncated") != result.get("agent_page_text_truncated")
+                        or summary.get("observation_scope") != "captured_text_excerpt"
+                        or summary.get("observation_trust") != "untrusted"
+                        or summary.get("browser_state") != "succeeded"
+                        or summary.get("submission_performed") is not False
+                        or summary.get("untrusted_page_text_excerpt") != browser_source_bytes[:1200].decode("utf-8", "ignore")
+                        or summary.get("source_url") != result.get("final_url")
+                    ):
+                        raise CoworkerError(
+                            "browser_source_mismatch",
+                            "The source does not match the verified browser command.", 409,
+                        )
+                    artifact_id, key, filename = browser_source_identity(run.owner_id, command.id)
+                    if summary.get("artifact_id") != artifact_id or summary.get("artifact_sha256") != source_hash:
+                        raise CoworkerError(
+                            "browser_source_mismatch", "The source artifact identity is invalid.", 409,
+                        )
+                    prior = db.get(Artifact, artifact_id)
+                    if prior is not None:
+                        if (
+                            prior.owner_id != run.owner_id or prior.artifact_class != "browser_source"
+                            or prior.sha256 != source_hash or prior.byte_size != source_size
+                            or prior.object_key != key
+                        ):
+                            raise CoworkerError("browser_source_conflict", "The source identity conflicts with an existing artifact.", 409)
+                    else:
+                        db.add(Artifact(
+                            id=artifact_id, owner_id=run.owner_id, artifact_class="browser_source",
+                            filename=filename, content_type=BROWSER_SOURCE_MEDIA_TYPE,
+                            object_key=key, sha256=source_hash, byte_size=source_size,
+                            expires_at=None,
+                        ))
+                elif "artifact_id" in summary or "artifact_sha256" in summary:
+                    raise CoworkerError(
+                        "browser_source_mismatch", "The browser source artifact was not verified.", 409,
                     )
                 _settle_agent_browser_session(
                     db, run.owner_id, session_id, completed=True,

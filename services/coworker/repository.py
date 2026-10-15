@@ -313,7 +313,7 @@ class Repository:
                 raise not_found()
             self._audit(db, owner, artifact_id, "artifact_downloaded")
             return {"filename": item.filename, "content_type": item.content_type, "object_key": item.object_key,
-                    "byte_size": item.byte_size, "sha256": item.sha256}
+                    "byte_size": item.byte_size, "sha256": item.sha256, "artifact_class": item.artifact_class}
 
     # Below this boundary, calls are made only by the trusted worker/dispatcher.
     def worker_task(self, task_id, check_live=True):
