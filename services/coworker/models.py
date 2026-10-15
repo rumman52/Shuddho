@@ -1476,6 +1476,27 @@ class BrowserCommand(Base):
     )
 
 
+class ReviewedCodeProposal(Base):
+    """Owner-reviewed code proposal. Never itself an execution grant."""
+    __tablename__ = "cw_reviewed_code_proposals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    agent_run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    review_sha256: Mapped[str] = mapped_column(String(64))
+    envelope: Mapped[dict[str, Any]] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(24), default="pending")
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("cw_sandbox_sessions.id"))
+    execution_id: Mapped[str | None] = mapped_column(ForeignKey("cw_sandbox_executions.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_code_review_owner_key"),
+        Index("cw_code_review_owner_state_expiry", "owner_id", "state", "expires_at"),
+    )
+
+
 class SandboxSession(Base):
     __tablename__ = "cw_sandbox_sessions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
