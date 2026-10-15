@@ -19,6 +19,7 @@
 - Revocation must work after the Agent run is cancelled or terminated.
 - Expiry maintenance is repeatable, scrubs persisted source and preserves a non-executing tombstone.
 - Account erasure with an attached proposal succeeds and removes the proposal, parent run and account.
+- A dedicated PostgreSQL integration test proves the same FK deletion order against real database constraints, independently of SQLite.
 - Existing owner/source-version/budget, connected-source admission, sandbox worker denial, and backend tests remain unchanged.
 - CI must pass `test-and-build`, no-skip `coworker` (including `tests/test_agent_code_proposal_persistence.py`) and `ci-merge-gate` on this PR's **final** SHA.
 
