@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
 const WORKER_TOKEN = process.env.SHUDDHO_BROWSER_WORKER_TOKEN || "";
@@ -535,6 +535,16 @@ async function execute(command) {
 
     const finalUrl = runtime.page.url();
     const title = (await runtime.page.title()).slice(0, 300);
+    let pageCapture = null;
+    if (command.policy?.agent_read_only === true) {
+      // Code-owned read of rendered visible text, not arbitrary model JS.
+      // Bound by characters in the browser process and bytes in the worker.
+      const extracted = await runtime.page.evaluate(() => {
+        const visible = document.body?.innerText || "";
+        return { text: visible.slice(0, 8192), truncated: visible.length > 8192 };
+      });
+      pageCapture = boundVisiblePageText(extracted.text, extracted.truncated);
+    }
     assertNoSurfaceViolation(runtime.state);
     const redirectChain = runtime.state.navigationUrls
       .filter((url, index, values) => url !== finalUrl && values.indexOf(url) === index)
@@ -552,6 +562,8 @@ async function execute(command) {
       worker_id: WORKER_ID,
       final_url: finalUrl,
       title,
+      page_text: pageCapture?.text ?? null,
+      page_text_truncated: pageCapture?.truncated ?? false,
       redirect_chain: redirectChain,
       resolved_ips: evidence,
       prepared_fields: preparedFields,
