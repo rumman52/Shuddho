@@ -293,7 +293,9 @@ async function createRuntime(command, evidence) {
       proxy: { server: proxy.url },
       env: { HOME: process.env.HOME || "/tmp" },
     });
-    const context = await browser.newContext(browserContextOptions(command.storage_state));
+    const context = await browser.newContext(browserContextOptions(
+      browserWorkerMayReuseStorageState(command) ? command.storage_state : null,
+    ));
     const page = await context.newPage();
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
   page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
