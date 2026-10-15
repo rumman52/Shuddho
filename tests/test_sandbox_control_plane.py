@@ -705,9 +705,46 @@ def test_sandbox_worker_claim_fails_closed_on_changed_persisted_source(
         assert owned_session.state == "failed"
         assert owned_session.cleanup_state == ("required" if recovery_claim else "not_required")
     if recovery_claim:
-        with pytest.raises(CoworkerError) as prior:
-            container.sandbox.worker_control("sandbox-before-tamper", prepared["id"])
-        assert prior.value.code in {"sandbox_worker_claim_invalid", "sandbox_session_closed"}
+        # A terminal session now sends an explicit stop signal to a prior
+        # worker.  That is fail-closed even though the old worker no longer
+        # owns a live lease; raising a 409 is reserved for an invalid claim
+        # on an otherwise active session.
+        stopped = container.sandbox.worker_control(
+            "sandbox-before-tamper", prepared["id"],
+        )
+        assert stopped == {"action": "stop", "reason": "session_closed"}
+
+        # A worker ignoring the stop signal must still be unable to publish
+        # an apparently successful result or restore the scrubbed source.
+        with pytest.raises(CoworkerError) as stale:
+            container.sandbox.complete_execution(
+                "sandbox-before-tamper",
+                prepared["id"],
+                {
+                    "policy_version": "sandbox-control-v1",
+                    "executor_contract": "bwrap-python311-v1",
+                    "exit_code": 0,
+                    "stdout": "101\\n",
+                    "stderr": "",
+                    "elapsed_ms": 1,
+                    "sandbox_destroyed": True,
+                    "network_isolated": True,
+                    "filesystem_isolated": True,
+                    "environment_sanitized": True,
+                },
+            )
+        assert stale.value.code in {"sandbox_worker_claim_invalid", "sandbox_session_closed"}
+        with container.repository.sessions() as db:
+            rejected = db.get(SandboxExecution, prepared["id"])
+            closed = db.get(SandboxSession, session["id"])
+            assert rejected.state == "failed"
+            assert rejected.error_code == "sandbox_source_integrity_failed"
+            assert rejected.result in ({}, None)
+            assert rejected.request_spec == {"source_scrubbed": True}
+            assert rejected.claimed_by is None
+            assert rejected.lease_until is None
+            assert closed.state == "failed"
+            assert closed.cleanup_state == "required"
 
 
 def test_sandbox_worker_lease_recovery_is_bounded(container):
