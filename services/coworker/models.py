@@ -1546,6 +1546,21 @@ class AgentCodeProposal(Base):
     )
 
 
+class AgentCodeReview(Base):
+    """Human decision bound to one inert proposal; never a worker execution grant."""
+    __tablename__ = "cw_agent_code_reviews"
+    proposal_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_agent_code_proposals.id"), primary_key=True,
+    )
+    run_id: Mapped[str] = mapped_column(ForeignKey("cw_agent_runs.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    review_sha256: Mapped[str] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(16))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AgentRun(Base):
     __tablename__ = "cw_agent_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
