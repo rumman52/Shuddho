@@ -417,7 +417,8 @@ class AgentRuntime:
             captured = self.container.browser.read_agent_capture(
                 run["owner_id"], session_id, command["id"],
             )
-            if captured is not None:
+            if captured is not None and captured["text"].strip():
+                # Blank/whitespace-only pages must not be reported as read content.
                 # Release only a short, untrusted excerpt to the bounded planner.
                 # The checksum is of exact captured UTF-8 bytes, NOT the URL/title.
                 excerpt = captured["text"].encode("utf-8")[:1200].decode("utf-8", "ignore")
