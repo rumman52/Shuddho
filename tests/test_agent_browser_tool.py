@@ -182,7 +182,7 @@ def test_agent_browser_dns_violation_is_terminal_and_cannot_be_rewritten(contain
     enabled_agent_browser(container)
     owner = account(container, "cw09-agent-rejected-dns")
     session, _ = container.browser.create(
-        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/"),
+        owner, BrowserSessionCreate(purpose="research", start_url="https://example.com/article"),
         "agent:synthetic-dns-rejection:1", agent_origin=True,
     )
     cmd = container.browser.prepare_agent_read(
