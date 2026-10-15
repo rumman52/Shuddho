@@ -506,6 +506,11 @@ class SandboxRepository:
                 if aware(session.expires_at) <= now:
                     session.state = "expired"
                     session.cancel_requested = True
+                else:
+                    # A cancellation flag may race ahead of the session state.
+                    # Never commit a cancelled execution under a running session.
+                    session.state = "cancelled"
+                    session.cancel_requested = True
                 session.updated_at = now
                 db.add(AuditEvent(
                     id=str(uuid4()),
