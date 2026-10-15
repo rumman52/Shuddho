@@ -39,6 +39,7 @@ MAX_BROWSER_STORAGE_COOKIES = 100
 MAX_BROWSER_STORAGE_ORIGINS = 10
 MAX_BROWSER_LOCAL_STORAGE_ITEMS = 100
 MAX_BROWSER_TAKEOVER_FRAME_BYTES = 350000
+MAX_AGENT_PAGE_TEXT_BYTES = 8192
 BROWSER_CONTENT_TRUST = "untrusted"
 
 
@@ -75,6 +76,19 @@ def _bounded_observation(value: dict) -> dict:
         )
     final_url = value.get("final_url")
     title = value.get("title")
+    page_text = value.get("page_text")
+    page_text_truncated = value.get("page_text_truncated", False)
+    if page_text is not None:
+        if not isinstance(page_text, str) or "\x00" in page_text:
+            raise CoworkerError("browser_observation_invalid", "The Agent page text is invalid.", 409)
+        try:
+            page_text_bytes = page_text.encode("utf-8")
+        except UnicodeError:
+            raise CoworkerError("browser_observation_invalid", "The Agent page text is invalid.", 409) from None
+        if len(page_text_bytes) > MAX_AGENT_PAGE_TEXT_BYTES:
+            raise CoworkerError("browser_observation_invalid", "The Agent page text exceeds the content limit.", 409)
+    if not isinstance(page_text_truncated, bool) or (page_text is None and page_text_truncated):
+        raise CoworkerError("browser_observation_invalid", "The Agent page text truncation evidence is invalid.", 409)
     redirects = value.get("redirect_chain", [])
     resolved = value.get("resolved_ips", {})
     prepared_fields = value.get("prepared_fields", [])
@@ -130,6 +144,8 @@ def _bounded_observation(value: dict) -> dict:
     return {
         "final_url": final_url,
         "title": title,
+        "page_text": page_text,
+        "page_text_truncated": page_text_truncated,
         "redirect_chain": redirects,
         "resolved_ips": normalized_resolved,
         "prepared_fields": prepared_fields,
@@ -303,6 +319,10 @@ class BrowserRepository:
     @staticmethod
     def _frame_binding(row: BrowserSession) -> str:
         return f"browser-takeover-frame:{row.owner_id}:{row.id}"
+
+    @staticmethod
+    def _agent_capture_binding(command: BrowserCommand) -> str:
+        return f"agent-page-text:{command.owner_id}:{command.session_id}:{command.id}"
 
     def _store_takeover_frame(self, row: BrowserSession, value: bytes, content_type: str, now) -> None:
         if self._session_vault is None:
@@ -761,6 +781,59 @@ class BrowserRepository:
                 BrowserCommand.owner_id == owner,
             ).order_by(BrowserCommand.sequence.desc()).limit(50)).all()
             return [self._command_dto(row) for row in rows]
+
+    def read_agent_capture(self, owner: str, session_id: str, command_id: str) -> dict | None:
+        """Return trusted-boundary decrypted untrusted text for this owned successful read.
+
+        The public command DTO never releases sealed page bytes; this method is
+        restricted to the server-side Agent runtime before its receipt settles.
+        """
+        self._require_enabled()
+        with self.sessions() as db:
+            session = db.scalar(select(BrowserSession).where(
+                BrowserSession.id == session_id,
+                BrowserSession.owner_id == owner,
+                BrowserSession.idempotency_key.like("agent:%"),
+            ))
+            command = db.scalar(select(BrowserCommand).where(
+                BrowserCommand.id == command_id,
+                BrowserCommand.session_id == session_id,
+                BrowserCommand.owner_id == owner,
+            ))
+            if session is None or command is None:
+                raise not_found()
+            if (
+                session.cancel_requested or session.state in TERMINAL_BROWSER_STATES
+                or aware(session.expires_at) <= utcnow()
+                or command.state != "succeeded"
+                or (command.payload or {}).get("agent_read_only") is not True
+            ):
+                raise CoworkerError("browser_session_closed", "The Agent page capture is unavailable.", 409)
+            result = command.result or {}
+            sealed = result.get("agent_page_text_sealed")
+            if sealed is None:
+                return None  # Compatibility with older metadata-only worker receipts.
+            if self._session_vault is None or not isinstance(sealed, str):
+                raise CoworkerError("browser_capture_invalid", "The Agent page capture cannot be verified.", 409)
+            try:
+                captured = self._session_vault.open(sealed, self._agent_capture_binding(command))
+                raw_text = captured["text"]
+                encoded = raw_text.encode("utf-8")
+                if (
+                    not isinstance(raw_text, str) or len(encoded) > MAX_AGENT_PAGE_TEXT_BYTES
+                    or len(encoded) != result.get("agent_page_text_bytes")
+                    or hashlib.sha256(encoded).hexdigest() != result.get("agent_page_text_sha256")
+                    or not isinstance(result.get("agent_page_text_truncated"), bool)
+                ):
+                    raise ValueError()
+            except (KeyError, TypeError, ValueError, UnicodeError, CoworkerError):
+                raise CoworkerError("browser_capture_invalid", "The Agent page capture cannot be verified.", 409) from None
+            return {
+                "text": raw_text,
+                "sha256": result["agent_page_text_sha256"],
+                "byte_size": len(encoded),
+                "truncated": result["agent_page_text_truncated"],
+            }
 
     def prepare_navigation(self, owner: str, session_id: str, request: BrowserNavigateCreate) -> dict:
         self._require_enabled()
@@ -1831,6 +1904,8 @@ class BrowserRepository:
                     checked.get("storage_state"),
                     list(session.allowed_origins or []),
                 )
+                if checked["page_text"] is not None and (command.payload or {}).get("agent_read_only") is not True:
+                    raise CoworkerError("browser_observation_invalid", "Only Agent read commands can capture page text.", 409)
                 if (
                     (command.payload or {}).get("agent_read_only") is True
                     and checked["storage_state"] is not None
@@ -2009,10 +2084,27 @@ class BrowserRepository:
                         409,
                     )
 
+                # The captured text is worker-observed, always untrusted, and
+                # encrypted with an owner/session/command binding before storing
+                # in the private broker ledger. Do not expose it in public DTOs.
+                captured_fields = {}
+                if checked["page_text"] is not None:
+                    if self._session_vault is None:
+                        raise CoworkerError("browser_capture_unavailable", "Secure page capture is unavailable.", 503)
+                    text_bytes = checked["page_text"].encode("utf-8")
+                    captured_fields = {
+                        "agent_page_text_sealed": self._session_vault.seal(
+                            {"text": checked["page_text"]}, self._agent_capture_binding(command),
+                        ),
+                        "agent_page_text_bytes": len(text_bytes),
+                        "agent_page_text_sha256": hashlib.sha256(text_bytes).hexdigest(),
+                        "agent_page_text_truncated": checked["page_text_truncated"],
+                    }
                 self._store_storage_state(session, checked.get("storage_state"), now)
                 _scrub_form_payload(command)
                 self._clear_command_secret(command)
                 command.result = {
+                    **captured_fields,
                     "final_url": normalized_chain[-1],
                     "title": checked["title"],
                     "redirect_chain": normalized_chain[:-1],
