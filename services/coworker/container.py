@@ -75,9 +75,6 @@ class Container:
     workspace_manifest: WorkspaceManifestService | None = None
 
     def __post_init__(self):
-        if self.reviewed_code is None:
-            # Initialized after the regular sandbox instance below.
-            pass
         if self.conversations is None:
             self.conversations = ConversationRepository(self.repository.sessions, self.settings)
         if self.workspace_manifest is None:
@@ -221,6 +218,8 @@ class Container:
                 self.settings,
                 self.storage,
             )
+        if self.reviewed_code is None:
+            self.reviewed_code = ReviewedCodeRepository(self.repository.sessions, self.settings, self.sandbox)
         if self.retention is None:
             self.retention = RetentionService(self.repository.sessions, self.storage)
 
