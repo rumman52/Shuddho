@@ -642,6 +642,65 @@ def test_sandbox_worker_claim_completion_and_api_auth(container, signed_client):
     assert allowed.status_code == 200
 
 
+@pytest.mark.parametrize("tamper_kind", [
+    "same_length_source", "source_missing", "wrong_byte_count",
+    "wrong_trust_label", "wrong_policy_version", "bad_utf8",
+])
+@pytest.mark.parametrize("recovery_claim", [False, True])
+def test_sandbox_worker_claim_fails_closed_on_changed_persisted_source(
+    container, tamper_kind, recovery_claim,
+):
+    """No new worker receives bytes that differ from the prepared source."""
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_session(
+        container, owner, f"sandbox-claim-integrity-{tamper_kind}-{recovery_claim}",
+    )
+    source = "print(101)"
+    prepared = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source=source),
+    )
+    if recovery_claim:
+        first = container.sandbox.claim_executions("sandbox-before-tamper")
+        assert len(first) == 1 and first[0]["source"] == source
+    with container.repository.sessions.begin() as db:
+        execution = db.get(SandboxExecution, prepared["id"])
+        spec = dict(execution.request_spec)
+        if tamper_kind == "same_length_source":
+            spec["source"] = "print(999)"
+            assert len(spec["source"].encode("utf-8")) == len(source.encode("utf-8"))
+        elif tamper_kind == "source_missing":
+            spec.pop("source")
+        elif tamper_kind == "wrong_byte_count":
+            execution.source_bytes += 1
+        elif tamper_kind == "wrong_trust_label":
+            spec["source_trust"] = "reviewed_by_model"
+        elif tamper_kind == "wrong_policy_version":
+            spec["policy_version"] = "replaced-policy"
+        elif tamper_kind == "bad_utf8":
+            spec["source"] = "\ud800"
+        execution.request_spec = spec
+        if recovery_claim:
+            execution.lease_until = utcnow() - timedelta(seconds=1)
+
+    assert container.sandbox.claim_executions("sandbox-after-tamper") == []
+    assert container.sandbox.claim_executions("sandbox-later") == []
+    with container.repository.sessions() as db:
+        execution = db.get(SandboxExecution, prepared["id"])
+        owned_session = db.get(SandboxSession, session["id"])
+        assert execution.state == "failed"
+        assert execution.error_code == "sandbox_source_integrity_failed"
+        assert execution.request_spec == {"source_scrubbed": True}
+        assert execution.claimed_by is None
+        assert execution.lease_until is None
+        assert owned_session.state == "failed"
+        assert owned_session.cleanup_state == "not_required"
+    if recovery_claim:
+        with pytest.raises(CoworkerError) as prior:
+            container.sandbox.worker_control("sandbox-before-tamper", prepared["id"])
+        assert prior.value.code in {"sandbox_worker_claim_invalid", "sandbox_session_closed"}
+
+
 def test_sandbox_worker_lease_recovery_is_bounded(container):
     settings = enable_sandbox(container)
     owner = account(container)
