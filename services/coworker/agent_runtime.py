@@ -504,6 +504,22 @@ class AgentRuntime:
                 })
                 return {"status": "executing"}
             execution = executions[0]
+            # A resume must never claim an earlier sandbox execution or
+            # consume its results for a *different* Agent invocation source.
+            # A durable session id is not itself authorization to substitute
+            # code. Check exact UTF-8 bytes/digest before both execution
+            # polling and verified ToolReceipt settlement.
+            requested_source = args.source.encode("utf-8")
+            if (
+                len(executions) != 1
+                or execution.get("source_bytes") != len(requested_source)
+                or execution.get("source_sha256") != hashlib.sha256(requested_source).hexdigest()
+            ):
+                raise CoworkerError(
+                    "sandbox_source_binding_mismatch",
+                    "The existing sandbox execution does not match the exact code for this Agent step.",
+                    409,
+                )
             if execution["state"] in {"prepared", "running"}:
                 validate_tool_result(spec, {
                     "status": "executing",

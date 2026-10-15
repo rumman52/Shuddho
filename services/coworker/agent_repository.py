@@ -15,7 +15,7 @@ from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
 from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .models import Account, ActionProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
@@ -1983,6 +1983,92 @@ class AgentRepository:
                     resource_type=resource_type, resource_id=resource_id, summary=summary,
                 ))
             now = utcnow()
+            if resource_type == "sandbox_execution":
+                bound = step.output or {}
+                if (
+                    invocation.tool_name != "sandbox.execute_python"
+                    or bound.get("resource_type") != "sandbox_session"
+                    or not bound.get("resource_id")
+                ):
+                    raise CoworkerError(
+                        "sandbox_agent_scope",
+                        "The sandbox receipt is not bound to the owning Agent step.",
+                        409,
+                    )
+                # Check within the same transaction that inserts the receipt.
+                # Worker completion cannot silently substitute source or
+                # results between a previous Agent poll and this commit.
+                session_id = str(bound["resource_id"])
+                sandbox_session = db.scalar(select(SandboxSession).where(
+                    SandboxSession.id == session_id,
+                    SandboxSession.owner_id == run.owner_id,
+                    SandboxSession.idempotency_key == f"agent:{run_id}:{ordinal}",
+                ).with_for_update())
+                if (
+                    sandbox_session is None or sandbox_session.cancel_requested
+                    or aware(sandbox_session.expires_at) <= utcnow()
+                    or sandbox_session.state in {"cancelled", "expired", "failed", "completed"}
+                ):
+                    raise CoworkerError(
+                        "sandbox_session_closed",
+                        "The Agent sandbox session is not eligible for receipt settlement.",
+                        409,
+                    )
+                execution = db.scalar(select(SandboxExecution).where(
+                    SandboxExecution.id == resource_id,
+                    SandboxExecution.session_id == session_id,
+                    SandboxExecution.owner_id == run.owner_id,
+                    SandboxExecution.state == "succeeded",
+                ).with_for_update(skip_locked=True))
+                # Sandbox worker completion locks execution before session,
+                # whereas an Agent cancellation can lock session first. Do not
+                # block holding the session lock while a concurrent worker
+                # holds the execution lock: skip and retry after it settles.
+                current_source = (invocation.arguments or {}).get("source")
+                if not isinstance(current_source, str) or not current_source:
+                    raise CoworkerError(
+                        "sandbox_source_binding_mismatch",
+                        "The Agent sandbox source is unavailable or invalid.", 409,
+                    )
+                exact_source = current_source.encode("utf-8")
+                if (
+                    execution is None
+                    or execution.source_bytes != len(exact_source)
+                    or execution.source_sha256 != hashlib.sha256(exact_source).hexdigest()
+                    or db.scalar(select(func.count()).select_from(SandboxExecution).where(
+                        SandboxExecution.session_id == session_id,
+                        SandboxExecution.owner_id == run.owner_id,
+                    )) != 1
+                ):
+                    raise CoworkerError(
+                        "sandbox_source_binding_mismatch",
+                        "The sandbox result does not match exactly one owned Agent source.",
+                        409,
+                    )
+                result = execution.result or {}
+                result_artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else {}
+                if (
+                    result.get("sandbox_destroyed") is not True
+                    or result.get("network_isolated") is not True
+                    or result.get("filesystem_isolated") is not True
+                    or result.get("environment_sanitized") is not True
+                    or result.get("exit_code") != 0
+                    or summary.get("sandbox_state") != "succeeded"
+                    or summary.get("sandbox_destroyed") is not True
+                    or summary.get("exit_code") != result.get("exit_code")
+                    or summary.get("stdout_sha256") != result.get("stdout_sha256")
+                    or summary.get("stderr_sha256") != result.get("stderr_sha256")
+                    or summary.get("stdout_excerpt") != str(result.get("stdout") or "")[:1800]
+                    or summary.get("stderr_excerpt") != str(result.get("stderr") or "")[:800]
+                    or summary.get("output_trust") != "untrusted"
+                    or summary.get("artifact_id") != result_artifact.get("id")
+                    or summary.get("artifact_sha256") != result_artifact.get("sha256")
+                ):
+                    raise CoworkerError(
+                        "sandbox_receipt_unverified",
+                        "The sandbox result lacks matching verified isolation evidence.",
+                        409,
+                    )
             if resource_type == "browser_command":
                 bound = step.output or {}
                 if bound.get("resource_type") != "browser_session" or not bound.get("resource_id"):

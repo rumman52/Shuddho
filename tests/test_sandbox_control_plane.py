@@ -26,7 +26,7 @@ from services.coworker.interactive_artifacts import (
     validate_static_preview_html,
     verify_preview_token,
 )
-from services.coworker.models import Artifact, SandboxExecution, SandboxSession, utcnow
+from services.coworker.models import Artifact, SandboxExecution, SandboxSession, ToolInvocation, ToolReceipt, utcnow
 from services.coworker.sandbox import SandboxRepository
 from services.coworker.sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 from scripts.sandbox_worker import (
@@ -312,6 +312,136 @@ def test_runtime_v3_sandbox_tool_executes_only_user_supplied_python(container):
     assert receipt["summary"]["stdout_excerpt"] == "42\n"
     assert receipt["summary"]["sandbox_destroyed"] is True
 
+
+
+@pytest.mark.parametrize("worker_already_completed", [False, True])
+def test_agent_sandbox_resume_refuses_source_substitution(container, worker_already_completed):
+    """A replay cannot attach a different program to the original result."""
+    base = enable_sandbox(container)
+    enabled = replace(base, agent_sandbox_tool_enabled=True)
+    enabled.validate()
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.sandbox.settings = enabled
+
+    owner = account(container)
+    original = "print(101)"
+    replacement = "print(999)"  # Same UTF-8 size; digest must still bind.
+    goal = "Execute my exact source.\n\n```python\n" + original + "\n```"
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal=goal, output_language="en"),
+        "sandbox-resume-substitution-" + str(worker_already_completed),
+    )
+    ordinal = container.agent.append_v3_step(
+        owner, run["id"], "sandbox.execute_python", "Run exact user code",
+    )
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    original_execution = container.sandbox.list_executions(
+        owner, container.agent.step_resource(run["id"], ordinal)["resource_id"],
+    )[0]
+    assert original_execution["source_sha256"] == hashlib.sha256(original.encode("utf-8")).hexdigest()
+    if worker_already_completed:
+        claimed = container.sandbox.claim_executions("sandbox-source-replay")[0]
+        assert claimed["source"] == original
+        completed = container.sandbox.complete_execution(
+            "sandbox-source-replay", claimed["id"], completion_observation(),
+        )
+        assert completed["state"] == "succeeded"
+
+    # Simulate an incompatible restored invocation (or corrupt replay) after
+    # the original exact source was durably queued/possibly completed.
+    with container.repository.sessions.begin() as db:
+        invocation = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+            ToolInvocation.owner_id == owner,
+        ))
+        assert invocation is not None
+        invocation.arguments = {"source": replacement}
+
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runtime.execute_step(run["id"], ordinal))
+    assert error.value.code == "sandbox_source_binding_mismatch"
+    assert error.value.status_code == 409
+    if worker_already_completed:
+        # Bypass the earlier AgentRuntime poll to prove final ToolReceipt
+        # enforcement independently checks the same exact source under DB lock.
+        with pytest.raises(CoworkerError) as settlement:
+            container.agent.finish_invocation(
+                run["id"], ordinal, "sandbox_execution", completed["id"],
+                {
+                    "sandbox_state": "succeeded",
+                    "sandbox_destroyed": True,
+                    "stdout_sha256": completed["result"]["stdout_sha256"],
+                    "stderr_sha256": completed["result"]["stderr_sha256"],
+                },
+            )
+        assert settlement.value.code == "sandbox_source_binding_mismatch"
+        assert settlement.value.status_code == 409
+    assert [x["id"] for x in container.sandbox.list_executions(
+        owner, container.agent.step_resource(run["id"], ordinal)["resource_id"],
+    )] == [original_execution["id"]]
+    with container.repository.sessions() as db:
+        assert db.get(ToolReceipt, invocation.id) is None
+
+
+def test_agent_sandbox_receipt_rejects_forged_stdout_and_preserves_verified_result(container):
+    base = enable_sandbox(container)
+    enabled = replace(base, agent_sandbox_tool_enabled=True)
+    enabled.validate()
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.sandbox.settings = enabled
+
+    owner = account(container)
+    source = "print(8)"
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Execute my exact Python.\n\n```python\n" + source + "\n```"),
+        "sandbox-forged-receipt",
+    )
+    ordinal = container.agent.append_v3_step(
+        owner, run["id"], "sandbox.execute_python", "Run exact code",
+    )
+    runtime = AgentRuntime(container, None)
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "executing"}
+    claimed = container.sandbox.claim_executions("sandbox-forged-receipt-worker")[0]
+    completed = container.sandbox.complete_execution(
+        "sandbox-forged-receipt-worker", claimed["id"], {
+            **completion_observation(),
+            "stdout": "8\n",
+        },
+    )
+    assert completed["state"] == "succeeded"
+    result = completed["result"]
+    with pytest.raises(CoworkerError) as failure:
+        container.agent.finish_invocation(
+            run["id"], ordinal, "sandbox_execution", completed["id"], {
+                "sandbox_state": "succeeded",
+                "exit_code": 0,
+                "sandbox_destroyed": True,
+                "stdout_sha256": result["stdout_sha256"],
+                "stderr_sha256": result["stderr_sha256"],
+                "stdout_excerpt": "FAKE RESULT",  # Digest alone is not enough.
+                "stderr_excerpt": "",
+                "output_trust": "untrusted",
+                "artifact_id": None,
+                "artifact_sha256": None,
+            },
+        )
+    assert failure.value.code == "sandbox_receipt_unverified"
+    with container.repository.sessions() as db:
+        invocation = db.scalar(select(ToolInvocation).where(ToolInvocation.run_id == run["id"]))
+        assert db.get(ToolReceipt, invocation.id) is None
+
+    # The actual verified worker output is eligible on the same execution;
+    # rejecting a forged receipt must not poison an otherwise valid replay.
+    assert asyncio.run(runtime.execute_step(run["id"], ordinal)) == {"status": "completed"}
+    observed = container.agent.verified_observations(owner, run["id"])
+    assert observed[0]["summary"]["stdout_excerpt"] == "8\n"
 
 
 def test_agent_cancel_scrubs_prepared_planner_sandbox_source(container, signed_client):
