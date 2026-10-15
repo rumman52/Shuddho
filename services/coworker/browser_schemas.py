@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
 class BrowserModel(BaseModel):
@@ -70,7 +70,7 @@ class BrowserWorkerObservation(BrowserWorkerIdentity):
     final_url: str = Field(min_length=8, max_length=4096)
     title: str | None = Field(default=None, max_length=300)
     # Only read-only Agent navigation may submit bounded, untrusted page text.
-    page_text: str | None = Field(default=None, max_length=8192)
+    page_text: Annotated[str, StringConstraints(strip_whitespace=False)] | None = Field(default=None, max_length=8192)
     page_text_truncated: bool = False
     redirect_chain: list[str] = Field(default_factory=list, max_length=10)
     resolved_ips: dict[str, list[str]] = Field(default_factory=dict)
