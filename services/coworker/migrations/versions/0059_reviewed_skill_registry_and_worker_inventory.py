@@ -28,6 +28,8 @@ def upgrade() -> None:
         sa.Column("manifest", sa.JSON(), nullable=False),
         sa.Column("rollback_target_version", sa.String(80), nullable=True),
         sa.Column("state", sa.String(20), nullable=False, server_default="published"),
+        sa.Column("published_by", sa.String(200), nullable=False, server_default="operator"),
+        sa.Column("publication_reason", sa.String(500), nullable=False, server_default="reviewed publication"),
         sa.Column("published_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint(
@@ -71,6 +73,8 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("heartbeat_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("drain_requested_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("drain_requested_by", sa.String(200), nullable=True),
+        sa.Column("drain_reason", sa.String(500), nullable=True),
         sa.Column("drained_at", sa.DateTime(timezone=True), nullable=True),
     )
     op.create_index(
