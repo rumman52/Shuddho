@@ -142,6 +142,8 @@ The evidence gate proves:
 - a fresh compatible worker is running;
 - no incompatible active/draining worker remains;
 - no active pre-fence reviewed tasks remain;
+- any registered legacy worker row is explicitly `drained` and has a durable
+  `drained_at` timestamp; missing or inconsistent drain evidence blocks;
 - control-event history is retained;
 - the shared read-only rollback task-ledger classifier reports no blockers:
   active unfenced reviewed Tasks, active reviewed-workflow Tasks missing their

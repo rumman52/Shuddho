@@ -20,7 +20,8 @@ The same second-pass review found that the collector could ignore a lost worker 
 4. Validate external Render evidence inside `collect_evidence()` before database-backed selection or inventory reads.
 5. Reject non-object payloads, missing or unexpected fields, non-integer schema versions/counts, a non-true verified marker, blank/equal service IDs, malformed full commit SHAs, a legacy instance count other than exactly zero, a candidate count below one, and either revision mismatch.
 6. Treat lost, unknown-state and stale-heartbeat active worker records as blockers even when a fresh candidate worker is also present.
-7. Keep the feature default-off and do not deploy, select, publish, rollback, migrate, drain or activate anything from this collector change.
+7. Require every registered old-revision worker row marked `drained` to have a non-null `drained_at` timestamp; inconsistent drain state blocks evidence.
+8. Keep the feature default-off and do not deploy, select, publish, rollback, migrate, drain or activate anything from this collector change.
 
 ## Implementation
 
@@ -36,6 +37,7 @@ The same second-pass review found that the collector could ignore a lost worker 
 - Active reviewed-workflow Task without identity: same fail-closed result.
 - Malformed, unverified, wrong-type, extra-field or revision-mismatched Render payload: rejected before database-backed publication selection.
 - Lost, unknown-state or stale-heartbeat active worker record: collector blocks, even when its revision differs from the declared legacy revision or a fresh candidate worker is present.
+- Old-revision worker row with `state="drained"` but no `drained_at`: collector blocks as inconsistent drain evidence.
 - Exact final-head `test-and-build`, mandatory no-skip `coworker`, and `ci-merge-gate` all pass.
 - Staging remains a separate protected operated gate. A green CI result does not prove worker drain, no in-flight external work, or production qualification.
 

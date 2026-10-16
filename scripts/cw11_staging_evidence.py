@@ -209,7 +209,7 @@ def collect_evidence(
     ]
     old_blockers = [
         row for row in old_rows
-        if row["state"] != "drained"
+        if row["state"] != "drained" or not row["drained_at"]
     ]
     if not compatible_running:
         raise CoworkerError(

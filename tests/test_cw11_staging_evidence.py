@@ -258,6 +258,34 @@ def test_collector_blocks_task_ledger_classification_gaps(
         )
 
 
+def test_collector_blocks_drained_worker_without_timestamp(
+    staging_repository,
+):
+    repository, settings = staging_repository
+    seed_release(repository)
+    old_row = next(
+        row for row in repository.worker_inventory(task_queue=settings.task_queue)
+        if row["source_revision"] == OLD_REVISION
+    )
+    with repository.sessions.begin() as db:
+        row = db.get(WorkerInstance, old_row["id"])
+        assert row is not None
+        assert row.state == "drained"
+        row.drained_at = None
+
+    with pytest.raises(
+        CoworkerError,
+        match="legacy worker row is not explicitly drained",
+    ):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=valid_render_evidence(),
+        )
+
+
 def test_collector_blocks_active_incompatible_worker(
     staging_repository,
 ):
