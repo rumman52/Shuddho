@@ -19,7 +19,10 @@ from scripts.reviewed_skill_rollback_preflight import inspect_reviewed_rollback
 from services.coworker.config import Settings
 from services.coworker.database import session_factory
 from services.coworker.errors import CoworkerError
-from services.coworker.models import ReviewedSkillPublication, ReviewedSkillRegistryEvent
+from services.coworker.models import (
+    ReviewedSkillPublication,
+    ReviewedSkillRegistryEvent,
+)
 from services.coworker.repository import Repository
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
@@ -103,7 +106,11 @@ def validate_render_evidence(
     if value.get("old_worker_live_commit") != old_source_revision:
         raise SystemExit("Render evidence does not bind the stopped worker to the declared revision.")
     if value.get("candidate_live_commit") != candidate_source_revision:
-        raise SystemExit("Render evidence candidate revision does not match this qualification revision.")
+        raise SystemExit(
+            "Render evidence candidate revision does not match this qualification revision."
+        )
+
+
 def collect_evidence(
     repository: Repository,
     settings: Settings,
