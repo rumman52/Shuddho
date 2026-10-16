@@ -169,7 +169,7 @@ class ReviewedSkillRegistryEvent(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     skill_name: Mapped[str] = mapped_column(String(60))
     publication_id: Mapped[str | None] = mapped_column(
-        ForeignKey("cw_reviewed_skill_publications.id"), index=True
+        ForeignKey("cw_reviewed_skill_publications.id")
     )
     event_type: Mapped[str] = mapped_column(String(60))
     actor_reference: Mapped[str] = mapped_column(String(200))
