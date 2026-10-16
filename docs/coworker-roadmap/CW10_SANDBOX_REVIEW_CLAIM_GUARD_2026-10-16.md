@@ -18,7 +18,7 @@ Denied claims never release Python source. Denial persists a terminal failed exe
 
 ## Changed components
 
-- `services/coworker/models.py`, Alembic `0058_sandbox_code_proposal_binding.py`: nullable FK; no backfill for existing executions. Existing source is classified as direct user source by absence of binding, which is safe because current APIs never schedule generated-code proposals.
+- `services/coworker/models.py`, Alembic `0058_sandbox_code_proposal_binding.py`: nullable FK; no backfill for existing executions. The FK has a **unique index** for non-null values so one owner-approved proposal cannot produce multiple distinct execution identities; many existing NULL direct-user executions remain permitted. Duplicate-link insertion is tested at the database boundary. Existing source is classified as direct user source by absence of binding, which is safe because current APIs never schedule generated-code proposals.
 - `services/coworker/sandbox.py`: shared review guard reuses the existing `AgentRepository._verify_persisted_code_review_source` owned-context admission contract, enforcing it at claim, control and completion, with fail-closed persisted terminalization.
 - `tests/test_agent_code_proposal_persistence.py`: negative matrix for no approval, revoked/expired approval, forged review/source, cancellation, exceeded limits; positive bounded synthetic owned review; heartbeat revoke; late result denial; unchanged direct-user path.
 - `tests/test_coworker_postgres.py`: mandatory migration/column proof with real PostgreSQL.
