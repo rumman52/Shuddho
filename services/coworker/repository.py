@@ -613,6 +613,11 @@ class Repository:
                     run = db.get(AgentRun, task.agent_run_id)
                     if run is None or run.cancel_requested or aware(run.deadline_at) <= utcnow():
                         raise CoworkerError("skill_migration_blocked", "The historical Agent run is cancelled or expired.")
+                    if task.phase != "queued":
+                        raise CoworkerError(
+                            "skill_migration_blocked",
+                            "A historical reviewed task has advanced beyond its safe pre-execution phase.",
+                        )
                     search_attempt = db.get(Step, (task.id, "search_attempt"))
                     if search_attempt is not None:
                         raise CoworkerError(
@@ -640,6 +645,20 @@ class Repository:
                     "task_workflow_version": binding.task_workflow_version,
                 }
                 task.updated_at = utcnow()
+                self._record_reviewed_control_event(
+                    db,
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    publication_id=binding.publication_id,
+                    event_type="legacy_task_migrated",
+                    actor_reference=actor_reference,
+                    reason=reason,
+                    metadata={
+                        "task_id": task.id,
+                        "task_queue": task_queue,
+                        "old_source_revision": old_source_revision,
+                        "publication_version": binding.publication_version,
+                    },
+                )
                 migrated += 1
             return {
                 "task_queue": task_queue,
