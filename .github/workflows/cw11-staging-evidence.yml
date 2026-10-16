@@ -13,6 +13,12 @@ on:
       old_source_revision:
         description: Exact legacy worker revision that was drained
         required: true
+      old_worker_service_id:
+        description: Render service ID for the legacy staging worker
+        required: true
+      candidate_worker_service_id:
+        description: Render service ID for the candidate staging worker
+        required: true
 
 permissions:
   contents: read
@@ -36,6 +42,7 @@ jobs:
       SHUDDHO_COWORKER_LOCAL_STORAGE: /tmp/cw11-storage
       SHUDDHO_TEMPORAL_TASK_QUEUE: shuddho-documents-v1
       SHUDDHO_AGENT_REVIEWED_RESEARCH_SKILL_ENABLED: "true"
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
 
     steps:
       - name: Checkout exact qualification revision
@@ -58,6 +65,48 @@ jobs:
       - name: Apply pending staging migrations
         run: uv run --extra coworker python -m services.coworker.migrate
 
+      - name: Verify live Render mixed-version drain state
+        shell: bash
+        env:
+          OLD_WORKER_SERVICE_ID: ${{ inputs.old_worker_service_id }}
+          CANDIDATE_WORKER_SERVICE_ID: ${{ inputs.candidate_worker_service_id }}
+        run: |
+          set -euo pipefail
+          api="https://api.render.com/v1"
+          auth=(-H "Authorization: Bearer ${RENDER_API_KEY}" -H "Accept: application/json")
+          old_instances="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}/instances")"
+          candidate_instances="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}/instances")"
+          candidate_deploys="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}/deploys?limit=20")"
+          old_count="$(jq 'length' <<<"${old_instances}")"
+          candidate_count="$(jq 'length' <<<"${candidate_instances}")"
+          candidate_commit="$(jq -r '
+            map(select(.status == "live" and (.commit.id? | type == "string")))
+            | sort_by(.createdAt)
+            | last
+            | .commit.id // empty
+          ' <<<"${candidate_deploys}")"
+          if [[ "${old_count}" -ne 0 ]]; then
+            echo "::error::Legacy Render worker still has live instances; drain is not complete."
+            exit 1
+          fi
+          if [[ "${candidate_count}" -lt 1 ]]; then
+            echo "::error::Candidate Render worker has no live instances."
+            exit 1
+          fi
+          if [[ "${candidate_commit}" != "${GITHUB_SHA}" ]]; then
+            echo "::error::Candidate Render worker is not running the exact qualification revision."
+            exit 1
+          fi
+          jq -n             --arg old_service "${OLD_WORKER_SERVICE_ID}"             --arg candidate_service "${CANDIDATE_WORKER_SERVICE_ID}"             --arg candidate_commit "${candidate_commit}"             --argjson old_count "${old_count}"             --argjson candidate_count "${candidate_count}"             '{
+              schema_version: 1,
+              old_worker_service_id: $old_service,
+              candidate_worker_service_id: $candidate_service,
+              old_worker_instance_count: $old_count,
+              candidate_worker_instance_count: $candidate_count,
+              candidate_live_commit: $candidate_commit,
+              verified: true
+            }' > /tmp/cw11-render-evidence.json
+
       - name: Collect CW-11 staging evidence
         run: |
           set -euo pipefail
@@ -71,6 +120,11 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          if [[ -f /tmp/cw11-render-evidence.json ]]; then
+            echo "## CW-11 Render worker evidence" >> "${GITHUB_STEP_SUMMARY}"
+            cat /tmp/cw11-render-evidence.json >> "${GITHUB_STEP_SUMMARY}"
+            echo "" >> "${GITHUB_STEP_SUMMARY}"
+          fi
           if [[ -f /tmp/cw11-staging-evidence.json ]]; then
             {
               echo "## CW-11 staging evidence"
@@ -84,6 +138,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cw11-staging-evidence
-          path: /tmp/cw11-staging-evidence.json
+          path: |
+            /tmp/cw11-render-evidence.json
+            /tmp/cw11-staging-evidence.json
           if-no-files-found: error
           retention-days: 30
