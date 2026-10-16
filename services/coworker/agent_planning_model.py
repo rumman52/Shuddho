@@ -212,7 +212,7 @@ class DeepSeekAgentPlanner:
                 raise ValueError()
             source = generated["source"]
             ast.parse(source)
-        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+        except (SyntaxError, ValueError, TypeError, KeyError, IndexError, AttributeError):
             raise PlannerFailure(
                 "invalid_code_proposal", "The model did not return one bounded Python source draft.",
                 total_tokens=usage_tokens,
