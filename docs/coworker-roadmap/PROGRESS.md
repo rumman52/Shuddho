@@ -1,3 +1,15 @@
+## CW-10 atomic reviewed-owner dispatch — 16 October 2026
+
+**Verified starting state:** `main` `8d9420e5ebc38e7c188dc8bf1e4cb19873190a90`; merged #427 added exact owner Python review UI. Its [PR CI #38845738704](https://github.com/rumman52/Shuddho/actions/runs/38845738704) and merged-main [CI #38845856137](https://github.com/rumman52/Shuddho/actions/runs/38845856137) both passed all three required jobs. No open PRs before this branch.
+
+**New source changes** on `codex/cw10-reviewed-dispatch-atomic-20261016`: independent default-off `SHUDDHO_CODE_PROPOSAL_DISPATCH_ENABLED`; authenticated exact-hash dispatch endpoint; `SandboxRepository.dispatch_reviewed_proposal` locks owner run → stored proposal → owner human approval, verifies admitted source, live expiry/permission/cancellation/limits, rejects unsupported private inputs, and creates one new session and its proposal-FK-linked prepared execution in one SQL transaction. Unique FK and run lock give duplicate POST one durable identity. Worker claim uses the same source/review guard and denies linked claims if the new gate is disabled. Added HTTP and worker negative/replay regressions. Existing direct-user sandbox path is unchanged, generated-code UI still has no execution control. [Detailed contract and rollout blockers](CW10_ATOMIC_REVIEWED_DISPATCH_2026-10-16.md).
+
+**Evidence required:** final-head mandatory `test-and-build`/`coworker`/`ci-merge-gate`, independent security review, operated PostgreSQL concurrency/worker revocation/staging bwrap isolation. **Source erasure improvement:** queued reviewed execution stores a source reference, not a duplicate Python snapshot; revocation clears the original proposal snapshot before claim, and claim fails closed. Still unverified: source already released to worker memory, process cancellation latency, temporary file erasure, old legacy manually linked rows and operated isolation. Old workers do not know this gate: mixed-version dispatch forbidden. No deployment/activation or production qualification.
+
+**Next:** prove actual worker process cancellation and in-memory/filesystem erasure after revocation; implement trusted model code proposal producer and qualify live full end-to-end CW-10 lifecycle. CW-11 skills, CW-09 operated browser and P/V coworker scenarios remain incomplete. Overall **INCOMPLETE**.
+
+---
+
 ## CW-10 exact owner code inspection UI — 16 October 2026
 
 **Current baseline:** `main` `d9d664c8b5a735260a17c1af58687e14e2b8c058` contains merged [PR #426](https://github.com/rumman52/Shuddho/pull/426), whose exact-head [CI #38843127126](https://github.com/rumman52/Shuddho/actions/runs/38843127126) passed all three mandatory jobs. The subsequent `main` push [CI #38844772799](https://github.com/rumman52/Shuddho/actions/runs/38844772799) was still in progress at task selection. No open PRs at bootstrap.

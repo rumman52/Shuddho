@@ -1803,6 +1803,27 @@ def review_agent_code_proposal(
     )
 
 
+@router.post(
+    "/agent-runs/{run_id}/code-proposals/{proposal_id}/dispatch",
+    status_code=201,
+)
+def dispatch_approved_code_proposal(
+    run_id: UUID,
+    proposal_id: UUID,
+    payload: CodeProposalRevocation,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    """Owner intent only; requires an existing exact human review plus an independent rollout gate."""
+    value, created = services.sandbox.dispatch_reviewed_proposal(
+        identity.account_id, str(run_id), str(proposal_id), payload.review_sha256,
+    )
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["Cache-Control"] = "no-store"
+    return value
+
+
 @router.get("/agent-runs/{run_id}/context")
 def agent_run_context(run_id: UUID, identity: Identity, services: Services):
     return services.context.for_run(identity.account_id, str(run_id))
