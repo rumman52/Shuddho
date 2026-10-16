@@ -2032,7 +2032,7 @@ def test_research_step_never_receives_prior_agent_handoff(container):
             output_language="en",
         ),
         "agent-handoff-research",
-        tool_allowlist=["research.search"],
+        tool_allowlist=["document.create", "research.search"],
     )
     container.agent.save_plan(owner, run["id"], [
         AgentPlanStep(tool="document.create", arguments={

@@ -696,7 +696,7 @@ def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
                 output_language="en",
             ),
             "agent-parallel-fan-in",
-            tool_allowlist=["research.search"],
+            tool_allowlist=["document.create", "research.search"],
         )
         saved = container.agent.save_plan(owner, run["id"], [
             AgentPlanStep(tool="research.search", arguments={
@@ -773,7 +773,7 @@ def test_agent_v2_failed_branch_preserves_completed_independent_work_and_blocks_
                 output_language="en",
             ),
             "agent-parallel-failure",
-            tool_allowlist=["research.search"],
+            tool_allowlist=["document.create", "research.search"],
         )
         container.agent.save_plan(owner, run["id"], [
             AgentPlanStep(tool="research.search", arguments={
@@ -839,7 +839,7 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
                 output_language="en",
             ),
             "agent-parallel-restart",
-            tool_allowlist=["research.search"],
+            tool_allowlist=["document.create", "research.search"],
         )
         container.agent.save_plan(owner, run["id"], [
             AgentPlanStep(tool="research.search", arguments={
