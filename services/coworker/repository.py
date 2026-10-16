@@ -190,6 +190,14 @@ class Repository:
                 raise CoworkerError("skill_rollback_unavailable", "The selected or rollback publication is missing.", 409)
             if current.id == target.id:
                 raise CoworkerError("skill_rollback_unavailable", "Rollback target is already selected.", 409)
+            if current.state != "published":
+                raise CoworkerError("skill_rollback_unavailable", "The current publication is not rollback-eligible.", 409)
+            if current.rollback_target_version != target_publication_version:
+                raise CoworkerError(
+                    "skill_rollback_unavailable",
+                    "Rollback target does not match the publication's explicitly declared rollback target.",
+                    409,
+                )
             require_selected_pilot(target, worker_source_revision=worker_source_revision)
             if target.state != "published":
                 raise CoworkerError("skill_rollback_unavailable", "Rollback target is not an eligible published version.", 409)
