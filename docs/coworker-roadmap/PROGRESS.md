@@ -1,3 +1,17 @@
+## CW-10 reviewed generated-code worker-claim guard — 16 October 2026
+
+**Refreshed truth:** `main` `35287ac3ab0e2c691d76b2a1973166342c5ccf06`; [PR #424](https://github.com/rumman52/Shuddho/pull/424) merged at this SHA and its exact-head [PR CI #38792431386](https://github.com/rumman52/Shuddho/actions/runs/38792431386) passed. Merged-main [CI #38837201149](https://github.com/rumman52/Shuddho/actions/runs/38837201149) was still in progress when the branch was opened. No open PRs at that initial refresh. The original document's old red CI and earlier draft reviews have since been superseded by merged fixes.
+
+**Missing real authority boundary:** The sandbox worker's claim/heartbeat/result path currently guards source integrity, lease and environment but never binds a model-generated proposal to its recorded owner decision. An `approve` record is inert; treating it as sufficient would bypass current source scope, budgets and revocation. This independent branch `codex/cw10-reviewed-sandbox-claim-guard-20261016` starts from the exact `main` above and adds nullable SQL-owned `agent_code_proposal_id` FK via migration `0058`. The current direct-user Python execution API never sets it.
+
+**Implemented on review branch:** Source-origin-bound reviewer validation at claim, heartbeat and receipt acceptance. Under SQL locks, only an exact owned unexpired/unrevoked approved proposal with current live run+conversation/source permissions, hash and reviewed limits may release bytes or settle; all unsafe claims fail closed and scrub source. Private input versions are explicitly denied pending an operated reviewed input-mount path. Changed reviewer/submitted hash, source tampering, revoked/expired consent, cancelled run and excess resource ceilings are tested; direct-user executions are unaffected. [Acceptance/rollout contract](CW10_SANDBOX_REVIEW_CLAIM_GUARD_2026-10-16.md).
+
+**Evidence:** Source and synthetic tests committed, required final-head no-skip `test-and-build`/`coworker`/`ci-merge-gate` still pending; real PostgreSQL migration test added. No independent security review or operated staging worker process evidence. Do not merge, deploy, or activate.
+
+**Remaining:** CW-10 trusted model proposal producer and trusted owner-review UI; atomic privileged server-side producer/dispatch path that sets proposal binding; reviewed private-input mounts and isolation/rollback; CW-11 skill publication; operated CW-09 browser network security; P/V goal/work/recovery/security scenarios. Core/architecture qualification remains **INCOMPLETE**.
+
+---
+
 ## CW-10 exact owner human review decision, no worker authority — 16 October 2026
 
 **Fresh repo:** `main` `a8b60903268f4be4655fd8191305bc35c739a9bd`; [PR #423](https://github.com/rumman52/Shuddho/pull/423) has merged private code revocation/expiry/account erasure, but its exact-head [PR CI #38789767003](https://github.com/rumman52/Shuddho/actions/runs/38789767003) and merged-main [CI #38790723827](https://github.com/rumman52/Shuddho/actions/runs/38790723827) were **still running**, and therefore not qualified at this initial inspection. Older green jobs do not close the new revision. No other open PR was present.
