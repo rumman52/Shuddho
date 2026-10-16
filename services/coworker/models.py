@@ -132,12 +132,77 @@ class Step(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ReviewedSkillPublication(Base):
+    __tablename__ = "cw_reviewed_skill_publications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    skill_name: Mapped[str] = mapped_column(String(60))
+    publication_version: Mapped[str] = mapped_column(String(80))
+    task_workflow_version: Mapped[str] = mapped_column(String(80))
+    manifest_version: Mapped[str] = mapped_column(String(80))
+    review_sha256: Mapped[str] = mapped_column(String(64))
+    publication_sha256: Mapped[str] = mapped_column(String(64))
+    source_revision: Mapped[str] = mapped_column(String(40))
+    tool_names: Mapped[list[str]] = mapped_column(JSON, default=list)
+    resource_limits: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSON)
+    rollback_target_version: Mapped[str | None] = mapped_column(String(80))
+    state: Mapped[str] = mapped_column(String(20), default="published")
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint(
+            "skill_name", "publication_version",
+            name="uq_cw_reviewed_skill_publication_version",
+        ),
+        Index(
+            "cw_reviewed_skill_publications_skill_state",
+            "skill_name", "state",
+        ),
+    )
+
+
+class ReviewedSkillSelection(Base):
+    __tablename__ = "cw_reviewed_skill_selections"
+    skill_name: Mapped[str] = mapped_column(String(60), primary_key=True)
+    publication_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_reviewed_skill_publications.id"),
+        unique=True,
+    )
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    state: Mapped[str] = mapped_column(String(20), default="selected")
+    updated_by: Mapped[str] = mapped_column(String(200))
+    reason: Mapped[str] = mapped_column(String(500))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Outbox(Base):
     __tablename__ = "cw_outbox"
     task_id: Mapped[str] = mapped_column(ForeignKey("cw_tasks.id"), primary_key=True)
     delivered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class WorkerInstance(Base):
+    __tablename__ = "cw_worker_instances"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_queue: Mapped[str] = mapped_column(String(160), index=True)
+    source_revision: Mapped[str] = mapped_column(String(40))
+    state: Mapped[str] = mapped_column(String(20), default="starting")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    drain_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    drained_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index(
+            "cw_worker_instances_queue_state_heartbeat",
+            "task_queue", "state", "heartbeat_at",
+        ),
+        Index(
+            "cw_worker_instances_revision_state",
+            "source_revision", "state",
+        ),
+    )
 
 
 class TaskEvent(Base):
