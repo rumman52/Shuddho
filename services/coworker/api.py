@@ -1061,6 +1061,10 @@ def runtime_manifest(
         "negotiation_proposal_promotion": settings.negotiation_proposal_promotion_enabled,
         "agent_linkedin_proposals": settings.agent_linkedin_proposals_enabled,
         "browser_push": settings.browser_push_enabled,
+        "reviewed_research": (
+            settings.agent_reviewed_research_skill_enabled
+            and services.repository.reviewed_skill_runtime_manifest()["research"]["state"] == "selected"
+        ),
     }
     providers = []
     if settings.actions_enabled:
@@ -1081,10 +1085,11 @@ def runtime_manifest(
                 ):
                     providers.append(provider)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_revision": settings.source_revision,
         "environment": settings.environment,
         "capabilities": capabilities,
+        "reviewed_skills": services.repository.reviewed_skill_runtime_manifest(),
         "action_providers": providers,
         "cohort": {
             "enforced": settings.cohort_enforced,
