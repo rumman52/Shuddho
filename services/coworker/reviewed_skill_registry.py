@@ -234,6 +234,16 @@ def _publication_values(row: Any) -> tuple[CoworkerSkillManifest, str]:
             "The persisted reviewed skill publication hash does not match its immutable fields.",
             409,
         )
+    if (
+        row.manifest_version != manifest.version
+        or list(row.tool_names or ()) != list(manifest.tool_names)
+        or dict(row.resource_limits or {}) != asdict(manifest.resource_limits)
+    ):
+        raise CoworkerError(
+            "skill_publication_untrusted",
+            "The persisted reviewed publication envelope does not match its manifest.",
+            409,
+        )
     if row.review_sha256 != manifest.review_sha256():
         raise CoworkerError(
             "skill_publication_untrusted",
