@@ -954,6 +954,9 @@ class SandboxRepository:
                 AgentCodeReview.owner_id == owner,
                 AgentCodeReview.run_id == run.id,
             ).with_for_update())
+            # Re-read the clock *after* acquiring the run/proposal/review
+            # locks: a delayed transaction cannot revive expired consent.
+            now = utcnow()
             if (
                 review is None
                 or review.decision != "approve"
