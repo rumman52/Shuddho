@@ -44,6 +44,7 @@ def main() -> int:
         or int(render_evidence.get("candidate_worker_instance_count", 0)) < 1
         or render_evidence.get("candidate_live_commit") != settings.source_revision
         or render_evidence.get("old_source_revision") != args.old_source_revision
+        or render_evidence.get("old_worker_live_commit") != args.old_source_revision
     ):
         raise SystemExit("Render evidence does not prove an active candidate and stopped legacy worker.")
     if settings.environment != "staging":
@@ -138,6 +139,18 @@ def main() -> int:
                 .order_by(ReviewedSkillPublication.published_at.asc())
             ).all()
 
+        selection_events = [
+            row for row in control_events
+            if row.event_type == "publication_selected"
+            and row.publication_id == selected["publication_id"]
+        ]
+
+        if not selection_events:
+            raise CoworkerError(
+                "staging_evidence_selection_event_missing",
+                "The selected publication has no durable operator selection event.",
+                409,
+            )
         if legacy_reviewed:
             raise CoworkerError(
                 "staging_evidence_legacy_tasks",
@@ -184,6 +197,7 @@ def main() -> int:
             ],
             "assertions": {
                 "explicit_selection": True,
+                "selection_event_present": True,
                 "selected_publication_is_published": selected["state"] == "selected",
                 "candidate_revision_matches_selection": True,
                 "fresh_compatible_worker_present": True,
