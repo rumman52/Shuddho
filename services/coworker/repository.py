@@ -369,12 +369,12 @@ class Repository:
         blockers = [
             row for row in inventory
             if row["source_revision"] == old_source_revision
-            and row["state"] in WORKER_ACTIVE_STATES
+            and row["state"] in (WORKER_ACTIVE_STATES | {"lost"})
         ]
         if blockers:
             raise CoworkerError(
                 "worker_drain_incomplete",
-                "The legacy worker fleet has not reached an explicit drained state.",
+                "The legacy worker fleet has not reached an explicit drained state; lost workers are treated as uncertain.",
                 409,
             )
         return {
