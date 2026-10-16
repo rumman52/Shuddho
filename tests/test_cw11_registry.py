@@ -192,6 +192,7 @@ def test_worker_drain_stops_new_claims_and_requires_explicit_drained_state(conta
         reason="mixed-version drain qualification",
     ) == 1
     assert container.repository.heartbeat_worker(old) == "draining"
+    assert container.repository.claim_outbox(worker_id=old) == []
     with pytest.raises(CoworkerError) as incomplete:
         container.repository.assert_worker_drain_complete(
             task_queue=container.settings.task_queue,
