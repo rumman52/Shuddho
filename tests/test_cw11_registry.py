@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import time
-from dataclasses import replace
-
 import pytest
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for CW-11 tests")
 
@@ -37,6 +35,11 @@ def container(tmp_path):
         local_storage_path=tmp_path / "objects",
         source_revision=REV_A,
         task_queue="cw11-test-queue",
+        agent_runtime_enabled=True,
+        research_services_enabled=True,
+        agent_reviewed_research_skill_enabled=True,
+        search_provider="tavily",
+        search_api_key="fixture-only-search-key",
     )
     upgrade(settings.database_url)
     value = Container.create(settings)
