@@ -170,6 +170,23 @@ def test_selection_requires_compatible_fleet_and_never_auto_selects(container):
     assert new
 
 
+def test_selected_publication_remains_the_agent_gate_after_feature_flag_off(container):
+    worker(container, REV_A)
+    publish(container, "research_reviewed_flag_off", source_revision=REV_A)
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_reviewed_flag_off",
+        actor_reference="cw11-test-operator",
+        reason="registry replaces mutable admission flag",
+        worker_source_revision=REV_A,
+    )
+    container.settings.agent_reviewed_research_skill_enabled = False
+    owner = account(container, "flag-off")
+    task = reviewed_task(container, owner, "flag-off-research")
+    assert task["workflow_version"] == "work_research_reviewed_v2"
+    container.repository.worker_task(task["id"], False)
+
+
 def test_normal_selection_preserves_old_publication_but_rollback_revokes_it(container):
     worker(container, REV_A)
     publish(container, "research_reviewed_v0", source_revision=REV_A)
