@@ -275,6 +275,46 @@ class AgentRepository:
             db.flush()
             return self._code_proposal_dto(row), True
 
+    def list_reviewable_code_proposals(self, owner: str, run_id: str) -> dict:
+        """Discover only currently authorized owned code for explicit inspection.
+
+        The list deliberately never contains source bytes. Each item is
+        rechecked against the exact live document/message scope before even
+        its review hash is returned. Deleted, expired, closed, revoked and
+        tampered proposals stay undiscoverable.
+        """
+        with self.sessions() as db:
+            run = self._run(db, owner, run_id)
+            proposals = db.scalars(select(AgentCodeProposal).where(
+                AgentCodeProposal.owner_id == owner,
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.state == "unreviewed",
+                AgentCodeProposal.expires_at > utcnow(),
+            ).order_by(AgentCodeProposal.created_at.desc(), AgentCodeProposal.id)
+                .limit(8)).all()
+            reviewable: list[dict] = []
+            for row in proposals:
+                try:
+                    self._verify_persisted_code_review_source(db, run, row)
+                except CoworkerError:
+                    # Do not show stale metadata when scope was withdrawn.
+                    continue
+                entry = {
+                    "id": row.id,
+                    "run_id": row.run_id,
+                    "review_sha256": row.review_sha256,
+                    "created_at": iso(row.created_at),
+                    "expires_at": iso(row.expires_at),
+                    "state": row.state,
+                    "execution_authorized": False,
+                    "code_executed": False,
+                }
+                review = db.get(AgentCodeReview, row.id)
+                if review is not None:
+                    entry["human_review"] = self._human_review_dto(review)
+                reviewable.append(entry)
+            return {"proposals": reviewable, "execution_authorized": False}
+
     def get_code_proposal(self, owner: str, run_id: str, proposal_id: str) -> dict:
         """Never return proposal code after an input revocation or expiry."""
         with self.sessions() as db:
