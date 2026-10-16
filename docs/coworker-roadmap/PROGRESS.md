@@ -1,3 +1,15 @@
+## CW-10 owner-invoked model Python producer — 16 October 2026
+
+**Source truth at task start:** `main` `08512aba78d5446c8115adbeafeded8a9e4f33cd` includes merged [PR #428](https://github.com/rumman52/Shuddho/pull/428). Its exact final-head [CI #38848800194](https://github.com/rumman52/Shuddho/actions/runs/38848800194) passed `test-and-build`, `coworker`, `ci-merge-gate`. New merged-main CI #38850518005 was in progress at start. No open PRs.
+
+**First dependency-ready gap C-04:** An authenticated owner could inspect/approve manually submitted Python but could not request an actually model-generated source draft. The new branch `codex/cw10-owner-model-code-producer-20261016` adds an independent default-off `SHUDDHO_MODEL_CODE_PROPOSALS_ENABLED` flag; an explicit owner-only model-draft API and Agent review UI button; strict DeepSeek JSON→validated Python with no tool or execution grant; pre-provider owner/private-context checks, ordinary planner reservation/settlement, and immutable SHA-bound post-inference code proposal persistence. Exact-key replays return stored source without another model call; cancellation between inference and persistence fails closed. No private-input mounts, network or destinations. User-supplied HTTP proposals cannot forge the reserved model-origin idempotency namespace. [Detailed contract](CW10_MODEL_CODE_DRAFT_PRODUCER_2026-10-16.md).
+
+**New tests:** disabled-before-provider, no cross-account or selected private-source generation, one-key replay, no sandbox execution, cancellation during inference, invalid provider output, provenance spoof rejection, typed frontend direct request without execution paths. **Not verified until exact final-head CI passes.** The provider is mocked in CI, no real paid DeepSeek performance or operated deployment proof. No merge, deploy or activation.
+
+**Next:** confirm mandatory `test-and-build`, `coworker`, `ci-merge-gate` on final SHA and repair red checks. Then qualify human-approved model source → sandbox worker in synthetic PostgreSQL concurrency/real bwrap/revocation/crash experiments, in-flight filesystem erasure, and durable recovery. CW-11 reviewed skills, CW-09 operated browser and P/V scenarios remain separate. **INCOMPLETE**.
+
+---
+
 ## CW-10 atomic reviewed-owner dispatch — 16 October 2026
 
 **Verified starting state:** `main` `8d9420e5ebc38e7c188dc8bf1e4cb19873190a90`; merged #427 added exact owner Python review UI. Its [PR CI #38845738704](https://github.com/rumman52/Shuddho/actions/runs/38845738704) and merged-main [CI #38845856137](https://github.com/rumman52/Shuddho/actions/runs/38845856137) both passed all three required jobs. No open PRs before this branch.
