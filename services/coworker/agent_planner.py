@@ -24,13 +24,14 @@ _RULES = (
 )
 
 
-def deterministic_plan(goal: str, document_ids: list[str], output_language: str, settings: Settings, actions: list[dict] | None = None) -> list[AgentPlanStep]:
+def deterministic_plan(goal: str, document_ids: list[str], output_language: str, settings: Settings, actions: list[dict] | None = None, *, tool_allowlist: list[str] | None = None) -> list[AgentPlanStep]:
     normalized = " ".join(goal.lower().split())
+    permitted = set(tool_allowlist or [])
     selected: list[str] = []
     for name, phrases in _RULES:
         if any(phrase in normalized for phrase in phrases):
             spec = tool(name)
-            if spec.enabled(settings) and not spec.consequential:
+            if spec.enabled(settings) and not spec.consequential and (not permitted or name in permitted):
                 selected.append(name)
     actions = list(actions or [])
     if not selected and not actions:
@@ -159,11 +160,12 @@ def intelligent_tool_names(
 
 
 def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: list[str],
-                     output_language: str, settings: Settings, actions: list[dict] | None = None) -> list[AgentPlanStep]:
+                     output_language: str, settings: Settings, actions: list[dict] | None = None, *,
+                     tool_allowlist: list[str] | None = None) -> list[AgentPlanStep]:
     steps: list[AgentPlanStep] = []
     actions = list(actions or [])[:3]
     candidates = action_selection_candidates(actions) if settings.agent_action_selection_enabled else {}
-    allowed = set(intelligent_tool_names(settings, actions))
+    allowed = set(intelligent_tool_names(settings, actions, tool_allowlist=tool_allowlist))
     selected_action_ids: set[str] = set()
     for choice in proposal.steps:
         if choice.tool not in allowed:
