@@ -1,3 +1,15 @@
+## CW-11 restricted planner attached-action review repair — 16 October 2026
+
+**Live baseline:** `main` `41f457b04f2b1e466cbaafd7bbfff04cc5993186` includes merged [PR #432](https://github.com/rumman52/Shuddho/pull/432). Its exact-head [CI #38861042441](https://github.com/rumman52/Shuddho/actions/runs/38861042441) passed `test-and-build`, `coworker` and `ci-merge-gate`. Merged-main [CI #38876797929](https://github.com/rumman52/Shuddho/actions/runs/38876797929) was still in progress at this checkpoint. [Codex review thread on #432](https://github.com/rumman52/Shuddho/pull/432#discussion_r4291573554) identified an unresolved authorized-attached-action regression despite green CI.
+
+**Review branch:** `codex/cw11-attached-action-scope-repair-20261016`. Ordinary tool suggestions remain filtered by the persisted run grant, but independently run-bound pending `attached.*` handles are no longer removed whenever that grant is nonempty. Added synthetic/SQL-backed action selection, opaque-handle, selected-vs-unselected release, and replan-after-renumbering regression assertions in `tests/test_coworker.py`. No additional provider authority, release flag, production operation or schema change. [Task contract](CW11_ATTACHED_ACTION_SCOPE_REPAIR_2026-10-16.md).
+
+**Evidence:** Source and tests committed on dedicated branch; focused command and exact *final branch-head* required CI **not yet observed passing** when this checkpoint was written. Review feedback needs re-verification against the new diff. **Implemented on review branch; repository verification pending; staging, production qualification and activation not established.**
+
+**Next:** Review the focused test and final-head `test-and-build`, `coworker`, `ci-merge-gate` results; repair failures rather than muting the check. Then proceed to CW-11 reviewed, grant/version-bound skill publication and rollback, with separate real worker/browser, cross-purpose and staging acceptance gates. No merge, deploy, activation, or external action authorized.
+
+---
+
 ## CW-11 post-merge planner and fallback tool scope — 16 October 2026
 
 **Live source:** [PR #431](https://github.com/rumman52/Shuddho/pull/431) merged at `main` `18068a48aae1dcd3f354638e525cdd2cf88fc185` (16 October 2026). Its earlier exact PR head was `b062f487ba2aa0de11fb367424c70d9eb9ce01cc`. Merged-main `CI #38860546551` was in progress at this review. Historical branch/open notes below predate the merge.
