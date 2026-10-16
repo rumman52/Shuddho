@@ -872,6 +872,72 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     assert container.repository.worker_task(standalone["id"], False)["agent_run_id"] is None
 
 
+
+def test_reviewed_research_rechecks_revocation_after_search_reservation(container, monkeypatch):
+    """No provider call after an Agent is cancelled during the reserved/read gap."""
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import AgentRun
+    from services.coworker.schemas import ResearchOptions
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True,
+        research_services_enabled=True, agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Research public evidence.", output_language="en"),
+        "research-reserve-race", tool_allowlist=["research.search"],
+    )
+    plan = container.agent.save_plan(owner, run["id"], [AgentPlanStep(
+        tool="research.search", arguments={
+            "instruction": "Research public evidence.", "notes": "",
+            "document_ids": [], "output_language": "en",
+            "query": "reliable public sources", "time_range": "any",
+        },
+    )])
+    step_id = plan["tool_invocations"][0]["step_id"]
+    task, _ = container.repository.create_task(
+        owner,
+        TaskCreate(
+            skill_id="research", instruction="Research public evidence.",
+            research=ResearchOptions(query="reliable public sources"),
+        ),
+        "reviewed-race-task", enqueue=False,
+        agent_run_id=run["id"], agent_step_id=step_id,
+    )
+    worker_task = container.repository.worker_task(task["id"], False)
+
+    class NeverSearch:
+        calls = 0
+
+        async def retrieve(self, _options):
+            self.calls += 1
+            raise AssertionError("Search must not reach the provider after revocation")
+
+    provider = NeverSearch()
+    runner = DocumentRunner(container, FakeModel(), research=provider)
+    reserve = container.repository.reserve_search
+
+    def revoke_immediately_after_reserving(task_id):
+        reserve(task_id)
+        with container.repository.sessions.begin() as db:
+            db.get(AgentRun, run["id"]).cancel_requested = True
+
+    monkeypatch.setattr(
+        container.repository, "reserve_search", revoke_immediately_after_reserving,
+    )
+    with pytest.raises(CoworkerError) as denied:
+        asyncio.run(runner.research(worker_task))
+    assert denied.value.code == "skill_run_scope"
+    assert provider.calls == 0
+    receipt = container.repository.step(task["id"], "search_attempt")
+    assert receipt["state"] == "failed"
+    assert receipt["accounted_credits"] == 0
+
+
 def test_reviewed_agent_research_rejects_ungranted_planner_step_before_task_admission(container):
     """No task may be created using a different legitimate run step as research authority."""
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
