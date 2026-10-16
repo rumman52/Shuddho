@@ -133,7 +133,7 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
 
             research_tasks = [
                 item for item in measured_tasks
-                if item.workflow_version == "work_research_v1"
+                if item.workflow_version in {"work_research_v1", "work_research_reviewed_v1"}
             ]
             research_failed = sum(item.state == "failed" for item in research_tasks)
 
