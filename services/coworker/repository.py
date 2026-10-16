@@ -320,12 +320,16 @@ class Repository:
                         409,
                     )
                 if (
-                    self.settings.agent_reviewed_research_skill_enabled
-                    and request.skill_id == "research"
-                    and agent_run_id is not None
+                    db.get(Step, (previous.id, "reviewed_skill_identity")) is not None
+                    or (
+                        self.settings.agent_reviewed_research_skill_enabled
+                        and request.skill_id == "research"
+                        and agent_run_id is not None
+                    )
                 ):
-                    # Replays must pass the same current reviewed manifest,
-                    # grant and pinned Task identity checks as worker claims.
+                    # A task admitted under reviewed policy stays reviewed even
+                    # after a deployment disables new reviewed-skill admission.
+                    # It must fail closed, never replay as legacy research.
                     self._reviewed_research_worker_task(db, previous)
                 return self._task_dto(db, previous), False
             enabled = service_enabled(request.skill_id, self.settings.work_services_enabled,
@@ -501,20 +505,29 @@ class Repository:
                 raise not_found()
             if check_live:
                 self._check_live(task)
-            if (
-                self.settings.agent_reviewed_research_skill_enabled
-                and task.agent_run_id is not None
-                and task.state not in TERMINAL
+            pinned_review = db.get(Step, (task.id, "reviewed_skill_identity"))
+            if task.state not in TERMINAL and (
+                pinned_review is not None
+                or (
+                    self.settings.agent_reviewed_research_skill_enabled
+                    and task.agent_run_id is not None
+                )
             ):
-                # An altered Task workflow version may not bypass the bound
-                # research tool's worker-side reviewed manifest requirement.
+                # A persisted reviewed identity takes precedence over the
+                # current admission flag, including rollback/mixed-version
+                # reads. Never downgrade such a task to legacy execution.
+                if pinned_review is not None and task.agent_run_id is None:
+                    raise CoworkerError(
+                        "skill_run_scope", "Reviewed task lost its owning Agent run.", 409,
+                    )
                 invocation = db.scalar(select(ToolInvocation).where(
                     ToolInvocation.run_id == task.agent_run_id,
                     ToolInvocation.step_id == task.agent_step_id,
                     ToolInvocation.owner_id == task.owner_id,
                 ))
                 if (
-                    task.workflow_version == "work_research_v1"
+                    pinned_review is not None
+                    or task.workflow_version == "work_research_v1"
                     or (invocation is not None and invocation.tool_name == "research.search")
                 ):
                     if task.workflow_version != "work_research_v1":
@@ -578,12 +591,22 @@ class Repository:
             existing = db.get(Task, task_id)
             if existing is None:
                 raise not_found()
-            if (
-                self.settings.agent_reviewed_research_skill_enabled
-                and existing.agent_run_id is not None
-            ):
-                # Serialize revocation against the paid search reservation.
-                # Keep AgentRun -> Task lock order used by model reservation.
+            # The immutable admission record, not a mutable feature flag,
+            # determines whether the existing task requires reviewed policy.
+            require_review = (
+                db.get(Step, (task_id, "reviewed_skill_identity")) is not None
+                or (
+                    self.settings.agent_reviewed_research_skill_enabled
+                    and existing.agent_run_id is not None
+                )
+            )
+            if require_review:
+                if existing.agent_run_id is None:
+                    raise CoworkerError(
+                        "skill_run_scope", "Reviewed task lost its owning Agent run.", 409,
+                    )
+                # Preserve AgentRun -> Task lock order so the credit
+                # reservation serializes correctly with grant revocation.
                 run = db.scalar(select(AgentRun).where(
                     AgentRun.id == existing.agent_run_id,
                     AgentRun.owner_id == existing.owner_id,
@@ -596,10 +619,7 @@ class Repository:
             self._check_live(task)
             if task.workflow_version != "work_research_v1":
                 raise CoworkerError("workflow_version", "This task cannot use web research.")
-            if (
-                self.settings.agent_reviewed_research_skill_enabled
-                and task.agent_run_id is not None
-            ):
+            if require_review:
                 self._reviewed_research_worker_task(db, task)
             if db.get(Step, (task_id, "search_attempt")):
                 raise CoworkerError("search_outcome_unknown", "The previous search could not be recovered. Create a new task to search again.", 409)
