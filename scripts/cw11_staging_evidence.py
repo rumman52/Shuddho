@@ -29,10 +29,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Collect read-only CW-11 staging qualification evidence.")
     parser.add_argument("--expected-publication-version", required=True)
     parser.add_argument("--old-source-revision", required=True)
+    parser.add_argument("--external-render-evidence", required=True)
     parser.add_argument("--output", default="cw11-staging-evidence.json")
     args = parser.parse_args()
 
     settings = Settings.from_env()
+    try:
+        with open(args.external_render_evidence, "r", encoding="utf-8") as handle:
+            render_evidence = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"Invalid Render staging evidence: {error}") from None
+    if (
+        render_evidence.get("old_worker_instance_count") != 0
+        or int(render_evidence.get("candidate_worker_instance_count", 0)) < 1
+        or render_evidence.get("candidate_live_commit") != settings.source_revision
+    ):
+        raise SystemExit("Render evidence does not prove an active candidate and stopped legacy worker.")
     if settings.environment != "staging":
         raise SystemExit("CW-11 evidence is staging-only.")
     if not settings.source_revision:
@@ -144,6 +156,7 @@ def main() -> int:
             "legacy_active_reviewed_tasks": int(legacy_reviewed),
             "old_source_revision": args.old_source_revision,
             "old_worker_rows_observed": len(old_rows),
+            "external_render_evidence": render_evidence,
             "control_events": [
                 {
                     "id": row.id,
