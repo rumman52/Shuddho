@@ -14,7 +14,8 @@ from .errors import CoworkerError
 from .models import Account, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, ToolInvocation, Workspace, utcnow
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 from .schemas import TaskCreate, UploadRequest
-from .skills import SKILLS, service_enabled, skill_for_version
+from .skills import SKILLS, service_enabled
+from .task_workflow_versions import REVIEWED_RESEARCH_WORKFLOW_VERSION, task_skill_for_version
 
 TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
@@ -276,7 +277,8 @@ class Repository:
         )
         stored_review = db.get(Step, (task.id, "reviewed_skill_identity"))
         if (
-            digest is None or stored_review is None
+            task.workflow_version != REVIEWED_RESEARCH_WORKFLOW_VERSION
+            or digest is None or stored_review is None
             or stored_review.output != {
                 "name": "research", "version": "work_research_v1",
                 "tool": "research.search", "tool_version": "1",
@@ -319,13 +321,18 @@ class Repository:
                         "This task key is bound to a different Agent execution.",
                         409,
                     )
-                if (
-                    self.settings.agent_reviewed_research_skill_enabled
-                    and request.skill_id == "research"
-                    and agent_run_id is not None
+                if previous.state not in TERMINAL and (
+                    db.get(Step, (previous.id, "reviewed_skill_identity")) is not None
+                    or previous.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
+                    or (
+                        self.settings.agent_reviewed_research_skill_enabled
+                        and request.skill_id == "research"
+                        and agent_run_id is not None
+                    )
                 ):
-                    # Replays must pass the same current reviewed manifest,
-                    # grant and pinned Task identity checks as worker claims.
+                    # A task admitted under reviewed policy stays reviewed even
+                    # after a deployment disables new reviewed-skill admission.
+                    # It must fail closed, never replay as legacy research.
                     self._reviewed_research_worker_task(db, previous)
                 return self._task_dto(db, previous), False
             enabled = service_enabled(request.skill_id, self.settings.work_services_enabled,
@@ -372,7 +379,10 @@ class Repository:
                         idempotency_key=idempotency_key, fingerprint=fingerprint, instruction=request.instruction,
                         agent_run_id=agent_run_id, agent_step_id=agent_step_id,
                         notes=request.notes, output_language=request.output_language, input_versions=versions,
-                        workflow_version=SKILLS[request.skill_id].version,
+                        workflow_version=(
+                            REVIEWED_RESEARCH_WORKFLOW_VERSION if reviewed_skill_digest is not None
+                            else SKILLS[request.skill_id].version
+                        ),
                         deadline_at=utcnow() + timedelta(seconds=self.settings.task_timeout_seconds))
             db.add(task)
             db.flush()
@@ -401,11 +411,13 @@ class Repository:
         artifacts = db.scalars(select(Artifact).where(Artifact.task_id == task.id, Artifact.owner_id == task.owner_id)).all()
         draft_step = db.get(Step, (task.id, "draft")) if detail else None
         usage = db.scalars(select(ModelAttempt).where(ModelAttempt.task_id == task.id)).all()
-        research_input = db.get(Step, (task.id, "research_input")) if task.workflow_version == "work_research_v1" else None
+        research_input = db.get(Step, (task.id, "research_input")) if task.workflow_version in {
+            "work_research_v1", REVIEWED_RESEARCH_WORKFLOW_VERSION,
+        } else None
         search_attempt = db.get(Step, (task.id, "search_attempt")) if research_input else None
         return {"id": task.id, "state": task.state, "phase": task.phase, "message": task.message,
                 "error_code": task.error_code, "output_language": task.output_language,
-                "skill_id": skill_for_version(task.workflow_version).id, "workflow_version": task.workflow_version,
+                "skill_id": task_skill_for_version(task.workflow_version).id, "workflow_version": task.workflow_version,
                 "instruction": task.instruction, "created_at": iso(task.created_at), "updated_at": iso(task.updated_at),
                 "event_sequence": task.event_sequence, "cancel_requested": task.cancel_requested,
                 "artifacts": [{"id": item.id, "filename": item.filename, "content_type": item.content_type,
@@ -501,26 +513,37 @@ class Repository:
                 raise not_found()
             if check_live:
                 self._check_live(task)
-            if (
-                self.settings.agent_reviewed_research_skill_enabled
-                and task.agent_run_id is not None
-                and task.state not in TERMINAL
+            pinned_review = db.get(Step, (task.id, "reviewed_skill_identity"))
+            if task.state not in TERMINAL and (
+                pinned_review is not None
+                or task.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
+                or (
+                    self.settings.agent_reviewed_research_skill_enabled
+                    and task.agent_run_id is not None
+                )
             ):
-                # An altered Task workflow version may not bypass the bound
-                # research tool's worker-side reviewed manifest requirement.
+                # The distinct task version is also rejected by older workers
+                # that know only the legacy work_research_v1 workflow.
+                if task.agent_run_id is None:
+                    raise CoworkerError(
+                        "skill_run_scope", "Reviewed task lost its owning Agent run.", 409,
+                    )
                 invocation = db.scalar(select(ToolInvocation).where(
                     ToolInvocation.run_id == task.agent_run_id,
                     ToolInvocation.step_id == task.agent_step_id,
                     ToolInvocation.owner_id == task.owner_id,
                 ))
                 if (
-                    task.workflow_version == "work_research_v1"
+                    pinned_review is not None
+                    or task.workflow_version in {
+                        "work_research_v1", REVIEWED_RESEARCH_WORKFLOW_VERSION,
+                    }
                     or (invocation is not None and invocation.tool_name == "research.search")
                 ):
-                    if task.workflow_version != "work_research_v1":
+                    if task.workflow_version != REVIEWED_RESEARCH_WORKFLOW_VERSION:
                         raise CoworkerError(
                             "skill_run_scope",
-                            "Task version differs from its bound reviewed skill.",
+                            "Task workflow is not the pinned reviewed research version.",
                             409,
                         )
                     self._reviewed_research_worker_task(db, task)
@@ -534,7 +557,7 @@ class Repository:
                     raise not_found()
                 documents.append(self._document_dto(document, version) | {"object_key": version.object_key})
             return {"id": task.id, "owner_id": task.owner_id, "instruction": task.instruction,
-                    "workflow_version": task.workflow_version, "skill_id": skill_for_version(task.workflow_version).id,
+                    "workflow_version": task.workflow_version, "skill_id": task_skill_for_version(task.workflow_version).id,
                     "notes": task.notes, "output_language": task.output_language, "documents": documents,
                     "agent_run_id": task.agent_run_id, "agent_step_id": task.agent_step_id,
                     "state": task.state, "deadline_at": iso(task.deadline_at)}
@@ -578,12 +601,23 @@ class Repository:
             existing = db.get(Task, task_id)
             if existing is None:
                 raise not_found()
-            if (
-                self.settings.agent_reviewed_research_skill_enabled
-                and existing.agent_run_id is not None
-            ):
-                # Serialize revocation against the paid search reservation.
-                # Keep AgentRun -> Task lock order used by model reservation.
+            # The immutable admission record, not a mutable feature flag,
+            # determines whether the existing task requires reviewed policy.
+            require_review = (
+                db.get(Step, (task_id, "reviewed_skill_identity")) is not None
+                or existing.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
+                or (
+                    self.settings.agent_reviewed_research_skill_enabled
+                    and existing.agent_run_id is not None
+                )
+            )
+            if require_review:
+                if existing.agent_run_id is None:
+                    raise CoworkerError(
+                        "skill_run_scope", "Reviewed task lost its owning Agent run.", 409,
+                    )
+                # Preserve AgentRun -> Task lock order so the credit
+                # reservation serializes correctly with grant revocation.
                 run = db.scalar(select(AgentRun).where(
                     AgentRun.id == existing.agent_run_id,
                     AgentRun.owner_id == existing.owner_id,
@@ -594,12 +628,13 @@ class Repository:
                     )
             task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
             self._check_live(task)
-            if task.workflow_version != "work_research_v1":
+            if task.workflow_version not in {"work_research_v1", REVIEWED_RESEARCH_WORKFLOW_VERSION}:
                 raise CoworkerError("workflow_version", "This task cannot use web research.")
-            if (
-                self.settings.agent_reviewed_research_skill_enabled
-                and task.agent_run_id is not None
-            ):
+            if require_review:
+                if task.workflow_version != REVIEWED_RESEARCH_WORKFLOW_VERSION:
+                    raise CoworkerError(
+                        "skill_run_scope", "A reviewed task requires its distinct workflow version.", 409,
+                    )
                 self._reviewed_research_worker_task(db, task)
             if db.get(Step, (task_id, "search_attempt")):
                 raise CoworkerError("search_outcome_unknown", "The previous search could not be recovered. Create a new task to search again.", 409)

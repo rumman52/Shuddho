@@ -782,7 +782,13 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         owner, request, "owned-reviewed-research", enqueue=False,
         agent_run_id=run["id"], agent_step_id=step_id,
     )
-    assert created and task["workflow_version"] == "work_research_v1"
+    assert created and task["workflow_version"] == "work_research_reviewed_v1"
+    # An older worker does not recognize this distinct workflow identity,
+    # so rolling it back cannot silently run reviewed tasks as legacy research.
+    from services.coworker.skills import skill_for_version
+    with pytest.raises(CoworkerError) as old_reader:
+        skill_for_version(task["workflow_version"])
+    assert old_reader.value.code == "workflow_version"
     assert container.repository.worker_task(task["id"], False)["agent_step_id"] == step_id
     with pytest.raises(CoworkerError) as reverse_collision:
         container.repository.create_task(
@@ -810,7 +816,7 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         container.repository.worker_task(task["id"], False)
     assert changed_skill.value.code == "skill_run_scope"
     with container.repository.sessions.begin() as db:
-        db.get(Task, task["id"]).workflow_version = "work_research_v1"
+        db.get(Task, task["id"]).workflow_version = "work_research_reviewed_v1"
 
     with container.repository.sessions.begin() as db:
         db.scalar(select(ToolInvocation).where(
@@ -873,6 +879,101 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     )
     assert container.repository.worker_task(standalone["id"], False)["agent_run_id"] is None
 
+
+
+
+def test_reviewed_research_gate_disable_never_downgrades_pinned_task(container):
+    """A persisted reviewed task cannot fall back to a legacy worker after rollback."""
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import Step
+    from services.coworker.schemas import ResearchOptions
+
+    enabled = replace(
+        container.settings, agent_runtime_enabled=True,
+        research_services_enabled=True,
+        agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Review public evidence.", output_language="en"),
+        "reviewed-rollback-run", tool_allowlist=["research.search"],
+    )
+    plan = container.agent.save_plan(owner, run["id"], [AgentPlanStep(
+        tool="research.search", arguments={
+            "instruction": "Review public evidence.", "notes": "",
+            "document_ids": [], "output_language": "en",
+            "query": "reviewed public sources", "time_range": "any",
+        },
+    )])
+    request = TaskCreate(
+        skill_id="research", instruction="Review public evidence.",
+        research=ResearchOptions(query="reviewed public sources"),
+    )
+    task, _ = container.repository.create_task(
+        owner, request, "reviewed-rollback-task", enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=plan["tool_invocations"][0]["step_id"],
+    )
+    assert task["workflow_version"] == "work_research_reviewed_v1"
+    assert container.repository.worker_task(task["id"], False)["agent_run_id"] == run["id"]
+    with container.repository.sessions() as db:
+        assert db.get(Step, (task["id"], "reviewed_skill_identity")) is not None
+
+    # A mixed/rollback worker with this admission flag off must NOT treat the
+    # reviewed task as a legacy research task or reserve a paid provider call.
+    disabled = replace(enabled, agent_reviewed_research_skill_enabled=False)
+    container.settings = disabled
+    container.repository.settings = disabled
+    container.agent.settings = disabled
+    with pytest.raises(CoworkerError) as read_denied:
+        container.repository.worker_task(task["id"], False)
+    assert read_denied.value.code == "skill_manifest_unreviewed"
+    with pytest.raises(CoworkerError) as search_denied:
+        container.repository.reserve_search(task["id"])
+    assert search_denied.value.code == "skill_manifest_unreviewed"
+    assert container.repository.step(task["id"], "search_attempt") is None
+    with pytest.raises(CoworkerError) as replay_denied:
+        container.repository.create_task(
+            owner, request, "reviewed-rollback-task", enqueue=False,
+            agent_run_id=run["id"],
+            agent_step_id=plan["tool_invocations"][0]["step_id"],
+        )
+    assert replay_denied.value.code == "skill_manifest_unreviewed"
+
+    # Old, unpinned legacy tasks are not silently enrolled into the pilot.
+    legacy_owner = account(container, "legacy-after-rollback")
+    legacy, _ = container.repository.create_task(
+        legacy_owner, request, "legacy-standalone-research", enqueue=False,
+    )
+    assert container.repository.worker_task(legacy["id"], False)["agent_run_id"] is None
+    with container.repository.sessions() as db:
+        assert db.get(Step, (legacy["id"], "reviewed_skill_identity")) is None
+
+    # Re-enabling the gate is not an authorization upgrade: the same pinned
+    # identity still has to pass its normal current grant/source validations.
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    assert container.repository.worker_task(task["id"], False)["agent_run_id"] == run["id"]
+
+    # Terminal task retries only return the historical result. They must
+    # remain idempotent even if the deployment is rolled back.
+    with container.repository.sessions.begin() as db:
+        db.get(Task, task["id"]).state = "completed"
+    container.settings = disabled
+    container.repository.settings = disabled
+    container.agent.settings = disabled
+    terminal, created = container.repository.create_task(
+        owner, request, "reviewed-rollback-task", enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=plan["tool_invocations"][0]["step_id"],
+    )
+    assert not created and terminal["id"] == task["id"]
+    assert terminal["state"] == "completed"
 
 
 def test_reviewed_research_rechecks_revocation_after_search_reservation(container, monkeypatch):

@@ -1,3 +1,15 @@
+## CW-11 persisted reviewed-skill rollback guard — 16 October 2026
+
+**Refreshed baseline:** `main` `c4d047dc9ede00b3caac81239621f3dcca28d6ab` includes externally merged [PR #434](https://github.com/rumman52/Shuddho/pull/434), exact final PR head `c03406e5d84a5f3af500fa3a59556ecbf5d9ed0d`. Matching [PR-head mandatory CI #38904915894](https://github.com/rumman52/Shuddho/actions/runs/38904915894) passed `test-and-build`, `coworker` and `ci-merge-gate`. Merged-main [CI #38908427544](https://github.com/rumman52/Shuddho/actions/runs/38908427544) was **running** at first refresh. The original three P1 review threads on #434 remain **unresolved**, and repeat Codex reviews failed operationally; source/CI success is not independent security review clearance. Older #434 unmerged/pending status immediately below is historical.
+
+**Next safety slice on isolated review branch:** `codex/cw11-reviewed-skill-rollback-boundary-20261016`. The merged reviewed research pilot persisted a Task-scoped reviewed manifest digest, but its worker read, Task replay and search credit reservation were gated solely by the live `SHUDDHO_AGENT_REVIEWED_RESEARCH_SKILL_ENABLED` flag. Disabling this flag post-admission could silently demote pinned Tasks to the unreviewed legacy path. New code independently checks the existing `reviewed_skill_identity` Step even when the flag is off, denying previously pinned Tasks at all three boundaries without new provider work. A synthetic SQL regression checks same Task across disable and re-enable, no search reservation after disable, and standalone legacy compatibility. [Task contract](CW11_REVIEWED_SKILL_FLAG_ROLLBACK_GUARD_2026-10-16.md).
+
+**Evidence state:** Committed source/regression and task contract; exact final-head CI/reviewer evidence **not yet confirmed** at this checkpoint. This closes neither true mixed-version rollout safety (older workers remain unsafe) nor trusted publication/version selection/rollback, operated worker/PG/Temporal staging, or A/P/V full acceptance. Code is default-off; no merge/deploy/provider send/activation performed here.
+
+**Next:** Inspect final-head mandatory CI and independent review; fix any failed denial/cleanup assertions; maintain old-worker downgrade as a rollout blocker. Then move to trusted reviewed skill publication/selection and operated version-replay acceptance.
+
+---
+
 ## CW-11 / C-05 reviewed research worker binding — 16 October 2026
 
 **Live baseline:** `main` `d4fccefdced8a68e8fb839525141d9796a6f4dac`. [PR #433](https://github.com/rumman52/Shuddho/pull/433) was merged externally; exact [PR-head CI #38877447028](https://github.com/rumman52/Shuddho/actions/runs/38877447028) passed `test-and-build`, `coworker` and `ci-merge-gate`; Codex review completed with no findings. Earlier checkpoint calling #433 open and pending is now historical.

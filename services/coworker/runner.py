@@ -12,7 +12,7 @@ from .extraction import extract_in_subprocess
 from .exports import render_in_subprocess
 from .schemas import ResearchOptions, parse_draft, source_references
 from .research import ResearchProvider, SearchFailure, TavilyResearchProvider, validate_evidence
-from .skills import skill_for_version
+from .task_workflow_versions import task_skill_for_version
 
 PHASE_MESSAGES = {
     "extract": "Reading your source material.",
@@ -37,7 +37,7 @@ class DocumentRunner:
         # Completion can reach the database before the activity acknowledgement.
         if task["state"] in {"completed", "needs_input"}:
             return
-        skill_for_version(task["workflow_version"])
+        task_skill_for_version(task["workflow_version"])
         if phase not in PHASE_MESSAGES:
             raise CoworkerError("workflow_version", "This task uses an unsupported workflow version.")
         if phase == "research" and task["skill_id"] != "research":
@@ -124,7 +124,7 @@ class DocumentRunner:
             if not research or not research.get("sources"):
                 raise CoworkerError("checkpoint_missing", "Web evidence could not be recovered. Please create a new task.")
             sources.extend(research["sources"])
-        skill = skill_for_version(task["workflow_version"])
+        skill = task_skill_for_version(task["workflow_version"])
         handoff = {"sources": [], "provenance": []}
         if (task["skill_id"] != "research" and task.get("agent_run_id") and task.get("agent_step_id")):
             handoff = await asyncio.to_thread(
@@ -179,7 +179,7 @@ class DocumentRunner:
         saved = await asyncio.to_thread(self.repo.step, task["id"], "draft")
         if saved is None:
             raise CoworkerError("checkpoint_missing", "The draft could not be recovered. Please create a new task.")
-        skill = skill_for_version(task["workflow_version"])
+        skill = task_skill_for_version(task["workflow_version"])
         options = {} if skill.id == "report_email" else {"skill_id": skill.id}
         outputs = await asyncio.to_thread(self.renderer, parse_draft(skill.id, saved["draft"]), saved["sources"], **options)
         manifest = []
