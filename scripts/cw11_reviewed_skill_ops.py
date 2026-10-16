@@ -76,9 +76,6 @@ def main() -> None:
 
     runtime = sub.add_parser("runtime", help="Print the selected reviewed publication identity.")
 
-    history = sub.add_parser("history", help="Print append-only reviewed-skill control history.")
-    history.add_argument("--limit", type=int, default=100)
-
     args = parser.parse_args()
     repository, _settings = repository_from_env()
 
@@ -142,7 +139,7 @@ def main() -> None:
             result = {"publications": repository.list_reviewed_publications()}
         elif args.command == "runtime":
             result = repository.reviewed_skill_runtime_manifest()
-        elif args.command == "history":
+        else:
             result = {"events": repository.reviewed_control_history(limit=args.limit)}
         else:
             raise CoworkerError("skill_operator", "Unsupported operator command.", 422)
