@@ -354,6 +354,131 @@ class Repository:
             "workers": inventory,
         }
 
+    def migrate_legacy_reviewed_tasks(
+        self, *, task_queue: str, old_source_revision: str,
+        publication_version: str, actor_reference: str, reason: str,
+    ) -> dict:
+        """Migrate only safely admitted legacy reviewed tasks after explicit worker drain."""
+        self.assert_worker_drain_complete(
+            task_queue=task_queue,
+            old_source_revision=old_source_revision,
+        )
+        with self.sessions.begin() as db:
+            selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+            ).with_for_update())
+            if selection is None or selection.state != "selected":
+                raise CoworkerError(
+                    "skill_migration_blocked",
+                    "A reviewed publication must be explicitly selected before historical migration.",
+                    409,
+                )
+            publication = db.scalar(select(ReviewedSkillPublication).where(
+                ReviewedSkillPublication.id == selection.publication_id,
+            ).with_for_update())
+            if publication is None or publication.publication_version != publication_version:
+                raise CoworkerError(
+                    "skill_migration_blocked",
+                    "The selected publication does not match the requested migration target.",
+                    409,
+                )
+            binding = require_selected_pilot(
+                publication,
+                worker_source_revision=self.settings.source_revision,
+            )
+            rows = db.scalars(select(Task).where(
+                Task.workflow_version == LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+                Task.state.not_in(TERMINAL),
+            ).with_for_update()).all()
+            blockers: list[dict] = []
+            for task in rows:
+                if task.agent_run_id is None or task.agent_step_id is None:
+                    blockers.append({"task_id": task.id, "code": "missing_agent_binding"})
+                    continue
+                options = db.get(Step, (task.id, "research_input"))
+                if options is None:
+                    blockers.append({"task_id": task.id, "code": "missing_research_input"})
+                    continue
+                try:
+                    from .schemas import ResearchOptions
+                    document_ids = []
+                    for version_id in task.input_versions:
+                        version = db.get(DocumentVersion, version_id)
+                        if version is None or version.owner_id != task.owner_id:
+                            raise CoworkerError("skill_run_scope", "A source version is missing.")
+                        document_ids.append(UUID(version.document_id))
+                    request = TaskCreate(
+                        skill_id="research",
+                        instruction=task.instruction,
+                        notes=task.notes,
+                        document_ids=document_ids,
+                        output_language=task.output_language,
+                        research=ResearchOptions.model_validate(options.output),
+                    )
+                    digest = self._require_reviewed_agent_research(
+                        db, task.owner_id, task.agent_run_id, task.agent_step_id,
+                        request, input_versions=list(task.input_versions or ()),
+                        enforce_gate=False,
+                    )
+                    identity = db.get(Step, (task.id, "reviewed_skill_identity"))
+                    expected_identity = {
+                        "name": "research",
+                        "version": "work_research_v1",
+                        "tool": "research.search",
+                        "tool_version": "1",
+                        "review_sha256": digest,
+                    }
+                    if identity is None or identity.output != expected_identity:
+                        raise CoworkerError(
+                            "skill_manifest_unreviewed",
+                            "The historical reviewed identity is not exact.",
+                        )
+                    if digest != binding.review_sha256:
+                        raise CoworkerError(
+                            "skill_manifest_unreviewed",
+                            "The historical review hash does not match the migration publication.",
+                        )
+                    if task.deadline_at is None or aware(task.deadline_at) <= utcnow():
+                        raise CoworkerError("skill_migration_blocked", "The historical task deadline expired.")
+                    run = db.get(AgentRun, task.agent_run_id)
+                    if run is None or run.cancel_requested or aware(run.deadline_at) <= utcnow():
+                        raise CoworkerError("skill_migration_blocked", "The historical Agent run is cancelled or expired.")
+                    search_attempt = db.get(Step, (task.id, "search_attempt"))
+                    if search_attempt is not None:
+                        raise CoworkerError(
+                            "skill_migration_blocked",
+                            "A historical task already has a search attempt and cannot be safely rebound.",
+                        )
+                except (CoworkerError, ValueError, TypeError) as error:
+                    blockers.append({"task_id": task.id, "code": getattr(error, "code", "invalid_historical_task")})
+            if blockers:
+                raise CoworkerError(
+                    "skill_migration_blocked",
+                    "Historical reviewed-task migration is blocked by unsafe or ambiguous rows.",
+                    409,
+                )
+            migrated = 0
+            for task in rows:
+                identity = db.get(Step, (task.id, "reviewed_skill_identity"))
+                task.workflow_version = binding.task_workflow_version
+                identity.output = {
+                    "publication_id": binding.publication_id,
+                    "publication_version": binding.publication_version,
+                    "publication_sha256": binding.publication_sha256,
+                    "review_sha256": binding.review_sha256,
+                    "source_revision": binding.source_revision,
+                    "task_workflow_version": binding.task_workflow_version,
+                }
+                task.updated_at = utcnow()
+                migrated += 1
+            return {
+                "task_queue": task_queue,
+                "old_source_revision": old_source_revision,
+                "publication_version": publication_version,
+                "migrated": migrated,
+                "verified": True,
+            }
+
     def ensure_account(self, principal: Principal) -> dict:
         owner = principal.account_id
         workspace_id = str(uuid5(NAMESPACE_URL, "shuddho:workspace:" + owner))
@@ -481,9 +606,10 @@ class Repository:
     def _require_reviewed_agent_research(
         self, db, owner: str, run_id: str, step_id: str | None,
         request: TaskCreate, *, input_versions: list[str] | None = None,
+        enforce_gate: bool = True,
     ) -> str | None:
         """Bind an opted-in reviewed research skill to the existing SQL run/step/tool."""
-        if not self.settings.agent_reviewed_research_skill_enabled:
+        if not self.settings.agent_reviewed_research_skill_enabled and enforce_gate:
             return None
         from .agent_tools import TOOLS
         from .skill_manifests import pilot_skill_manifest, validate_manifest
