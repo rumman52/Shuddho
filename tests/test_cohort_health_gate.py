@@ -300,7 +300,7 @@ def test_reviewed_skill_rollback_preflight_rejects_unfenced_or_unpinned_live_tas
                 output={"review_sha256": "a" * 64},
             ))
             fenced = db.get(Task, fenced_id)
-            fenced.workflow_version = "work_research_reviewed_v1"
+            fenced.workflow_version = "work_research_reviewed_v2"
             db.add(Step(
                 task_id=fenced_id, phase="reviewed_skill_identity",
                 output={"review_sha256": "b" * 64},

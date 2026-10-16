@@ -345,7 +345,7 @@ class Repository:
                 "event_type": row.event_type,
                 "actor_reference": row.actor_reference,
                 "reason": row.reason,
-                "metadata": dict(row.metadata or {}),
+                "metadata": dict(row.event_metadata or {}),
                 "created_at": iso(row.created_at),
             } for row in rows]
 
@@ -753,7 +753,7 @@ class Repository:
             event_type=event_type,
             actor_reference=actor_reference,
             reason=reason,
-            metadata=metadata or {},
+            event_metadata=metadata or {},
         ))
 
     def ensure_account(self, principal: Principal) -> dict:
