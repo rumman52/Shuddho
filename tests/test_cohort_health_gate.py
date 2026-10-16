@@ -209,3 +209,55 @@ def test_collect_snapshot_scopes_metrics_to_configured_cohort(tmp_path):
         assert value["provider"]["window_tokens"] == 80
     finally:
         container.repository.sessions.kw["bind"].dispose()
+
+
+def test_reviewed_research_version_is_measured_by_cohort_stop_gate(tmp_path):
+    """A failed reviewed task must not disappear from the research denominator."""
+    from services.coworker.schemas import ResearchOptions
+
+    issuer = "https://identity.example.test/auth/v1"
+    member = Principal(issuer, "reviewed-research-cohort-member", 0)
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'reviewed-health.sqlite3'}",
+        auth_issuer=issuer, environment="development",
+        storage_backend="local", local_storage_path=tmp_path / "objects",
+        research_services_enabled=True,
+        cohort_enforced=True,
+        cohort_account_ids=frozenset({member.account_id}),
+        cohort_max_users=25,
+    )
+    upgrade(settings.database_url)
+    container = Container.create(settings)
+    try:
+        container.repository.ensure_account(member)
+        request = TaskCreate(
+            skill_id="research", instruction="Synthetic researched comparison.",
+            research=ResearchOptions(query="synthetic cited comparison"),
+        )
+        legacy, _ = container.repository.create_task(
+            member.account_id, request, "legacy-research-health", enqueue=False,
+        )
+        reviewed, _ = container.repository.create_task(
+            member.account_id, request, "reviewed-research-health", enqueue=False,
+        )
+        now = utcnow()
+        with container.repository.sessions.begin() as db:
+            older = db.get(Task, legacy["id"])
+            older.state = "completed"
+            older.updated_at = now
+            newer = db.get(Task, reviewed["id"])
+            newer.workflow_version = "work_research_reviewed_v1"
+            newer.state = "failed"
+            newer.updated_at = now
+
+        value = collect_snapshot(settings, window_minutes=15, now=now + timedelta(seconds=1))
+        assert value["research"] == {
+            "samples": 2, "failed": 1, "failure_rate": 0.5,
+        }
+        result = evaluate(value, rollout(research=True), {
+            **thresholds(), "min_research_samples": 2,
+        })
+        assert result["decision"] == "STOP_ROLLOUT"
+        assert any(item["metric"] == "research.failure_rate" for item in result["breaches"])
+    finally:
+        container.repository.sessions.kw["bind"].dispose()
