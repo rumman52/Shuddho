@@ -1034,7 +1034,7 @@ def test_sqlite_0058_proposal_claim_fk_and_unique_identity_survive_migration(con
         indexes = inspector.get_indexes("cw_sandbox_executions")
         assert any(
             entry["name"] == "ix_cw_sandbox_executions_agent_code_proposal_id"
-            and entry["unique"] is True
+            and entry["unique"] == 1  # SQLite Inspector returns integer 1 for a UNIQUE index
             for entry in indexes
         )
         assert "agent_code_proposal_id" in {
