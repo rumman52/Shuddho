@@ -705,8 +705,9 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
 def test_reviewed_agent_research_requires_exact_worker_grant_and_version(container, monkeypatch):
     """CW-11 opt-in worker gate binds reviewed research to SQL-owned run and tool."""
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
-    from services.coworker.models import AgentRun, ToolInvocation
+    from services.coworker.models import AgentRun, Step, ToolInvocation
     from services.coworker.schemas import ResearchOptions
+    from services.coworker.skill_manifests import pilot_skill_manifest
     from services.coworker.skills import SKILLS
 
     with pytest.raises(ValueError, match="Reviewed Agent research requires"):
@@ -769,6 +770,20 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     )
     assert created and task["workflow_version"] == "work_research_v1"
     assert container.repository.worker_task(task["id"], False)["agent_step_id"] == step_id
+    with container.repository.sessions() as db:
+        pinned = db.get(Step, (task["id"], "reviewed_skill_identity")).output
+    assert pinned["review_sha256"] == pilot_skill_manifest().review_sha256()
+
+    # A stored review SHA is tied to the admitted Task: changed bytes
+    # cannot be interpreted as an authorized publication/revision.
+    with container.repository.sessions.begin() as db:
+        row = db.get(Step, (task["id"], "reviewed_skill_identity"))
+        row.output = row.output | {"review_sha256": "0" * 64}
+    with pytest.raises(CoworkerError) as changed_review:
+        container.repository.worker_task(task["id"], False)
+    assert changed_review.value.code == "skill_manifest_unreviewed"
+    with container.repository.sessions.begin() as db:
+        db.get(Step, (task["id"], "reviewed_skill_identity")).output = pinned
 
     with container.repository.sessions.begin() as db:
         db.get(Task, task["id"]).workflow_version = "work_email_v1"
