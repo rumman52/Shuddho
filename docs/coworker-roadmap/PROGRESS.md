@@ -1,3 +1,15 @@
+## CW-11 / A-03 rollback preflight mandatory-CI repair — 16 October 2026
+
+**Fresh failure evidence:** merged `main` `b0d6c56f81e81fef8da1cc75a0a0a215c89c992f`; exact PR-head CI [#38915877509](https://github.com/rumman52/Shuddho/actions/runs/38915877509) for #437 failed only in mandatory `coworker`: `test-and-build` passed, `coworker` failed, and `ci-merge-gate` failed. The coworker suite reported **1402 passed, 2 failed**.
+
+**Root cause:** two deterministic fixture defects, not a production authorization defect. The research cohort test enables research but omitted the current required backend-only search-key fixture, so `Settings` validation rejected the test setup. The rollback-inventory test created the default `report_email` TaskCreate with neither notes nor a document, which the current schema correctly rejects.
+
+**Repair branch:** `codex/cw11-rollback-preflight-ci-repair-20261016`, first repair commit `7a966660be102da4ab518154781f89b3ac66ddcf`. It supplies the repository's existing `fixture-only-search-key` convention to the research test and gives synthetic rollback tasks a fixture note. No production code, authority, provider registration, release flag or schema contract is changed. [Task contract](CW11_ROLLBACK_PREFLIGHT_CI_REPAIR_2026-10-16.md).
+
+**Evidence state:** implemented on repair branch; focused test and exact final-head CI are pending. No staging/production qualification or activation is claimed. Next exact action: run the focused cohort-health tests, then require all three final-head CI jobs to pass before repository verification of #437 can be considered restored. Historical worker-drain/Temporal/provider staging evidence remains a separate CW-11 gate.
+
+---
+
 ## CW-11 / A-03 historical reviewed-skill rollback task-ledger preflight — 16 October 2026
 
 **Baseline verified at task selection:** `main` `d757d165bbb36eaea829b683714f03b37d7206d9`, merged [#435](https://github.com/rumman52/Shuddho/pull/435). [#436](https://github.com/rumman52/Shuddho/pull/436) has since been merged into `main` at `8dba11cb3d288f374be12c96410f8ee276aff67a`; this reconciliation preserves its cohort-health regression and documentation. The initial checkpoint was written before that merge. Exact review/qualification evidence remains separately gated. The merged #435 required long-running coworker jobs and P1/P2 re-review were not fully qualified at last observation. Older checkpoint sections below predate those merges.

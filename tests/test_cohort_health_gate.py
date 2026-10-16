@@ -222,6 +222,7 @@ def test_reviewed_research_version_is_measured_by_cohort_stop_gate(tmp_path):
         auth_issuer=issuer, environment="development",
         storage_backend="local", local_storage_path=tmp_path / "objects",
         research_services_enabled=True,
+        search_provider="tavily", search_api_key="fixture-only-search-key",
         cohort_enforced=True,
         cohort_account_ids=frozenset({member.account_id}),
         cohort_max_users=25,
@@ -282,7 +283,10 @@ def test_reviewed_skill_rollback_preflight_rejects_unfenced_or_unpinned_live_tas
             container.repository.ensure_account(member)
             task, _ = container.repository.create_task(
                 member.account_id,
-                TaskCreate(instruction=f"Synthetic {label} rollback inventory."),
+                TaskCreate(
+                    instruction=f"Synthetic {label} rollback inventory.",
+                    notes="Fixture-only rollback inventory record.",
+                ),
                 f"preflight-{label}",
                 enqueue=False,
             )
