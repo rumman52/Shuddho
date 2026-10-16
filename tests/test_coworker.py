@@ -701,6 +701,360 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
         )) is None
 
 
+
+def test_reviewed_agent_research_requires_exact_worker_grant_and_version(container, monkeypatch):
+    """CW-11 opt-in worker gate binds reviewed research to SQL-owned run and tool."""
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import AgentRun, Step, ToolInvocation
+    from services.coworker.schemas import ResearchOptions
+    from services.coworker.skill_manifests import pilot_skill_manifest
+    from services.coworker.skills import SKILLS
+
+    with pytest.raises(ValueError, match="Reviewed Agent research requires"):
+        replace(
+            container.settings, agent_reviewed_research_skill_enabled=True,
+        ).validate()
+    settings = replace(
+        container.settings, agent_runtime_enabled=True,
+        research_services_enabled=True, agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    outsider = account(container, "bob")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Research the current topic.", output_language="en"),
+        "reviewed-research-run", tool_allowlist=["research.search"],
+    )
+    arguments = {
+        "instruction": "Research the current topic.", "notes": "",
+        "document_ids": [], "output_language": "en",
+        "query": "reliable public sources", "time_range": "any",
+    }
+    container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="research.search", arguments=arguments),
+    ])
+    with container.repository.sessions() as db:
+        invocation = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        ))
+        step_id = invocation.step_id
+
+    request = TaskCreate(
+        skill_id="research", instruction=arguments["instruction"], notes="",
+        research=ResearchOptions(query=arguments["query"], time_range="any"),
+    )
+    with pytest.raises(CoworkerError) as cross_owner:
+        container.repository.create_task(
+            outsider, request, "wrong-owner-research", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert cross_owner.value.code == "skill_run_scope"
+
+    with pytest.raises(CoworkerError) as changed_query:
+        container.repository.create_task(
+            owner,
+            TaskCreate(
+                skill_id="research", instruction=arguments["instruction"],
+                research=ResearchOptions(query="a different query", time_range="any"),
+            ),
+            "changed-query-research", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert changed_query.value.code == "skill_run_scope"
+
+    # Public callers can predict the agent:<run>:<ordinal> key. Reusing a
+    # pre-created standalone Task must not smuggle it into this Agent step.
+    collision_key = f"agent:{run['id']}:1"
+    standalone_collision, _ = container.repository.create_task(
+        owner, request, collision_key, enqueue=False,
+    )
+    with pytest.raises(CoworkerError) as collision:
+        container.repository.create_task(
+            owner, request, collision_key, enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert collision.value.code == "task_agent_binding_conflict"
+    assert standalone_collision["id"] != run["id"]
+
+    task, created = container.repository.create_task(
+        owner, request, "owned-reviewed-research", enqueue=False,
+        agent_run_id=run["id"], agent_step_id=step_id,
+    )
+    assert created and task["workflow_version"] == "work_research_v1"
+    assert container.repository.worker_task(task["id"], False)["agent_step_id"] == step_id
+    with pytest.raises(CoworkerError) as reverse_collision:
+        container.repository.create_task(
+            owner, request, "owned-reviewed-research", enqueue=False,
+        )
+    assert reverse_collision.value.code == "task_agent_binding_conflict"
+    with container.repository.sessions() as db:
+        pinned = db.get(Step, (task["id"], "reviewed_skill_identity")).output
+    assert pinned["review_sha256"] == pilot_skill_manifest().review_sha256()
+
+    # A stored review SHA is tied to the admitted Task: changed bytes
+    # cannot be interpreted as an authorized publication/revision.
+    with container.repository.sessions.begin() as db:
+        row = db.get(Step, (task["id"], "reviewed_skill_identity"))
+        row.output = row.output | {"review_sha256": "0" * 64}
+    with pytest.raises(CoworkerError) as changed_review:
+        container.repository.worker_task(task["id"], False)
+    assert changed_review.value.code == "skill_manifest_unreviewed"
+    with container.repository.sessions.begin() as db:
+        db.get(Step, (task["id"], "reviewed_skill_identity")).output = pinned
+
+    with container.repository.sessions.begin() as db:
+        db.get(Task, task["id"]).workflow_version = "work_email_v1"
+    with pytest.raises(CoworkerError) as changed_skill:
+        container.repository.worker_task(task["id"], False)
+    assert changed_skill.value.code == "skill_run_scope"
+    with container.repository.sessions.begin() as db:
+        db.get(Task, task["id"]).workflow_version = "work_research_v1"
+
+    with container.repository.sessions.begin() as db:
+        db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        )).tool_version = "unreviewed"
+    with pytest.raises(CoworkerError) as changed_tool:
+        container.repository.worker_task(task["id"], False)
+    assert changed_tool.value.code == "skill_run_scope"
+
+    with container.repository.sessions.begin() as db:
+        db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        )).tool_version = "1"
+        db.get(AgentRun, run["id"]).tool_allowlist = []
+    with pytest.raises(CoworkerError) as revoked:
+        container.repository.worker_task(task["id"], False)
+    assert revoked.value.code == "skill_manifest_unreviewed"
+
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).tool_allowlist = ["research.search"]
+    with monkeypatch.context() as patch:
+        patch.setitem(SKILLS, "research", replace(
+            SKILLS["research"], guidance=SKILLS["research"].guidance + " unreviewed",
+        ))
+        with pytest.raises(CoworkerError) as policy_drift:
+            container.repository.worker_task(task["id"], False)
+        assert policy_drift.value.code == "skill_manifest_unreviewed"
+
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).deadline_at = utcnow() - timedelta(seconds=1)
+    with pytest.raises(CoworkerError) as expired:
+        container.repository.worker_task(task["id"], False)
+    assert expired.value.code == "skill_run_scope"
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).deadline_at = utcnow() + timedelta(minutes=20)
+
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).cancel_requested = True
+    with pytest.raises(CoworkerError) as cancelled:
+        container.repository.worker_task(task["id"], False)
+    assert cancelled.value.code == "skill_run_scope"
+    # The reservation is the paid-provider boundary. A cancellation after
+    # task admission must still prevent the credit reservation and search.
+    with pytest.raises(CoworkerError) as no_search:
+        container.repository.reserve_search(task["id"])
+    assert no_search.value.code == "skill_run_scope"
+    assert container.repository.step(task["id"], "search_attempt") is None
+    with pytest.raises(CoworkerError) as cancelled_replay:
+        container.repository.create_task(
+            owner, request, "owned-reviewed-research", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert cancelled_replay.value.code == "skill_run_scope"
+
+    # The owning account has two active tasks from the collision and reviewed
+    # admission cases. Verify standalone compatibility in a separate account
+    # so the regression does not trip the independent active-task quota.
+    standalone, _ = container.repository.create_task(
+        outsider, request, "standalone-research", enqueue=False,
+    )
+    assert container.repository.worker_task(standalone["id"], False)["agent_run_id"] is None
+
+
+
+def test_reviewed_research_rechecks_revocation_after_search_reservation(container, monkeypatch):
+    """No provider call after an Agent is cancelled during the reserved/read gap."""
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import AgentRun
+    from services.coworker.schemas import ResearchOptions
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True,
+        research_services_enabled=True, agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Research public evidence.", output_language="en"),
+        "research-reserve-race", tool_allowlist=["research.search"],
+    )
+    plan = container.agent.save_plan(owner, run["id"], [AgentPlanStep(
+        tool="research.search", arguments={
+            "instruction": "Research public evidence.", "notes": "",
+            "document_ids": [], "output_language": "en",
+            "query": "reliable public sources", "time_range": "any",
+        },
+    )])
+    step_id = plan["tool_invocations"][0]["step_id"]
+    task, _ = container.repository.create_task(
+        owner,
+        TaskCreate(
+            skill_id="research", instruction="Research public evidence.",
+            research=ResearchOptions(query="reliable public sources"),
+        ),
+        "reviewed-race-task", enqueue=False,
+        agent_run_id=run["id"], agent_step_id=step_id,
+    )
+    worker_task = container.repository.worker_task(task["id"], False)
+
+    class NeverSearch:
+        calls = 0
+
+        async def retrieve(self, _options):
+            self.calls += 1
+            raise AssertionError("Search must not reach the provider after revocation")
+
+    provider = NeverSearch()
+    runner = DocumentRunner(container, FakeModel(), research=provider)
+    reserve = container.repository.reserve_search
+
+    def revoke_immediately_after_reserving(task_id):
+        reserve(task_id)
+        with container.repository.sessions.begin() as db:
+            db.get(AgentRun, run["id"]).cancel_requested = True
+
+    monkeypatch.setattr(
+        container.repository, "reserve_search", revoke_immediately_after_reserving,
+    )
+    with pytest.raises(CoworkerError) as denied:
+        asyncio.run(runner.research(worker_task))
+    assert denied.value.code == "skill_run_scope"
+    assert provider.calls == 0
+    receipt = container.repository.step(task["id"], "search_attempt")
+    assert receipt["state"] == "failed"
+    assert receipt["accounted_credits"] == 0
+
+
+
+def test_reviewed_research_rejects_new_document_version_under_same_id(container):
+    """Agent research cannot silently upgrade the exact source version it admitted."""
+    from uuid import UUID, uuid4
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import DocumentVersion
+    from services.coworker.schemas import ResearchOptions
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True,
+        research_services_enabled=True, agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    raw = b"Reviewed document version"
+    uploaded = container.repository.create_upload(
+        owner, UploadRequest(
+            filename="reviewed.txt", byte_size=len(raw),
+            sha256=hashlib.sha256(raw).hexdigest(),
+        ),
+    )
+    container.repository.finish_upload(owner, uploaded["id"])
+    document_id = UUID(uploaded["id"])
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Research a public comparison report.",
+            document_ids=[document_id], output_language="en",
+        ),
+        "reviewed-source-version-run", tool_allowlist=["research.search"],
+    )
+    plan = container.agent.save_plan(owner, run["id"], [AgentPlanStep(
+        tool="research.search", arguments={
+            "instruction": "Research a public comparison report.",
+            "notes": "", "document_ids": [str(document_id)],
+            "output_language": "en", "query": "public source comparison",
+            "time_range": "any",
+        },
+    )])
+    task, _ = container.repository.create_task(
+        owner,
+        TaskCreate(
+            skill_id="research",
+            instruction="Research a public comparison report.",
+            document_ids=[document_id],
+            research=ResearchOptions(query="public source comparison"),
+        ),
+        "reviewed-source-version-task", enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=plan["tool_invocations"][0]["step_id"],
+    )
+    assert container.repository.worker_task(task["id"], False)["documents"][0]["version_id"] == uploaded["version_id"]
+
+    with container.repository.sessions.begin() as db:
+        old = db.get(DocumentVersion, uploaded["version_id"])
+        later = DocumentVersion(
+            id=str(uuid4()), version=2, document_id=old.document_id,
+            owner_id=owner, kind=old.kind, byte_size=old.byte_size,
+            sha256=old.sha256, object_key=old.object_key + "-next",
+            state="uploaded", expires_at=old.expires_at,
+        )
+        db.add(later)
+        db.get(Task, task["id"]).input_versions = [later.id]
+    with pytest.raises(CoworkerError) as changed_version:
+        container.repository.worker_task(task["id"], False)
+    assert changed_version.value.code == "skill_run_scope"
+
+
+def test_reviewed_agent_research_rejects_ungranted_planner_step_before_task_admission(container):
+    """No task may be created using a different legitimate run step as research authority."""
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.schemas import ResearchOptions
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True, research_services_enabled=True,
+        work_services_enabled=True, agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Prepare a daily plan.", output_language="en"),
+        "ungranted-research-run", tool_allowlist=["daily_plan.create"],
+    )
+    container.agent.save_plan(owner, run["id"], [AgentPlanStep(
+        tool="daily_plan.create", arguments={
+            "instruction": "Prepare a daily plan.", "notes": "",
+            "document_ids": [], "output_language": "en",
+        },
+    )])
+    with container.repository.sessions() as db:
+        from services.coworker.models import ToolInvocation
+        step_id = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        )).step_id
+    with pytest.raises(CoworkerError) as denied:
+        container.repository.create_task(
+            owner,
+            TaskCreate(
+                skill_id="research", instruction="Research a topic.",
+                research=ResearchOptions(query="public topic", time_range="any"),
+            ),
+            "research-bypass-task", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert denied.value.code == "skill_run_scope"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(Task.id).where(
+            Task.agent_run_id == run["id"],
+        )) is None
+
+
 def test_restricted_run_planner_and_fallback_never_offer_extra_tools(container):
     """Initial planning, replan and provider-error fallback share the SQL-owned grant."""
     from services.coworker.agent_runtime import AgentRuntime

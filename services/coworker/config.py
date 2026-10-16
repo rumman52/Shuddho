@@ -47,6 +47,8 @@ class Settings:
     work_services_enabled: bool = False
     artifact_services_enabled: bool = False
     research_services_enabled: bool = False
+    # Opt-in reviewed Agent research gate; independent of standalone research.
+    agent_reviewed_research_skill_enabled: bool = False
     actions_enabled: bool = False
     connector_trust_boundary_enabled: bool = False
     connector_reads_enabled: bool = False
@@ -221,6 +223,7 @@ class Settings:
             work_services_enabled=os.getenv("SHUDDHO_WORK_SERVICES_ENABLED", "false").lower() == "true",
             artifact_services_enabled=os.getenv("SHUDDHO_ARTIFACT_SERVICES_ENABLED", "false").lower() == "true",
             research_services_enabled=os.getenv("SHUDDHO_RESEARCH_SERVICES_ENABLED", "false").lower() == "true",
+            agent_reviewed_research_skill_enabled=os.getenv("SHUDDHO_AGENT_REVIEWED_RESEARCH_SKILL_ENABLED", "false").lower() == "true",
             actions_enabled=os.getenv("SHUDDHO_ACTIONS_ENABLED", "false").lower() == "true",
             connector_trust_boundary_enabled=os.getenv("SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED", "false").lower() == "true",
             connector_reads_enabled=os.getenv("SHUDDHO_CONNECTOR_READS_ENABLED", "false").lower() == "true",
@@ -380,6 +383,8 @@ class Settings:
                 raise ValueError(
                     "SHUDDHO_SOURCE_REVISION/RENDER_GIT_COMMIT must be a full lowercase 40-character Git commit hash"
                 )
+        if self.agent_reviewed_research_skill_enabled and not (self.agent_runtime_enabled and self.research_services_enabled):
+            raise ValueError("Reviewed Agent research requires Agent runtime and research service eligibility")
         if self.connector_trust_boundary_enabled and not self.actions_enabled:
             raise ValueError("Connector trust boundary requires SHUDDHO_ACTIONS_ENABLED=true")
         if self.connector_reads_enabled:
