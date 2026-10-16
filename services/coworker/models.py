@@ -163,6 +163,27 @@ class ReviewedSkillPublication(Base):
     )
 
 
+class ReviewedSkillRegistryEvent(Base):
+    """Append-only operator control history for reviewed-skill release actions."""
+    __tablename__ = "cw_reviewed_skill_registry_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    skill_name: Mapped[str] = mapped_column(String(60))
+    publication_id: Mapped[str | None] = mapped_column(
+        ForeignKey("cw_reviewed_skill_publications.id"), index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(60))
+    actor_reference: Mapped[str] = mapped_column(String(200))
+    reason: Mapped[str] = mapped_column(String(500))
+    metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        Index(
+            "cw_reviewed_skill_registry_events_skill_created",
+            "skill_name", "created_at",
+        ),
+    )
+
+
 class ReviewedSkillSelection(Base):
     __tablename__ = "cw_reviewed_skill_selections"
     skill_name: Mapped[str] = mapped_column(String(60), primary_key=True)
