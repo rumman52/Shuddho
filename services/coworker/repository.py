@@ -30,6 +30,7 @@ from .reviewed_skill_registry import (
     require_selected_pilot,
 )
 from .task_workflow_versions import (
+    LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
     REVIEWED_RESEARCH_WORKFLOW_VERSION,
     task_skill_for_version,
 )
@@ -395,6 +396,33 @@ class Repository:
             "workers": inventory,
         }
 
+    def _require_selected_reviewed_publication(
+        self, db, review_sha256: str,
+    ):
+        selection = db.scalar(select(ReviewedSkillSelection).where(
+            ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+        ).with_for_update())
+        if selection is None or selection.state != "selected":
+            raise CoworkerError(
+                "skill_publication_unavailable",
+                "The reviewed research skill has no explicitly selected publication.",
+                409,
+            )
+        publication = db.scalar(select(ReviewedSkillPublication).where(
+            ReviewedSkillPublication.id == selection.publication_id,
+        ).with_for_update())
+        binding = require_selected_pilot(
+            publication,
+            worker_source_revision=self.settings.source_revision,
+        )
+        if binding.review_sha256 != review_sha256:
+            raise CoworkerError(
+                "skill_publication_unavailable",
+                "The selected publication does not match the admitted reviewed manifest.",
+                409,
+            )
+        return binding
+
     def migrate_legacy_reviewed_tasks(
         self, *, task_queue: str, old_source_revision: str,
         publication_version: str, actor_reference: str, reason: str,
@@ -432,10 +460,15 @@ class Repository:
                 publication,
                 worker_source_revision=self.settings.source_revision,
             )
-            rows = db.scalars(select(Task).where(
-                Task.workflow_version == LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
-                Task.state.not_in(TERMINAL),
-            ).with_for_update()).all()
+            rows = db.scalars(
+                select(Task)
+                .join(Step, (Step.task_id == Task.id) & (Step.phase == "reviewed_skill_identity"))
+                .where(
+                    Task.workflow_version == LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+                    Task.state.not_in(TERMINAL),
+                )
+                .with_for_update()
+            ).all()
             blockers: list[dict] = []
             for task in rows:
                 if task.agent_run_id is None or task.agent_step_id is None:
