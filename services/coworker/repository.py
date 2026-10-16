@@ -163,10 +163,10 @@ class Repository:
     def _require_reviewed_agent_research(
         self, db, owner: str, run_id: str, step_id: str | None,
         request: TaskCreate,
-    ) -> None:
+    ) -> str | None:
         """Bind an opted-in reviewed research skill to the existing SQL run/step/tool."""
         if not self.settings.agent_reviewed_research_skill_enabled:
-            return
+            return None
         from .agent_tools import TOOLS
         from .skill_manifests import pilot_skill_manifest, validate_manifest
         from .schemas import ResearchOptions
@@ -235,6 +235,7 @@ class Repository:
                 409,
             )
         validate_manifest(manifest, frozenset(run.tool_allowlist or ()))
+        return manifest.review_sha256()
 
     def _reviewed_research_worker_task(self, db, task: Task) -> None:
         """Rebuild pinned task inputs and recheck manifest/grants before each phase."""
@@ -257,9 +258,23 @@ class Repository:
             output_language=task.output_language,
             research=ResearchOptions.model_validate(options.output),
         )
-        self._require_reviewed_agent_research(
+        digest = self._require_reviewed_agent_research(
             db, task.owner_id, task.agent_run_id, task.agent_step_id, request,
         )
+        stored_review = db.get(Step, (task.id, "reviewed_skill_identity"))
+        if (
+            digest is None or stored_review is None
+            or stored_review.output != {
+                "name": "research", "version": "work_research_v1",
+                "tool": "research.search", "tool_version": "1",
+                "review_sha256": digest,
+            }
+        ):
+            raise CoworkerError(
+                "skill_manifest_unreviewed",
+                "The Task has no matching immutable reviewed skill identity.",
+                409,
+            )
 
     def create_task(self, owner: str, request: TaskCreate, idempotency_key: str, *, enqueue: bool = True, agent_run_id: str | None = None, agent_step_id: str | None = None) -> tuple[dict, bool]:
         self.expire_tasks(owner)
@@ -283,8 +298,9 @@ class Repository:
                                       self.settings.artifact_services_enabled, self.settings.research_services_enabled)
             if not enabled:
                 raise CoworkerError("service_unavailable", "This work service is not available yet. Please choose another service.", 409)
+            reviewed_skill_digest = None
             if request.skill_id == "research" and agent_run_id is not None:
-                self._require_reviewed_agent_research(
+                reviewed_skill_digest = self._require_reviewed_agent_research(
                     db, owner, agent_run_id, agent_step_id, request,
                 )
             active = db.scalar(select(func.count()).select_from(Task).where(Task.owner_id == owner, Task.state.not_in(TERMINAL)))
@@ -314,6 +330,17 @@ class Repository:
                         deadline_at=utcnow() + timedelta(seconds=self.settings.task_timeout_seconds))
             db.add(task)
             db.flush()
+            if reviewed_skill_digest is not None:
+                # Pin the actual source-reviewed identity alongside the Task;
+                # code updates cannot silently upgrade in-flight Agent runs.
+                db.add(Step(
+                    task_id=task.id, phase="reviewed_skill_identity",
+                    output={
+                        "name": "research", "version": "work_research_v1",
+                        "tool": "research.search", "tool_version": "1",
+                        "review_sha256": reviewed_skill_digest,
+                    },
+                ))
             if request.research:
                 # Immutable task options, committed atomically with the task/outbox.
                 db.add(Step(task_id=task.id, phase="research_input", output=request.research.model_dump()))
