@@ -115,6 +115,7 @@ jobs:
           uv run --extra coworker python scripts/cw11_staging_evidence.py \
             --expected-publication-version "${{ inputs.expected_publication_version }}" \
             --old-source-revision "${{ inputs.old_source_revision }}" \
+            --external-render-evidence /tmp/cw11-render-evidence.json
             --output /tmp/cw11-staging-evidence.json
 
       - name: Publish evidence summary
