@@ -574,6 +574,33 @@ class Repository:
             )
         return manifest.review_sha256()
 
+    def _require_selected_reviewed_publication(
+        self, db, expected_review_sha256: str,
+    ):
+        selection = db.scalar(select(ReviewedSkillSelection).where(
+            ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+        ).with_for_update())
+        if selection is None or selection.state != "selected":
+            raise CoworkerError(
+                "skill_publication_unavailable",
+                "The reviewed research skill has no explicitly selected publication.",
+                409,
+            )
+        publication = db.scalar(select(ReviewedSkillPublication).where(
+            ReviewedSkillPublication.id == selection.publication_id,
+        ).with_for_update())
+        binding = require_selected_pilot(
+            publication,
+            worker_source_revision=self.settings.source_revision,
+        )
+        if binding.review_sha256 != expected_review_sha256:
+            raise CoworkerError(
+                "skill_publication_untrusted",
+                "The selected publication does not match the exact reviewed manifest.",
+                409,
+            )
+        return binding
+
     def _reviewed_research_worker_task(self, db, task: Task) -> None:
         """Rebuild pinned task inputs and recheck manifest/grants before each phase."""
         from .schemas import ResearchOptions
@@ -600,14 +627,29 @@ class Repository:
             request, input_versions=list(task.input_versions or ()),
         )
         stored_review = db.get(Step, (task.id, "reviewed_skill_identity"))
+        if stored_review is None or digest is None:
+            raise CoworkerError(
+                "skill_manifest_unreviewed",
+                "The Task has no matching immutable reviewed skill identity.",
+                409,
+            )
+        publication_id = (
+            stored_review.output.get("publication_id")
+            if isinstance(stored_review.output, dict) else None
+        )
+        publication = (
+            db.get(ReviewedSkillPublication, publication_id)
+            if publication_id else None
+        )
+        binding = require_pinned_publication(
+            publication,
+            stored_review.output,
+            worker_source_revision=self.settings.source_revision,
+        )
         if (
             task.workflow_version != REVIEWED_RESEARCH_WORKFLOW_VERSION
-            or digest is None or stored_review is None
-            or stored_review.output != {
-                "name": "research", "version": "work_research_v1",
-                "tool": "research.search", "tool_version": "1",
-                "review_sha256": digest,
-            }
+            or binding.task_workflow_version != REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION
+            or binding.review_sha256 != digest
         ):
             raise CoworkerError(
                 "skill_manifest_unreviewed",
@@ -664,61 +706,24 @@ class Repository:
             if not enabled:
                 raise CoworkerError("service_unavailable", "This work service is not available yet. Please choose another service.", 409)
             reviewed_skill_digest = None
+            reviewed_publication = None
             if request.skill_id == "research" and agent_run_id is not None:
                 reviewed_skill_digest = self._require_reviewed_agent_research(
                     db, owner, agent_run_id, agent_step_id, request,
                 )
-            active = db.scalar(select(func.count()).select_from(Task).where(Task.owner_id == owner, Task.state.not_in(TERMINAL)))
-            day = utcnow().date().isoformat()
-            usage = db.get(DailyUsage, (owner, day))
-            if usage is None:
-                usage = DailyUsage(owner_id=owner, day=day, allocated_tokens=0, task_count=0)
-                db.add(usage)
-            if active >= self.settings.max_active_tasks:
-                raise CoworkerError("active_task_limit", "Your coworker is already working on your active tasks. Try again when one finishes.", 429)
-            if usage.task_count >= self.settings.max_daily_tasks or usage.allocated_tokens >= self.settings.daily_token_budget:
-                raise CoworkerError("daily_limit", "Your daily coworker limit has been reached. Try again tomorrow.", 429)
-            versions = []
-            for document_id in request.document_ids:
-                row = db.execute(select(DocumentVersion, Document).join(Document, DocumentVersion.document_id == Document.id).where(
-                    Document.id == str(document_id), Document.owner_id == owner, Document.deleted.is_(False),
-                    DocumentVersion.owner_id == owner, DocumentVersion.state == "uploaded",
-                )).first()
-                if row is None:
-                    raise not_found()
-                versions.append(row[0].id)
-            if reviewed_skill_digest is not None:
-                # The SQL-owned Agent run, not the latest document upload,
-                # determines which exact source versions a reviewed Task uses.
-                run = db.get(AgentRun, agent_run_id)
-                if run is None or not set(versions).issubset(
-                    set(run.input_versions or ())
-                ):
-                    raise CoworkerError(
-                        "skill_run_scope",
-                        "A Task source version is not pinned to its Agent run.",
-                        409,
-                    )
-            task = Task(id=str(uuid4()), owner_id=owner, workspace_id=self._workspace(db, owner),
-                        idempotency_key=idempotency_key, fingerprint=fingerprint, instruction=request.instruction,
-                        agent_run_id=agent_run_id, agent_step_id=agent_step_id,
-                        notes=request.notes, output_language=request.output_language, input_versions=versions,
-                        workflow_version=(
-                            REVIEWED_RESEARCH_WORKFLOW_VERSION if reviewed_skill_digest is not None
-                            else SKILLS[request.skill_id].version
-                        ),
-                        deadline_at=utcnow() + timedelta(seconds=self.settings.task_timeout_seconds))
-            db.add(task)
-            db.flush()
-            if reviewed_skill_digest is not None:
-                # Pin the actual source-reviewed identity alongside the Task;
-                # code updates cannot silently upgrade in-flight Agent runs.
+                if reviewed_publication is not None:
+                # Pin the complete publication identity alongside the Task.
+                # Selection changes never mutate an admitted Task; explicit
+                # rollback marks its publication rolled_back and fails closed.
                 db.add(Step(
                     task_id=task.id, phase="reviewed_skill_identity",
                     output={
-                        "name": "research", "version": "work_research_v1",
-                        "tool": "research.search", "tool_version": "1",
-                        "review_sha256": reviewed_skill_digest,
+                        "publication_id": reviewed_publication.publication_id,
+                        "publication_version": reviewed_publication.publication_version,
+                        "publication_sha256": reviewed_publication.publication_sha256,
+                        "review_sha256": reviewed_publication.review_sha256,
+                        "source_revision": reviewed_publication.source_revision,
+                        "task_workflow_version": reviewed_publication.task_workflow_version,
                     },
                 ))
             if request.research:
