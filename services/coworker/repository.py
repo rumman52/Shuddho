@@ -186,6 +186,7 @@ class Repository:
         if (
             run is None or step is None or invocation is None
             or run.cancel_requested
+            or aware(run.deadline_at) <= utcnow()
             or run.state not in {"queued", "planning", "running", "awaiting_approval"}
             or step.tool_name != "research.search"
             or invocation.tool_name != "research.search"
@@ -293,6 +294,27 @@ class Repository:
             if previous is not None:
                 if previous.fingerprint != fingerprint:
                     raise CoworkerError("idempotency_conflict", "This request key belongs to different input. Submit a new task.", 409)
+                # The public Task API accepts arbitrary keys, including the
+                # predictable agent:<run>:<step> namespace. Never let an Agent
+                # adopt a standalone task (or a different Agent step), nor let
+                # a standalone replay read an Agent-owned task.
+                if (
+                    previous.agent_run_id != agent_run_id
+                    or previous.agent_step_id != agent_step_id
+                ):
+                    raise CoworkerError(
+                        "task_agent_binding_conflict",
+                        "This task key is bound to a different Agent execution.",
+                        409,
+                    )
+                if (
+                    self.settings.agent_reviewed_research_skill_enabled
+                    and request.skill_id == "research"
+                    and agent_run_id is not None
+                ):
+                    # Replays must pass the same current reviewed manifest,
+                    # grant and pinned Task identity checks as worker claims.
+                    self._reviewed_research_worker_task(db, previous)
                 return self._task_dto(db, previous), False
             enabled = service_enabled(request.skill_id, self.settings.work_services_enabled,
                                       self.settings.artifact_services_enabled, self.settings.research_services_enabled)
