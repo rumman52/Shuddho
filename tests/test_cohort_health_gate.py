@@ -261,3 +261,95 @@ def test_reviewed_research_version_is_measured_by_cohort_stop_gate(tmp_path):
         assert any(item["metric"] == "research.failure_rate" for item in result["breaches"])
     finally:
         container.repository.sessions.kw["bind"].dispose()
+
+def test_reviewed_skill_rollback_preflight_rejects_unfenced_or_unpinned_live_tasks(tmp_path):
+    """Classify both pre-fence reviewed tasks and fenced tasks with missing identity."""
+    from scripts.reviewed_skill_rollback_preflight import inspect_reviewed_rollback
+    from services.coworker.models import Step
+
+    issuer = "https://identity.example.test/auth/v1"
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'reviewed-rollback.sqlite3'}",
+        auth_issuer=issuer, environment="development",
+        storage_backend="local", local_storage_path=tmp_path / "objects",
+    )
+    upgrade(settings.database_url)
+    container = Container.create(settings)
+    try:
+        admitted = []
+        for label in ("legacy", "fenced", "missing", "completed", "agent-missing"):
+            member = Principal(issuer, f"rollback-preflight-{label}", 0)
+            container.repository.ensure_account(member)
+            task, _ = container.repository.create_task(
+                member.account_id,
+                TaskCreate(instruction=f"Synthetic {label} rollback inventory."),
+                f"preflight-{label}",
+                enqueue=False,
+            )
+            admitted.append(task["id"])
+        legacy_id, fenced_id, missing_id, completed_id, agent_missing_id = admitted
+        with container.repository.sessions.begin() as db:
+            legacy = db.get(Task, legacy_id)
+            legacy.workflow_version = "work_research_v1"
+            db.add(Step(
+                task_id=legacy_id, phase="reviewed_skill_identity",
+                output={"review_sha256": "a" * 64},
+            ))
+            fenced = db.get(Task, fenced_id)
+            fenced.workflow_version = "work_research_reviewed_v1"
+            db.add(Step(
+                task_id=fenced_id, phase="reviewed_skill_identity",
+                output={"review_sha256": "b" * 64},
+            ))
+            missing = db.get(Task, missing_id)
+            missing.workflow_version = "work_research_reviewed_v1"
+            agent_missing = db.get(Task, agent_missing_id)
+            agent_missing.workflow_version = "work_research_v1"
+            agent_missing.agent_run_id = "synthetic-owned-legacy-run"
+            completed = db.get(Task, completed_id)
+            completed.workflow_version = "work_research_v1"
+            completed.state = "completed"
+            db.add(Step(
+                task_id=completed_id, phase="reviewed_skill_identity",
+                output={"review_sha256": "c" * 64},
+            ))
+
+        result = inspect_reviewed_rollback(container.repository.sessions)
+        assert result["decision"] == "BLOCKED_TASK_LEDGER"
+        assert result["active_unfenced_reviewed_tasks"] == 1
+        assert result["active_fenced_tasks_missing_review_identity"] == 1
+        assert result["active_fenced_reviewed_tasks"] == 1
+        assert result["terminal_legacy_reviewed_tasks"] == 1
+        assert result["active_legacy_agent_research_without_review_identity"] == 1
+        assert set(result["blockers"]) == {
+            "active_reviewed_tasks_without_worker_version_fence",
+            "active_fenced_tasks_missing_review_identity",
+            "active_legacy_agent_research_without_review_identity",
+        }
+        assert result["fleet_drained_verified"] is False
+        assert result["rollout_authorized"] is False
+
+        with container.repository.sessions.begin() as db:
+            db.get(Task, legacy_id).state = "failed"
+            db.get(Task, missing_id).state = "cancelled"
+            db.get(Task, agent_missing_id).state = "cancelled"
+
+        checked = inspect_reviewed_rollback(container.repository.sessions)
+        assert checked["decision"] == "TASK_LEDGER_CHECK_ONLY"
+        assert checked["blockers"] == []
+        assert checked["active_fenced_reviewed_tasks"] == 1
+        assert checked["terminal_legacy_reviewed_tasks"] == 2
+        assert checked["active_legacy_agent_research_without_review_identity"] == 0
+        assert checked["fleet_drained_verified"] is False
+        assert checked["staging_verified"] is False
+        assert checked["rollout_authorized"] is False
+    finally:
+        container.repository.sessions.kw["bind"].dispose()
+
+
+def test_reviewed_skill_rollback_cli_requires_backend_database_env(monkeypatch):
+    from scripts.reviewed_skill_rollback_preflight import main
+
+    monkeypatch.delenv("SHUDDHO_COWORKER_DATABASE_URL", raising=False)
+    with pytest.raises(SystemExit, match="SHUDDHO_COWORKER_DATABASE_URL"):
+        main()
