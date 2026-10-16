@@ -162,7 +162,7 @@ class Repository:
 
     def _require_reviewed_agent_research(
         self, db, owner: str, run_id: str, step_id: str | None,
-        request: TaskCreate,
+        request: TaskCreate, *, input_versions: list[str] | None = None,
     ) -> str | None:
         """Bind an opted-in reviewed research skill to the existing SQL run/step/tool."""
         if not self.settings.agent_reviewed_research_skill_enabled:
@@ -236,6 +236,17 @@ class Repository:
                 409,
             )
         validate_manifest(manifest, frozenset(run.tool_allowlist or ()))
+        # Document identities alone are insufficient: the reviewed Agent run
+        # pinned *versions*. A later upload/replacement cannot be pulled into
+        # this Task merely because it has the same document ID.
+        if input_versions is not None and not set(input_versions).issubset(
+            set(run.input_versions or ())
+        ):
+            raise CoworkerError(
+                "skill_run_scope",
+                "The reviewed Task uses source versions outside the admitted Agent run.",
+                409,
+            )
         return manifest.review_sha256()
 
     def _reviewed_research_worker_task(self, db, task: Task) -> None:
@@ -260,7 +271,8 @@ class Repository:
             research=ResearchOptions.model_validate(options.output),
         )
         digest = self._require_reviewed_agent_research(
-            db, task.owner_id, task.agent_run_id, task.agent_step_id, request,
+            db, task.owner_id, task.agent_run_id, task.agent_step_id,
+            request, input_versions=list(task.input_versions or ()),
         )
         stored_review = db.get(Step, (task.id, "reviewed_skill_identity"))
         if (
@@ -344,6 +356,18 @@ class Repository:
                 if row is None:
                     raise not_found()
                 versions.append(row[0].id)
+            if reviewed_skill_digest is not None:
+                # The SQL-owned Agent run, not the latest document upload,
+                # determines which exact source versions a reviewed Task uses.
+                run = db.get(AgentRun, agent_run_id)
+                if run is None or not set(versions).issubset(
+                    set(run.input_versions or ())
+                ):
+                    raise CoworkerError(
+                        "skill_run_scope",
+                        "A Task source version is not pinned to its Agent run.",
+                        409,
+                    )
             task = Task(id=str(uuid4()), owner_id=owner, workspace_id=self._workspace(db, owner),
                         idempotency_key=idempotency_key, fingerprint=fingerprint, instruction=request.instruction,
                         agent_run_id=agent_run_id, agent_step_id=agent_step_id,
