@@ -236,8 +236,9 @@ class AgentActivities:
 
 
 class Dispatcher:
-    def __init__(self, container: Container, client):
+    def __init__(self, container: Container, client, worker_id: str):
         self.container, self.client = container, client
+        self.worker_id = worker_id
         self.automation_schedules = AutomationScheduleReconciler(client, container.settings.task_queue)
 
     async def dispatch_agent_run(self, run_id: str):
@@ -296,6 +297,13 @@ class Dispatcher:
         ))
 
     async def tick(self):
+        # Cooperative drain: finish any already accepted Temporal work, but
+        # stop this dispatcher from claiming another queued item.
+        worker_state = await asyncio.to_thread(
+            self.container.repository.heartbeat_worker, self.worker_id,
+        )
+        if worker_state != "running":
+            return
         repo = self.container.repository
         actions = self.container.actions.repo
         agent = self.container.agent
@@ -423,6 +431,20 @@ class Dispatcher:
                 pass
 
 
+async def _worker_registry_heartbeat(container, worker_id: str, stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        state = await asyncio.to_thread(
+            container.repository.heartbeat_worker, worker_id,
+        )
+        if state in {"draining", "lost", "drained"}:
+            stop.set()
+            return
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=3)
+        except TimeoutError:
+            pass
+
+
 async def main():
     from dotenv import load_dotenv
     load_dotenv()
@@ -435,6 +457,11 @@ async def main():
     agent_activities = AgentActivities(AgentRuntime(container, DocumentRunner(container)))
     automation_activities = AutomationActivities(container.automations)
     stop = asyncio.Event()
+    worker_id = await asyncio.to_thread(
+        container.repository.register_worker,
+        task_queue=settings.task_queue,
+        source_revision=settings.source_revision,
+    )
     loop = asyncio.get_running_loop()
     for name in (signal.SIGTERM, signal.SIGINT):
         try:
@@ -448,7 +475,17 @@ async def main():
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,
                       graceful_shutdown_timeout=timedelta(seconds=20)):
-        await Dispatcher(container, client).run(stop)
+        heartbeat_task = asyncio.create_task(
+            _worker_registry_heartbeat(container, worker_id, stop)
+        )
+        try:
+            await Dispatcher(container, client, worker_id).run(stop)
+        finally:
+            stop.set()
+            await heartbeat_task
+            await asyncio.to_thread(
+                container.repository.mark_worker_drained, worker_id,
+            )
     container.repository.sessions.kw["bind"].dispose()
 
 
