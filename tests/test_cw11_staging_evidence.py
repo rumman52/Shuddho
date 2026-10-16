@@ -10,6 +10,7 @@ pytest.importorskip("sqlalchemy")
 
 from services.coworker.config import Settings
 from services.coworker.database import session_factory
+from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
 from services.coworker.repository import Repository
 from services.coworker.reviewed_skill_registry import (
@@ -147,10 +148,6 @@ def test_collector_blocks_active_incompatible_worker(
         source_revision=CANDIDATE_REVISION,
     )
     repository.heartbeat_worker(candidate)
-    repository.register_worker(
-        task_queue=settings.task_queue,
-        source_revision=OLD_REVISION,
-    )
     publication = build_pilot_publication(
         source_revision=CANDIDATE_REVISION,
         publication_version="research_reviewed_v1",
@@ -167,7 +164,13 @@ def test_collector_blocks_active_incompatible_worker(
         reason="CW-11 staging collector selection test",
         worker_source_revision=CANDIDATE_REVISION,
     )
-    with pytest.raises(Exception, match="incompatible worker"):
+    # Selection is valid before the mixed-version condition is introduced.
+    # The collector, not publication selection, owns the staging drain assertion.
+    repository.register_worker(
+        task_queue=settings.task_queue,
+        source_revision=OLD_REVISION,
+    )
+    with pytest.raises(CoworkerError, match="incompatible worker"):
         evidence.collect_evidence(
             repository,
             staging_settings(settings),
