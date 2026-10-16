@@ -242,18 +242,25 @@ class SandboxRepository:
             return "code_review_ineligible"
         # Serialize against owner review/revoke: run -> proposal -> review.
         # The worker already owns its execution and session row locks.
-        proposal = db.scalar(select(AgentCodeProposal).where(
+        run_id = db.scalar(select(AgentCodeProposal.run_id).where(
             AgentCodeProposal.id == proposal_id,
             AgentCodeProposal.owner_id == execution.owner_id,
-        ).with_for_update())
-        if proposal is None:
+        ))
+        if run_id is None:
             return "code_review_ineligible"
         run = db.scalar(select(AgentRun).where(
-            AgentRun.id == proposal.run_id,
+            AgentRun.id == run_id,
             AgentRun.owner_id == execution.owner_id,
             AgentRun.workspace_id == session.workspace_id,
         ).with_for_update())
         if run is None:
+            return "code_review_ineligible"
+        proposal = db.scalar(select(AgentCodeProposal).where(
+            AgentCodeProposal.id == proposal_id,
+            AgentCodeProposal.run_id == run.id,
+            AgentCodeProposal.owner_id == execution.owner_id,
+        ).with_for_update())
+        if proposal is None:
             return "code_review_ineligible"
         review = db.scalar(select(AgentCodeReview).where(
             AgentCodeReview.proposal_id == proposal_id,
