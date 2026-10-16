@@ -236,7 +236,7 @@ class AgentActivities:
 
 
 class Dispatcher:
-    def __init__(self, container: Container, client, worker_id: str):
+    def __init__(self, container: Container, client, worker_id: str | None = None):
         self.container, self.client = container, client
         self.worker_id = worker_id
         self.automation_schedules = AutomationScheduleReconciler(client, container.settings.task_queue)
@@ -299,11 +299,12 @@ class Dispatcher:
     async def tick(self):
         # Cooperative drain: finish any already accepted Temporal work, but
         # stop this dispatcher from claiming another queued item.
-        worker_state = await asyncio.to_thread(
-            self.container.repository.heartbeat_worker, self.worker_id,
-        )
-        if worker_state != "running":
-            return
+        if self.worker_id is not None:
+            worker_state = await asyncio.to_thread(
+                self.container.repository.heartbeat_worker, self.worker_id,
+            )
+            if worker_state != "running":
+                return
         repo = self.container.repository
         actions = self.container.actions.repo
         agent = self.container.agent
