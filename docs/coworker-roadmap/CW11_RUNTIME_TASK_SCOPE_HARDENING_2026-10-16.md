@@ -6,19 +6,19 @@
 
 ## Defect and acceptance
 
-A restricted Agent run has a durable `cw_agent_runs.tool_allowlist`, but the legacy `save_plan`, `replace_remaining_plan` and `AgentRuntime.execute_step` path did not independently enforce it. The v3 planner already filters admitted tools; that is not a sufficient worker boundary. A direct deterministic plan, saved replan or corrupted/stale persisted invocation could attempt a different enabled task.
+A restricted Agent run has a durable `cw_agent_runs.tool_allowlist`, but the legacy `save_plan`, `replace_remaining_plan` and `AgentRuntime.execute_step` path did not independently enforce it. The v3 planner already filters admitted tools; that is not a sufficient worker boundary. A direct deterministic plan, saved replan or corrupted/stale persisted invocation could attempt a different enabled task, sandbox or browser capability.
 
 Keep existing unspecialized user runs with an empty allowlist unchanged. For a run with a nonempty allowlist:
-- A task outside that exact recorded scope is rejected at initial plan, replan and worker execution, even if globally enabled.
+- A non-approved-action tool outside that exact recorded scope is rejected at initial plan, replan and worker execution, even if globally enabled. This includes browser and sandbox tools not present in the allowlist.
 - Rejection happens before task creation, provider calls, receipt writes or artifacts. Rejected plan/replan transactions roll back.
-- Task selection does not inherit a manifest's authority. Existing attached consequential actions continue through exact ExternalAction approval bindings, not a task grant.
+- Tool selection does not inherit a manifest's authority. Existing attached consequential actions continue through exact ExternalAction approval bindings, not a nonconsequential run grant.
 - No new orchestrator, credential, schema, feature flag, publish path, capability activation or provider permission.
 
 ## Implementation
 
 - `services/coworker/agent_repository.py`: recheck `run.tool_allowlist` in initial and replacement plan SQL admission.
 - `services/coworker/agent_runtime.py`: recheck the same persisted grant before task execution.
-- `tests/test_coworker.py::test_agent_task_scope_survives_plan_replan_and_worker_claim`: real SQLite repository and AgentRuntime path. Deny an unlisted step in plan/replan; persist an allowed step, simulate an altered persisted tool identity and prove the worker refuses to create a Task. Existing unscoped path remains covered by prior tests.
+- `tests/test_coworker.py::test_agent_task_scope_survives_plan_replan_and_worker_claim`: real SQLite repository and AgentRuntime path. Deny unlisted task/browser steps in plan/replan; persist an allowed task, simulate an altered persisted browser invocation and prove the worker refuses to create any Task or browser session. Existing unscoped path remains covered by prior tests.
 
 ## Required checks before repository verified
 
