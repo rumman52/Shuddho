@@ -147,34 +147,37 @@ def publication_sha256(
     )
 
 
-def build_pilot_publication(
+def build_reviewed_publication(
     *,
+    skill_name: str,
+    publication_version: str,
+    task_workflow_version: str,
     source_revision: str,
-    publication_version: str = REVIEWED_RESEARCH_PUBLICATION_VERSION,
-    task_workflow_version: str = REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
     rollback_target_version: str | None = None,
 ) -> dict[str, Any]:
     source_revision = _source_revision(source_revision)
-    if publication_version != REVIEWED_RESEARCH_PUBLICATION_VERSION:
-        raise CoworkerError(
-            "skill_publication_untrusted",
-            "Only the explicitly reviewed pilot publication may be published by this code path.",
-            409,
-        )
+    if type(publication_version) is not str or re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", publication_version) is None:
+        raise CoworkerError("skill_publication_untrusted", "The publication version is invalid.", 409)
+    if skill_name != REVIEWED_RESEARCH_SKILL:
+        raise CoworkerError("skill_publication_untrusted", "Only the reviewed research skill is supported.", 409)
     if task_workflow_version != REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION:
         raise CoworkerError(
             "skill_publication_untrusted",
-            "The reviewed pilot requires its registry-bound task workflow version.",
+            "The reviewed research publication requires a registry-bound supported workflow version.",
             409,
         )
+    if rollback_target_version is not None and (
+        type(rollback_target_version) is not str
+        or re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", rollback_target_version) is None
+        or rollback_target_version == publication_version
+    ):
+        raise CoworkerError("skill_publication_untrusted", "Rollback target must be another publication version.", 409)
     manifest = pilot_skill_manifest()
     validate_manifest(manifest, frozenset({REVIEWED_RESEARCH_TOOL}))
     if manifest.name != REVIEWED_RESEARCH_SKILL:
         raise CoworkerError("skill_publication_untrusted", "The reviewed pilot skill identity changed.", 409)
-    if rollback_target_version is not None and type(rollback_target_version) is not str:
-        raise CoworkerError("skill_publication_untrusted", "Rollback target must be a publication version.", 409)
     payload = publication_payload(
-        skill_name=REVIEWED_RESEARCH_SKILL,
+        skill_name=skill_name,
         publication_version=publication_version,
         task_workflow_version=task_workflow_version,
         source_revision=source_revision,
@@ -186,7 +189,7 @@ def build_pilot_publication(
         "manifest_version": manifest.version,
         "review_sha256": manifest.review_sha256(),
         "publication_sha256": publication_sha256(
-            skill_name=REVIEWED_RESEARCH_SKILL,
+            skill_name=skill_name,
             publication_version=publication_version,
             task_workflow_version=task_workflow_version,
             source_revision=source_revision,
@@ -196,6 +199,22 @@ def build_pilot_publication(
         "tool_names": list(manifest.tool_names),
         "resource_limits": asdict(manifest.resource_limits),
     }
+
+
+def build_pilot_publication(
+    *,
+    source_revision: str,
+    publication_version: str = REVIEWED_RESEARCH_PUBLICATION_VERSION,
+    task_workflow_version: str = REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
+    rollback_target_version: str | None = None,
+) -> dict[str, Any]:
+    return build_reviewed_publication(
+        skill_name=REVIEWED_RESEARCH_SKILL,
+        publication_version=publication_version,
+        task_workflow_version=task_workflow_version,
+        source_revision=source_revision,
+        rollback_target_version=rollback_target_version,
+    )
 
 
 def _publication_values(row: Any) -> tuple[CoworkerSkillManifest, str]:
@@ -254,13 +273,14 @@ def require_selected_pilot(row: Any, *, worker_source_revision: str | None) -> R
     validate_manifest(manifest, frozenset({REVIEWED_RESEARCH_TOOL}))
     if (
         row.skill_name != REVIEWED_RESEARCH_SKILL
-        or row.publication_version != REVIEWED_RESEARCH_PUBLICATION_VERSION
         or row.task_workflow_version != REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION
         or row.state != "published"
+        or list(row.tool_names or ()) != [REVIEWED_RESEARCH_TOOL]
+        or row.manifest_version != manifest.version
     ):
         raise CoworkerError(
             "skill_publication_unavailable",
-            "The selected reviewed research publication is not an active supported version.",
+            "The selected reviewed research publication is not a supported compatible version.",
             409,
         )
     if worker_source_revision != source_revision:
