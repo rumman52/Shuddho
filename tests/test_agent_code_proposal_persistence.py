@@ -1017,3 +1017,26 @@ def test_cw10_one_approved_proposal_cannot_create_two_sandbox_execution_rows(
     with container.repository.sessions() as db:
         assert db.get(SandboxExecution, first["id"]).agent_code_proposal_id == proposal_id
         assert db.get(SandboxExecution, second["id"]).agent_code_proposal_id is None
+
+def test_sqlite_0058_proposal_claim_fk_and_unique_identity_survive_migration(container):
+    """Mandatory transaction suites need a real 0058 FK, not an omitted SQLite constraint."""
+    from sqlalchemy import inspect
+
+    with container.repository.sessions() as db:
+        inspector = inspect(db.bind)
+        foreign = inspector.get_foreign_keys("cw_sandbox_executions")
+        assert any(
+            item["constrained_columns"] == ["agent_code_proposal_id"]
+            and item["referred_table"] == "cw_agent_code_proposals"
+            and item["referred_columns"] == ["id"]
+            for item in foreign
+        )
+        indexes = inspector.get_indexes("cw_sandbox_executions")
+        assert any(
+            entry["name"] == "ix_cw_sandbox_executions_agent_code_proposal_id"
+            and entry["unique"] is True
+            for entry in indexes
+        )
+        assert "agent_code_proposal_id" in {
+            entry["name"] for entry in inspector.get_columns("cw_sandbox_executions")
+        }
