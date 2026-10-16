@@ -1373,9 +1373,21 @@ class Repository:
             self._audit(db, task.owner_id, task_id, "task_cancelled" if cancelled else "task_failed")
             self._discard_extracted_text(db, task_id)
 
-    def claim_outbox(self, limit=10):
+    def claim_outbox(self, limit=10, *, worker_id: str | None = None):
         with self.sessions.begin() as db:
             now = utcnow()
+            if worker_id is not None:
+                worker = db.scalar(
+                    select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
+                )
+                cutoff = now - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
+                if (
+                    worker is None
+                    or worker.state != "running"
+                    or aware(worker.heartbeat_at) < cutoff
+                ):
+                    return []
+                worker.heartbeat_at = now
             rows = db.scalars(select(Outbox).where(Outbox.delivered.is_(False), or_(Outbox.lease_until.is_(None), Outbox.lease_until < now)).limit(limit).with_for_update(skip_locked=True)).all()
             for row in rows:
                 row.lease_until = now + timedelta(seconds=30)
