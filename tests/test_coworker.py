@@ -865,9 +865,11 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         )
     assert cancelled_replay.value.code == "skill_run_scope"
 
-    # A standalone existing research task has no Agent skill-grant contract.
+    # The owning account has two active tasks from the collision and reviewed
+    # admission cases. Verify standalone compatibility in a separate account
+    # so the regression does not trip the independent active-task quota.
     standalone, _ = container.repository.create_task(
-        owner, request, "standalone-research", enqueue=False,
+        outsider, request, "standalone-research", enqueue=False,
     )
     assert container.repository.worker_task(standalone["id"], False)["agent_run_id"] is None
 
