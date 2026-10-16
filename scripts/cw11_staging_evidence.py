@@ -43,6 +43,7 @@ def main() -> int:
         render_evidence.get("old_worker_instance_count") != 0
         or int(render_evidence.get("candidate_worker_instance_count", 0)) < 1
         or render_evidence.get("candidate_live_commit") != settings.source_revision
+        or render_evidence.get("old_source_revision") != args.old_source_revision
     ):
         raise SystemExit("Render evidence does not prove an active candidate and stopped legacy worker.")
     if settings.environment != "staging":
