@@ -17,7 +17,10 @@ from sqlalchemy import and_, case, func, select
 from services.coworker.database import session_factory
 from services.coworker.models import Step, Task
 from services.coworker.repository import TERMINAL
-from services.coworker.task_workflow_versions import REVIEWED_RESEARCH_WORKFLOW_VERSION
+from services.coworker.task_workflow_versions import (
+    LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    REVIEWED_RESEARCH_WORKFLOW_VERSION,
+)
 
 LEGACY_RESEARCH_WORKFLOW_VERSION = "work_research_v1"
 REVIEW_PHASE = "reviewed_skill_identity"
@@ -32,7 +35,11 @@ def inspect_reviewed_rollback(sessions) -> dict:
     # unlike four independent SELECTs under PostgreSQL READ COMMITTED.
     live = Task.state.not_in(TERMINAL)
     has_review = Step.task_id.is_not(None)
-    new_version = Task.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
+    fenced_versions = (
+        LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+        REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    )
+    new_version = Task.workflow_version.in_(fenced_versions)
     legacy = Task.workflow_version == LEGACY_RESEARCH_WORKFLOW_VERSION
     with sessions() as db:
         values = db.execute(

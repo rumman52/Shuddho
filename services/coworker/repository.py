@@ -1061,7 +1061,8 @@ class Repository:
                     db.get(Step, (previous.id, "reviewed_skill_identity")) is not None
                     or previous.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
                     or (
-                        request.skill_id == "research"
+                        self.settings.agent_reviewed_research_skill_enabled
+                        and request.skill_id == "research"
                         and agent_run_id is not None
                     )
                 ):
@@ -1079,7 +1080,7 @@ class Repository:
             if request.skill_id == "research" and agent_run_id is not None:
                 reviewed_skill_digest = self._require_reviewed_agent_research(
                     db, owner, agent_run_id, agent_step_id, request,
-                    enforce_gate=False,
+                    enforce_gate=True,
                 )
                 if reviewed_skill_digest is not None:
                     reviewed_publication = self._require_selected_reviewed_publication(
