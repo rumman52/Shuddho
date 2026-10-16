@@ -20,7 +20,7 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column(
             "agent_code_proposal_id",
             sa.String(36),
-            sa.ForeignKey("cw_agent_code_proposals.id"),
+            sa.ForeignKey("cw_agent_code_proposals.id", name="fk_cw_sandbox_executions_agent_code_proposal_id"),
             nullable=True,
         ))
     op.create_index(
