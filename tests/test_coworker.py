@@ -81,6 +81,28 @@ def account(container, subject="alice"):
     return container.repository.ensure_account(principal(subject))["account_id"]
 
 
+def enable_reviewed_pilot(container):
+    from services.coworker.reviewed_skill_registry import build_pilot_publication
+
+    settings = replace(container.settings, source_revision="a" * 40)
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    publication = build_pilot_publication(source_revision=settings.source_revision)
+    container.repository.publish_reviewed_skill(
+        publication,
+        actor_reference="test-operator",
+        reason="CW-11 test fixture publication",
+    )
+    container.repository.select_reviewed_skill(
+        "research",
+        publication["publication_version"],
+        actor_reference="test-operator",
+        reason="CW-11 test fixture selection",
+        worker_source_revision=settings.source_revision,
+    )
+
+
 def new_task(container, owner=None, **kwargs):
     return container.repository.create_task(owner or account(container), TaskCreate(
         instruction="Prepare a project report and email.", notes="Team completed 12 reviews on 10 September 2026.", **kwargs), "task-key-" + str(time.time_ns()))[0]
@@ -721,6 +743,7 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     container.settings = settings
     container.repository.settings = settings
     container.agent.settings = settings
+    enable_reviewed_pilot(container)
     owner = account(container)
     outsider = account(container, "bob")
     run, _ = container.agent.create(
@@ -782,7 +805,7 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         owner, request, "owned-reviewed-research", enqueue=False,
         agent_run_id=run["id"], agent_step_id=step_id,
     )
-    assert created and task["workflow_version"] == "work_research_reviewed_v1"
+    assert created and task["workflow_version"] == "work_research_reviewed_v2"
     # An older worker does not recognize this distinct workflow identity,
     # so rolling it back cannot silently run reviewed tasks as legacy research.
     from services.coworker.skills import skill_for_version
@@ -798,6 +821,9 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     with container.repository.sessions() as db:
         pinned = db.get(Step, (task["id"], "reviewed_skill_identity")).output
     assert pinned["review_sha256"] == pilot_skill_manifest().review_sha256()
+    assert pinned["publication_version"] == "research_reviewed_v1"
+    assert pinned["task_workflow_version"] == "work_research_reviewed_v2"
+    assert pinned["source_revision"] == "a" * 40
 
     # A stored review SHA is tied to the admitted Task: changed bytes
     # cannot be interpreted as an authorized publication/revision.
@@ -816,7 +842,7 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         container.repository.worker_task(task["id"], False)
     assert changed_skill.value.code == "skill_run_scope"
     with container.repository.sessions.begin() as db:
-        db.get(Task, task["id"]).workflow_version = "work_research_reviewed_v1"
+        db.get(Task, task["id"]).workflow_version = "work_research_reviewed_v2"
 
     with container.repository.sessions.begin() as db:
         db.scalar(select(ToolInvocation).where(
@@ -896,6 +922,7 @@ def test_reviewed_research_gate_disable_never_downgrades_pinned_task(container):
     container.settings = enabled
     container.repository.settings = enabled
     container.agent.settings = enabled
+    enable_reviewed_pilot(container)
 
     owner = account(container)
     run, _ = container.agent.create(
@@ -918,7 +945,7 @@ def test_reviewed_research_gate_disable_never_downgrades_pinned_task(container):
         agent_run_id=run["id"],
         agent_step_id=plan["tool_invocations"][0]["step_id"],
     )
-    assert task["workflow_version"] == "work_research_reviewed_v1"
+    assert task["workflow_version"] == "work_research_reviewed_v2"
     assert container.repository.worker_task(task["id"], False)["agent_run_id"] == run["id"]
     with container.repository.sessions() as db:
         assert db.get(Step, (task["id"], "reviewed_skill_identity")) is not None
@@ -1123,6 +1150,7 @@ def test_reviewed_agent_research_rejects_ungranted_planner_step_before_task_admi
     container.settings = settings
     container.repository.settings = settings
     container.agent.settings = settings
+    enable_reviewed_pilot(container)
     owner = account(container)
     run, _ = container.agent.create(
         owner, AgentRunCreate(goal="Prepare a daily plan.", output_language="en"),
