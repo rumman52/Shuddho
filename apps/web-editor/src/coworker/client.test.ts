@@ -225,7 +225,7 @@ test("CW-10 model source drafts are explicit owner requests, not sandbox dispatc
     assert.ok(!seen[0].url.includes("/dispatch"));
     assert.ok(!seen[0].url.includes("/sandbox"));
     assert.equal(seen[0].options?.body, undefined);
-    assert.throws(() => client.generateModelCodeProposal(runId, "../injected"));
+    await assert.rejects(client.generateModelCodeProposal(runId, "../injected"));
     assert.equal(seen.length, 1);
   } finally { globalThis.fetch = original; }
 });
