@@ -1117,3 +1117,25 @@ def test_review_list_hides_other_owners_revoked_expired_and_stale_sources(
     )
     assert revoked.status_code == 200
     assert client.get(path, headers=headers()).json()["proposals"] == []
+
+def test_review_list_hides_code_when_admitted_conversation_source_changes(
+    container, signed_client,
+):
+    from services.coworker.models import DocumentVersion
+
+    proposal, _, _, version_id = conversation_proposal(container)
+    client, headers = signed_client
+    run_id = str(proposal.run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201, created.text
+    route = f"/api/v1/agent-runs/{run_id}/code-proposals"
+    before = client.get(route, headers=headers())
+    assert before.status_code == 200
+    assert len(before.json()["proposals"]) == 1
+    assert proposal.source not in before.text
+    with container.repository.sessions.begin() as db:
+        db.get(DocumentVersion, version_id).sha256 = "e" * 64
+    after = client.get(route, headers=headers())
+    assert after.status_code == 200, after.text
+    assert after.json()["proposals"] == []
+    assert proposal.source not in after.text
