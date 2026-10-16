@@ -1502,6 +1502,14 @@ class AgentRepository:
             for offset, planned in enumerate(steps):
                 ordinal = from_ordinal + offset
                 spec = tool(planned.tool)
+                # Preserve the run\u0027s durable non-consequential grant for both
+                # initial planning and replans; attached actions have their own ledger.
+                if run.tool_allowlist and spec.kind == "task" and spec.name not in run.tool_allowlist:
+                    raise CoworkerError(
+                        "agent_tool_scope",
+                        "This task tool is outside the recorded run scope.",
+                        409,
+                    )
                 if not spec.enabled(self.settings):
                     raise CoworkerError("tool_not_supported", "A required Agent tool is not enabled in this runtime.", 409)
                 validated = spec.validate(planned.arguments)
@@ -1583,6 +1591,14 @@ class AgentRepository:
                 db.flush()
             for ordinal, planned in enumerate(steps, 1):
                 spec = tool(planned.tool)
+                # Preserve the run\u0027s durable non-consequential grant for both
+                # initial planning and replans; attached actions have their own ledger.
+                if run.tool_allowlist and spec.kind == "task" and spec.name not in run.tool_allowlist:
+                    raise CoworkerError(
+                        "agent_tool_scope",
+                        "This task tool is outside the recorded run scope.",
+                        409,
+                    )
                 if not spec.enabled(self.settings):
                     raise CoworkerError("tool_not_supported", "A required Agent tool is not enabled in this runtime.", 409)
                 validated = spec.validate(planned.arguments)
