@@ -195,6 +195,32 @@ export type NotificationDigest = {
   id: string; kind: string; title: string; count: number; unread_count: number;
   latest_at: string; notifications: (AgentNotification & { read_digest_id: string })[];
 };
+export type CodeReviewDecision = {
+  proposal_id: string; review_sha256: string; decision: "approve" | "reject";
+  decided_at: string; expires_at: string; revoked: boolean; expired: boolean;
+  execution_authorized: false; code_executed: false;
+};
+export type CodeProposalSummary = {
+  id: string; run_id: string; state: "unreviewed"; review_sha256: string;
+  created_at: string; expires_at: string;
+  human_review?: CodeReviewDecision;
+  execution_authorized: false; code_executed: false;
+};
+export type CodeProposalDetail = {
+  id: string; run_id: string; state: "unreviewed"; review_sha256: string;
+  created_at: string; expires_at: string;
+  approval_granted: false; code_executed: false;
+  human_review?: CodeReviewDecision;
+  proposal: {
+    schema_version: 1; owner_id: string; run_id: string;
+    source: string; source_sha256: string;
+    input_versions: { owner_id: string; document_id: string; version_id: string; source_sha256: string }[];
+    limits: { cpu_seconds: number; wall_seconds: number; memory_mb: number; disk_mb: number; stdout_bytes: number };
+    egress_profile: "none"; destinations: [];
+    created_at: string; expires_at: string;
+  };
+};
+
 export type AgentRun = {
   id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
   plan: { step_id: string; ordinal: number; tool: string | null; state: string; invocation_id: string | null; depends_on: number[] }[];
@@ -859,6 +885,30 @@ export class CoworkerClient {
   memoryProposals(signal?: AbortSignal) { return this.json<{ enabled: boolean; proposals: MemoryProposal[] }>("/api/v1/memory-proposals", { signal }); }
   acceptMemoryProposal(id: string) { return this.json<{ proposal: MemoryProposal; fact: MemoryFact | null }>(`/api/v1/memory-proposals/${identifier(id)}/accept`, { method: "POST" }); }
   rejectMemoryProposal(id: string) { return this.json<MemoryProposal>(`/api/v1/memory-proposals/${identifier(id)}/reject`, { method: "POST" }); }
+  reviewableCodeProposals(runId: string, signal?: AbortSignal) {
+    return this.json<{ proposals: CodeProposalSummary[]; execution_authorized: false }>(
+      `/api/v1/agent-runs/${identifier(runId)}/code-proposals`, { signal },
+    );
+  }
+  codeProposal(runId: string, proposalId: string, signal?: AbortSignal) {
+    return this.json<CodeProposalDetail>(
+      `/api/v1/agent-runs/${identifier(runId)}/code-proposals/${identifier(proposalId)}`, { signal },
+    );
+  }
+  reviewCodeProposal(runId: string, proposalId: string, hash: string, decision: "approve" | "reject", expiresAt: string) {
+    return this.json<CodeReviewDecision>(
+      `/api/v1/agent-runs/${identifier(runId)}/code-proposals/${identifier(proposalId)}/review`,
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ review_sha256: hash, decision, expires_at: expiresAt }) },
+    );
+  }
+  revokeCodeProposal(runId: string, proposalId: string, hash: string) {
+    return this.json<{ id: string; state: "revoked"; source_erased: true; approval_granted: false; code_executed: false }>(
+      `/api/v1/agent-runs/${identifier(runId)}/code-proposals/${identifier(proposalId)}/revoke`,
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ review_sha256: hash }) },
+    );
+  }
   agentContext(id: string, signal?: AbortSignal) { return this.json<AgentContext>(`/api/v1/agent-runs/${identifier(id)}/context`, { signal }); }
   agentTools(signal?: AbortSignal) { return this.json<{ enabled: boolean; tools: AgentTool[] }>("/api/v1/agent-tools", { signal }); }
   agentRuns(signal?: AbortSignal) { return this.json<{ runs: AgentRun[] }>("/api/v1/agent-runs", { signal }); }

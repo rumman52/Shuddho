@@ -166,3 +166,39 @@ test("browser workspace client keeps commands owner-authenticated and bounded to
     }
   } finally { globalThis.fetch = original; }
 });
+
+test("CW-10 code review client uses owner-authenticated exact identity without execution route", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  const run = "00000001-0000-4000-8000-000000000000";
+  const proposal = "00000002-0000-4000-8000-000000000000";
+  const digest = "a".repeat(64);
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    return new Response(JSON.stringify({ proposals: [], execution_authorized: false }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "code-review-bearer");
+    await client.reviewableCodeProposals(run);
+    await client.codeProposal(run, proposal);
+    await client.reviewCodeProposal(run, proposal, digest, "approve", "2026-10-16T05:00:00Z");
+    await client.revokeCodeProposal(run, proposal, digest);
+    assert.equal(seen.length, 4);
+    assert.equal(seen[0].url, `/backend/api/v1/agent-runs/${run}/code-proposals`);
+    assert.equal(seen[0].options?.method ?? "GET", "GET");
+    assert.equal(seen[1].url, `/backend/api/v1/agent-runs/${run}/code-proposals/${proposal}`);
+    assert.equal(seen[2].url, `/backend/api/v1/agent-runs/${run}/code-proposals/${proposal}/review`);
+    assert.deepEqual(JSON.parse(String(seen[2].options?.body)), {
+      review_sha256: digest, decision: "approve", expires_at: "2026-10-16T05:00:00Z",
+    });
+    assert.equal(seen[3].url, `/backend/api/v1/agent-runs/${run}/code-proposals/${proposal}/revoke`);
+    assert.deepEqual(JSON.parse(String(seen[3].options?.body)), { review_sha256: digest });
+    assert.ok(seen.every(item => new Headers(item.options?.headers).get("Authorization") === "Bearer code-review-bearer"));
+    assert.ok(seen.every(item => item.options?.credentials === "omit"));
+    assert.ok(seen.every(item => !item.url.includes("/executions")));
+    assert.throws(() => client.codeProposal(run, "../other-owner"));
+    assert.equal(seen.length, 4);
+  } finally { globalThis.fetch = original; }
+});
