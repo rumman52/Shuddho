@@ -886,8 +886,14 @@ export class CoworkerClient {
   acceptMemoryProposal(id: string) { return this.json<{ proposal: MemoryProposal; fact: MemoryFact | null }>(`/api/v1/memory-proposals/${identifier(id)}/accept`, { method: "POST" }); }
   rejectMemoryProposal(id: string) { return this.json<MemoryProposal>(`/api/v1/memory-proposals/${identifier(id)}/reject`, { method: "POST" }); }
   reviewableCodeProposals(runId: string, signal?: AbortSignal) {
-    return this.json<{ proposals: CodeProposalSummary[]; execution_authorized: false }>(
+    return this.json<{ proposals: CodeProposalSummary[]; execution_authorized: false; generation_enabled: boolean }>(
       `/api/v1/agent-runs/${identifier(runId)}/code-proposals`, { signal },
+    );
+  }
+  generateModelCodeProposal(runId: string, key: string) {
+    return this.json<CodeProposalDetail>(
+      `/api/v1/agent-runs/${identifier(runId)}/code-proposals/generate`,
+      { method: "POST", headers: { "Idempotency-Key": key } },
     );
   }
   codeProposal(runId: string, proposalId: string, signal?: AbortSignal) {
