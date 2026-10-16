@@ -1415,3 +1415,176 @@ def test_cw10_dispatch_cannot_accept_unreviewed_source_or_extra_model_grants(
         assert db.scalar(select(SandboxExecution).where(
             SandboxExecution.agent_code_proposal_id == proposal_id,
         )) is None
+
+
+
+def enable_inert_model_drafting(container):
+    settings = replace(
+        container.settings,
+        model_code_proposals_enabled=True,
+        deepseek_api_key="synthetic-model-key-only",
+    )
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.sandbox.settings = settings
+
+
+def request_inert_model_draft(client, headers, run_id, key="owner-generates-inert-code"):
+    return client.post(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/generate",
+        headers={**headers(), "Idempotency-Key": key},
+    )
+
+
+def test_model_code_producer_default_off_denies_before_any_paid_model_call(
+    container, signed_client, monkeypatch,
+):
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+
+    owner, run_id = active_agent(container)
+    called = []
+    async def forbidden(self, goal):
+        called.append(goal)
+        raise AssertionError("disabled generation must never call model")
+    monkeypatch.setattr(DeepSeekAgentPlanner, "propose_code", forbidden)
+    client, headers = signed_client
+    result = request_inert_model_draft(client, headers, run_id)
+    assert result.status_code == 503, result.text
+    assert result.json()["error"]["code"] == "model_code_proposals_disabled"
+    assert called == []
+
+
+def test_cw10_model_generated_code_is_owned_inert_reviewable_and_idempotent(
+    container, signed_client, monkeypatch,
+):
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+
+    owner, run_id = active_agent(container)
+    enable_inert_model_drafting(container)
+    called = []
+    source = "print('generated but never executed')\n"
+    async def generate(self, goal):
+        called.append(goal)
+        return source, 35
+    monkeypatch.setattr(DeepSeekAgentPlanner, "propose_code", generate)
+    client, headers = signed_client
+    first = request_inert_model_draft(client, headers, run_id)
+    assert first.status_code == 201, first.text
+    assert first.headers["Idempotent-Replayed"] == "false"
+    assert first.headers["Cache-Control"] == "no-store"
+    saved = first.json()
+    assert saved["proposal"]["source"] == source
+    assert saved["review_sha256"] == CodeProposalEnvelope.model_validate(
+        saved["proposal"],
+    ).review_sha256()
+    assert saved["approval_granted"] is False
+    assert saved["code_executed"] is False
+    with container.repository.sessions() as db:
+        stored = db.get(AgentCodeProposal, saved["id"])
+        assert stored.idempotency_key == "model-v1:owner-generates-inert-code"
+        assert stored.snapshot["source"] == source
+        assert db.scalar(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == stored.id,
+        )) is None
+    second = request_inert_model_draft(client, headers, run_id)
+    assert second.status_code == 201, second.text
+    assert second.headers["Idempotent-Replayed"] == "true"
+    assert second.json()["id"] == saved["id"]
+    assert len(called) == 1
+    listing = client.get(
+        f"/api/v1/agent-runs/{run_id}/code-proposals",
+        headers=headers(),
+    )
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["generation_enabled"] is True
+    assert listing.json()["execution_authorized"] is False
+    assert len(listing.json()["proposals"]) == 1
+    assert source not in listing.text
+    assert listing.json()["proposals"][0]["id"] == saved["id"]
+
+    foreign = account(container, "bob")
+    assert foreign != owner
+    denied = request_inert_model_draft(client, lambda: headers("bob"), run_id)
+    assert denied.status_code == 404, denied.text
+    assert len(called) == 1
+
+
+def test_cw10_model_code_generator_denies_unbound_private_document_before_provider(
+    container, signed_client, monkeypatch,
+):
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+
+    proposal, _, _, _ = conversation_proposal(container)
+    enable_inert_model_drafting(container)
+    called = []
+    async def forbidden(self, goal):
+        called.append(goal)
+        raise AssertionError("No selected source may reach unbound model generation")
+    monkeypatch.setattr(DeepSeekAgentPlanner, "propose_code", forbidden)
+    client, headers = signed_client
+    rejected = request_inert_model_draft(client, headers, str(proposal.run_id))
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["error"]["code"] == "code_context_unbound"
+    assert called == []
+
+
+def test_cw10_model_code_generation_rechecks_cancel_after_provider_result(
+    container, signed_client, monkeypatch,
+):
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+
+    owner, run_id = active_agent(container)
+    enable_inert_model_drafting(container)
+    async def cancel_during_generation(self, goal):
+        with container.repository.sessions.begin() as db:
+            db.get(AgentRun, run_id).cancel_requested = True
+        return "print('cancelled')\n", 20
+    monkeypatch.setattr(DeepSeekAgentPlanner, "propose_code", cancel_during_generation)
+    client, headers = signed_client
+    rejected = request_inert_model_draft(client, headers, run_id)
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["error"]["code"] == "code_run_closed"
+    with container.repository.sessions() as db:
+        assert db.scalars(select(AgentCodeProposal).where(
+            AgentCodeProposal.run_id == run_id,
+        )).all() == []
+
+
+def test_cw10_model_code_producer_invalid_output_is_not_persisted(
+    container, signed_client, monkeypatch,
+):
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+
+    owner, run_id = active_agent(container)
+    enable_inert_model_drafting(container)
+    async def malformed(self, goal):
+        raise PlannerFailure(
+            "invalid_code_proposal",
+            "The model did not return one bounded Python source draft.",
+            total_tokens=31,
+        )
+    monkeypatch.setattr(DeepSeekAgentPlanner, "propose_code", malformed)
+    client, headers = signed_client
+    rejected = request_inert_model_draft(client, headers, run_id)
+    assert rejected.status_code == 502, rejected.text
+    assert rejected.json()["error"]["code"] == "invalid_code_proposal"
+    with container.repository.sessions() as db:
+        assert db.scalars(select(AgentCodeProposal).where(
+            AgentCodeProposal.run_id == run_id,
+        )).all() == []
+        assert db.get(AgentRun, run_id).planner_calls == 1
+
+
+def test_cw10_owner_code_endpoint_cannot_forge_model_provenance(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    payload = sample_proposal(owner, run_id)
+    forged = prepare(
+        client, headers, run_id, payload, key="model-v1:owner-forged-key",
+    )
+    assert forged.status_code == 422, forged.text
+    assert forged.json()["error"]["code"] == "idempotency_key_reserved"
