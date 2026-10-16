@@ -918,7 +918,7 @@ def test_cw10_approved_worker_claim_rechecks_hash_and_releases_exact_source(
     assert container.sandbox.get_execution(owner, execution["id"])["state"] == "running"
 
 
-@pytest.mark.parametrize("termination", ["revocation", "expiry", "source_change"])
+@pytest.mark.parametrize("termination", ["revocation", "expiry", "source_change", "policy_drift"])
 def test_cw10_review_termination_stops_claimed_worker_and_rejects_completion(
     container, signed_client, termination,
 ):
@@ -936,10 +936,15 @@ def test_cw10_review_termination_stops_claimed_worker_and_rejects_completion(
             proposal_row.snapshot = {}
         elif termination == "expiry":
             review.expires_at = utcnow() - timedelta(seconds=1)
-        else:
+        elif termination == "source_change":
             edited = dict(proposal_row.snapshot)
             edited["source"] = "print('altered')\n"
             proposal_row.snapshot = edited
+        else:
+            saved_session = db.get(SandboxSession, session["id"])
+            changed_policy = dict(saved_session.execution_policy)
+            changed_policy["network"] = "allow"
+            saved_session.execution_policy = changed_policy
 
     with pytest.raises(CoworkerError) as rejection:
         container.sandbox.complete_execution(
