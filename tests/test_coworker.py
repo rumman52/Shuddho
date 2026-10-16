@@ -709,6 +709,10 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     from services.coworker.schemas import ResearchOptions
     from services.coworker.skills import SKILLS
 
+    with pytest.raises(ValueError, match="Reviewed Agent research requires"):
+        replace(
+            container.settings, agent_reviewed_research_skill_enabled=True,
+        ).validate()
     settings = replace(
         container.settings, agent_runtime_enabled=True,
         research_services_enabled=True, agent_reviewed_research_skill_enabled=True,
@@ -747,12 +751,32 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         )
     assert cross_owner.value.code == "skill_run_scope"
 
+    with pytest.raises(CoworkerError) as changed_query:
+        container.repository.create_task(
+            owner,
+            TaskCreate(
+                skill_id="research", instruction=arguments["instruction"],
+                research=ResearchOptions(query="a different query", time_range="any"),
+            ),
+            "changed-query-research", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert changed_query.value.code == "skill_run_scope"
+
     task, created = container.repository.create_task(
         owner, request, "owned-reviewed-research", enqueue=False,
         agent_run_id=run["id"], agent_step_id=step_id,
     )
     assert created and task["workflow_version"] == "work_research_v1"
     assert container.repository.worker_task(task["id"], False)["agent_step_id"] == step_id
+
+    with container.repository.sessions.begin() as db:
+        db.get(Task, task["id"]).workflow_version = "work_email_v1"
+    with pytest.raises(CoworkerError) as changed_skill:
+        container.repository.worker_task(task["id"], False)
+    assert changed_skill.value.code == "skill_run_scope"
+    with container.repository.sessions.begin() as db:
+        db.get(Task, task["id"]).workflow_version = "work_research_v1"
 
     with container.repository.sessions.begin() as db:
         db.scalar(select(ToolInvocation).where(
