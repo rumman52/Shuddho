@@ -1874,10 +1874,12 @@ def test_agent_action_selection_releases_only_unselected_pending_drafts(containe
 
         async def propose(self, _goal, tools, **_kwargs):
             self.tools = list(tools)
+            # Replanning renumbers surviving handles after unselected drafts release.
+            selected = "attached.email.2" if "attached.email.2" in tools else "attached.email.1"
             return AgentPlannerProposal.model_validate({
                 "steps": [
                     {
-                        "tool": "attached.email.2",
+                        "tool": selected,
                         "objective": "Use the second attached draft.",
                     },
                 ]
@@ -1904,6 +1906,12 @@ def test_agent_action_selection_releases_only_unselected_pending_drafts(containe
     saved = container.agent.get(owner, run["id"])
     assert saved["action_ids"] == [second["id"]]
     assert saved["steps"][0]["tool"] == "email.send"
+    assert asyncio.run(runtime.replan(run["id"], 1)) == 1
+    assert "attached.email.1" in planner.tools
+    assert "attached.email.2" not in planner.tools
+    replanned = container.agent.get(owner, run["id"])
+    assert replanned["action_ids"] == [second["id"]]
+    assert replanned["steps"][0]["tool"] == "email.send"
     assert provider.sent == []
 
     with container.repository.sessions() as db:
