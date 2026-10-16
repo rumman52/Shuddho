@@ -174,7 +174,9 @@ class ReviewedSkillRegistryEvent(Base):
     event_type: Mapped[str] = mapped_column(String(60))
     actor_reference: Mapped[str] = mapped_column(String(200))
     reason: Mapped[str] = mapped_column(String(500))
-    metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # ``metadata`` is reserved by SQLAlchemy DeclarativeBase; keep the
+    # existing database column name while using a safe Python attribute.
+    event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (
         Index(

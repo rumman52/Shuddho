@@ -112,6 +112,26 @@ def reviewed_task(container, owner: str, key: str):
     return task
 
 
+def test_registry_event_maps_reserved_metadata_column_without_reserved_orm_attribute(container):
+    """Keep the legacy SQL column while avoiding SQLAlchemy's reserved attribute name."""
+    assert ReviewedSkillRegistryEvent.__table__.c.metadata.name == "metadata"
+    with container.repository.sessions.begin() as db:
+        db.add(
+            ReviewedSkillRegistryEvent(
+                id="registry-event-metadata-regression",
+                skill_name=REVIEWED_RESEARCH_SKILL,
+                event_type="test_metadata",
+                actor_reference="cw11-test-operator",
+                reason="reserved ORM name regression",
+                event_metadata={"revision": REV_A},
+            )
+        )
+
+    history = container.repository.reviewed_control_history(limit=1)
+    assert history[0]["event_type"] == "test_metadata"
+    assert history[0]["metadata"] == {"revision": REV_A}
+
+
 def test_publication_is_source_bound_and_not_auto_selected(container):
     mismatched = build_reviewed_publication(
         skill_name=REVIEWED_RESEARCH_SKILL,
