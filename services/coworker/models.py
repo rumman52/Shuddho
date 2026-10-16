@@ -147,6 +147,8 @@ class ReviewedSkillPublication(Base):
     manifest: Mapped[dict[str, Any]] = mapped_column(JSON)
     rollback_target_version: Mapped[str | None] = mapped_column(String(80))
     state: Mapped[str] = mapped_column(String(20), default="published")
+    published_by: Mapped[str] = mapped_column(String(200), nullable=False, default="operator")
+    publication_reason: Mapped[str] = mapped_column(String(500), nullable=False, default="reviewed publication")
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (
@@ -192,6 +194,8 @@ class WorkerInstance(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     drain_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    drain_requested_by: Mapped[str | None] = mapped_column(String(200))
+    drain_reason: Mapped[str | None] = mapped_column(String(500))
     drained_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         Index(
