@@ -273,10 +273,10 @@ class AgentRuntime:
         spec = tool(invocation["tool"])
         # Recheck the durable run grant before touching task state or providers.
         # This also rejects stale/forged persisted steps after planner admission.
-        if run.get("tool_allowlist") and spec.kind == "task" and spec.name not in run["tool_allowlist"]:
+        if run.get("tool_allowlist") and spec.kind != "approved_action" and spec.name not in run["tool_allowlist"]:
             raise CoworkerError(
                 "agent_tool_scope",
-                "This task tool is outside the recorded run scope.",
+                "This tool is outside the recorded run scope.",
                 409,
             )
         if not spec.enabled(self.container.settings) and spec.kind == "task":
