@@ -938,6 +938,76 @@ def test_reviewed_research_rechecks_revocation_after_search_reservation(containe
     assert receipt["accounted_credits"] == 0
 
 
+
+def test_reviewed_research_rejects_new_document_version_under_same_id(container):
+    """Agent research cannot silently upgrade the exact source version it admitted."""
+    from uuid import UUID, uuid4
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import DocumentVersion
+    from services.coworker.schemas import ResearchOptions
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True,
+        research_services_enabled=True, agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    raw = b"Reviewed document version"
+    uploaded = container.repository.create_upload(
+        owner, UploadRequest(
+            filename="reviewed.txt", byte_size=len(raw),
+            sha256=hashlib.sha256(raw).hexdigest(),
+        ),
+    )
+    container.repository.finish_upload(owner, uploaded["id"])
+    document_id = UUID(uploaded["id"])
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Research a public comparison report.",
+            document_ids=[document_id], output_language="en",
+        ),
+        "reviewed-source-version-run", tool_allowlist=["research.search"],
+    )
+    plan = container.agent.save_plan(owner, run["id"], [AgentPlanStep(
+        tool="research.search", arguments={
+            "instruction": "Research a public comparison report.",
+            "notes": "", "document_ids": [str(document_id)],
+            "output_language": "en", "query": "public source comparison",
+            "time_range": "any",
+        },
+    )])
+    task, _ = container.repository.create_task(
+        owner,
+        TaskCreate(
+            skill_id="research",
+            instruction="Research a public comparison report.",
+            document_ids=[document_id],
+            research=ResearchOptions(query="public source comparison"),
+        ),
+        "reviewed-source-version-task", enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=plan["tool_invocations"][0]["step_id"],
+    )
+    assert container.repository.worker_task(task["id"], False)["documents"][0]["version_id"] == uploaded["version_id"]
+
+    with container.repository.sessions.begin() as db:
+        old = db.get(DocumentVersion, uploaded["version_id"])
+        later = DocumentVersion(
+            id=str(uuid4()), version=2, document_id=old.document_id,
+            owner_id=owner, kind=old.kind, byte_size=old.byte_size,
+            sha256=old.sha256, object_key=old.object_key + "-next",
+            state="uploaded", expires_at=old.expires_at,
+        )
+        db.add(later)
+        db.get(Task, task["id"]).input_versions = [later.id]
+    with pytest.raises(CoworkerError) as changed_version:
+        container.repository.worker_task(task["id"], False)
+    assert changed_version.value.code == "skill_run_scope"
+
+
 def test_reviewed_agent_research_rejects_ungranted_planner_step_before_task_admission(container):
     """No task may be created using a different legitimate run step as research authority."""
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
