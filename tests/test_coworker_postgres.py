@@ -41,6 +41,13 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
         tables = set(inspect(db.bind).get_table_names(schema="shuddho_coworker"))
         assert "cw_tasks" in tables
         assert {"cw_conversations", "cw_conversation_messages"} <= tables
+        assert "cw_agent_code_reviews" in tables
+        sandbox_columns = {
+            column["name"] for column in inspect(db.bind).get_columns(
+                "cw_sandbox_executions", schema="shuddho_coworker",
+            )
+        }
+        assert "agent_code_proposal_id" in sandbox_columns
         assert {
             "cw_transactions",
             "cw_transaction_revisions",
