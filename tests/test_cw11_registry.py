@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import pytest
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for CW-11 tests")
+pytest.importorskip("temporalio", reason="Install the coworker extra for CW-11 tests")
 
 from sqlalchemy import select
 
