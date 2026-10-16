@@ -131,7 +131,7 @@ jobs:
               echo "## CW-11 staging evidence"
               echo ""
               cat /tmp/cw11-staging-evidence.json
-            } >> "\${GITHUB_STEP_SUMMARY}"
+            } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
       - name: Upload evidence artifact
