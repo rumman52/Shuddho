@@ -673,7 +673,32 @@ def test_agent_dependency_graph_replan_rebuilds_only_unstarted_edges(container):
     assert replaced["steps"][2]["depends_on"] == [2]
 
 
-def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
+def seed_parallel_work_dependencies(container, owner, run_id):
+    """Seed a valid persisted DAG for scheduler/restart tests.
+
+    The planner derives document dependencies conservatively. These tests
+    exercise durable graph execution, not that separate derivation contract.
+    Two research branches cannot use the reviewed pilot's one-call budget.
+    """
+    from sqlalchemy import select
+    from services.coworker.models import AgentStep
+
+    with container.repository.sessions.begin() as db:
+        steps = db.scalars(select(AgentStep).where(
+            AgentStep.owner_id == owner,
+            AgentStep.run_id == run_id,
+        ).order_by(AgentStep.ordinal)).all()
+        assert len(steps) == 3
+        assert [step.tool_name for step in steps] == [
+            "research.search", "document.create", "document.create",
+        ]
+        steps[1].depends_on_ordinals = []
+        steps[2].depends_on_ordinals = [1, 2]
+    saved = container.agent.get(owner, run_id)
+    assert [step["depends_on"] for step in saved["steps"]] == [[], [], [1, 2]]
+
+
+def test_agent_v2_fans_out_research_and_work_steps_then_fans_in(container):
     async def scenario():
         enabled = replace(
             container.settings,
@@ -698,21 +723,21 @@ def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
             "agent-parallel-fan-in",
             tool_allowlist=["document.create", "research.search"],
         )
-        saved = container.agent.save_plan(owner, run["id"], [
+        container.agent.save_plan(owner, run["id"], [
             AgentPlanStep(tool="research.search", arguments={
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
                 "output_language": "en", "query": "first public project update", "time_range": "any",
             }),
-            AgentPlanStep(tool="research.search", arguments={
-                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
-                "output_language": "en", "query": "second public project update", "time_range": "any",
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create an independent supporting note.", "notes": "",
+                "document_ids": [], "output_language": "en",
             }),
             AgentPlanStep(tool="document.create", arguments={
                 "instruction": "Create the combined project document.", "notes": "",
                 "document_ids": [], "output_language": "en",
             }),
         ])
-        assert [step["depends_on"] for step in saved["steps"]] == [[], [], [1, 2]]
+        seed_parallel_work_dependencies(container, owner, run["id"])
 
         entered = set()
         finished = set()
@@ -780,15 +805,16 @@ def test_agent_v2_failed_branch_preserves_completed_independent_work_and_blocks_
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
                 "output_language": "en", "query": "first public project update", "time_range": "any",
             }),
-            AgentPlanStep(tool="research.search", arguments={
-                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
-                "output_language": "en", "query": "second public project update", "time_range": "any",
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create an independent supporting note.", "notes": "",
+                "document_ids": [], "output_language": "en",
             }),
             AgentPlanStep(tool="document.create", arguments={
                 "instruction": "Create the combined project document.", "notes": "",
                 "document_ids": [], "output_language": "en",
             }),
         ])
+        seed_parallel_work_dependencies(container, owner, run["id"])
         runner = DocumentRunner(container, WorkModel(), research=SimulatedResearch(enabled))
 
         class OneBranchFails(AgentRuntime):
@@ -846,15 +872,16 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
                 "output_language": "en", "query": "first public project update", "time_range": "any",
             }),
-            AgentPlanStep(tool="research.search", arguments={
-                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
-                "output_language": "en", "query": "second public project update", "time_range": "any",
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create an independent supporting note.", "notes": "",
+                "document_ids": [], "output_language": "en",
             }),
             AgentPlanStep(tool="document.create", arguments={
                 "instruction": "Create the combined project document.", "notes": "",
                 "document_ids": [], "output_language": "en",
             }),
         ])
+        seed_parallel_work_dependencies(container, owner, run["id"])
         model = WorkModel()
         search = SimulatedResearch(enabled)
         checkpoint = asyncio.Event()
@@ -864,7 +891,7 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
             async def draft(self, task):
                 await super().draft(task)
                 worker_task = self.container.repository.worker_task(task["id"], False)
-                if worker_task["skill_id"] == "research":
+                if worker_task["skill_id"] in {"research", "document"}:
                     drafted.add(task["id"])
                     if len(drafted) == 2:
                         checkpoint.set()
@@ -896,7 +923,7 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
         final = container.agent.get(owner, run["id"])
         assert final["state"] == "completed"
         assert model.calls == 3
-        assert search.calls == 2
+        assert search.calls == 1
         assert all(step["state"] == "completed" for step in final["steps"])
 
     asyncio.run(scenario())

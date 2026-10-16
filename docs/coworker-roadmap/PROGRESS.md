@@ -1,3 +1,29 @@
+## CW-11 parallel scheduler fixture correction — 17 October 2026 (Asia/Dhaka)
+
+**Resume base:** main `272186af38965ab60e6c551e8ebce9337c6e6ae0`; open [PR #444](https://github.com/rumman52/Shuddho/pull/444) head `c99cd56c0f774beed5995a794e444b54afc42971`. This session reproduced a remaining fixture defect before repairing it: the research/document/document plan derives `[[], [1], [2]]`, while the fan-in test asserts `[[], [], [1, 2]]`. The same sequential graph prevents the restart fixture's two-branch barrier from being reached.
+
+**Correction:** a test-only helper seeds the explicit persisted three-node DAG for the three scheduler/recovery tests. The real SQL repository, dispatcher, Temporal workflow and runtime still execute the graph. Existing plan-derivation tests remain unchanged. Reviewed research remains one call per run; no production dependency rules, authority, budgets or default-off controls are changed.
+
+**Local evidence:** affected Temporal tests **3 passed, 25 deselected**; reviewed/research tests in `test_coworker.py` **6 passed, 81 deselected**. Full Temporal suite is running; exact amended-head CI remains required. Independent bounded review is in progress. The GitHub automated review attempt on #444 failed due to account review quota, not a demonstrated code finding. No merge/deployment/activation performed.
+
+**Next:** verify amended #444 with all three mandatory CI jobs and review. A separate staging-collector safety patch is preserved for independent review: reuse rollback task-ledger classification and validate external evidence at the collection boundary. Real staging worker/drain/replay evidence and overall A/C/P/V qualification remain incomplete.
+
+---
+
+## CW-11 reviewed research parallel-test contract repair — 16 October 2026
+
+**Live mainline truth:** `main` `272186af38965ab60e6c551e8ebce9337c6e6ae0` includes merged [PR #443](https://github.com/rumman52/Shuddho/pull/443), but both its exact-head CI [#38944172227](https://github.com/rumman52/Shuddho/actions/runs/38944172227) and merged-main CI [#38944959166](https://github.com/rumman52/Shuddho/actions/runs/38944959166) failed the mandatory `coworker` job while `test-and-build` passed. The mainline is therefore **not repository-verified**.
+
+**Failure analysis:** The earlier Temporal failures were caused by fan-out/fan-in/restart fixtures issuing two `research.search` calls after explicitly selecting the reviewed pilot, whose accepted manifest imposes a one-call-per-Agent-run limit. A temporary attempt to route around this by honoring the mutable feature flag contradicted the registry contract: explicit publication selection remains the Agent research gate even if that flag changes, as tested by `test_selected_publication_remains_the_agent_gate_after_feature_flag_off`. That attempt also caused the current mainline registry regression. Do not weaken the one-call limit or treat flag-off as permission to downgrade selected/pinned reviewed work.
+
+**Correction branch:** `codex/cw11-regression-ci-fixes-20261016`, corrective source/test commit `f425760326b96739067d845a7b9ac88c4476e175` before this checkpoint update. It restores the registry-authoritative admission/replay behavior, removes the contradictory test, and keeps the Temporal concurrency/recovery tests meaningful with one reviewed research task plus one independent document task. The rollback preflight still fences both legacy reviewed v1 and current reviewed v2 workflow identities. No authority, provider budget, workflow version or release flag is widened.
+
+**Evidence:** Correction is not yet verified until exact-head `test-and-build`, mandatory no-skip `coworker`, and `ci-merge-gate` all pass on the final corrective revision. The staging workflow has not been run; its actual staging environment, Render worker IDs and operated drain evidence remain separate required inputs. No staging, production qualification or activation is claimed.
+
+**Next:** open a corrective PR from this branch, inspect the exact final-head CI and fix any remaining failures without changing the reviewed one-call contract. Only after CI is green, continue with the protected `CW11-STAGING` operated evidence gate and verify the artifact against the exact candidate revision. Overall CW-11 remains **INCOMPLETE**.
+
+---
+
 ## CW-11 / A-03 rollback preflight mandatory-CI repair — 16 October 2026
 
 **Fresh failure evidence:** merged `main` `b0d6c56f81e81fef8da1cc75a0a0a215c89c992f`; exact PR-head CI [#38915877509](https://github.com/rumman52/Shuddho/actions/runs/38915877509) for #437 failed only in mandatory `coworker`: `test-and-build` passed, `coworker` failed, and `ci-merge-gate` failed. The coworker suite reported **1402 passed, 2 failed**.
