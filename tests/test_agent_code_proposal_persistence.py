@@ -829,6 +829,12 @@ def reviewed_sandbox_candidate(container, signed_client, *, approved=True, limit
     from test_sandbox_control_plane import create_session
     from services.coworker.sandbox_schemas import SandboxExecutionCreate
     owner, run_id = active_agent(container)
+    dispatch_settings = replace(container.settings, code_proposal_dispatch_enabled=True)
+    dispatch_settings.validate()
+    container.settings = dispatch_settings
+    container.repository.settings = dispatch_settings
+    container.agent.settings = dispatch_settings
+    container.sandbox.settings = dispatch_settings
     client, headers = signed_client
     proposal = sample_proposal(owner, run_id)
     if not limited:
@@ -1139,3 +1145,196 @@ def test_review_list_hides_code_when_admitted_conversation_source_changes(
     assert after.status_code == 200, after.text
     assert after.json()["proposals"] == []
     assert proposal.source not in after.text
+
+def dispatch_ready(container, signed_client, *, approve=True, source=None, inputs=()):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    policy = container.settings
+    proposal = sample_proposal(
+        owner, run_id,
+        source=source or "print('human reviewed source')\n",
+        input_versions=inputs,
+    ).model_copy(update={"limits": CodeComputeLimits(
+        cpu_seconds=policy.sandbox_cpu_seconds,
+        wall_seconds=policy.sandbox_wall_seconds,
+        memory_mb=policy.sandbox_memory_mb,
+        disk_mb=policy.sandbox_disk_mb,
+        stdout_bytes=policy.sandbox_max_output_bytes,
+    )})
+    response = prepare(client, headers, run_id, proposal, key="dispatch-immutable-source")
+    assert response.status_code == 201, response.text
+    proposal_id = response.json()["id"]
+    if approve:
+        reviewed = human_review(client, headers, run_id, proposal_id, proposal.review_sha256())
+        assert reviewed.status_code == 200, reviewed.text
+        assert reviewed.json()["execution_authorized"] is False
+    url = f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}/dispatch"
+    return owner, run_id, proposal_id, proposal, client, headers, url
+
+
+def enable_reviewed_dispatch(container):
+    settings = replace(container.settings, code_proposal_dispatch_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.sandbox.settings = settings
+
+
+def post_dispatch(client, headers, url, digest):
+    return client.post(url, headers=headers(), json={"review_sha256": digest})
+
+
+def test_cw10_dispatch_requires_independent_default_off_flag_and_real_owner_review(
+    container, signed_client,
+):
+    owner, run_id, proposal_id, proposal, client, headers, url = dispatch_ready(
+        container, signed_client, approve=False,
+    )
+    disabled = post_dispatch(client, headers, url, proposal.review_sha256())
+    assert disabled.status_code == 503, disabled.text
+    assert disabled.json()["error"]["code"] == "reviewed_dispatch_disabled"
+    enable_reviewed_dispatch(container)
+    unreviewed = post_dispatch(client, headers, url, proposal.review_sha256())
+    assert unreviewed.status_code == 409, unreviewed.text
+    assert unreviewed.json()["error"]["code"] == "code_review_ineligible"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == proposal_id,
+        )) is None
+
+
+def test_cw10_reviewed_dispatch_is_owner_intent_exactly_once_with_worker_guard(
+    container, signed_client,
+):
+    owner, run_id, proposal_id, proposal, client, headers, url = dispatch_ready(
+        container, signed_client,
+    )
+    enable_reviewed_dispatch(container)
+    first = post_dispatch(client, headers, url, proposal.review_sha256())
+    assert first.status_code == 201, first.text
+    assert first.headers["Cache-Control"] == "no-store"
+    assert first.headers["Idempotent-Replayed"] == "false"
+    result = first.json()
+    assert result["execution_authorized"] is True
+    assert result["code_executed"] is False
+    assert result["execution"]["source_sha256"] == proposal.source_sha256
+    assert result["execution"]["state"] == "prepared"
+    assert proposal.source not in first.text
+    second = post_dispatch(client, headers, url, proposal.review_sha256())
+    assert second.status_code == 201, second.text
+    assert second.headers["Idempotent-Replayed"] == "true"
+    assert second.json()["execution"]["id"] == result["execution"]["id"]
+    assert second.json()["session_id"] == result["session_id"]
+    with container.repository.sessions() as db:
+        records = db.scalars(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == proposal_id,
+        )).all()
+        assert len(records) == 1
+        assert records[0].request_spec["source"] == proposal.source
+        assert db.get(SandboxSession, result["session_id"]).workspace_id == db.get(
+            AgentRun, run_id,
+        ).workspace_id
+    claims = container.sandbox.claim_executions("cw10-reviewed-worker")
+    assert len(claims) == 1
+    assert claims[0]["id"] == result["execution"]["id"]
+    assert claims[0]["source"] == proposal.source
+    assert len(container.sandbox.claim_executions("other-worker")) == 0
+
+
+@pytest.mark.parametrize("failure", [
+    "wrong_hash", "foreign_owner", "expired_review", "revoked",
+    "tampered_source", "cancelled_run", "too_small_limits", "context_changed",
+])
+def test_cw10_dispatch_fails_closed_on_current_consent_and_context(
+    container, signed_client, failure,
+):
+    owner, run_id, proposal_id, proposal, client, headers, url = dispatch_ready(
+        container, signed_client,
+    )
+    enable_reviewed_dispatch(container)
+    if failure == "foreign_owner":
+        account(container, "bob")
+        denied = post_dispatch(client, lambda: headers("bob"), url, proposal.review_sha256())
+        assert denied.status_code == 404
+    else:
+        with container.repository.sessions.begin() as db:
+            row = db.get(AgentCodeProposal, proposal_id)
+            review = db.get(AgentCodeReview, proposal_id)
+            if failure == "expired_review":
+                review.expires_at = utcnow() - timedelta(seconds=1)
+            elif failure == "revoked":
+                review.revoked_at = utcnow()
+            elif failure == "tampered_source":
+                snapshot = dict(row.snapshot)
+                snapshot["source"] = "print('forged')\n"
+                row.snapshot = snapshot
+            elif failure == "cancelled_run":
+                db.get(AgentRun, run_id).cancel_requested = True
+            elif failure == "too_small_limits":
+                snapshot = dict(row.snapshot)
+                snapshot["limits"] = {**snapshot["limits"], "memory_mb": 64}
+                row.snapshot = snapshot
+            elif failure == "context_changed":
+                db.get(AgentRun, run_id).input_versions = [str(uuid4())]
+        digest = "b" * 64 if failure == "wrong_hash" else proposal.review_sha256()
+        denied = post_dispatch(client, headers, url, digest)
+        assert denied.status_code == 409, denied.text
+    with container.repository.sessions() as db:
+        assert db.scalar(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == proposal_id,
+        )) is None
+
+
+def test_cw10_dispatch_rejects_private_inputs_before_worker_could_access_them(
+    container, signed_client,
+):
+    proposal, _, _, _ = conversation_proposal(container)
+    client, headers = signed_client
+    run_id = str(proposal.run_id)
+    policy = container.settings
+    proposal = proposal.model_copy(update={"limits": CodeComputeLimits(
+        cpu_seconds=policy.sandbox_cpu_seconds,
+        wall_seconds=policy.sandbox_wall_seconds,
+        memory_mb=policy.sandbox_memory_mb,
+        disk_mb=policy.sandbox_disk_mb,
+        stdout_bytes=policy.sandbox_max_output_bytes,
+    )})
+    result = prepare(client, headers, run_id, proposal, key="review-private-input-dispatch")
+    assert result.status_code == 201, result.text
+    proposal_id = result.json()["id"]
+    reviewed = human_review(client, headers, run_id, proposal_id, proposal.review_sha256())
+    assert reviewed.status_code == 200, reviewed.text
+    enable_reviewed_dispatch(container)
+    denied = post_dispatch(
+        client, headers, f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}/dispatch",
+        proposal.review_sha256(),
+    )
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["error"]["code"] == "code_inputs_unsupported"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == proposal_id,
+        )) is None
+
+
+def test_cw10_feature_disabled_rejects_claim_of_prepared_linked_work(
+    container, signed_client,
+):
+    owner, run_id, proposal_id, proposal, client, headers, url = dispatch_ready(
+        container, signed_client,
+    )
+    enable_reviewed_dispatch(container)
+    first = post_dispatch(client, headers, url, proposal.review_sha256())
+    assert first.status_code == 201, first.text
+    disabled = replace(container.settings, code_proposal_dispatch_enabled=False)
+    container.settings = disabled
+    container.repository.settings = disabled
+    container.agent.settings = disabled
+    container.sandbox.settings = disabled
+    assert container.sandbox.claim_executions("disabled-claim") == []
+    with container.repository.sessions() as db:
+        execution = db.get(SandboxExecution, first.json()["execution"]["id"])
+        assert execution.state == "failed"
+        assert execution.error_code == "code_review_ineligible"
+        assert execution.request_spec == {"source_scrubbed": True}
