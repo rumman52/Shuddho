@@ -109,7 +109,7 @@ jobs:
           candidate_count="$(jq 'length' <<<"${candidate_instances}")"
 
           old_commit="$(jq -r '
-            map(select(.status == "live" and (.commit.id? | type == "string")))
+            map(select(.commit.id? | type == "string"))
             | sort_by(.createdAt)
             | last
             | .commit.id // empty
