@@ -226,7 +226,7 @@ def test_reviewed_skill_rollback_preflight_rejects_unfenced_or_unpinned_live_tas
     container = Container.create(settings)
     try:
         admitted = []
-        for label in ("legacy", "fenced", "missing", "completed"):
+        for label in ("legacy", "fenced", "missing", "completed", "agent-missing"):
             member = Principal(issuer, f"rollback-preflight-{label}", 0)
             container.repository.ensure_account(member)
             task, _ = container.repository.create_task(
@@ -236,7 +236,7 @@ def test_reviewed_skill_rollback_preflight_rejects_unfenced_or_unpinned_live_tas
                 enqueue=False,
             )
             admitted.append(task["id"])
-        legacy_id, fenced_id, missing_id, completed_id = admitted
+        legacy_id, fenced_id, missing_id, completed_id, agent_missing_id = admitted
         with container.repository.sessions.begin() as db:
             legacy = db.get(Task, legacy_id)
             legacy.workflow_version = "work_research_v1"
@@ -252,6 +252,9 @@ def test_reviewed_skill_rollback_preflight_rejects_unfenced_or_unpinned_live_tas
             ))
             missing = db.get(Task, missing_id)
             missing.workflow_version = "work_research_reviewed_v1"
+            agent_missing = db.get(Task, agent_missing_id)
+            agent_missing.workflow_version = "work_research_v1"
+            agent_missing.agent_run_id = "synthetic-owned-legacy-run"
             completed = db.get(Task, completed_id)
             completed.workflow_version = "work_research_v1"
             completed.state = "completed"
@@ -266,9 +269,11 @@ def test_reviewed_skill_rollback_preflight_rejects_unfenced_or_unpinned_live_tas
         assert result["active_fenced_tasks_missing_review_identity"] == 1
         assert result["active_fenced_reviewed_tasks"] == 1
         assert result["terminal_legacy_reviewed_tasks"] == 1
+        assert result["active_legacy_agent_research_without_review_identity"] == 1
         assert set(result["blockers"]) == {
             "active_reviewed_tasks_without_worker_version_fence",
             "active_fenced_tasks_missing_review_identity",
+            "active_legacy_agent_research_without_review_identity",
         }
         assert result["fleet_drained_verified"] is False
         assert result["rollout_authorized"] is False
@@ -276,12 +281,14 @@ def test_reviewed_skill_rollback_preflight_rejects_unfenced_or_unpinned_live_tas
         with container.repository.sessions.begin() as db:
             db.get(Task, legacy_id).state = "failed"
             db.get(Task, missing_id).state = "cancelled"
+            db.get(Task, agent_missing_id).state = "cancelled"
 
         checked = inspect_reviewed_rollback(container.repository.sessions)
         assert checked["decision"] == "TASK_LEDGER_CHECK_ONLY"
         assert checked["blockers"] == []
         assert checked["active_fenced_reviewed_tasks"] == 1
         assert checked["terminal_legacy_reviewed_tasks"] == 2
+        assert checked["active_legacy_agent_research_without_review_identity"] == 0
         assert checked["fleet_drained_verified"] is False
         assert checked["staging_verified"] is False
         assert checked["rollout_authorized"] is False
