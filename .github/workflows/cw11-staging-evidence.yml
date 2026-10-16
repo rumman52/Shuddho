@@ -97,10 +97,11 @@ jobs:
             echo "::error::Candidate Render worker is not running the exact qualification revision."
             exit 1
           fi
-          jq -n             --arg old_service "${OLD_WORKER_SERVICE_ID}"             --arg candidate_service "${CANDIDATE_WORKER_SERVICE_ID}"             --arg candidate_commit "${candidate_commit}"             --argjson old_count "${old_count}"             --argjson candidate_count "${candidate_count}"             '{
+          jq -n             --arg old_service "${OLD_WORKER_SERVICE_ID}"             --arg candidate_service "${CANDIDATE_WORKER_SERVICE_ID}"             --arg old_revision "${{ inputs.old_source_revision }}"             --arg candidate_commit "${candidate_commit}"             --argjson old_count "${old_count}"             --argjson candidate_count "${candidate_count}"             '{
               schema_version: 1,
               old_worker_service_id: $old_service,
               candidate_worker_service_id: $candidate_service,
+              old_source_revision: $old_revision,
               old_worker_instance_count: $old_count,
               candidate_worker_instance_count: $candidate_count,
               candidate_live_commit: $candidate_commit,
