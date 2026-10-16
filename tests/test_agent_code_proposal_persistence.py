@@ -1231,7 +1231,8 @@ def test_cw10_reviewed_dispatch_is_owner_intent_exactly_once_with_worker_guard(
             SandboxExecution.agent_code_proposal_id == proposal_id,
         )).all()
         assert len(records) == 1
-        assert records[0].request_spec["source"] == proposal.source
+        assert "source" not in records[0].request_spec
+        assert records[0].request_spec["reviewed_source_ref"] is True
         assert db.get(SandboxSession, result["session_id"]).workspace_id == db.get(
             AgentRun, run_id,
         ).workspace_id
@@ -1338,3 +1339,36 @@ def test_cw10_feature_disabled_rejects_claim_of_prepared_linked_work(
         assert execution.state == "failed"
         assert execution.error_code == "code_review_ineligible"
         assert execution.request_spec == {"source_scrubbed": True}
+
+def test_cw10_revocation_erases_only_queued_source_copy_before_any_worker_claim(
+    container, signed_client,
+):
+    owner, run_id, proposal_id, proposal, client, headers, url = dispatch_ready(
+        container, signed_client,
+    )
+    enable_reviewed_dispatch(container)
+    prepared = post_dispatch(client, headers, url, proposal.review_sha256())
+    assert prepared.status_code == 201, prepared.text
+    execution_id = prepared.json()["execution"]["id"]
+    with container.repository.sessions() as db:
+        assert proposal.source in db.get(AgentCodeProposal, proposal_id).snapshot["source"]
+        spec = db.get(SandboxExecution, execution_id).request_spec
+        assert "source" not in spec
+        assert spec["reviewed_source_ref"] is True
+
+    revoked = client.post(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}/revoke",
+        headers=headers(), json={"review_sha256": proposal.review_sha256()},
+    )
+    assert revoked.status_code == 200, revoked.text
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeProposal, proposal_id).snapshot == {}
+        spec = db.get(SandboxExecution, execution_id).request_spec
+        assert "source" not in spec
+        assert proposal.source not in str(spec)
+    assert container.sandbox.claim_executions("queued-revoked-worker") == []
+    with container.repository.sessions() as db:
+        row = db.get(SandboxExecution, execution_id)
+        assert row.state == "failed"
+        assert row.error_code == "code_review_ineligible"
+        assert row.request_spec == {"source_scrubbed": True}
