@@ -515,10 +515,19 @@ class Repository:
         self, *, task_queue: str, old_source_revision: str,
     ) -> dict:
         inventory = self.worker_inventory(task_queue=task_queue)
-        blockers = [
+        old_rows = [
             row for row in inventory
             if row["source_revision"] == old_source_revision
-            and row["state"] in (WORKER_ACTIVE_STATES | {"lost"})
+        ]
+        if not old_rows:
+            raise CoworkerError(
+                "worker_drain_incomplete",
+                "No registered worker for the legacy revision was observed; explicit drain cannot be claimed.",
+                409,
+            )
+        blockers = [
+            row for row in old_rows
+            if row["state"] in (WORKER_ACTIVE_STATES | {"lost"})
         ]
         if blockers:
             raise CoworkerError(
