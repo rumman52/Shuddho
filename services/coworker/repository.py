@@ -132,6 +132,19 @@ class Repository:
             ))
             if existing is not None:
                 raise CoworkerError("skill_publication_exists", "That reviewed skill publication version already exists.", 409)
+            rollback_target = publication["rollback_target_version"]
+            if rollback_target is not None:
+                target_exists = db.scalar(select(ReviewedSkillPublication.id).where(
+                    ReviewedSkillPublication.skill_name == publication["skill_name"],
+                    ReviewedSkillPublication.publication_version == rollback_target,
+                    ReviewedSkillPublication.state == "published",
+                ))
+                if target_exists is None:
+                    raise CoworkerError(
+                        "skill_publication_untrusted",
+                        "The explicit rollback target must already be a published reviewed version.",
+                        409,
+                    )
             row = ReviewedSkillPublication(
                 id=str(uuid4()), skill_name=publication["skill_name"],
                 publication_version=publication["publication_version"],
@@ -229,6 +242,11 @@ class Repository:
                     "Rollback target does not match the publication's explicitly declared rollback target.",
                     409,
                 )
+            self._require_compatible_worker_fleet(
+                db,
+                task_queue=self.settings.task_queue,
+                required_source_revision=worker_source_revision,
+            )
             require_selected_pilot(target, worker_source_revision=worker_source_revision)
             current.state = "rolled_back"
             current.updated_at = utcnow()
