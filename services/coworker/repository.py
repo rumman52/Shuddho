@@ -21,16 +21,19 @@ from .provider_capacity import acquire_provider_lease, release_provider_lease, s
 from .schemas import TaskCreate, UploadRequest
 from .skills import SKILLS, service_enabled
 from .reviewed_skill_registry import (
-    REVIEWED_RESEARCH_PUBLICATION_VERSION,
     REVIEWED_RESEARCH_SKILL,
     REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
+    WORKER_ACTIVE_STATES,
     WORKER_HEARTBEAT_TTL_SECONDS,
-    binding_from_row,
     build_pilot_publication,
     require_pinned_publication,
     require_selected_pilot,
 )
-from .task_workflow_versions import REVIEWED_RESEARCH_WORKFLOW_VERSION, task_skill_for_version
+from .task_workflow_versions import (
+    LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    task_skill_for_version,
+)
 
 TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
@@ -77,8 +80,6 @@ class Repository:
             raise CoworkerError("skill_publication_untrusted", "The publication version is invalid.", 409)
         if publication["task_workflow_version"] != REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION:
             raise CoworkerError("skill_publication_untrusted", "The publication workflow version is not reviewed.", 409)
-        # Rebuild through the code-reviewed manifest path. Caller-supplied hashes
-        # are never trusted merely because they are well-formed.
         expected = build_pilot_publication(
             source_revision=publication["source_revision"],
             publication_version=publication["publication_version"],
@@ -97,11 +98,7 @@ class Repository:
                 ReviewedSkillPublication.publication_version == publication["publication_version"],
             ))
             if existing is not None:
-                raise CoworkerError(
-                    "skill_publication_exists",
-                    "That reviewed skill publication version already exists.",
-                    409,
-                )
+                raise CoworkerError("skill_publication_exists", "That reviewed skill publication version already exists.", 409)
             row = ReviewedSkillPublication(
                 id=str(uuid4()),
                 skill_name=publication["skill_name"],
@@ -199,8 +196,6 @@ class Repository:
                     409,
                 )
             require_selected_pilot(target, worker_source_revision=worker_source_revision)
-            if target.state != "published":
-                raise CoworkerError("skill_rollback_unavailable", "Rollback target is not an eligible published version.", 409)
             current.state = "rolled_back"
             current.updated_at = utcnow()
             selection.publication_id = target.id
@@ -257,8 +252,6 @@ class Repository:
             "source_revision": publication.source_revision,
             "generation": selection.generation,
             "state": selection.state,
-            "updated_by": selection.updated_by,
-            "reason": selection.reason,
             "updated_at": iso(selection.updated_at),
         }
 
@@ -316,7 +309,7 @@ class Repository:
     def mark_worker_drained(self, worker_id: str) -> None:
         with self.sessions.begin() as db:
             row = db.get(WorkerInstance, worker_id)
-            if row is not None and row.state not in {"lost"}:
+            if row is not None and row.state != "lost":
                 row.state = "drained"
                 row.drained_at = utcnow()
                 row.heartbeat_at = utcnow()
@@ -636,9 +629,7 @@ class Repository:
             document_ids.append(UUID(version.document_id))
         options = db.get(Step, (task.id, "research_input"))
         if options is None:
-            raise CoworkerError(
-                "skill_run_scope", "The pinned research inputs are missing.", 409,
-            )
+            raise CoworkerError("skill_run_scope", "The pinned research inputs are missing.", 409)
         request = TaskCreate(
             skill_id="research", instruction=task.instruction,
             notes=task.notes, document_ids=document_ids,
@@ -736,8 +727,8 @@ class Repository:
                 )
                 if reviewed_publication is not None:
                 # Pin the complete publication identity alongside the Task.
-                # Selection changes never mutate an admitted Task; explicit
-                # rollback marks its publication rolled_back and fails closed.
+                # Normal selection changes do not mutate an admitted Task;
+                # explicit rollback marks the publication rolled_back.
                 db.add(Step(
                     task_id=task.id, phase="reviewed_skill_identity",
                     output={
