@@ -48,6 +48,12 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             )
         }
         assert "agent_code_proposal_id" in sandbox_columns
+        indexes = {
+            idx["name"]: idx for idx in inspect(db.bind).get_indexes(
+                "cw_sandbox_executions", schema="shuddho_coworker",
+            )
+        }
+        assert indexes["ix_cw_sandbox_executions_agent_code_proposal_id"]["unique"] is True
         assert {
             "cw_transactions",
             "cw_transaction_revisions",
