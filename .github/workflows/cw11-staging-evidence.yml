@@ -74,6 +74,14 @@ jobs:
           set -euo pipefail
           api="https://api.render.com/v1"
           auth=(-H "Authorization: Bearer ${RENDER_API_KEY}" -H "Accept: application/json")
+          if [[ "${OLD_WORKER_SERVICE_ID}" == "${CANDIDATE_WORKER_SERVICE_ID}" ]]; then
+            echo "::error::Old and candidate worker service IDs must differ."
+            exit 1
+          fi
+          old_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}")"
+          candidate_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}")"
+          jq -e '.type == "background_worker" and .repo == "https://github.com/rumman52/Shuddho" and .serviceDetails.region == "oregon" and .branch == "main"' <<<"${old_service}" >/dev/null
+          jq -e --arg branch "${GITHUB_REF_NAME}" '.type == "background_worker" and .repo == "https://github.com/rumman52/Shuddho" and .serviceDetails.region == "oregon" and .branch == $branch' <<<"${candidate_service}" >/dev/null
           old_instances="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}/instances")"
           candidate_instances="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}/instances")"
           candidate_deploys="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}/deploys?limit=20")"
