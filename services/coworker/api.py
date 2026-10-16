@@ -1745,6 +1745,18 @@ def prepare_agent_code_proposal(
     return value
 
 
+@router.get("/agent-runs/{run_id}/code-proposals")
+def list_reviewable_agent_code_proposals(
+    run_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    """Only current owner-scoped proposal summaries. Source requires explicit GET."""
+    response.headers["Cache-Control"] = "no-store"
+    return services.agent.list_reviewable_code_proposals(identity.account_id, str(run_id))
+
+
 @router.get("/agent-runs/{run_id}/code-proposals/{proposal_id}")
 def get_agent_code_proposal(
     run_id: UUID,
