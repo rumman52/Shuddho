@@ -26,6 +26,7 @@ def upgrade() -> None:
         "ix_cw_sandbox_executions_agent_code_proposal_id",
         "cw_sandbox_executions",
         ["agent_code_proposal_id"],
+        unique=True,
     )
 
 
