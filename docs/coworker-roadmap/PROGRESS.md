@@ -1,8 +1,18 @@
+## CW-11 post-merge planner and fallback tool scope — 16 October 2026
+
+**Live source:** [PR #431](https://github.com/rumman52/Shuddho/pull/431) merged at `main` `18068a48aae1dcd3f354638e525cdd2cf88fc185` (16 October 2026). Its earlier exact PR head was `b062f487ba2aa0de11fb367424c70d9eb9ce01cc`. Merged-main `CI #38860546551` was in progress at this review. Historical branch/open notes below predate the merge.
+
+**Independent continuation branch:** `codex/cw11-planner-scope-continuation-20261016`. The merged worker-admission guard is insufficient alone: the initial intelligent planner and replan offered tool names without filtering the run's durable `tool_allowlist`; deterministic fallback and model proposal conversion also omitted it. This branch passes the persisted scope through all these routes and adds real repository regressions for restricted initial plan, replan, fallback and no-eligible-tool denial. The follow-up diff is **not merged** and neither exact final CI nor staging evidence is claimed. No model can grant extra tools via this change.
+
+**Next:** create/review separate draft PR, inspect exact-head CI, resolve test/review findings and keep capability gates disabled. Full CW-11 reviewed skill publication and runtime version selection, CW-10 real worker isolation, CW-09 browser network proof, and broader A/P/V scenarios remain independently incomplete. [Acceptance details](CW11_RUNTIME_TASK_SCOPE_HARDENING_2026-10-16.md).
+
+---
+
 ## CW-11 / A-04 restricted-run task scope at worker claim — 16 October 2026
 
 **Refreshed default branch:** `main` `9b9e23a182ec212ce7f30e87d7a235ba886c2f5f`, with #430 merged and exact merged-main CI #38858449740 still in progress at first inspection; no open PRs were observed. Older 15 October recovery-claim CI checkpoint is superseded.
 
-**New bounded security slice:** `codex/cw11-task-run-scope-claim-20261016` prevents any tool outside a stored nonempty Agent run `tool_allowlist` from being admitted by `save_plan`, `replace_remaining_plan` or `AgentRuntime.execute_step`. All non-approved-action tools (including browser/sandbox) are restricted by this field; attached consequential actions retain their existing ExternalAction approval checks. A targeted SQL repository test rejects task/browser admission, simulates an altered persisted browser invocation and checks no new Task is created.
+**New bounded security slice:** `codex/cw11-task-run-scope-claim-20261016` prevents any tool outside a stored nonempty Agent run `tool_allowlist` from being admitted by `save_plan`, `replace_remaining_plan` or `AgentRuntime.execute_step`. Additionally, initial intelligent planning, replanning and deterministic fallback now consume the exact stored scope so an unauthorized tool is not offered to the model and a valid restricted fallback can complete. All non-approved-action tools (including browser/sandbox) are restricted by this field; attached consequential actions retain their existing ExternalAction approval checks. Targeted SQL repository tests reject task/browser admission, simulate an altered persisted browser invocation and check no new Task/session is created; a separate regression covers initial model tool enumeration, replan and constrained fallback.
 
 **Evidence state:** changes committed on a review branch; targeted test, exact-final-HEAD mandatory CI, independent review, PostgreSQL/Temporal racing worker replay and staging were **not yet verified** at checkpoint drafting. This narrows the authority gap but **does not** complete CW-11 publication or activation, CW-10 operated sandbox, CW-09 browser, A/P/V qualification. [Task acceptance](CW11_RUNTIME_TASK_SCOPE_HARDENING_2026-10-16.md).
 

@@ -36,7 +36,8 @@ class AgentRuntime:
         if current["tool_invocations"]:
             return len(current["tool_invocations"])
         steps = deterministic_plan(
-            run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"]
+            run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"],
+            tool_allowlist=run.get("tool_allowlist"),
         )
         self.repo.set_planner_mode(run_id, "deterministic")
         saved = self.repo.save_plan(run["owner_id"], run_id, steps)
@@ -53,7 +54,9 @@ class AgentRuntime:
         current = self.repo.get(run["owner_id"], run_id)
         if current["tool_invocations"]:
             return len(current["tool_invocations"])
-        tools = intelligent_tool_names(self.container.settings, run["actions"])
+        tools = intelligent_tool_names(
+            self.container.settings, run["actions"], tool_allowlist=run.get("tool_allowlist"),
+        )
         if not tools:
             return self.plan(run_id)
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
@@ -69,6 +72,7 @@ class AgentRuntime:
             steps = proposal_to_plan(
                 proposal, run["goal"], run["document_ids"], run["output_language"],
                 self.container.settings, run["actions"],
+                tool_allowlist=run.get("tool_allowlist"),
             )
             saved = self.repo.save_plan(
                 run["owner_id"],
@@ -84,7 +88,8 @@ class AgentRuntime:
             actual_tokens = error.total_tokens
             self.repo.set_planner_mode(run_id, "fallback")
             steps = deterministic_plan(
-                run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"]
+                run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"],
+                tool_allowlist=run.get("tool_allowlist"),
             )
             saved = self.repo.save_plan(run["owner_id"], run_id, steps)
             return len(saved["tool_invocations"])
@@ -108,7 +113,9 @@ class AgentRuntime:
             ) if receipt and receipt.get("resource_type") == "action"
         }
         remaining_actions = [action for action in run["actions"] if action["id"] not in completed_actions]
-        tools = intelligent_tool_names(self.container.settings, remaining_actions)
+        tools = intelligent_tool_names(
+            self.container.settings, remaining_actions, tool_allowlist=run.get("tool_allowlist"),
+        )
         if not tools:
             raise CoworkerError("no_agent_tool", "No suitable agent tool is currently enabled.", 409)
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
@@ -131,6 +138,7 @@ class AgentRuntime:
         steps = proposal_to_plan(
             proposal, run["goal"], run["document_ids"], run["output_language"],
             self.container.settings, remaining_actions,
+            tool_allowlist=run.get("tool_allowlist"),
         )
         saved = self.repo.replace_remaining_plan(run["owner_id"], run_id, from_ordinal, steps)
         if self.container.settings.agent_action_selection_enabled:
