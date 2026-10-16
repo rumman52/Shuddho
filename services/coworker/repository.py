@@ -309,7 +309,15 @@ class Repository:
                 return None
             publication = db.get(ReviewedSkillPublication, selection.publication_id)
             if publication is None:
-                return None
+                raise CoworkerError(
+                    "skill_publication_unavailable",
+                    "The selected reviewed skill publication is missing.",
+                    409,
+                )
+            require_selected_pilot(
+                publication,
+                worker_source_revision=publication.source_revision,
+            )
             return self._reviewed_selection_dto(selection, publication)
 
     @staticmethod
