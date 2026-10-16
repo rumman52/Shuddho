@@ -1,3 +1,15 @@
+## CW-11 collector mainline integration and current qualification checkpoint — 17 October 2026 (Asia/Dhaka)
+
+**Mainline reconciliation:** current `main` at task selection is `f7f3223c06d9253afbaab62d7073eac1f2799c5e`, after PR #444 merged. PR #445 was then merged into the already-closed #444 source branch, so its collector changes did **not** reach main. A source check confirmed main's collector lacked the task-ledger classifier, strict external Render payload allowlist and uncertain-worker guard.
+
+**Current implementation:** main-targeted [PR #446](https://github.com/rumman52/Shuddho/pull/446), branch `codex/cw11-staging-collector-ledger-guard-20261017`, brings that change to main. It reuses `inspect_reviewed_rollback()`, validates external Render evidence at the collector boundary, blocks lost/unknown/stale workers, requires an old-revision row marked `drained` to have `drained_at`, and adds regressions for task-ledger ambiguity, malformed evidence and inconsistent worker state. The source/test hardening is in commit `001d1b515eb3846d4002d07ee57d4b6425a3678a`; this checkpoint edit advances the PR head and therefore requires fresh exact-head CI.
+
+**Evidence:** prior implementation SHA `41c446b5424fd3e21e5edacbc51e30aa7844045a` passed `test-and-build`, mandatory `coworker` and `ci-merge-gate` in [run #38956399729](https://github.com/rumman52/Shuddho/actions/runs/38956399729). That result does not cover the later drain-timestamp change or this checkpoint commit. Codex review failed due the configured review usage limit; manual second-pass review is not independent clearance. No staging run or production activation is claimed.
+
+**Next:** verify all three required jobs on the final #446 head; complete independent review when available; then perform the protected `CW11-STAGING` gate with authorized environment inputs and inspect the exact-revision artifact. CW-11/C-05 and the broader A/C/P/V architecture/core qualification remain incomplete.
+
+---
+
 # Shuddho architecture and core-agent acceptance inventory — v1
 
 **16 October 2026 CW-11 merged/follow-up update:** `main` `d757d165bbb36eaea829b683714f03b37d7206d9` includes externally merged [PR #435](https://github.com/rumman52/Shuddho/pull/435), introducing distinct `work_research_reviewed_v1` Task identity to fail closed on older worker code for **new** reviewed admissions and preserving terminal idempotent replay. Exact merged-PR mandatory coworker CI and independent P1/P2 review closure were not yet demonstrated at this checkpoint. **Legacy-reviewed** Tasks admitted by merged #434 retain `work_research_v1`: a running older worker still poses a rollback bypass until drained and a controlled migration/recovery is proved. Separate unmerged branch `codex/cw11-reviewed-rollout-evidence-followup-20261016` updates rollout contract and research cohort failure accounting for both versions; final-head CI/review pending. C-05/C-04 and staging/V gates **remain incomplete**. [Rollback contract](CW11_REVIEWED_SKILL_FLAG_ROLLBACK_GUARD_2026-10-16.md).
