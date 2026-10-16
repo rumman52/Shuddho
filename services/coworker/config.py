@@ -55,6 +55,7 @@ class Settings:
     code_execution_enabled: bool = False
     agent_sandbox_tool_enabled: bool = False
     code_proposal_dispatch_enabled: bool = False
+    model_code_proposals_enabled: bool = False
     action_attachments_enabled: bool = False
     action_reminders_enabled: bool = False
     action_recipients_enabled: bool = False
@@ -228,6 +229,7 @@ class Settings:
             code_execution_enabled=os.getenv("SHUDDHO_CODE_EXECUTION_ENABLED", "false").lower() == "true",
             agent_sandbox_tool_enabled=os.getenv("SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED", "false").lower() == "true",
             code_proposal_dispatch_enabled=os.getenv("SHUDDHO_CODE_PROPOSAL_DISPATCH_ENABLED", "false").lower() == "true",
+            model_code_proposals_enabled=os.getenv("SHUDDHO_MODEL_CODE_PROPOSALS_ENABLED", "false").lower() == "true",
             action_attachments_enabled=os.getenv("SHUDDHO_ACTION_ATTACHMENTS_ENABLED", "false").lower() == "true",
             action_reminders_enabled=os.getenv("SHUDDHO_ACTION_REMINDERS_ENABLED", "false").lower() == "true",
             action_recipients_enabled=os.getenv("SHUDDHO_ACTION_RECIPIENTS_ENABLED", "false").lower() == "true",
@@ -513,6 +515,11 @@ class Settings:
                 raise ValueError("Agent sandbox planner tool requires SHUDDHO_CODE_EXECUTION_ENABLED=true")
             if not self.agent_runtime_v3_enabled or not self.intelligent_planner_enabled:
                 raise ValueError("Agent sandbox planner tool requires Agent Runtime v3 and the intelligent planner")
+        if self.model_code_proposals_enabled and not (
+            self.code_execution_enabled and self.agent_sandbox_tool_enabled
+            and self.agent_runtime_v3_enabled and self.intelligent_planner_enabled
+        ):
+            raise ValueError("Model code proposal generation requires Agent Runtime v3, the planner and sandbox eligibility")
         if self.code_proposal_dispatch_enabled and not (
             self.code_execution_enabled and self.agent_sandbox_tool_enabled
             and self.agent_runtime_v3_enabled

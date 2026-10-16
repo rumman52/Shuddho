@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CoworkerClient,
   type CodeProposalDetail,
@@ -14,6 +14,8 @@ export default function CodeProposalReview({
   client: CoworkerClient; runId: string;
 }) {
   const [proposals, setProposals] = useState<CodeProposalSummary[]>([]);
+  const [generationEnabled, setGenerationEnabled] = useState(false);
+  const generationKey = useRef<string | null>(null);
   const [detail, setDetail] = useState<CodeProposalDetail | null>(null);
   const [inspected, setInspected] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -24,12 +26,17 @@ export default function CodeProposalReview({
   useEffect(() => {
     const controller = new AbortController();
     setProposals([]);
+    setGenerationEnabled(false);
+    generationKey.current = null;
     setDetail(null);
     setLoading(true);
     setError("");
     setMessage("");
     client.reviewableCodeProposals(runId, controller.signal).then(result => {
-      if (!controller.signal.aborted) setProposals(result.proposals);
+      if (!controller.signal.aborted) {
+        setProposals(result.proposals);
+        setGenerationEnabled(result.generation_enabled);
+      }
     }).catch(failure => {
       if (!controller.signal.aborted) setError(errorMessage(failure));
     }).finally(() => {
@@ -37,6 +44,31 @@ export default function CodeProposalReview({
     });
     return () => controller.abort();
   }, [client, runId]);
+
+  async function generateDraft() {
+    if (!generationEnabled || busy) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    setDetail(null);
+    setInspected(false);
+    // Preserve one request key when the response is lost. A retry must
+    // retrieve the same persisted source rather than implicitly create more.
+    generationKey.current ??= `model-review-${crypto.randomUUID()}`;
+    try {
+      const draft = await client.generateModelCodeProposal(runId, generationKey.current);
+      setDetail(draft);
+      generationKey.current = null;
+      const next = await client.reviewableCodeProposals(runId);
+      setProposals(next.proposals);
+      setGenerationEnabled(next.generation_enabled);
+      setMessage("A model-generated draft is ready for your exact inspection. No code was executed.");
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function inspect(item: CodeProposalSummary) {
     if (busy) return;
@@ -115,6 +147,7 @@ export default function CodeProposalReview({
       <h3>Inspect before deciding</h3>
       <p>Stored proposals are untrusted Python. Read the complete source and limits before approving. A review decision is not permission to execute: generated-code dispatch remains unavailable.</p>
     </div>
+    {generationEnabled && <div className="cw-proposal-controls"><button className="cw-secondary" type="button" disabled={busy || loading} onClick={() => void generateDraft()}>Generate Python draft for review</button><span className="cw-fineprint">Model proposal only. No execution or approval.</span></div>}
     {loading && <p role="status">Loading owned proposals…</p>}
     {error && <p role="alert" className="cw-error">{error}</p>}
     {message && <p role="status" className="cw-notice">{message}</p>}

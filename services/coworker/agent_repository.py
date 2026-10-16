@@ -275,6 +275,48 @@ class AgentRepository:
             db.flush()
             return self._code_proposal_dto(row), True
 
+    def preflight_model_code_proposal(
+        self, owner: str, run_id: str, request_key: str,
+    ) -> dict:
+        """Verify live run scope before a metered code-generation provider call."""
+        if not (
+            self.settings.model_code_proposals_enabled
+            and self.settings.agent_runtime_v3_enabled
+            and self.settings.agent_sandbox_tool_enabled
+            and self.settings.code_execution_enabled
+        ):
+            raise CoworkerError(
+                "model_code_proposals_disabled",
+                "Model code proposals are unavailable for this workspace.", 503,
+            )
+        with self.sessions.begin() as db:
+            run = self._run(db, owner, run_id, lock=True)
+            if run.runtime_version != 3 or run.cancel_requested or run.state not in ACTIVE_RUN_STATES:
+                raise CoworkerError("code_run_closed", "This run cannot accept model code.", 409)
+            self._assert_within_deadline(run)
+            require_admitted_conversation_run_sources(db, run)
+            if (
+                run.input_versions or run.memory_namespaces or run.action_ids
+                or run.connector_read_grant_ids or run.connector_snapshot_ids
+            ):
+                raise CoworkerError(
+                    "code_context_unbound",
+                    "Model code cannot access selected private or connected run context.", 409,
+                )
+            existing = db.scalar(select(AgentCodeProposal).where(
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.owner_id == owner,
+                AgentCodeProposal.idempotency_key == "model-v1:" + request_key,
+            ))
+            if existing is not None:
+                if existing.state != "unreviewed" or aware(existing.expires_at) <= utcnow():
+                    raise CoworkerError(
+                        "code_proposal_revoked", "This model proposal is no longer reviewable.", 409,
+                    )
+                self._verify_persisted_code_review_source(db, run, existing)
+                return {"existing": self._code_proposal_dto(existing)}
+            return {"existing": None, "goal": run.goal, "deadline_at": iso(run.deadline_at)}
+
     def list_reviewable_code_proposals(self, owner: str, run_id: str) -> dict:
         """Discover only currently authorized owned code for explicit inspection.
 
@@ -313,7 +355,8 @@ class AgentRepository:
                 if review is not None:
                     entry["human_review"] = self._human_review_dto(review)
                 reviewable.append(entry)
-            return {"proposals": reviewable, "execution_authorized": False}
+            return {"proposals": reviewable, "execution_authorized": False,
+                    "generation_enabled": self.settings.model_code_proposals_enabled}
 
     def get_code_proposal(self, owner: str, run_id: str, proposal_id: str) -> dict:
         """Never return proposal code after an input revocation or expiry."""
