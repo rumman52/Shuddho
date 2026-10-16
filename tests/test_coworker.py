@@ -88,6 +88,11 @@ def enable_reviewed_pilot(container):
     container.settings = settings
     container.repository.settings = settings
     container.agent.settings = settings
+    worker_id = container.repository.register_worker(
+        task_queue=settings.task_queue,
+        source_revision=settings.source_revision,
+    )
+    container.repository.heartbeat_worker(worker_id)
     publication = build_pilot_publication(source_revision=settings.source_revision)
     container.repository.publish_reviewed_skill(
         publication,
