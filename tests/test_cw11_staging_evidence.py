@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from services.coworker.config import Settings
 from services.coworker.database import session_factory
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Task
+from services.coworker.models import Task, WorkerInstance, utcnow
 from services.coworker.repository import Repository
 from services.coworker.schemas import ResearchOptions, TaskCreate
 from services.coworker.task_workflow_versions import REVIEWED_RESEARCH_WORKFLOW_VERSION
@@ -292,3 +293,45 @@ def test_collector_blocks_active_incompatible_worker(
             old_source_revision=OLD_REVISION,
             render_evidence=valid_render_evidence(),
         )
+
+@pytest.mark.parametrize(
+    ("revision", "state", "stale_heartbeat"),
+    [
+        ("c" * 40, "lost", False),
+        (CANDIDATE_REVISION, "running", True),
+    ],
+)
+def test_collector_blocks_lost_or_stale_worker_records(
+    staging_repository,
+    revision,
+    state,
+    stale_heartbeat,
+):
+    repository, settings = staging_repository
+    seed_release(repository)
+    worker_id = repository.register_worker(
+        task_queue=settings.task_queue,
+        source_revision=revision,
+    )
+    with repository.sessions.begin() as db:
+        row = db.get(WorkerInstance, worker_id)
+        assert row is not None
+        row.state = state
+        row.heartbeat_at = (
+            utcnow() - timedelta(hours=1)
+            if stale_heartbeat
+            else utcnow()
+        )
+
+    with pytest.raises(
+        CoworkerError,
+        match="lost, stale or unknown worker",
+    ):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=valid_render_evidence(),
+        )
+

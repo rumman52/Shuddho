@@ -172,9 +172,26 @@ def collect_evidence(
         )
 
     inventory = repository.worker_inventory(task_queue=settings.task_queue)
+    active_states = {"starting", "running", "draining"}
+    known_states = active_states | {"drained", "lost"}
+    uncertain_workers = [
+        row for row in inventory
+        if row["state"] == "lost"
+        or row["state"] not in known_states
+        or (
+            row["state"] in active_states
+            and not row["heartbeat_fresh"]
+        )
+    ]
+    if uncertain_workers:
+        raise CoworkerError(
+            "staging_evidence_worker_uncertain",
+            "A lost, stale or unknown worker record prevents proving a safe mixed-version drain.",
+            409,
+        )
     active = [
         row for row in inventory
-        if row["state"] in {"starting", "running", "draining"}
+        if row["state"] in active_states
     ]
     incompatible = [
         row for row in active
