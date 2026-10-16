@@ -17,7 +17,7 @@ from .interactive_artifacts import (
     validate_static_preview_html,
     verify_preview_token,
 )
-from .models import Account, Artifact, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
+from .models import Account, AgentCodeProposal, AgentCodeReview, AgentRun, Artifact, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
@@ -221,6 +221,119 @@ class SandboxRepository:
             db.flush()
             return self._session_dto(row), True
 
+    def _reviewed_code_claim_denial(self, db, execution: SandboxExecution, session: SandboxSession, now) -> str | None:
+        """Recheck exact human consent before any proposal-linked worker use.
+
+        The trusted SQL FK is assigned by the server, never from request_spec.
+        Existing direct-user source has no proposal FK and retains its current
+        independent sandbox policy. This guard cannot create an execution.
+        """
+        proposal_id = execution.agent_code_proposal_id
+        if proposal_id is None:
+            return None
+        if (
+            not self.settings.agent_runtime_v3_enabled
+            or not self.settings.agent_sandbox_tool_enabled
+            or not self.settings.code_execution_enabled
+            or execution.kind != "python"
+            or session.purpose != "code_task"
+            or execution.owner_id != session.owner_id
+            or not isinstance(session.execution_policy, dict)
+            or session.execution_policy != self._policy()
+        ):
+            return "code_review_ineligible"
+        # Serialize against owner review/revoke: run -> proposal -> review.
+        # The worker already owns its execution and session row locks.
+        run_id = db.scalar(select(AgentCodeProposal.run_id).where(
+            AgentCodeProposal.id == proposal_id,
+            AgentCodeProposal.owner_id == execution.owner_id,
+        ))
+        if run_id is None:
+            return "code_review_ineligible"
+        run = db.scalar(select(AgentRun).where(
+            AgentRun.id == run_id,
+            AgentRun.owner_id == execution.owner_id,
+            AgentRun.workspace_id == session.workspace_id,
+        ).with_for_update())
+        if run is None:
+            return "code_review_ineligible"
+        proposal = db.scalar(select(AgentCodeProposal).where(
+            AgentCodeProposal.id == proposal_id,
+            AgentCodeProposal.run_id == run.id,
+            AgentCodeProposal.owner_id == execution.owner_id,
+        ).with_for_update())
+        if proposal is None:
+            return "code_review_ineligible"
+        review = db.scalar(select(AgentCodeReview).where(
+            AgentCodeReview.proposal_id == proposal_id,
+            AgentCodeReview.run_id == run.id,
+            AgentCodeReview.owner_id == execution.owner_id,
+        ).with_for_update())
+        if (
+            review is None
+            or review.decision != "approve"
+            or review.revoked_at is not None
+            or aware(review.expires_at) <= now
+            or proposal.state != "unreviewed"
+            or aware(proposal.expires_at) <= now
+            or review.review_sha256 != proposal.review_sha256
+        ):
+            return "code_review_ineligible"
+        try:
+            from .agent_repository import AgentRepository
+            from .code_proposal_schemas import (
+                CodeProposalEnvelope, canonicalize_transport_code_proposal,
+            )
+            envelope = canonicalize_transport_code_proposal(
+                CodeProposalEnvelope.model_validate(proposal.snapshot)
+            )
+            source = (execution.request_spec or {}).get("source")
+            if (
+                envelope.review_sha256() != proposal.review_sha256
+                or envelope.source != source
+                or envelope.source_sha256 != execution.source_sha256
+                or len(envelope.source.encode("utf-8")) != execution.source_bytes
+                or envelope.owner_id != execution.owner_id
+                # The present isolated worker has no reviewed private-input
+                # mount implementation. Never claim source-only execution
+                # as though attached input bytes were present.
+                or envelope.input_versions
+            ):
+                return "code_review_ineligible"
+            limits = envelope.limits
+            current = self._policy()["resource_limits"]
+            if (
+                current["cpu_seconds"] > limits.cpu_seconds
+                or current["wall_seconds"] > limits.wall_seconds
+                or current["memory_mb"] > limits.memory_mb
+                or current["disk_mb"] > limits.disk_mb
+                or current["output_bytes"] > limits.stdout_bytes
+            ):
+                return "code_review_ineligible"
+            AgentRepository(self.sessions, self.settings)._verify_persisted_code_review_source(
+                db, run, proposal,
+            )
+        except (CoworkerError, ValueError, TypeError, UnicodeError, AttributeError):
+            return "code_review_ineligible"
+        return None
+
+    @staticmethod
+    def _reject_reviewed_claim(db, execution: SandboxExecution, session: SandboxSession, now, reason: str) -> None:
+        was_running = execution.state == "running" and execution.claimed_by is not None
+        execution.state = "failed"
+        execution.error_code = reason
+        execution.request_spec = {"source_scrubbed": True}
+        execution.finished_at = now
+        execution.lease_until = None
+        execution.claimed_by = None
+        session.state = "failed"
+        session.cleanup_state = "required" if was_running else "not_required"
+        session.updated_at = now
+        db.add(AuditEvent(
+            id=str(uuid4()), owner_id=execution.owner_id,
+            resource_id=session.id, action="sandbox_execution.review_claim_rejected",
+        ))
+
     def claim_executions(self, worker_id: str, limit: int = 1) -> list[dict]:
         self._require_enabled()
         if not worker_id or len(worker_id) > 64:
@@ -358,6 +471,10 @@ class SandboxRepository:
                         action="sandbox_execution.source_integrity_rejected",
                     ))
                     continue
+                rejection = self._reviewed_code_claim_denial(db, execution, session, now)
+                if rejection is not None:
+                    self._reject_reviewed_claim(db, execution, session, now, rejection)
+                    continue
                 claimed.append({
                     "id": execution.id,
                     "sequence": execution.sequence,
@@ -435,6 +552,11 @@ class SandboxRepository:
                     "This sandbox execution is not actively owned by this worker.",
                     409,
                 )
+            rejection = self._reviewed_code_claim_denial(db, execution, session, now)
+            if rejection is not None:
+                self._reject_reviewed_claim(db, execution, session, now, rejection)
+                session.cleanup_state = "required"
+                return {"action": "stop", "reason": "code_review_revoked"}
             execution.lease_until = now + timedelta(seconds=self.settings.sandbox_worker_lease_seconds)
             session.updated_at = now
             return {"action": "continue", "lease_until": iso(execution.lease_until)}
@@ -565,6 +687,11 @@ class SandboxRepository:
                 ))
                 # Return a private sentinel to commit terminalization before
                 # the public method raises the same typed 409 as before.
+                return {"_rejected_session_closed": True}
+            rejection = self._reviewed_code_claim_denial(db, execution, session, now)
+            if rejection is not None:
+                self._reject_reviewed_claim(db, execution, session, now, rejection)
+                session.cleanup_state = "required"
                 return {"_rejected_session_closed": True}
             if (
                 observation.get("policy_version") != SANDBOX_POLICY_VERSION

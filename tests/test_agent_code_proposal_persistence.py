@@ -14,10 +14,11 @@ from sqlalchemy import select
 from test_coworker import account, container, signed_client
 from test_sandbox_control_plane import enable_sandbox
 from services.coworker.agent_schemas import AgentRunCreate
+from services.coworker.errors import CoworkerError
 from services.coworker.code_proposal_schemas import (
     CodeComputeLimits, CodeInputVersion, CodeProposalEnvelope,
 )
-from services.coworker.models import AgentCodeProposal, AgentCodeReview, AgentRun, SandboxExecution, utcnow
+from services.coworker.models import AgentCodeProposal, AgentCodeReview, AgentRun, SandboxExecution, SandboxSession, utcnow
 
 
 def active_agent(container):
@@ -822,3 +823,197 @@ def test_human_review_replay_fails_closed_when_original_source_is_revoked(
         assert not db.scalars(select(SandboxExecution).where(
             SandboxExecution.owner_id == proposal.owner_id,
         )).all()
+
+def reviewed_sandbox_candidate(container, signed_client, *, approved=True, limited=False):
+    """Build a real owned review and a synthetic proposal-linked SQL claim."""
+    from test_sandbox_control_plane import create_session
+    from services.coworker.sandbox_schemas import SandboxExecutionCreate
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    if not limited:
+        proposal = proposal.model_copy(update={"limits": CodeComputeLimits(
+            cpu_seconds=container.settings.sandbox_cpu_seconds,
+            wall_seconds=container.settings.sandbox_wall_seconds,
+            memory_mb=container.settings.sandbox_memory_mb,
+            disk_mb=container.settings.sandbox_disk_mb,
+            stdout_bytes=container.settings.sandbox_max_output_bytes,
+        )})
+    saved = prepare(client, headers, run_id, proposal, key="sandbox-claim-proposal")
+    assert saved.status_code == 201, saved.text
+    proposal_id = saved.json()["id"]
+    if approved:
+        decision = human_review(
+            client, headers, run_id, proposal_id, proposal.review_sha256(),
+            expires_at=utcnow() + timedelta(seconds=90),
+        )
+        assert decision.status_code == 200, decision.text
+        assert decision.json()["execution_authorized"] is False
+    session = create_session(container, owner)
+    execution = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source=proposal.source),
+    )
+    with container.repository.sessions.begin() as db:
+        db.get(SandboxExecution, execution["id"]).agent_code_proposal_id = proposal_id
+    return owner, run_id, proposal_id, proposal, session, execution
+
+
+@pytest.mark.parametrize("failure", [
+    "unreviewed", "revoked", "expired_review", "changed_source",
+    "changed_review_hash", "exceeds_limits", "cancelled_run",
+])
+def test_cw10_worker_claim_denies_unreviewed_or_stale_code_without_source(
+    container, signed_client, failure,
+):
+    owner, run_id, proposal_id, proposal, session, execution = reviewed_sandbox_candidate(
+        container, signed_client,
+        approved=failure != "unreviewed",
+        limited=failure == "exceeds_limits",
+    )
+    with container.repository.sessions.begin() as db:
+        row = db.get(AgentCodeProposal, proposal_id)
+        review = db.get(AgentCodeReview, proposal_id)
+        if failure == "revoked":
+            row.state = "revoked"
+            row.snapshot = {}
+            review.revoked_at = utcnow()
+        elif failure == "expired_review":
+            review.expires_at = utcnow() - timedelta(seconds=1)
+        elif failure == "changed_source":
+            snap = dict(row.snapshot)
+            snap["source"] = "print('forged')\n"
+            row.snapshot = snap
+        elif failure == "changed_review_hash":
+            review.review_sha256 = "a" * 64
+        elif failure == "cancelled_run":
+            db.get(AgentRun, run_id).cancel_requested = True
+
+    claims = container.sandbox.claim_executions("reviewed-code-worker")
+    assert all(item["id"] != execution["id"] for item in claims)
+    with container.repository.sessions() as db:
+        row = db.get(SandboxExecution, execution["id"])
+        sess = db.get(SandboxSession, session["id"])
+        assert row.state == "failed"
+        assert row.error_code == "code_review_ineligible"
+        assert row.request_spec == {"source_scrubbed": True}
+        assert row.claimed_by is None and row.lease_until is None
+        assert sess.state == "failed"
+
+
+def test_cw10_approved_worker_claim_rechecks_hash_and_releases_exact_source(
+    container, signed_client,
+):
+    owner, run_id, proposal_id, proposal, session, execution = reviewed_sandbox_candidate(
+        container, signed_client,
+    )
+    claims = container.sandbox.claim_executions("reviewed-code-worker")
+    assert len(claims) == 1
+    claim = claims[0]
+    assert claim["id"] == execution["id"]
+    assert claim["source"] == proposal.source
+    assert claim["source_sha256"] == proposal.source_sha256
+    assert claim["policy"]["network"] == "none"
+    control = container.sandbox.worker_control("reviewed-code-worker", execution["id"])
+    assert control["action"] == "continue"
+    assert container.sandbox.get_execution(owner, execution["id"])["state"] == "running"
+
+
+@pytest.mark.parametrize("termination", ["revocation", "expiry", "source_change", "policy_drift"])
+def test_cw10_review_termination_stops_claimed_worker_and_rejects_completion(
+    container, signed_client, termination,
+):
+    from test_sandbox_control_plane import completion_observation
+    owner, run_id, proposal_id, proposal, session, execution = reviewed_sandbox_candidate(
+        container, signed_client,
+    )
+    assert len(container.sandbox.claim_executions("reviewed-code-worker")) == 1
+    with container.repository.sessions.begin() as db:
+        review = db.get(AgentCodeReview, proposal_id)
+        proposal_row = db.get(AgentCodeProposal, proposal_id)
+        if termination == "revocation":
+            review.revoked_at = utcnow()
+            proposal_row.state = "revoked"
+            proposal_row.snapshot = {}
+        elif termination == "expiry":
+            review.expires_at = utcnow() - timedelta(seconds=1)
+        elif termination == "source_change":
+            edited = dict(proposal_row.snapshot)
+            edited["source"] = "print('altered')\n"
+            proposal_row.snapshot = edited
+        else:
+            saved_session = db.get(SandboxSession, session["id"])
+            changed_policy = dict(saved_session.execution_policy)
+            changed_policy["network"] = "allow"
+            saved_session.execution_policy = changed_policy
+
+    with pytest.raises(CoworkerError) as rejection:
+        container.sandbox.complete_execution(
+            "reviewed-code-worker", execution["id"], completion_observation(),
+        )
+    assert rejection.value.code == "sandbox_session_closed"
+    with container.repository.sessions() as db:
+        record = db.get(SandboxExecution, execution["id"])
+        assert record.state == "failed"
+        assert record.error_code == "code_review_ineligible"
+        assert record.request_spec == {"source_scrubbed": True}
+        assert record.result == {}
+        assert db.get(SandboxSession, session["id"]).cleanup_state == "required"
+
+
+def test_cw10_review_revocation_heartbeat_terminates_existing_worker_claim(
+    container, signed_client,
+):
+    owner, _, proposal_id, _, session, execution = reviewed_sandbox_candidate(
+        container, signed_client,
+    )
+    assert len(container.sandbox.claim_executions("reviewed-code-worker")) == 1
+    with container.repository.sessions.begin() as db:
+        review = db.get(AgentCodeReview, proposal_id)
+        review.revoked_at = utcnow()
+    stop = container.sandbox.worker_control("reviewed-code-worker", execution["id"])
+    assert stop == {"action": "stop", "reason": "code_review_revoked"}
+    with container.repository.sessions() as db:
+        saved = db.get(SandboxExecution, execution["id"])
+        assert saved.state == "failed"
+        assert saved.request_spec == {"source_scrubbed": True}
+        assert saved.claimed_by is None
+        assert db.get(SandboxSession, session["id"]).cleanup_state == "required"
+
+
+def test_cw10_direct_user_sandbox_source_is_not_reclassified_as_model_generated(
+    container,
+):
+    from test_sandbox_control_plane import create_session
+    from services.coworker.sandbox_schemas import SandboxExecutionCreate
+
+    enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner)
+    request = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print(42)\n"),
+    )
+    with container.repository.sessions() as db:
+        assert db.get(SandboxExecution, request["id"]).agent_code_proposal_id is None
+    claimed = container.sandbox.claim_executions("direct-user-worker")
+    assert len(claimed) == 1
+    assert claimed[0]["source"] == "print(42)\n"
+
+def test_cw10_one_approved_proposal_cannot_create_two_sandbox_execution_rows(
+    container, signed_client,
+):
+    from sqlalchemy.exc import IntegrityError
+    from services.coworker.sandbox_schemas import SandboxExecutionCreate
+
+    owner, _, proposal_id, proposal, session, first = reviewed_sandbox_candidate(
+        container, signed_client,
+    )
+    second = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source=proposal.source),
+    )
+    with pytest.raises(IntegrityError):
+        with container.repository.sessions.begin() as db:
+            db.get(SandboxExecution, second["id"]).agent_code_proposal_id = proposal_id
+            db.flush()
+    with container.repository.sessions() as db:
+        assert db.get(SandboxExecution, first["id"]).agent_code_proposal_id == proposal_id
+        assert db.get(SandboxExecution, second["id"]).agent_code_proposal_id is None
