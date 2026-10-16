@@ -687,7 +687,6 @@ def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
         container.settings = enabled
         container.repository.settings = enabled
         container.agent.settings = enabled
-        enable_reviewed_pilot(container)
         owner = account(container)
         run, _ = container.agent.create(owner, AgentRunCreate(
             goal="Research two sources and create a project document.", output_language="en"
@@ -758,7 +757,6 @@ def test_agent_v2_failed_branch_preserves_completed_independent_work_and_blocks_
         container.settings = enabled
         container.repository.settings = enabled
         container.agent.settings = enabled
-        enable_reviewed_pilot(container)
         owner = account(container)
         run, _ = container.agent.create(owner, AgentRunCreate(
             goal="Research two sources and create a project document.", output_language="en"
@@ -818,7 +816,6 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
         container.settings = enabled
         container.repository.settings = enabled
         container.agent.settings = enabled
-        enable_reviewed_pilot(container)
         owner = account(container)
         run, _ = container.agent.create(owner, AgentRunCreate(
             goal="Research two sources and create a project document.", output_language="en"
