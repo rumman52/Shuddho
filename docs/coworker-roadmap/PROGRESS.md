@@ -1,3 +1,15 @@
+## CW-11 / A-04 restricted-run task scope at worker claim — 16 October 2026
+
+**Refreshed default branch:** `main` `9b9e23a182ec212ce7f30e87d7a235ba886c2f5f`, with #430 merged and exact merged-main CI #38858449740 still in progress at first inspection; no open PRs were observed. Older 15 October recovery-claim CI checkpoint is superseded.
+
+**New bounded security slice:** `codex/cw11-task-run-scope-claim-20261016` prevents any tool outside a stored nonempty Agent run `tool_allowlist` from being admitted by `save_plan`, `replace_remaining_plan` or `AgentRuntime.execute_step`. Only non-consequential task tools are restricted by this field; attached consequential actions retain their existing ExternalAction approval checks. A targeted real-SQL repository test simulates a stale/tampered persisted invocation and checks no Task is created.
+
+**Evidence state:** changes committed on a review branch; targeted test, exact-final-HEAD mandatory CI, independent review, PostgreSQL/Temporal racing worker replay and staging were **not yet verified** at checkpoint drafting. This narrows the authority gap but **does not** complete CW-11 publication or activation, CW-10 operated sandbox, CW-09 browser, A/P/V qualification. [Task acceptance](CW11_RUNTIME_TASK_SCOPE_HARDENING_2026-10-16.md).
+
+**Next:** open review PR, inspect required final-head CI and review, fix failures without weakening scope. After review, implement independently version-pinned approved skill publication and runtime grants; no automatic merge, deployment or activation.
+
+---
+
 ## CW-10 generated model source → worker revocation integration regression — 16 October 2026
 
 **Verified baseline:** `main` `4b456bf41ad324d79e142c3dd39e4a49e9e2a612` contains merged #429 bounded owner DeepSeek model drafts. Its exact-head [PR CI #38852014466](https://github.com/rumman52/Shuddho/actions/runs/38852014466) and merged-main [CI #38852778094](https://github.com/rumman52/Shuddho/actions/runs/38852778094) passed all three required jobs; no open PRs at task selection.
