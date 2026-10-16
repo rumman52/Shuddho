@@ -75,48 +75,53 @@ jobs:
           set -euo pipefail
           api="https://api.render.com/v1"
           auth=(-H "Authorization: Bearer ${RENDER_API_KEY}" -H "Accept: application/json")
+
           if [[ "${OLD_WORKER_SERVICE_ID}" == "${CANDIDATE_WORKER_SERVICE_ID}" ]]; then
             echo "::error::Old and candidate worker service IDs must differ."
             exit 1
           fi
+
           old_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}")"
           candidate_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}")"
-          jq -e '.type == "background_worker" and .repo == "https://github.com/rumman52/Shuddho" and .serviceDetails.region == "oregon" and .branch == "main"' <<<"${old_service}" >/dev/null
-          jq -e --arg branch "${GITHUB_REF_NAME}" '.type == "background_worker" and .repo == "https://github.com/rumman52/Shuddho" and .serviceDetails.region == "oregon" and .branch == $branch' <<<"${candidate_service}" >/dev/null
-          if [[ "${OLD_WORKER_SERVICE_ID}" == "${CANDIDATE_WORKER_SERVICE_ID}" ]]; then
-            echo "::error::Legacy and candidate worker services must be different services."
-            exit 1
-          fi
-          old_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}")"
-          candidate_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}")"
+
+          jq -e --arg owner "${RENDER_WORKSPACE_ID}" '
+            .type == "background_worker"
+            and .ownerId == $owner
+            and .repo == "https://github.com/rumman52/Shuddho"
+            and .serviceDetails.region == "oregon"
+            and .branch == "main"
+          ' <<<"${old_service}" >/dev/null
+
+          jq -e --arg owner "${RENDER_WORKSPACE_ID}" --arg branch "${GITHUB_REF_NAME}" '
+            .type == "background_worker"
+            and .ownerId == $owner
+            and .repo == "https://github.com/rumman52/Shuddho"
+            and .serviceDetails.region == "oregon"
+            and .branch == $branch
+          ' <<<"${candidate_service}" >/dev/null
+
           old_instances="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}/instances")"
           candidate_instances="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}/instances")"
           old_deploys="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}/deploys?limit=20")"
           candidate_deploys="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}/deploys?limit=20")"
+
           old_count="$(jq 'length' <<<"${old_instances}")"
           candidate_count="$(jq 'length' <<<"${candidate_instances}")"
-          for service_json in "${old_service}" "${candidate_service}"; do
-            if ! jq -e --arg owner "${RENDER_WORKSPACE_ID}" '
-              .type == "background_worker"
-              and .ownerId == $owner
-              and .repo == "https://github.com/rumman52/Shuddho"
-            ' <<<"${service_json}" >/dev/null; then
-              echo "::error::A supplied Render service is not the reviewed Shuddho staging background worker."
-              exit 1
-            fi
-          done
+
           old_commit="$(jq -r '
             map(select(.status == "live" and (.commit.id? | type == "string")))
             | sort_by(.createdAt)
             | last
             | .commit.id // empty
           ' <<<"${old_deploys}")"
+
           candidate_commit="$(jq -r '
             map(select(.status == "live" and (.commit.id? | type == "string")))
             | sort_by(.createdAt)
             | last
             | .commit.id // empty
           ' <<<"${candidate_deploys}")"
+
           if [[ "${old_count}" -ne 0 ]]; then
             echo "::error::Legacy Render worker still has live instances; drain is not complete."
             exit 1
@@ -133,7 +138,8 @@ jobs:
             echo "::error::Candidate Render worker is not running the exact qualification revision."
             exit 1
           fi
-          jq -n             --arg old_service "${OLD_WORKER_SERVICE_ID}"             --arg candidate_service "${CANDIDATE_WORKER_SERVICE_ID}"             --arg old_revision "${{ inputs.old_source_revision }}"             --arg candidate_commit "${candidate_commit}"             --argjson old_count "${old_count}"             --argjson candidate_count "${candidate_count}"             '{
+
+          jq -n             --arg old_service "${OLD_WORKER_SERVICE_ID}"             --arg candidate_service "${CANDIDATE_WORKER_SERVICE_ID}"             --arg old_revision "${{ inputs.old_source_revision }}"             --arg old_commit "${old_commit}"             --arg candidate_commit "${candidate_commit}"             --argjson old_count "${old_count}"             --argjson candidate_count "${candidate_count}"             '{
               schema_version: 1,
               old_worker_service_id: $old_service,
               candidate_worker_service_id: $candidate_service,
@@ -149,11 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/cw11-storage
-          uv run --extra coworker python scripts/cw11_staging_evidence.py \
-            --expected-publication-version "${{ inputs.expected_publication_version }}" \
-            --old-source-revision "${{ inputs.old_source_revision }}" \
-            --external-render-evidence /tmp/cw11-render-evidence.json
-            --output /tmp/cw11-staging-evidence.json
+          uv run --extra coworker python scripts/cw11_staging_evidence.py             --expected-publication-version "${{ inputs.expected_publication_version }}"             --old-source-revision "${{ inputs.old_source_revision }}"             --external-render-evidence /tmp/cw11-render-evidence.json             --output /tmp/cw11-staging-evidence.json
 
       - name: Publish evidence summary
         if: always()
