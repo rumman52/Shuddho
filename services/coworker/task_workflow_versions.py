@@ -9,7 +9,15 @@ from __future__ import annotations
 
 from .skills import SKILLS, WorkSkill, skill_for_version
 
-REVIEWED_RESEARCH_WORKFLOW_VERSION = "work_research_reviewed_v1"
+# Registry-bound reviewed research. The v1 reviewed workflow remains a
+# historical compatibility reader only; newly admitted or migrated work must
+# carry the persisted publication identity and use v2.
+REVIEWED_RESEARCH_WORKFLOW_VERSION = "work_research_reviewed_v2"
+LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION = "work_research_reviewed_v1"
+# Historical reviewed admissions from the pre-fence pilot used the ordinary
+# research workflow plus a reviewed_skill_identity Step. They are the only
+# rows eligible for controlled post-drain migration.
+PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION = "work_research_v1"
 
 
 def task_skill_for_version(version: str) -> WorkSkill:

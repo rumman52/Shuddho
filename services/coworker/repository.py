@@ -11,11 +11,29 @@ from sqlalchemy.exc import IntegrityError
 from .auth import Principal
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, ToolInvocation, Workspace, utcnow
+from .models import (
+    Account, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document,
+    DocumentVersion, ModelAttempt, Outbox, ReviewedSkillPublication,
+    ReviewedSkillRegistryEvent, ReviewedSkillSelection, Step, Task, TaskEvent, ToolInvocation, WorkerInstance,
+    Workspace, utcnow,
+)
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 from .schemas import TaskCreate, UploadRequest
 from .skills import SKILLS, service_enabled
-from .task_workflow_versions import REVIEWED_RESEARCH_WORKFLOW_VERSION, task_skill_for_version
+from .reviewed_skill_registry import (
+    REVIEWED_RESEARCH_SKILL,
+    REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
+    WORKER_ACTIVE_STATES,
+    WORKER_HEARTBEAT_TTL_SECONDS,
+    build_pilot_publication,
+    require_pinned_publication,
+    require_selected_pilot,
+)
+from .task_workflow_versions import (
+    PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    task_skill_for_version,
+)
 
 TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
@@ -36,6 +54,707 @@ class Repository:
     def __init__(self, sessions, settings: Settings):
         self.sessions = sessions
         self.settings = settings
+
+    def _require_compatible_worker_fleet(
+        self, db, *, task_queue: str, required_source_revision: str | None,
+    ) -> None:
+        if not required_source_revision:
+            raise CoworkerError(
+                "skill_worker_revision_mismatch",
+                "Reviewed skill selection requires a full worker source revision.",
+                409,
+            )
+        cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
+        rows = db.scalars(select(WorkerInstance).where(
+            WorkerInstance.task_queue == task_queue,
+            WorkerInstance.state.in_(WORKER_ACTIVE_STATES),
+        ).with_for_update()).all()
+        incompatible = [
+            row for row in rows
+            if row.source_revision != required_source_revision
+        ]
+        if incompatible:
+            raise CoworkerError(
+                "worker_fleet_incompatible",
+                "Reviewed skill selection is blocked while an incompatible worker is active or draining.",
+                409,
+            )
+        if not any(
+            row.source_revision == required_source_revision
+            and row.state == "running"
+            and aware(row.heartbeat_at) >= cutoff
+            for row in rows
+        ):
+            raise CoworkerError(
+                "worker_fleet_unavailable",
+                "Reviewed skill selection requires at least one fresh compatible running worker.",
+                409,
+            )
+
+    def publish_reviewed_skill(
+        self, publication: dict, *, actor_reference: str, reason: str,
+    ) -> dict:
+        """Persist one immutable reviewed publication; never selects it."""
+        if not actor_reference.strip() or len(actor_reference) > 200:
+            raise CoworkerError("skill_publication_operator", "A non-empty operator reference is required.", 409)
+        if not reason.strip() or len(reason) > 500:
+            raise CoworkerError("skill_publication_operator", "A non-empty publication reason is required.", 409)
+        required = {
+            "skill_name", "publication_version", "task_workflow_version",
+            "manifest_version", "review_sha256", "publication_sha256",
+            "source_revision", "tool_names", "resource_limits", "manifest",
+            "rollback_target_version",
+        }
+        if set(publication) != required:
+            raise CoworkerError("skill_publication_untrusted", "The publication envelope is incomplete.", 409)
+        if publication["skill_name"] != REVIEWED_RESEARCH_SKILL:
+            raise CoworkerError("skill_publication_untrusted", "Only the reviewed research pilot is supported.", 409)
+        if type(publication["publication_version"]) is not str or not publication["publication_version"].strip():
+            raise CoworkerError("skill_publication_untrusted", "The publication version is invalid.", 409)
+        if publication["task_workflow_version"] != REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION:
+            raise CoworkerError("skill_publication_untrusted", "The publication workflow version is not reviewed.", 409)
+        if publication["source_revision"] != self.settings.source_revision:
+            raise CoworkerError(
+                "skill_worker_revision_mismatch",
+                "A reviewed publication must be created by the exact source revision that will run it.",
+                409,
+            )
+        expected = build_pilot_publication(
+            source_revision=publication["source_revision"],
+            publication_version=publication["publication_version"],
+            task_workflow_version=publication["task_workflow_version"],
+            rollback_target_version=publication["rollback_target_version"],
+        )
+        if publication != expected:
+            raise CoworkerError(
+                "skill_publication_untrusted",
+                "The publication does not match the code-reviewed pilot envelope.",
+                409,
+            )
+        with self.sessions.begin() as db:
+            existing = db.scalar(select(ReviewedSkillPublication).where(
+                ReviewedSkillPublication.skill_name == publication["skill_name"],
+                ReviewedSkillPublication.publication_version == publication["publication_version"],
+            ))
+            if existing is not None:
+                raise CoworkerError("skill_publication_exists", "That reviewed skill publication version already exists.", 409)
+            rollback_target = publication["rollback_target_version"]
+            if rollback_target is not None:
+                target_exists = db.scalar(select(ReviewedSkillPublication.id).where(
+                    ReviewedSkillPublication.skill_name == publication["skill_name"],
+                    ReviewedSkillPublication.publication_version == rollback_target,
+                    ReviewedSkillPublication.state == "published",
+                ))
+                if target_exists is None:
+                    raise CoworkerError(
+                        "skill_publication_untrusted",
+                        "The explicit rollback target must already be a published reviewed version.",
+                        409,
+                    )
+            row = ReviewedSkillPublication(
+                id=str(uuid4()), skill_name=publication["skill_name"],
+                publication_version=publication["publication_version"],
+                task_workflow_version=publication["task_workflow_version"],
+                manifest_version=publication["manifest_version"],
+                review_sha256=publication["review_sha256"],
+                publication_sha256=publication["publication_sha256"],
+                source_revision=publication["source_revision"],
+                tool_names=publication["tool_names"],
+                resource_limits=publication["resource_limits"],
+                manifest=publication["manifest"],
+                rollback_target_version=publication["rollback_target_version"],
+                state="published",
+                published_by=actor_reference,
+                publication_reason=reason,
+            )
+            db.add(row)
+            db.flush()
+            self._record_reviewed_control_event(
+                db,
+                skill_name=publication["skill_name"],
+                publication_id=row.id,
+                event_type="publication_published",
+                actor_reference=actor_reference,
+                reason=reason,
+                metadata={
+                    "publication_version": row.publication_version,
+                    "source_revision": row.source_revision,
+                },
+            )
+            return self._reviewed_publication_dto(row)
+
+    def select_reviewed_skill(
+        self, skill_name: str, publication_version: str, *,
+        actor_reference: str, reason: str, worker_source_revision: str | None,
+    ) -> dict:
+        if skill_name != REVIEWED_RESEARCH_SKILL:
+            raise CoworkerError("skill_publication_untrusted", "Unsupported reviewed skill.", 409)
+        if not actor_reference.strip() or len(actor_reference) > 200:
+            raise CoworkerError("skill_publication_operator", "A non-empty operator reference is required.", 409)
+        if not reason.strip() or len(reason) > 500:
+            raise CoworkerError("skill_publication_operator", "A non-empty selection reason is required.", 409)
+        if worker_source_revision != self.settings.source_revision:
+            raise CoworkerError(
+                "skill_worker_revision_mismatch",
+                "The operator selection context does not match this worker source revision.",
+                409,
+            )
+        with self.sessions.begin() as db:
+            self._require_compatible_worker_fleet(
+                db,
+                task_queue=self.settings.task_queue,
+                required_source_revision=worker_source_revision,
+            )
+            publication = db.scalar(select(ReviewedSkillPublication).where(
+                ReviewedSkillPublication.skill_name == skill_name,
+                ReviewedSkillPublication.publication_version == publication_version,
+            ).with_for_update())
+            if publication is None:
+                raise CoworkerError("skill_publication_unavailable", "The requested reviewed publication is not published.", 409)
+            binding = require_selected_pilot(publication, worker_source_revision=worker_source_revision)
+            selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == skill_name,
+            ).with_for_update())
+            previous_publication_id = selection.publication_id if selection is not None else None
+            if selection is None:
+                selection = ReviewedSkillSelection(
+                    skill_name=skill_name, publication_id=binding.publication_id,
+                    generation=1, state="selected",
+                    updated_by=actor_reference, reason=reason,
+                )
+                db.add(selection)
+            else:
+                if selection.publication_id != binding.publication_id:
+                    selection.publication_id = binding.publication_id
+                    selection.generation = int(selection.generation or 0) + 1
+                selection.state = "selected"
+                selection.updated_by = actor_reference
+                selection.reason = reason
+                selection.updated_at = utcnow()
+            db.flush()
+            self._record_reviewed_control_event(
+                db,
+                skill_name=skill_name,
+                publication_id=publication.id,
+                event_type="publication_selected",
+                actor_reference=actor_reference,
+                reason=reason,
+                metadata={
+                    "previous_publication_id": previous_publication_id,
+                    "generation": selection.generation,
+                },
+            )
+            return self._reviewed_selection_dto(selection, publication)
+
+    def rollback_reviewed_skill(
+        self, skill_name: str, target_publication_version: str, *,
+        actor_reference: str, reason: str, worker_source_revision: str | None,
+    ) -> dict:
+        if skill_name != REVIEWED_RESEARCH_SKILL:
+            raise CoworkerError("skill_publication_untrusted", "Unsupported reviewed skill.", 409)
+        if not actor_reference.strip() or len(actor_reference) > 200:
+            raise CoworkerError("skill_publication_operator", "A non-empty operator reference is required.", 409)
+        if not reason.strip() or len(reason) > 500:
+            raise CoworkerError("skill_publication_operator", "A non-empty rollback reason is required.", 409)
+        if worker_source_revision != self.settings.source_revision:
+            raise CoworkerError(
+                "skill_worker_revision_mismatch",
+                "The operator rollback context does not match this worker source revision.",
+                409,
+            )
+        with self.sessions.begin() as db:
+            selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == skill_name,
+            ).with_for_update())
+            if selection is None:
+                raise CoworkerError("skill_rollback_unavailable", "There is no selected reviewed publication to roll back.", 409)
+            current = db.scalar(select(ReviewedSkillPublication).where(
+                ReviewedSkillPublication.id == selection.publication_id,
+            ).with_for_update())
+            target = db.scalar(select(ReviewedSkillPublication).where(
+                ReviewedSkillPublication.skill_name == skill_name,
+                ReviewedSkillPublication.publication_version == target_publication_version,
+            ).with_for_update())
+            if current is None or target is None:
+                raise CoworkerError("skill_rollback_unavailable", "The selected or rollback publication is missing.", 409)
+            if current.id == target.id:
+                raise CoworkerError("skill_rollback_unavailable", "Rollback target is already selected.", 409)
+            if current.state != "published":
+                raise CoworkerError("skill_rollback_unavailable", "The current publication is not rollback-eligible.", 409)
+            if current.rollback_target_version != target_publication_version:
+                raise CoworkerError(
+                    "skill_rollback_unavailable",
+                    "Rollback target does not match the publication's explicitly declared rollback target.",
+                    409,
+                )
+            self._require_compatible_worker_fleet(
+                db,
+                task_queue=self.settings.task_queue,
+                required_source_revision=worker_source_revision,
+            )
+            require_selected_pilot(target, worker_source_revision=worker_source_revision)
+            current.state = "rolled_back"
+            current.updated_at = utcnow()
+            selection.publication_id = target.id
+            selection.generation = int(selection.generation or 0) + 1
+            selection.state = "selected"
+            selection.updated_by = actor_reference
+            selection.reason = reason
+            selection.updated_at = utcnow()
+            db.flush()
+            self._record_reviewed_control_event(
+                db,
+                skill_name=skill_name,
+                publication_id=target.id,
+                event_type="publication_rolled_back",
+                actor_reference=actor_reference,
+                reason=reason,
+                metadata={
+                    "from_publication_id": current.id,
+                    "from_publication_version": current.publication_version,
+                    "target_publication_version": target.publication_version,
+                    "generation": selection.generation,
+                },
+            )
+            return self._reviewed_selection_dto(selection, target)
+
+    def list_reviewed_publications(self, skill_name: str = REVIEWED_RESEARCH_SKILL) -> list[dict]:
+        if skill_name != REVIEWED_RESEARCH_SKILL:
+            raise CoworkerError("skill_publication_untrusted", "Unsupported reviewed skill.", 409)
+        with self.sessions() as db:
+            rows = db.scalars(
+                select(ReviewedSkillPublication)
+                .where(ReviewedSkillPublication.skill_name == skill_name)
+                .order_by(ReviewedSkillPublication.published_at.asc())
+            ).all()
+            return [self._reviewed_publication_dto(row) for row in rows]
+
+    def reviewed_control_history(self, *, limit: int = 100) -> list[dict]:
+        if limit < 1 or limit > 500:
+            raise CoworkerError("skill_operator", "History limit must be between 1 and 500.", 422)
+        with self.sessions() as db:
+            rows = db.scalars(
+                select(ReviewedSkillRegistryEvent)
+                .order_by(ReviewedSkillRegistryEvent.created_at.desc())
+                .limit(limit)
+            ).all()
+            return [{
+                "id": row.id,
+                "skill_name": row.skill_name,
+                "publication_id": row.publication_id,
+                "event_type": row.event_type,
+                "actor_reference": row.actor_reference,
+                "reason": row.reason,
+                "metadata": dict(row.metadata or {}),
+                "created_at": iso(row.created_at),
+            } for row in rows]
+
+    def selected_reviewed_skill(self, skill_name: str) -> dict | None:
+        with self.sessions() as db:
+            selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == skill_name,
+            ))
+            if selection is None or selection.state != "selected":
+                return None
+            publication = db.get(ReviewedSkillPublication, selection.publication_id)
+            if publication is None:
+                raise CoworkerError(
+                    "skill_publication_unavailable",
+                    "The selected reviewed skill publication is missing.",
+                    409,
+                )
+            require_selected_pilot(
+                publication,
+                worker_source_revision=publication.source_revision,
+            )
+            return self._reviewed_selection_dto(selection, publication)
+
+    @staticmethod
+    def _reviewed_publication_dto(row: ReviewedSkillPublication) -> dict:
+        return {
+            "id": row.id, "skill_name": row.skill_name,
+            "publication_version": row.publication_version,
+            "task_workflow_version": row.task_workflow_version,
+            "manifest_version": row.manifest_version,
+            "review_sha256": row.review_sha256,
+            "publication_sha256": row.publication_sha256,
+            "source_revision": row.source_revision,
+            "tool_names": list(row.tool_names or ()),
+            "resource_limits": dict(row.resource_limits or {}),
+            "rollback_target_version": row.rollback_target_version,
+            "state": row.state, "published_at": iso(row.published_at),
+            "updated_at": iso(row.updated_at),
+        }
+
+    @classmethod
+    def _reviewed_selection_dto(
+        cls, selection: ReviewedSkillSelection, publication: ReviewedSkillPublication,
+    ) -> dict:
+        return {
+            "skill_name": selection.skill_name,
+            "publication_id": selection.publication_id,
+            "publication_version": publication.publication_version,
+            "task_workflow_version": publication.task_workflow_version,
+            "publication_sha256": publication.publication_sha256,
+            "review_sha256": publication.review_sha256,
+            "source_revision": publication.source_revision,
+            "generation": selection.generation,
+            "state": selection.state,
+            "updated_at": iso(selection.updated_at),
+        }
+
+    def reviewed_skill_runtime_manifest(self) -> dict:
+        selected = self.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL)
+        if selected is None:
+            return {"research": {
+                "state": "unselected", "publication_version": None,
+                "publication_sha256": None, "review_sha256": None,
+                "source_revision": None, "task_workflow_version": None,
+                "generation": None,
+            }}
+        return {"research": {
+            key: selected[key]
+            for key in (
+                "state", "publication_version", "publication_sha256",
+                "review_sha256", "source_revision",
+                "task_workflow_version", "generation",
+            )
+        }}
+
+    def register_worker(self, *, task_queue: str, source_revision: str | None) -> str:
+        worker_id = str(uuid4())
+        with self.sessions.begin() as db:
+            db.add(WorkerInstance(
+                id=worker_id, task_queue=task_queue,
+                source_revision=source_revision or "unknown",
+                state="starting",
+            ))
+        return worker_id
+
+    def heartbeat_worker(self, worker_id: str) -> str:
+        with self.sessions.begin() as db:
+            row = db.scalar(
+                select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
+            )
+            if row is None:
+                return "lost"
+            if row.state in {"drained", "lost"}:
+                return row.state
+            row.state = "draining" if row.drain_requested_at is not None else "running"
+            row.heartbeat_at = utcnow()
+            return row.state
+
+    def mark_worker_drained(self, worker_id: str) -> None:
+        with self.sessions.begin() as db:
+            row = db.scalar(
+                select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
+            )
+            if row is not None and row.state != "lost":
+                row.state = "drained"
+                row.drained_at = utcnow()
+                row.heartbeat_at = utcnow()
+                self._record_reviewed_control_event(
+                    db,
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    event_type="worker_drained",
+                    actor_reference="worker-self",
+                    reason="Worker completed cooperative drain.",
+                    metadata={
+                        "worker_id": row.id,
+                        "task_queue": row.task_queue,
+                        "source_revision": row.source_revision,
+                    },
+                )
+
+    def request_worker_drain(
+        self, *, task_queue: str, source_revision: str,
+        actor_reference: str, reason: str,
+    ) -> int:
+        if not actor_reference.strip() or len(actor_reference) > 200:
+            raise CoworkerError("worker_drain_operator", "A non-empty operator reference is required.", 409)
+        if not reason.strip() or len(reason) > 500:
+            raise CoworkerError("worker_drain_operator", "A non-empty drain reason is required.", 409)
+        with self.sessions.begin() as db:
+            cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
+            rows = db.scalars(select(WorkerInstance).where(
+                WorkerInstance.task_queue == task_queue,
+                WorkerInstance.source_revision == source_revision,
+                WorkerInstance.state.in_(WORKER_ACTIVE_STATES),
+                WorkerInstance.heartbeat_at >= cutoff,
+            ).with_for_update()).all()
+            now = utcnow()
+            for row in rows:
+                row.state = "draining"
+                row.drain_requested_at = now
+                row.drain_requested_by = actor_reference
+                row.drain_reason = reason
+                row.heartbeat_at = now
+                self._record_reviewed_control_event(
+                    db,
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    event_type="worker_drain_requested",
+                    actor_reference=actor_reference,
+                    reason=reason,
+                    metadata={
+                        "worker_id": row.id,
+                        "task_queue": row.task_queue,
+                        "source_revision": row.source_revision,
+                    },
+                )
+            return len(rows)
+
+    def worker_inventory(self, *, task_queue: str | None = None) -> list[dict]:
+        with self.sessions() as db:
+            stmt = select(WorkerInstance).order_by(WorkerInstance.started_at.desc())
+            if task_queue:
+                stmt = stmt.where(WorkerInstance.task_queue == task_queue)
+            rows = db.scalars(stmt).all()
+            cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
+            return [{
+                "id": row.id, "task_queue": row.task_queue,
+                "source_revision": row.source_revision, "state": row.state,
+                "started_at": iso(row.started_at),
+                "heartbeat_at": iso(row.heartbeat_at),
+                "heartbeat_fresh": aware(row.heartbeat_at) >= cutoff,
+                "drain_requested_at": iso(row.drain_requested_at) if row.drain_requested_at else None,
+                "drain_requested_by": row.drain_requested_by,
+                "drain_reason": row.drain_reason,
+                "drained_at": iso(row.drained_at) if row.drained_at else None,
+            } for row in rows]
+
+    def assert_worker_drain_complete(
+        self, *, task_queue: str, old_source_revision: str,
+    ) -> dict:
+        inventory = self.worker_inventory(task_queue=task_queue)
+        old_rows = [
+            row for row in inventory
+            if row["source_revision"] == old_source_revision
+        ]
+        if not old_rows:
+            raise CoworkerError(
+                "worker_drain_incomplete",
+                "No registered worker for the legacy revision was observed; explicit drain cannot be claimed.",
+                409,
+            )
+        blockers = [
+            row for row in old_rows
+            if row["state"] in (WORKER_ACTIVE_STATES | {"lost"})
+        ]
+        if blockers:
+            raise CoworkerError(
+                "worker_drain_incomplete",
+                "The legacy worker fleet has not reached an explicit drained state; lost workers are treated as uncertain.",
+                409,
+            )
+        return {
+            "task_queue": task_queue,
+            "old_source_revision": old_source_revision,
+            "verified": True,
+            "workers": inventory,
+        }
+
+    def _require_selected_reviewed_publication(
+        self, db, review_sha256: str,
+    ):
+        selection = db.scalar(select(ReviewedSkillSelection).where(
+            ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+        ).with_for_update())
+        if selection is None or selection.state != "selected":
+            raise CoworkerError(
+                "skill_publication_unavailable",
+                "The reviewed research skill has no explicitly selected publication.",
+                409,
+            )
+        publication = db.scalar(select(ReviewedSkillPublication).where(
+            ReviewedSkillPublication.id == selection.publication_id,
+        ).with_for_update())
+        binding = require_selected_pilot(
+            publication,
+            worker_source_revision=self.settings.source_revision,
+        )
+        if binding.review_sha256 != review_sha256:
+            raise CoworkerError(
+                "skill_publication_unavailable",
+                "The selected publication does not match the admitted reviewed manifest.",
+                409,
+            )
+        self._require_compatible_worker_fleet(
+            db,
+            task_queue=self.settings.task_queue,
+            required_source_revision=binding.source_revision,
+        )
+        return binding
+
+    def migrate_legacy_reviewed_tasks(
+        self, *, task_queue: str, old_source_revision: str,
+        publication_version: str, actor_reference: str, reason: str,
+    ) -> dict:
+        """Migrate only safely admitted legacy reviewed tasks after explicit worker drain."""
+        self.assert_worker_drain_complete(
+            task_queue=task_queue,
+            old_source_revision=old_source_revision,
+        )
+        with self.sessions.begin() as db:
+            self._require_compatible_worker_fleet(
+                db,
+                task_queue=task_queue,
+                required_source_revision=self.settings.source_revision,
+            )
+            selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+            ).with_for_update())
+            if selection is None or selection.state != "selected":
+                raise CoworkerError(
+                    "skill_migration_blocked",
+                    "A reviewed publication must be explicitly selected before historical migration.",
+                    409,
+                )
+            publication = db.scalar(select(ReviewedSkillPublication).where(
+                ReviewedSkillPublication.id == selection.publication_id,
+            ).with_for_update())
+            if publication is None or publication.publication_version != publication_version:
+                raise CoworkerError(
+                    "skill_migration_blocked",
+                    "The selected publication does not match the requested migration target.",
+                    409,
+                )
+            binding = require_selected_pilot(
+                publication,
+                worker_source_revision=self.settings.source_revision,
+            )
+            rows = db.scalars(
+                select(Task)
+                .join(Step, (Step.task_id == Task.id) & (Step.phase == "reviewed_skill_identity"))
+                .where(
+                    Task.workflow_version == PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+                    Task.state.not_in(TERMINAL),
+                )
+                .with_for_update()
+            ).all()
+            blockers: list[dict] = []
+            for task in rows:
+                if task.agent_run_id is None or task.agent_step_id is None:
+                    blockers.append({"task_id": task.id, "code": "missing_agent_binding"})
+                    continue
+                options = db.get(Step, (task.id, "research_input"))
+                if options is None:
+                    blockers.append({"task_id": task.id, "code": "missing_research_input"})
+                    continue
+                try:
+                    from .schemas import ResearchOptions
+                    document_ids = []
+                    for version_id in task.input_versions:
+                        version = db.get(DocumentVersion, version_id)
+                        if version is None or version.owner_id != task.owner_id:
+                            raise CoworkerError("skill_run_scope", "A source version is missing.")
+                        document_ids.append(UUID(version.document_id))
+                    request = TaskCreate(
+                        skill_id="research",
+                        instruction=task.instruction,
+                        notes=task.notes,
+                        document_ids=document_ids,
+                        output_language=task.output_language,
+                        research=ResearchOptions.model_validate(options.output),
+                    )
+                    digest = self._require_reviewed_agent_research(
+                        db, task.owner_id, task.agent_run_id, task.agent_step_id,
+                        request, input_versions=list(task.input_versions or ()),
+                        enforce_gate=False,
+                    )
+                    identity = db.get(Step, (task.id, "reviewed_skill_identity"))
+                    expected_identity = {
+                        "name": "research",
+                        "version": "work_research_v1",
+                        "tool": "research.search",
+                        "tool_version": "1",
+                        "review_sha256": digest,
+                    }
+                    if identity is None or identity.output != expected_identity:
+                        raise CoworkerError(
+                            "skill_manifest_unreviewed",
+                            "The historical reviewed identity is not exact.",
+                        )
+                    if digest != binding.review_sha256:
+                        raise CoworkerError(
+                            "skill_manifest_unreviewed",
+                            "The historical review hash does not match the migration publication.",
+                        )
+                    if task.deadline_at is None or aware(task.deadline_at) <= utcnow():
+                        raise CoworkerError("skill_migration_blocked", "The historical task deadline expired.")
+                    run = db.get(AgentRun, task.agent_run_id)
+                    if run is None or run.cancel_requested or aware(run.deadline_at) <= utcnow():
+                        raise CoworkerError("skill_migration_blocked", "The historical Agent run is cancelled or expired.")
+                    if task.phase != "queued":
+                        raise CoworkerError(
+                            "skill_migration_blocked",
+                            "A historical reviewed task has advanced beyond its safe pre-execution phase.",
+                        )
+                    search_attempt = db.get(Step, (task.id, "search_attempt"))
+                    if search_attempt is not None:
+                        raise CoworkerError(
+                            "skill_migration_blocked",
+                            "A historical task already has a search attempt and cannot be safely rebound.",
+                        )
+                except (CoworkerError, ValueError, TypeError) as error:
+                    blockers.append({"task_id": task.id, "code": getattr(error, "code", "invalid_historical_task")})
+            if blockers:
+                raise CoworkerError(
+                    "skill_migration_blocked",
+                    "Historical reviewed-task migration is blocked by unsafe or ambiguous rows.",
+                    409,
+                )
+            migrated = 0
+            for task in rows:
+                identity = db.get(Step, (task.id, "reviewed_skill_identity"))
+                task.workflow_version = binding.task_workflow_version
+                identity.output = {
+                    "publication_id": binding.publication_id,
+                    "publication_version": binding.publication_version,
+                    "publication_sha256": binding.publication_sha256,
+                    "review_sha256": binding.review_sha256,
+                    "source_revision": binding.source_revision,
+                    "task_workflow_version": binding.task_workflow_version,
+                }
+                task.updated_at = utcnow()
+                self._record_reviewed_control_event(
+                    db,
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    publication_id=binding.publication_id,
+                    event_type="legacy_task_migrated",
+                    actor_reference=actor_reference,
+                    reason=reason,
+                    metadata={
+                        "task_id": task.id,
+                        "task_queue": task_queue,
+                        "old_source_revision": old_source_revision,
+                        "publication_version": binding.publication_version,
+                    },
+                )
+                migrated += 1
+            return {
+                "task_queue": task_queue,
+                "old_source_revision": old_source_revision,
+                "publication_version": publication_version,
+                "migrated": migrated,
+                "verified": True,
+            }
+
+    @staticmethod
+    def _record_reviewed_control_event(
+        db, *, skill_name: str, event_type: str,
+        actor_reference: str, reason: str,
+        publication_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        db.add(ReviewedSkillRegistryEvent(
+            id=str(uuid4()),
+            skill_name=skill_name,
+            publication_id=publication_id,
+            event_type=event_type,
+            actor_reference=actor_reference,
+            reason=reason,
+            metadata=metadata or {},
+        ))
 
     def ensure_account(self, principal: Principal) -> dict:
         owner = principal.account_id
@@ -164,9 +883,10 @@ class Repository:
     def _require_reviewed_agent_research(
         self, db, owner: str, run_id: str, step_id: str | None,
         request: TaskCreate, *, input_versions: list[str] | None = None,
+        enforce_gate: bool = True,
     ) -> str | None:
         """Bind an opted-in reviewed research skill to the existing SQL run/step/tool."""
-        if not self.settings.agent_reviewed_research_skill_enabled:
+        if not self.settings.agent_reviewed_research_skill_enabled and enforce_gate:
             return None
         from .agent_tools import TOOLS
         from .skill_manifests import pilot_skill_manifest, validate_manifest
@@ -274,16 +994,32 @@ class Repository:
         digest = self._require_reviewed_agent_research(
             db, task.owner_id, task.agent_run_id, task.agent_step_id,
             request, input_versions=list(task.input_versions or ()),
+            enforce_gate=False,
         )
         stored_review = db.get(Step, (task.id, "reviewed_skill_identity"))
+        if stored_review is None or digest is None:
+            raise CoworkerError(
+                "skill_manifest_unreviewed",
+                "The Task has no matching immutable reviewed skill identity.",
+                409,
+            )
+        publication_id = (
+            stored_review.output.get("publication_id")
+            if isinstance(stored_review.output, dict) else None
+        )
+        publication = (
+            db.get(ReviewedSkillPublication, publication_id)
+            if publication_id else None
+        )
+        binding = require_pinned_publication(
+            publication,
+            stored_review.output,
+            worker_source_revision=self.settings.source_revision,
+        )
         if (
             task.workflow_version != REVIEWED_RESEARCH_WORKFLOW_VERSION
-            or digest is None or stored_review is None
-            or stored_review.output != {
-                "name": "research", "version": "work_research_v1",
-                "tool": "research.search", "tool_version": "1",
-                "review_sha256": digest,
-            }
+            or binding.task_workflow_version != REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION
+            or binding.review_sha256 != digest
         ):
             raise CoworkerError(
                 "skill_manifest_unreviewed",
@@ -325,8 +1061,7 @@ class Repository:
                     db.get(Step, (previous.id, "reviewed_skill_identity")) is not None
                     or previous.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
                     or (
-                        self.settings.agent_reviewed_research_skill_enabled
-                        and request.skill_id == "research"
+                        request.skill_id == "research"
                         and agent_run_id is not None
                     )
                 ):
@@ -340,10 +1075,27 @@ class Repository:
             if not enabled:
                 raise CoworkerError("service_unavailable", "This work service is not available yet. Please choose another service.", 409)
             reviewed_skill_digest = None
+            reviewed_publication = None
             if request.skill_id == "research" and agent_run_id is not None:
                 reviewed_skill_digest = self._require_reviewed_agent_research(
                     db, owner, agent_run_id, agent_step_id, request,
+                    enforce_gate=False,
                 )
+                if reviewed_skill_digest is not None:
+                    reviewed_publication = self._require_selected_reviewed_publication(
+                        db, reviewed_skill_digest,
+                    )
+            if reviewed_publication is not None:
+                duplicate = db.scalar(select(Task.id).where(
+                    Task.agent_run_id == agent_run_id,
+                    Task.agent_step_id == agent_step_id,
+                ))
+                if duplicate is not None:
+                    raise CoworkerError(
+                        "task_agent_binding_conflict",
+                        "This Agent research invocation is already bound to a Task.",
+                        409,
+                    )
             active = db.scalar(select(func.count()).select_from(Task).where(Task.owner_id == owner, Task.state.not_in(TERMINAL)))
             day = utcnow().date().isoformat()
             usage = db.get(DailyUsage, (owner, day))
@@ -380,21 +1132,25 @@ class Repository:
                         agent_run_id=agent_run_id, agent_step_id=agent_step_id,
                         notes=request.notes, output_language=request.output_language, input_versions=versions,
                         workflow_version=(
-                            REVIEWED_RESEARCH_WORKFLOW_VERSION if reviewed_skill_digest is not None
+                            REVIEWED_RESEARCH_WORKFLOW_VERSION if reviewed_publication is not None
                             else SKILLS[request.skill_id].version
                         ),
                         deadline_at=utcnow() + timedelta(seconds=self.settings.task_timeout_seconds))
             db.add(task)
             db.flush()
-            if reviewed_skill_digest is not None:
-                # Pin the actual source-reviewed identity alongside the Task;
-                # code updates cannot silently upgrade in-flight Agent runs.
+            if reviewed_publication is not None:
+                # Pin the complete publication identity alongside the Task.
+                # Normal selection changes do not mutate an admitted Task;
+                # explicit rollback marks its publication rolled_back.
                 db.add(Step(
                     task_id=task.id, phase="reviewed_skill_identity",
                     output={
-                        "name": "research", "version": "work_research_v1",
-                        "tool": "research.search", "tool_version": "1",
-                        "review_sha256": reviewed_skill_digest,
+                        "publication_id": reviewed_publication.publication_id,
+                        "publication_version": reviewed_publication.publication_version,
+                        "publication_sha256": reviewed_publication.publication_sha256,
+                        "review_sha256": reviewed_publication.review_sha256,
+                        "source_revision": reviewed_publication.source_revision,
+                        "task_workflow_version": reviewed_publication.task_workflow_version,
                     },
                 ))
             if request.research:
@@ -798,9 +1554,21 @@ class Repository:
             self._audit(db, task.owner_id, task_id, "task_cancelled" if cancelled else "task_failed")
             self._discard_extracted_text(db, task_id)
 
-    def claim_outbox(self, limit=10):
+    def claim_outbox(self, limit=10, *, worker_id: str | None = None):
         with self.sessions.begin() as db:
             now = utcnow()
+            if worker_id is not None:
+                worker = db.scalar(
+                    select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
+                )
+                cutoff = now - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
+                if (
+                    worker is None
+                    or worker.state != "running"
+                    or aware(worker.heartbeat_at) < cutoff
+                ):
+                    return []
+                worker.heartbeat_at = now
             rows = db.scalars(select(Outbox).where(Outbox.delivered.is_(False), or_(Outbox.lease_until.is_(None), Outbox.lease_until < now)).limit(limit).with_for_update(skip_locked=True)).all()
             for row in rows:
                 row.lease_until = now + timedelta(seconds=30)

@@ -210,9 +210,15 @@ class Settings:
             local_storage_path=Path(os.getenv("SHUDDHO_COWORKER_LOCAL_STORAGE", "data/coworker-files")),
             environment=os.getenv("SHUDDHO_COWORKER_ENV", "production"),
             source_revision=(
-                os.getenv("SHUDDHO_SOURCE_REVISION")
-                or os.getenv("RENDER_GIT_COMMIT")
-                or os.getenv("GITHUB_SHA")
+                (
+                    os.getenv("SHUDDHO_SOURCE_REVISION")
+                    if os.getenv("SHUDDHO_COWORKER_ENV", "production") == "development"
+                    else (
+                        os.getenv("RENDER_GIT_COMMIT")
+                        or os.getenv("GITHUB_SHA")
+                        or os.getenv("SHUDDHO_SOURCE_REVISION")
+                    )
+                )
                 or ""
             ).strip().lower() or None,
             temporal_address=os.getenv("SHUDDHO_TEMPORAL_ADDRESS", "localhost:7233"),
