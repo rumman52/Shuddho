@@ -502,10 +502,32 @@ class Repository:
     def reserve_search(self, task_id):
         """At most one paid search per accepted task, including worker loss."""
         with self.sessions.begin() as db:
+            existing = db.get(Task, task_id)
+            if existing is None:
+                raise not_found()
+            if (
+                self.settings.agent_reviewed_research_skill_enabled
+                and existing.agent_run_id is not None
+            ):
+                # Serialize revocation against the paid search reservation.
+                # Keep AgentRun -> Task lock order used by model reservation.
+                run = db.scalar(select(AgentRun).where(
+                    AgentRun.id == existing.agent_run_id,
+                    AgentRun.owner_id == existing.owner_id,
+                ).with_for_update())
+                if run is None:
+                    raise CoworkerError(
+                        "skill_run_scope", "The owning Agent run is unavailable.", 409,
+                    )
             task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
             self._check_live(task)
             if task.workflow_version != "work_research_v1":
                 raise CoworkerError("workflow_version", "This task cannot use web research.")
+            if (
+                self.settings.agent_reviewed_research_skill_enabled
+                and task.agent_run_id is not None
+            ):
+                self._reviewed_research_worker_task(db, task)
             if db.get(Step, (task_id, "search_attempt")):
                 raise CoworkerError("search_outcome_unknown", "The previous search could not be recovered. Create a new task to search again.", 409)
             db.add(Step(task_id=task_id, phase="search_attempt", output={
