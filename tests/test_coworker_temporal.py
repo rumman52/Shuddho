@@ -673,7 +673,7 @@ def test_agent_dependency_graph_replan_rebuilds_only_unstarted_edges(container):
     assert replaced["steps"][2]["depends_on"] == [2]
 
 
-def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
+def test_agent_v2_fans_out_research_and_work_steps_then_fans_in(container):
     async def scenario():
         enabled = replace(
             container.settings,
@@ -703,9 +703,9 @@ def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
                 "output_language": "en", "query": "first public project update", "time_range": "any",
             }),
-            AgentPlanStep(tool="research.search", arguments={
-                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
-                "output_language": "en", "query": "second public project update", "time_range": "any",
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create an independent supporting note.", "notes": "",
+                "document_ids": [], "output_language": "en",
             }),
             AgentPlanStep(tool="document.create", arguments={
                 "instruction": "Create the combined project document.", "notes": "",
@@ -780,9 +780,9 @@ def test_agent_v2_failed_branch_preserves_completed_independent_work_and_blocks_
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
                 "output_language": "en", "query": "first public project update", "time_range": "any",
             }),
-            AgentPlanStep(tool="research.search", arguments={
-                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
-                "output_language": "en", "query": "second public project update", "time_range": "any",
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create an independent supporting note.", "notes": "",
+                "document_ids": [], "output_language": "en",
             }),
             AgentPlanStep(tool="document.create", arguments={
                 "instruction": "Create the combined project document.", "notes": "",
@@ -846,9 +846,9 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
                 "output_language": "en", "query": "first public project update", "time_range": "any",
             }),
-            AgentPlanStep(tool="research.search", arguments={
-                "instruction": "Research the second public update.", "notes": "", "document_ids": [],
-                "output_language": "en", "query": "second public project update", "time_range": "any",
+            AgentPlanStep(tool="document.create", arguments={
+                "instruction": "Create an independent supporting note.", "notes": "",
+                "document_ids": [], "output_language": "en",
             }),
             AgentPlanStep(tool="document.create", arguments={
                 "instruction": "Create the combined project document.", "notes": "",
@@ -864,7 +864,7 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
             async def draft(self, task):
                 await super().draft(task)
                 worker_task = self.container.repository.worker_task(task["id"], False)
-                if worker_task["skill_id"] == "research":
+                if worker_task["skill_id"] in {"research", "document"}:
                     drafted.add(task["id"])
                     if len(drafted) == 2:
                         checkpoint.set()
@@ -896,7 +896,7 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
         final = container.agent.get(owner, run["id"])
         assert final["state"] == "completed"
         assert model.calls == 3
-        assert search.calls == 2
+        assert search.calls == 1
         assert all(step["state"] == "completed" for step in final["steps"])
 
     asyncio.run(scenario())
