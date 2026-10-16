@@ -1015,7 +1015,7 @@ class SandboxRepository:
                 # reclaims the same consequential execution.
                 return {"execution": self._execution_dto(existing),
                         "session_id": existing.session_id,
-                        "execution_authorized": True, "code_executed": existing.state == "completed"}, False
+                        "execution_authorized": True, "code_executed": existing.state == "succeeded"}, False
             count = db.scalar(select(func.count()).select_from(SandboxSession).where(
                 SandboxSession.owner_id == owner,
                 SandboxSession.state.in_(tuple(ACTIVE_SANDBOX_STATES)),
@@ -1034,7 +1034,7 @@ class SandboxRepository:
             session = SandboxSession(
                 id=str(uuid4()), owner_id=owner, workspace_id=run.workspace_id,
                 idempotency_key="cw10:" + proposal.id,
-                fingerprint=_digest({"purpose": "code_task", "runtime": "python311", "review": proposal.review_sha256}),
+                fingerprint=_digest({"purpose": "code_task", "runtime": "python311"}),
                 purpose="code_task", runtime="python311", state="prepared",
                 execution_policy=current_policy, cancel_requested=False,
                 cleanup_state="pending", created_at=now, updated_at=now,
