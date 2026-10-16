@@ -72,7 +72,7 @@ def main() -> None:
     runtime = sub.add_parser("runtime", help="Print the selected reviewed publication identity.")
 
     args = parser.parse_args()
-    repository, settings = repository_from_env()
+    repository, _settings = repository_from_env()
 
     try:
         if args.command == "publish":
