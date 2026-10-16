@@ -29,15 +29,15 @@ concurrency:
 
 jobs:
   evidence:
-    if: \${{ inputs.confirm == 'CW11-STAGING' }}
+    if: ${{ inputs.confirm == 'CW11-STAGING' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
       name: staging
     env:
       SHUDDHO_COWORKER_ENV: staging
-      SHUDDHO_COWORKER_DATABASE_URL: \${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}
-      SHUDDHO_AUTH_ISSUER: \${{ secrets.SHUDDHO_STAGING_AUTH_ISSUER }}
+      SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}
+      SHUDDHO_AUTH_ISSUER: ${{ secrets.SHUDDHO_STAGING_AUTH_ISSUER }}
       SHUDDHO_COWORKER_STORAGE: local
       SHUDDHO_COWORKER_LOCAL_STORAGE: /tmp/cw11-storage
       SHUDDHO_TEMPORAL_TASK_QUEUE: shuddho-documents-v1
@@ -112,8 +112,8 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/cw11-storage
           uv run --extra coworker python scripts/cw11_staging_evidence.py \
-            --expected-publication-version "\${{ inputs.expected_publication_version }}" \
-            --old-source-revision "\${{ inputs.old_source_revision }}" \
+            --expected-publication-version "${{ inputs.expected_publication_version }}" \
+            --old-source-revision "${{ inputs.old_source_revision }}" \
             --output /tmp/cw11-staging-evidence.json
 
       - name: Publish evidence summary
