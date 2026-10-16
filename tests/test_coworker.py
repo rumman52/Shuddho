@@ -2025,10 +2025,15 @@ def test_research_step_never_receives_prior_agent_handoff(container):
     container.agent.settings = enabled
     enable_reviewed_pilot(container)
     owner = account(container)
-    run, _ = container.agent.create(owner, AgentRunCreate(
-        goal="Create a project document, then research the public project update.",
-        output_language="en",
-    ), "agent-handoff-research")
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(
+            goal="Create a project document, then research the public project update.",
+            output_language="en",
+        ),
+        "agent-handoff-research",
+        tool_allowlist=["research.search"],
+    )
     container.agent.save_plan(owner, run["id"], [
         AgentPlanStep(tool="document.create", arguments={
             "instruction": run["goal"], "notes": "", "document_ids": [], "output_language": "en",

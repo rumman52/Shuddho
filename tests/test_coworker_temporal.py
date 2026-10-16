@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.coworker_integration, pytest.mark.skipif(os.getenv("SH
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from test_coworker import container, account, new_task, FakeModel
+from test_coworker import container, account, new_task, FakeModel, enable_reviewed_pilot
 from coworker_samples import WorkModel
 from research_samples import SimulatedResearch
 from services.coworker.drafting import DraftFailure
@@ -689,9 +689,15 @@ def test_agent_v2_fans_out_two_research_steps_then_fans_in(container):
         container.agent.settings = enabled
         enable_reviewed_pilot(container)
         owner = account(container)
-        run, _ = container.agent.create(owner, AgentRunCreate(
-            goal="Research two sources and create a project document.", output_language="en"
-        ), "agent-parallel-fan-in")
+        run, _ = container.agent.create(
+            owner,
+            AgentRunCreate(
+                goal="Research two sources and create a project document.",
+                output_language="en",
+            ),
+            "agent-parallel-fan-in",
+            tool_allowlist=["research.search"],
+        )
         saved = container.agent.save_plan(owner, run["id"], [
             AgentPlanStep(tool="research.search", arguments={
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
@@ -760,9 +766,15 @@ def test_agent_v2_failed_branch_preserves_completed_independent_work_and_blocks_
         container.agent.settings = enabled
         enable_reviewed_pilot(container)
         owner = account(container)
-        run, _ = container.agent.create(owner, AgentRunCreate(
-            goal="Research two sources and create a project document.", output_language="en"
-        ), "agent-parallel-failure")
+        run, _ = container.agent.create(
+            owner,
+            AgentRunCreate(
+                goal="Research two sources and create a project document.",
+                output_language="en",
+            ),
+            "agent-parallel-failure",
+            tool_allowlist=["research.search"],
+        )
         container.agent.save_plan(owner, run["id"], [
             AgentPlanStep(tool="research.search", arguments={
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
@@ -820,9 +832,15 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
         container.agent.settings = enabled
         enable_reviewed_pilot(container)
         owner = account(container)
-        run, _ = container.agent.create(owner, AgentRunCreate(
-            goal="Research two sources and create a project document.", output_language="en"
-        ), "agent-parallel-restart")
+        run, _ = container.agent.create(
+            owner,
+            AgentRunCreate(
+                goal="Research two sources and create a project document.",
+                output_language="en",
+            ),
+            "agent-parallel-restart",
+            tool_allowlist=["research.search"],
+        )
         container.agent.save_plan(owner, run["id"], [
             AgentPlanStep(tool="research.search", arguments={
                 "instruction": "Research the first public update.", "notes": "", "document_ids": [],
