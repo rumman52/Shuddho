@@ -764,12 +764,31 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         )
     assert changed_query.value.code == "skill_run_scope"
 
+    # Public callers can predict the agent:<run>:<ordinal> key. Reusing a
+    # pre-created standalone Task must not smuggle it into this Agent step.
+    collision_key = f"agent:{run['id']}:1"
+    standalone_collision, _ = container.repository.create_task(
+        owner, request, collision_key, enqueue=False,
+    )
+    with pytest.raises(CoworkerError) as collision:
+        container.repository.create_task(
+            owner, request, collision_key, enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert collision.value.code == "task_agent_binding_conflict"
+    assert standalone_collision["id"] != run["id"]
+
     task, created = container.repository.create_task(
         owner, request, "owned-reviewed-research", enqueue=False,
         agent_run_id=run["id"], agent_step_id=step_id,
     )
     assert created and task["workflow_version"] == "work_research_v1"
     assert container.repository.worker_task(task["id"], False)["agent_step_id"] == step_id
+    with pytest.raises(CoworkerError) as reverse_collision:
+        container.repository.create_task(
+            owner, request, "owned-reviewed-research", enqueue=False,
+        )
+    assert reverse_collision.value.code == "task_agent_binding_conflict"
     with container.repository.sessions() as db:
         pinned = db.get(Step, (task["id"], "reviewed_skill_identity")).output
     assert pinned["review_sha256"] == pilot_skill_manifest().review_sha256()
@@ -821,6 +840,14 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         assert policy_drift.value.code == "skill_manifest_unreviewed"
 
     with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).deadline_at = utcnow() - timedelta(seconds=1)
+    with pytest.raises(CoworkerError) as expired:
+        container.repository.worker_task(task["id"], False)
+    assert expired.value.code == "skill_run_scope"
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).deadline_at = utcnow() + timedelta(minutes=20)
+
+    with container.repository.sessions.begin() as db:
         db.get(AgentRun, run["id"]).cancel_requested = True
     with pytest.raises(CoworkerError) as cancelled:
         container.repository.worker_task(task["id"], False)
@@ -831,6 +858,12 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         container.repository.reserve_search(task["id"])
     assert no_search.value.code == "skill_run_scope"
     assert container.repository.step(task["id"], "search_attempt") is None
+    with pytest.raises(CoworkerError) as cancelled_replay:
+        container.repository.create_task(
+            owner, request, "owned-reviewed-research", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert cancelled_replay.value.code == "skill_run_scope"
 
     # A standalone existing research task has no Agent skill-grant contract.
     standalone, _ = container.repository.create_task(
