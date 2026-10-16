@@ -140,8 +140,6 @@ def main() -> None:
         elif args.command == "runtime":
             result = repository.reviewed_skill_runtime_manifest()
         else:
-            result = {"events": repository.reviewed_control_history(limit=args.limit)}
-        else:
             raise CoworkerError("skill_operator", "Unsupported operator command.", 422)
     except (CoworkerError, ValueError) as error:
         print(json.dumps({
