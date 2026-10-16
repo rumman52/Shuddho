@@ -399,21 +399,37 @@ class Repository:
                     "byte_size": item.byte_size, "sha256": item.sha256, "artifact_class": item.artifact_class}
 
     # Below this boundary, calls are made only by the trusted worker/dispatcher.
-    def worker_task(self, task_id, check_live=True):
-        with self.sessions() as db:
-            task = db.get(Task, task_id)
-            if task is None:
-                raise not_found()
-            if check_live:
-                self._check_live(task)
-            if (
+    def _reviewed_research_worker_task(self, db, task: Task) -> None:
+        # Rebuild exact immutable Task inputs rather than trusting a
+        # caller-supplied task or an old admission-only manifest check.
+        from .schemas import ResearchOptions
+               if (
                 self.settings.agent_reviewed_research_skill_enabled
                 and task.agent_run_id is not None
-                and task.workflow_version == "work_research_v1"
                 and task.state not in TERMINAL
             ):
-                # Rebuild exact immutable Task inputs rather than trusting a
-                # caller-supplied task or an old admission-only manifest check.
+                # A corrupted workflow_version may not evade reviewed-tool
+                # admission; inspect the actual recorded Agent invocation.
+                agent_invocation = db.scalar(select(ToolInvocation).where(
+                    ToolInvocation.run_id == task.agent_run_id,
+                    ToolInvocation.step_id == task.agent_step_id,
+                    ToolInvocation.owner_id == task.owner_id,
+                ))
+                if (
+                    task.workflow_version == "work_research_v1"
+                    or (
+                        agent_invocation is not None
+                        and agent_invocation.tool_name == "research.search"
+                    )
+                ):
+                    if task.workflow_version != "work_research_v1":
+                        raise CoworkerError(
+                            "skill_run_scope",
+                            "The research task skill version does not match its bound Agent tool.",
+                            409,
+                        )
+                    self._reviewed_research_worker_task(db, task)
+ old admission-only manifest check.
                 from .schemas import ResearchOptions
                 source_ids = []
                 for version_id in task.input_versions:
