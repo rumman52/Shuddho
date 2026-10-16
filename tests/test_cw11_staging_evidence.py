@@ -180,6 +180,10 @@ def test_collector_emits_verified_evidence_and_preserves_event_metadata(
             "candidate revision does not match",
         ),
         (
+            {**valid_render_evidence(), "old_worker_instance_count": False},
+            "legacy worker is stopped",
+        ),
+        (
             {**valid_render_evidence(), "provider_api_key": "must-not-be-echoed"},
             "missing or unexpected fields",
         ),
@@ -298,6 +302,7 @@ def test_collector_blocks_active_incompatible_worker(
     ("revision", "state", "stale_heartbeat"),
     [
         ("c" * 40, "lost", False),
+        ("c" * 40, "unexpected-state", False),
         (CANDIDATE_REVISION, "running", True),
     ],
 )
