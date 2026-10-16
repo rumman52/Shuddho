@@ -628,6 +628,79 @@ def test_agent_plan_is_bounded_registered_and_source_scoped(signed_client, conta
     assert unknown.value.code == "tool_not_supported"
 
 
+
+def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
+    """A durable derived-run grant must be enforced past the planner boundary."""
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import AgentStep, BrowserSession, SandboxSession, ToolInvocation
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True, work_services_enabled=True,
+        intelligent_planner_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Prepare a daily plan.", output_language="en"),
+        "run-scope-worker-claim", tool_allowlist=["daily_plan.create"],
+    )
+    arguments = {
+        "instruction": "Prepare a daily plan.", "notes": "",
+        "document_ids": [], "output_language": "en",
+    }
+    forbidden = AgentPlanStep(tool="email.draft", arguments=arguments)
+    forbidden_browser = AgentPlanStep(tool="browser.read", arguments={})
+    allowed = AgentPlanStep(tool="daily_plan.create", arguments=arguments)
+
+    # A deterministic planner or direct replan must not bypass the stored scope.
+    for disallowed in (forbidden, forbidden_browser):
+        with pytest.raises(CoworkerError) as initial:
+            container.agent.save_plan(owner, run["id"], [disallowed])
+        assert initial.value.code == "agent_tool_scope"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(ToolInvocation.id).where(
+            ToolInvocation.run_id == run["id"],
+        )) is None
+
+    saved = container.agent.save_plan(owner, run["id"], [allowed])
+    assert saved["tool_invocations"][0]["tool"] == "daily_plan.create"
+    for disallowed in (forbidden, forbidden_browser):
+        with pytest.raises(CoworkerError) as replanned:
+            container.agent.replace_remaining_plan(owner, run["id"], 1, [disallowed])
+        assert replanned.value.code == "agent_tool_scope"
+
+    # Simulate a stale or altered prepared invocation after planning. The
+    # actual worker must reject it before any task, provider or artifact work.
+    with container.repository.sessions.begin() as db:
+        invocation = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        ))
+        step = db.get(AgentStep, invocation.step_id)
+        assert invocation.tool_name == step.tool_name == "daily_plan.create"
+        invocation.tool_name = "browser.read"
+        step.tool_name = "browser.read"
+
+    runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()))
+    with pytest.raises(CoworkerError) as worker:
+        asyncio.run(runtime.execute_step(run["id"], 1))
+    assert worker.value.code == "agent_tool_scope"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(Task.id).where(Task.agent_run_id == run["id"])) is None
+        invocation = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        ))
+        assert invocation.state == "prepared"
+        assert db.scalar(select(BrowserSession.id).where(
+            BrowserSession.owner_id == owner,
+        )) is None
+        assert db.scalar(select(SandboxSession.id).where(
+            SandboxSession.owner_id == owner,
+        )) is None
+
+
 def test_agent_plan_limits_step_count(container):
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
     enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
