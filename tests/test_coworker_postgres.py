@@ -1309,3 +1309,52 @@ def test_postgres_owned_code_proposal_erased_before_agent_run_fk(repository):
         assert db.get(AgentCodeProposal, row_id) is None
         assert db.get(AgentRun, run["id"]) is None
         assert db.get(Account, owned) is None
+
+def test_postgres_exact_human_review_fk_erases_with_account(repository):
+    """Migration 0057 and FK deletion order are verified against PostgreSQL."""
+    from datetime import timedelta
+    from services.coworker.agent_repository import AgentRepository
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.models import (
+        Account, AgentCodeProposal, AgentCodeReview, AgentRun, utcnow,
+    )
+    from services.coworker.retention import RetentionService
+
+    identity = owner(repository)
+    service = AgentRepository(
+        repository.sessions, replace(repository.settings, agent_runtime_enabled=True),
+    )
+    run, created = service.create(
+        identity, AgentRunCreate(goal="Review a bounded inert source proposal."),
+        "postgres-reviewed-code-" + str(uuid4()),
+    )
+    assert created is True
+    proposal_id = str(uuid4())
+    now = utcnow()
+    with repository.sessions.begin() as db:
+        agent_run = db.get(AgentRun, run["id"])
+        agent_run.state = "cancelled"
+        agent_run.cancel_requested = True
+        db.add(AgentCodeProposal(
+            id=proposal_id, run_id=run["id"], owner_id=identity,
+            idempotency_key="human-review-" + str(uuid4()),
+            review_sha256="d" * 64, snapshot={"source": "print('private')"},
+            state="unreviewed", created_at=now,
+            expires_at=now + timedelta(minutes=5),
+        ))
+        db.flush()
+        db.add(AgentCodeReview(
+            proposal_id=proposal_id, run_id=run["id"], owner_id=identity,
+            review_sha256="d" * 64, decision="approve",
+            decided_at=now, expires_at=now + timedelta(minutes=2),
+            revoked_at=None,
+        ))
+    with repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id).decision == "approve"
+    outcome = RetentionService(repository.sessions, object()).erase_account(identity)
+    assert outcome["database_erased"] is True
+    with repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id) is None
+        assert db.get(AgentCodeProposal, proposal_id) is None
+        assert db.get(AgentRun, run["id"]) is None
+        assert db.get(Account, identity) is None

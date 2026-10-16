@@ -8,7 +8,7 @@ from sqlalchemy import delete, select
 from .errors import CoworkerError
 from .models import Conversation, ConversationMessage
 from .models import (
-    Account, ActionProposal, ActionRecipient, AgentCodeProposal, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
+    Account, ActionProposal, ActionRecipient, AgentCodeProposal, AgentCodeReview, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
     Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, DailyUsage, Document, DocumentVersion, ExecutionGrant, ExternalAction, MemoryFact, MemoryProposal,
     ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal,
@@ -268,6 +268,7 @@ class RetentionService:
             db.execute(delete(AgentStep).where(AgentStep.owner_id == owner))
             # CW-10 stores private Python snapshots under the owning AgentRun.
             # Delete them first: PostgreSQL's FK otherwise rejects account erasure.
+            db.execute(delete(AgentCodeReview).where(AgentCodeReview.owner_id == owner))
             db.execute(delete(AgentCodeProposal).where(AgentCodeProposal.owner_id == owner))
             db.execute(delete(AgentRun).where(AgentRun.owner_id == owner))
             db.execute(delete(PersonalGoalRevision).where(PersonalGoalRevision.owner_id == owner))
@@ -312,6 +313,9 @@ class RetentionService:
             for row in due:
                 row.snapshot = {}
                 row.state = "expired"
+                review = db.get(AgentCodeReview, row.id)
+                if review is not None and review.revoked_at is None:
+                    review.revoked_at = utcnow()
                 db.add(AuditEvent(
                     id=str(uuid4()), owner_id=row.owner_id,
                     resource_id=row.id, action="agent.code_proposal.expired",

@@ -17,7 +17,7 @@ from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.code_proposal_schemas import (
     CodeComputeLimits, CodeInputVersion, CodeProposalEnvelope,
 )
-from services.coworker.models import AgentCodeProposal, AgentRun, utcnow
+from services.coworker.models import AgentCodeProposal, AgentCodeReview, AgentRun, SandboxExecution, utcnow
 
 
 def active_agent(container):
@@ -533,3 +533,292 @@ def test_account_erasure_removes_owned_code_proposal_before_parent_run(
         assert db.get(AgentCodeProposal, proposal_id) is None
         assert db.get(AgentRun, run_id) is None
         assert db.get(Account, owner) is None
+
+def human_review(client, headers, run_id, proposal_id, digest, *,
+                 decision="approve", expires_at=None):
+    return client.post(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}/review",
+        headers=headers(),
+        json={
+            "review_sha256": digest,
+            "decision": decision,
+            "expires_at": (expires_at or utcnow() + timedelta(seconds=90)).isoformat(),
+        },
+    )
+
+
+def test_human_review_records_exact_owned_decision_without_worker_grant(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    saved = prepare(client, headers, run_id, proposal)
+    assert saved.status_code == 201, saved.text
+    proposal_id = saved.json()["id"]
+    expiration = utcnow() + timedelta(seconds=90)
+    first = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        expires_at=expiration,
+    )
+    assert first.status_code == 200, first.text
+    result = first.json()
+    assert result["decision"] == "approve"
+    assert result["review_sha256"] == proposal.review_sha256()
+    assert result["execution_authorized"] is False
+    assert result["code_executed"] is False
+    assert first.headers["Cache-Control"] == "no-store"
+
+    replay = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        expires_at=expiration,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == result
+
+    visible = client.get(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}",
+        headers=headers(),
+    )
+    assert visible.status_code == 200, visible.text
+    assert visible.json()["human_review"]["decision"] == "approve"
+    assert visible.json()["approval_granted"] is False
+    assert visible.json()["code_executed"] is False
+    with container.repository.sessions() as db:
+        review = db.get(AgentCodeReview, proposal_id)
+        assert review.owner_id == owner
+        assert review.run_id == run_id
+        assert review.decision == "approve"
+        assert review.revoked_at is None
+        assert db.get(AgentCodeProposal, proposal_id).state == "unreviewed"
+        assert not db.scalars(select(SandboxExecution).where(
+            SandboxExecution.owner_id == owner,
+        )).all()
+
+
+def test_human_review_rejects_cross_owner_changed_identity_and_stale_run(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201
+    proposal_id = created.json()["id"]
+    path = f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}/review"
+    valid = {
+        "review_sha256": proposal.review_sha256(),
+        "decision": "approve",
+        "expires_at": (utcnow() + timedelta(seconds=60)).isoformat(),
+    }
+    account(container, "bob")
+    assert client.post(path, headers=headers("bob"), json=valid).status_code == 404
+    assert client.post(
+        f"/api/v1/agent-runs/{uuid4()}/code-proposals/{proposal_id}/review",
+        headers=headers(), json=valid,
+    ).status_code == 404
+    wrong = client.post(
+        path, headers=headers(), json={**valid, "review_sha256": "c" * 64},
+    )
+    assert wrong.status_code == 409
+    assert wrong.json()["error"]["code"] == "code_proposal_changed"
+
+    long_lived = client.post(
+        path, headers=headers(),
+        json={**valid, "expires_at": (utcnow() + timedelta(minutes=11)).isoformat()},
+    )
+    assert long_lived.status_code == 409
+    assert long_lived.json()["error"]["code"] == "code_review_expiry"
+
+    with container.repository.sessions.begin() as db:
+        run = db.get(AgentRun, run_id)
+        run.cancel_requested = True
+        run.state = "cancelled"
+    rejected = client.post(path, headers=headers(), json=valid)
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "code_run_closed"
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id) is None
+
+
+def test_human_approval_is_immutable_and_revocation_clears_it(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201
+    proposal_id = created.json()["id"]
+    expiry = utcnow() + timedelta(seconds=75)
+    first = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        expires_at=expiry,
+    )
+    assert first.status_code == 200, first.text
+    changed = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        decision="reject", expires_at=expiry,
+    )
+    assert changed.status_code == 409
+    assert changed.json()["error"]["code"] == "code_review_conflict"
+
+    revoked = client.post(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}/revoke",
+        headers=headers(), json={"review_sha256": proposal.review_sha256()},
+    )
+    assert revoked.status_code == 200, revoked.text
+    after_revoke = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        expires_at=expiry,
+    )
+    assert after_revoke.status_code == 409
+    assert after_revoke.json()["error"]["code"] == "code_review_closed"
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id).revoked_at is not None
+        assert db.get(AgentCodeProposal, proposal_id).snapshot == {}
+
+
+def test_explicit_human_rejection_revokes_source_and_does_not_grant_execution(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201
+    proposal_id = created.json()["id"]
+    expiry = utcnow() + timedelta(seconds=45)
+    rejected = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        decision="reject", expires_at=expiry,
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["decision"] == "reject"
+    assert rejected.json()["execution_authorized"] is False
+    assert "source" not in rejected.text
+
+    repeated = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        decision="reject", expires_at=expiry,
+    )
+    assert repeated.status_code == 200
+    assert repeated.json() == rejected.json()
+    unavailable = client.get(
+        f"/api/v1/agent-runs/{run_id}/code-proposals/{proposal_id}",
+        headers=headers(),
+    )
+    assert unavailable.status_code == 409
+    with container.repository.sessions() as db:
+        row = db.get(AgentCodeProposal, proposal_id)
+        review = db.get(AgentCodeReview, proposal_id)
+        assert row.state == "revoked" and row.snapshot == {}
+        assert review.decision == "reject"
+        assert review.revoked_at is not None
+
+
+def test_account_erasure_removes_exact_human_review_before_parent_proposal(
+    container, signed_client,
+):
+    from services.coworker.models import Account
+
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201
+    proposal_id = created.json()["id"]
+    approved = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+    )
+    assert approved.status_code == 200, approved.text
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run_id).state = "cancelled"
+    erased = container.retention.erase_account(owner)
+    assert erased["database_erased"] is True
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id) is None
+        assert db.get(AgentCodeProposal, proposal_id) is None
+        assert db.get(AgentRun, run_id) is None
+        assert db.get(Account, owner) is None
+
+def test_human_approval_rechecks_admitted_conversation_source_and_denies_drift(
+    container, signed_client,
+):
+    from services.coworker.models import DocumentVersion
+
+    proposal, _, _, version_id = conversation_proposal(container)
+    client, headers = signed_client
+    run_id = str(proposal.run_id)
+    saved = prepare(client, headers, run_id, proposal)
+    assert saved.status_code == 201, saved.text
+    proposal_id = saved.json()["id"]
+    with container.repository.sessions.begin() as db:
+        db.get(DocumentVersion, version_id).sha256 = "e" * 64
+
+    denied = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+    )
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["error"]["code"] == "context_sources_changed"
+    assert proposal.source not in denied.text
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id) is None
+        assert db.get(AgentCodeProposal, proposal_id).state == "unreviewed"
+
+
+def test_human_approval_denies_tampered_persisted_source_and_does_not_store_decision(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201
+    proposal_id = created.json()["id"]
+    with container.repository.sessions.begin() as db:
+        row = db.get(AgentCodeProposal, proposal_id)
+        snapshot = dict(row.snapshot)
+        snapshot["source"] = "print('substituted')"
+        row.snapshot = snapshot
+
+    denied = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+    )
+    assert denied.status_code == 409
+    assert denied.json()["error"]["code"] == "code_proposal_invalid"
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id) is None
+
+def test_human_review_replay_fails_closed_when_original_source_is_revoked(
+    container, signed_client,
+):
+    from services.coworker.models import DocumentVersion
+
+    proposal, _, _, version_id = conversation_proposal(container)
+    client, headers = signed_client
+    run_id = str(proposal.run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201, created.text
+    proposal_id = created.json()["id"]
+    expiry = utcnow() + timedelta(seconds=60)
+    first = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        expires_at=expiry,
+    )
+    assert first.status_code == 200, first.text
+
+    with container.repository.sessions.begin() as db:
+        db.get(DocumentVersion, version_id).sha256 = "f" * 64
+    stale_replay = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+        expires_at=expiry,
+    )
+    assert stale_replay.status_code == 409, stale_replay.text
+    assert stale_replay.json()["error"]["code"] == "context_sources_changed"
+    assert proposal.source not in stale_replay.text
+    with container.repository.sessions() as db:
+        assert db.get(AgentCodeReview, proposal_id).decision == "approve"
+        assert not db.scalars(select(SandboxExecution).where(
+            SandboxExecution.owner_id == proposal.owner_id,
+        )).all()
