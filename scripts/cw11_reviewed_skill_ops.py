@@ -16,9 +16,7 @@ from services.coworker.errors import CoworkerError
 from services.coworker.repository import Repository
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
-    REVIEWED_RESEARCH_PUBLICATION_VERSION,
     REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
-    build_pilot_publication,
     build_reviewed_publication,
 )
 
