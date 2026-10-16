@@ -158,6 +158,8 @@ class Repository:
                 manifest=publication["manifest"],
                 rollback_target_version=publication["rollback_target_version"],
                 state="published",
+                published_by=actor_reference,
+                publication_reason=reason,
             )
             db.add(row)
             db.flush()
@@ -376,6 +378,8 @@ class Repository:
             for row in rows:
                 row.state = "draining"
                 row.drain_requested_at = now
+                row.drain_requested_by = actor_reference
+                row.drain_reason = reason
                 row.heartbeat_at = now
             return len(rows)
 
@@ -393,6 +397,8 @@ class Repository:
                 "heartbeat_at": iso(row.heartbeat_at),
                 "heartbeat_fresh": aware(row.heartbeat_at) >= cutoff,
                 "drain_requested_at": iso(row.drain_requested_at) if row.drain_requested_at else None,
+                "drain_requested_by": row.drain_requested_by,
+                "drain_reason": row.drain_reason,
                 "drained_at": iso(row.drained_at) if row.drained_at else None,
             } for row in rows]
 
