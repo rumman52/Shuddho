@@ -749,12 +749,6 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     container.repository.settings = settings
     container.agent.settings = settings
     enable_reviewed_pilot(container)
-    enable_reviewed_pilot(container)
-    enable_reviewed_pilot(container)
-    enable_reviewed_pilot(container)
-    enable_reviewed_pilot(container)
-    enable_reviewed_pilot(container)
-    enable_reviewed_pilot(container)
     owner = account(container)
     outsider = account(container, "bob")
     run, _ = container.agent.create(
@@ -925,14 +919,15 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
 
 
 
-def test_reviewed_research_gate_disable_never_downgrades_pinned_task(container):
-    """A persisted reviewed task cannot fall back to a legacy worker after rollback."""
+def test_reviewed_research_gate_disable_preserves_pinned_task(container):
+    """Disabling the admission flag must not downgrade an already pinned reviewed Task."""
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
     from services.coworker.models import Step
     from services.coworker.schemas import ResearchOptions
 
     enabled = replace(
-        container.settings, agent_runtime_enabled=True,
+        container.settings,
+        agent_runtime_enabled=True,
         research_services_enabled=True,
         agent_reviewed_research_skill_enabled=True,
     )
@@ -963,32 +958,34 @@ def test_reviewed_research_gate_disable_never_downgrades_pinned_task(container):
         agent_step_id=plan["tool_invocations"][0]["step_id"],
     )
     assert task["workflow_version"] == "work_research_reviewed_v2"
-    assert container.repository.worker_task(task["id"], False)["agent_run_id"] == run["id"]
     with container.repository.sessions() as db:
         assert db.get(Step, (task["id"], "reviewed_skill_identity")) is not None
 
-    # A mixed/rollback worker with this admission flag off must NOT treat the
-    # reviewed task as a legacy research task or reserve a paid provider call.
-    disabled = replace(enabled, agent_reviewed_research_skill_enabled=False)
+    # The flag controls new rollout admission, not the immutable identity of
+    # a Task that was already accepted under the selected publication.
+    disabled = replace(
+        container.settings,
+        agent_reviewed_research_skill_enabled=False,
+    )
     container.settings = disabled
     container.repository.settings = disabled
     container.agent.settings = disabled
-    with pytest.raises(CoworkerError) as read_denied:
-        container.repository.worker_task(task["id"], False)
-    assert read_denied.value.code == "skill_manifest_unreviewed"
-    with pytest.raises(CoworkerError) as search_denied:
-        container.repository.reserve_search(task["id"])
-    assert search_denied.value.code == "skill_manifest_unreviewed"
-    assert container.repository.step(task["id"], "search_attempt") is None
-    with pytest.raises(CoworkerError) as replay_denied:
-        container.repository.create_task(
-            owner, request, "reviewed-rollback-task", enqueue=False,
-            agent_run_id=run["id"],
-            agent_step_id=plan["tool_invocations"][0]["step_id"],
-        )
-    assert replay_denied.value.code == "skill_manifest_unreviewed"
 
-    # Old, unpinned legacy tasks are not silently enrolled into the pilot.
+    pinned = container.repository.worker_task(task["id"], False)
+    assert pinned["agent_run_id"] == run["id"]
+    assert pinned["workflow_version"] == "work_research_reviewed_v2"
+
+    replay, created = container.repository.create_task(
+        owner, request, "reviewed-rollback-task", enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=plan["tool_invocations"][0]["step_id"],
+    )
+    assert not created
+    assert replay["id"] == task["id"]
+    assert replay["workflow_version"] == "work_research_reviewed_v2"
+
+    # Old, unpinned standalone research remains legacy; disabling the reviewed
+    # admission flag must not retroactively enroll it into the pilot.
     legacy_owner = account(container, "legacy-after-rollback")
     legacy, _ = container.repository.create_task(
         legacy_owner, request, "legacy-standalone-research", enqueue=False,
@@ -997,26 +994,17 @@ def test_reviewed_research_gate_disable_never_downgrades_pinned_task(container):
     with container.repository.sessions() as db:
         assert db.get(Step, (legacy["id"], "reviewed_skill_identity")) is None
 
-    # Re-enabling the gate is not an authorization upgrade: the same pinned
-    # identity still has to pass its normal current grant/source validations.
-    container.settings = enabled
-    container.repository.settings = enabled
-    container.agent.settings = enabled
-    assert container.repository.worker_task(task["id"], False)["agent_run_id"] == run["id"]
-
-    # Terminal task retries only return the historical result. They must
-    # remain idempotent even if the deployment is rolled back.
+    # Terminal retries return their committed result without new work even
+    # while the reviewed admission flag is disabled.
     with container.repository.sessions.begin() as db:
         db.get(Task, task["id"]).state = "completed"
-    container.settings = disabled
-    container.repository.settings = disabled
-    container.agent.settings = disabled
     terminal, created = container.repository.create_task(
         owner, request, "reviewed-rollback-task", enqueue=False,
         agent_run_id=run["id"],
         agent_step_id=plan["tool_invocations"][0]["step_id"],
     )
-    assert not created and terminal["id"] == task["id"]
+    assert not created
+    assert terminal["id"] == task["id"]
     assert terminal["state"] == "completed"
 
 
@@ -1033,6 +1021,7 @@ def test_reviewed_research_rechecks_revocation_after_search_reservation(containe
     container.settings = settings
     container.repository.settings = settings
     container.agent.settings = settings
+    enable_reviewed_pilot(container)
     owner = account(container)
     run, _ = container.agent.create(
         owner, AgentRunCreate(goal="Research public evidence.", output_language="en"),
@@ -1100,6 +1089,7 @@ def test_reviewed_research_rejects_new_document_version_under_same_id(container)
     container.settings = settings
     container.repository.settings = settings
     container.agent.settings = settings
+    enable_reviewed_pilot(container)
     owner = account(container)
     raw = b"Reviewed document version"
     uploaded = container.repository.create_upload(
@@ -2033,6 +2023,7 @@ def test_research_step_never_receives_prior_agent_handoff(container):
     container.settings = enabled
     container.repository.settings = enabled
     container.agent.settings = enabled
+    enable_reviewed_pilot(container)
     owner = account(container)
     run, _ = container.agent.create(owner, AgentRunCreate(
         goal="Create a project document, then research the public project update.",
@@ -2588,7 +2579,7 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store"
     value = response.json()
-    assert value["schema_version"] == 1
+    assert value["schema_version"] == 2
     assert value["source_revision"] == "a" * 40
     assert value["capabilities"]["coworker"] is True
     assert value["capabilities"]["action_proposals"] is True
