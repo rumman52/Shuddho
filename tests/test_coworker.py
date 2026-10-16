@@ -810,6 +810,12 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     with pytest.raises(CoworkerError) as cancelled:
         container.repository.worker_task(task["id"], False)
     assert cancelled.value.code == "skill_run_scope"
+    # The reservation is the paid-provider boundary. A cancellation after
+    # task admission must still prevent the credit reservation and search.
+    with pytest.raises(CoworkerError) as no_search:
+        container.repository.reserve_search(task["id"])
+    assert no_search.value.code == "skill_run_scope"
+    assert container.repository.step(task["id"], "search_attempt") is None
 
     # A standalone existing research task has no Agent skill-grant contract.
     standalone, _ = container.repository.create_task(
