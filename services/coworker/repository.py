@@ -520,6 +520,11 @@ class Repository:
                 "The selected publication does not match the admitted reviewed manifest.",
                 409,
             )
+        self._require_compatible_worker_fleet(
+            db,
+            task_queue=self.settings.task_queue,
+            required_source_revision=binding.source_revision,
+        )
         return binding
 
     def migrate_legacy_reviewed_tasks(
@@ -675,6 +680,23 @@ class Repository:
                 "migrated": migrated,
                 "verified": True,
             }
+
+    @staticmethod
+    def _record_reviewed_control_event(
+        db, *, skill_name: str, event_type: str,
+        actor_reference: str, reason: str,
+        publication_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        db.add(ReviewedSkillRegistryEvent(
+            id=str(uuid4()),
+            skill_name=skill_name,
+            publication_id=publication_id,
+            event_type=event_type,
+            actor_reference=actor_reference,
+            reason=reason,
+            metadata=metadata or {},
+        ))
 
     def ensure_account(self, principal: Principal) -> dict:
         owner = principal.account_id
