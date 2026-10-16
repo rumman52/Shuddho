@@ -13,7 +13,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import ReviewedSkillPublication, Step, Task, WorkerInstance
+from services.coworker.models import ReviewedSkillPublication, ReviewedSkillRegistryEvent, Step, Task, WorkerInstance
 from services.coworker.task_workflow_versions import PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
@@ -112,6 +112,29 @@ def reviewed_task(container, owner: str, key: str):
     return task
 
 
+def test_publication_is_source_bound_and_not_auto_selected(container):
+    mismatched = build_reviewed_publication(
+        skill_name=REVIEWED_RESEARCH_SKILL,
+        publication_version="research_reviewed_mismatch",
+        task_workflow_version=REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
+        source_revision=REV_B,
+    )
+    with pytest.raises(CoworkerError) as blocked:
+        container.repository.publish_reviewed_skill(
+            mismatched,
+            actor_reference="cw11-test-operator",
+            reason="must reject source mismatch",
+        )
+    assert blocked.value.code == "skill_worker_revision_mismatch"
+
+    worker(container, REV_A)
+    publish(container, "research_reviewed_unselected", source_revision=REV_A)
+    assert container.repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL) is None
+    with container.repository.sessions() as db:
+        events = db.scalars(select(ReviewedSkillRegistryEvent)).all()
+        assert [event.event_type for event in events] == ["publication_published"]
+
+
 def test_selection_requires_compatible_fleet_and_never_auto_selects(container):
     old = worker(container, REV_B)
     publish(container, "research_reviewed_v0", source_revision=REV_A)
@@ -136,6 +159,11 @@ def test_selection_requires_compatible_fleet_and_never_auto_selects(container):
     )
     assert selected["publication_version"] == "research_reviewed_v0"
     assert container.repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL)["publication_version"] == "research_reviewed_v0"
+    with container.repository.sessions() as db:
+        events = db.scalars(select(ReviewedSkillRegistryEvent).order_by(ReviewedSkillRegistryEvent.created_at)).all()
+        assert [event.event_type for event in events] == [
+            "publication_published", "publication_selected",
+        ]
     assert new
 
 
