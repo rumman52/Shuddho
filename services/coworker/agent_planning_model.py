@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import time
@@ -206,10 +207,11 @@ class DeepSeekAgentPlanner:
                 or not isinstance(generated["source"], str)
                 or not generated["source"].strip()
                 or len(generated["source"].encode("utf-8")) > 4096
-                or "\\x00" in generated["source"]
+                or chr(0) in generated["source"]
             ):
                 raise ValueError()
             source = generated["source"]
+            ast.parse(source)
         except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             raise PlannerFailure(
                 "invalid_code_proposal", "The model did not return one bounded Python source draft.",
