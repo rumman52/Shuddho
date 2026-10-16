@@ -113,6 +113,12 @@ class Repository:
             raise CoworkerError("skill_publication_untrusted", "The publication version is invalid.", 409)
         if publication["task_workflow_version"] != REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION:
             raise CoworkerError("skill_publication_untrusted", "The publication workflow version is not reviewed.", 409)
+        if publication["source_revision"] != self.settings.source_revision:
+            raise CoworkerError(
+                "skill_worker_revision_mismatch",
+                "A reviewed publication must be created by the exact source revision that will run it.",
+                409,
+            )
         expected = build_pilot_publication(
             source_revision=publication["source_revision"],
             publication_version=publication["publication_version"],
@@ -187,6 +193,12 @@ class Repository:
             raise CoworkerError("skill_publication_operator", "A non-empty operator reference is required.", 409)
         if not reason.strip() or len(reason) > 500:
             raise CoworkerError("skill_publication_operator", "A non-empty selection reason is required.", 409)
+        if worker_source_revision != self.settings.source_revision:
+            raise CoworkerError(
+                "skill_worker_revision_mismatch",
+                "The operator selection context does not match this worker source revision.",
+                409,
+            )
         with self.sessions.begin() as db:
             self._require_compatible_worker_fleet(
                 db,
@@ -244,6 +256,12 @@ class Repository:
             raise CoworkerError("skill_publication_operator", "A non-empty operator reference is required.", 409)
         if not reason.strip() or len(reason) > 500:
             raise CoworkerError("skill_publication_operator", "A non-empty rollback reason is required.", 409)
+        if worker_source_revision != self.settings.source_revision:
+            raise CoworkerError(
+                "skill_worker_revision_mismatch",
+                "The operator rollback context does not match this worker source revision.",
+                409,
+            )
         with self.sessions.begin() as db:
             selection = db.scalar(select(ReviewedSkillSelection).where(
                 ReviewedSkillSelection.skill_name == skill_name,
@@ -299,6 +317,26 @@ class Repository:
                 },
             )
             return self._reviewed_selection_dto(selection, target)
+
+    def reviewed_control_history(self, *, limit: int = 100) -> list[dict]:
+        if limit < 1 or limit > 500:
+            raise CoworkerError("skill_operator", "History limit must be between 1 and 500.", 422)
+        with self.sessions() as db:
+            rows = db.scalars(
+                select(ReviewedSkillRegistryEvent)
+                .order_by(ReviewedSkillRegistryEvent.created_at.desc())
+                .limit(limit)
+            ).all()
+            return [{
+                "id": row.id,
+                "skill_name": row.skill_name,
+                "publication_id": row.publication_id,
+                "event_type": row.event_type,
+                "actor_reference": row.actor_reference,
+                "reason": row.reason,
+                "metadata": dict(row.metadata or {}),
+                "created_at": iso(row.created_at),
+            } for row in rows]
 
     def selected_reviewed_skill(self, skill_name: str) -> dict | None:
         with self.sessions() as db:
