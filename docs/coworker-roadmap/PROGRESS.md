@@ -1,3 +1,15 @@
+## Mandatory CI recovery — Alembic 0058 SQLite FK compatibility — 16 October 2026
+
+**Current mainline truth:** `main` `e495a202720de658ef98cf55a21f3032ef4f1f12` has merged [PR #425](https://github.com/rumman52/Shuddho/pull/425), but **its final-head [PR CI #38838451837](https://github.com/rumman52/Shuddho/actions/runs/38838451837) and merged-main [CI #38842070652](https://github.com/rumman52/Shuddho/actions/runs/38842070652) both failed** mandatory `coworker` while `test-and-build` passed. Inspect log `coworker` step "Run mandatory transaction safety regressions without skips": seven transaction regression fixtures could not migrate new SQLite databases. The blocking traceback is `services/coworker/migrations/versions/0058_sandbox_code_proposal_binding.py:16`, `NotImplementedError: No support for ALTER of constraints in SQLite dialect` when adding the new `agent_code_proposal_id` foreign key. This is a failed **migration setup**, not a demonstrated transaction invariant failure. The merge did not satisfy the required final-head acceptance gate.
+
+**Isolated CI safety repair:** branch `codex/cw10-0058-sqlite-fk-migration-ci-20261016` forked from exact main `e495a202720de658ef98cf55a21f3032ef4f1f12`. Migration 0058 now uses `op.batch_alter_table` for FK column addition and downgrade, following existing portable migration patterns 0032/0039; the original PostgreSQL non-null-safe nullable FK and **unique non-null index are retained**. Dedicated regression inspects SQLite migration metadata to require actual FK to `cw_agent_code_proposals.id` and unique claim origin index; transaction mandatory regressions are not skipped or weakened.
+
+**Evidence pending:** Exact final repair-branch SHA `test-and-build`, no-skip `coworker` including transaction safety suite and PostgreSQL/Temporal, and `ci-merge-gate` must pass. Independent review and operated staging remain unproven. Keep draft. **No merge/deploy/activation authorized.**
+
+**Next once green:** Continue CW-10 trusted generated-code producer + owner review UI and safe server dispatch, without allowing a model to self-grant authority; require real worker isolation/restart evidence. CW-11 reviewed skill activation and browser/P/V scenarios remain independently incomplete.
+
+---
+
 ## CW-10 reviewed generated-code worker-claim guard — 16 October 2026
 
 **Refreshed truth:** `main` `35287ac3ab0e2c691d76b2a1973166342c5ccf06`; [PR #424](https://github.com/rumman52/Shuddho/pull/424) merged at this SHA and its exact-head [PR CI #38792431386](https://github.com/rumman52/Shuddho/actions/runs/38792431386) passed. Merged-main [CI #38837201149](https://github.com/rumman52/Shuddho/actions/runs/38837201149) was still in progress when the branch was opened. No open PRs at that initial refresh. The original document's old red CI and earlier draft reviews have since been superseded by merged fixes.
