@@ -54,6 +54,42 @@ class Repository:
         self.sessions = sessions
         self.settings = settings
 
+    def _require_compatible_worker_fleet(
+        self, db, *, task_queue: str, required_source_revision: str | None,
+    ) -> None:
+        if not required_source_revision:
+            raise CoworkerError(
+                "skill_worker_revision_mismatch",
+                "Reviewed skill selection requires a full worker source revision.",
+                409,
+            )
+        cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
+        rows = db.scalars(select(WorkerInstance).where(
+            WorkerInstance.task_queue == task_queue,
+            WorkerInstance.state.in_(WORKER_ACTIVE_STATES),
+        ).with_for_update()).all()
+        incompatible = [
+            row for row in rows
+            if row.source_revision != required_source_revision
+        ]
+        if incompatible:
+            raise CoworkerError(
+                "worker_fleet_incompatible",
+                "Reviewed skill selection is blocked while an incompatible worker is active or draining.",
+                409,
+            )
+        if not any(
+            row.source_revision == required_source_revision
+            and row.state == "running"
+            and aware(row.heartbeat_at) >= cutoff
+            for row in rows
+        ):
+            raise CoworkerError(
+                "worker_fleet_unavailable",
+                "Reviewed skill selection requires at least one fresh compatible running worker.",
+                409,
+            )
+
     def publish_reviewed_skill(
         self, publication: dict, *, actor_reference: str, reason: str,
     ) -> dict:
@@ -124,6 +160,11 @@ class Repository:
         if not reason.strip() or len(reason) > 500:
             raise CoworkerError("skill_publication_operator", "A non-empty selection reason is required.", 409)
         with self.sessions.begin() as db:
+            self._require_compatible_worker_fleet(
+                db,
+                task_queue=self.settings.task_queue,
+                required_source_revision=worker_source_revision,
+            )
             publication = db.scalar(select(ReviewedSkillPublication).where(
                 ReviewedSkillPublication.skill_name == skill_name,
                 ReviewedSkillPublication.publication_version == publication_version,
@@ -364,6 +405,11 @@ class Repository:
             old_source_revision=old_source_revision,
         )
         with self.sessions.begin() as db:
+            self._require_compatible_worker_fleet(
+                db,
+                task_queue=task_queue,
+                required_source_revision=self.settings.source_revision,
+            )
             selection = db.scalar(select(ReviewedSkillSelection).where(
                 ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
             ).with_for_update())
