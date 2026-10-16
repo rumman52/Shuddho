@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from .auth import Principal
 from .config import Settings
 from .errors import CoworkerError
-from .models import Account, AgentRun, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, Workspace, utcnow
+from .models import Account, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document, DocumentVersion, ModelAttempt, Outbox, Step, Task, TaskEvent, ToolInvocation, Workspace, utcnow
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 from .schemas import TaskCreate, UploadRequest
 from .skills import SKILLS, service_enabled, skill_for_version
@@ -160,6 +160,85 @@ class Repository:
                 self._audit(db, owner, document_id, "source_deletion_requested")
             return {"id": document_id, "state": "deleted", "message": "Upload removed. Existing drafts remain in your task history."}
 
+    def _require_reviewed_agent_research(
+        self, db, owner: str, run_id: str, step_id: str | None,
+        request: TaskCreate,
+    ) -> None:
+        """Opt-in worker/admission gate: reviewed code never creates a tool grant.
+
+        Called with the same database session that reads the Task or admits its
+        creation. The existing AgentRun/AgentStep/ToolInvocation ledgers remain
+        authoritative; source-provided skill manifests cannot publish tools.
+        """
+        if not self.settings.agent_reviewed_research_skill_enabled:
+            return
+        from .agent_tools import TOOLS
+        from .skill_manifests import pilot_skill_manifest, validate_manifest
+
+        run = db.scalar(select(AgentRun).where(
+            AgentRun.id == run_id, AgentRun.owner_id == owner,
+        ))
+        step = db.scalar(select(AgentStep).where(
+            AgentStep.id == step_id, AgentStep.run_id == run_id,
+            AgentStep.owner_id == owner,
+        )) if step_id else None
+        invocation = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.step_id == step_id,
+            ToolInvocation.run_id == run_id, ToolInvocation.owner_id == owner,
+        )) if step_id else None
+        spec = TOOLS.get("research.search")
+        if (
+            run is None or step is None or invocation is None
+            or run.cancel_requested
+            or run.state not in {"queued", "planning", "running", "awaiting_approval"}
+            or step.tool_name != "research.search"
+            or invocation.tool_name != "research.search"
+            or invocation.state not in {"prepared", "running"}
+            or spec is None or not spec.enabled(self.settings)
+            or invocation.tool_version != spec.version
+            or request.skill_id != "research"
+        ):
+            raise CoworkerError(
+                "skill_run_scope",
+                "The reviewed research task is not bound to an eligible owned Agent run and tool.",
+                409,
+            )
+        # A caller cannot substitute a different query, source or instruction
+        # while reusing an otherwise legitimate run/step identity.
+        arguments = spec.validate(invocation.arguments)
+        from .schemas import ResearchOptions
+        if (
+            request.instruction != arguments.instruction
+            or request.notes != arguments.notes
+            or request.document_ids != arguments.document_ids
+            or request.output_language != arguments.output_language
+            or request.research != ResearchOptions(
+                query=arguments.query, time_range=arguments.time_range,
+            )
+        ):
+            raise CoworkerError(
+                "skill_run_scope",
+                "The research task inputs differ from the run's authorized tool invocation.",
+                409,
+            )
+        # The already-persisted Task pins the WorkSkill version; the Agent
+        # invocation pins ToolSpec.version. Neither is selected by the model.
+        try:
+            manifest = pilot_skill_manifest()
+        except (ValueError, TypeError, OSError):
+            raise CoworkerError(
+                "skill_manifest_unreviewed",
+                "The reviewed research skill version or source is unavailable.",
+                409,
+            ) from None
+        if manifest.version != SKILLS[request.skill_id].version:
+            raise CoworkerError(
+                "skill_manifest_unreviewed",
+                "The task skill version is not the published reviewed version.",
+                409,
+            )
+        validate_manifest(manifest, frozenset(run.tool_allowlist or ()))
+
     def create_task(self, owner: str, request: TaskCreate, idempotency_key: str, *, enqueue: bool = True, agent_run_id: str | None = None, agent_step_id: str | None = None) -> tuple[dict, bool]:
         self.expire_tasks(owner)
         if agent_step_id is not None and agent_run_id is None:
@@ -182,6 +261,10 @@ class Repository:
                                       self.settings.artifact_services_enabled, self.settings.research_services_enabled)
             if not enabled:
                 raise CoworkerError("service_unavailable", "This work service is not available yet. Please choose another service.", 409)
+            if request.skill_id == "research" and agent_run_id is not None:
+                self._require_reviewed_agent_research(
+                    db, owner, agent_run_id, agent_step_id, request,
+                )
             active = db.scalar(select(func.count()).select_from(Task).where(Task.owner_id == owner, Task.state.not_in(TERMINAL)))
             day = utcnow().date().isoformat()
             usage = db.get(DailyUsage, (owner, day))
@@ -323,6 +406,36 @@ class Repository:
                 raise not_found()
             if check_live:
                 self._check_live(task)
+            if (
+                self.settings.agent_reviewed_research_skill_enabled
+                and task.agent_run_id is not None
+                and task.workflow_version == "work_research_v1"
+                and task.state not in TERMINAL
+            ):
+                # Rebuild exact immutable Task inputs rather than trusting a
+                # caller-supplied task or an old admission-only manifest check.
+                from .schemas import ResearchOptions
+                source_ids = []
+                for version_id in task.input_versions:
+                    version = db.get(DocumentVersion, version_id)
+                    if version is None or version.owner_id != task.owner_id:
+                        raise not_found()
+                    source_ids.append(UUID(version.document_id))
+                stored = db.get(Step, (task.id, "research_input"))
+                if stored is None:
+                    raise CoworkerError(
+                        "skill_run_scope", "The research inputs are missing.", 409,
+                    )
+                request = TaskCreate(
+                    skill_id="research", instruction=task.instruction,
+                    notes=task.notes, document_ids=source_ids,
+                    output_language=task.output_language,
+                    research=ResearchOptions.model_validate(stored.output),
+                )
+                self._require_reviewed_agent_research(
+                    db, task.owner_id, task.agent_run_id, task.agent_step_id,
+                    request,
+                )
             documents = []
             for version_id in ([] if task.state in TERMINAL else task.input_versions):
                 version = db.get(DocumentVersion, version_id)
