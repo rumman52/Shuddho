@@ -393,3 +393,48 @@ def test_transport_normalization_does_not_launder_forged_envelope_fields():
     with pytest.raises(CoworkerError) as denied:
         verified(normalized, now, reviewed_sha256=envelope.review_sha256())
     assert denied.value.code == "code_proposal_invalid"
+
+
+
+@pytest.mark.parametrize("source, valid", [
+    ("print('safe inert draft')\n", True),
+    ("print('unterminated'\n", False),
+    ("print(1)\x00", False),
+    ("x = 1\n" * 2000, False),
+])
+def test_deepseek_model_code_draft_rejects_malformed_bounded_source(source, valid):
+    import asyncio
+    import json
+    import httpx
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+    from services.coworker.config import Settings
+
+    seen = []
+    def provider(request):
+        data = json.loads(request.content)
+        seen.append(data)
+        return httpx.Response(200, json={
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"content": json.dumps({"source": source})},
+            }],
+            "usage": {"total_tokens": 35},
+        })
+    planner = DeepSeekAgentPlanner(
+        Settings(database_url="sqlite+pysqlite:///:memory:",
+                 auth_issuer="https://identity.example.test/auth/v1",
+                 deepseek_api_key="synthetic-unit-test-key"),
+        transport=httpx.MockTransport(provider),
+    )
+    if valid:
+        produced, tokens = asyncio.run(planner.propose_code("Write an inert greeting."))
+        assert produced == source
+        assert tokens == 35
+    else:
+        with pytest.raises(PlannerFailure) as exc:
+            asyncio.run(planner.propose_code("Write a greeting."))
+        assert exc.value.code == "invalid_code_proposal"
+    assert len(seen) == 1
+    assert seen[0]["response_format"] == {"type": "json_object"}
+    assert seen[0]["messages"][0]["role"] == "system"
+    assert all("tool_calls" not in message for message in seen[0]["messages"])
