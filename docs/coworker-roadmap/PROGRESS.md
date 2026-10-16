@@ -1,3 +1,15 @@
+## CW-10 generated model source → worker revocation integration regression — 16 October 2026
+
+**Verified baseline:** `main` `4b456bf41ad324d79e142c3dd39e4a49e9e2a612` contains merged #429 bounded owner DeepSeek model drafts. Its exact-head [PR CI #38852014466](https://github.com/rumman52/Shuddho/actions/runs/38852014466) and merged-main [CI #38852778094](https://github.com/rumman52/Shuddho/actions/runs/38852778094) passed all three required jobs; no open PRs at task selection.
+
+**New test-only work:** isolated branch `codex/cw10-model-review-worker-revocation-e2e-20261016` adds full bounded synthetic acceptance from mocked DeepSeek output to authenticated model draft, immutable owner review SHA, atomic single sandbox dispatch, one authorized worker claim, and success/retry identity, plus an adversarial revocation *after claim*. The latter drives real owner revoke and SQL `worker_control` through the actual `scripts/sandbox_worker.py::execute_claim` loop, using simulated `Popen`. It asserts process kill request, refusal to send completion, destruction of temporary Python source paths, cleared SQL proposal and execution source, revoked lease and blocked late result/retry. [Acceptance and environment limits](CW10_GENERATED_WORKER_REVOCATION_E2E_2026-10-16.md).
+
+**Verification:** tests and contract committed but final-head no-skip `test-and-build`, `coworker`, `ci-merge-gate` are pending. The process is synthetic, not operated `bwrap`; real kernel no-egress, PostgreSQL concurrent retries, Temporal restart, actual OS kill, in-memory wipe, real model/provider quality and independent security reviewer remain unverified. No product authority or deployment settings change; CW-10 remains **default-off, INCOMPLETE**.
+
+**Next:** address CI errors on exact final branch SHA; then operated reviewed-source real bubblewrap/PG kill + cleanup, and CW-11 reviewed skills / CW-09 browser / P/V coworker scenario obligations.
+
+---
+
 ## CW-10 owner-invoked model Python producer — 16 October 2026
 
 **Source truth at task start:** `main` `08512aba78d5446c8115adbeafeded8a9e4f33cd` includes merged [PR #428](https://github.com/rumman52/Shuddho/pull/428). Its exact final-head [CI #38848800194](https://github.com/rumman52/Shuddho/actions/runs/38848800194) passed `test-and-build`, `coworker`, `ci-merge-gate`. New merged-main CI #38850518005 was in progress at start. No open PRs.

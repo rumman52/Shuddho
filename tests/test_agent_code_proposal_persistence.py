@@ -1588,3 +1588,214 @@ def test_cw10_owner_code_endpoint_cannot_forge_model_provenance(
     )
     assert forged.status_code == 422, forged.text
     assert forged.json()["error"]["code"] == "idempotency_key_reserved"
+
+
+
+def _generated_reviewed_worker_claim(container, signed_client, monkeypatch):
+    """Synthetic owner/provider -> exact human consent -> trusted dispatch -> claim."""
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+
+    owner, run_id = active_agent(container)
+    enable_inert_model_drafting(container)
+    source = "print('bounded generated proof')\n"
+    provider_calls = []
+
+    async def model_draft(self, goal):
+        provider_calls.append(goal)
+        return source, 32
+
+    monkeypatch.setattr(DeepSeekAgentPlanner, "propose_code", model_draft)
+    client, headers = signed_client
+    drafted = request_inert_model_draft(
+        client, headers, run_id, key="cw10-integrated-owner-draft",
+    )
+    assert drafted.status_code == 201, drafted.text
+    proposal = drafted.json()
+    assert proposal["proposal"]["source"] == source
+    assert proposal["approval_granted"] is False
+    assert proposal["code_executed"] is False
+    assert len(provider_calls) == 1
+    with container.repository.sessions() as db:
+        assert db.scalars(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == proposal["id"],
+        )).all() == []
+
+    reviewed = human_review(
+        client, headers, run_id, proposal["id"], proposal["review_sha256"],
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["execution_authorized"] is False
+    enable_reviewed_dispatch(container)
+    url = (
+        f"/api/v1/agent-runs/{run_id}/code-proposals/"
+        f"{proposal['id']}/dispatch"
+    )
+    prepared = post_dispatch(client, headers, url, proposal["review_sha256"])
+    assert prepared.status_code == 201, prepared.text
+    assert prepared.json()["execution_authorized"] is True
+    assert prepared.json()["code_executed"] is False
+    assert source not in prepared.text
+    replay = post_dispatch(client, headers, url, proposal["review_sha256"])
+    assert replay.status_code == 201, replay.text
+    assert replay.headers["Idempotent-Replayed"] == "true"
+    assert replay.json()["execution"]["id"] == prepared.json()["execution"]["id"]
+    assert len(provider_calls) == 1
+
+    claimed = container.sandbox.claim_executions("cw10-model-lifecycle-worker")
+    assert len(claimed) == 1
+    claim = claimed[0]
+    assert claim["id"] == prepared.json()["execution"]["id"]
+    assert claim["source"] == source
+    assert claim["source_sha256"] == proposal["proposal"]["source_sha256"]
+    with container.repository.sessions() as db:
+        row = db.get(SandboxExecution, claim["id"])
+        assert row.agent_code_proposal_id == proposal["id"]
+        assert row.request_spec.get("reviewed_source_ref") is True
+        assert "source" not in row.request_spec
+    return client, headers, run_id, proposal, prepared.json(), claim
+
+
+def test_cw10_synthetic_model_owner_review_dispatch_worker_success(
+    container, signed_client, monkeypatch,
+):
+    """One owned generated draft becomes ONE verified worker result, not a model grant."""
+    from test_sandbox_control_plane import completion_observation
+
+    client, headers, run_id, proposal, prepared, claim = (
+        _generated_reviewed_worker_claim(container, signed_client, monkeypatch)
+    )
+    result = container.sandbox.complete_execution(
+        "cw10-model-lifecycle-worker", claim["id"], completion_observation(),
+    )
+    assert result["state"] == "succeeded"
+    assert result["source_sha256"] == proposal["proposal"]["source_sha256"]
+    assert container.sandbox.claim_executions("duplicate-worker") == []
+    with container.repository.sessions() as db:
+        rows = db.scalars(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == proposal["id"],
+        )).all()
+        assert len(rows) == 1
+        assert rows[0].state == "succeeded"
+        assert "source" not in rows[0].request_spec
+    # Terminal result is NOT permission to generate a second consequence.
+    route = (
+        f"/api/v1/agent-runs/{run_id}/code-proposals/"
+        f"{proposal['id']}/dispatch"
+    )
+    again = post_dispatch(client, headers, route, proposal["review_sha256"])
+    assert again.status_code == 201
+    assert again.headers["Idempotent-Replayed"] == "true"
+    assert again.json()["execution"]["id"] == claim["id"]
+
+
+def test_cw10_revoked_generated_claim_stops_subprocess_cleans_temp_and_denies_late_receipt(
+    container, signed_client, monkeypatch,
+):
+    """Real SQL review revoke drives worker heartbeat STOP, not fake model authority.
+
+    Popen is a synthetic process, so this proves claim/control/cancellation
+    and source-file cleanup in the Python worker, NOT operated bubblewrap.
+    """
+    from pathlib import Path
+    from scripts import sandbox_worker as sandbox_worker_module
+    from scripts.sandbox_worker import WorkerError
+    from test_sandbox_control_plane import completion_observation
+
+    client, headers, run_id, proposal, prepared, claim = (
+        _generated_reviewed_worker_claim(container, signed_client, monkeypatch)
+    )
+    source = proposal["proposal"]["source"]
+    paths = []
+    controls = []
+    terminations = []
+    completions = []
+    processes = []
+
+    class SyntheticProcess:
+        pid = 123456
+
+        def __init__(self):
+            self.killed = False
+            self.polls = 0
+
+        def poll(self):
+            self.polls += 1
+            if self.polls > 6:
+                pytest.fail("Revoked generated code continued after denied heartbeat")
+            return -9 if self.killed else None
+
+    def fake_bwrap_command(source_path, scratch_path, policy, **_kwargs):
+        paths.extend([source_path, scratch_path])
+        assert source_path.read_bytes() == source.encode("utf-8")
+        assert policy["network"] == "none"
+        assert not policy["mounts"]
+        return ["/synthetic/bwrap", "--fake"]
+
+    def fake_spawn(*_args, **_kwargs):
+        process = SyntheticProcess()
+        processes.append(process)
+        return process
+
+    def fake_terminate(process):
+        assert process in processes
+        terminations.append(process)
+        process.killed = True
+
+    class SyntheticWorkerClient:
+        def post(self, path, payload):
+            if path.endswith("/control"):
+                controls.append(path)
+                # An owner revokes AFTER the original claim was issued and
+                # AFTER the source file exists, before the next worker lease.
+                revoked = client.post(
+                    f"/api/v1/agent-runs/{run_id}/code-proposals/"
+                    f"{proposal['id']}/revoke",
+                    headers=headers(),
+                    json={"review_sha256": proposal["review_sha256"]},
+                )
+                assert revoked.status_code == 200, revoked.text
+                return container.sandbox.worker_control(
+                    payload["worker_id"], claim["id"],
+                )
+            if path.endswith("/complete"):
+                completions.append(payload)
+                pytest.fail("A revoked generated-code subprocess sent a completion receipt")
+            pytest.fail("Unexpected worker route")
+
+    monkeypatch.setattr(
+        sandbox_worker_module, "build_bwrap_command", fake_bwrap_command,
+    )
+    monkeypatch.setattr(
+        sandbox_worker_module.subprocess, "Popen", fake_spawn,
+    )
+    monkeypatch.setattr(
+        sandbox_worker_module, "terminate_group", fake_terminate,
+    )
+    with pytest.raises(WorkerError, match="worker_interrupted"):
+        sandbox_worker_module.execute_claim(
+            SyntheticWorkerClient(), "cw10-model-lifecycle-worker",
+            claim, "/synthetic/bwrap",
+        )
+
+    assert len(controls) == 1
+    assert len(processes) == 1
+    assert terminations == processes
+    assert processes[0].killed
+    assert completions == []
+    assert len(paths) == 2
+    assert not any(Path(path).exists() for path in paths)
+    with container.repository.sessions() as db:
+        stored = db.get(AgentCodeProposal, proposal["id"])
+        execution = db.get(SandboxExecution, claim["id"])
+        assert stored.snapshot == {}
+        assert execution.state == "failed"
+        assert execution.error_code == "code_review_ineligible"
+        assert execution.request_spec == {"source_scrubbed": True}
+        assert execution.claimed_by is None
+    with pytest.raises(CoworkerError) as denied:
+        container.sandbox.complete_execution(
+            "cw10-model-lifecycle-worker", claim["id"],
+            completion_observation(),
+        )
+    assert denied.value.code == "sandbox_worker_claim_invalid"
+    assert container.sandbox.claim_executions("cw10-late-retry") == []
