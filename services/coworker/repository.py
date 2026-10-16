@@ -14,7 +14,7 @@ from .errors import CoworkerError
 from .models import (
     Account, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document,
     DocumentVersion, ModelAttempt, Outbox, ReviewedSkillPublication,
-    ReviewedSkillSelection, Step, Task, TaskEvent, ToolInvocation, WorkerInstance,
+    ReviewedSkillRegistryEvent, ReviewedSkillSelection, Step, Task, TaskEvent, ToolInvocation, WorkerInstance,
     Workspace, utcnow,
 )
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
@@ -163,6 +163,18 @@ class Repository:
             )
             db.add(row)
             db.flush()
+            self._record_reviewed_control_event(
+                db,
+                skill_name=publication["skill_name"],
+                publication_id=row.id,
+                event_type="publication_published",
+                actor_reference=actor_reference,
+                reason=reason,
+                metadata={
+                    "publication_version": row.publication_version,
+                    "source_revision": row.source_revision,
+                },
+            )
             return self._reviewed_publication_dto(row)
 
     def select_reviewed_skill(
@@ -191,6 +203,7 @@ class Repository:
             selection = db.scalar(select(ReviewedSkillSelection).where(
                 ReviewedSkillSelection.skill_name == skill_name,
             ).with_for_update())
+            previous_publication_id = selection.publication_id if selection is not None else None
             if selection is None:
                 selection = ReviewedSkillSelection(
                     skill_name=skill_name, publication_id=binding.publication_id,
@@ -207,6 +220,18 @@ class Repository:
                 selection.reason = reason
                 selection.updated_at = utcnow()
             db.flush()
+            self._record_reviewed_control_event(
+                db,
+                skill_name=skill_name,
+                publication_id=publication.id,
+                event_type="publication_selected",
+                actor_reference=actor_reference,
+                reason=reason,
+                metadata={
+                    "previous_publication_id": previous_publication_id,
+                    "generation": selection.generation,
+                },
+            )
             return self._reviewed_selection_dto(selection, publication)
 
     def rollback_reviewed_skill(
@@ -259,6 +284,20 @@ class Repository:
             selection.reason = reason
             selection.updated_at = utcnow()
             db.flush()
+            self._record_reviewed_control_event(
+                db,
+                skill_name=skill_name,
+                publication_id=target.id,
+                event_type="publication_rolled_back",
+                actor_reference=actor_reference,
+                reason=reason,
+                metadata={
+                    "from_publication_id": current.id,
+                    "from_publication_version": current.publication_version,
+                    "target_publication_version": target.publication_version,
+                    "generation": selection.generation,
+                },
+            )
             return self._reviewed_selection_dto(selection, target)
 
     def selected_reviewed_skill(self, skill_name: str) -> dict | None:
@@ -357,6 +396,18 @@ class Repository:
                 row.state = "drained"
                 row.drained_at = utcnow()
                 row.heartbeat_at = utcnow()
+                self._record_reviewed_control_event(
+                    db,
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    event_type="worker_drained",
+                    actor_reference="worker-self",
+                    reason="Worker completed cooperative drain.",
+                    metadata={
+                        "worker_id": row.id,
+                        "task_queue": row.task_queue,
+                        "source_revision": row.source_revision,
+                    },
+                )
 
     def request_worker_drain(
         self, *, task_queue: str, source_revision: str,
@@ -381,6 +432,18 @@ class Repository:
                 row.drain_requested_by = actor_reference
                 row.drain_reason = reason
                 row.heartbeat_at = now
+                self._record_reviewed_control_event(
+                    db,
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    event_type="worker_drain_requested",
+                    actor_reference=actor_reference,
+                    reason=reason,
+                    metadata={
+                        "worker_id": row.id,
+                        "task_queue": row.task_queue,
+                        "source_revision": row.source_revision,
+                    },
+                )
             return len(rows)
 
     def worker_inventory(self, *, task_queue: str | None = None) -> list[dict]:
