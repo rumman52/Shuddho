@@ -289,7 +289,15 @@ class SandboxRepository:
             envelope = canonicalize_transport_code_proposal(
                 CodeProposalEnvelope.model_validate(proposal.snapshot)
             )
-            source = (execution.request_spec or {}).get("source")
+            spec = execution.request_spec if isinstance(execution.request_spec, dict) else {}
+            # New trusted dispatches store only an immutable proposal link.
+            # Fetch source from the still-live, locked proposal; revocation
+            # erases that single DB copy before any subsequent worker claim.
+            referenced_source = (
+                spec.get("reviewed_source_ref") is True
+                and "source" not in spec
+            )
+            source = envelope.source if referenced_source else spec.get("source")
             if (
                 envelope.review_sha256() != proposal.review_sha256
                 or envelope.source != source
@@ -432,7 +440,23 @@ class SandboxRepository:
                 # not when a request was first prepared. Never hand the
                 # sandbox altered stored source even when its length matches.
                 spec = execution.request_spec if isinstance(execution.request_spec, dict) else {}
-                source = spec.get("source")
+                if (
+                    execution.agent_code_proposal_id is not None
+                    and spec.get("reviewed_source_ref") is True
+                ):
+                    # The database-owned FK alone cannot authorize a worker.
+                    # Validate exact live human consent under locks first,
+                    # then retrieve the ONLY persisted code source bytes.
+                    rejection = self._reviewed_code_claim_denial(db, execution, session, now)
+                    if rejection is not None:
+                        self._reject_reviewed_claim(db, execution, session, now, rejection)
+                        continue
+                    proposal = db.get(AgentCodeProposal, execution.agent_code_proposal_id)
+                    source = proposal.snapshot.get("source") if (
+                        proposal is not None and isinstance(proposal.snapshot, dict)
+                    ) else None
+                else:
+                    source = spec.get("source")
                 try:
                     encoded = source.encode("utf-8") if isinstance(source, str) else None
                 except UnicodeError:
@@ -1049,7 +1073,7 @@ class SandboxRepository:
                 source_sha256=envelope.source_sha256,
                 source_bytes=len(envelope.source.encode("utf-8")),
                 request_spec={
-                    "source": envelope.source, "source_trust": "untrusted",
+                    "reviewed_source_ref": True, "source_trust": "untrusted",
                     "policy_version": SANDBOX_POLICY_VERSION,
                 },
                 state="prepared",
