@@ -17,12 +17,12 @@ Keep existing unspecialized user runs with an empty allowlist unchanged. For a r
 ## Implementation
 
 - `services/coworker/agent_repository.py`: recheck `run.tool_allowlist` in initial and replacement plan SQL admission.
-- `services/coworker/agent_runtime.py`: recheck the same persisted grant before task execution.
-- `tests/test_coworker.py::test_agent_task_scope_survives_plan_replan_and_worker_claim`: real SQLite repository and AgentRuntime path. Deny unlisted task/browser steps in plan/replan; persist an allowed task, simulate an altered persisted browser invocation and prove the worker refuses to create any Task or browser session. Existing unscoped path remains covered by prior tests.
+- `services/coworker/agent_runtime.py`: pass the persisted grant through initial intelligent planning, deterministic fallback, replan and task execution. The model never receives ungranted task names for restricted runs.
+- `services/coworker/agent_planner.py`: restrict deterministic and model proposal conversion to the run grant; preserve unchanged behavior for unrestricted runs and server-bound approved actions.\n- `tests/test_coworker.py::test_agent_task_scope_survives_plan_replan_and_worker_claim`: real SQLite repository and AgentRuntime path. Deny unlisted task/browser steps in plan/replan; persist an allowed task, simulate an altered persisted browser invocation and prove the worker refuses to create any Task or browser session.\n- `tests/test_coworker.py::test_restricted_run_planner_and_fallback_never_offer_extra_tools`: real run initial planner, replan, provider failure and deterministic fallback keep the single allowed tool and reject goals with no permitted matching tool. Existing unscoped path remains covered by prior tests.
 
 ## Required checks before repository verified
 
-1. `uv run --extra coworker pytest tests/test_coworker.py -k agent_task_scope_survives_plan_replan_and_worker_claim -q`
+1. `uv run --extra coworker pytest tests/test_coworker.py -k 'agent_task_scope_survives_plan_replan_and_worker_claim or restricted_run_planner_and_fallback_never_offer_extra_tools' -q`
 2. `uv run --extra coworker pytest tests/test_coworker.py tests/test_automations.py tests/test_coworker_skill_manifests.py -q`
 3. Mandatory exact PR HEAD `test-and-build`, zero-skip `coworker` and `ci-merge-gate`.
 4. Independent review of time-of-check/time-of-use, model-selected steps, plan replay, old invocations, action paths and mixed-version behavior.
