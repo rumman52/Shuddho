@@ -70,8 +70,11 @@ class Repository:
             raise CoworkerError("skill_publication_untrusted", "The publication envelope is incomplete.", 409)
         if publication["skill_name"] != REVIEWED_RESEARCH_SKILL:
             raise CoworkerError("skill_publication_untrusted", "Only the reviewed research pilot is supported.", 409)
-        if publication["publication_version"] != REVIEWED_RESEARCH_PUBLICATION_VERSION:
-            raise CoworkerError("skill_publication_untrusted", "The publication version is not reviewed.", 409)
+        if (
+            type(publication["publication_version"]) is not str
+            or not publication["publication_version"].strip()
+        ):
+            raise CoworkerError("skill_publication_untrusted", "The publication version is invalid.", 409)
         if publication["task_workflow_version"] != REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION:
             raise CoworkerError("skill_publication_untrusted", "The publication workflow version is not reviewed.", 409)
         # Rebuild through the code-reviewed manifest path. Caller-supplied hashes
