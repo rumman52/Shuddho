@@ -355,7 +355,8 @@ class AgentRepository:
                 if review is not None:
                     entry["human_review"] = self._human_review_dto(review)
                 reviewable.append(entry)
-            return {"proposals": reviewable, "execution_authorized": False}
+            return {"proposals": reviewable, "execution_authorized": False,
+                    "generation_enabled": self.settings.model_code_proposals_enabled}
 
     def get_code_proposal(self, owner: str, run_id: str, proposal_id: str) -> dict:
         """Never return proposal code after an input revocation or expiry."""
