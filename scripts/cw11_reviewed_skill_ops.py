@@ -72,6 +72,8 @@ def main() -> None:
     history = sub.add_parser("history", help="Print the append-only reviewed-skill control history.")
     history.add_argument("--limit", type=int, default=100)
 
+    listing = sub.add_parser("list", help="Print all reviewed publications and lifecycle states.")
+
     runtime = sub.add_parser("runtime", help="Print the selected reviewed publication identity.")
 
     history = sub.add_parser("history", help="Print append-only reviewed-skill control history.")
@@ -136,6 +138,8 @@ def main() -> None:
             )
         elif args.command == "history":
             result = {"events": repository.reviewed_control_history(limit=args.limit)}
+        elif args.command == "list":
+            result = {"publications": repository.list_reviewed_publications()}
         elif args.command == "runtime":
             result = repository.reviewed_skill_runtime_manifest()
         elif args.command == "history":
