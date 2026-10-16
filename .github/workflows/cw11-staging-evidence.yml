@@ -43,6 +43,7 @@ jobs:
       SHUDDHO_TEMPORAL_TASK_QUEUE: shuddho-documents-v1
       SHUDDHO_AGENT_REVIEWED_RESEARCH_SKILL_ENABLED: "true"
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_WORKSPACE_ID: tea-d6ok4okhg0os73erkdv0
 
     steps:
       - name: Checkout exact qualification revision
@@ -82,11 +83,34 @@ jobs:
           candidate_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}")"
           jq -e '.type == "background_worker" and .repo == "https://github.com/rumman52/Shuddho" and .serviceDetails.region == "oregon" and .branch == "main"' <<<"${old_service}" >/dev/null
           jq -e --arg branch "${GITHUB_REF_NAME}" '.type == "background_worker" and .repo == "https://github.com/rumman52/Shuddho" and .serviceDetails.region == "oregon" and .branch == $branch' <<<"${candidate_service}" >/dev/null
+          if [[ "${OLD_WORKER_SERVICE_ID}" == "${CANDIDATE_WORKER_SERVICE_ID}" ]]; then
+            echo "::error::Legacy and candidate worker services must be different services."
+            exit 1
+          fi
+          old_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}")"
+          candidate_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}")"
           old_instances="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}/instances")"
           candidate_instances="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}/instances")"
+          old_deploys="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}/deploys?limit=20")"
           candidate_deploys="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}/deploys?limit=20")"
           old_count="$(jq 'length' <<<"${old_instances}")"
           candidate_count="$(jq 'length' <<<"${candidate_instances}")"
+          for service_json in "${old_service}" "${candidate_service}"; do
+            if ! jq -e --arg owner "${RENDER_WORKSPACE_ID}" '
+              .type == "background_worker"
+              and .ownerId == $owner
+              and .repo == "https://github.com/rumman52/Shuddho"
+            ' <<<"${service_json}" >/dev/null; then
+              echo "::error::A supplied Render service is not the reviewed Shuddho staging background worker."
+              exit 1
+            fi
+          done
+          old_commit="$(jq -r '
+            map(select(.status == "live" and (.commit.id? | type == "string")))
+            | sort_by(.createdAt)
+            | last
+            | .commit.id // empty
+          ' <<<"${old_deploys}")"
           candidate_commit="$(jq -r '
             map(select(.status == "live" and (.commit.id? | type == "string")))
             | sort_by(.createdAt)
@@ -95,6 +119,10 @@ jobs:
           ' <<<"${candidate_deploys}")"
           if [[ "${old_count}" -ne 0 ]]; then
             echo "::error::Legacy Render worker still has live instances; drain is not complete."
+            exit 1
+          fi
+          if [[ "${old_commit}" != "${{ inputs.old_source_revision }}" ]]; then
+            echo "::error::Legacy Render worker live deploy does not match the declared old source revision."
             exit 1
           fi
           if [[ "${candidate_count}" -lt 1 ]]; then
@@ -110,6 +138,7 @@ jobs:
               old_worker_service_id: $old_service,
               candidate_worker_service_id: $candidate_service,
               old_source_revision: $old_revision,
+              old_worker_live_commit: $old_commit,
               old_worker_instance_count: $old_count,
               candidate_worker_instance_count: $candidate_count,
               candidate_live_commit: $candidate_commit,
