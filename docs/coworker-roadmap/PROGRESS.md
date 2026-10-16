@@ -1,3 +1,13 @@
+## CW-11 post-merge planner and fallback tool scope — 16 October 2026
+
+**Live source:** [PR #431](https://github.com/rumman52/Shuddho/pull/431) merged at `main` `18068a48aae1dcd3f354638e525cdd2cf88fc185` (16 October 2026). Its earlier exact PR head was `b062f487ba2aa0de11fb367424c70d9eb9ce01cc`. Merged-main `CI #38860546551` was in progress at this review. Historical branch/open notes below predate the merge.
+
+**Independent continuation branch:** `codex/cw11-planner-scope-continuation-20261016`. The merged worker-admission guard is insufficient alone: the initial intelligent planner and replan offered tool names without filtering the run's durable `tool_allowlist`; deterministic fallback and model proposal conversion also omitted it. This branch passes the persisted scope through all these routes and adds real repository regressions for restricted initial plan, replan, fallback and no-eligible-tool denial. The follow-up diff is **not merged** and neither exact final CI nor staging evidence is claimed. No model can grant extra tools via this change.
+
+**Next:** create/review separate draft PR, inspect exact-head CI, resolve test/review findings and keep capability gates disabled. Full CW-11 reviewed skill publication and runtime version selection, CW-10 real worker isolation, CW-09 browser network proof, and broader A/P/V scenarios remain independently incomplete. [Acceptance details](CW11_RUNTIME_TASK_SCOPE_HARDENING_2026-10-16.md).
+
+---
+
 ## CW-11 / A-04 restricted-run task scope at worker claim — 16 October 2026
 
 **Refreshed default branch:** `main` `9b9e23a182ec212ce7f30e87d7a235ba886c2f5f`, with #430 merged and exact merged-main CI #38858449740 still in progress at first inspection; no open PRs were observed. Older 15 October recovery-claim CI checkpoint is superseded.
