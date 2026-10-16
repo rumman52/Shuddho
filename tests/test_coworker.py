@@ -701,6 +701,69 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
         )) is None
 
 
+def test_restricted_run_planner_and_fallback_never_offer_extra_tools(container):
+    """Initial planning, replan and provider-error fallback share the SQL-owned grant."""
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentPlannerProposal, AgentRunCreate
+    from services.coworker.agent_planner import deterministic_plan
+    from services.coworker.agent_planning_model import PlannerFailure
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True, intelligent_planner_enabled=True,
+        work_services_enabled=True, max_agent_planner_calls=3,
+        agent_planner_token_budget=16000,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    scope = ["daily_plan.create"]
+    goal = "Prepare a daily plan and follow-up email."
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal=goal, output_language="en"),
+        "restricted-planner-grant", tool_allowlist=scope,
+    )
+    seen = []
+
+    class Planner:
+        async def propose(self, _goal, tools, **kwargs):
+            seen.append((list(tools), kwargs["reason"]))
+            return AgentPlannerProposal.model_validate({
+                "steps": [{"tool": "daily_plan.create", "objective": "Create a plan."}],
+            }), 10, 1
+
+    runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()), planner=Planner())
+    assert asyncio.run(runtime.plan_for_worker(run["id"])) == 1
+    assert asyncio.run(runtime.replan(run["id"], 1)) == 1
+    assert seen == [(scope, "initial"), (scope, "capability_changed")]
+    saved = container.agent.get(owner, run["id"])
+    assert [step["tool"] for step in saved["tool_invocations"]] == scope
+
+    fallback, _ = container.agent.create(
+        owner, AgentRunCreate(goal=goal, output_language="en"),
+        "restricted-planner-fallback", tool_allowlist=scope,
+    )
+
+    class UnavailablePlanner:
+        async def propose(self, _goal, tools, **_kwargs):
+            assert tools == scope
+            raise PlannerFailure("planner_unavailable", "synthetic failure", retryable=True)
+
+    failed_model = AgentRuntime(
+        container, DocumentRunner(container, FakeModel()), planner=UnavailablePlanner(),
+    )
+    assert asyncio.run(failed_model.plan_for_worker(fallback["id"])) == 1
+    state = container.agent.get(owner, fallback["id"])
+    assert state["planner_mode"] == "fallback"
+    assert [step["tool"] for step in state["tool_invocations"]] == scope
+
+    with pytest.raises(CoworkerError) as unmatched:
+        deterministic_plan(
+            "Draft an email.", [], "en", settings, tool_allowlist=scope,
+        )
+    assert unmatched.value.code == "no_agent_tool"
+
+
 def test_agent_plan_limits_step_count(container):
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
     enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)
