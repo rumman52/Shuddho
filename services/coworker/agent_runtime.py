@@ -276,7 +276,7 @@ class AgentRuntime:
         if run.get("tool_allowlist") and spec.kind == "task" and spec.name not in run["tool_allowlist"]:
             raise CoworkerError(
                 "agent_tool_scope",
-                "This task tool is outside the run\u0027s server-owned scope.",
+                "This task tool is outside the recorded run scope.",
                 409,
             )
         if not spec.enabled(self.container.settings) and spec.kind == "task":
