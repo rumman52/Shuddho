@@ -701,6 +701,144 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
         )) is None
 
 
+
+def test_reviewed_agent_research_requires_exact_worker_grant_and_version(container, monkeypatch):
+    """CW-11 opt-in worker gate binds reviewed research to SQL-owned run and tool."""
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.models import AgentRun, ToolInvocation
+    from services.coworker.schemas import ResearchOptions
+    from services.coworker.skills import SKILLS
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True,
+        research_services_enabled=True, agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    outsider = account(container, "bob")
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Research the current topic.", output_language="en"),
+        "reviewed-research-run", tool_allowlist=["research.search"],
+    )
+    arguments = {
+        "instruction": "Research the current topic.", "notes": "",
+        "document_ids": [], "output_language": "en",
+        "query": "reliable public sources", "time_range": "any",
+    }
+    container.agent.save_plan(owner, run["id"], [
+        AgentPlanStep(tool="research.search", arguments=arguments),
+    ])
+    with container.repository.sessions() as db:
+        invocation = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        ))
+        step_id = invocation.step_id
+
+    request = TaskCreate(
+        skill_id="research", instruction=arguments["instruction"], notes="",
+        research=ResearchOptions(query=arguments["query"], time_range="any"),
+    )
+    with pytest.raises(CoworkerError) as cross_owner:
+        container.repository.create_task(
+            outsider, request, "wrong-owner-research", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert cross_owner.value.code == "skill_run_scope"
+
+    task, created = container.repository.create_task(
+        owner, request, "owned-reviewed-research", enqueue=False,
+        agent_run_id=run["id"], agent_step_id=step_id,
+    )
+    assert created and task["workflow_version"] == "work_research_v1"
+    assert container.repository.worker_task(task["id"], False)["agent_step_id"] == step_id
+
+    with container.repository.sessions.begin() as db:
+        db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        )).tool_version = "unreviewed"
+    with pytest.raises(CoworkerError) as changed_tool:
+        container.repository.worker_task(task["id"], False)
+    assert changed_tool.value.code == "skill_run_scope"
+
+    with container.repository.sessions.begin() as db:
+        db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        )).tool_version = "1"
+        db.get(AgentRun, run["id"]).tool_allowlist = []
+    with pytest.raises(CoworkerError) as revoked:
+        container.repository.worker_task(task["id"], False)
+    assert revoked.value.code == "skill_manifest_unreviewed"
+
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).tool_allowlist = ["research.search"]
+    with monkeypatch.context() as patch:
+        patch.setitem(SKILLS, "research", replace(
+            SKILLS["research"], guidance=SKILLS["research"].guidance + " unreviewed",
+        ))
+        with pytest.raises(CoworkerError) as policy_drift:
+            container.repository.worker_task(task["id"], False)
+        assert policy_drift.value.code == "skill_manifest_unreviewed"
+
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run["id"]).cancel_requested = True
+    with pytest.raises(CoworkerError) as cancelled:
+        container.repository.worker_task(task["id"], False)
+    assert cancelled.value.code == "skill_run_scope"
+
+    # A standalone existing research task has no Agent skill-grant contract.
+    standalone, _ = container.repository.create_task(
+        owner, request, "standalone-research", enqueue=False,
+    )
+    assert container.repository.worker_task(standalone["id"], False)["agent_run_id"] is None
+
+
+def test_reviewed_agent_research_rejects_ungranted_planner_step_before_task_admission(container):
+    """No task may be created using a different legitimate run step as research authority."""
+    from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
+    from services.coworker.schemas import ResearchOptions
+
+    settings = replace(
+        container.settings, agent_runtime_enabled=True, research_services_enabled=True,
+        work_services_enabled=True, agent_reviewed_research_skill_enabled=True,
+    )
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Prepare a daily plan.", output_language="en"),
+        "ungranted-research-run", tool_allowlist=["daily_plan.create"],
+    )
+    container.agent.save_plan(owner, run["id"], [AgentPlanStep(
+        tool="daily_plan.create", arguments={
+            "instruction": "Prepare a daily plan.", "notes": "",
+            "document_ids": [], "output_language": "en",
+        },
+    )])
+    with container.repository.sessions() as db:
+        from services.coworker.models import ToolInvocation
+        step_id = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        )).step_id
+    with pytest.raises(CoworkerError) as denied:
+        container.repository.create_task(
+            owner,
+            TaskCreate(
+                skill_id="research", instruction="Research a topic.",
+                research=ResearchOptions(query="public topic", time_range="any"),
+            ),
+            "research-bypass-task", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert denied.value.code == "skill_run_scope"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(Task.id).where(
+            Task.agent_run_id == run["id"],
+        )) is None
+
+
 def test_restricted_run_planner_and_fallback_never_offer_extra_tools(container):
     """Initial planning, replan and provider-error fallback share the SQL-owned grant."""
     from services.coworker.agent_runtime import AgentRuntime
