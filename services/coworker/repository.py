@@ -335,7 +335,9 @@ class Repository:
 
     def heartbeat_worker(self, worker_id: str) -> str:
         with self.sessions.begin() as db:
-            row = db.get(WorkerInstance, worker_id)
+            row = db.scalar(
+                select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
+            )
             if row is None:
                 return "lost"
             if row.state in {"drained", "lost"}:
@@ -346,7 +348,9 @@ class Repository:
 
     def mark_worker_drained(self, worker_id: str) -> None:
         with self.sessions.begin() as db:
-            row = db.get(WorkerInstance, worker_id)
+            row = db.scalar(
+                select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
+            )
             if row is not None and row.state != "lost":
                 row.state = "drained"
                 row.drained_at = utcnow()
