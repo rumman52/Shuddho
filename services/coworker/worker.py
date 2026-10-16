@@ -387,7 +387,9 @@ class Dispatcher:
             for run_id in await asyncio.to_thread(agent.claim_outbox):
                 await self.dispatch_agent_run(run_id)
         await asyncio.to_thread(repo.expire_tasks)
-        for task_id in await asyncio.to_thread(repo.claim_outbox):
+        for task_id in await asyncio.to_thread(
+            repo.claim_outbox, worker_id=self.worker_id,
+        ):
             task = await asyncio.to_thread(repo.worker_task, task_id, False)
             if task["state"] not in TERMINAL:
                 try:
