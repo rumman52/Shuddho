@@ -14,6 +14,7 @@ from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
 from services.coworker.models import ReviewedSkillPublication, Step, Task, WorkerInstance
+from services.coworker.task_workflow_versions import PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
     REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
@@ -225,7 +226,7 @@ def test_legacy_migration_is_atomic_and_requires_no_search_attempt(container):
     with container.repository.sessions.begin() as db:
         for task_id in (safe["id"], blocked["id"]):
             task = db.get(Task, task_id)
-            task.workflow_version = "work_research_reviewed_v1"
+            task.workflow_version = PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
             identity = db.get(Step, (task_id, "reviewed_skill_identity"))
             publication_id = identity.output["publication_id"]
             publication = db.get(ReviewedSkillPublication, publication_id)
@@ -249,5 +250,47 @@ def test_legacy_migration_is_atomic_and_requires_no_search_attempt(container):
         )
     assert atomic_block.value.code == "skill_migration_blocked"
     with container.repository.sessions() as db:
-        assert db.get(Task, safe["id"]).workflow_version == "work_research_reviewed_v1"
-        assert db.get(Task, blocked["id"]).workflow_version == "work_research_reviewed_v1"
+        assert db.get(Task, safe["id"]).workflow_version == PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
+        assert db.get(Task, blocked["id"]).workflow_version == PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
+
+
+def test_legacy_migration_moves_only_reviewed_rows_after_drain(container):
+    old = worker(container, REV_B)
+    worker(container, REV_A)
+    publish(container, "research_reviewed_v0", source_revision=REV_A)
+    publish(container, "research_reviewed_v1", source_revision=REV_A, rollback_target="research_reviewed_v0")
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL, "research_reviewed_v1",
+        actor_reference="cw11-test-operator", reason="migration target",
+        worker_source_revision=REV_A,
+    )
+    owner = account(container)
+    reviewed = reviewed_task(container, owner, "legacy-reviewed")
+    with container.repository.sessions.begin() as db:
+        task = db.get(Task, reviewed["id"])
+        task.workflow_version = PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
+        identity = db.get(Step, (reviewed["id"], "reviewed_skill_identity"))
+        publication_id = identity.output["publication_id"]
+        publication = db.get(ReviewedSkillPublication, publication_id)
+        identity.output = {
+            "name": "research",
+            "version": "work_research_v1",
+            "tool": "research.search",
+            "tool_version": "1",
+            "review_sha256": publication.review_sha256,
+        }
+    container.repository.mark_worker_drained(old)
+    result = container.repository.migrate_legacy_reviewed_tasks(
+        task_queue=container.settings.task_queue,
+        old_source_revision=REV_B,
+        publication_version="research_reviewed_v1",
+        actor_reference="cw11-test-operator",
+        reason="safe historical migration",
+    )
+    assert result["verified"] is True
+    assert result["migrated"] == 1
+    with container.repository.sessions() as db:
+        task = db.get(Task, reviewed["id"])
+        assert task.workflow_version == "work_research_reviewed_v2"
+        identity = db.get(Step, (reviewed["id"], "reviewed_skill_identity")).output
+        assert identity["publication_version"] == "research_reviewed_v1"
