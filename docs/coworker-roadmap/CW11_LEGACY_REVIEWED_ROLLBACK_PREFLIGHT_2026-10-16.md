@@ -14,10 +14,11 @@ A successful code merge or synthetic test cannot prove that no old worker, provi
 
 `python -m scripts.reviewed_skill_rollback_preflight`
 
-Provide `SHUDDHO_COWORKER_DATABASE_URL` through backend environment secrets, never CLI flags or logs. Run on a consistent snapshot after new admissions are stopped. The script reads the existing `cw_tasks` and `cw_steps` tables; it performs **no writes, claims, migrations, task cancellations, external actions, provider calls, credential output or activation**. Return only aggregate counts:
+Provide `SHUDDHO_COWORKER_DATABASE_URL` through backend environment secrets, never CLI flags or logs. Run on a consistent snapshot after new admissions are stopped. The script reads the existing `cw_tasks` and `cw_steps` tables with **one aggregate SQL statement** (a single PostgreSQL statement snapshot), rather than multiple count queries observing inconsistent states. It performs **no writes, claims, migrations, task cancellations, external actions, provider calls, credential output or activation**. The result is still a point-in-time observation, not a transaction-level lock or worker-fleet barrier. Return only aggregate counts:
 
 - `active_unfenced_reviewed_tasks`: nonterminal Tasks with a persisted review identity but without `work_research_reviewed_v1`. **Block**; includes old pilot instances.
 - `active_fenced_tasks_missing_review_identity`: nonterminal new-version Tasks without review Step. **Block**; version without identity does not authorize execution.
+- `active_legacy_agent_research_without_review_identity`: nonterminal legacy `work_research_v1` Tasks tied to an Agent run but **without** a reviewed Step. **Block conservatively**: an absent review record cannot prove that the task was safely unreviewed, and an older worker may execute it.
 - `active_fenced_reviewed_tasks`: nonterminal new-version Tasks with review Step, informational; old readers reject these by version.
 - `terminal_legacy_reviewed_tasks`: terminal historic reviewed Tasks that may be replayed for status without new effect; informational.
 - `BLOCKED_TASK_LEDGER` and nonzero process exit when either blocker count is positive. Empty result is only `TASK_LEDGER_CHECK_ONLY` and is **not rollout approval**, worker-drain proof or staged recovery evidence.
@@ -26,7 +27,7 @@ A missing database URL, schema access error or malformed environment must cause 
 
 ## Acceptance
 
-- SQL integration test includes one active old-reviewed workflow + Step, one active new-reviewed workflow + Step, one new workflow missing Step, and one terminal old-reviewed workflow. Assert both blockers and zero authority flags, and that terminal tasks are not active blockers.
+- SQL integration test includes one active old-reviewed workflow + Step, one active new-reviewed workflow + Step, one new workflow missing Step, one active legacy Agent research Task missing Step, and one terminal old-reviewed workflow. Assert all three blockers and zero authority flags, and that terminal tasks are not active blockers.
 - After synthetic terminalization of unsafe Tasks, assert `TASK_LEDGER_CHECK_ONLY`, never `GO` or `rollout_authorized`.
 - Missing URL fails closed. CI must run `tests/test_cohort_health_gate.py` in mandatory coworker job and all final-head required jobs must pass.
 - Independent review checks ownership assumptions, grouping/count completeness, SQL consistency and absence of accidental rollout authority.
