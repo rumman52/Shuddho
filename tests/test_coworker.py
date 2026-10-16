@@ -744,6 +744,12 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
     container.repository.settings = settings
     container.agent.settings = settings
     enable_reviewed_pilot(container)
+    enable_reviewed_pilot(container)
+    enable_reviewed_pilot(container)
+    enable_reviewed_pilot(container)
+    enable_reviewed_pilot(container)
+    enable_reviewed_pilot(container)
+    enable_reviewed_pilot(container)
     owner = account(container)
     outsider = account(container, "bob")
     run, _ = container.agent.create(
