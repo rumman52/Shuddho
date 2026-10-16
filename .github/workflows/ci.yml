@@ -169,10 +169,11 @@ jobs:
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_conversation_dispatch
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_coworker_postgres
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_coworker
-      - name: Qualify CW-11 trusted skill registry and mixed-worker controls without skips
+      - name: Qualify CW-11 trusted skill registry and staging collector without skips
         run: |
-          uv run --extra coworker pytest tests/test_cw11_registry.py -q -rs --junitxml=/tmp/cw11-registry.xml
+          uv run --extra coworker pytest tests/test_cw11_registry.py tests/test_cw11_staging_evidence.py -q -rs --junitxml=/tmp/cw11-registry.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/cw11-registry.xml --required-module tests.test_cw11_registry
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/cw11-registry.xml --required-module tests.test_cw11_staging_evidence
       - name: Keep CW-11 registry evidence
         if: always()
         uses: actions/upload-artifact@v4
