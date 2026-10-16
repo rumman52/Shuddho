@@ -652,12 +652,14 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
         "document_ids": [], "output_language": "en",
     }
     forbidden = AgentPlanStep(tool="email.draft", arguments=arguments)
+    forbidden_browser = AgentPlanStep(tool="browser.read", arguments={})
     allowed = AgentPlanStep(tool="daily_plan.create", arguments=arguments)
 
     # A deterministic planner or direct replan must not bypass the stored scope.
-    with pytest.raises(CoworkerError) as initial:
-        container.agent.save_plan(owner, run["id"], [forbidden])
-    assert initial.value.code == "agent_tool_scope"
+    for disallowed in (forbidden, forbidden_browser):
+        with pytest.raises(CoworkerError) as initial:
+            container.agent.save_plan(owner, run["id"], [disallowed])
+        assert initial.value.code == "agent_tool_scope"
     with container.repository.sessions() as db:
         assert db.scalar(select(ToolInvocation.id).where(
             ToolInvocation.run_id == run["id"],
@@ -665,9 +667,10 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
 
     saved = container.agent.save_plan(owner, run["id"], [allowed])
     assert saved["tool_invocations"][0]["tool"] == "daily_plan.create"
-    with pytest.raises(CoworkerError) as replanned:
-        container.agent.replace_remaining_plan(owner, run["id"], 1, [forbidden])
-    assert replanned.value.code == "agent_tool_scope"
+    for disallowed in (forbidden, forbidden_browser):
+        with pytest.raises(CoworkerError) as replanned:
+            container.agent.replace_remaining_plan(owner, run["id"], 1, [disallowed])
+        assert replanned.value.code == "agent_tool_scope"
 
     # Simulate a stale or altered prepared invocation after planning. The
     # actual worker must reject it before any task, provider or artifact work.
@@ -677,8 +680,8 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
         ))
         step = db.get(AgentStep, invocation.step_id)
         assert invocation.tool_name == step.tool_name == "daily_plan.create"
-        invocation.tool_name = "email.draft"
-        step.tool_name = "email.draft"
+        invocation.tool_name = "browser.read"
+        step.tool_name = "browser.read"
 
     runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()))
     with pytest.raises(CoworkerError) as worker:
@@ -690,8 +693,6 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
             ToolInvocation.run_id == run["id"],
         ))
         assert invocation.state == "prepared"
-
-
 
 def test_agent_plan_limits_step_count(container):
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
