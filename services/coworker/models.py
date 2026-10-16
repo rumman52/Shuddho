@@ -1508,7 +1508,7 @@ class SandboxExecution(Base):
     kind: Mapped[str] = mapped_column(String(20))
     # SQL-owned origin link: never trust a proposal id copied from untrusted JSON.
     agent_code_proposal_id: Mapped[str | None] = mapped_column(
-        ForeignKey("cw_agent_code_proposals.id"), nullable=True, index=True,
+        ForeignKey("cw_agent_code_proposals.id"), nullable=True, unique=True,
     )
     source_sha256: Mapped[str] = mapped_column(String(64))
     source_bytes: Mapped[int] = mapped_column(Integer)
