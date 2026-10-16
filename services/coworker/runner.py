@@ -88,6 +88,16 @@ class DocumentRunner:
         if isinstance(self.research_provider, TavilyResearchProvider):
             self.research_provider.configured()
         await asyncio.to_thread(self.repo.reserve_search, task["id"])
+        # The Agent grant may be revoked between phase entry and the paid
+        # reservation. Revalidate immediately before the provider call. A
+        # denied pre-dispatch check consumed no search credits.
+        try:
+            await asyncio.to_thread(self.repo.worker_task, task["id"])
+        except BaseException:
+            await asyncio.shield(asyncio.to_thread(
+                self.repo.settle_search, task["id"], "failed", 0,
+            ))
+            raise
         try:
             result = await self.research_provider.retrieve(ResearchOptions.model_validate(options))
         except SearchFailure as error:
