@@ -992,3 +992,23 @@ def test_cw10_direct_user_sandbox_source_is_not_reclassified_as_model_generated(
     claimed = container.sandbox.claim_executions("direct-user-worker")
     assert len(claimed) == 1
     assert claimed[0]["source"] == "print(42)\n"
+
+def test_cw10_one_approved_proposal_cannot_create_two_sandbox_execution_rows(
+    container, signed_client,
+):
+    from sqlalchemy.exc import IntegrityError
+    from services.coworker.sandbox_schemas import SandboxExecutionCreate
+
+    owner, _, proposal_id, proposal, session, first = reviewed_sandbox_candidate(
+        container, signed_client,
+    )
+    second = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source=proposal.source),
+    )
+    with pytest.raises(IntegrityError):
+        with container.repository.sessions.begin() as db:
+            db.get(SandboxExecution, second["id"]).agent_code_proposal_id = proposal_id
+            db.flush()
+    with container.repository.sessions() as db:
+        assert db.get(SandboxExecution, first["id"]).agent_code_proposal_id == proposal_id
+        assert db.get(SandboxExecution, second["id"]).agent_code_proposal_id is None
