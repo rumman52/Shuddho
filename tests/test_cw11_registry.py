@@ -130,6 +130,9 @@ def test_publication_is_source_bound_and_not_auto_selected(container):
     worker(container, REV_A)
     publish(container, "research_reviewed_unselected", source_revision=REV_A)
     assert container.repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL) is None
+    publications = container.repository.list_reviewed_publications()
+    assert publications[0]["publication_version"] == "research_reviewed_unselected"
+    assert publications[0]["state"] == "published"
     with container.repository.sessions() as db:
         events = db.scalars(select(ReviewedSkillRegistryEvent)).all()
         assert [event.event_type for event in events] == ["publication_published"]
