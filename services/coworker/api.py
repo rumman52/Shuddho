@@ -27,6 +27,7 @@ from .skills import available_skills
 from .action_schemas import ActionApproval, ActionPrepare, OAuthFinish, OAuthStart
 from .agent_schemas import ActionProposalPromotion, ActionProposalReview, AgentRunCreate
 from .code_proposal_schemas import CodeProposalEnvelope, CodeProposalHumanDecision, CodeProposalRevocation
+from .model_code_producer import ModelCodeProposalService
 from .agent_router import qualify_agent_goal
 from .goal_schemas import GoalCreate, GoalPatch, GoalRunCreate, GoalTransition
 from .suggestion_schemas import PersonalSuggestionPreferences
@@ -1735,9 +1736,31 @@ def prepare_agent_code_proposal(
         str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
     ],
 ):
-    """Capture an exact code proposal for owner inspection, never approve it."""
+    """Capture an exact owner-submitted code proposal, never approve it."""
+    if idempotency_key.startswith("model-v1:"):
+        raise CoworkerError("idempotency_key_reserved", "This model producer key is reserved.", 422)
     value, created = services.agent.prepare_code_proposal(
         identity.account_id, str(run_id), payload, idempotency_key,
+    )
+    response.headers["Location"] = f'/api/v1/agent-runs/{run_id}/code-proposals/{value["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    response.headers["Cache-Control"] = "no-store"
+    return value
+
+
+@router.post("/agent-runs/{run_id}/code-proposals/generate", status_code=201)
+async def generate_model_code_proposal(
+    run_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+    idempotency_key: Annotated[
+        str, Header(min_length=8, max_length=110, pattern=r"^[A-Za-z0-9_.:-]+$")
+    ],
+):
+    """Owner-requested model draft only: no approval, sandbox or execution."""
+    value, created = await ModelCodeProposalService(services).generate(
+        identity.account_id, str(run_id), idempotency_key,
     )
     response.headers["Location"] = f'/api/v1/agent-runs/{run_id}/code-proposals/{value["id"]}'
     response.headers["Idempotent-Replayed"] = "false" if created else "true"
