@@ -253,14 +253,26 @@ class Repository:
 
     def reviewed_skill_runtime_manifest(self) -> dict:
         selected = self.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL)
+        if selected is None:
+            return {
+                "research": {
+                    "state": "unselected",
+                    "publication_version": None,
+                    "publication_sha256": None,
+                    "review_sha256": None,
+                    "source_revision": None,
+                    "task_workflow_version": None,
+                    "generation": None,
+                }
+            }
         return {
-            "research": selected or {
-                "state": "unselected",
-                "publication_version": None,
-                "publication_sha256": None,
-                "review_sha256": None,
-                "source_revision": None,
-                "task_workflow_version": None,
+            "research": {
+                key: selected[key]
+                for key in (
+                    "state", "publication_version", "publication_sha256",
+                    "review_sha256", "source_revision",
+                    "task_workflow_version", "generation",
+                )
             }
         }
 
