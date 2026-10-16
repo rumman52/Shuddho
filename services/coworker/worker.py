@@ -452,6 +452,8 @@ async def main():
     from dotenv import load_dotenv
     load_dotenv()
     settings = Settings.from_env()
+    if settings.environment != "development" and not settings.source_revision:
+        raise RuntimeError("A deployment-attested source revision is required outside development.")
     container = Container.create(settings)
     client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace,
                                   api_key=settings.temporal_api_key or None, tls=settings.temporal_tls)
