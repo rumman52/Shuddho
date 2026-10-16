@@ -408,6 +408,11 @@ const identifier = (value: string) => {
   return value;
 };
 
+const codeReviewRequestKey = (value: string) => {
+  if (!/^[A-Za-z0-9_.:-]{8,110}$/.test(value)) throw new WorkspaceError("The model review request key is invalid.");
+  return value;
+};
+
 const digestIdentifier = (value: string) => {
   if (!/^[a-f0-9]{64}$/.test(value)) throw new WorkspaceError("This suggestion is invalid.");
   return value;
@@ -890,10 +895,10 @@ export class CoworkerClient {
       `/api/v1/agent-runs/${identifier(runId)}/code-proposals`, { signal },
     );
   }
-  generateModelCodeProposal(runId: string, key: string) {
+  async generateModelCodeProposal(runId: string, key: string) {
     return this.json<CodeProposalDetail>(
       `/api/v1/agent-runs/${identifier(runId)}/code-proposals/generate`,
-      { method: "POST", headers: { "Idempotency-Key": key } },
+      { method: "POST", headers: { "Idempotency-Key": codeReviewRequestKey(key) } },
     );
   }
   codeProposal(runId: string, proposalId: string, signal?: AbortSignal) {
