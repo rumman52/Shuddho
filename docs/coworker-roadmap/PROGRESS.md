@@ -2,7 +2,7 @@
 
 **Refreshed default branch:** `main` `9b9e23a182ec212ce7f30e87d7a235ba886c2f5f`, with #430 merged and exact merged-main CI #38858449740 still in progress at first inspection; no open PRs were observed. Older 15 October recovery-claim CI checkpoint is superseded.
 
-**New bounded security slice:** `codex/cw11-task-run-scope-claim-20261016` prevents any tool outside a stored nonempty Agent run `tool_allowlist` from being admitted by `save_plan`, `replace_remaining_plan` or `AgentRuntime.execute_step`. Only non-consequential task tools are restricted by this field; attached consequential actions retain their existing ExternalAction approval checks. A targeted real-SQL repository test simulates a stale/tampered persisted invocation and checks no Task is created.
+**New bounded security slice:** `codex/cw11-task-run-scope-claim-20261016` prevents any tool outside a stored nonempty Agent run `tool_allowlist` from being admitted by `save_plan`, `replace_remaining_plan` or `AgentRuntime.execute_step`. All non-approved-action tools (including browser/sandbox) are restricted by this field; attached consequential actions retain their existing ExternalAction approval checks. A targeted SQL repository test rejects task/browser admission, simulates an altered persisted browser invocation and checks no new Task is created.
 
 **Evidence state:** changes committed on a review branch; targeted test, exact-final-HEAD mandatory CI, independent review, PostgreSQL/Temporal racing worker replay and staging were **not yet verified** at checkpoint drafting. This narrows the authority gap but **does not** complete CW-11 publication or activation, CW-10 operated sandbox, CW-09 browser, A/P/V qualification. [Task acceptance](CW11_RUNTIME_TASK_SCOPE_HARDENING_2026-10-16.md).
 
