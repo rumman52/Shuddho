@@ -1792,6 +1792,14 @@ def test_intelligent_planner_resolves_only_opaque_attached_action_handles(contai
     assert actions[0]["id"] not in encoded_tools
     assert actions[1]["id"] not in encoded_tools
 
+    # Run grants restrict ordinary tasks, never independently bound action handles.
+    scoped_tools = intelligent_tool_names(
+        settings, actions, tool_allowlist=["daily_plan.create"],
+    )
+    assert set(scoped_tools) == {
+        "daily_plan.create", "attached.email.1", "attached.calendar.2",
+    }
+
     proposal = AgentPlannerProposal.model_validate({
         "steps": [
             {"tool": "attached.calendar.2", "objective": "Use the attached calendar draft."},
@@ -1808,6 +1816,11 @@ def test_intelligent_planner_resolves_only_opaque_attached_action_handles(contai
     assert len(plan) == 1
     assert plan[0].tool == "calendar.create"
     assert plan[0].arguments == {"action_id": actions[1]["id"]}
+    scoped_plan = proposal_to_plan(
+        proposal, "Schedule the reviewed event if appropriate.", [], "en",
+        settings, actions, tool_allowlist=["daily_plan.create"],
+    )
+    assert scoped_plan == plan
 
 
 def test_agent_action_selection_releases_only_unselected_pending_drafts(container):
@@ -1852,6 +1865,7 @@ def test_agent_action_selection_releases_only_unselected_pending_drafts(containe
             output_language="en",
         ),
         "agent-select-run",
+        tool_allowlist=["daily_plan.create"],
     )
 
     class SelectingPlanner:
@@ -1860,10 +1874,12 @@ def test_agent_action_selection_releases_only_unselected_pending_drafts(containe
 
         async def propose(self, _goal, tools, **_kwargs):
             self.tools = list(tools)
+            # Replanning renumbers surviving handles after unselected drafts release.
+            selected = "attached.email.2" if "attached.email.2" in tools else "attached.email.1"
             return AgentPlannerProposal.model_validate({
                 "steps": [
                     {
-                        "tool": "attached.email.2",
+                        "tool": selected,
                         "objective": "Use the second attached draft.",
                     },
                 ]
@@ -1881,12 +1897,21 @@ def test_agent_action_selection_releases_only_unselected_pending_drafts(containe
     encoded_tools = json.dumps(planner.tools)
     assert "attached.email.1" in planner.tools
     assert "attached.email.2" in planner.tools
+    assert set(planner.tools) == {
+        "daily_plan.create", "attached.email.1", "attached.email.2",
+    }
     assert first["id"] not in encoded_tools
     assert second["id"] not in encoded_tools
 
     saved = container.agent.get(owner, run["id"])
     assert saved["action_ids"] == [second["id"]]
     assert saved["steps"][0]["tool"] == "email.send"
+    assert asyncio.run(runtime.replan(run["id"], 1)) == 1
+    assert "attached.email.1" in planner.tools
+    assert "attached.email.2" not in planner.tools
+    replanned = container.agent.get(owner, run["id"])
+    assert replanned["action_ids"] == [second["id"]]
+    assert replanned["steps"][0]["tool"] == "email.send"
     assert provider.sent == []
 
     with container.repository.sessions() as db:
