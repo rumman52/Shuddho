@@ -38,10 +38,16 @@ jobs:
       SHUDDHO_COWORKER_ENV: staging
       SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}
       SHUDDHO_AUTH_ISSUER: ${{ secrets.SHUDDHO_STAGING_AUTH_ISSUER }}
-      SHUDDHO_COWORKER_STORAGE: local
-      SHUDDHO_COWORKER_LOCAL_STORAGE: /tmp/cw11-storage
+      # The collector is DB/read-only. Keep the non-secret staging
+      # storage shape required by Settings without granting storage credentials to CI.
+      SHUDDHO_COWORKER_STORAGE: s3
+      SHUDDHO_COWORKER_BUCKET: shuddho-coworker-staging
+      SHUDDHO_COWORKER_S3_ENDPOINT: https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3
+      AWS_DEFAULT_REGION: us-west-1
       SHUDDHO_TEMPORAL_TASK_QUEUE: shuddho-documents-v1
-      SHUDDHO_AGENT_REVIEWED_RESEARCH_SKILL_ENABLED: "true"
+      # The candidate worker, not this read-only collector, is required to run
+      # the selected reviewed publication.
+      SHUDDHO_AGENT_REVIEWED_RESEARCH_SKILL_ENABLED: "false"
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_WORKSPACE_ID: tea-d6ok4okhg0os73erkdv0
 
@@ -109,7 +115,7 @@ jobs:
           candidate_count="$(jq 'length' <<<"${candidate_instances}")"
 
           old_commit="$(jq -r '
-            map(select(.commit.id? | type == "string"))
+            map(select(.status == "live" and (.commit.id? | type == "string")))
             | sort_by(.createdAt)
             | last
             | .commit.id // empty
@@ -154,7 +160,6 @@ jobs:
       - name: Collect CW-11 staging evidence
         run: |
           set -euo pipefail
-          mkdir -p /tmp/cw11-storage
           uv run --extra coworker python scripts/cw11_staging_evidence.py             --expected-publication-version "${{ inputs.expected_publication_version }}"             --old-source-revision "${{ inputs.old_source_revision }}"             --external-render-evidence /tmp/cw11-render-evidence.json             --output /tmp/cw11-staging-evidence.json
 
       - name: Publish evidence summary
