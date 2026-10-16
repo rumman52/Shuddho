@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 import time
 from datetime import timedelta
@@ -232,7 +233,8 @@ class SandboxRepository:
         if proposal_id is None:
             return None
         if (
-            not self.settings.agent_runtime_v3_enabled
+            not self.settings.code_proposal_dispatch_enabled
+            or not self.settings.agent_runtime_v3_enabled
             or not self.settings.agent_sandbox_tool_enabled
             or not self.settings.code_execution_enabled
             or execution.kind != "python"
@@ -906,6 +908,168 @@ class SandboxRepository:
             if row is None:
                 raise not_found()
             return self._session_dto(row)
+
+    def dispatch_reviewed_proposal(
+        self, owner: str, run_id: str, proposal_id: str, expected_review_sha256: str,
+    ) -> tuple[dict, bool]:
+        """Atomically prepare ONE server-linked execution after exact human consent.
+
+        Does not execute code in the API or bypass the existing worker claim
+        checks. New sessions and executions become worker-visible together only
+        after commit; the proposal FK and uniqueness index are database-owned.
+        """
+        self._require_enabled()
+        if not self.settings.code_proposal_dispatch_enabled:
+            raise CoworkerError(
+                "reviewed_dispatch_disabled",
+                "Reviewed generated-code dispatch is not enabled in this deployment.",
+                503,
+            )
+        from .agent_repository import AgentRepository
+        from .code_proposal_schemas import CodeProposalEnvelope, canonicalize_transport_code_proposal
+
+        now = utcnow()
+        with self.sessions.begin() as db:
+            # Human review and revoke lock in run -> proposal -> review order.
+            # These sessions/executions do not exist until our commit, so no
+            # worker can hold a conflicting lock on them during preparation.
+            run = db.scalar(select(AgentRun).where(
+                AgentRun.id == run_id, AgentRun.owner_id == owner,
+            ).with_for_update())
+            if run is None:
+                raise not_found()
+            proposal = db.scalar(select(AgentCodeProposal).where(
+                AgentCodeProposal.id == proposal_id,
+                AgentCodeProposal.run_id == run.id,
+                AgentCodeProposal.owner_id == owner,
+            ).with_for_update())
+            if proposal is None:
+                raise not_found()
+            if not hmac.compare_digest(proposal.review_sha256, expected_review_sha256):
+                raise CoworkerError(
+                    "code_proposal_changed", "The exact reviewed proposal changed.", 409,
+                )
+            review = db.scalar(select(AgentCodeReview).where(
+                AgentCodeReview.proposal_id == proposal.id,
+                AgentCodeReview.owner_id == owner,
+                AgentCodeReview.run_id == run.id,
+            ).with_for_update())
+            if (
+                review is None
+                or review.decision != "approve"
+                or review.revoked_at is not None
+                or not hmac.compare_digest(review.review_sha256, proposal.review_sha256)
+                or aware(review.expires_at) <= now
+                or proposal.state != "unreviewed"
+                or aware(proposal.expires_at) <= now
+                or run.cancel_requested
+                or aware(run.deadline_at) <= now
+            ):
+                raise CoworkerError(
+                    "code_review_ineligible",
+                    "A current, exact owner approval is required to dispatch Python.", 409,
+                )
+            AgentRepository(self.sessions, self.settings)._verify_persisted_code_review_source(
+                db, run, proposal,
+            )
+            try:
+                envelope = canonicalize_transport_code_proposal(
+                    CodeProposalEnvelope.model_validate(proposal.snapshot)
+                )
+            except (ValueError, TypeError):
+                raise CoworkerError(
+                    "code_proposal_invalid", "The reviewed Python source is invalid.", 409,
+                ) from None
+            if envelope.input_versions:
+                # No reviewed private-input copy/mount exists in the worker.
+                raise CoworkerError(
+                    "code_inputs_unsupported",
+                    "Reviewed private inputs cannot yet be mounted into this sandbox.", 409,
+                )
+            if (
+                len(envelope.source.encode("utf-8")) > self.settings.sandbox_max_source_bytes
+                or envelope.source_sha256 != hashlib.sha256(envelope.source.encode("utf-8")).hexdigest()
+            ):
+                raise CoworkerError(
+                    "code_proposal_changed", "The exact source bytes no longer match.", 409,
+                )
+            current_policy = self._policy()
+            bounds = current_policy["resource_limits"]
+            limits = envelope.limits
+            if (
+                bounds["cpu_seconds"] > limits.cpu_seconds
+                or bounds["wall_seconds"] > limits.wall_seconds
+                or bounds["memory_mb"] > limits.memory_mb
+                or bounds["disk_mb"] > limits.disk_mb
+                or bounds["output_bytes"] > limits.stdout_bytes
+            ):
+                raise CoworkerError(
+                    "code_resource_limit", "The effective sandbox exceeds the owner's reviewed limits.", 409,
+                )
+            existing = db.scalar(select(SandboxExecution).where(
+                SandboxExecution.agent_code_proposal_id == proposal.id,
+                SandboxExecution.owner_id == owner,
+            ))
+            if existing is not None:
+                # Replay returns only durable metadata, never restarts or
+                # reclaims the same consequential execution.
+                return {"execution": self._execution_dto(existing),
+                        "session_id": existing.session_id,
+                        "execution_authorized": True, "code_executed": existing.state == "completed"}, False
+            count = db.scalar(select(func.count()).select_from(SandboxSession).where(
+                SandboxSession.owner_id == owner,
+                SandboxSession.state.in_(tuple(ACTIVE_SANDBOX_STATES)),
+                SandboxSession.expires_at > now,
+            )) or 0
+            if count >= self.settings.max_active_sandbox_sessions:
+                raise CoworkerError(
+                    "sandbox_session_limit", "Close another session before dispatch.", 429,
+                )
+            expires = min(
+                now + timedelta(seconds=self.settings.sandbox_session_ttl_seconds),
+                aware(proposal.expires_at), aware(review.expires_at), aware(run.deadline_at),
+            )
+            if expires <= now:
+                raise CoworkerError("code_review_expired", "The reviewed execution window expired.", 409)
+            session = SandboxSession(
+                id=str(uuid4()), owner_id=owner, workspace_id=run.workspace_id,
+                idempotency_key="cw10:" + proposal.id,
+                fingerprint=_digest({"purpose": "code_task", "runtime": "python311", "review": proposal.review_sha256}),
+                purpose="code_task", runtime="python311", state="prepared",
+                execution_policy=current_policy, cancel_requested=False,
+                cleanup_state="pending", created_at=now, updated_at=now,
+                expires_at=expires,
+            )
+            execution = SandboxExecution(
+                id=str(uuid4()), session_id=session.id, owner_id=owner,
+                sequence=1, kind="python", agent_code_proposal_id=proposal.id,
+                source_sha256=envelope.source_sha256,
+                source_bytes=len(envelope.source.encode("utf-8")),
+                request_spec={
+                    "source": envelope.source, "source_trust": "untrusted",
+                    "policy_version": SANDBOX_POLICY_VERSION,
+                },
+                state="prepared",
+            )
+            db.add(session)
+            db.add(execution)
+            db.flush()
+            # Reuse the *same* guarded worker contract before committing
+            # any runnable source; runtime guard repeats it at claim/heartbeat.
+            rejection = self._reviewed_code_claim_denial(db, execution, session, now)
+            if rejection is not None:
+                raise CoworkerError(rejection, "The reviewed proposal is not eligible.", 409)
+            db.add(AuditEvent(
+                id=str(uuid4()), owner_id=owner, resource_id=proposal.id,
+                action="agent.code_proposal.reviewed_dispatch_prepared",
+            ))
+            db.flush()
+            return {
+                "execution": self._execution_dto(execution),
+                "session_id": session.id,
+                "execution_authorized": True,
+                "code_executed": False,
+            }, True
 
     def prepare_execution(self, owner: str, session_id: str, request: SandboxExecutionCreate) -> dict:
         self._require_enabled()
