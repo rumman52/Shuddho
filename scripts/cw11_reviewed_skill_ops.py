@@ -69,6 +69,9 @@ def main() -> None:
     migrate.add_argument("--actor-reference", required=True)
     migrate.add_argument("--reason", required=True)
 
+    history = sub.add_parser("history", help="Print the append-only reviewed-skill control history.")
+    history.add_argument("--limit", type=int, default=100)
+
     runtime = sub.add_parser("runtime", help="Print the selected reviewed publication identity.")
 
     args = parser.parse_args()
@@ -128,6 +131,8 @@ def main() -> None:
                 actor_reference=args.actor_reference,
                 reason=args.reason,
             )
+        elif args.command == "history":
+            result = {"events": repository.reviewed_control_history(limit=args.limit)}
         elif args.command == "runtime":
             result = repository.reviewed_skill_runtime_manifest()
         else:
