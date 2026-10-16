@@ -633,7 +633,7 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
     """A durable derived-run grant must be enforced past the planner boundary."""
     from services.coworker.agent_runtime import AgentRuntime
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
-    from services.coworker.models import AgentStep, ToolInvocation
+    from services.coworker.models import AgentStep, BrowserSession, SandboxSession, ToolInvocation
 
     settings = replace(
         container.settings, agent_runtime_enabled=True, work_services_enabled=True,
@@ -693,6 +693,13 @@ def test_agent_task_scope_survives_plan_replan_and_worker_claim(container):
             ToolInvocation.run_id == run["id"],
         ))
         assert invocation.state == "prepared"
+        assert db.scalar(select(BrowserSession.id).where(
+            BrowserSession.owner_id == owner,
+        )) is None
+        assert db.scalar(select(SandboxSession.id).where(
+            SandboxSession.owner_id == owner,
+        )) is None
+
 
 def test_agent_plan_limits_step_count(container):
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
