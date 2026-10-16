@@ -153,7 +153,9 @@ def intelligent_tool_names(
         and (not allowed or browser.name in allowed)
     ):
         names.append(browser.name)
-    if settings.agent_action_selection_enabled and not allowed:
+    # Attached action handles are independently bound to the run and approved
+    # via ExternalAction; a task-tool grant must not suppress those handles.
+    if settings.agent_action_selection_enabled:
         names.extend(action_selection_candidates(actions))
     assert_model_tool_surface(names)
     return names
