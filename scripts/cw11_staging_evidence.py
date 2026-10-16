@@ -13,23 +13,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
+from scripts.reviewed_skill_rollback_preflight import inspect_reviewed_rollback
 from services.coworker.config import Settings
 from services.coworker.database import session_factory
 from services.coworker.errors import CoworkerError
-from services.coworker.models import (
-    ReviewedSkillPublication,
-    ReviewedSkillRegistryEvent,
-    Step,
-    Task,
-)
-from services.coworker.repository import Repository, TERMINAL
+from services.coworker.models import ReviewedSkillPublication, ReviewedSkillRegistryEvent
+from services.coworker.repository import Repository
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
     REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
 )
-from services.coworker.task_workflow_versions import PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -54,22 +49,46 @@ def load_render_evidence(path: str | Path) -> dict[str, Any]:
     return value
 
 
+def _is_full_git_sha(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 def validate_render_evidence(
-    value: dict[str, Any],
+    value: Any,
     old_source_revision: str,
     candidate_source_revision: str,
 ) -> None:
-    if value.get("schema_version") != 1 or value.get("verified") is not True:
+    if not isinstance(value, dict):
+        raise SystemExit("Invalid Render staging evidence: expected a JSON object.")
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("verified") is not True
+    ):
         raise SystemExit(
             "Render evidence has an unsupported schema or is not verified."
+        )
+    if not _is_full_git_sha(old_source_revision):
+        raise SystemExit(
+            "Requested old source revision must be a full lowercase Git commit SHA."
+        )
+    if not _is_full_git_sha(candidate_source_revision):
+        raise SystemExit(
+            "Candidate source revision must be a full lowercase Git commit SHA."
         )
     old_service = value.get("old_worker_service_id")
     candidate_service = value.get("candidate_worker_service_id")
     if (
         not isinstance(old_service, str)
-        or not old_service
+        or not old_service.strip()
+        or old_service != old_service.strip()
         or not isinstance(candidate_service, str)
-        or not candidate_service
+        or not candidate_service.strip()
+        or candidate_service != candidate_service.strip()
         or old_service == candidate_service
     ):
         raise SystemExit("Render evidence must identify two distinct worker services.")
@@ -85,8 +104,6 @@ def validate_render_evidence(
         raise SystemExit("Render evidence does not bind the stopped worker to the declared revision.")
     if value.get("candidate_live_commit") != candidate_source_revision:
         raise SystemExit("Render evidence candidate revision does not match this qualification revision.")
-
-
 def collect_evidence(
     repository: Repository,
     settings: Settings,
@@ -99,6 +116,14 @@ def collect_evidence(
         raise SystemExit("CW-11 evidence is staging-only.")
     if not settings.source_revision:
         raise SystemExit("A deployment-attested candidate source revision is required.")
+
+    # Revalidate at the collector boundary. Callers other than main() must not
+    # be able to turn an untrusted JSON object into a verified artifact.
+    validate_render_evidence(
+        render_evidence,
+        old_source_revision,
+        settings.source_revision,
+    )
 
     selected = repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL)
     if selected is None:
@@ -168,20 +193,18 @@ def collect_evidence(
             409,
         )
 
-    with repository.sessions() as db:
-        legacy_reviewed = db.scalar(
-            select(func.count())
-            .select_from(Task)
-            .join(
-                Step,
-                (Step.task_id == Task.id)
-                & (Step.phase == "reviewed_skill_identity"),
-            )
-            .where(
-                Task.workflow_version == PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION,
-                Task.state.not_in(TERMINAL),
-            )
+    # Reuse the rollback preflight's conservative classification. A clean count
+    # of only legacy Tasks with an identity misses both ambiguous legacy Agent
+    # work and new reviewed-version Tasks that lack their required identity.
+    task_ledger = inspect_reviewed_rollback(repository.sessions)
+    if task_ledger["blockers"]:
+        raise CoworkerError(
+            "staging_evidence_task_ledger_blocked",
+            "The reviewed-skill task ledger has active blockers; staging qualification is denied.",
+            409,
         )
+
+    with repository.sessions() as db:
         control_events = db.scalars(
             select(ReviewedSkillRegistryEvent)
             .order_by(ReviewedSkillRegistryEvent.created_at.asc())
@@ -203,13 +226,6 @@ def collect_evidence(
             "The selected publication has no durable operator selection event.",
             409,
         )
-    if legacy_reviewed:
-        raise CoworkerError(
-            "staging_evidence_legacy_tasks",
-            "Active pre-fence reviewed tasks remain; drain/migration is incomplete.",
-            409,
-        )
-
     return {
         "schema_version": 1,
         "qualified_at": datetime.now(timezone.utc).isoformat(),
@@ -219,7 +235,12 @@ def collect_evidence(
         "expected_publication_version": expected_publication_version,
         "selected_publication": selected,
         "workers": inventory,
-        "legacy_active_reviewed_tasks": int(legacy_reviewed),
+        "reviewed_task_ledger": task_ledger,
+        # Preserve the existing summary key while sourcing it from the shared
+        # classifier; the full aggregate breakdown below is authoritative.
+        "legacy_active_reviewed_tasks": int(
+            task_ledger["active_unfenced_reviewed_tasks"]
+        ),
         "old_source_revision": old_source_revision,
         "old_worker_rows_observed": len(old_rows),
         "external_render_evidence": render_evidence,
@@ -255,6 +276,7 @@ def collect_evidence(
             "fresh_compatible_worker_present": True,
             "no_active_incompatible_workers": True,
             "no_active_pre_fence_reviewed_tasks": True,
+            "no_reviewed_task_ledger_blockers": True,
             "legacy_worker_render_instances_zero": True,
         },
         "verified": True,
@@ -265,12 +287,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     settings = Settings.from_env()
     render_evidence = load_render_evidence(args.external_render_evidence)
-    validate_render_evidence(
-        render_evidence,
-        args.old_source_revision,
-        settings.source_revision or "",
-    )
-
     repository = Repository(session_factory(settings.database_url), settings)
     try:
         evidence = collect_evidence(

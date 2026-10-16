@@ -8,11 +8,15 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
+from services.coworker.auth import Principal
 from services.coworker.config import Settings
 from services.coworker.database import session_factory
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
+from services.coworker.models import Task
 from services.coworker.repository import Repository
+from services.coworker.schemas import ResearchOptions, TaskCreate
+from services.coworker.task_workflow_versions import REVIEWED_RESEARCH_WORKFLOW_VERSION
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
     build_pilot_publication,
@@ -98,6 +102,44 @@ def staging_settings(settings: Settings) -> Settings:
     )
 
 
+def seed_active_research_task(
+    repository: Repository,
+    *,
+    subject: str,
+    agent_owned: bool = False,
+    workflow_version: str | None = None,
+) -> None:
+    """Create a queued research Task and optionally model an unsafe persisted identity."""
+    repository.settings = replace(
+        repository.settings,
+        research_services_enabled=True,
+    )
+    principal = Principal(ISSUER, subject, 0)
+    repository.ensure_account(principal)
+    task, created = repository.create_task(
+        principal.account_id,
+        TaskCreate(
+            skill_id="research",
+            instruction="Synthetic active research task for the CW-11 ledger gate.",
+            notes="Ledger-only test; no provider dispatch.",
+            output_language="en",
+            research=ResearchOptions(query="synthetic staging ledger"),
+        ),
+        f"cw11-ledger-{subject}",
+        enqueue=False,
+    )
+    assert created is True
+    with repository.sessions.begin() as db:
+        row = db.get(Task, task["id"])
+        assert row is not None
+        if agent_owned:
+            # The historical Agent-owned Task has no reviewed identity Step.
+            row.agent_run_id = f"synthetic-agent-run-{subject}"
+        if workflow_version is not None:
+            # Model an active reviewed-version Task missing its identity Step.
+            row.workflow_version = workflow_version
+
+
 def test_collector_emits_verified_evidence_and_preserves_event_metadata(
     staging_repository,
     tmp_path,
@@ -116,11 +158,44 @@ def test_collector_emits_verified_evidence_and_preserves_event_metadata(
     )
     assert result["verified"] is True
     assert result["assertions"]["no_active_incompatible_workers"] is True
+    assert result["assertions"]["no_reviewed_task_ledger_blockers"] is True
+    assert result["reviewed_task_ledger"]["decision"] == "TASK_LEDGER_CHECK_ONLY"
+    assert result["reviewed_task_ledger"]["blockers"] == []
+    assert result["reviewed_task_ledger"]["rollout_authorized"] is False
     assert any(
         item["event_type"] == "publication_selected"
         and item["metadata"]["generation"] == 1
         for item in result["control_events"]
     )
+
+
+@pytest.mark.parametrize(
+    ("render_payload", "message"),
+    [
+        (None, "expected a JSON object"),
+        ({"schema_version": True, "verified": True}, "unsupported schema"),
+        (
+            {**valid_render_evidence(), "candidate_live_commit": "c" * 40},
+            "candidate revision does not match",
+        ),
+    ],
+)
+def test_collector_revalidates_external_render_evidence_at_boundary(
+    staging_repository,
+    render_payload,
+    message,
+):
+    repository, settings = staging_repository
+    # No publication is seeded: the expected failure proves payload validation
+    # happens before any database-backed selection check.
+    with pytest.raises(SystemExit, match=message):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=render_payload,
+        )
 
 
 def test_render_evidence_rejects_unverified_or_malformed_payload():
@@ -136,6 +211,41 @@ def test_render_evidence_rejects_unverified_or_malformed_payload():
     with pytest.raises(SystemExit, match="two distinct worker services"):
         evidence.validate_render_evidence(
             value, OLD_REVISION, CANDIDATE_REVISION
+        )
+
+
+@pytest.mark.parametrize(
+    ("agent_owned", "workflow_version", "subject"),
+    [
+        (True, None, "ambiguous-legacy-agent"),
+        (False, REVIEWED_RESEARCH_WORKFLOW_VERSION, "missing-reviewed-identity"),
+    ],
+)
+def test_collector_blocks_task_ledger_classification_gaps(
+    staging_repository,
+    agent_owned,
+    workflow_version,
+    subject,
+):
+    repository, settings = staging_repository
+    seed_release(repository)
+    seed_active_research_task(
+        repository,
+        subject=subject,
+        agent_owned=agent_owned,
+        workflow_version=workflow_version,
+    )
+
+    with pytest.raises(
+        CoworkerError,
+        match="task ledger has active blockers",
+    ):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=valid_render_evidence(),
         )
 
 

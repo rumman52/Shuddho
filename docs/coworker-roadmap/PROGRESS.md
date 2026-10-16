@@ -1,3 +1,19 @@
+## CW-11 staging collector task-ledger and evidence-boundary hardening — 17 October 2026 (Asia/Dhaka)
+
+**Base and dependency:** stacked on the exact CI-green head of [PR #444](https://github.com/rumman52/Shuddho/pull/444), `fdad69dafbd887285e93d559b2a71927ea2bbfcb`, because main still contains the pre-fix CW-11 regression until #444 is merged. Working branch: `codex/cw11-staging-collector-ledger-guard-20261017`. This follow-up does not merge or activate #444.
+
+**Gap:** `collect_evidence()` counted only nonterminal pre-fence Tasks that already had a reviewed identity Step. It did not block an active reviewed-workflow Task missing that identity or ambiguous active legacy Agent-owned research without one. Separately, external Render JSON was validated only by `main()`, so direct callers of the collector could bypass the boundary validator.
+
+**Implementation:** reuse `inspect_reviewed_rollback()` and fail closed on any returned blocker; include its aggregate, non-authorizing ledger result in the evidence artifact. Validate the external Render payload inside `collect_evidence()` before database reads, reject non-object payloads and boolean-as-integer schema versions, require strict integer counts, distinct nonblank service IDs and full 40-character lowercase Git SHAs, and compare both revisions to the requested/deployment-attested values. Add regressions for ambiguous legacy Agent work, a reviewed workflow missing identity, malformed/unverified external payloads and a clean ledger. Update the rollout contract and this checkpoint.
+
+**Validation:** implementation and tests committed together; exact-head CI is the next gate. No local test execution is claimed. The dependency PR #444 has exact-head run [#38948849904](https://github.com/rumman52/Shuddho/actions/runs/38948849904) with `test-and-build`, mandatory `coworker`, and `ci-merge-gate` all successful. This new collector change is not yet repository-verified.
+
+**Still blocked:** protected `CW11-STAGING` has not been run. It requires the protected staging environment, operator confirmation, real old/candidate Render worker service IDs, actual drain state, and an inspectable artifact bound to the exact candidate revision. No staging/production qualification, deployment or activation is claimed.
+
+**Next:** run all three required CI jobs on this exact follow-up head; review the resulting diff and any findings; then perform the protected staging gate only with real authorized staging inputs. The task-ledger query remains a point-in-time snapshot, not a substitute for admission quiescence or whole-fleet drain.
+
+---
+
 ## CW-11 parallel scheduler fixture correction — 17 October 2026 (Asia/Dhaka)
 
 **Resume base:** main `272186af38965ab60e6c551e8ebce9337c6e6ae0`; open [PR #444](https://github.com/rumman52/Shuddho/pull/444) head `c99cd56c0f774beed5995a794e444b54afc42971`. This session reproduced a remaining fixture defect before repairing it: the research/document/document plan derives `[[], [1], [2]]`, while the fan-in test asserts `[[], [], [1, 2]]`. The same sequential graph prevents the restart fixture's two-branch barrier from being reached.
