@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import time
 import pytest
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for CW-11 tests")
@@ -185,7 +186,7 @@ def test_selection_requires_compatible_fleet_and_never_auto_selects(container):
     with container.repository.sessions() as db:
         events = db.scalars(select(ReviewedSkillRegistryEvent).order_by(ReviewedSkillRegistryEvent.created_at)).all()
         assert [event.event_type for event in events] == [
-            "publication_published", "publication_selected",
+            "publication_published", "worker_drained", "publication_selected",
         ]
     assert new
 
@@ -200,7 +201,13 @@ def test_selected_publication_remains_the_agent_gate_after_feature_flag_off(cont
         reason="registry replaces mutable admission flag",
         worker_source_revision=REV_A,
     )
-    container.settings.agent_reviewed_research_skill_enabled = False
+    disabled = replace(
+        container.settings,
+        agent_reviewed_research_skill_enabled=False,
+    )
+    container.settings = disabled
+    container.repository.settings = disabled
+    container.agent.settings = disabled
     owner = account(container, "flag-off")
     task = reviewed_task(container, owner, "flag-off-research")
     assert task["workflow_version"] == "work_research_reviewed_v2"
@@ -282,6 +289,7 @@ def test_worker_drain_stops_new_claims_and_requires_explicit_drained_state(conta
 def test_legacy_migration_is_atomic_and_requires_no_search_attempt(container):
     old = worker(container, REV_B)
     worker(container, REV_A)
+    container.repository.mark_worker_drained(old)
     publish(container, "research_reviewed_v0", source_revision=REV_A)
     publish(container, "research_reviewed_v1", source_revision=REV_A, rollback_target="research_reviewed_v0")
     container.repository.select_reviewed_skill(
@@ -326,6 +334,7 @@ def test_legacy_migration_is_atomic_and_requires_no_search_attempt(container):
 def test_legacy_migration_moves_only_reviewed_rows_after_drain(container):
     old = worker(container, REV_B)
     worker(container, REV_A)
+    container.repository.mark_worker_drained(old)
     publish(container, "research_reviewed_v0", source_revision=REV_A)
     publish(container, "research_reviewed_v1", source_revision=REV_A, rollback_target="research_reviewed_v0")
     container.repository.select_reviewed_skill(
