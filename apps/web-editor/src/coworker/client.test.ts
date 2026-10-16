@@ -202,3 +202,30 @@ test("CW-10 code review client uses owner-authenticated exact identity without e
     assert.equal(seen.length, 4);
   } finally { globalThis.fetch = original; }
 });
+test("CW-10 model source drafts are explicit owner requests, not sandbox dispatch", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  const runId = "00000001-0000-4000-8000-000000000000";
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    return new Response(JSON.stringify({ id: "saved-draft", code_executed: false }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-token");
+    const draft = await client.generateModelCodeProposal(runId, "model-review-key-01");
+    assert.equal(draft.code_executed, false);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, `/backend/api/v1/agent-runs/${runId}/code-proposals/generate`);
+    assert.equal(seen[0].options?.method, "POST");
+    assert.equal(new Headers(seen[0].options?.headers).get("Authorization"), "Bearer owner-token");
+    assert.equal(new Headers(seen[0].options?.headers).get("Idempotency-Key"), "model-review-key-01");
+    assert.equal(seen[0].options?.credentials, "omit");
+    assert.ok(!seen[0].url.includes("/dispatch"));
+    assert.ok(!seen[0].url.includes("/sandbox"));
+    assert.equal(seen[0].options?.body, undefined);
+    assert.throws(() => client.generateModelCodeProposal(runId, "../injected"));
+    assert.equal(seen.length, 1);
+  } finally { globalThis.fetch = original; }
+});
