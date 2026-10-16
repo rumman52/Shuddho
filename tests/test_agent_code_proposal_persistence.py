@@ -1040,3 +1040,80 @@ def test_sqlite_0058_proposal_claim_fk_and_unique_identity_survive_migration(con
         assert "agent_code_proposal_id" in {
             entry["name"] for entry in inspector.get_columns("cw_sandbox_executions")
         }
+
+def test_owner_review_list_exposes_no_source_before_explicit_inspection(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201, created.text
+    proposal_id = created.json()["id"]
+    url = f"/api/v1/agent-runs/{run_id}/code-proposals"
+
+    listed = client.get(url, headers=headers())
+    assert listed.status_code == 200, listed.text
+    assert listed.headers["Cache-Control"] == "no-store"
+    data = listed.json()
+    assert data["execution_authorized"] is False
+    assert len(data["proposals"]) == 1
+    item = data["proposals"][0]
+    assert item["id"] == proposal_id
+    assert item["review_sha256"] == proposal.review_sha256()
+    assert item["execution_authorized"] is False
+    assert item["code_executed"] is False
+    assert "proposal" not in item
+    assert "source" not in item
+    assert proposal.source not in listed.text
+
+    inspected = client.get(f"{url}/{proposal_id}", headers=headers())
+    assert inspected.status_code == 200
+    assert inspected.json()["proposal"]["source"] == proposal.source
+
+    approved = human_review(
+        client, headers, run_id, proposal_id, proposal.review_sha256(),
+    )
+    assert approved.status_code == 200, approved.text
+    reviewed = client.get(url, headers=headers())
+    assert reviewed.status_code == 200
+    assert reviewed.json()["proposals"][0]["human_review"]["decision"] == "approve"
+    assert reviewed.json()["proposals"][0]["human_review"]["execution_authorized"] is False
+    assert proposal.source not in reviewed.text
+
+
+def test_review_list_hides_other_owners_revoked_expired_and_stale_sources(
+    container, signed_client,
+):
+    owner, run_id = active_agent(container)
+    client, headers = signed_client
+    proposal = sample_proposal(owner, run_id)
+    created = prepare(client, headers, run_id, proposal)
+    assert created.status_code == 201
+    proposal_id = created.json()["id"]
+    path = f"/api/v1/agent-runs/{run_id}/code-proposals"
+    account(container, "bob")
+    assert client.get(path, headers=headers("bob")).status_code == 404
+    assert client.get(
+        f"/api/v1/agent-runs/{uuid4()}/code-proposals", headers=headers(),
+    ).status_code == 404
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(AgentCodeProposal, proposal_id)
+        snapshot = dict(row.snapshot)
+        snapshot["source"] = "print('tampered')"
+        row.snapshot = snapshot
+    unavailable = client.get(path, headers=headers())
+    assert unavailable.status_code == 200
+    assert unavailable.json()["proposals"] == []
+    assert proposal.source not in unavailable.text
+
+    with container.repository.sessions.begin() as db:
+        db.get(AgentCodeProposal, proposal_id).snapshot = proposal.model_dump(mode="json")
+    assert len(client.get(path, headers=headers()).json()["proposals"]) == 1
+    revoked = client.post(
+        f"{path}/{proposal_id}/revoke", headers=headers(),
+        json={"review_sha256": proposal.review_sha256()},
+    )
+    assert revoked.status_code == 200
+    assert client.get(path, headers=headers()).json()["proposals"] == []
