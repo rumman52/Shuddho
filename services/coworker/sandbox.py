@@ -1067,6 +1067,12 @@ class SandboxRepository:
                 cleanup_state="pending", created_at=now, updated_at=now,
                 expires_at=expires,
             )
+            # Persist the parent inside this uncommitted transaction before
+            # flushing the FK-linked child. SQLAlchemy has no explicit ORM
+            # relationship here, so one combined flush may insert the child
+            # first in SQLite. Neither row is visible to a worker yet.
+            db.add(session)
+            db.flush()
             execution = SandboxExecution(
                 id=str(uuid4()), session_id=session.id, owner_id=owner,
                 sequence=1, kind="python", agent_code_proposal_id=proposal.id,
@@ -1078,7 +1084,6 @@ class SandboxRepository:
                 },
                 state="prepared",
             )
-            db.add(session)
             db.add(execution)
             db.flush()
             # Reuse the *same* guarded worker contract before committing
