@@ -193,6 +193,12 @@ class Repository:
             or spec is None or not spec.enabled(self.settings)
             or invocation.tool_version != spec.version
             or request.skill_id != "research"
+            # The pilot manifest authorizes only ONE research tool call per run.
+            or db.scalar(select(func.count()).select_from(ToolInvocation).where(
+                ToolInvocation.run_id == run_id,
+                ToolInvocation.owner_id == owner,
+                ToolInvocation.tool_name == "research.search",
+            )) != 1
         ):
             raise CoworkerError(
                 "skill_run_scope",
