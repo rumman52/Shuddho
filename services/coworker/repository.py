@@ -318,6 +318,17 @@ class Repository:
             )
             return self._reviewed_selection_dto(selection, target)
 
+    def list_reviewed_publications(self, skill_name: str = REVIEWED_RESEARCH_SKILL) -> list[dict]:
+        if skill_name != REVIEWED_RESEARCH_SKILL:
+            raise CoworkerError("skill_publication_untrusted", "Unsupported reviewed skill.", 409)
+        with self.sessions() as db:
+            rows = db.scalars(
+                select(ReviewedSkillPublication)
+                .where(ReviewedSkillPublication.skill_name == skill_name)
+                .order_by(ReviewedSkillPublication.published_at.asc())
+            ).all()
+            return [self._reviewed_publication_dto(row) for row in rows]
+
     def reviewed_control_history(self, *, limit: int = 100) -> list[dict]:
         if limit < 1 or limit > 500:
             raise CoworkerError("skill_operator", "History limit must be between 1 and 500.", 422)
