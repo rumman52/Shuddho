@@ -238,6 +238,8 @@ class SandboxRepository:
             or execution.kind != "python"
             or session.purpose != "code_task"
             or execution.owner_id != session.owner_id
+            or not isinstance(session.execution_policy, dict)
+            or session.execution_policy != self._policy()
         ):
             return "code_review_ineligible"
         # Serialize against owner review/revoke: run -> proposal -> review.
