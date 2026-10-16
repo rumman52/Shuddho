@@ -178,6 +178,10 @@ def test_collector_emits_verified_evidence_and_preserves_event_metadata(
             {**valid_render_evidence(), "candidate_live_commit": "c" * 40},
             "candidate revision does not match",
         ),
+        (
+            {**valid_render_evidence(), "provider_api_key": "must-not-be-echoed"},
+            "missing or unexpected fields",
+        ),
     ],
 )
 def test_collector_revalidates_external_render_evidence_at_boundary(

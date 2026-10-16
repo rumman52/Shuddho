@@ -16,7 +16,7 @@ The Render evidence validator was called only by the CLI entry point. A direct c
 2. Refuse to emit evidence when any task-ledger blocker is present.
 3. Include only aggregate, non-authorizing ledger counts in a successful artifact.
 4. Validate external Render evidence inside `collect_evidence()` before database-backed selection or inventory reads.
-5. Reject non-object payloads, non-integer schema versions/counts, a non-true verified marker, blank/equal service IDs, malformed full commit SHAs, a legacy instance count other than exactly zero, a candidate count below one, and either revision mismatch.
+5. Reject non-object payloads, missing or unexpected fields, non-integer schema versions/counts, a non-true verified marker, blank/equal service IDs, malformed full commit SHAs, a legacy instance count other than exactly zero, a candidate count below one, and either revision mismatch.
 6. Keep the feature default-off and do not deploy, select, publish, rollback, migrate, drain or activate anything from this collector change.
 
 ## Implementation

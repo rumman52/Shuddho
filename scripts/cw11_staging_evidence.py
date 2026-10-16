@@ -75,6 +75,19 @@ def validate_render_evidence(
         raise SystemExit(
             "Render evidence has an unsupported schema or is not verified."
         )
+    expected_fields = {
+        "schema_version",
+        "old_worker_service_id",
+        "candidate_worker_service_id",
+        "old_source_revision",
+        "old_worker_live_commit",
+        "old_worker_instance_count",
+        "candidate_worker_instance_count",
+        "candidate_live_commit",
+        "verified",
+    }
+    if set(value) != expected_fields:
+        raise SystemExit("Render evidence has missing or unexpected fields.")
     if not _is_full_git_sha(old_source_revision):
         raise SystemExit(
             "Requested old source revision must be a full lowercase Git commit SHA."
