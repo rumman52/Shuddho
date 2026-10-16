@@ -475,14 +475,16 @@ async def main():
                       # Avoid affinity to a departed worker during rollouts.
                       max_cached_workflows=0, max_concurrent_activities=4,
                       graceful_shutdown_timeout=timedelta(seconds=20)):
-        heartbeat_task = asyncio.create_task(
-            _worker_registry_heartbeat(container, worker_id, stop)
-        )
+        heartbeat_task = None
         try:
+            heartbeat_task = asyncio.create_task(
+                _worker_registry_heartbeat(container, worker_id, stop)
+            )
             await Dispatcher(container, client, worker_id).run(stop)
         finally:
             stop.set()
-            await heartbeat_task
+            if heartbeat_task is not None:
+                await heartbeat_task
             await asyncio.to_thread(
                 container.repository.mark_worker_drained, worker_id,
             )
