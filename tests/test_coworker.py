@@ -817,6 +817,12 @@ def test_reviewed_agent_research_requires_exact_worker_grant_and_version(contain
         agent_run_id=run["id"], agent_step_id=step_id,
     )
     assert created and task["workflow_version"] == "work_research_reviewed_v2"
+    with pytest.raises(CoworkerError) as duplicate_invocation:
+        container.repository.create_task(
+            owner, request, "second-task-same-agent-invocation", enqueue=False,
+            agent_run_id=run["id"], agent_step_id=step_id,
+        )
+    assert duplicate_invocation.value.code == "task_agent_binding_conflict"
     # An older worker does not recognize this distinct workflow identity,
     # so rolling it back cannot silently run reviewed tasks as legacy research.
     from services.coworker.skills import skill_for_version
