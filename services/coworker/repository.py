@@ -30,7 +30,7 @@ from .reviewed_skill_registry import (
     require_selected_pilot,
 )
 from .task_workflow_versions import (
-    LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION,
     REVIEWED_RESEARCH_WORKFLOW_VERSION,
     task_skill_for_version,
 )
@@ -464,7 +464,7 @@ class Repository:
                 select(Task)
                 .join(Step, (Step.task_id == Task.id) & (Step.phase == "reviewed_skill_identity"))
                 .where(
-                    Task.workflow_version == LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+                    Task.workflow_version == PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION,
                     Task.state.not_in(TERMINAL),
                 )
                 .with_for_update()
