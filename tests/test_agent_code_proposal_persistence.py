@@ -1372,3 +1372,46 @@ def test_cw10_revocation_erases_only_queued_source_copy_before_any_worker_claim(
         assert row.state == "failed"
         assert row.error_code == "code_review_ineligible"
         assert row.request_spec == {"source_scrubbed": True}
+
+def test_cw10_review_guard_failure_rolls_back_parent_and_child(
+    container, signed_client, monkeypatch,
+):
+    owner, run_id, proposal_id, proposal, client, headers, url = dispatch_ready(
+        container, signed_client,
+    )
+    enable_reviewed_dispatch(container)
+    monkeypatch.setattr(
+        container.sandbox, "_reviewed_code_claim_denial",
+        lambda db, execution, session, now: "code_review_ineligible",
+    )
+    denied = post_dispatch(client, headers, url, proposal.review_sha256())
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["error"]["code"] == "code_review_ineligible"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == proposal_id,
+        )) is None
+        assert db.scalar(select(SandboxSession).where(
+            SandboxSession.owner_id == owner,
+            SandboxSession.idempotency_key == "cw10:" + proposal_id,
+        )) is None
+
+
+def test_cw10_dispatch_cannot_accept_unreviewed_source_or_extra_model_grants(
+    container, signed_client,
+):
+    owner, run_id, proposal_id, proposal, client, headers, url = dispatch_ready(
+        container, signed_client,
+    )
+    enable_reviewed_dispatch(container)
+    forged = client.post(url, headers=headers(), json={
+        "review_sha256": proposal.review_sha256(),
+        "source": "print('not reviewed')",
+        "network": "allow",
+        "approve": True,
+    })
+    assert forged.status_code == 422, forged.text
+    with container.repository.sessions() as db:
+        assert db.scalar(select(SandboxExecution).where(
+            SandboxExecution.agent_code_proposal_id == proposal_id,
+        )) is None
