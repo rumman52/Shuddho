@@ -1425,9 +1425,22 @@ class ActionRepository:
     def claim_outbox(self, *, worker_id: str | None = None):
         now = utcnow()
         with self.sessions.begin() as db:
+            # Lock the worker before any dispatchable action rows. Drain requests
+            # use the same worker-first order, so no new claim can cross the
+            # running -> draining transition.
+            worker = (
+                lock_running_worker(
+                    db,
+                    worker_id=worker_id,
+                    task_queue=self.settings.task_queue,
+                    now=now,
+                    heartbeat_ttl_seconds=WORKER_HEARTBEAT_TTL_SECONDS,
+                )
+                if worker_id is not None
+                else None
+            )
             # Deadline and lost-activity reconciliation is not new dispatch
-            # authority, so it remains available even when this worker is
-            # draining or no dispatcher identity was supplied.
+            # authority, so it remains available even with no worker identity.
             for row in db.scalars(select(ExternalAction).where(ExternalAction.state.in_(["awaiting_approval", "queued"]), ExternalAction.expires_at <= now).with_for_update(skip_locked=True)):
                 row.state, row.finished_at = "expired", now
                 self._audit(db, row.owner_id, row.id, "action.expired")
@@ -1448,16 +1461,7 @@ class ActionRepository:
                 )
                 self._audit(db, row.owner_id, row.id, "action.outcome_unknown")
             db.execute(update(OAuthAttempt).where(OAuthAttempt.expires_at <= now, OAuthAttempt.verifier_ciphertext != "").values(verifier_ciphertext="", consumed=True))
-            if not self.settings.actions_enabled or worker_id is None:
-                return []
-            worker = lock_running_worker(
-                db,
-                worker_id=worker_id,
-                task_queue=self.settings.task_queue,
-                now=now,
-                heartbeat_ttl_seconds=WORKER_HEARTBEAT_TTL_SECONDS,
-            )
-            if worker is None:
+            if not self.settings.actions_enabled or worker is None:
                 return []
             rows = db.scalars(select(ExternalAction).where(
                 ExternalAction.state == "queued",
