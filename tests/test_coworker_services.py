@@ -24,7 +24,6 @@ from services.coworker.runner import DocumentRunner
 from services.coworker.schemas import TaskCreate, parse_draft
 from services.coworker.skills import SKILLS
 from services.coworker.work_exports import content_blocks
-from services.coworker.worker import Dispatcher
 from services.coworker.workflow import WorkServicesWorkflow
 
 
