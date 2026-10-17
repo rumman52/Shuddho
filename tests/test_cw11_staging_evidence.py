@@ -167,6 +167,8 @@ def test_collector_emits_verified_evidence_and_preserves_event_metadata(
     )
     assert result["verified"] is True
     assert result["assertions"]["no_active_incompatible_workers"] is True
+    assert result["active_old_worker_claim_count"] == 0
+    assert result["assertions"]["no_active_old_worker_claims"] is True
     assert result["assertions"]["no_reviewed_task_ledger_blockers"] is True
     assert result["reviewed_task_ledger"]["decision"] == "TASK_LEDGER_CHECK_ONLY"
     assert result["reviewed_task_ledger"]["blockers"] == []
