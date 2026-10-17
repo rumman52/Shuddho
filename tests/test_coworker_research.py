@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
-from coworker_worker_helpers import dispatch_tick, run_dispatcher
+from coworker_worker_helpers import dispatch_tick
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
