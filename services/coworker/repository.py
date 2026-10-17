@@ -55,6 +55,26 @@ class Repository:
         self.sessions = sessions
         self.settings = settings
 
+    def _lock_worker_queue_membership(self, db, *, task_queue: str) -> None:
+        """Serialize queue membership changes with reviewed-skill fleet controls.
+
+        PostgreSQL row locks cannot lock a missing worker row, so a concurrent
+        registration could otherwise appear after the fleet snapshot. A
+        transaction-scoped advisory lock closes that phantom window without a
+        schema migration. Registry controls and worker registration must acquire
+        this lock before touching queue membership or registry rows.
+        """
+        if db.get_bind().dialect.name != "postgresql":
+            return
+        lock_key = int.from_bytes(
+            hashlib.sha256(
+                f"shuddho:cw11-worker-fleet:{task_queue}".encode("utf-8")
+            ).digest()[:8],
+            byteorder="big",
+            signed=True,
+        )
+        db.execute(select(func.pg_advisory_xact_lock(lock_key)))
+
     def _require_compatible_worker_fleet(
         self, db, *, task_queue: str, required_source_revision: str | None,
     ) -> None:
@@ -64,9 +84,12 @@ class Repository:
                 "Reviewed skill selection requires a full worker source revision.",
                 409,
             )
+        # Serialize queue membership first: row locks alone cannot protect
+        # this snapshot from a worker inserted into an otherwise empty fleet.
+        self._lock_worker_queue_membership(db, task_queue=task_queue)
         cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
-        # Registry controls must lock the worker inventory in a stable order,
-        # then the selection row, then publication rows.
+        # After the queue-membership lock, registry controls lock worker rows
+        # in stable order, then the selection row, then publication rows.
         rows = db.scalars(
             select(WorkerInstance)
             .where(WorkerInstance.task_queue == task_queue)
@@ -451,10 +474,37 @@ class Repository:
 
     def register_worker(self, *, task_queue: str, source_revision: str | None) -> str:
         worker_id = str(uuid4())
+        worker_revision = source_revision or "unknown"
         with self.sessions.begin() as db:
+            self._lock_worker_queue_membership(db, task_queue=task_queue)
+            # The reviewed-skill selection is global for the configured
+            # coworker queue. Once selected, a new worker with another source
+            # revision must not become a post-snapshot incompatible phantom.
+            if task_queue == self.settings.task_queue:
+                selection = db.scalar(select(ReviewedSkillSelection).where(
+                    ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+                ))
+                if selection is not None:
+                    publication = db.get(ReviewedSkillPublication, selection.publication_id)
+                    if (
+                        selection.state != "selected"
+                        or publication is None
+                        or publication.state != "published"
+                    ):
+                        raise CoworkerError(
+                            "worker_fleet_uncertain",
+                            "Worker registration is blocked because the reviewed-skill selection is not authoritative.",
+                            409,
+                        )
+                    if publication.source_revision != worker_revision:
+                        raise CoworkerError(
+                            "worker_fleet_incompatible",
+                            "Worker registration is blocked because its source revision differs from the selected reviewed publication.",
+                            409,
+                        )
             db.add(WorkerInstance(
                 id=worker_id, task_queue=task_queue,
-                source_revision=source_revision or "unknown",
+                source_revision=worker_revision,
                 state="starting",
             ))
         return worker_id
