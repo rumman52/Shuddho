@@ -21,18 +21,7 @@ async def dispatch_tick(container, client):
         await asyncio.to_thread(container.repository.mark_worker_drained, worker_id)
 
 
-async def run_dispatcher(container, client, stop):
-    """Run the dispatcher loop under a registered identity until stop is signalled."""
-    worker_id = await asyncio.to_thread(
-        container.repository.register_worker,
-        task_queue=container.settings.task_queue,
-        source_revision=container.settings.source_revision,
-    )
-    state = await asyncio.to_thread(container.repository.heartbeat_worker, worker_id)
-    if state != "running":
-        raise AssertionError(f"test dispatcher worker did not become running: {state}")
-    try:
-        from services.coworker.worker import Dispatcher
-        await Dispatcher(container, client, worker_id).run(stop)
-    finally:
-        await asyncio.to_thread(container.repository.mark_worker_drained, worker_id)
+async def run_dispatcher(container, client, stop, worker_id):
+    """Run the dispatcher loop; the caller owns registration and post-shutdown drain."""
+    from services.coworker.worker import Dispatcher
+    await Dispatcher(container, client, worker_id).run(stop)
