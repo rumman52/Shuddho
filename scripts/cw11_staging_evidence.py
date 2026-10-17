@@ -230,7 +230,13 @@ def collect_evidence(
             "An incompatible worker remains active or draining.",
             409,
         )
-    if old_rows and old_blockers:
+    if not old_rows:
+        raise CoworkerError(
+            "staging_evidence_old_worker",
+            "No registered worker for the legacy revision was observed; explicit drain cannot be claimed.",
+            409,
+        )
+    if old_blockers:
         raise CoworkerError(
             "staging_evidence_old_worker",
             "A legacy worker row is not explicitly drained or still has active dispatch claims.",
