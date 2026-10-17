@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -311,12 +312,17 @@ def test_collector_blocks_active_incompatible_worker(
         reason="CW-11 staging collector selection test",
         worker_source_revision=CANDIDATE_REVISION,
     )
-    # Selection is valid before the mixed-version condition is introduced.
-    # The collector, not publication selection, owns the staging drain assertion.
-    repository.register_worker(
-        task_queue=settings.task_queue,
-        source_revision=OLD_REVISION,
-    )
+    # Simulate a pre-existing legacy binary that writes its old-format
+    # inventory row without the current registration guard. The collector must
+    # still detect the unsafe mixed-version fleet at the evidence boundary.
+    with repository.sessions.begin() as db:
+        db.add(WorkerInstance(
+            id=str(uuid4()),
+            task_queue=settings.task_queue,
+            source_revision=OLD_REVISION,
+            state="running",
+            heartbeat_at=utcnow(),
+        ))
     with pytest.raises(CoworkerError, match="incompatible worker"):
         evidence.collect_evidence(
             repository,
@@ -342,19 +348,22 @@ def test_collector_blocks_lost_or_stale_worker_records(
 ):
     repository, settings = staging_repository
     seed_release(repository)
-    worker_id = repository.register_worker(
-        task_queue=settings.task_queue,
-        source_revision=revision,
+    # Insert a persisted row directly to model legacy/unknown worker records
+    # that predate the current registration guard.
+    worker_id = str(uuid4())
+    heartbeat_at = (
+        utcnow() - timedelta(hours=1)
+        if stale_heartbeat
+        else utcnow()
     )
     with repository.sessions.begin() as db:
-        row = db.get(WorkerInstance, worker_id)
-        assert row is not None
-        row.state = state
-        row.heartbeat_at = (
-            utcnow() - timedelta(hours=1)
-            if stale_heartbeat
-            else utcnow()
-        )
+        db.add(WorkerInstance(
+            id=worker_id,
+            task_queue=settings.task_queue,
+            source_revision=revision,
+            state=state,
+            heartbeat_at=heartbeat_at,
+        ))
 
     with pytest.raises(
         CoworkerError,
