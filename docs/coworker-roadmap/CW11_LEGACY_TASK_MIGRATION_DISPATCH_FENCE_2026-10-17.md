@@ -16,7 +16,7 @@ Never rewrite a historical reviewed Task's workflow/publication identity if its 
 
 - Require the Task to remain queued and in its initial queued phase.
 - Lock and inspect the existing parent `AgentOutbox`. Reject a missing row, a delivered row, any previous attempt, or any lease. Any dispatch attempt is treated as uncertain because the workflow start may have succeeded even if its response was lost.
-- Require a queued, non-cancelled, unexpired Agent run; a planned, never-started `research.search` step; and a prepared, never-started matching invocation.
+- Require the parent Agent run to remain in its undispatched planning state (`state=planning`, `phase=planned`), non-cancelled and unexpired; require a planned, never-started `research.search` step and a prepared, never-started matching invocation.
 - Reject an already-linked step resource or any persisted `ToolReceipt`.
 - Keep the current exact source-review hash, selected publication, grant, deadline, no-search-attempt and worker-drain checks. All candidates remain an all-or-nothing transaction: one unsafe row blocks the batch without rebinding another task.
 - Do not infer Temporal quiescence from SQL state. A failed preflight requires controlled recovery/reconciliation, not a forced workflow-version rewrite.
