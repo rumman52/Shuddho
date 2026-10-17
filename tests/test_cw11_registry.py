@@ -262,6 +262,12 @@ def test_worker_registration_fences_legacy_revision_and_allows_candidate_rollout
         == "research_registration_fence_v0"
     )
 
+    container.repository.request_worker_drain(
+        task_queue=container.settings.task_queue,
+        source_revision=REV_A,
+        actor_reference="cw11-test-operator",
+        reason="Drain the old revision before switching the selected publication",
+    )
     container.repository.mark_worker_drained(old_worker)
     selected = container.repository.select_reviewed_skill(
         REVIEWED_RESEARCH_SKILL,
