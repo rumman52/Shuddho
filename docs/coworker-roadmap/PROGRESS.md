@@ -9,6 +9,7 @@
 - Make task, Agent and action outbox claims lock the registered worker first, require a fresh `running` worker on the configured queue, and create claim records atomically with outbox leases.
 - Require an active durable claim at the Agent dispatch boundary, including staging/operator helper paths.
 - Complete claims after each dispatch attempt returns. On a batch failure, close claims for unattempted items without acknowledging their outbox rows, preserving normal lease-based retry.
+- Keep the browser-test worker lifecycle aligned with production by recording drain only after the Temporal worker context exits; make cancellation outbox coverage use a real registered worker rather than a no-identity call that always returns an empty batch.
 - Make `mark_worker_drained()` refuse completion while active claims remain; expose `active_claim_count` in worker inventory and require zero claims in drain evidence.
 - Add tests for Agent/action/task claim blocking, rejection of Agent dispatch without an active claim, failed-batch cleanup for unattempted items, migration/model column-and-index parity, and a PostgreSQL interleaving where a drain waits behind an uncommitted claim.
 
