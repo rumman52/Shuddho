@@ -15,7 +15,7 @@ from services.coworker.config import Settings
 from services.coworker.database import session_factory
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Task, WorkerInstance, utcnow
+from services.coworker.models import Task, WorkerClaim, WorkerInstance, utcnow
 from services.coworker.repository import Repository
 from services.coworker.schemas import ResearchOptions, TaskCreate
 from services.coworker.task_workflow_versions import REVIEWED_RESEARCH_WORKFLOW_VERSION
@@ -167,6 +167,8 @@ def test_collector_emits_verified_evidence_and_preserves_event_metadata(
     )
     assert result["verified"] is True
     assert result["assertions"]["no_active_incompatible_workers"] is True
+    assert result["active_old_worker_claim_count"] == 0
+    assert result["assertions"]["no_active_old_worker_claims"] is True
     assert result["assertions"]["no_reviewed_task_ledger_blockers"] is True
     assert result["reviewed_task_ledger"]["decision"] == "TASK_LEDGER_CHECK_ONLY"
     assert result["reviewed_task_ledger"]["blockers"] == []
@@ -256,6 +258,118 @@ def test_collector_blocks_task_ledger_classification_gaps(
     with pytest.raises(
         CoworkerError,
         match="task ledger has active blockers",
+    ):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=valid_render_evidence(),
+        )
+
+
+def test_collector_blocks_when_no_legacy_worker_row_was_observed(
+    staging_repository,
+):
+    repository, settings = staging_repository
+    candidate = repository.register_worker(
+        task_queue=settings.task_queue,
+        source_revision=CANDIDATE_REVISION,
+    )
+    assert repository.heartbeat_worker(candidate) == "running"
+    publication = build_pilot_publication(
+        source_revision=CANDIDATE_REVISION,
+        publication_version="research_reviewed_v1",
+    )
+    repository.publish_reviewed_skill(
+        publication,
+        actor_reference="cw11-staging-test",
+        reason="missing legacy worker row test",
+    )
+    repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_reviewed_v1",
+        actor_reference="cw11-staging-test",
+        reason="candidate selection for missing legacy row test",
+        worker_source_revision=CANDIDATE_REVISION,
+    )
+
+    with pytest.raises(
+        CoworkerError,
+        match="No registered worker for the legacy revision was observed",
+    ):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=valid_render_evidence(),
+        )
+
+
+def test_collector_blocks_drained_legacy_worker_with_active_claim(
+    staging_repository,
+):
+    repository, settings = staging_repository
+    seed_release(repository)
+    old_row = next(
+        row for row in repository.worker_inventory(task_queue=settings.task_queue)
+        if row["source_revision"] == OLD_REVISION
+    )
+    with repository.sessions.begin() as db:
+        db.add(WorkerClaim(
+            id=str(uuid4()),
+            worker_id=old_row["id"],
+            task_queue=settings.task_queue,
+            claim_type="task_dispatch",
+            resource_id="legacy-active-dispatch",
+            state="active",
+            claimed_at=utcnow(),
+        ))
+
+    with pytest.raises(
+        CoworkerError,
+        match="legacy worker row is not explicitly drained or still has active dispatch claims",
+    ):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=valid_render_evidence(),
+        )
+
+
+def test_collector_blocks_active_claim_on_drained_unexpected_revision(
+    staging_repository,
+):
+    repository, settings = staging_repository
+    seed_release(repository)
+    unexpected_revision = "c" * 40
+    worker_id = str(uuid4())
+    with repository.sessions.begin() as db:
+        db.add(WorkerInstance(
+            id=worker_id,
+            task_queue=settings.task_queue,
+            source_revision=unexpected_revision,
+            state="drained",
+            heartbeat_at=utcnow(),
+            drained_at=utcnow(),
+        ))
+        db.flush()
+        db.add(WorkerClaim(
+            id=str(uuid4()),
+            worker_id=worker_id,
+            task_queue=settings.task_queue,
+            claim_type="task_dispatch",
+            resource_id="unexpected-revision-active-dispatch",
+            state="active",
+            claimed_at=utcnow(),
+        ))
+
+    with pytest.raises(
+        CoworkerError,
+        match="worker marked drained still has active dispatch claims",
     ):
         evidence.collect_evidence(
             repository,

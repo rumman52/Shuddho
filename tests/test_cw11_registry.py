@@ -386,6 +386,65 @@ def test_worker_drain_stops_new_claims_and_requires_explicit_drained_state(conta
         assert db.get(WorkerInstance, new).state == "running"
 
 
+def test_registry_selection_and_rollback_block_claims_on_drained_rows(container):
+    worker_id = worker(container, REV_A)
+    worker(container, REV_A)  # Keep a fresh compatible worker in the fleet.
+    target_version = "research_reviewed_claim_target"
+    current_version = "research_reviewed_claim_current"
+    publish(container, target_version)
+    publish(
+        container,
+        current_version,
+        rollback_target=target_version,
+    )
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        current_version,
+        actor_reference="cw11-test-operator",
+        reason="select current version before claim-fence regression",
+        worker_source_revision=REV_A,
+    )
+
+    with container.repository.sessions.begin() as db:
+        db.add(WorkerClaim(
+            id=str(uuid4()),
+            worker_id=worker_id,
+            task_queue=container.settings.task_queue,
+            claim_type="agent_dispatch",
+            resource_id="active-claim-on-falsely-drained-worker",
+            state="active",
+            claimed_at=utcnow(),
+        ))
+        # Simulate a legacy worker binary bypassing the new repository guard.
+        row = db.get(WorkerInstance, worker_id)
+        assert row is not None
+        row.state = "drained"
+        row.drained_at = utcnow()
+
+    with pytest.raises(CoworkerError) as selection_blocked:
+        container.repository.select_reviewed_skill(
+            REVIEWED_RESEARCH_SKILL,
+            target_version,
+            actor_reference="cw11-test-operator",
+            reason="active claims must block selection even on drained rows",
+            worker_source_revision=REV_A,
+        )
+    assert selection_blocked.value.code == "worker_claims_active"
+
+    with pytest.raises(CoworkerError) as rollback_blocked:
+        container.repository.rollback_reviewed_skill(
+            REVIEWED_RESEARCH_SKILL,
+            target_version,
+            actor_reference="cw11-test-operator",
+            reason="active claims must block rollback even on drained rows",
+            worker_source_revision=REV_A,
+        )
+    assert rollback_blocked.value.code == "worker_claims_active"
+    assert container.repository.selected_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+    )["publication_version"] == current_version
+
+
 def test_active_task_dispatch_claim_blocks_drain_certification(container):
     worker_id = worker(container, REV_A)
     publication_version = "research_reviewed_claim_drain"
