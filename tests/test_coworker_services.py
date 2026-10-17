@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import httpx
 import pytest
+from coworker_worker_helpers import dispatch_tick, run_dispatcher
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
@@ -181,7 +182,7 @@ def test_dispatcher_routes_work_services_using_persisted_version(container):
         async def start_workflow(self, workflow, task_id, **kwargs):
             self.calls.append((workflow, task_id, kwargs))
     client = Client()
-    asyncio.run(Dispatcher(container, client).tick())
-    asyncio.run(Dispatcher(container, client).tick())
+    asyncio.run(dispatch_tick(container, client))
+    asyncio.run(dispatch_tick(container, client))
     assert len(client.calls) == 1
     assert client.calls[0][0] is WorkServicesWorkflow.run and client.calls[0][1] == task["id"]
