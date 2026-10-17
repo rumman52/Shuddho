@@ -361,16 +361,27 @@ class Dispatcher:
         notifications = self.container.notifications
         for notification_id in await asyncio.to_thread(notifications.claim_notifications):
             await asyncio.to_thread(notifications.deliver_notification, notification_id)
-        for action_id in await asyncio.to_thread(actions.claim_outbox):
+        for action_id in await asyncio.to_thread(
+            actions.claim_outbox, worker_id=self.worker_id,
+        ):
             try:
-                await self.client.start_workflow(
-                    ApprovedActionWorkflow.run, action_id, id="shuddho-action-" + action_id,
-                    task_queue=self.container.settings.task_queue, execution_timeout=timedelta(minutes=6),
-                    id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE, rpc_timeout=timedelta(seconds=10),
-                )
-            except WorkflowAlreadyStartedError:
-                pass
-            await asyncio.to_thread(actions.delivered, action_id)
+                try:
+                    await self.client.start_workflow(
+                        ApprovedActionWorkflow.run, action_id, id="shuddho-action-" + action_id,
+                        task_queue=self.container.settings.task_queue, execution_timeout=timedelta(minutes=6),
+                        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE, rpc_timeout=timedelta(seconds=10),
+                    )
+                except WorkflowAlreadyStartedError:
+                    pass
+                await asyncio.to_thread(actions.delivered, action_id)
+            finally:
+                if self.worker_id is not None:
+                    await asyncio.to_thread(
+                        repo.complete_worker_claim,
+                        worker_id=self.worker_id,
+                        claim_type="action_dispatch",
+                        resource_id=action_id,
+                    )
         if self.container.settings.connector_reads_enabled:
             for subscription in await asyncio.to_thread(
                 self.container.connector_reads.repo.claim_renewals
@@ -384,27 +395,47 @@ class Dispatcher:
         # work cannot remain indefinitely active after a Temporal/process timeout.
         await asyncio.to_thread(agent.expire_due_runs)
         if self.container.settings.agent_runtime_enabled:
-            for run_id in await asyncio.to_thread(agent.claim_outbox):
-                await self.dispatch_agent_run(run_id)
+            for run_id in await asyncio.to_thread(
+                agent.claim_outbox, worker_id=self.worker_id,
+            ):
+                try:
+                    await self.dispatch_agent_run(run_id)
+                finally:
+                    if self.worker_id is not None:
+                        await asyncio.to_thread(
+                            repo.complete_worker_claim,
+                            worker_id=self.worker_id,
+                            claim_type="agent_dispatch",
+                            resource_id=run_id,
+                        )
         await asyncio.to_thread(repo.expire_tasks)
         for task_id in await asyncio.to_thread(
             repo.claim_outbox, worker_id=self.worker_id,
         ):
-            task = await asyncio.to_thread(repo.worker_task, task_id, False)
-            if task["state"] not in TERMINAL:
-                try:
-                    await self.client.start_workflow(
-                        (ReportEmailWorkflow.run if task["skill_id"] == "report_email" else
-                         ResearchWorkflow.run if task["skill_id"] == "research" else WorkServicesWorkflow.run),
-                        task_id, id="shuddho-task-" + task_id,
-                        task_queue=self.container.settings.task_queue,
-                        execution_timeout=timedelta(seconds=self.container.settings.task_timeout_seconds),
-                        id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-                        rpc_timeout=timedelta(seconds=10),
+            try:
+                task = await asyncio.to_thread(repo.worker_task, task_id, False)
+                if task["state"] not in TERMINAL:
+                    try:
+                        await self.client.start_workflow(
+                            (ReportEmailWorkflow.run if task["skill_id"] == "report_email" else
+                             ResearchWorkflow.run if task["skill_id"] == "research" else WorkServicesWorkflow.run),
+                            task_id, id="shuddho-task-" + task_id,
+                            task_queue=self.container.settings.task_queue,
+                            execution_timeout=timedelta(seconds=self.container.settings.task_timeout_seconds),
+                            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                            rpc_timeout=timedelta(seconds=10),
+                        )
+                    except WorkflowAlreadyStartedError:
+                        pass  # Crash after engine acceptance, before outbox acknowledgement.
+                await asyncio.to_thread(repo.delivered, task_id)
+            finally:
+                if self.worker_id is not None:
+                    await asyncio.to_thread(
+                        repo.complete_worker_claim,
+                        worker_id=self.worker_id,
+                        claim_type="task_dispatch",
+                        resource_id=task_id,
                     )
-                except WorkflowAlreadyStartedError:
-                    pass  # Crash after engine acceptance, before outbox acknowledgement.
-            await asyncio.to_thread(repo.delivered, task_id)
         # Optional browser push runs after core dispatch and is bounded/concurrent,
         # so slow push providers cannot starve actions, connector work, Agent runs, or tasks.
         await self.dispatch_browser_push(notifications)
