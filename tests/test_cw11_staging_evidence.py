@@ -266,6 +266,45 @@ def test_collector_blocks_task_ledger_classification_gaps(
         )
 
 
+def test_collector_blocks_when_no_legacy_worker_row_was_observed(
+    staging_repository,
+):
+    repository, settings = staging_repository
+    candidate = repository.register_worker(
+        task_queue=settings.task_queue,
+        source_revision=CANDIDATE_REVISION,
+    )
+    assert repository.heartbeat_worker(candidate) == "running"
+    publication = build_pilot_publication(
+        source_revision=CANDIDATE_REVISION,
+        publication_version="research_reviewed_v1",
+    )
+    repository.publish_reviewed_skill(
+        publication,
+        actor_reference="cw11-staging-test",
+        reason="missing legacy worker row test",
+    )
+    repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_reviewed_v1",
+        actor_reference="cw11-staging-test",
+        reason="candidate selection for missing legacy row test",
+        worker_source_revision=CANDIDATE_REVISION,
+    )
+
+    with pytest.raises(
+        CoworkerError,
+        match="No registered worker for the legacy revision was observed",
+    ):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=valid_render_evidence(),
+        )
+
+
 def test_collector_blocks_drained_legacy_worker_with_active_claim(
     staging_repository,
 ):
