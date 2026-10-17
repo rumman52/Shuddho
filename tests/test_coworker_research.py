@@ -25,7 +25,7 @@ from services.coworker.errors import CoworkerError
 from services.coworker.research import MAX_PAGE_CHARS, MAX_RESPONSE_BYTES, SEARCH_ENDPOINT, SearchFailure, TavilyResearchProvider, public_source_url, validate_evidence
 from services.coworker.runner import DocumentRunner
 from services.coworker.schemas import ResearchOptions, TaskCreate
-from services.coworker.worker import Activities, Dispatcher
+from services.coworker.worker import Activities
 from services.coworker.workflow import ResearchWorkflow
 
 
