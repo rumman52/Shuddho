@@ -31,6 +31,8 @@ def test_bad_confirmation_fails_before_staging_environment_or_secrets():
     # show a successful workflow with no evidence. The guard must instead fail.
     assert "if: ${{ inputs.confirm == 'CW11-STAGING' }}" not in source
     assert 'CONFIRM: ${{ inputs.confirm }}' in confirmation
+    assert 'REF_NAME: ${{ github.ref_name }}' in confirmation
+    assert '[[ "${REF_NAME}" != "main" ]]' in confirmation
     assert '[[ "${CONFIRM}" != "CW11-STAGING" ]]' in confirmation
     assert "environment:" not in confirmation
     assert "secrets." not in confirmation
@@ -58,6 +60,36 @@ def test_staging_secrets_are_scoped_to_the_steps_that_need_them():
     assert "SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}" in collector
     assert "SHUDDHO_AUTH_ISSUER: ${{ secrets.SHUDDHO_STAGING_AUTH_ISSUER }}" in collector
     assert "SHUDDHO_AUTH_ISSUER" not in migration
+
+
+def test_dispatch_inputs_are_passed_through_environment_not_shell_interpolation():
+    source = WORKFLOW_PATH.read_text(encoding="utf-8")
+    render_check = source.split(
+        "- name: Verify live Render mixed-version drain state", maxsplit=1
+    )[1].split("- name: Apply pending staging migrations", maxsplit=1)[0]
+    collector = source.split("- name: Collect CW-11 staging evidence", maxsplit=1)[1]
+    render_script = render_check.split("        run: |", maxsplit=1)[1]
+    collector_script = collector.split("        run: |", maxsplit=1)[1]
+
+    assert "OLD_SOURCE_REVISION: ${{ inputs.old_source_revision }}" in render_check
+    assert "EXPECTED_PUBLICATION_VERSION: ${{ inputs.expected_publication_version }}" in collector
+    assert "OLD_SOURCE_REVISION: ${{ inputs.old_source_revision }}" in collector
+    assert "${{ inputs.old_source_revision }}" not in render_script
+    assert "${{ inputs.expected_publication_version }}" not in collector_script
+    assert "${{ inputs.old_source_revision }}" not in collector_script
+
+
+def test_staging_render_identity_and_revision_are_strictly_bound():
+    source = WORKFLOW_PATH.read_text(encoding="utf-8")
+    render_check = source.split(
+        "- name: Verify live Render mixed-version drain state", maxsplit=1
+    )[1].split("- name: Apply pending staging migrations", maxsplit=1)[0]
+    render_script = render_check.split("        run: |", maxsplit=1)[1]
+
+    assert '[[ ! "${OLD_SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]' in render_script
+    assert '.id == $id' in render_script
+    assert '--arg id "${OLD_WORKER_SERVICE_ID}"' in render_script
+    assert '--arg id "${CANDIDATE_WORKER_SERVICE_ID}"' in render_script
 
 
 def test_live_worker_drain_gate_precedes_schema_mutation_and_evidence():

@@ -36,8 +36,13 @@ jobs:
       - name: Validate confirmation before staging access
         env:
           CONFIRM: ${{ inputs.confirm }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          if [[ "${REF_NAME}" != "main" ]]; then
+            echo "::error::The protected staging workflow must be dispatched from main."
+            exit 1
+          fi
           if [[ "${CONFIRM}" != "CW11-STAGING" ]]; then
             echo "::error::Type CW11-STAGING in the confirm input. The staging evidence job was not started."
             exit 1
@@ -87,6 +92,7 @@ jobs:
         env:
           OLD_WORKER_SERVICE_ID: ${{ inputs.old_worker_service_id }}
           CANDIDATE_WORKER_SERVICE_ID: ${{ inputs.candidate_worker_service_id }}
+          OLD_SOURCE_REVISION: ${{ inputs.old_source_revision }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
           set -euo pipefail
@@ -97,20 +103,26 @@ jobs:
             echo "::error::Old and candidate worker service IDs must differ."
             exit 1
           fi
+          if [[ ! "${OLD_SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The legacy source revision must be a full lowercase Git commit SHA."
+            exit 1
+          fi
 
           old_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}")"
           candidate_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}")"
 
-          jq -e --arg owner "${RENDER_WORKSPACE_ID}" '
-            .type == "background_worker"
+          jq -e --arg owner "${RENDER_WORKSPACE_ID}" --arg id "${OLD_WORKER_SERVICE_ID}" '
+            .id == $id
+            and .type == "background_worker"
             and .ownerId == $owner
             and .repo == "https://github.com/rumman52/Shuddho"
             and .serviceDetails.region == "oregon"
             and .branch == "main"
           ' <<<"${old_service}" >/dev/null
 
-          jq -e --arg owner "${RENDER_WORKSPACE_ID}" --arg branch "${GITHUB_REF_NAME}" '
-            .type == "background_worker"
+          jq -e --arg owner "${RENDER_WORKSPACE_ID}" --arg branch "${GITHUB_REF_NAME}" --arg id "${CANDIDATE_WORKER_SERVICE_ID}" '
+            .id == $id
+            and .type == "background_worker"
             and .ownerId == $owner
             and .repo == "https://github.com/rumman52/Shuddho"
             and .serviceDetails.region == "oregon"
@@ -143,7 +155,7 @@ jobs:
             echo "::error::Legacy Render worker still has live instances; drain is not complete."
             exit 1
           fi
-          if [[ "${old_commit}" != "${{ inputs.old_source_revision }}" ]]; then
+          if [[ "${old_commit}" != "${OLD_SOURCE_REVISION}" ]]; then
             echo "::error::Legacy Render worker live deploy does not match the declared old source revision."
             exit 1
           fi
@@ -156,7 +168,15 @@ jobs:
             exit 1
           fi
 
-          jq -n             --arg old_service "${OLD_WORKER_SERVICE_ID}"             --arg candidate_service "${CANDIDATE_WORKER_SERVICE_ID}"             --arg old_revision "${{ inputs.old_source_revision }}"             --arg old_commit "${old_commit}"             --arg candidate_commit "${candidate_commit}"             --argjson old_count "${old_count}"             --argjson candidate_count "${candidate_count}"             '{
+          jq -n \
+            --arg old_service "${OLD_WORKER_SERVICE_ID}" \
+            --arg candidate_service "${CANDIDATE_WORKER_SERVICE_ID}" \
+            --arg old_revision "${OLD_SOURCE_REVISION}" \
+            --arg old_commit "${old_commit}" \
+            --arg candidate_commit "${candidate_commit}" \
+            --argjson old_count "${old_count}" \
+            --argjson candidate_count "${candidate_count}" \
+            '{
               schema_version: 1,
               old_worker_service_id: $old_service,
               candidate_worker_service_id: $candidate_service,
@@ -177,9 +197,15 @@ jobs:
         env:
           SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}
           SHUDDHO_AUTH_ISSUER: ${{ secrets.SHUDDHO_STAGING_AUTH_ISSUER }}
+          EXPECTED_PUBLICATION_VERSION: ${{ inputs.expected_publication_version }}
+          OLD_SOURCE_REVISION: ${{ inputs.old_source_revision }}
         run: |
           set -euo pipefail
-          uv run --extra coworker python scripts/cw11_staging_evidence.py             --expected-publication-version "${{ inputs.expected_publication_version }}"             --old-source-revision "${{ inputs.old_source_revision }}"             --external-render-evidence /tmp/cw11-render-evidence.json             --output /tmp/cw11-staging-evidence.json
+          uv run --extra coworker python scripts/cw11_staging_evidence.py \
+            --expected-publication-version "${EXPECTED_PUBLICATION_VERSION}" \
+            --old-source-revision "${OLD_SOURCE_REVISION}" \
+            --external-render-evidence /tmp/cw11-render-evidence.json \
+            --output /tmp/cw11-staging-evidence.json
 
       - name: Publish evidence summary
         if: always()
