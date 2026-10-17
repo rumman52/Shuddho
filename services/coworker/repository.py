@@ -298,7 +298,7 @@ class Repository:
             )
             selection = db.scalar(select(ReviewedSkillSelection).where(
                 ReviewedSkillSelection.skill_name == skill_name,
-            ).with_for_update())
+            ).with_for_update().execution_options(populate_existing=True))
             if selection is None:
                 raise CoworkerError("skill_rollback_unavailable", "There is no selected reviewed publication to roll back.", 409)
             current = db.scalar(select(ReviewedSkillPublication).where(
@@ -622,7 +622,7 @@ class Repository:
         )
         selection = db.scalar(select(ReviewedSkillSelection).where(
             ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
-        ).with_for_update())
+        ).with_for_update().execution_options(populate_existing=True))
         if selection is None or selection.state != "selected":
             raise CoworkerError(
                 "skill_publication_unavailable",
@@ -631,7 +631,7 @@ class Repository:
             )
         publication = db.scalar(select(ReviewedSkillPublication).where(
             ReviewedSkillPublication.id == selection.publication_id,
-        ).with_for_update())
+        ).with_for_update().execution_options(populate_existing=True))
         binding = require_selected_pilot(
             publication,
             worker_source_revision=self.settings.source_revision,
