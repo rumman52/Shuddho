@@ -4,7 +4,7 @@
 
 **Next implementation slice:** draft [PR #453](https://github.com/rumman52/Shuddho/pull/453), branch `codex/cw11-staging-workflow-fail-closed-20261017`. The staging workflow previously skipped its only evidence job when the confirmation token was wrong, potentially leaving a green run with no artifact. It also applied pending staging migrations before verifying the legacy Render service had zero instances and the candidate was running the exact qualification revision.
 
-**Implemented:** separate no-secret confirmation job that fails on an incorrect token; evidence job depends on that success; live Render service/instance/revision validation precedes pending staging migrations; standard-library workflow-contract tests; rollout runbook and bounded task contract updated. The code change does not alter runtime authorization, provider behavior, schema, or capability flags.
+**Implemented:** separate no-secret confirmation job that fails on an incorrect token; evidence job depends on that success; live Render service/instance/revision validation precedes pending staging migrations; Render/database/auth credentials are injected only into the specific steps that need them; standard-library workflow-contract tests; rollout runbook and bounded task contract updated. The code change does not alter runtime authorization, provider behavior, schema, or capability flags.
 
 | Evidence level | Status |
 | --- | --- |
