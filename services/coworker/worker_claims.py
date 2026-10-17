@@ -134,6 +134,51 @@ def complete_worker_claim(
         return True
 
 
+def require_active_worker_claim(
+    sessions,
+    *,
+    worker_id: str | None,
+    claim_type: str,
+    resource_id: str,
+) -> None:
+    """Authorize dispatch only while the exact durable claim is still active."""
+    if not worker_id:
+        raise CoworkerError(
+            "worker_identity_required",
+            "Dispatch requires a registered worker identity and an active durable claim.",
+            409,
+        )
+    with sessions.begin() as db:
+        worker = db.scalar(
+            select(WorkerInstance)
+            .where(WorkerInstance.id == worker_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if worker is None or worker.state not in {"running", "draining"}:
+            raise CoworkerError(
+                "worker_not_dispatchable",
+                "The registered worker is no longer permitted to dispatch work.",
+                409,
+            )
+        claim = db.scalar(
+            select(WorkerClaim)
+            .where(
+                WorkerClaim.worker_id == worker_id,
+                WorkerClaim.claim_type == claim_type,
+                WorkerClaim.resource_id == resource_id,
+                WorkerClaim.state == "active",
+            )
+            .with_for_update()
+        )
+        if claim is None:
+            raise CoworkerError(
+                "worker_claim_missing",
+                "Dispatch is blocked because no active claim authorizes this resource.",
+                409,
+            )
+
+
 def require_no_active_worker_claims(db, worker_id: str) -> None:
     claims = db.scalars(
         select(WorkerClaim)
