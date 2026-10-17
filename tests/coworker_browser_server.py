@@ -34,7 +34,6 @@ from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentPlannerProposal
 from services.coworker.migrate import upgrade
 from services.coworker.runner import DocumentRunner
-from services.coworker.worker import Dispatcher
 
 if os.getenv("SHUDDHO_BROWSER_TESTS") != "true":
     raise RuntimeError("This fixture requires SHUDDHO_BROWSER_TESTS=true")
