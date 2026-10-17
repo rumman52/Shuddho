@@ -388,6 +388,15 @@ def test_worker_drain_stops_new_claims_and_requires_explicit_drained_state(conta
 
 def test_active_task_dispatch_claim_blocks_drain_certification(container):
     worker_id = worker(container, REV_A)
+    publication_version = "research_reviewed_claim_drain"
+    publish(container, publication_version)
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        publication_version,
+        actor_reference="cw11-test-operator",
+        reason="select publication for dispatch claim regression",
+        worker_source_revision=REV_A,
+    )
     owner = account(container)
     task = reviewed_task(container, owner, "active-dispatch-claim")
     with container.repository.sessions.begin() as db:
