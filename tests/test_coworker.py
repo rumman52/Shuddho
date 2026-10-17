@@ -1524,7 +1524,9 @@ def test_agent_dispatch_requires_an_active_worker_claim(container):
     from services.coworker.agent_schemas import AgentRunCreate
     from services.coworker.worker import Dispatcher
 
-    enabled = replace(container.settings, agent_runtime_enabled=True)
+    enabled = replace(
+        container.settings, agent_runtime_enabled=True, work_services_enabled=True,
+    )
     container.settings = enabled
     container.repository.settings = enabled
     container.agent.settings = enabled
