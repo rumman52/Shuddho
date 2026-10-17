@@ -21,6 +21,8 @@ from .connector_registry import CONNECTOR_ACTION_AUDIENCE, CONNECTOR_READ_AUDIEN
 from .errors import CoworkerError
 from .models import Account, ActionProposal, AgentCheckpoint, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, NegotiationCase, NegotiationOffer, NegotiationProposal, OAuthAttempt, Transaction, TransactionExecutionLink, TransactionTermsSnapshot, utcnow
 from .repository import aware, iso, not_found
+from .reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
+from .worker_claims import add_worker_claim, lock_running_worker
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
 
@@ -1420,9 +1422,25 @@ class ActionRepository:
                 )
             self._audit(db, row.owner_id, row.id, "action." + state)
 
-    def claim_outbox(self):
+    def claim_outbox(self, *, worker_id: str | None = None, limit: int = 20):
         now = utcnow()
         with self.sessions.begin() as db:
+            # Lock the worker before any dispatchable action rows. Drain requests
+            # use the same worker-first order, so no new claim can cross the
+            # running -> draining transition.
+            worker = (
+                lock_running_worker(
+                    db,
+                    worker_id=worker_id,
+                    task_queue=self.settings.task_queue,
+                    now=now,
+                    heartbeat_ttl_seconds=WORKER_HEARTBEAT_TTL_SECONDS,
+                )
+                if worker_id is not None
+                else None
+            )
+            # Deadline and lost-activity reconciliation is not new dispatch
+            # authority, so it remains available even with no worker identity.
             for row in db.scalars(select(ExternalAction).where(ExternalAction.state.in_(["awaiting_approval", "queued"]), ExternalAction.expires_at <= now).with_for_update(skip_locked=True)):
                 row.state, row.finished_at = "expired", now
                 self._audit(db, row.owner_id, row.id, "action.expired")
@@ -1443,16 +1461,20 @@ class ActionRepository:
                 )
                 self._audit(db, row.owner_id, row.id, "action.outcome_unknown")
             db.execute(update(OAuthAttempt).where(OAuthAttempt.expires_at <= now, OAuthAttempt.verifier_ciphertext != "").values(verifier_ciphertext="", consumed=True))
-            if not self.settings.actions_enabled:
+            if not self.settings.actions_enabled or worker is None:
                 return []
             rows = db.scalars(select(ExternalAction).where(
                 ExternalAction.state == "queued",
                 ExternalAction.delivered.is_(False),
                 or_(ExternalAction.agent_run_id.is_(None), ExternalAction.agent_ready.is_(True)),
                 or_(ExternalAction.lease_until.is_(None), ExternalAction.lease_until < now),
-            ).order_by(ExternalAction.created_at).limit(20).with_for_update(skip_locked=True)).all()
+            ).order_by(ExternalAction.created_at).limit(limit).with_for_update(skip_locked=True)).all()
             for row in rows:
                 row.lease_until = now + timedelta(seconds=30)
+                add_worker_claim(
+                    db, worker=worker, claim_type="action_dispatch",
+                    resource_id=row.id, now=now,
+                )
             return [row.id for row in rows]
 
     def delivered(self, action_id):

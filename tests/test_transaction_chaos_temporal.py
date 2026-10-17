@@ -15,6 +15,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
+from coworker_worker_helpers import dispatch_tick
 import httpx
 
 pytest.importorskip("sqlalchemy")
@@ -316,7 +317,6 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
     from temporalio.service import RPCError
     from temporalio.testing import WorkflowEnvironment
     from services.coworker.models import ExternalAction, utcnow
-    from services.coworker.worker import Dispatcher
 
     async def scenario():
         value = transaction_container
@@ -324,14 +324,24 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
         claim_outbox = value.actions.repo.claim_outbox
         # Target only this fixture's action; other PostgreSQL fixtures share the
         # disposable CI database and must not acquire workflows in this test.
-        monkeypatch.setattr(value.actions.repo, "claim_outbox", lambda: [
-            identity for identity in claim_outbox() if identity == action["id"]
-        ])
+        def claim_target_action(*, worker_id=None):
+            identities = claim_outbox(worker_id=worker_id)
+            # The repository claims atomically before this test filter runs.
+            # Release every unrelated test-fixture claim without dispatching it.
+            for identity in identities:
+                if identity != action["id"] and worker_id is not None:
+                    value.repository.complete_worker_claim(
+                        worker_id=worker_id,
+                        claim_type="action_dispatch",
+                        resource_id=identity,
+                    )
+            return [identity for identity in identities if identity == action["id"]]
+        monkeypatch.setattr(value.actions.repo, "claim_outbox", claim_target_action)
         async with await WorkflowEnvironment.start_time_skipping() as stopped:
             stopped_client = stopped.client
         # The server really exited; this is not an exception-only client mock.
         with pytest.raises(RPCError):
-            await asyncio.wait_for(Dispatcher(value, stopped_client).tick(), 15)
+            await asyncio.wait_for(dispatch_tick(value, stopped_client), 15)
         with value.repository.sessions.begin() as db:
             row = db.get(ExternalAction, action["id"])
             assert row.state == "queued" and row.delivered is False and row.started_at is None
@@ -341,7 +351,7 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
         async with await WorkflowEnvironment.start_time_skipping() as recovered:
             processes.start(value.settings, provider.origin, action["id"],
                             temporal_address=recovered.client.service_client.config.target_host)
-            await Dispatcher(value, recovered.client).tick()
+            await dispatch_tick(value, recovered.client)
             handle = recovered.client.get_workflow_handle("shuddho-action-" + action["id"])
             with recovered.auto_time_skipping_disabled():
                 await asyncio.wait_for(handle.result(), 30)

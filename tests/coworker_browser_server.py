@@ -1,3 +1,4 @@
+from coworker_worker_helpers import run_dispatcher
 """Local-only browser fixture: real auth verification, DB, Temporal and exports.
 
 The identity and model responses are test fixtures. This file is excluded from
@@ -33,7 +34,6 @@ from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentPlannerProposal
 from services.coworker.migrate import upgrade
 from services.coworker.runner import DocumentRunner
-from services.coworker.worker import Dispatcher
 
 if os.getenv("SHUDDHO_BROWSER_TESTS") != "true":
     raise RuntimeError("This fixture requires SHUDDHO_BROWSER_TESTS=true")
@@ -115,13 +115,23 @@ async def lifespan(_app):
         stop = asyncio.Event()
         runner = DocumentRunner(container, BrowserModel(), research=SimulatedResearch(settings))
         runtime = AgentRuntime(container, runner, planner=BrowserAgentPlanner())
+        worker_id = await asyncio.to_thread(
+            container.repository.register_worker,
+            task_queue=settings.task_queue,
+            source_revision=settings.source_revision,
+        )
+        state = await asyncio.to_thread(container.repository.heartbeat_worker, worker_id)
+        if state != "running":
+            raise RuntimeError(f"Browser fixture worker failed to enter running state: {state}")
         async with make_worker(env, runner, agent_runtime=runtime):
-            dispatcher = asyncio.create_task(Dispatcher(container, env.client).run(stop))
+            dispatcher = asyncio.create_task(run_dispatcher(container, env.client, stop, worker_id))
             try:
                 yield
             finally:
                 stop.set()
                 await dispatcher
+        # Match production: certify drain only after the Temporal worker context exits.
+        await asyncio.to_thread(container.repository.mark_worker_drained, worker_id)
 
 
 app = FastAPI(lifespan=lifespan)

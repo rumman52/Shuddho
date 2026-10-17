@@ -1,3 +1,24 @@
+## CW-11 per-claim dispatch drain fencing — 17 October 2026 (Asia/Dhaka)
+
+**Active branch:** `codex/cw11-per-claim-drain-fencing-20261017`, [PR #450](https://github.com/rumman52/Shuddho/pull/450), initially at `950d3be74e6bc8a31ee07ae310f675821963f7e5`. Initial exact-head CI run [#39017961482](https://github.com/rumman52/Shuddho/actions/runs/39017961482): `test-and-build` passed; mandatory `coworker` failed with 1 failed / 67 passed in the CW-11 registry suite because the new task-claim test used `reviewed_task()` without selecting a reviewed publication first. The repository correctly failed closed. A test-only correction now explicitly publishes and selects the fixture publication before creating that task; all required checks must be rerun on the resulting head. The independent Codex review could not run because the configured review service reported its usage limit. No local test execution, staging qualification, deployment, or activation is claimed.
+
+**Failure mode closed by this slice:** an outbox could be claimed by an Agent/action dispatcher without a registered worker identity, and the worker registry could mark a worker drained while a dispatch attempt was still in flight. A worker could also claim a batch, fail on the first dispatch, and leave the rest of that batch indistinguishable from active in-flight work.
+
+**Implementation:**
+- Add migration `0062` and durable `cw_worker_claims` records for task, Agent and approved-action dispatch claims. A second-pass schema review removed a redundant ORM-only worker index; the migration/model parity regression now checks index names as well as columns.
+- Make task, Agent and action outbox claims lock the registered worker first, require a fresh `running` worker on the configured queue, and create claim records atomically with outbox leases.
+- Require an active durable claim at the Agent dispatch boundary, including staging/operator helper paths.
+- Complete claims after each dispatch attempt returns. On a batch failure, close claims for unattempted items without acknowledging their outbox rows, preserving normal lease-based retry.
+- Keep the browser-test worker lifecycle aligned with production by recording drain only after the Temporal worker context exits; make cancellation outbox coverage use a real registered worker rather than a no-identity call that always returns an empty batch.
+- Make `mark_worker_drained()` refuse completion while active claims remain; expose `active_claim_count` in worker inventory and require zero claims in drain evidence.
+- Add tests for Agent/action/task claim blocking, rejection of Agent dispatch without an active claim, failed-batch cleanup for unattempted items, migration/model column-and-index parity, and a PostgreSQL interleaving where a drain waits behind an uncommitted claim.
+
+**Safety boundary:** claims have no expiry-based auto-clear. A process crash that leaves an active claim blocks drain certification until evidence-driven reconciliation. The claim ledger tracks dispatcher work; it does not replace the existing requirement to await Temporal worker shutdown before marking the process drained. No production activation, external provider mutation, deployment or protected staging run is performed by this change.
+
+**Remaining gates:** exact-head `test-and-build`, `coworker`, and `ci-merge-gate`; independent code/security review; protected `CW11-STAGING` with real worker identities and exact-revision evidence; the four operated coworker scenarios; and separate production qualification/activation authorization.
+
+---
+
 ## CW-11 worker-registration phantom fence — 17 October 2026 (Asia/Dhaka)
 
 **Mainline baseline:** PR #447 is merged as `e8de414e8b98eb503700a85474190304e28e58ed`. PR #448 then merged the initial queue advisory-lock and PostgreSQL registration-trigger implementation as `6b5aa1e2743bdbbdaa7c38a55670f6d39e8043da`. Its merged-main CI run [#39008038850](https://github.com/rumman52/Shuddho/actions/runs/39008038850) has `test-and-build` green; the mandatory `coworker` job was still running at this checkpoint.

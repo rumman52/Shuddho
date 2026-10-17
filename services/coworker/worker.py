@@ -242,6 +242,14 @@ class Dispatcher:
         self.automation_schedules = AutomationScheduleReconciler(client, container.settings.task_queue)
 
     async def dispatch_agent_run(self, run_id: str):
+        # This method is also called by operator/test helpers, so enforce the
+        # same durable claim boundary as the normal outbox loop.
+        await asyncio.to_thread(
+            self.container.repository.require_active_worker_claim,
+            worker_id=self.worker_id,
+            claim_type="agent_dispatch",
+            resource_id=run_id,
+        )
         agent = self.container.agent
         run = await asyncio.to_thread(agent.worker_run, run_id)
         if run["state"] not in {"completed", "failed", "cancelled", "needs_input", "blocked"}:
@@ -281,6 +289,36 @@ class Dispatcher:
             except WorkflowAlreadyStartedError:
                 pass
         await asyncio.to_thread(agent.delivered, run_id)
+
+    async def _dispatch_claim_batch(self, claim_type: str, resource_ids: list[str], operation):
+        """Run claimed work and close all claims, including rows not attempted after a failure."""
+        completed: set[str] = set()
+        try:
+            for resource_id in resource_ids:
+                try:
+                    await operation(resource_id)
+                finally:
+                    if self.worker_id is not None:
+                        await asyncio.to_thread(
+                            self.container.repository.complete_worker_claim,
+                            worker_id=self.worker_id,
+                            claim_type=claim_type,
+                            resource_id=resource_id,
+                        )
+                    completed.add(resource_id)
+        finally:
+            # A batch is claimed atomically. If one dispatch fails, release the
+            # remaining claims without marking their outbox rows delivered; they
+            # become eligible for a safe retry after their ordinary lease ends.
+            if self.worker_id is not None:
+                for resource_id in resource_ids:
+                    if resource_id not in completed:
+                        await asyncio.to_thread(
+                            self.container.repository.complete_worker_claim,
+                            worker_id=self.worker_id,
+                            claim_type=claim_type,
+                            resource_id=resource_id,
+                        )
 
     async def dispatch_browser_push(self, notifications):
         if not self.container.settings.browser_push_enabled:
@@ -361,7 +399,11 @@ class Dispatcher:
         notifications = self.container.notifications
         for notification_id in await asyncio.to_thread(notifications.claim_notifications):
             await asyncio.to_thread(notifications.deliver_notification, notification_id)
-        for action_id in await asyncio.to_thread(actions.claim_outbox):
+        action_ids = await asyncio.to_thread(
+            actions.claim_outbox, worker_id=self.worker_id,
+        )
+
+        async def dispatch_action(action_id: str):
             try:
                 await self.client.start_workflow(
                     ApprovedActionWorkflow.run, action_id, id="shuddho-action-" + action_id,
@@ -371,6 +413,8 @@ class Dispatcher:
             except WorkflowAlreadyStartedError:
                 pass
             await asyncio.to_thread(actions.delivered, action_id)
+
+        await self._dispatch_claim_batch("action_dispatch", action_ids, dispatch_action)
         if self.container.settings.connector_reads_enabled:
             for subscription in await asyncio.to_thread(
                 self.container.connector_reads.repo.claim_renewals
@@ -384,12 +428,18 @@ class Dispatcher:
         # work cannot remain indefinitely active after a Temporal/process timeout.
         await asyncio.to_thread(agent.expire_due_runs)
         if self.container.settings.agent_runtime_enabled:
-            for run_id in await asyncio.to_thread(agent.claim_outbox):
-                await self.dispatch_agent_run(run_id)
+            run_ids = await asyncio.to_thread(
+                agent.claim_outbox, worker_id=self.worker_id,
+            )
+            await self._dispatch_claim_batch(
+                "agent_dispatch", run_ids, self.dispatch_agent_run,
+            )
         await asyncio.to_thread(repo.expire_tasks)
-        for task_id in await asyncio.to_thread(
+        task_ids = await asyncio.to_thread(
             repo.claim_outbox, worker_id=self.worker_id,
-        ):
+        )
+
+        async def dispatch_task(task_id: str):
             task = await asyncio.to_thread(repo.worker_task, task_id, False)
             if task["state"] not in TERMINAL:
                 try:
@@ -405,6 +455,8 @@ class Dispatcher:
                 except WorkflowAlreadyStartedError:
                     pass  # Crash after engine acceptance, before outbox acknowledgement.
             await asyncio.to_thread(repo.delivered, task_id)
+
+        await self._dispatch_claim_batch("task_dispatch", task_ids, dispatch_task)
         # Optional browser push runs after core dispatch and is bounded/concurrent,
         # so slow push providers cannot starve actions, connector work, Agent runs, or tasks.
         await self.dispatch_browser_push(notifications)

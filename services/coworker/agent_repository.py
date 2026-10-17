@@ -19,6 +19,8 @@ from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
 from .models import Account, ActionProposal, AgentCodeProposal, AgentCodeReview, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
+from .reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
+from .worker_claims import add_worker_claim, lock_running_worker
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 
 ACTIVE_RUN_STATES = {"queued", "planning", "running", "awaiting_approval"}
@@ -1843,16 +1845,40 @@ class AgentRepository:
 
 
     # Trusted worker/dispatcher boundary.
-    def claim_outbox(self, limit: int = 10) -> list[str]:
+    def claim_outbox(
+        self, limit: int = 10, *, worker_id: str | None = None,
+        run_ids: list[str] | None = None,
+    ) -> list[str]:
+        # Agent dispatch must be attributable to a live registered worker.
+        if worker_id is None or run_ids == []:
+            return []
         with self.sessions.begin() as db:
             now = utcnow()
-            rows = db.scalars(select(AgentOutbox).where(
+            worker = lock_running_worker(
+                db,
+                worker_id=worker_id,
+                task_queue=self.settings.task_queue,
+                now=now,
+                heartbeat_ttl_seconds=WORKER_HEARTBEAT_TTL_SECONDS,
+            )
+            if worker is None:
+                return []
+            query = select(AgentOutbox).where(
                 AgentOutbox.delivered.is_(False),
                 or_(AgentOutbox.lease_until.is_(None), AgentOutbox.lease_until < now),
-            ).limit(limit).with_for_update(skip_locked=True)).all()
+            )
+            if run_ids is not None:
+                query = query.where(AgentOutbox.run_id.in_(run_ids))
+            rows = db.scalars(
+                query.limit(limit).with_for_update(skip_locked=True)
+            ).all()
             for row in rows:
                 row.lease_until = now + timedelta(seconds=30)
                 row.attempts += 1
+                add_worker_claim(
+                    db, worker=worker, claim_type="agent_dispatch",
+                    resource_id=row.run_id, now=now,
+                )
             return [row.run_id for row in rows]
 
     def delivered(self, run_id: str):

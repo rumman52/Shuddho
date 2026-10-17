@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
+from coworker_worker_helpers import dispatch_tick
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
@@ -24,7 +25,7 @@ from services.coworker.errors import CoworkerError
 from services.coworker.research import MAX_PAGE_CHARS, MAX_RESPONSE_BYTES, SEARCH_ENDPOINT, SearchFailure, TavilyResearchProvider, public_source_url, validate_evidence
 from services.coworker.runner import DocumentRunner
 from services.coworker.schemas import ResearchOptions, TaskCreate
-from services.coworker.worker import Activities, Dispatcher
+from services.coworker.worker import Activities
 from services.coworker.workflow import ResearchWorkflow
 
 
@@ -251,7 +252,7 @@ def test_search_only_task_routes_to_new_workflow_and_rejects_work_entry(containe
         async def start_workflow(self, workflow, task_id, **kwargs):
             self.calls.append((workflow, task_id))
     client = Client()
-    asyncio.run(Dispatcher(container, client).tick())
+    asyncio.run(dispatch_tick(container, client))
     assert client.calls == [(ResearchWorkflow.run, task["id"])]
     runner = DocumentRunner(container, WorkModel(), research=SimulatedResearch(container.settings))
     with pytest.raises(CoworkerError):

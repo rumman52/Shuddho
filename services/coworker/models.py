@@ -232,6 +232,47 @@ class WorkerInstance(Base):
     )
 
 
+class WorkerClaim(Base):
+    """Durable dispatch-attempt ledger; active rows block worker drain certification."""
+
+    __tablename__ = "cw_worker_claims"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    worker_id: Mapped[str] = mapped_column(
+        ForeignKey("cw_worker_instances.id"),
+    )
+    task_queue: Mapped[str] = mapped_column(String(160))
+    claim_type: Mapped[str] = mapped_column(String(30))
+    resource_id: Mapped[str] = mapped_column(String(128))
+    state: Mapped[str] = mapped_column(String(20), default="active")
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        CheckConstraint(
+            "claim_type IN ('task_dispatch','agent_dispatch','action_dispatch')",
+            name="ck_cw_worker_claims_claim_type",
+        ),
+        CheckConstraint(
+            "state IN ('active','completed')",
+            name="ck_cw_worker_claims_state",
+        ),
+        Index(
+            "cw_worker_claims_worker_state_claimed",
+            "worker_id", "state", "claimed_at",
+        ),
+        Index(
+            "cw_worker_claims_queue_state",
+            "task_queue", "state",
+        ),
+        Index(
+            "uq_cw_worker_claims_active_resource",
+            "worker_id", "claim_type", "resource_id",
+            unique=True,
+            postgresql_where=text("state = 'active'"),
+            sqlite_where=text("state = 'active'"),
+        ),
+    )
+
+
 class TaskEvent(Base):
     __tablename__ = "cw_task_events"
     task_id: Mapped[str] = mapped_column(ForeignKey("cw_tasks.id"), primary_key=True)
