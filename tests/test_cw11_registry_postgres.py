@@ -11,8 +11,9 @@ import pytest
 
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for CW-11 tests")
 
-from sqlalchemy import event
+from sqlalchemy import event, select
 
+from services.coworker.models import ReviewedSkillPublication, ReviewedSkillSelection
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
     REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
@@ -51,6 +52,21 @@ def test_selection_uses_consistent_postgres_registry_lock_order(repository, cont
         source_revision=REVISION,
     )
 
+    # This test shares the CI PostgreSQL schema with later test modules.
+    # Save the global selection so the concurrency race cannot leak state.
+    with repository.sessions() as db:
+        previous_row = db.scalar(select(ReviewedSkillSelection).where(
+            ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+        ))
+        previous_selection = None if previous_row is None else {
+            "publication_id": previous_row.publication_id,
+            "generation": previous_row.generation,
+            "state": previous_row.state,
+            "updated_by": previous_row.updated_by,
+            "reason": previous_row.reason,
+            "updated_at": previous_row.updated_at,
+        }
+
     suffix = uuid4().hex[:12]
     baseline_version = f"baseline_{suffix}"
     candidate_version = f"candidate_{suffix}"
@@ -75,6 +91,13 @@ def test_selection_uses_consistent_postgres_registry_lock_order(repository, cont
     candidate = publish(candidate_version, baseline_version)
     next_publication = publish(next_version, baseline_version)
     assert baseline["review_sha256"] == candidate["review_sha256"] == next_publication["review_sha256"]
+    with repository.sessions() as db:
+        test_publication_ids = set(db.scalars(select(ReviewedSkillPublication.id).where(
+            ReviewedSkillPublication.skill_name == REVIEWED_RESEARCH_SKILL,
+            ReviewedSkillPublication.publication_version.in_(
+                [baseline_version, candidate_version, next_version],
+            ),
+        )).all())
 
     worker_id = repository.register_worker(task_queue=queue, source_revision=REVISION)
     assert repository.heartbeat_worker(worker_id) == "running"
@@ -160,3 +183,23 @@ def test_selection_uses_consistent_postgres_registry_lock_order(repository, cont
     finally:
         event.remove(engine, "after_cursor_execute", observe_selection_lock)
         repository._require_compatible_worker_fleet = original_fleet_check
+        # Restore/delete the single global selection row so later PostgreSQL
+        # tests see the same registry state they would have seen without this test.
+        with repository.sessions.begin() as db:
+            current_selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+            ).with_for_update().execution_options(populate_existing=True))
+            if (
+                current_selection is not None
+                and current_selection.publication_id in test_publication_ids
+            ):
+                if previous_selection is None:
+                    db.delete(current_selection)
+                else:
+                    for field, value in previous_selection.items():
+                        setattr(current_selection, field, value)
+            elif current_selection is None and previous_selection is not None:
+                db.add(ReviewedSkillSelection(
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    **previous_selection,
+                ))
