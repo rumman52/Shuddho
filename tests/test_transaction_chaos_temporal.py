@@ -317,7 +317,6 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
     from temporalio.service import RPCError
     from temporalio.testing import WorkflowEnvironment
     from services.coworker.models import ExternalAction, utcnow
-    from services.coworker.worker import Dispatcher
 
     async def scenario():
         value = transaction_container
