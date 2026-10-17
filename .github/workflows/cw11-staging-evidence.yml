@@ -36,8 +36,13 @@ jobs:
       - name: Validate confirmation before staging access
         env:
           CONFIRM: ${{ inputs.confirm }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          if [[ "${REF_NAME}" != "main" ]]; then
+            echo "::error::The protected staging workflow must be dispatched from main."
+            exit 1
+          fi
           if [[ "${CONFIRM}" != "CW11-STAGING" ]]; then
             echo "::error::Type CW11-STAGING in the confirm input. The staging evidence job was not started."
             exit 1
@@ -98,20 +103,26 @@ jobs:
             echo "::error::Old and candidate worker service IDs must differ."
             exit 1
           fi
+          if [[ ! "${OLD_SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The legacy source revision must be a full lowercase Git commit SHA."
+            exit 1
+          fi
 
           old_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${OLD_WORKER_SERVICE_ID}")"
           candidate_service="$(curl --fail --silent --show-error "${auth[@]}" "${api}/services/${CANDIDATE_WORKER_SERVICE_ID}")"
 
-          jq -e --arg owner "${RENDER_WORKSPACE_ID}" '
-            .type == "background_worker"
+          jq -e --arg owner "${RENDER_WORKSPACE_ID}" --arg id "${OLD_WORKER_SERVICE_ID}" '
+            .id == $id
+            and .type == "background_worker"
             and .ownerId == $owner
             and .repo == "https://github.com/rumman52/Shuddho"
             and .serviceDetails.region == "oregon"
             and .branch == "main"
           ' <<<"${old_service}" >/dev/null
 
-          jq -e --arg owner "${RENDER_WORKSPACE_ID}" --arg branch "${GITHUB_REF_NAME}" '
-            .type == "background_worker"
+          jq -e --arg owner "${RENDER_WORKSPACE_ID}" --arg branch "${GITHUB_REF_NAME}" --arg id "${CANDIDATE_WORKER_SERVICE_ID}" '
+            .id == $id
+            and .type == "background_worker"
             and .ownerId == $owner
             and .repo == "https://github.com/rumman52/Shuddho"
             and .serviceDetails.region == "oregon"
