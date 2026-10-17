@@ -1523,11 +1523,18 @@ def test_agent_bound_action_cannot_dispatch_before_its_step(container):
 def test_worker_claim_model_matches_migration(container):
     from sqlalchemy import inspect
     from services.coworker.models import WorkerClaim
+
+    inspector = inspect(container.repository.sessions.kw["bind"])
     database_columns = {
-        item["name"]
-        for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_worker_claims")
+        item["name"] for item in inspector.get_columns("cw_worker_claims")
     }
+    database_indexes = {
+        item["name"] for item in inspector.get_indexes("cw_worker_claims")
+    }
+    model_indexes = {index.name for index in WorkerClaim.__table__.indexes}
+
     assert database_columns == set(WorkerClaim.__table__.columns.keys())
+    assert database_indexes == model_indexes
 
 
 def test_external_action_binding_model_matches_migration(container):
