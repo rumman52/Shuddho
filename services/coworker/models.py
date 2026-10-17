@@ -238,7 +238,7 @@ class WorkerClaim(Base):
     __tablename__ = "cw_worker_claims"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     worker_id: Mapped[str] = mapped_column(
-        ForeignKey("cw_worker_instances.id"), index=True,
+        ForeignKey("cw_worker_instances.id"),
     )
     task_queue: Mapped[str] = mapped_column(String(160))
     claim_type: Mapped[str] = mapped_column(String(30))
