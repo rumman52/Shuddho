@@ -7,13 +7,14 @@
 **Implementation on branch `codex/cw11-worker-registration-fence-20261017`:**
 - Add a deterministic transaction-scoped PostgreSQL advisory lock per task queue.
 - Acquire it in both the fleet-compatibility snapshot and `register_worker()`, before worker-row or selection/publication work.
-- After selection exists, reject registration for the configured queue if the selected publication is non-authoritative or its source revision differs from the incoming worker. Preserve isolation for unrelated queues.
-- Add a SQLite contract test and a barrier-controlled PostgreSQL race test. The PostgreSQL test must be collected by the mandatory CW-11 JUnit gate with zero skips.
-- Document the guarantee and its boundary; no schema migration, public API change, expanded grant, external action, deployment or activation.
+- Require registrations on the configured queue to match the deployment-attested runtime revision while still allowing a candidate runtime to start before the old publication is switched.
+- Add Alembic migration 0061 with a PostgreSQL `BEFORE INSERT` trigger requiring transaction-local `shuddho.worker_source_revision` attestation. This blocks new registrations from legacy binaries that predate the lock protocol; existing legacy rows remain available for drain checks.
+- Add a SQLite contract test, a barrier-controlled PostgreSQL race test, and a PostgreSQL regression proving un-attested inserts are rejected. The mandatory CW-11 JUnit gate must collect all PostgreSQL tests with zero skips.
+- No public API change, expanded grant, external action, deployment or activation. A PostgreSQL schema migration is required.
 
 **Validation status:** the implementation, regression tests and documentation are committed to the follow-up branch, but exact-head CI and independent review are pending. The successful merged-main run does not qualify this follow-up. No local test execution is claimed.
 
-**Remaining gates:** per-claim drain fencing for Agent/action outboxes; protected `CW11-STAGING` using real authorized worker identities, confirmed drain and exact-revision evidence; four operated coworker scenarios; independent operational review; and separate production qualification/activation authorization. The intermittent parallel SQLite malformed-schema/duplicate-index symptoms also remain unexplained; a serial rerun is not root-cause evidence.
+**Remaining gates:** per-claim drain fencing for Agent/action outboxes; protected `CW11-STAGING` using real authorized worker identities, confirmed drain and exact-revision evidence; four operated coworker scenarios; independent operational review; and separate production qualification/activation authorization. Existing legacy processes may continue running after migration but cannot re-register if they restart; rollout/rollback must account for that availability trade-off. The intermittent parallel SQLite malformed-schema/duplicate-index symptoms also remain unexplained; a serial rerun is not root-cause evidence.
 
 
 ---
