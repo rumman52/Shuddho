@@ -1,3 +1,25 @@
+## CW-11 historical migration dispatch fence — 17 October 2026 (Asia/Dhaka)
+
+**Fresh main baseline:** `main` `75521bdc77fea7366127c18ee854731880cff58b`. [PR #451](https://github.com/rumman52/Shuddho/pull/451) is merged. Its exact-head and merged-main CI runs passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate` ([PR CI #39028085374](https://github.com/rumman52/Shuddho/actions/runs/39028085374), [main CI #39030046227](https://github.com/rumman52/Shuddho/actions/runs/39030046227)). CW-11 still lacks protected staging, independent operational review, and production qualification.
+
+**New bounded task:** [PR #452](https://github.com/rumman52/Shuddho/pull/452), branch `codex/cw11-legacy-migration-dispatch-fence-20261017`. The source change is in commit `e1768729fcb1420a3d6e95021391968b51a8c8fd`; regression cases are in `a12b65d3d627d0fde1e37053851344a48012f700` and the final test-fixture correction in `734077a899e1d84bdc79671401826140397b5a26`. Contract: [CW11_LEGACY_TASK_MIGRATION_DISPATCH_FENCE_2026-10-17.md](CW11_LEGACY_TASK_MIGRATION_DISPATCH_FENCE_2026-10-17.md).
+
+**Gap reproduced from current source:** `migrate_legacy_reviewed_tasks()` checked only the Task phase and search-attempt record. A Task may still appear queued after its parent Temporal workflow has been dispatched, including a lost dispatch response. Rebinding that Task's workflow/publication identity in place would cross an uncertain execution boundary.
+
+**Implemented on the review branch:** migration now requires Task state and phase to remain queued; a pristine, undispatched parent AgentOutbox; an undispatched planning-state AgentRun; a planned, never-started `research.search` step; a prepared, never-started matching invocation; no linked task resource and no ToolReceipt. Existing exact review-hash, selected-publication, grant, deadline, search-attempt and worker-drain checks remain. A single unsafe candidate aborts the whole migration transaction.
+
+| Evidence level | Status |
+| --- | --- |
+| Implemented | Source and regression tests committed on PR #452 |
+| Repository-verified | Pending exact-head `test-and-build`, zero-skip `coworker`, and `ci-merge-gate`; do not substitute PR #451 CI |
+| Staging-verified | Not established |
+| Production-qualified | Not established |
+| Activated | No; capability remains default-off |
+
+No local test execution, independent review, protected staging run, deployment, or activation is claimed. **Next exact action:** inspect all required checks on PR #452's latest head; repair failures without weakening safety assertions, then obtain independent review. The outbox fence proves a repository pre-dispatch condition only; it does not certify live fleet drain, mixed-version Temporal recovery, or production rollout.
+
+---
+
 ## CW-11 follow-up — selection and staging claim accounting — 17 October 2026
 
 Parent [PR #450](https://github.com/rumman52/Shuddho/pull/450) merged as `bd4fc89b0d3d43f529a4014fa6c442f4442c726c`. Exact merged-main `test-and-build` passed; mandatory `coworker` and `ci-merge-gate` were still running at checkpoint. The automated independent review could not run because the configured review service reported its usage limit.

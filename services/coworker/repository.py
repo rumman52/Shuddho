@@ -12,10 +12,10 @@ from .auth import Principal
 from .config import Settings
 from .errors import CoworkerError
 from .models import (
-    Account, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document,
+    Account, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document,
     DocumentVersion, ModelAttempt, Outbox, ReviewedSkillPublication,
-    ReviewedSkillRegistryEvent, ReviewedSkillSelection, Step, Task, TaskEvent, ToolInvocation, WorkerClaim, WorkerInstance,
-    Workspace, utcnow,
+    ReviewedSkillRegistryEvent, ReviewedSkillSelection, Step, Task, TaskEvent,
+    ToolInvocation, ToolReceipt, WorkerClaim, WorkerInstance, Workspace, utcnow,
 )
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
 from .worker_claims import (
@@ -873,13 +873,70 @@ class Repository:
                         )
                     if task.deadline_at is None or aware(task.deadline_at) <= utcnow():
                         raise CoworkerError("skill_migration_blocked", "The historical task deadline expired.")
-                    run = db.get(AgentRun, task.agent_run_id)
-                    if run is None or run.cancel_requested or aware(run.deadline_at) <= utcnow():
-                        raise CoworkerError("skill_migration_blocked", "The historical Agent run is cancelled or expired.")
-                    if task.phase != "queued":
+                    if task.state != "queued" or task.phase != "queued":
                         raise CoworkerError(
                             "skill_migration_blocked",
-                            "A historical reviewed task has advanced beyond its safe pre-execution phase.",
+                            "A historical reviewed task has started and cannot be rebound in place.",
+                        )
+
+                    # A task's queued phase is not proof that its parent Temporal
+                    # workflow never started. The Agent outbox is the dispatch
+                    # boundary: any attempt, lease or delivered state means the
+                    # start may have succeeded, including a lost response. Never
+                    # rewrite workflow identity across that uncertainty.
+                    agent_outbox = db.scalar(select(AgentOutbox).where(
+                        AgentOutbox.run_id == task.agent_run_id,
+                    ).with_for_update())
+                    if (
+                        agent_outbox is None
+                        or agent_outbox.delivered
+                        or agent_outbox.attempts != 0
+                        or agent_outbox.lease_until is not None
+                    ):
+                        raise CoworkerError(
+                            "skill_migration_blocked",
+                            "The parent Agent workflow may already have been dispatched or its outcome is uncertain.",
+                        )
+
+                    run = db.get(AgentRun, task.agent_run_id)
+                    if (
+                        run is None
+                        or run.cancel_requested
+                        or run.state != "planning"
+                        or run.phase != "planned"
+                        or aware(run.deadline_at) <= utcnow()
+                    ):
+                        raise CoworkerError(
+                            "skill_migration_blocked",
+                            "The historical Agent run is not in its undispatched planning state, or is cancelled or expired.",
+                        )
+                    step = db.scalar(select(AgentStep).where(
+                        AgentStep.id == task.agent_step_id,
+                        AgentStep.run_id == task.agent_run_id,
+                        AgentStep.owner_id == task.owner_id,
+                    ))
+                    invocation = db.scalar(select(ToolInvocation).where(
+                        ToolInvocation.run_id == task.agent_run_id,
+                        ToolInvocation.step_id == task.agent_step_id,
+                        ToolInvocation.owner_id == task.owner_id,
+                    ))
+                    if (
+                        step is None
+                        or step.tool_name != "research.search"
+                        or step.state != "planned"
+                        or step.started_at is not None
+                        or step.finished_at is not None
+                        or bool(step.output)
+                        or invocation is None
+                        or invocation.tool_name != "research.search"
+                        or invocation.state != "prepared"
+                        or invocation.started_at is not None
+                        or invocation.finished_at is not None
+                        or db.get(ToolReceipt, invocation.id) is not None
+                    ):
+                        raise CoworkerError(
+                            "skill_migration_blocked",
+                            "The parent Agent invocation has started or has persisted execution evidence.",
                         )
                     search_attempt = db.get(Step, (task.id, "search_attempt"))
                     if search_attempt is not None:
