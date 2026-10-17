@@ -12,8 +12,9 @@ import pytest
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for CW-11 tests")
 
 from sqlalchemy import event, select
+from sqlalchemy.exc import IntegrityError
 
-from services.coworker.models import ReviewedSkillPublication, ReviewedSkillSelection
+from services.coworker.models import ReviewedSkillPublication, ReviewedSkillSelection, WorkerInstance
 from services.coworker.errors import CoworkerError
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
@@ -355,3 +356,25 @@ def test_worker_registration_cannot_phantom_after_registry_fleet_snapshot(reposi
         repository.settings = original_settings
         if selection_snapshot_saved:
             restore_selection()
+
+
+
+def test_postgres_rejects_worker_insert_without_deployment_revision_context(repository):
+    """A legacy binary that bypasses the application lock cannot insert a worker row."""
+    engine = repository.sessions.kw["bind"]
+    if engine.dialect.name != "postgresql":
+        pytest.skip("The PostgreSQL registration trigger is the production guard")
+
+    worker_id = str(uuid4())
+    queue = "cw11-unattested-" + uuid4().hex
+    with pytest.raises(IntegrityError, match="worker registration requires matching deployment-attested source revision"):
+        with repository.sessions.begin() as db:
+            db.add(WorkerInstance(
+                id=worker_id,
+                task_queue=queue,
+                source_revision=REVISION,
+                state="starting",
+            ))
+
+    with repository.sessions() as db:
+        assert db.get(WorkerInstance, worker_id) is None

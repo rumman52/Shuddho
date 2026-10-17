@@ -1,19 +1,20 @@
 ## CW-11 worker-registration phantom fence — 17 October 2026 (Asia/Dhaka)
 
-**Mainline baseline:** PR #447, which fixed the reviewed-skill registry lock order and worker shutdown evidence, is merged as `e8de414e8b98eb503700a85474190304e28e58ed`. Merged-main CI run [#39005416159](https://github.com/rumman52/Shuddho/actions/runs/39005416159) completed successfully.
+**Mainline baseline:** PR #447 is merged as `e8de414e8b98eb503700a85474190304e28e58ed`. PR #448 then merged the initial queue advisory-lock and PostgreSQL registration-trigger implementation as `6b5aa1e2743bdbbdaa7c38a55670f6d39e8043da`. Its merged-main CI run [#39008038850](https://github.com/rumman52/Shuddho/actions/runs/39008038850) has `test-and-build` green; the mandatory `coworker` job was still running at this checkpoint.
 
 **Remaining race:** PostgreSQL row locks protect existing worker rows, not a worker inserted after the inventory query. Without queue-membership serialization, a new incompatible worker could appear between the reviewed-skill fleet snapshot and selection commit.
 
-**Implementation on branch `codex/cw11-worker-registration-fence-20261017`:**
+**Follow-up implementation on branch `codex/cw11-worker-registration-guard-followup-20261017` (PR #448 is already merged at its earlier head):**
 - Add a deterministic transaction-scoped PostgreSQL advisory lock per task queue.
 - Acquire it in both the fleet-compatibility snapshot and `register_worker()`, before worker-row or selection/publication work.
-- After selection exists, reject registration for the configured queue if the selected publication is non-authoritative or its source revision differs from the incoming worker. Preserve isolation for unrelated queues.
-- Add a SQLite contract test and a barrier-controlled PostgreSQL race test. The PostgreSQL test must be collected by the mandatory CW-11 JUnit gate with zero skips.
-- Document the guarantee and its boundary; no schema migration, public API change, expanded grant, external action, deployment or activation.
+- Require registrations on the configured queue to match the deployment-attested runtime revision while still allowing a candidate runtime to start before the old publication is switched.
+- The merged Alembic migration 0061 installs a PostgreSQL `BEFORE INSERT` trigger requiring transaction-local `shuddho.worker_source_revision` attestation. The follow-up binds that attestation to the configured runtime setting. This blocks new registrations from legacy binaries that predate the lock protocol; existing legacy rows remain available for drain checks.
+- Add a SQLite contract test, a barrier-controlled PostgreSQL race test, and a PostgreSQL regression proving un-attested inserts are rejected. The mandatory CW-11 JUnit gate must collect all PostgreSQL tests with zero skips.
+- No public API change, expanded grant, external action, deployment or activation. A PostgreSQL schema migration is required.
 
-**Validation status:** the implementation, regression tests and documentation are committed to the follow-up branch, but exact-head CI and independent review are pending. The successful merged-main run does not qualify this follow-up. No local test execution is claimed.
+**Validation status:** the follow-up branch carries additional runtime-revision and regression-fixture hardening beyond the merged PR #448 head. Exact-head CI and independent review for this follow-up are pending. No local test execution is claimed.
 
-**Remaining gates:** per-claim drain fencing for Agent/action outboxes; protected `CW11-STAGING` using real authorized worker identities, confirmed drain and exact-revision evidence; four operated coworker scenarios; independent operational review; and separate production qualification/activation authorization. The intermittent parallel SQLite malformed-schema/duplicate-index symptoms also remain unexplained; a serial rerun is not root-cause evidence.
+**Remaining gates:** per-claim drain fencing for Agent/action outboxes; protected `CW11-STAGING` using real authorized worker identities, confirmed drain and exact-revision evidence; four operated coworker scenarios; independent operational review; and separate production qualification/activation authorization. Existing legacy processes may continue running after migration but cannot re-register if they restart; rollout/rollback must account for that availability trade-off. The intermittent parallel SQLite malformed-schema/duplicate-index symptoms also remain unexplained; a serial rerun is not root-cause evidence.
 
 
 ---

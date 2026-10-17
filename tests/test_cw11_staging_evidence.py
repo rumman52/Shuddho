@@ -70,11 +70,18 @@ def seed_release(repository: Repository) -> None:
         source_revision=CANDIDATE_REVISION,
     )
     assert repository.heartbeat_worker(candidate) == "running"
-    old = repository.register_worker(
-        task_queue=repository.settings.task_queue,
-        source_revision=OLD_REVISION,
-    )
-    assert repository.heartbeat_worker(old) == "running"
+    # Simulate an already-running legacy binary. New PostgreSQL inserts from
+    # old binaries are blocked by the registration attestation trigger, but
+    # existing rows must remain visible to drain and staging-evidence checks.
+    old = str(uuid4())
+    with repository.sessions.begin() as db:
+        db.add(WorkerInstance(
+            id=old,
+            task_queue=repository.settings.task_queue,
+            source_revision=OLD_REVISION,
+            state="running",
+            heartbeat_at=utcnow(),
+        ))
     repository.mark_worker_drained(old)
     publication = build_pilot_publication(
         source_revision=CANDIDATE_REVISION,

@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 from datetime import timedelta
 import time
+from uuid import uuid4
 import pytest
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for CW-11 tests")
 pytest.importorskip("temporalio", reason="Install the coworker extra for CW-11 tests")
@@ -59,11 +60,27 @@ def account(container, subject="alice"):
 
 
 def worker(container, revision: str):
-    worker_id = container.repository.register_worker(
-        task_queue=container.settings.task_queue,
-        source_revision=revision,
-    )
-    assert container.repository.heartbeat_worker(worker_id) == "running"
+    if revision == (container.settings.source_revision or "unknown"):
+        worker_id = container.repository.register_worker(
+            task_queue=container.settings.task_queue,
+            source_revision=revision,
+        )
+        assert container.repository.heartbeat_worker(worker_id) == "running"
+        return worker_id
+
+    # Model a pre-existing legacy worker row written by a binary that predates
+    # the current registration attestation. Production PostgreSQL blocks new
+    # inserts from such binaries; SQLite fixtures let fleet/drain logic inspect
+    # the persisted legacy state directly.
+    worker_id = str(uuid4())
+    with container.repository.sessions.begin() as db:
+        db.add(WorkerInstance(
+            id=worker_id,
+            task_queue=container.settings.task_queue,
+            source_revision=revision,
+            state="running",
+            heartbeat_at=utcnow(),
+        ))
     return worker_id
 
 
@@ -245,6 +262,12 @@ def test_worker_registration_fences_legacy_revision_and_allows_candidate_rollout
         == "research_registration_fence_v0"
     )
 
+    container.repository.request_worker_drain(
+        task_queue=container.settings.task_queue,
+        source_revision=REV_A,
+        actor_reference="cw11-test-operator",
+        reason="Drain the old revision before switching the selected publication",
+    )
     container.repository.mark_worker_drained(old_worker)
     selected = container.repository.select_reviewed_skill(
         REVIEWED_RESEARCH_SKILL,
