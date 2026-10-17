@@ -477,10 +477,18 @@ class Repository:
         worker_revision = source_revision or "unknown"
         with self.sessions.begin() as db:
             self._lock_worker_queue_membership(db, task_queue=task_queue)
-            # The reviewed-skill selection is global for the configured
-            # coworker queue. Once selected, a new worker with another source
-            # revision must not become a post-snapshot incompatible phantom.
+            runtime_revision = self.settings.source_revision or "unknown"
             if task_queue == self.settings.task_queue:
+                # The row's revision must describe this running deployment, not
+                # an operator-supplied or stale value. Candidate code may join
+                # while an older publication remains selected; selection itself
+                # still blocks until the active fleet matches the candidate.
+                if worker_revision != runtime_revision:
+                    raise CoworkerError(
+                        "worker_fleet_incompatible",
+                        "Worker registration is blocked because its source revision differs from this deployment-attested runtime revision.",
+                        409,
+                    )
                 selection = db.scalar(select(ReviewedSkillSelection).where(
                     ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
                 ))
@@ -496,23 +504,16 @@ class Repository:
                             "Worker registration is blocked because the reviewed-skill selection is not authoritative.",
                             409,
                         )
-                    # A new candidate runtime must be able to start while the
-                    # old publication remains selected so that the fleet can be
-                    # drained and then switched. Reject a legacy revision being
-                    # introduced by this runtime; the selection operation itself
-                    # still blocks until every active peer matches the candidate.
-                    if worker_revision != self.settings.source_revision:
-                        raise CoworkerError(
-                            "worker_fleet_incompatible",
-                            "Worker registration is blocked because its source revision differs from this deployment-attested runtime revision.",
-                            409,
-                        )
             if db.get_bind().dialect.name == "postgresql":
                 # The database trigger also rejects inserts from legacy
                 # binaries that do not set this transaction-local attestation.
+                attested_revision = (
+                    runtime_revision if task_queue == self.settings.task_queue
+                    else worker_revision
+                )
                 db.execute(select(func.set_config(
                     "shuddho.worker_source_revision",
-                    worker_revision,
+                    attested_revision,
                     True,
                 )))
             db.add(WorkerInstance(
