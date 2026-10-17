@@ -17,7 +17,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import ReviewedSkillPublication, ReviewedSkillRegistryEvent, Step, Task, WorkerInstance, utcnow
+from services.coworker.models import Outbox, ReviewedSkillPublication, ReviewedSkillRegistryEvent, Step, Task, WorkerClaim, WorkerInstance, utcnow
 from services.coworker.task_workflow_versions import PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
@@ -384,6 +384,50 @@ def test_worker_drain_stops_new_claims_and_requires_explicit_drained_state(conta
     with container.repository.sessions() as db:
         assert db.get(WorkerInstance, old).state == "drained"
         assert db.get(WorkerInstance, new).state == "running"
+
+
+def test_active_task_dispatch_claim_blocks_drain_certification(container):
+    worker_id = worker(container, REV_A)
+    owner = account(container)
+    task = reviewed_task(container, owner, "active-dispatch-claim")
+    with container.repository.sessions.begin() as db:
+        db.add(Outbox(task_id=task["id"], delivered=False))
+
+    assert container.repository.claim_outbox(worker_id=worker_id) == [task["id"]]
+    assert container.repository.request_worker_drain(
+        task_queue=container.settings.task_queue,
+        source_revision=REV_A,
+        actor_reference="cw11-test-operator",
+        reason="verify active task dispatch is fenced by drain",
+    ) == 1
+    with pytest.raises(CoworkerError) as blocked:
+        container.repository.mark_worker_drained(worker_id)
+    assert blocked.value.code == "worker_claims_active"
+    with pytest.raises(CoworkerError) as incomplete:
+        container.repository.assert_worker_drain_complete(
+            task_queue=container.settings.task_queue,
+            old_source_revision=REV_A,
+        )
+    assert incomplete.value.code == "worker_drain_incomplete"
+    with container.repository.sessions() as db:
+        claims = db.scalars(select(WorkerClaim).where(
+            WorkerClaim.worker_id == worker_id,
+            WorkerClaim.state == "active",
+        )).all()
+        assert [(claim.claim_type, claim.resource_id) for claim in claims] == [
+            ("task_dispatch", task["id"]),
+        ]
+
+    assert container.repository.complete_worker_claim(
+        worker_id=worker_id, claim_type="task_dispatch", resource_id=task["id"],
+    ) is True
+    container.repository.mark_worker_drained(worker_id)
+    evidence = container.repository.assert_worker_drain_complete(
+        task_queue=container.settings.task_queue,
+        old_source_revision=REV_A,
+    )
+    assert evidence["verified"] is True
+    assert evidence["workers"][0]["active_claim_count"] == 0
 
 
 def test_legacy_migration_is_atomic_and_requires_no_search_attempt(container):
