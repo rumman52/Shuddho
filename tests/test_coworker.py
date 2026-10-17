@@ -1520,6 +1520,82 @@ def test_agent_bound_action_cannot_dispatch_before_its_step(container):
     container.repository.mark_worker_drained(worker_id)
 
 
+def test_agent_dispatch_requires_an_active_worker_claim(container):
+    from services.coworker.agent_schemas import AgentRunCreate
+    from services.coworker.worker import Dispatcher
+
+    enabled = replace(container.settings, agent_runtime_enabled=True)
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Prepare a bounded work plan.", output_language="en"),
+        "agent-dispatch-without-claim",
+    )
+    worker_id = container.repository.register_worker(
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision,
+    )
+    assert container.repository.heartbeat_worker(worker_id) == "running"
+
+    with pytest.raises(CoworkerError) as blocked:
+        asyncio.run(Dispatcher(container, object(), worker_id).dispatch_agent_run(run["id"]))
+    assert blocked.value.code == "worker_claim_missing"
+    container.repository.mark_worker_drained(worker_id)
+
+
+def test_dispatch_batch_failure_closes_unattempted_claims(container):
+    from services.coworker.models import WorkerClaim, WorkerInstance, utcnow
+    from services.coworker.worker import Dispatcher
+    from services.coworker.worker_claims import add_worker_claim
+
+    worker_id = container.repository.register_worker(
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision,
+    )
+    assert container.repository.heartbeat_worker(worker_id) == "running"
+    resource_ids = ["first-dispatch", "unattempted-dispatch"]
+    with container.repository.sessions.begin() as db:
+        worker = db.get(WorkerInstance, worker_id)
+        for resource_id in resource_ids:
+            add_worker_claim(
+                db,
+                worker=worker,
+                claim_type="task_dispatch",
+                resource_id=resource_id,
+                now=utcnow(),
+            )
+
+    attempted = []
+
+    async def fail_first(resource_id):
+        attempted.append(resource_id)
+        raise RuntimeError("simulated Temporal dispatch failure")
+
+    async def run_batch():
+        await Dispatcher(container, object(), worker_id)._dispatch_claim_batch(
+            "task_dispatch", resource_ids, fail_first,
+        )
+
+    with pytest.raises(RuntimeError, match="simulated Temporal dispatch failure"):
+        asyncio.run(run_batch())
+
+    assert attempted == ["first-dispatch"]
+    with container.repository.sessions() as db:
+        claims = db.scalars(select(WorkerClaim).where(
+            WorkerClaim.worker_id == worker_id,
+        )).all()
+        assert {claim.resource_id: claim.state for claim in claims} == {
+            "first-dispatch": "completed",
+            "unattempted-dispatch": "completed",
+        }
+        assert all(claim.completed_at is not None for claim in claims)
+    assert container.repository.worker_inventory()[0]["active_claim_count"] == 0
+    container.repository.mark_worker_drained(worker_id)
+
+
 def test_worker_claim_model_matches_migration(container):
     from sqlalchemy import inspect
     from services.coworker.models import WorkerClaim
