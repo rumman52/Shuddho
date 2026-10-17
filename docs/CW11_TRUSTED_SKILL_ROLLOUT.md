@@ -142,7 +142,26 @@ The evidence gate proves:
 - a fresh compatible worker is running;
 - no incompatible active/draining worker remains;
 - no active pre-fence reviewed tasks remain;
-- control-event history is retained.
+- any registered legacy worker row is explicitly `drained` and has a durable
+  `drained_at` timestamp; missing or inconsistent drain evidence blocks;
+- control-event history is retained;
+- the shared read-only rollback task-ledger classifier reports no blockers:
+  active unfenced reviewed Tasks, active reviewed-workflow Tasks missing their
+  identity, and ambiguous active legacy Agent research without an identity all
+  block collection;
+- the evidence artifact includes aggregate task-ledger counts only, not Task
+  IDs, owner identifiers or private Task content;
+- the collector itself revalidates external Render evidence for strict schema
+  and boolean types, distinct worker service IDs, exact instance-count types,
+  and full commit SHAs matching the requested old revision and candidate
+  deployment revision.
+
+The external payload's `verified` field is not trusted on its own: the
+protected workflow first reads live Render service, instance and deployment
+state, then the collector validates the resulting payload again. The task
+ledger remains a point-in-time database snapshot; it cannot prove admission
+quiescence, absence of in-flight Temporal/provider work, or complete worker-fleet
+drain without the separate operated procedure.
 
 ## Rollback
 
