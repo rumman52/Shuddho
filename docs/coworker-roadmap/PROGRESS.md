@@ -1,16 +1,20 @@
-## CW-11 registry lock-order and runtime fleet safety continuation — 17 October 2026 (Asia/Dhaka)
+## CW-11 worker-registration phantom fence — 17 October 2026 (Asia/Dhaka)
 
-**Live baseline:** `main` `640f42f0dbc289ab7b28d86128cbe88cb4610fcb`, including merged PR #446. The runtime fleet/drain source and regression work from PR #447 is preserved and rebased onto this current baseline. This PR remains open and unmerged; its earlier exact-head CI does not qualify the new revision.
+**Mainline baseline:** PR #447, which fixed the reviewed-skill registry lock order and worker shutdown evidence, is merged as `e8de414e8b98eb503700a85474190304e28e58ed`. Merged-main CI run [#39005416159](https://github.com/rumman52/Shuddho/actions/runs/39005416159) completed successfully.
 
-**Defect:** reviewed-skill registry controls had inconsistent PostgreSQL lock order. Selection locked the worker inventory before publication/selection; admission locked selection/publication before the worker inventory; rollback locked selection/publications before the worker inventory. Concurrent selection against admission or rollback could form a row-lock cycle.
+**Remaining race:** PostgreSQL row locks protect existing worker rows, not a worker inserted after the inventory query. Without queue-membership serialization, a new incompatible worker could appear between the reviewed-skill fleet snapshot and selection commit.
 
-**Implementation:** canonical order is worker inventory rows ordered by stable worker ID, then the selection row, then publication rows. Admission uses non-locking reads only for early error classification, then acquires worker locks and re-reads/revalidates the locked selection and publication. Selection and rollback follow the same order. A new barrier-controlled PostgreSQL regression exercises both selection-versus-admission and selection-versus-rollback; CI now requires this module with zero skips. No schema, API, grant, provider budget, workflow identity or default-off control was changed.
+**Implementation on branch `codex/cw11-worker-registration-fence-20261017`:**
+- Add a deterministic transaction-scoped PostgreSQL advisory lock per task queue.
+- Acquire it in both the fleet-compatibility snapshot and `register_worker()`, before worker-row or selection/publication work.
+- After selection exists, reject registration for the configured queue if the selected publication is non-authoritative or its source revision differs from the incoming worker. Preserve isolation for unrelated queues.
+- Add a SQLite contract test and a barrier-controlled PostgreSQL race test. The PostgreSQL test must be collected by the mandatory CW-11 JUnit gate with zero skips.
+- Document the guarantee and its boundary; no schema migration, public API change, expanded grant, external action, deployment or activation.
 
-**SQLite investigation remains open:** the earlier parallel full-suite run recorded one meeting-artifact test failure and one code-proposal setup error reporting malformed-schema/duplicate-index symptoms. Both passed on a serial rerun, but the cause was not established. This patch does not claim a SQLite fix or treat a retry as root-cause evidence.
+**Validation status:** the implementation, regression tests and documentation are committed to the follow-up branch, but exact-head CI and independent review are pending. The successful merged-main run does not qualify this follow-up. No local test execution is claimed.
 
-**Validation:** fresh exact-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` are required after this rebased implementation. The PostgreSQL regression must be collected and pass with zero skips. Staging and production qualification remain unverified.
+**Remaining gates:** per-claim drain fencing for Agent/action outboxes; protected `CW11-STAGING` using real authorized worker identities, confirmed drain and exact-revision evidence; four operated coworker scenarios; independent operational review; and separate production qualification/activation authorization. The intermittent parallel SQLite malformed-schema/duplicate-index symptoms also remain unexplained; a serial rerun is not root-cause evidence.
 
-**Remaining gates:** worker-registration snapshot/phantom race, per-claim Agent/action drain fencing, protected staging with actual worker identities and process-recovery evidence, four operated coworker scenarios, and separately authorized activation. No deployment, activation or external action is claimed.
 
 ---
 

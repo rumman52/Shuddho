@@ -193,6 +193,81 @@ def test_selection_requires_compatible_fleet_and_never_auto_selects(container):
     assert new
 
 
+def test_worker_registration_fences_legacy_revision_and_allows_candidate_rollout(container):
+    old_worker = worker(container, REV_A)
+    publish(container, "research_registration_fence_v0", source_revision=REV_A)
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_registration_fence_v0",
+        actor_reference="cw11-test-operator",
+        reason="seed the currently selected release",
+        worker_source_revision=REV_A,
+    )
+
+    # A legacy revision cannot be introduced through the current runtime's
+    # registration path after selection.
+    with pytest.raises(CoworkerError) as blocked:
+        container.repository.register_worker(
+            task_queue=container.settings.task_queue,
+            source_revision=REV_B,
+        )
+    assert blocked.value.code == "worker_fleet_incompatible"
+    assert {
+        row["source_revision"]
+        for row in container.repository.worker_inventory(
+            task_queue=container.settings.task_queue,
+        )
+    } == {REV_A}
+
+    # A candidate deployment must be able to start while the old publication
+    # remains selected; selection is the later gate that requires old workers
+    # to finish draining before the new revision can be selected.
+    container.settings = replace(container.settings, source_revision=REV_B)
+    container.repository.settings = container.settings
+    candidate_worker = container.repository.register_worker(
+        task_queue=container.settings.task_queue,
+        source_revision=REV_B,
+    )
+    assert container.repository.heartbeat_worker(candidate_worker) == "running"
+    publish(container, "research_registration_fence_v1", source_revision=REV_B)
+
+    with pytest.raises(CoworkerError) as mixed_fleet:
+        container.repository.select_reviewed_skill(
+            REVIEWED_RESEARCH_SKILL,
+            "research_registration_fence_v1",
+            actor_reference="cw11-test-operator",
+            reason="candidate must wait for old worker drain",
+            worker_source_revision=REV_B,
+        )
+    assert mixed_fleet.value.code == "worker_fleet_incompatible"
+    assert (
+        container.repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL)["publication_version"]
+        == "research_registration_fence_v0"
+    )
+
+    container.repository.mark_worker_drained(old_worker)
+    selected = container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_registration_fence_v1",
+        actor_reference="cw11-test-operator",
+        reason="select after explicit old worker drain",
+        worker_source_revision=REV_B,
+    )
+    assert selected["publication_version"] == "research_registration_fence_v1"
+
+    # A separate task queue is not governed by this queue's reviewed selection.
+    unrelated = container.repository.register_worker(
+        task_queue="cw11-unrelated-queue",
+        source_revision=REV_A,
+    )
+    assert any(
+        row["id"] == unrelated and row["source_revision"] == REV_A
+        for row in container.repository.worker_inventory(
+            task_queue="cw11-unrelated-queue",
+        )
+    )
+
+
 def test_selected_publication_remains_the_agent_gate_after_feature_flag_off(container):
     worker(container, REV_A)
     publish(container, "research_reviewed_flag_off", source_revision=REV_A)
