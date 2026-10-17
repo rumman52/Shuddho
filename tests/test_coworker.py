@@ -3301,3 +3301,254 @@ def test_core_agent_phase3_verified_action_checkpoints_and_completes(container):
     assert kinds.count("verify_result") == 1
     assert kinds.count("complete") == 1
     assert result["resume_from"] == "complete"
+
+
+def test_late_v3_planner_response_cannot_record_decision_or_memory_after_cancel(container):
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentRunCreate, AgentV3Decision
+    from services.coworker.models import AgentDecision, MemoryProposal, ToolInvocation
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_runtime_v3_enabled=True,
+        intelligent_planner_enabled=True,
+        work_services_enabled=True,
+        artifact_services_enabled=True,
+        agent_memory_enabled=True,
+        context_retrieval_enabled=True,
+        max_active_agent_runs=10,
+        max_agent_v3_planner_calls=2,
+        agent_v3_planner_token_budget=16000,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.context.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Create a concise project update.", output_language="en"),
+        "cw02-late-v3-cancel",
+    )
+    assert run["runtime_version"] == 3
+    decision = AgentV3Decision.model_validate({
+        "decision": "next_step",
+        "tool": "email.draft",
+        "objective": "Draft a concise project update.",
+        "memory_proposal": {
+            "namespace": "preferences",
+            "key": "cancelled_run_update_style",
+            "value": "Prefer concise project updates.",
+            "language": "en",
+            "source_ids": ["goal"],
+        },
+    })
+
+    async def exercise():
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class LatePlanner:
+            async def decide(self, *_args, **_kwargs):
+                entered.set()
+                await release.wait()
+                return decision, 24, 1, {
+                    "model": "test-model",
+                    "prompt_sha256": "a" * 64,
+                    "tool_schema_sha256": "b" * 64,
+                }
+
+        runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()), planner=LatePlanner())
+        pending = asyncio.create_task(runtime.decide_v3(run["id"]))
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        cancelled = container.agent.cancel(owner, run["id"])
+        assert cancelled["state"] == "cancelled"
+        release.set()
+        with pytest.raises(CoworkerError) as failure:
+            await pending
+        assert failure.value.code == "agent_cancelled"
+
+    asyncio.run(exercise())
+    saved = container.agent.get(owner, run["id"])
+    assert saved["state"] == "cancelled"
+    with container.repository.sessions() as db:
+        assert db.scalars(select(AgentDecision).where(
+            AgentDecision.run_id == run["id"],
+        )).all() == []
+        assert db.scalars(select(MemoryProposal).where(
+            MemoryProposal.run_id == run["id"],
+        )).all() == []
+        assert db.scalars(select(ToolInvocation).where(
+            ToolInvocation.run_id == run["id"],
+        )).all() == []
+
+
+def test_cancelled_run_cannot_accept_late_memory_proposal(container):
+    from services.coworker.agent_schemas import AgentMemoryProposal, AgentRunCreate
+    from services.coworker.models import MemoryProposal
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_runtime_v3_enabled=True,
+        intelligent_planner_enabled=True,
+        work_services_enabled=True,
+        agent_memory_enabled=True,
+        context_retrieval_enabled=True,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.context.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Use concise weekly updates.", output_language="en"),
+        "cw02-cancelled-memory-proposal",
+    )
+    _context, source_map = container.context.planner_context(owner, run["id"])
+    assert "goal" in source_map
+    container.agent.cancel(owner, run["id"])
+    proposal = AgentMemoryProposal(
+        namespace="preferences",
+        key="cancelled_run_preference",
+        value="Use concise weekly updates.",
+        language="en",
+        source_ids=["goal"],
+    )
+    with pytest.raises(CoworkerError) as failure:
+        container.memory.propose_from_agent(owner, run["id"], proposal, source_map)
+    assert failure.value.code == "agent_cancelled"
+    assert container.memory.proposals(owner) == []
+    with container.repository.sessions() as db:
+        assert db.scalars(select(MemoryProposal).where(
+            MemoryProposal.run_id == run["id"],
+        )).all() == []
+
+
+def test_recorded_v3_decision_replay_remains_idempotent_after_cancel(container):
+    from services.coworker.agent_schemas import AgentRunCreate, AgentV3Decision
+    from services.coworker.models import AgentDecision
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_runtime_v3_enabled=True,
+        intelligent_planner_enabled=True,
+        work_services_enabled=True,
+        agent_memory_enabled=True,
+        context_retrieval_enabled=True,
+        max_active_agent_runs=10,
+        max_agent_v3_planner_calls=2,
+        agent_v3_planner_token_budget=16000,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.context.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Draft a concise project update.", output_language="en"),
+        "cw02-v3-decision-replay-after-cancel",
+    )
+    assert run["runtime_version"] == 3
+    decision = AgentV3Decision.model_validate({
+        "decision": "next_step",
+        "tool": "email.draft",
+        "objective": "Draft a concise project update.",
+    })
+    record = {
+        "planner_call": 1,
+        "model": "test-model",
+        "prompt_sha256": "a" * 64,
+        "tool_schema_sha256": "b" * 64,
+        "observation_count": 0,
+        "total_tokens": 24,
+        "cost_microusd": None,
+    }
+
+    container.agent.record_v3_decision(run["id"], decision, **record)
+    cancelled = container.agent.cancel(owner, run["id"])
+    assert cancelled["state"] == "cancelled"
+
+    # An identical planner-call replay is a no-op even after the run is terminal.
+    container.agent.record_v3_decision(run["id"], decision, **record)
+    with container.repository.sessions() as db:
+        rows = db.scalars(select(AgentDecision).where(
+            AgentDecision.run_id == run["id"],
+        )).all()
+    assert len(rows) == 1
+
+
+def test_terminal_v3_run_rejects_late_decision_and_memory_proposal(container):
+    from services.coworker.agent_schemas import AgentMemoryProposal, AgentRunCreate, AgentV3Decision
+    from services.coworker.models import AgentDecision, MemoryProposal
+
+    enabled = replace(
+        container.settings,
+        agent_runtime_enabled=True,
+        agent_runtime_v3_enabled=True,
+        intelligent_planner_enabled=True,
+        work_services_enabled=True,
+        artifact_services_enabled=True,
+        agent_memory_enabled=True,
+        context_retrieval_enabled=True,
+        max_active_agent_runs=10,
+        max_agent_v3_planner_calls=2,
+        agent_v3_planner_token_budget=16000,
+    )
+    container.settings = enabled
+    container.repository.settings = enabled
+    container.agent.settings = enabled
+    container.context.settings = enabled
+    container.memory.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner,
+        AgentRunCreate(goal="Prepare a concise project update.", output_language="en"),
+        "cw02-v3-terminal-late-write",
+    )
+    _context, source_map = container.context.planner_context(owner, run["id"])
+    container.agent.v3_terminal(run["id"], "blocked", "No registered tool is available.")
+
+    decision = AgentV3Decision.model_validate({
+        "decision": "next_step",
+        "tool": "email.draft",
+        "objective": "Draft a concise project update.",
+    })
+    with pytest.raises(CoworkerError) as failure:
+        container.agent.record_v3_decision(
+            run["id"], decision,
+            planner_call=1,
+            model="test-model",
+            prompt_sha256="a" * 64,
+            tool_schema_sha256="b" * 64,
+            observation_count=0,
+            total_tokens=24,
+            cost_microusd=None,
+        )
+    assert failure.value.code == "agent_cancelled"
+
+    proposal = AgentMemoryProposal(
+        namespace="preferences",
+        key="blocked_run_preference",
+        value="Use concise project updates.",
+        language="en",
+        source_ids=["goal"],
+    )
+    with pytest.raises(CoworkerError) as failure:
+        container.memory.propose_from_agent(owner, run["id"], proposal, source_map)
+    assert failure.value.code == "agent_cancelled"
+    with container.repository.sessions() as db:
+        assert db.scalars(select(AgentDecision).where(
+            AgentDecision.run_id == run["id"],
+        )).all() == []
+        assert db.scalars(select(MemoryProposal).where(
+            MemoryProposal.run_id == run["id"],
+        )).all() == []
+

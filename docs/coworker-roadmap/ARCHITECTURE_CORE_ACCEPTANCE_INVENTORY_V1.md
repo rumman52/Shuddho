@@ -1,3 +1,25 @@
+## Runtime v3 late planner cancellation fence — 18 October 2026
+
+This cross-cutting correctness slice supports the CW-06 acceptance criterion “cancellation beats delayed result”; it does **not** complete all of CW-06 and is not the roadmap's CW-02 transaction-chaos qualification task. PR [#455](https://github.com/rumman52/Shuddho/pull/455), branch `codex/cw02-v3-cancellation-race-20261018`. The branch name retains its historical `cw02` segment from the original test-only commit.
+
+Initial failing-first head `87a37898979455b62b248098d3c5027f3490f5cd` was based on `e52006c112c8b07623dbe1c07dc982406ce31084`, not current main. [CI #39059380961](https://github.com/rumman52/Shuddho/actions/runs/39059380961) passed `test-and-build` but the mandatory `coworker` suite failed two new tests (2 failed, 1407 passed): a late planner response persisted an `AgentDecision` after cancellation, and direct late memory-proposal persistence was accepted. The candidate code/test commit `dcec2490057be63ad366a9aa4eda4c15a679a898` is rebased on current main `515dbc8d842645e3b93403cbe003e707642a4955`.
+
+The implementation rechecks `cancel_requested` and terminal state under the existing `AgentRun` row lock in `AgentRepository.record_v3_decision` and `MemoryRepository.propose_from_agent`. The decision method preserves lookup-before-terminal-check ordering so an already-committed planner-call decision replays idempotently. Regression coverage also checks a non-cancelled terminal state. No schema or API changes; no capability flags or external authority changed.
+
+| Requirement | Evidence / status |
+| --- | --- |
+| Reject late planner decision after cancellation | Implemented on PR #455; exact-head CI pending |
+| Reject late memory proposal after cancellation | Implemented on PR #455; exact-head CI pending |
+| Reject writes after other terminal states | Regression added; exact-head CI pending |
+| Preserve idempotent replay of an existing decision | Regression added; exact-head CI pending |
+| Full CW-06 conversation dispatch/steering acceptance | Not established by this safety slice |
+| CW-02 transaction-chaos qualification | Separate task; not established by this change |
+| Production qualification / activation | Not established / not activated |
+
+Next: verify `test-and-build`, mandatory `coworker`, and `ci-merge-gate` on the latest PR head; resolve failures without relaxing assertions; then obtain independent review and operated qualification. This slice must not be described as completing CW-06, CW-02, or the full Architecture/Core Agent scope.
+
+---
+
 **17 October 2026 refreshed CW-11 status:** current `main` is `e52006c112c8b07623dbe1c07dc982406ce31084`; PR [#453](https://github.com/rumman52/Shuddho/pull/453) is merged and merged-head CI passed all three required jobs. Follow-up branch `codex/cw11-staging-workflow-fail-closed-20261017` fixes shell-input interpolation, enforces main-only dispatch and validates Render identities, with regression tests; its exact-head CI is pending. **C-05 is not staging-qualified**: no protected staging run, independent operational sign-off, production qualification or activation is claimed. The capability remains default-off.
 
 **17 October 2026 current CW-11 registry concurrency checkpoint**: live `main` is `640f42f0dbc289ab7b28d86128cbe88cb4610fcb` after merged PR #446. PR #447 is rebased to this baseline and retains its uncertain-worker/confirmed-Temporal-drain safeguards. Selection, admission and rollback now share the PostgreSQL lock order worker rows (stable ID order) → selection row → publication row(s); admission revalidates after locks. Mandatory CI adds deterministic PostgreSQL interleavings for selection versus admission and rollback. The intermittent SQLite malformed-schema/duplicate-index failure remains unexplained; serial rerun success is not a fix. Exact-head CI is pending for this revision. C-05, staging qualification, production qualification and activation remain incomplete.

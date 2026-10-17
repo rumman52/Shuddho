@@ -1,3 +1,23 @@
+## Runtime v3 late planner cancellation fence — 18 October 2026 (Asia/Dhaka)
+
+**Roadmap mapping:** this is a cross-cutting correctness slice supporting the CW-06 acceptance criterion “cancellation beats delayed result.” It does **not** complete all of CW-06 and is not the roadmap's CW-02 transaction-chaos task. The branch name retains its historical `cw02` segment from the original failing-first test commit.
+
+**Reproduction-first evidence:** the initial failing-first test commit `87a37898979455b62b248098d3c5027f3490f5cd` was based on `e52006c112c8b07623dbe1c07dc982406ce31084`, before 13 newer mainline commits. [CI run #39059380961](https://github.com/rumman52/Shuddho/actions/runs/39059380961) passed `test-and-build` but failed the mandatory `coworker` job with **2 failed, 1407 passed** in 647.14 seconds. The race test observed an `AgentDecision` persisted after cancellation; the direct memory test showed `propose_from_agent` accepted a proposal after cancellation. The `ci-merge-gate` failed because the required coworker job failed. This is the confirmed pre-fix reproduction.
+
+**Implementation:** the candidate code/test commit `dcec2490057be63ad366a9aa4eda4c15a679a898` was rebased onto current `main` `515dbc8d842645e3b93403cbe003e707642a4955`. `AgentRepository.record_v3_decision` now checks cancellation/terminal state under the existing run-row lock after the planner-call idempotency lookup; an already-recorded decision still replays without duplication. `MemoryRepository.propose_from_agent` rejects cancelled/terminal runs under its existing run-row lock before proposal persistence. Regressions cover cancellation races, direct late proposals, non-cancelled terminal runs, and idempotent replay. Task contract: [Runtime v3 late planner cancellation](RUNTIME_V3_LATE_PLANNER_CANCELLATION_2026-10-18.md).
+
+| Evidence level | Status |
+| --- | --- |
+| Implemented | Yes — source and regressions are on PR #455 |
+| Repository-verified | Pending exact-final-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` |
+| Staging-verified | Not established; operated CW-02 transaction-chaos and full CW-06 acceptance remain separate |
+| Production-qualified | Not established |
+| Activated | No |
+
+No provider was called, no secret or protected staging environment was accessed, no deployment or capability activation occurred, and no independent review is claimed. **Next exact action:** inspect all required CI jobs on the final PR head, repair real failures without weakening safety assertions, then obtain independent review and complete the authorized operated cancellation/recovery qualification.
+
+---
+
 ## CW-11 staging workflow shell-input hardening — 17 October 2026 (Asia/Dhaka)
 
 PR [#453](https://github.com/rumman52/Shuddho/pull/453) merged as `e52006c112c8b07623dbe1c07dc982406ce31084`; its exact-head CI [#39053340279](https://github.com/rumman52/Shuddho/actions/runs/39053340279) passed all three required jobs. Final review then identified a separate security defect in the merged workflow: user-supplied old-source-revision and expected-publication-version inputs were interpolated into shell command source.

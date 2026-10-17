@@ -152,6 +152,17 @@ class MemoryRepository:
             ).with_for_update())
             if run is None:
                 raise not_found()
+            # Revalidate run authority at persistence time, not only before the
+            # asynchronous planner call. Cancellation and terminal transitions use
+            # the same run-row lock, so a late response cannot create new memory.
+            if run.cancel_requested or run.state in {
+                "completed", "failed", "cancelled", "needs_input", "blocked",
+            }:
+                raise CoworkerError(
+                    "agent_cancelled",
+                    "The Agent run is no longer active.",
+                    409,
+                )
             existing = db.scalar(select(MemoryProposal).where(
                 MemoryProposal.owner_id == owner,
                 MemoryProposal.run_id == run.id,

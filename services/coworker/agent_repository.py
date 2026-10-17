@@ -2252,7 +2252,17 @@ class AgentRepository:
                 AgentDecision.planner_call == planner_call,
             ))
             if existing is not None:
+                # Preserve idempotent replay of a decision committed before cancellation.
                 return
+            # The planner response may have been produced while this run was active,
+            # then arrive after cancellation or another terminal transition. The run
+            # row lock makes this check atomic with cancel()/terminal-state changes.
+            if run.cancel_requested or run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_cancelled",
+                    "The Agent run is no longer active.",
+                    409,
+                )
             sequence = db.scalar(select(func.count()).select_from(AgentDecision).where(
                 AgentDecision.run_id == run.id,
             )) + 1
