@@ -22,6 +22,7 @@ from .worker_claims import (
     add_worker_claim,
     complete_worker_claim as finish_dispatch_claim,
     lock_running_worker,
+    require_active_worker_claim as require_dispatch_claim,
     require_no_active_worker_claims,
 )
 from .schemas import TaskCreate, UploadRequest
@@ -580,6 +581,17 @@ class Repository:
         self, *, worker_id: str, claim_type: str, resource_id: str,
     ) -> bool:
         return finish_dispatch_claim(
+            self.sessions,
+            worker_id=worker_id,
+            claim_type=claim_type,
+            resource_id=resource_id,
+        )
+
+
+    def require_active_worker_claim(
+        self, *, worker_id: str | None, claim_type: str, resource_id: str,
+    ) -> None:
+        require_dispatch_claim(
             self.sessions,
             worker_id=worker_id,
             claim_type=claim_type,
