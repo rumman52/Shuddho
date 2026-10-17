@@ -15,7 +15,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
-from coworker_worker_helpers import dispatch_tick, run_dispatcher
+from coworker_worker_helpers import dispatch_tick
 import httpx
 
 pytest.importorskip("sqlalchemy")
