@@ -1,3 +1,23 @@
+## CW-02 Runtime v3 late planner cancellation fence — 18 October 2026 (Asia/Dhaka)
+
+**Fresh base:** `main` `515dbc8d842645e3b93403cbe003e707642a4955`. Draft [PR #455](https://github.com/rumman52/Shuddho/pull/455), branch `codex/cw02-v3-cancellation-race-20261018`, contains the implementation slice and failing-first regression coverage. Task contract: [CW-02 v3 late planner cancellation](CW02_V3_LATE_PLANNER_CANCELLATION_2026-10-18.md).
+
+**Reproduction-first evidence:** exact-head [CI run #39059380961](https://github.com/rumman52/Shuddho/actions/runs/39059380961) passed `test-and-build` but failed the mandatory `coworker` job with **2 failed, 1407 passed** in 647.14 seconds. The new race test observed an `AgentDecision` persisted after cancellation; the direct memory test showed `propose_from_agent` accepted a proposal after cancellation. The `ci-merge-gate` failed because the required coworker job failed. This is the confirmed pre-fix reproduction, not evidence for the final candidate.
+
+**Implementation on PR #455:** `AgentRepository.record_v3_decision` now checks cancellation/terminal state under the existing run-row lock after the existing planner-call idempotency lookup; an already-recorded decision still replays without duplication. `MemoryRepository.propose_from_agent` now rejects cancelled/terminal runs under its existing run-row lock before proposal persistence. Added regressions for cancellation races, direct late proposals, terminal non-cancelled runs, and idempotent replay. No schema/API/provider/credential/staging/activation change.
+
+| Evidence level | Status |
+| --- | --- |
+| Implemented | Yes — on PR #455; inspect the latest branch head |
+| Repository-verified | Pending exact-final-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` |
+| Staging-verified | Not established; operated CW-02 PostgreSQL/Temporal/process-interruption matrix remains outstanding |
+| Production-qualified | Not established |
+| Activated | No |
+
+No provider was called, no secret or protected staging environment was accessed, no deployment or capability activation occurred, and no independent review is claimed. **Next exact action:** inspect all required CI jobs on the final PR head, repair any real failures without weakening the safety assertions, then obtain independent review and complete the authorized operated CW-02 qualification matrix.
+
+---
+
 ## CW-11 staging workflow shell-input hardening — 17 October 2026 (Asia/Dhaka)
 
 PR [#453](https://github.com/rumman52/Shuddho/pull/453) merged as `e52006c112c8b07623dbe1c07dc982406ce31084`; its exact-head CI [#39053340279](https://github.com/rumman52/Shuddho/actions/runs/39053340279) passed all three required jobs. Final review then identified a separate security defect in the merged workflow: user-supplied old-source-revision and expected-publication-version inputs were interpolated into shell command source.
