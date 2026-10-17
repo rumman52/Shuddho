@@ -393,6 +393,7 @@ def test_active_task_dispatch_claim_blocks_drain_certification(container):
     with container.repository.sessions.begin() as db:
         db.add(Outbox(task_id=task["id"], delivered=False))
 
+    assert container.repository.claim_outbox() == []
     assert container.repository.claim_outbox(worker_id=worker_id) == [task["id"]]
     assert container.repository.request_worker_drain(
         task_queue=container.settings.task_queue,
