@@ -38,6 +38,28 @@ def test_bad_confirmation_fails_before_staging_environment_or_secrets():
     assert "environment:\n      name: staging" in evidence
 
 
+def test_staging_secrets_are_scoped_to_the_steps_that_need_them():
+    source = WORKFLOW_PATH.read_text(encoding="utf-8")
+    evidence = _job_section(source, "evidence")
+    evidence_header = evidence.split("    steps:", maxsplit=1)[0]
+    render_check = evidence.split(
+        "- name: Verify live Render mixed-version drain state", maxsplit=1
+    )[1].split("- name: Apply pending staging migrations", maxsplit=1)[0]
+    migration = evidence.split(
+        "- name: Apply pending staging migrations", maxsplit=1
+    )[1].split("- name: Collect CW-11 staging evidence", maxsplit=1)[0]
+    collector = evidence.split("- name: Collect CW-11 staging evidence", maxsplit=1)[1]
+
+    # Do not expose credentials to checkout, dependency installation, or
+    # unrelated steps in the protected environment job.
+    assert "secrets." not in evidence_header
+    assert "RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}" in render_check
+    assert "SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}" in migration
+    assert "SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}" in collector
+    assert "SHUDDHO_AUTH_ISSUER: ${{ secrets.SHUDDHO_STAGING_AUTH_ISSUER }}" in collector
+    assert "SHUDDHO_AUTH_ISSUER" not in migration
+
+
 def test_live_worker_drain_gate_precedes_schema_mutation_and_evidence():
     source = WORKFLOW_PATH.read_text(encoding="utf-8")
     evidence = _job_section(source, "evidence")
