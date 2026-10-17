@@ -36,7 +36,6 @@ from services.coworker.migrate import upgrade
 from services.coworker.models import Account, Artifact, DailyUsage, ModelAttempt, Outbox, Task, utcnow
 from services.coworker.runner import DocumentRunner
 from services.coworker.schemas import DraftPackage, TaskCreate, UploadRequest
-from services.coworker.worker import Dispatcher
 from coworker_worker_helpers import dispatch_tick
 
 ISSUER = "https://identity.example.test/auth/v1"
