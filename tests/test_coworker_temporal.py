@@ -389,7 +389,13 @@ def test_agent_action_cancel_before_approval_never_dispatches(container):
     cancelled = container.agent.cancel(owner, run["id"])
     assert cancelled["state"] == "cancelled"
     assert container.actions.repo.get(owner, action["id"])["state"] == "cancelled"
-    assert container.actions.repo.claim_outbox() == []
+    worker_id = container.repository.register_worker(
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision,
+    )
+    assert container.repository.heartbeat_worker(worker_id) == "running"
+    assert container.actions.repo.claim_outbox(worker_id=worker_id) == []
+    container.repository.mark_worker_drained(worker_id)
     assert provider.sent == []
 
 
