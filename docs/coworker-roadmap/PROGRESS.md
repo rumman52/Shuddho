@@ -6,8 +6,8 @@ Parent [PR #450](https://github.com/rumman52/Shuddho/pull/450) merged as `bd4fc8
 
 **Follow-up branch:** `codex/cw11-claim-aware-selection-evidence-20261017`.
 - Lock the worker fleet first, then reject reviewed-skill selection/rollback/legacy migration if any active dispatch claim remains, even when a worker row claims to be drained.
-- Make CW-11 staging evidence reject a legacy worker row with active claims and include the old-fleet active-claim count in the artifact.
-- Add regression tests that simulate a legacy false-drain row and prove both registry controls and the staging collector fail closed.
+- Make CW-11 staging evidence reject a legacy worker row with active claims, reject a missing legacy worker row, and include the old-fleet active-claim count in the artifact.
+- Add regression tests that simulate a legacy false-drain row and missing legacy inventory, proving registry controls and staging evidence fail closed.
 
 This is repository code/test work only. Protected Render staging, independent operational review, four operated coworker scenarios, production qualification, deployment, and activation remain unverified.
 
