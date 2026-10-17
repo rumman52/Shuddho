@@ -14,10 +14,16 @@ from .errors import CoworkerError
 from .models import (
     Account, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document,
     DocumentVersion, ModelAttempt, Outbox, ReviewedSkillPublication,
-    ReviewedSkillRegistryEvent, ReviewedSkillSelection, Step, Task, TaskEvent, ToolInvocation, WorkerInstance,
+    ReviewedSkillRegistryEvent, ReviewedSkillSelection, Step, Task, TaskEvent, ToolInvocation, WorkerClaim, WorkerInstance,
     Workspace, utcnow,
 )
 from .provider_capacity import acquire_provider_lease, release_provider_lease, settle_provider_lease
+from .worker_claims import (
+    add_worker_claim,
+    complete_worker_claim as finish_dispatch_claim,
+    lock_running_worker,
+    require_no_active_worker_claims,
+)
 from .schemas import TaskCreate, UploadRequest
 from .skills import SKILLS, service_enabled
 from .reviewed_skill_registry import (
@@ -543,9 +549,16 @@ class Repository:
     def mark_worker_drained(self, worker_id: str) -> None:
         with self.sessions.begin() as db:
             row = db.scalar(
-                select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
+                select(WorkerInstance).where(WorkerInstance.id == worker_id)
+                .with_for_update().execution_options(populate_existing=True)
             )
-            if row is not None and row.state in WORKER_ACTIVE_STATES:
+            if row is None:
+                return
+            # A worker may publish drain completion only after every dispatch
+            # attempt has returned. Claims are durable; a lost process leaves
+            # unresolved evidence and must not be silently certified drained.
+            require_no_active_worker_claims(db, row.id)
+            if row.state in WORKER_ACTIVE_STATES:
                 row.state = "drained"
                 row.drained_at = utcnow()
                 row.heartbeat_at = utcnow()
@@ -554,13 +567,24 @@ class Repository:
                     skill_name=REVIEWED_RESEARCH_SKILL,
                     event_type="worker_drained",
                     actor_reference="worker-self",
-                    reason="Worker completed cooperative drain.",
+                    reason="Worker completed cooperative drain with no active dispatch claims.",
                     metadata={
                         "worker_id": row.id,
                         "task_queue": row.task_queue,
                         "source_revision": row.source_revision,
+                        "active_claims": 0,
                     },
                 )
+
+    def complete_worker_claim(
+        self, *, worker_id: str, claim_type: str, resource_id: str,
+    ) -> bool:
+        return finish_dispatch_claim(
+            self.sessions,
+            worker_id=worker_id,
+            claim_type=claim_type,
+            resource_id=resource_id,
+        )
 
     def request_worker_drain(
         self, *, task_queue: str, source_revision: str,
@@ -605,6 +629,11 @@ class Repository:
             if task_queue:
                 stmt = stmt.where(WorkerInstance.task_queue == task_queue)
             rows = db.scalars(stmt).all()
+            active_claim_counts = dict(db.execute(
+                select(WorkerClaim.worker_id, func.count(WorkerClaim.id))
+                .where(WorkerClaim.state == "active")
+                .group_by(WorkerClaim.worker_id)
+            ).all())
             cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
             return [{
                 "id": row.id, "task_queue": row.task_queue,
@@ -616,6 +645,7 @@ class Repository:
                 "drain_requested_by": row.drain_requested_by,
                 "drain_reason": row.drain_reason,
                 "drained_at": iso(row.drained_at) if row.drained_at else None,
+                "active_claim_count": int(active_claim_counts.get(row.id, 0)),
             } for row in rows]
 
     def assert_worker_drain_complete(
@@ -634,12 +664,16 @@ class Repository:
             )
         blockers = [
             row for row in old_rows
-            if row["state"] != "drained" or row["drained_at"] is None
+            if (
+                row["state"] != "drained"
+                or row["drained_at"] is None
+                or row.get("active_claim_count", 0) != 0
+            )
         ]
         if blockers:
             raise CoworkerError(
                 "worker_drain_incomplete",
-                "The legacy worker fleet requires an explicit drained state and completion timestamp for every worker.",
+                "Every legacy worker must be explicitly drained with a completion timestamp and zero active dispatch claims.",
                 409,
             )
         return {
@@ -1678,24 +1712,33 @@ class Repository:
             self._discard_extracted_text(db, task_id)
 
     def claim_outbox(self, limit=10, *, worker_id: str | None = None):
+        # Dispatch without a registered worker identity is never authorized.
+        if worker_id is None:
+            return []
         with self.sessions.begin() as db:
             now = utcnow()
-            if worker_id is not None:
-                worker = db.scalar(
-                    select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
-                )
-                cutoff = now - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
-                if (
-                    worker is None
-                    or worker.state != "running"
-                    or aware(worker.heartbeat_at) < cutoff
-                ):
-                    return []
-                worker.heartbeat_at = now
-            rows = db.scalars(select(Outbox).where(Outbox.delivered.is_(False), or_(Outbox.lease_until.is_(None), Outbox.lease_until < now)).limit(limit).with_for_update(skip_locked=True)).all()
+            worker = lock_running_worker(
+                db,
+                worker_id=worker_id,
+                task_queue=self.settings.task_queue,
+                now=now,
+                heartbeat_ttl_seconds=WORKER_HEARTBEAT_TTL_SECONDS,
+            )
+            if worker is None:
+                return []
+            rows = db.scalars(
+                select(Outbox).where(
+                    Outbox.delivered.is_(False),
+                    or_(Outbox.lease_until.is_(None), Outbox.lease_until < now),
+                ).limit(limit).with_for_update(skip_locked=True)
+            ).all()
             for row in rows:
                 row.lease_until = now + timedelta(seconds=30)
                 row.attempts += 1
+                add_worker_claim(
+                    db, worker=worker, claim_type="task_dispatch",
+                    resource_id=row.task_id, now=now,
+                )
             return [row.task_id for row in rows]
 
     def delivered(self, task_id):
