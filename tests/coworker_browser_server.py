@@ -1,3 +1,4 @@
+from coworker_worker_helpers import dispatch_tick, run_dispatcher
 """Local-only browser fixture: real auth verification, DB, Temporal and exports.
 
 The identity and model responses are test fixtures. This file is excluded from
@@ -116,7 +117,7 @@ async def lifespan(_app):
         runner = DocumentRunner(container, BrowserModel(), research=SimulatedResearch(settings))
         runtime = AgentRuntime(container, runner, planner=BrowserAgentPlanner())
         async with make_worker(env, runner, agent_runtime=runtime):
-            dispatcher = asyncio.create_task(Dispatcher(container, env.client).run(stop))
+            dispatcher = asyncio.create_task(run_dispatcher(container, env.client, stop))
             try:
                 yield
             finally:
