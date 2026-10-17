@@ -1,3 +1,23 @@
+## CW-11 staging workflow fail-closed hardening — 17 October 2026 (Asia/Dhaka)
+
+**Fresh base:** `main` `e7a9f22834c8c84b5d4d2e81c33af7dc96d65f32`. PR [#452](https://github.com/rumman52/Shuddho/pull/452) is merged; merged-main [CI #39050236569](https://github.com/rumman52/Shuddho/actions/runs/39050236569) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`.
+
+**Next implementation slice:** draft [PR #453](https://github.com/rumman52/Shuddho/pull/453), branch `codex/cw11-staging-workflow-fail-closed-20261017`. The staging workflow previously skipped its only evidence job when the confirmation token was wrong, potentially leaving a green run with no artifact. It also applied pending staging migrations before verifying the legacy Render service had zero instances and the candidate was running the exact qualification revision.
+
+**Implemented:** separate no-secret confirmation job that fails on an incorrect token; evidence job depends on that success; live Render service/instance/revision validation precedes pending staging migrations; Render/database/auth credentials are injected only into the specific steps that need them; standard-library workflow-contract tests; rollout runbook and bounded task contract updated. The code change does not alter runtime authorization, provider behavior, schema, or capability flags.
+
+| Evidence level | Status |
+| --- | --- |
+| Implemented | Yes — draft PR #453 |
+| Repository-verified | Use the latest exact-head checks on PR #453; do not infer from the prior main run |
+| Staging-verified | Not established; the protected workflow has not been run in this session |
+| Production-qualified | Not established |
+| Activated | No; CW-11 remains default-off |
+
+No staging secrets were accessed, no protected workflow was dispatched, and no staging migration, deployment, publication selection or activation was performed. **Next exact action:** verify all three required CI jobs on PR #453's latest head; then an authorized operator must run the protected `CW11-STAGING` workflow with real service IDs and inspect the artifact, followed by independent operational review.
+
+---
+
 ## CW-11 historical migration dispatch fence — 17 October 2026 (Asia/Dhaka)
 
 **Fresh main baseline:** `main` `75521bdc77fea7366127c18ee854731880cff58b`. [PR #451](https://github.com/rumman52/Shuddho/pull/451) is merged. Its exact-head and merged-main CI runs passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate` ([PR CI #39028085374](https://github.com/rumman52/Shuddho/actions/runs/39028085374), [main CI #39030046227](https://github.com/rumman52/Shuddho/actions/runs/39030046227)). CW-11 still lacks protected staging, independent operational review, and production qualification.

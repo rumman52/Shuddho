@@ -132,7 +132,7 @@ Use the protected GitHub Actions workflow:
 - Environment: `staging`
 - Inputs: expected publication version and old source revision.
 
-The workflow applies pending migrations, runs the read-only evidence collector, and stores `cw11-staging-evidence.json` as an artifact.
+The workflow first runs a separate confirmation job that fails unless the exact `CW11-STAGING` token is supplied. That job has no staging environment or secrets; the protected evidence job cannot start unless it succeeds. Render API credentials are scoped to the live-service check, the database URL to migration and evidence collection, and the auth issuer to evidence collection; checkout and dependency installation receive no staging credentials. The evidence job verifies live Render service identity, confirms that the legacy service has zero instances, and confirms that the candidate has a live instance on the exact qualification revision **before** applying pending staging migrations. It then runs the read-only evidence collector and stores `cw11-staging-evidence.json` as an artifact. This ordering does not replace the operator's controlled drain procedure or prove the absence of in-flight Temporal/provider work.
 
 The evidence gate proves:
 
