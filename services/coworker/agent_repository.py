@@ -1847,9 +1847,10 @@ class AgentRepository:
     # Trusted worker/dispatcher boundary.
     def claim_outbox(
         self, limit: int = 10, *, worker_id: str | None = None,
+        run_ids: list[str] | None = None,
     ) -> list[str]:
         # Agent dispatch must be attributable to a live registered worker.
-        if worker_id is None:
+        if worker_id is None or run_ids == []:
             return []
         with self.sessions.begin() as db:
             now = utcnow()
@@ -1862,10 +1863,15 @@ class AgentRepository:
             )
             if worker is None:
                 return []
-            rows = db.scalars(select(AgentOutbox).where(
+            query = select(AgentOutbox).where(
                 AgentOutbox.delivered.is_(False),
                 or_(AgentOutbox.lease_until.is_(None), AgentOutbox.lease_until < now),
-            ).limit(limit).with_for_update(skip_locked=True)).all()
+            )
+            if run_ids is not None:
+                query = query.where(AgentOutbox.run_id.in_(run_ids))
+            rows = db.scalars(
+                query.limit(limit).with_for_update(skip_locked=True)
+            ).all()
             for row in rows:
                 row.lease_until = now + timedelta(seconds=30)
                 row.attempts += 1
