@@ -8,26 +8,29 @@ Prevent a worker from being inserted into the configured coworker queue between 
 
 - Add a transaction-scoped PostgreSQL advisory lock keyed deterministically by task queue.
 - Acquire the same queue-membership lock before the worker inventory query in `_require_compatible_worker_fleet()` and before inserting a row in `register_worker()`.
-- After the lock is acquired, worker registration checks the current reviewed-skill selection for the configured queue. A missing/non-authoritative selected publication fails closed; a worker revision that differs from the selected publication is rejected with `worker_fleet_incompatible`.
-- Keep other task queues isolated from the configured queue's reviewed-skill selection.
+- Require a worker registering for the configured queue to match the deployment-attested runtime revision. A candidate runtime may join while an older publication remains selected; selection itself still blocks until all active workers match the candidate revision.
+- Add Alembic migration `0061` with a PostgreSQL `BEFORE INSERT` trigger. It rejects worker-row inserts that lack a transaction-local `shuddho.worker_source_revision` attestation matching the inserted row. Updated code sets this context from the configured runtime revision; a legacy binary that predates the protocol cannot register a new worker after the migration is applied.
+- Keep other task queues isolated from the configured queue's application-level revision check.
 - Keep the existing row lock order after the queue lock: worker rows in stable ID order → selection row → publication row(s).
-- No schema migration, public API change, new grant, provider call, release activation, or deployment.
+- No public API change, new grant, provider call, release activation, or deployment. A schema migration is required for the PostgreSQL legacy-binary guard.
 
-The advisory lock is transaction-scoped and is released on commit/rollback. The implementation uses PostgreSQL's advisory-lock mechanism only when the active database dialect is PostgreSQL; production safety qualification must therefore use PostgreSQL, not infer this guarantee from SQLite behavior.
+The advisory lock is transaction-scoped and is released on commit/rollback. The PostgreSQL trigger protects against old binaries that do not cooperate with that lock. SQLite does not install this trigger, so SQLite tests do not establish the production legacy-binary guard.
 
 ## Regression coverage
 
 1. SQLite-backed contract test: after a reviewed publication is selected, registration of a worker from a different source revision is denied; a worker on an unrelated queue remains isolated.
 2. PostgreSQL interleaving test: pause selection after its fleet snapshot, attempt to register an incompatible worker concurrently, prove registration blocks on the same advisory lock, release selection, and prove the registration is then rejected.
-3. The PostgreSQL regression must be included in the mandatory CW-11 JUnit gate and must pass with zero skips.
+3. PostgreSQL trigger test: prove a direct worker-row insert without transaction-local revision attestation is rejected.
+4. All PostgreSQL regressions must be included in the mandatory CW-11 JUnit gate and pass with zero skips.
 
 ## Validation status
 
-Implementation and tests are on branch `codex/cw11-worker-registration-fence-20261017`. Exact-head CI and independent review are pending; no local execution, CI pass, staging evidence, or production qualification is claimed in this document.
+Implementation, migration and tests are on branch `codex/cw11-worker-registration-fence-20261017`. Exact-head CI and independent review are pending; no local execution, CI pass, staging evidence, or production qualification is claimed in this document.
 
 ## Remaining work
 
 - Add per-claim drain fencing for Agent/action outboxes so a drain cannot be reported complete while a claim or dispatch can still proceed.
+- Existing legacy worker processes can continue running after migration, but their new registrations are rejected; drain/rollback planning must account for a legacy process crash that cannot restart until it is upgraded.
 - Run protected `CW11-STAGING` with authorized real worker identities, verified drain, process-recovery evidence, and an inspectable artifact bound to the exact deployed revision.
 - Complete the four operated coworker scenarios and independent operational review.
 - Keep production qualification and activation disabled until their separate authorization and evidence gates pass.
