@@ -1119,10 +1119,33 @@ def test_agent_runtime_version_is_frozen_per_new_run(container):
                 self.entries[str(value["run_id"] if isinstance(value, dict) else value)] = entry
 
         client = Client()
-        dispatcher = Dispatcher(container, client)
-        await dispatcher.dispatch_agent_run(v1["id"])
-        await dispatcher.dispatch_agent_run(v2["id"])
-        await dispatcher.dispatch_agent_run(v3["id"])
+        worker_id = await asyncio.to_thread(
+            container.repository.register_worker,
+            task_queue=container.settings.task_queue,
+            source_revision=container.settings.source_revision,
+        )
+        assert await asyncio.to_thread(container.repository.heartbeat_worker, worker_id) == "running"
+        run_ids = [v1["id"], v2["id"], v3["id"]]
+        claimed = await asyncio.to_thread(
+            container.agent.claim_outbox,
+            worker_id=worker_id,
+            run_ids=run_ids,
+        )
+        assert set(claimed) == set(run_ids)
+        dispatcher = Dispatcher(container, client, worker_id)
+        try:
+            for run_id in claimed:
+                try:
+                    await dispatcher.dispatch_agent_run(run_id)
+                finally:
+                    await asyncio.to_thread(
+                        container.repository.complete_worker_claim,
+                        worker_id=worker_id,
+                        claim_type="agent_dispatch",
+                        resource_id=run_id,
+                    )
+        finally:
+            await asyncio.to_thread(container.repository.mark_worker_drained, worker_id)
         assert client.entries[v1["id"]] == AgentWorkflow.run
         assert client.entries[v2["id"]] == AgentWorkflowV2.run
         assert client.entries[v3["id"]] == AgentWorkflowV3.run
