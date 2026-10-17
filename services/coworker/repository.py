@@ -507,6 +507,14 @@ class Repository:
                             "Worker registration is blocked because its source revision differs from this deployment-attested runtime revision.",
                             409,
                         )
+            if db.get_bind().dialect.name == "postgresql":
+                # The database trigger also rejects inserts from legacy
+                # binaries that do not set this transaction-local attestation.
+                db.execute(select(func.set_config(
+                    "shuddho.worker_source_revision",
+                    worker_revision,
+                    True,
+                )))
             db.add(WorkerInstance(
                 id=worker_id, task_queue=task_queue,
                 source_revision=worker_revision,
