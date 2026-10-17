@@ -2,7 +2,7 @@
 
 PR [#453](https://github.com/rumman52/Shuddho/pull/453) merged as `e52006c112c8b07623dbe1c07dc982406ce31084`; its exact-head CI [#39053340279](https://github.com/rumman52/Shuddho/actions/runs/39053340279) passed all three required jobs. Final review then identified a separate security defect in the merged workflow: user-supplied old-source-revision and expected-publication-version inputs were interpolated into shell command source.
 
-The follow-up branch `codex/cw11-staging-workflow-fail-closed-20261017` passes those values through step-scoped environment variables, quotes shell expansions, and adds a regression test that rejects input expressions inside the relevant `run` scripts. Exact-head CI for this follow-up is pending. Do not call this follow-up repository-verified until its own `test-and-build`, mandatory `coworker`, and `ci-merge-gate` pass. Staging remains unverified, no protected workflow has been dispatched, and CW-11 remains default-off.
+The follow-up branch `codex/cw11-staging-workflow-fail-closed-20261017` passes those values through step-scoped environment variables, quotes shell expansions, rejects non-main dispatches before staging access, validates the old revision and binds service responses to requested IDs, and adds regression tests for those boundaries. Exact-head CI for this follow-up is pending. Do not call this follow-up repository-verified until its own `test-and-build`, mandatory `coworker`, and `ci-merge-gate` pass. Staging remains unverified, no protected workflow has been dispatched, and CW-11 remains default-off.
 
 ---
 
