@@ -5,7 +5,7 @@
 **Failure mode closed by this slice:** an outbox could be claimed by an Agent/action dispatcher without a registered worker identity, and the worker registry could mark a worker drained while a dispatch attempt was still in flight. A worker could also claim a batch, fail on the first dispatch, and leave the rest of that batch indistinguishable from active in-flight work.
 
 **Implementation:**
-- Add migration `0062` and durable `cw_worker_claims` records for task, Agent and approved-action dispatch claims.
+- Add migration `0062` and durable `cw_worker_claims` records for task, Agent and approved-action dispatch claims. A second-pass schema review removed a redundant ORM-only worker index; the migration/model parity regression now checks index names as well as columns.
 - Make task, Agent and action outbox claims lock the registered worker first, require a fresh `running` worker on the configured queue, and create claim records atomically with outbox leases.
 - Require an active durable claim at the Agent dispatch boundary, including staging/operator helper paths.
 - Complete claims after each dispatch attempt returns. On a batch failure, close claims for unattempted items without acknowledging their outbox rows, preserving normal lease-based retry.
