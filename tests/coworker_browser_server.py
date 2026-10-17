@@ -115,13 +115,23 @@ async def lifespan(_app):
         stop = asyncio.Event()
         runner = DocumentRunner(container, BrowserModel(), research=SimulatedResearch(settings))
         runtime = AgentRuntime(container, runner, planner=BrowserAgentPlanner())
+        worker_id = await asyncio.to_thread(
+            container.repository.register_worker,
+            task_queue=settings.task_queue,
+            source_revision=settings.source_revision,
+        )
+        state = await asyncio.to_thread(container.repository.heartbeat_worker, worker_id)
+        if state != "running":
+            raise RuntimeError(f"Browser fixture worker failed to enter running state: {state}")
         async with make_worker(env, runner, agent_runtime=runtime):
-            dispatcher = asyncio.create_task(run_dispatcher(container, env.client, stop))
+            dispatcher = asyncio.create_task(run_dispatcher(container, env.client, stop, worker_id))
             try:
                 yield
             finally:
                 stop.set()
                 await dispatcher
+        # Match production: certify drain only after the Temporal worker context exits.
+        await asyncio.to_thread(container.repository.mark_worker_drained, worker_id)
 
 
 app = FastAPI(lifespan=lifespan)
