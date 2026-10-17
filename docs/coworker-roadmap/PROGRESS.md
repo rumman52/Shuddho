@@ -6,7 +6,7 @@
 
 **Gap reproduced from current source:** `migrate_legacy_reviewed_tasks()` checked only the Task phase and search-attempt record. A Task may still appear queued after its parent Temporal workflow has been dispatched, including a lost dispatch response. Rebinding that Task's workflow/publication identity in place would cross an uncertain execution boundary.
 
-**Implemented on the review branch:** migration now requires Task state and phase to remain queued; a pristine, undispatched parent AgentOutbox; a queued/live AgentRun; a planned, never-started `research.search` step; a prepared, never-started matching invocation; no linked task resource and no ToolReceipt. Existing exact review-hash, selected-publication, grant, deadline, search-attempt and worker-drain checks remain. A single unsafe candidate aborts the whole migration transaction.
+**Implemented on the review branch:** migration now requires Task state and phase to remain queued; a pristine, undispatched parent AgentOutbox; an undispatched planning-state AgentRun; a planned, never-started `research.search` step; a prepared, never-started matching invocation; no linked task resource and no ToolReceipt. Existing exact review-hash, selected-publication, grant, deadline, search-attempt and worker-drain checks remain. A single unsafe candidate aborts the whole migration transaction.
 
 | Evidence level | Status |
 | --- | --- |
