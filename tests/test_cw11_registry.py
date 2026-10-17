@@ -588,12 +588,13 @@ def test_legacy_migration_blocks_tasks_that_may_have_been_dispatched(
         publication = db.get(
             ReviewedSkillPublication, identity.output["publication_id"],
         )
+        legacy_review_sha = publication.review_sha256
         identity.output = {
             "name": "research",
             "version": "work_research_v1",
             "tool": "research.search",
             "tool_version": "1",
-            "review_sha256": publication.review_sha256,
+            "review_sha256": legacy_review_sha,
         }
         run = db.get(AgentRun, task_row.agent_run_id)
         step = db.get(AgentStep, task_row.agent_step_id)
@@ -654,7 +655,7 @@ def test_legacy_migration_blocks_tasks_that_may_have_been_dispatched(
             "version": "work_research_v1",
             "tool": "research.search",
             "tool_version": "1",
-            "review_sha256": publication.review_sha256,
+            "review_sha256": legacy_review_sha,
         }
         migration_events = db.scalars(select(ReviewedSkillRegistryEvent).where(
             ReviewedSkillRegistryEvent.event_type == "legacy_task_migrated",
