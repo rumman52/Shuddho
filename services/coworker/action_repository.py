@@ -1422,7 +1422,7 @@ class ActionRepository:
                 )
             self._audit(db, row.owner_id, row.id, "action." + state)
 
-    def claim_outbox(self, *, worker_id: str | None = None):
+    def claim_outbox(self, *, worker_id: str | None = None, limit: int = 20):
         now = utcnow()
         with self.sessions.begin() as db:
             # Lock the worker before any dispatchable action rows. Drain requests
@@ -1468,7 +1468,7 @@ class ActionRepository:
                 ExternalAction.delivered.is_(False),
                 or_(ExternalAction.agent_run_id.is_(None), ExternalAction.agent_ready.is_(True)),
                 or_(ExternalAction.lease_until.is_(None), ExternalAction.lease_until < now),
-            ).order_by(ExternalAction.created_at).limit(20).with_for_update(skip_locked=True)).all()
+            ).order_by(ExternalAction.created_at).limit(limit).with_for_update(skip_locked=True)).all()
             for row in rows:
                 row.lease_until = now + timedelta(seconds=30)
                 add_worker_claim(
