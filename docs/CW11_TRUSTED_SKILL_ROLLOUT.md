@@ -203,3 +203,13 @@ The release is not CW-11 qualified until all three evidence layers pass:
 3. **Operational review:** an authorized reviewer confirms the exact candidate revision, publication version, rollback target, worker inventory and evidence artifact.
 
 Do not substitute a unit-test result for the staging or operational layer.
+
+## Registry transaction lock order
+
+All reviewed-skill control transactions must acquire locks in this order:
+
+1. Lock every worker row for the task queue in stable worker-ID order and validate liveness/drain state.
+2. Lock the reviewed-skill selection row and revalidate that it remains selected.
+3. Lock the publication row or rows required by the operation.
+
+Admission may use non-locking reads to preserve precise early error responses, but those reads are only observations. It must acquire the worker locks and then re-read and validate the selection and publication under lock before admitting work. Selection and rollback must never hold selection/publication locks while waiting for the worker inventory. This ordering does not fence a concurrent worker-registration phantom and does not prove whole-fleet quiescence; protected staging evidence remains required.

@@ -1,0 +1,205 @@
+"""Deterministic PostgreSQL lock-order regressions for the CW-11 skill registry."""
+from __future__ import annotations
+
+import os
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from threading import Event, current_thread
+from uuid import uuid4
+
+import pytest
+
+pytest.importorskip("sqlalchemy", reason="Install the coworker extra for CW-11 tests")
+
+from sqlalchemy import event, select
+
+from services.coworker.models import ReviewedSkillPublication, ReviewedSkillSelection
+from services.coworker.reviewed_skill_registry import (
+    REVIEWED_RESEARCH_SKILL,
+    REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
+    build_reviewed_publication,
+)
+from test_coworker_postgres import repository
+
+pytestmark = [
+    pytest.mark.coworker_integration,
+    pytest.mark.skipif(
+        not os.getenv("SHUDDHO_TEST_POSTGRES_URL"),
+        reason="Dedicated PostgreSQL test database required",
+    ),
+]
+
+REVISION = "a" * 40
+
+
+@pytest.mark.parametrize("contender", ["admission", "rollback"])
+def test_selection_uses_consistent_postgres_registry_lock_order(repository, contender):
+    """Force select to hold worker rows before a competing control can lock selection.
+
+    Before the fix, admission/rollback locked selection and publication first,
+    then waited for worker rows. Selection held worker rows and waited for the
+    selection row: a deterministic PostgreSQL lock cycle. The corrected order
+    makes the contender wait without holding registry rows.
+    """
+    engine = repository.sessions.kw["bind"]
+    if engine.dialect.name != "postgresql":
+        pytest.skip("This regression requires PostgreSQL row locks")
+
+    queue = "cw11-lock-" + uuid4().hex
+    repository.settings = replace(
+        repository.settings,
+        task_queue=queue,
+        source_revision=REVISION,
+    )
+
+    # This test shares the CI PostgreSQL schema with later test modules.
+    # Save the global selection so the concurrency race cannot leak state.
+    with repository.sessions() as db:
+        previous_row = db.scalar(select(ReviewedSkillSelection).where(
+            ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+        ))
+        previous_selection = None if previous_row is None else {
+            "publication_id": previous_row.publication_id,
+            "generation": previous_row.generation,
+            "state": previous_row.state,
+            "updated_by": previous_row.updated_by,
+            "reason": previous_row.reason,
+            "updated_at": previous_row.updated_at,
+        }
+
+    suffix = uuid4().hex[:12]
+    baseline_version = f"baseline_{suffix}"
+    candidate_version = f"candidate_{suffix}"
+    next_version = f"next_{suffix}"
+
+    def publish(version: str, rollback_target: str | None = None) -> dict:
+        value = build_reviewed_publication(
+            skill_name=REVIEWED_RESEARCH_SKILL,
+            publication_version=version,
+            task_workflow_version=REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
+            source_revision=REVISION,
+            rollback_target_version=rollback_target,
+        )
+        repository.publish_reviewed_skill(
+            value,
+            actor_reference="cw11-lock-order-test",
+            reason="Deterministic PostgreSQL lock-order regression",
+        )
+        return value
+
+    baseline = publish(baseline_version)
+    candidate = publish(candidate_version, baseline_version)
+    next_publication = publish(next_version, baseline_version)
+    assert baseline["review_sha256"] == candidate["review_sha256"] == next_publication["review_sha256"]
+    with repository.sessions() as db:
+        test_publication_ids = set(db.scalars(select(ReviewedSkillPublication.id).where(
+            ReviewedSkillPublication.skill_name == REVIEWED_RESEARCH_SKILL,
+            ReviewedSkillPublication.publication_version.in_(
+                [baseline_version, candidate_version, next_version],
+            ),
+        )).all())
+
+    worker_id = repository.register_worker(task_queue=queue, source_revision=REVISION)
+    assert repository.heartbeat_worker(worker_id) == "running"
+    repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        candidate_version,
+        actor_reference="cw11-lock-order-test",
+        reason="Seed the current selection",
+        worker_source_revision=REVISION,
+    )
+
+    worker_rows_held = Event()
+    contender_holds_selection = Event()
+    original_fleet_check = repository._require_compatible_worker_fleet
+
+    def coordinated_fleet_check(db, *, task_queue, required_source_revision):
+        result = original_fleet_check(
+            db,
+            task_queue=task_queue,
+            required_source_revision=required_source_revision,
+        )
+        if current_thread().name == "cw11-select":
+            worker_rows_held.set()
+            # Under the old order, admission/rollback can lock selection before
+            # waiting for these worker rows. Under the new order it cannot.
+            contender_holds_selection.wait(timeout=2.0)
+        return result
+
+    def observe_selection_lock(conn, cursor, statement, parameters, context, executemany):
+        normalized = " ".join(statement.lower().split())
+        if (
+            current_thread().name == "cw11-contender"
+            and "cw_reviewed_skill_selections" in normalized
+            and "for update" in normalized
+        ):
+            contender_holds_selection.set()
+
+    def select_next():
+        current_thread().name = "cw11-select"
+        return repository.select_reviewed_skill(
+            REVIEWED_RESEARCH_SKILL,
+            next_version,
+            actor_reference="cw11-lock-order-test",
+            reason="Concurrent selection",
+            worker_source_revision=REVISION,
+        )
+
+    def run_contender():
+        current_thread().name = "cw11-contender"
+        if contender == "rollback":
+            return repository.rollback_reviewed_skill(
+                REVIEWED_RESEARCH_SKILL,
+                baseline_version,
+                actor_reference="cw11-lock-order-test",
+                reason="Concurrent explicit rollback",
+                worker_source_revision=REVISION,
+            )
+        with repository.sessions.begin() as db:
+            binding = repository._require_selected_reviewed_publication(
+                db, candidate["review_sha256"],
+            )
+            return binding.publication_version
+
+    event.listen(engine, "after_cursor_execute", observe_selection_lock)
+    repository._require_compatible_worker_fleet = coordinated_fleet_check
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            selected_future = pool.submit(select_next)
+            assert worker_rows_held.wait(timeout=5), "Selection did not acquire worker rows"
+            contender_future = pool.submit(run_contender)
+
+            selected = selected_future.result(timeout=12)
+            contender_result = contender_future.result(timeout=12)
+
+        assert selected["publication_version"] == next_version
+        if contender == "admission":
+            assert contender_result == next_version
+            expected_final = next_version
+        else:
+            assert contender_result["publication_version"] == baseline_version
+            expected_final = baseline_version
+        assert repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL)["publication_version"] == expected_final
+    finally:
+        event.remove(engine, "after_cursor_execute", observe_selection_lock)
+        repository._require_compatible_worker_fleet = original_fleet_check
+        # Restore/delete the single global selection row so later PostgreSQL
+        # tests see the same registry state they would have seen without this test.
+        with repository.sessions.begin() as db:
+            current_selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+            ).with_for_update().execution_options(populate_existing=True))
+            if (
+                current_selection is not None
+                and current_selection.publication_id in test_publication_ids
+            ):
+                if previous_selection is None:
+                    db.delete(current_selection)
+                else:
+                    for field, value in previous_selection.items():
+                        setattr(current_selection, field, value)
+            elif current_selection is None and previous_selection is not None:
+                db.add(ReviewedSkillSelection(
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    **previous_selection,
+                ))

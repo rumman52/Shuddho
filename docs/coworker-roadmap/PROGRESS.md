@@ -1,3 +1,19 @@
+## CW-11 registry lock-order and runtime fleet safety continuation — 17 October 2026 (Asia/Dhaka)
+
+**Live baseline:** `main` `640f42f0dbc289ab7b28d86128cbe88cb4610fcb`, including merged PR #446. The runtime fleet/drain source and regression work from PR #447 is preserved and rebased onto this current baseline. This PR remains open and unmerged; its earlier exact-head CI does not qualify the new revision.
+
+**Defect:** reviewed-skill registry controls had inconsistent PostgreSQL lock order. Selection locked the worker inventory before publication/selection; admission locked selection/publication before the worker inventory; rollback locked selection/publications before the worker inventory. Concurrent selection against admission or rollback could form a row-lock cycle.
+
+**Implementation:** canonical order is worker inventory rows ordered by stable worker ID, then the selection row, then publication rows. Admission uses non-locking reads only for early error classification, then acquires worker locks and re-reads/revalidates the locked selection and publication. Selection and rollback follow the same order. A new barrier-controlled PostgreSQL regression exercises both selection-versus-admission and selection-versus-rollback; CI now requires this module with zero skips. No schema, API, grant, provider budget, workflow identity or default-off control was changed.
+
+**SQLite investigation remains open:** the earlier parallel full-suite run recorded one meeting-artifact test failure and one code-proposal setup error reporting malformed-schema/duplicate-index symptoms. Both passed on a serial rerun, but the cause was not established. This patch does not claim a SQLite fix or treat a retry as root-cause evidence.
+
+**Validation:** fresh exact-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` are required after this rebased implementation. The PostgreSQL regression must be collected and pass with zero skips. Staging and production qualification remain unverified.
+
+**Remaining gates:** worker-registration snapshot/phantom race, per-claim Agent/action drain fencing, protected staging with actual worker identities and process-recovery evidence, four operated coworker scenarios, and separately authorized activation. No deployment, activation or external action is claimed.
+
+---
+
 ## CW-11 staging collector task-ledger and evidence-boundary hardening — 17 October 2026 (Asia/Dhaka)
 
 **Base and dependency:** stacked on the exact CI-green head of [PR #444](https://github.com/rumman52/Shuddho/pull/444), `fdad69dafbd887285e93d559b2a71927ea2bbfcb`, because main still contains the pre-fix CW-11 regression until #444 is merged. Working branch: `codex/cw11-staging-collector-ledger-guard-20261017`. This follow-up does not merge or activate #444.
