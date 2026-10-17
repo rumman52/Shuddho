@@ -10,7 +10,7 @@
 - Require an active durable claim at the Agent dispatch boundary, including staging/operator helper paths.
 - Complete claims after each dispatch attempt returns. On a batch failure, close claims for unattempted items without acknowledging their outbox rows, preserving normal lease-based retry.
 - Make `mark_worker_drained()` refuse completion while active claims remain; expose `active_claim_count` in worker inventory and require zero claims in drain evidence.
-- Add tests for Agent/action/task claim blocking, missing worker identity, migration/model parity, and a PostgreSQL interleaving where a drain waits behind an uncommitted claim.
+- Add tests for Agent/action/task claim blocking, rejection of Agent dispatch without an active claim, failed-batch cleanup for unattempted items, migration/model column-and-index parity, and a PostgreSQL interleaving where a drain waits behind an uncommitted claim.
 
 **Safety boundary:** claims have no expiry-based auto-clear. A process crash that leaves an active claim blocks drain certification until evidence-driven reconciliation. The claim ledger tracks dispatcher work; it does not replace the existing requirement to await Temporal worker shutdown before marking the process drained. No production activation, external provider mutation, deployment or protected staging run is performed by this change.
 
