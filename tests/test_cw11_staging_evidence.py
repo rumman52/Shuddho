@@ -340,6 +340,46 @@ def test_collector_blocks_drained_legacy_worker_with_active_claim(
         )
 
 
+def test_collector_blocks_active_claim_on_drained_unexpected_revision(
+    staging_repository,
+):
+    repository, settings = staging_repository
+    seed_release(repository)
+    unexpected_revision = "c" * 40
+    worker_id = str(uuid4())
+    with repository.sessions.begin() as db:
+        db.add(WorkerInstance(
+            id=worker_id,
+            task_queue=settings.task_queue,
+            source_revision=unexpected_revision,
+            state="drained",
+            heartbeat_at=utcnow(),
+            drained_at=utcnow(),
+        ))
+        db.flush()
+        db.add(WorkerClaim(
+            id=str(uuid4()),
+            worker_id=worker_id,
+            task_queue=settings.task_queue,
+            claim_type="task_dispatch",
+            resource_id="unexpected-revision-active-dispatch",
+            state="active",
+            claimed_at=utcnow(),
+        ))
+
+    with pytest.raises(
+        CoworkerError,
+        match="worker marked drained still has active dispatch claims",
+    ):
+        evidence.collect_evidence(
+            repository,
+            staging_settings(settings),
+            expected_publication_version="research_reviewed_v1",
+            old_source_revision=OLD_REVISION,
+            render_evidence=valid_render_evidence(),
+        )
+
+
 def test_collector_blocks_drained_worker_without_timestamp(
     staging_repository,
 ):
