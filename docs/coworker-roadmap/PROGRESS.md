@@ -1,6 +1,6 @@
 ## CW-11 per-claim dispatch drain fencing — 17 October 2026 (Asia/Dhaka)
 
-**Active branch:** `codex/cw11-per-claim-drain-fencing-20261017`. This follows the merged PR #449 runtime-revision hardening. Exact-head CI and independent review for this slice are pending; no local test execution is claimed.
+**Active branch:** `codex/cw11-per-claim-drain-fencing-20261017`, [PR #450](https://github.com/rumman52/Shuddho/pull/450), initially at `950d3be74e6bc8a31ee07ae310f675821963f7e5`. Initial exact-head CI run [#39017961482](https://github.com/rumman52/Shuddho/actions/runs/39017961482): `test-and-build` passed; mandatory `coworker` failed with 1 failed / 67 passed in the CW-11 registry suite because the new task-claim test used `reviewed_task()` without selecting a reviewed publication first. The repository correctly failed closed. A test-only correction now explicitly publishes and selects the fixture publication before creating that task; all required checks must be rerun on the resulting head. The independent Codex review could not run because the configured review service reported its usage limit. No local test execution, staging qualification, deployment, or activation is claimed.
 
 **Failure mode closed by this slice:** an outbox could be claimed by an Agent/action dispatcher without a registered worker identity, and the worker registry could mark a worker drained while a dispatch attempt was still in flight. A worker could also claim a batch, fail on the first dispatch, and leave the rest of that batch indistinguishable from active in-flight work.
 
