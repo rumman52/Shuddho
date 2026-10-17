@@ -325,9 +325,19 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
         claim_outbox = value.actions.repo.claim_outbox
         # Target only this fixture's action; other PostgreSQL fixtures share the
         # disposable CI database and must not acquire workflows in this test.
-        monkeypatch.setattr(value.actions.repo, "claim_outbox", lambda: [
-            identity for identity in claim_outbox() if identity == action["id"]
-        ])
+        def claim_target_action(*, worker_id=None):
+            identities = claim_outbox(worker_id=worker_id)
+            # The repository claims atomically before this test filter runs.
+            # Release every unrelated test-fixture claim without dispatching it.
+            for identity in identities:
+                if identity != action["id"] and worker_id is not None:
+                    value.repository.complete_worker_claim(
+                        worker_id=worker_id,
+                        claim_type="action_dispatch",
+                        resource_id=identity,
+                    )
+            return [identity for identity in identities if identity == action["id"]]
+        monkeypatch.setattr(value.actions.repo, "claim_outbox", claim_target_action)
         async with await WorkflowEnvironment.start_time_skipping() as stopped:
             stopped_client = stopped.client
         # The server really exited; this is not an exception-only client mock.
