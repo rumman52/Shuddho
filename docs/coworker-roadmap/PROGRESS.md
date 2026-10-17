@@ -8,7 +8,7 @@
 - Add a deterministic transaction-scoped PostgreSQL advisory lock per task queue.
 - Acquire it in both the fleet-compatibility snapshot and `register_worker()`, before worker-row or selection/publication work.
 - Require registrations on the configured queue to match the deployment-attested runtime revision while still allowing a candidate runtime to start before the old publication is switched.
-- Add Alembic migration 0061 with a PostgreSQL `BEFORE INSERT` trigger requiring transaction-local `shuddho.worker_source_revision` attestation. This blocks new registrations from legacy binaries that predate the lock protocol; existing legacy rows remain available for drain checks.
+- The merged Alembic migration 0061 installs a PostgreSQL `BEFORE INSERT` trigger requiring transaction-local `shuddho.worker_source_revision` attestation. The follow-up binds that attestation to the configured runtime setting. This blocks new registrations from legacy binaries that predate the lock protocol; existing legacy rows remain available for drain checks.
 - Add a SQLite contract test, a barrier-controlled PostgreSQL race test, and a PostgreSQL regression proving un-attested inserts are rejected. The mandatory CW-11 JUnit gate must collect all PostgreSQL tests with zero skips.
 - No public API change, expanded grant, external action, deployment or activation. A PostgreSQL schema migration is required.
 
