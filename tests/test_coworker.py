@@ -1346,11 +1346,20 @@ def test_agent_outbox_is_crash_safe_and_flag_independent(container):
         row = db.get(AgentOutbox, run["id"])
         row.lease_until = utcnow() - timedelta(seconds=1)
     assert container.agent.claim_outbox(worker_id=worker_id) == [run["id"]]
+    assert container.repository.request_worker_drain(
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision or "unknown",
+        actor_reference="cw11-test-operator",
+        reason="verify an active Agent dispatch claim blocks drain completion",
+    ) == 1
+    assert container.agent.claim_outbox(worker_id=worker_id) == []
+    with pytest.raises(CoworkerError) as blocked:
+        container.repository.mark_worker_drained(worker_id)
+    assert blocked.value.code == "worker_claims_active"
     container.agent.delivered(run["id"])
     assert container.repository.complete_worker_claim(
         worker_id=worker_id, claim_type="agent_dispatch", resource_id=run["id"],
     ) is True
-    assert container.agent.claim_outbox(worker_id=worker_id) == []
     container.repository.mark_worker_drained(worker_id)
 
 
@@ -1495,6 +1504,16 @@ def test_agent_bound_action_cannot_dispatch_before_its_step(container):
     assert container.repository.heartbeat_worker(worker_id) == "running"
     assert container.actions.repo.claim_outbox() == []
     assert container.actions.repo.claim_outbox(worker_id=worker_id) == [action["id"]]
+    assert container.repository.request_worker_drain(
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision or "unknown",
+        actor_reference="cw11-test-operator",
+        reason="verify an active action dispatch claim blocks drain completion",
+    ) == 1
+    assert container.actions.repo.claim_outbox(worker_id=worker_id) == []
+    with pytest.raises(CoworkerError) as blocked:
+        container.repository.mark_worker_drained(worker_id)
+    assert blocked.value.code == "worker_claims_active"
     assert container.repository.complete_worker_claim(
         worker_id=worker_id, claim_type="action_dispatch", resource_id=action["id"],
     ) is True
