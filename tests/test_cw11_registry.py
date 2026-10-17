@@ -17,7 +17,11 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Outbox, ReviewedSkillPublication, ReviewedSkillRegistryEvent, Step, Task, WorkerClaim, WorkerInstance, utcnow
+from services.coworker.models import (
+    AgentOutbox, AgentRun, AgentStep, Outbox, ReviewedSkillPublication,
+    ReviewedSkillRegistryEvent, Step, Task, ToolInvocation, ToolReceipt,
+    WorkerClaim, WorkerInstance, utcnow,
+)
 from services.coworker.task_workflow_versions import PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
@@ -542,6 +546,123 @@ def test_legacy_migration_is_atomic_and_requires_no_search_attempt(container):
     with container.repository.sessions() as db:
         assert db.get(Task, safe["id"]).workflow_version == PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
         assert db.get(Task, blocked["id"]).workflow_version == PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
+
+
+@pytest.mark.parametrize(
+    "unsafe_state",
+    [
+        "parent_outbox_delivered",
+        "parent_outbox_attempted",
+        "parent_outbox_leased",
+        "missing_parent_outbox",
+        "parent_run_running",
+        "task_running",
+        "invocation_started",
+        "step_already_linked",
+        "receipt_exists",
+    ],
+)
+def test_legacy_migration_blocks_tasks_that_may_have_been_dispatched(
+    container, unsafe_state,
+):
+    old = worker(container, REV_B)
+    worker(container, REV_A)
+    container.repository.mark_worker_drained(old)
+    publish(container, "research_reviewed_v0", source_revision=REV_A)
+    publish(
+        container, "research_reviewed_v1",
+        source_revision=REV_A, rollback_target="research_reviewed_v0",
+    )
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL, "research_reviewed_v1",
+        actor_reference="cw11-test-operator", reason="migration target",
+        worker_source_revision=REV_A,
+    )
+    owner = account(container)
+    task = reviewed_task(container, owner, "legacy-dispatch-" + unsafe_state)
+
+    with container.repository.sessions.begin() as db:
+        task_row = db.get(Task, task["id"])
+        task_row.workflow_version = PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
+        identity = db.get(Step, (task["id"], "reviewed_skill_identity"))
+        publication = db.get(
+            ReviewedSkillPublication, identity.output["publication_id"],
+        )
+        identity.output = {
+            "name": "research",
+            "version": "work_research_v1",
+            "tool": "research.search",
+            "tool_version": "1",
+            "review_sha256": publication.review_sha256,
+        }
+        run = db.get(AgentRun, task_row.agent_run_id)
+        step = db.get(AgentStep, task_row.agent_step_id)
+        invocation = db.scalar(select(ToolInvocation).where(
+            ToolInvocation.run_id == run.id,
+            ToolInvocation.step_id == step.id,
+        ))
+        outbox = db.get(AgentOutbox, run.id)
+
+        if unsafe_state == "parent_outbox_delivered":
+            outbox.delivered = True
+        elif unsafe_state == "parent_outbox_attempted":
+            outbox.attempts = 1
+        elif unsafe_state == "parent_outbox_leased":
+            outbox.lease_until = utcnow() + timedelta(minutes=1)
+        elif unsafe_state == "missing_parent_outbox":
+            db.delete(outbox)
+        elif unsafe_state == "parent_run_running":
+            run.state = "running"
+        elif unsafe_state == "task_running":
+            task_row.state = "running"
+        elif unsafe_state == "invocation_started":
+            run.state = "running"
+            step.state = "running"
+            step.started_at = utcnow()
+            invocation.state = "running"
+            invocation.started_at = utcnow()
+        elif unsafe_state == "step_already_linked":
+            step.output = {"resource_type": "task", "resource_id": task["id"]}
+        elif unsafe_state == "receipt_exists":
+            db.add(ToolReceipt(
+                invocation_id=invocation.id,
+                run_id=run.id,
+                owner_id=owner,
+                tool_name="research.search",
+                status="completed",
+                resource_type="task",
+                resource_id=task["id"],
+                summary={"status": "completed"},
+            ))
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.repository.migrate_legacy_reviewed_tasks(
+            task_queue=container.settings.task_queue,
+            old_source_revision=REV_B,
+            publication_version="research_reviewed_v1",
+            actor_reference="cw11-test-operator",
+            reason="must not rebind possibly dispatched workflow",
+        )
+    assert blocked.value.code == "skill_migration_blocked"
+
+    with container.repository.sessions() as db:
+        unchanged = db.get(Task, task["id"])
+        identity = db.get(Step, (task["id"], "reviewed_skill_identity"))
+        assert unchanged.workflow_version == PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
+        assert identity.output == {
+            "name": "research",
+            "version": "work_research_v1",
+            "tool": "research.search",
+            "tool_version": "1",
+            "review_sha256": publication.review_sha256,
+        }
+        migration_events = db.scalars(select(ReviewedSkillRegistryEvent).where(
+            ReviewedSkillRegistryEvent.event_type == "legacy_task_migrated",
+        )).all()
+        assert not any(
+            event.event_metadata.get("task_id") == task["id"]
+            for event in migration_events
+        )
 
 
 def test_legacy_migration_moves_only_reviewed_rows_after_drain(container):
