@@ -435,17 +435,22 @@ class Dispatcher:
 
 
 async def _worker_registry_heartbeat(container, worker_id: str, stop: asyncio.Event) -> None:
-    while not stop.is_set():
-        state = await asyncio.to_thread(
-            container.repository.heartbeat_worker, worker_id,
-        )
-        if state in {"draining", "lost", "drained"}:
-            stop.set()
-            return
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=3)
-        except TimeoutError:
-            pass
+    try:
+        while not stop.is_set():
+            state = await asyncio.to_thread(
+                container.repository.heartbeat_worker, worker_id,
+            )
+            if state in {"draining", "lost", "drained"}:
+                stop.set()
+                return
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=3)
+            except TimeoutError:
+                pass
+    finally:
+        # Losing registry liveness must also stop dispatch/polling. The
+        # exception still propagates, so shutdown cannot certify a drain.
+        stop.set()
 
 
 async def main():
@@ -455,45 +460,50 @@ async def main():
     if settings.environment != "development" and not settings.source_revision:
         raise RuntimeError("A deployment-attested source revision is required outside development.")
     container = Container.create(settings)
-    client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace,
-                                  api_key=settings.temporal_api_key or None, tls=settings.temporal_tls)
-    activities = Activities(DocumentRunner(container))
-    action_activities = ActionActivities(container.actions)
-    agent_activities = AgentActivities(AgentRuntime(container, DocumentRunner(container)))
-    automation_activities = AutomationActivities(container.automations)
-    stop = asyncio.Event()
-    worker_id = await asyncio.to_thread(
-        container.repository.register_worker,
-        task_queue=settings.task_queue,
-        source_revision=settings.source_revision,
-    )
-    loop = asyncio.get_running_loop()
-    for name in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(name, stop.set)
-        except NotImplementedError:
-            pass
-    async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AutomationOccurrenceWorkflow, AgentWorkflow, AgentWorkflowV2, AgentWorkflowV3],
-                      activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted,
-                                  agent_activities.plan, agent_activities.replan, agent_activities.decide_v3, agent_activities.readiness, agent_activities.step, agent_activities.complete, agent_activities.failed, automation_activities.accept],
-                      # Four short deterministic steps: replay is inexpensive.
-                      # Avoid affinity to a departed worker during rollouts.
-                      max_cached_workflows=0, max_concurrent_activities=4,
-                      graceful_shutdown_timeout=timedelta(seconds=20)):
-        heartbeat_task = None
-        try:
-            heartbeat_task = asyncio.create_task(
-                _worker_registry_heartbeat(container, worker_id, stop)
-            )
-            await Dispatcher(container, client, worker_id).run(stop)
-        finally:
-            stop.set()
-            if heartbeat_task is not None:
-                await heartbeat_task
-            await asyncio.to_thread(
-                container.repository.mark_worker_drained, worker_id,
-            )
-    container.repository.sessions.kw["bind"].dispose()
+    try:
+        client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace,
+                                      api_key=settings.temporal_api_key or None, tls=settings.temporal_tls)
+        activities = Activities(DocumentRunner(container))
+        action_activities = ActionActivities(container.actions)
+        agent_activities = AgentActivities(AgentRuntime(container, DocumentRunner(container)))
+        automation_activities = AutomationActivities(container.automations)
+        stop = asyncio.Event()
+        worker_id = await asyncio.to_thread(
+            container.repository.register_worker,
+            task_queue=settings.task_queue,
+            source_revision=settings.source_revision,
+        )
+        loop = asyncio.get_running_loop()
+        for name in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(name, stop.set)
+            except NotImplementedError:
+                pass
+        async with Worker(client, task_queue=settings.task_queue, workflows=[ReportEmailWorkflow, WorkServicesWorkflow, ResearchWorkflow, ApprovedActionWorkflow, AutomationOccurrenceWorkflow, AgentWorkflow, AgentWorkflowV2, AgentWorkflowV3],
+                          activities=[activities.phase, activities.work_phase, activities.research_phase, activities.failed, action_activities.execute, action_activities.interrupted,
+                                      agent_activities.plan, agent_activities.replan, agent_activities.decide_v3, agent_activities.readiness, agent_activities.step, agent_activities.complete, agent_activities.failed, automation_activities.accept],
+                          # Four short deterministic steps: replay is inexpensive.
+                          # Avoid affinity to a departed worker during rollouts.
+                          max_cached_workflows=0, max_concurrent_activities=4,
+                          graceful_shutdown_timeout=timedelta(seconds=20)):
+            heartbeat_task = None
+            try:
+                heartbeat_task = asyncio.create_task(
+                    _worker_registry_heartbeat(container, worker_id, stop)
+                )
+                await Dispatcher(container, client, worker_id).run(stop)
+            finally:
+                stop.set()
+                if heartbeat_task is not None:
+                    await heartbeat_task
+        # Worker.__aexit__ awaits Temporal shutdown. Publishing earlier would
+        # allow selection/migration while this worker still polls or executes.
+        # Any dispatch, heartbeat, cancellation or shutdown error skips this.
+        await asyncio.to_thread(
+            container.repository.mark_worker_drained, worker_id,
+        )
+    finally:
+        container.repository.sessions.kw["bind"].dispose()
 
 
 if __name__ == "__main__":

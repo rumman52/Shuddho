@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
+from datetime import timedelta
 import time
 import pytest
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for CW-11 tests")
@@ -14,7 +16,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import ReviewedSkillPublication, ReviewedSkillRegistryEvent, Step, Task, WorkerInstance
+from services.coworker.models import ReviewedSkillPublication, ReviewedSkillRegistryEvent, Step, Task, WorkerInstance, utcnow
 from services.coworker.task_workflow_versions import PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
@@ -372,3 +374,198 @@ def test_legacy_migration_moves_only_reviewed_rows_after_drain(container):
         assert task.workflow_version == "work_research_reviewed_v2"
         identity = db.get(Step, (reviewed["id"], "reviewed_skill_identity")).output
         assert identity["publication_version"] == "research_reviewed_v1"
+
+
+@pytest.mark.parametrize("state,stale", [
+    ("lost", False),
+    ("unknown", False),
+    ("drained", False),  # A lifecycle label without a completion timestamp.
+    ("starting", True),
+    ("running", True),
+    ("draining", True),
+])
+@pytest.mark.parametrize("operation", ["select", "admit", "rollback"])
+def test_uncertain_worker_cannot_authorize_reviewed_controls(container, state, stale, operation):
+    worker(container, REV_A)
+    publish(container, "baseline")
+    publish(container, "candidate", rollback_target="baseline")
+    repository = container.repository
+    repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL, "candidate",
+        actor_reference="operator", reason="establish selection",
+        worker_source_revision=REV_A,
+    )
+    uncertain_id = worker(container, REV_A)
+    with repository.sessions.begin() as db:
+        row = db.get(WorkerInstance, uncertain_id)
+        row.state = state
+        if stale:
+            row.heartbeat_at = utcnow() - timedelta(minutes=1)
+    before = repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL)
+    events_before = repository.reviewed_control_history()
+    owner = account(container, "uncertain-fleet")
+    with pytest.raises(CoworkerError) as blocked:
+        if operation == "admit":
+            reviewed_task(container, owner, "uncertain-admission")
+        elif operation == "rollback":
+            repository.rollback_reviewed_skill(
+                REVIEWED_RESEARCH_SKILL, "baseline",
+                actor_reference="operator", reason="must fail closed",
+                worker_source_revision=REV_A,
+            )
+        else:
+            repository.select_reviewed_skill(
+                REVIEWED_RESEARCH_SKILL, "baseline",
+                actor_reference="operator", reason="must fail closed",
+                worker_source_revision=REV_A,
+            )
+    assert blocked.value.code == "worker_fleet_uncertain"
+    assert repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL) == before
+    assert repository.reviewed_control_history() == events_before
+    with repository.sessions() as db:
+        assert db.scalar(select(Task.id).where(Task.owner_id == owner)) is None
+        assert all(row.state == "published" for row in db.scalars(select(ReviewedSkillPublication)))
+
+
+@pytest.mark.parametrize("state", ["lost", "unknown", "drained", "running", "draining", "starting"])
+@pytest.mark.parametrize("operation", ["verify", "migrate"])
+def test_uncertain_legacy_worker_never_proves_drain(container, state, operation):
+    old = worker(container, REV_B)
+    worker(container, REV_A)
+    with container.repository.sessions.begin() as db:
+        row = db.get(WorkerInstance, old)
+        row.state = state
+        row.heartbeat_at = utcnow() - timedelta(minutes=1)
+    with pytest.raises(CoworkerError) as blocked:
+        if operation == "verify":
+            container.repository.assert_worker_drain_complete(
+                task_queue=container.settings.task_queue, old_source_revision=REV_B,
+            )
+        else:
+            container.repository.migrate_legacy_reviewed_tasks(
+                task_queue=container.settings.task_queue, old_source_revision=REV_B,
+                publication_version="nonexistent",
+                actor_reference="operator", reason="must fail before migration",
+            )
+    assert blocked.value.code == "worker_drain_incomplete"
+
+
+def test_uncertain_worker_in_other_queue_does_not_block_selection(container):
+    worker(container, REV_A)
+    other = container.repository.register_worker(task_queue="other-queue", source_revision=REV_B)
+    with container.repository.sessions.begin() as db:
+        db.get(WorkerInstance, other).state = "lost"
+    publish(container, "isolated-queue")
+    selected = container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL, "isolated-queue",
+        actor_reference="operator", reason="queue isolation",
+        worker_source_revision=REV_A,
+    )
+    assert selected["publication_version"] == "isolated-queue"
+
+
+@pytest.mark.parametrize("outcome", ["success", "shutdown_error", "shutdown_cancelled", "dispatcher_error", "heartbeat_error"])
+def test_worker_publishes_drain_only_after_successful_temporal_shutdown(container, monkeypatch, outcome):
+    from services.coworker import worker as worker_module
+
+    events = []
+    repository = container.repository
+    mark_drained = repository.mark_worker_drained
+    engine = repository.sessions.kw["bind"]
+    dispose_engine = engine.dispose
+
+    def publish_drain(worker_id):
+        events.append("drained")
+        mark_drained(worker_id)
+
+    def dispose():
+        events.append("disposed")
+        dispose_engine()
+
+    class ControlledWorker:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            events.append("polling")
+            return self
+
+        async def __aexit__(self, *args):
+            events.append("shutdown_started")
+            assert "drained" not in events, "Registry advertised drain before Temporal shutdown"
+            if outcome == "shutdown_error":
+                raise RuntimeError("shutdown failed")
+            if outcome == "shutdown_cancelled":
+                raise asyncio.CancelledError()
+            events.append("shutdown_complete")
+
+    async def connect(*args, **kwargs):
+        return object()
+
+    async def dispatch(self, stop):
+        if outcome == "dispatcher_error":
+            raise RuntimeError("dispatcher failed")
+        if outcome == "heartbeat_error":
+            await stop.wait()
+        stop.set()
+
+    async def heartbeat(container, worker_id, stop):
+        if outcome == "heartbeat_error":
+            stop.set()
+            raise RuntimeError("heartbeat failed")
+        await stop.wait()
+
+    monkeypatch.setattr(worker_module.Settings, "from_env", lambda: container.settings)
+    monkeypatch.setattr(worker_module.Container, "create", lambda settings: container)
+    monkeypatch.setattr(worker_module.Client, "connect", connect)
+    monkeypatch.setattr(worker_module, "Worker", ControlledWorker)
+    monkeypatch.setattr(worker_module.Dispatcher, "run", dispatch)
+    monkeypatch.setattr(worker_module, "_worker_registry_heartbeat", heartbeat)
+    monkeypatch.setattr(repository, "mark_worker_drained", publish_drain)
+    monkeypatch.setattr(engine, "dispose", dispose)
+
+    async def run():
+        # Avoid changing process-wide SIGTERM/SIGINT handlers in a unit test.
+        monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda *args: None)
+        await worker_module.main()
+
+    if outcome == "success":
+        asyncio.run(run())
+        assert events == ["polling", "shutdown_started", "shutdown_complete", "drained", "disposed"]
+        assert repository.worker_inventory()[0]["state"] == "drained"
+    else:
+        expected_error = asyncio.CancelledError if outcome == "shutdown_cancelled" else RuntimeError
+        with pytest.raises(expected_error):
+            asyncio.run(run())
+        assert "drained" not in events
+        assert repository.worker_inventory()[0]["state"] != "drained"
+        assert "disposed" in events
+
+
+def test_failed_registry_heartbeat_stops_dispatch_without_claiming_drain(container, monkeypatch):
+    from services.coworker import worker as worker_module
+
+    def unavailable(worker_id):
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr(container.repository, "heartbeat_worker", unavailable)
+
+    async def run():
+        stop = asyncio.Event()
+        with pytest.raises(RuntimeError, match="registry unavailable"):
+            await worker_module._worker_registry_heartbeat(container, "unavailable", stop)
+        assert stop.is_set()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("state", ["lost", "unknown"])
+def test_worker_heartbeat_and_drain_do_not_rehabilitate_uncertain_state(container, state):
+    worker_id = worker(container, REV_B)
+    with container.repository.sessions.begin() as db:
+        db.get(WorkerInstance, worker_id).state = state
+    assert container.repository.heartbeat_worker(worker_id) == "lost"
+    container.repository.mark_worker_drained(worker_id)
+    row = container.repository.worker_inventory()[0]
+    assert row["state"] == state
+    assert row["drained_at"] is None

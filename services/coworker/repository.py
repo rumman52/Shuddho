@@ -65,18 +65,38 @@ class Repository:
                 409,
             )
         cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
-        rows = db.scalars(select(WorkerInstance).where(
-            WorkerInstance.task_queue == task_queue,
-            WorkerInstance.state.in_(WORKER_ACTIVE_STATES),
-        ).with_for_update()).all()
+        # Registry controls must lock the worker inventory in a stable order,
+        # then the selection row, then publication rows.
+        rows = db.scalars(
+            select(WorkerInstance)
+            .where(WorkerInstance.task_queue == task_queue)
+            .order_by(WorkerInstance.id)
+            .with_for_update()
+        ).all()
         incompatible = [
             row for row in rows
-            if row.source_revision != required_source_revision
+            if row.state in WORKER_ACTIVE_STATES
+            and row.source_revision != required_source_revision
         ]
         if incompatible:
             raise CoworkerError(
                 "worker_fleet_incompatible",
                 "Reviewed skill selection is blocked while an incompatible worker is active or draining.",
+                409,
+            )
+        # A live compatible peer cannot account for another worker whose
+        # liveness or shutdown is unknown. Inspect all queue rows, including
+        # lost/unsupported states, rather than silently filtering them out.
+        uncertain = [
+            row for row in rows
+            if row.state not in (WORKER_ACTIVE_STATES | {"drained"})
+            or (row.state == "drained" and row.drained_at is None)
+            or (row.state in WORKER_ACTIVE_STATES and aware(row.heartbeat_at) < cutoff)
+        ]
+        if uncertain:
+            raise CoworkerError(
+                "worker_fleet_uncertain",
+                "Reviewed skill control is blocked until every worker has fresh liveness or explicit completed drain evidence.",
                 409,
             )
         if not any(
@@ -205,6 +225,10 @@ class Repository:
                 task_queue=self.settings.task_queue,
                 required_source_revision=worker_source_revision,
             )
+            # Keep the registry lock order consistent with admission and rollback.
+            selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == skill_name,
+            ).with_for_update())
             publication = db.scalar(select(ReviewedSkillPublication).where(
                 ReviewedSkillPublication.skill_name == skill_name,
                 ReviewedSkillPublication.publication_version == publication_version,
@@ -212,9 +236,6 @@ class Repository:
             if publication is None:
                 raise CoworkerError("skill_publication_unavailable", "The requested reviewed publication is not published.", 409)
             binding = require_selected_pilot(publication, worker_source_revision=worker_source_revision)
-            selection = db.scalar(select(ReviewedSkillSelection).where(
-                ReviewedSkillSelection.skill_name == skill_name,
-            ).with_for_update())
             previous_publication_id = selection.publication_id if selection is not None else None
             if selection is None:
                 selection = ReviewedSkillSelection(
@@ -263,6 +284,18 @@ class Repository:
                 409,
             )
         with self.sessions.begin() as db:
+            # Preserve the missing-selection error without holding registry locks
+            # while waiting for worker-fleet row locks.
+            observed_selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == skill_name,
+            ))
+            if observed_selection is None:
+                raise CoworkerError("skill_rollback_unavailable", "There is no selected reviewed publication to roll back.", 409)
+            self._require_compatible_worker_fleet(
+                db,
+                task_queue=self.settings.task_queue,
+                required_source_revision=worker_source_revision,
+            )
             selection = db.scalar(select(ReviewedSkillSelection).where(
                 ReviewedSkillSelection.skill_name == skill_name,
             ).with_for_update())
@@ -287,11 +320,6 @@ class Repository:
                     "Rollback target does not match the publication's explicitly declared rollback target.",
                     409,
                 )
-            self._require_compatible_worker_fleet(
-                db,
-                task_queue=self.settings.task_queue,
-                required_source_revision=worker_source_revision,
-            )
             require_selected_pilot(target, worker_source_revision=worker_source_revision)
             current.state = "rolled_back"
             current.updated_at = utcnow()
@@ -440,6 +468,10 @@ class Repository:
                 return "lost"
             if row.state in {"drained", "lost"}:
                 return row.state
+            if row.state not in WORKER_ACTIVE_STATES:
+                # Unknown lifecycle evidence is not permission to resume work.
+                # Keep the stored record intact for operator reconciliation.
+                return "lost"
             row.state = "draining" if row.drain_requested_at is not None else "running"
             row.heartbeat_at = utcnow()
             return row.state
@@ -449,7 +481,7 @@ class Repository:
             row = db.scalar(
                 select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update()
             )
-            if row is not None and row.state != "lost":
+            if row is not None and row.state in WORKER_ACTIVE_STATES:
                 row.state = "drained"
                 row.drained_at = utcnow()
                 row.heartbeat_at = utcnow()
@@ -538,12 +570,12 @@ class Repository:
             )
         blockers = [
             row for row in old_rows
-            if row["state"] in (WORKER_ACTIVE_STATES | {"lost"})
+            if row["state"] != "drained" or row["drained_at"] is None
         ]
         if blockers:
             raise CoworkerError(
                 "worker_drain_incomplete",
-                "The legacy worker fleet has not reached an explicit drained state; lost workers are treated as uncertain.",
+                "The legacy worker fleet requires an explicit drained state and completion timestamp for every worker.",
                 409,
             )
         return {
@@ -556,6 +588,38 @@ class Repository:
     def _require_selected_reviewed_publication(
         self, db, review_sha256: str,
     ):
+        # First inspect without row locks so missing/invalid selections keep
+        # their existing fail-closed diagnostics. Re-read after the fleet lock:
+        # snapshots never authorize use and may be stale by then.
+        observed_selection = db.scalar(select(ReviewedSkillSelection).where(
+            ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+        ))
+        if observed_selection is None or observed_selection.state != "selected":
+            raise CoworkerError(
+                "skill_publication_unavailable",
+                "The reviewed research skill has no explicitly selected publication.",
+                409,
+            )
+        observed_publication = db.scalar(select(ReviewedSkillPublication).where(
+            ReviewedSkillPublication.id == observed_selection.publication_id,
+        ))
+        observed_binding = require_selected_pilot(
+            observed_publication,
+            worker_source_revision=self.settings.source_revision,
+        )
+        if observed_binding.review_sha256 != review_sha256:
+            raise CoworkerError(
+                "skill_publication_unavailable",
+                "The selected publication does not match the admitted reviewed manifest.",
+                409,
+            )
+
+        # Canonical lock order: worker inventory -> selection -> publication.
+        self._require_compatible_worker_fleet(
+            db,
+            task_queue=self.settings.task_queue,
+            required_source_revision=observed_binding.source_revision,
+        )
         selection = db.scalar(select(ReviewedSkillSelection).where(
             ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
         ).with_for_update())
@@ -578,11 +642,6 @@ class Repository:
                 "The selected publication does not match the admitted reviewed manifest.",
                 409,
             )
-        self._require_compatible_worker_fleet(
-            db,
-            task_queue=self.settings.task_queue,
-            required_source_revision=binding.source_revision,
-        )
         return binding
 
     def migrate_legacy_reviewed_tasks(
