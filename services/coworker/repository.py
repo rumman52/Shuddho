@@ -59,10 +59,10 @@ class Repository:
         """Serialize queue membership changes with reviewed-skill fleet controls.
 
         PostgreSQL row locks cannot lock a missing worker row, so a concurrent
-        registration could otherwise appear after the fleet snapshot. A
-        transaction-scoped advisory lock closes that phantom window without a
-        schema migration. Registry controls and worker registration must acquire
-        this lock before touching queue membership or registry rows.
+        registration could otherwise appear after the fleet snapshot. This
+        transaction-scoped advisory lock serializes updated registration code
+        with registry controls. Migration 0061's insert trigger additionally
+        rejects legacy binaries that do not attest their runtime revision.
         """
         if db.get_bind().dialect.name != "postgresql":
             return
