@@ -242,6 +242,14 @@ class Dispatcher:
         self.automation_schedules = AutomationScheduleReconciler(client, container.settings.task_queue)
 
     async def dispatch_agent_run(self, run_id: str):
+        # This method is also called by operator/test helpers, so enforce the
+        # same durable claim boundary as the normal outbox loop.
+        await asyncio.to_thread(
+            self.container.repository.require_active_worker_claim,
+            worker_id=self.worker_id,
+            claim_type="agent_dispatch",
+            resource_id=run_id,
+        )
         agent = self.container.agent
         run = await asyncio.to_thread(agent.worker_run, run_id)
         if run["state"] not in {"completed", "failed", "cancelled", "needs_input", "blocked"}:
