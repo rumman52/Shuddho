@@ -37,6 +37,7 @@ from services.coworker.models import Account, Artifact, DailyUsage, ModelAttempt
 from services.coworker.runner import DocumentRunner
 from services.coworker.schemas import DraftPackage, TaskCreate, UploadRequest
 from services.coworker.worker import Dispatcher
+from coworker_worker_helpers import dispatch_tick
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -510,13 +511,12 @@ def test_outbox_recovery_does_not_start_another_workflow(container):
             if task_id in started:
                 raise WorkflowAlreadyStartedError(options["id"], "shuddho_report_email_v1")
             started.add(task_id)
-    dispatcher = Dispatcher(container, Client())
-    asyncio.run(dispatcher.tick())
+    asyncio.run(dispatch_tick(container, Client()))
     with container.repository.sessions.begin() as db:
         row = db.get(Outbox, task["id"])
         row.delivered = False
         row.lease_until = utcnow() - timedelta(seconds=1)
-    asyncio.run(dispatcher.tick())
+    asyncio.run(dispatch_tick(container, Client()))
     assert started == {task["id"]}
     with container.repository.sessions() as db:
         assert db.get(Outbox, task["id"]).delivered
@@ -1331,14 +1331,27 @@ def test_agent_outbox_is_crash_safe_and_flag_independent(container):
     run, _ = container.agent.create(owner, AgentRunCreate(
         goal="Draft a professional email.", output_language="en"
     ), "agent-outbox-test")
-    claimed = container.agent.claim_outbox()
+    worker_id = container.repository.register_worker(
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision,
+    )
+    assert container.repository.heartbeat_worker(worker_id) == "running"
+    assert container.agent.claim_outbox() == []  # No identity means no dispatch authority.
+    claimed = container.agent.claim_outbox(worker_id=worker_id)
     assert claimed == [run["id"]]
+    assert container.repository.complete_worker_claim(
+        worker_id=worker_id, claim_type="agent_dispatch", resource_id=run["id"],
+    ) is True
     with container.repository.sessions.begin() as db:
         row = db.get(AgentOutbox, run["id"])
         row.lease_until = utcnow() - timedelta(seconds=1)
-    assert container.agent.claim_outbox() == [run["id"]]
+    assert container.agent.claim_outbox(worker_id=worker_id) == [run["id"]]
     container.agent.delivered(run["id"])
-    assert container.agent.claim_outbox() == []
+    assert container.repository.complete_worker_claim(
+        worker_id=worker_id, claim_type="agent_dispatch", resource_id=run["id"],
+    ) is True
+    assert container.agent.claim_outbox(worker_id=worker_id) == []
+    container.repository.mark_worker_drained(worker_id)
 
 
 def test_agent_outbox_model_matches_migration(container):
@@ -1475,7 +1488,28 @@ def test_agent_bound_action_cannot_dispatch_before_its_step(container):
         AgentPlanStep(tool="email.send", arguments={"action_id": action["id"]}),
     ])
     container.agent.action_waiting(run["id"], 1, action["id"], "queued")
-    assert container.actions.repo.claim_outbox() == [action["id"]]
+    worker_id = container.repository.register_worker(
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision,
+    )
+    assert container.repository.heartbeat_worker(worker_id) == "running"
+    assert container.actions.repo.claim_outbox() == []
+    assert container.actions.repo.claim_outbox(worker_id=worker_id) == [action["id"]]
+    assert container.repository.complete_worker_claim(
+        worker_id=worker_id, claim_type="action_dispatch", resource_id=action["id"],
+    ) is True
+    container.actions.repo.delivered(action["id"])
+    container.repository.mark_worker_drained(worker_id)
+
+
+def test_worker_claim_model_matches_migration(container):
+    from sqlalchemy import inspect
+    from services.coworker.models import WorkerClaim
+    database_columns = {
+        item["name"]
+        for item in inspect(container.repository.sessions.kw["bind"]).get_columns("cw_worker_claims")
+    }
+    assert database_columns == set(WorkerClaim.__table__.columns.keys())
 
 
 def test_external_action_binding_model_matches_migration(container):
