@@ -1,3 +1,18 @@
+## CW-11 follow-up — selection and staging claim accounting — 17 October 2026
+
+Parent [PR #450](https://github.com/rumman52/Shuddho/pull/450) merged as `bd4fc89b0d3d43f529a4014fa6c442f4442c726c`. Exact merged-main `test-and-build` passed; mandatory `coworker` and `ci-merge-gate` were still running at checkpoint. The automated independent review could not run because the configured review service reported its usage limit.
+
+**Gap found after merge:** the fleet compatibility check used by reviewed-skill selection/rollback and the staging evidence collector did not independently account for active claim rows on a worker whose inventory state appeared drained.
+
+**Follow-up branch:** `codex/cw11-claim-aware-selection-evidence-20261017`.
+- Lock the worker fleet first, then reject reviewed-skill selection/rollback/legacy migration if any active dispatch claim remains, even when a worker row claims to be drained.
+- Make CW-11 staging evidence reject a legacy worker row with active claims and include the old-fleet active-claim count in the artifact.
+- Add regression tests that simulate a legacy false-drain row and prove both registry controls and the staging collector fail closed.
+
+This is repository code/test work only. Protected Render staging, independent operational review, four operated coworker scenarios, production qualification, deployment, and activation remain unverified.
+
+---
+
 ## CW-11 per-claim dispatch drain fencing — 17 October 2026 (Asia/Dhaka)
 
 **Active branch:** `codex/cw11-per-claim-drain-fencing-20261017`, [PR #450](https://github.com/rumman52/Shuddho/pull/450), initially at `950d3be74e6bc8a31ee07ae310f675821963f7e5`. Initial exact-head CI run [#39017961482](https://github.com/rumman52/Shuddho/actions/runs/39017961482): `test-and-build` passed; mandatory `coworker` failed with 1 failed / 67 passed in the CW-11 registry suite because the new task-claim test used `reviewed_task()` without selecting a reviewed publication first. The repository correctly failed closed. A test-only correction now explicitly publishes and selects the fixture publication before creating that task; all required checks must be rerun on the resulting head. The independent Codex review could not run because the configured review service reported its usage limit. No local test execution, staging qualification, deployment, or activation is claimed.
