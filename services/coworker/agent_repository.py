@@ -17,7 +17,7 @@ from .approval_boundary import assert_inert_proposal_payload
 from .config import Settings
 from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
-from .models import Account, ActionProposal, AgentCodeProposal, AgentCodeReview, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, WorkerClaim, WorkerInstance, Workspace, utcnow
+from .models import Account, ActionProposal, AgentCodeProposal, AgentCodeReview, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
 from .repository import aware, iso, not_found
 from .reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
 from .worker_claims import add_worker_claim, lock_running_worker
