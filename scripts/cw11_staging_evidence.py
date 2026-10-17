@@ -218,6 +218,11 @@ def collect_evidence(
     active_old_worker_claim_count = sum(
         int(row.get("active_claim_count", 0)) for row in old_rows
     )
+    active_drained_worker_claim_count = sum(
+        int(row.get("active_claim_count", 0))
+        for row in inventory
+        if row["state"] == "drained"
+    )
     if not compatible_running:
         raise CoworkerError(
             "staging_evidence_worker_missing",
@@ -240,6 +245,15 @@ def collect_evidence(
         raise CoworkerError(
             "staging_evidence_old_worker",
             "A legacy worker row is not explicitly drained or still has active dispatch claims.",
+            409,
+        )
+
+    # A drained-state claim is contradictory regardless of source revision.
+    # Do not let an unexpected/third revision escape the legacy-row check.
+    if active_drained_worker_claim_count:
+        raise CoworkerError(
+            "staging_evidence_worker_claims_active",
+            "A worker marked drained still has active dispatch claims; drain evidence is invalid.",
             409,
         )
 
@@ -294,6 +308,7 @@ def collect_evidence(
         "old_source_revision": old_source_revision,
         "old_worker_rows_observed": len(old_rows),
         "active_old_worker_claim_count": active_old_worker_claim_count,
+        "active_drained_worker_claim_count": active_drained_worker_claim_count,
         "external_render_evidence": render_evidence,
         "control_events": [
             {
@@ -327,6 +342,7 @@ def collect_evidence(
             "fresh_compatible_worker_present": True,
             "no_active_incompatible_workers": True,
             "no_active_old_worker_claims": active_old_worker_claim_count == 0,
+            "no_active_claims_on_drained_workers": active_drained_worker_claim_count == 0,
             "no_active_pre_fence_reviewed_tasks": True,
             "no_reviewed_task_ledger_blockers": True,
             "legacy_worker_render_instances_zero": True,
