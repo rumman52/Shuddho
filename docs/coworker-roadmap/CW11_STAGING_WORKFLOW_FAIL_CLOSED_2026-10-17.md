@@ -12,6 +12,7 @@ Make the protected staging-evidence workflow fail visibly and before exposing st
 
 1. The only evidence job used a job-level `if: inputs.confirm == 'CW11-STAGING'`. A wrong confirmation silently skipped the entire job instead of failing the workflow, potentially producing a green run with no evidence artifact.
 2. Pending staging migrations ran before the workflow verified that the legacy Render worker had zero instances and that the candidate worker was running the exact qualification revision. That ordering could mutate staging schema while the old worker had not yet been proven stopped.
+3. The old-source-revision and expected-publication-version dispatch inputs were interpolated into shell command source, creating a command-injection risk if a caller supplied shell syntax.
 
 ## Bounded implementation
 
@@ -19,12 +20,14 @@ Make the protected staging-evidence workflow fail visibly and before exposing st
 - Scope Render, database and auth secrets to only the steps that need them; dependency installation and checkout receive no staging credentials.
 - Make the evidence job depend on the confirmation job. A failed confirmation therefore fails the workflow and prevents the staging environment job from starting.
 - Move the live Render service/instance/deployment check before pending database migrations.
-- Add standard-library-only regression checks for the confirmation boundary and step ordering; these run in the lightweight test-and-build suite.
+- Pass untrusted dispatch inputs through step-scoped environment variables and quoted shell expansions rather than embedding them in shell source.
+- Add standard-library-only regression checks for confirmation, secret scope, input handling and step ordering; these run in the lightweight test-and-build suite.
 - Update the rollout runbook to reflect the fail-closed gate and migration ordering.
 
 ## Acceptance
 
 - Incorrect confirmation produces a failed workflow, not a skipped-only green run.
+- Dispatch inputs cannot inject shell syntax into the Render verification or evidence collector commands.
 - Staging secrets are only exposed to the evidence job after confirmation succeeds.
 - The workflow verifies legacy service instance count is zero and candidate commit/instance evidence matches before applying migrations.
 - The read-only collector still validates the selected publication, worker inventory, active claims and reviewed-task ledger.
