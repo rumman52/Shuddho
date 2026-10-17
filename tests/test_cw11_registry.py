@@ -558,6 +558,7 @@ def test_legacy_migration_is_atomic_and_requires_no_search_attempt(container):
         "parent_run_running",
         "task_running",
         "invocation_started",
+        "step_started",
         "step_already_linked",
         "receipt_exists",
     ],
@@ -617,11 +618,12 @@ def test_legacy_migration_blocks_tasks_that_may_have_been_dispatched(
         elif unsafe_state == "task_running":
             task_row.state = "running"
         elif unsafe_state == "invocation_started":
-            run.state = "running"
-            step.state = "running"
-            step.started_at = utcnow()
+            # Isolate the invocation-state guard even if other persisted state
+            # is stale or contradictory.
             invocation.state = "running"
             invocation.started_at = utcnow()
+        elif unsafe_state == "step_started":
+            step.started_at = utcnow()
         elif unsafe_state == "step_already_linked":
             step.output = {"resource_type": "task", "resource_id": task["id"]}
         elif unsafe_state == "receipt_exists":
