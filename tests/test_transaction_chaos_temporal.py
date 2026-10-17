@@ -15,6 +15,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
+from coworker_worker_helpers import dispatch_tick, run_dispatcher
 import httpx
 
 pytest.importorskip("sqlalchemy")
@@ -331,7 +332,7 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
             stopped_client = stopped.client
         # The server really exited; this is not an exception-only client mock.
         with pytest.raises(RPCError):
-            await asyncio.wait_for(Dispatcher(value, stopped_client).tick(), 15)
+            await asyncio.wait_for(dispatch_tick(value, stopped_client), 15)
         with value.repository.sessions.begin() as db:
             row = db.get(ExternalAction, action["id"])
             assert row.state == "queued" and row.delivered is False and row.started_at is None
@@ -341,7 +342,7 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
         async with await WorkflowEnvironment.start_time_skipping() as recovered:
             processes.start(value.settings, provider.origin, action["id"],
                             temporal_address=recovered.client.service_client.config.target_host)
-            await Dispatcher(value, recovered.client).tick()
+            await dispatch_tick(value, recovered.client)
             handle = recovered.client.get_workflow_handle("shuddho-action-" + action["id"])
             with recovered.auto_time_skipping_disabled():
                 await asyncio.wait_for(handle.result(), 30)
