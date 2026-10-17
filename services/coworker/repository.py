@@ -902,12 +902,13 @@ class Repository:
                     if (
                         run is None
                         or run.cancel_requested
-                        or run.state != "queued"
+                        or run.state != "planning"
+                        or run.phase != "planned"
                         or aware(run.deadline_at) <= utcnow()
                     ):
                         raise CoworkerError(
                             "skill_migration_blocked",
-                            "The historical Agent run is active, cancelled or expired.",
+                            "The historical Agent run is not in its undispatched planning state, or is cancelled or expired.",
                         )
                     step = db.scalar(select(AgentStep).where(
                         AgentStep.id == task.agent_step_id,
