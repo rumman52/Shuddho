@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
-from coworker_worker_helpers import dispatch_tick, run_dispatcher
+from coworker_worker_helpers import dispatch_tick
 
 pytest.importorskip("temporalio")
 pytestmark = [pytest.mark.coworker_integration, pytest.mark.skipif(os.getenv("SHUDDHO_TEMPORAL_TESTS") != "true", reason="Set SHUDDHO_TEMPORAL_TESTS=true to run the Temporal test server")]
