@@ -16,6 +16,7 @@ Make the protected staging-evidence workflow fail visibly and before exposing st
 ## Bounded implementation
 
 - Add a separate confirmation job with no staging environment and no secrets. It exits nonzero unless the exact `CW11-STAGING` token is supplied.
+- Scope Render, database and auth secrets to only the steps that need them; dependency installation and checkout receive no staging credentials.
 - Make the evidence job depend on the confirmation job. A failed confirmation therefore fails the workflow and prevents the staging environment job from starting.
 - Move the live Render service/instance/deployment check before pending database migrations.
 - Add standard-library-only regression checks for the confirmation boundary and step ordering; these run in the lightweight test-and-build suite.
