@@ -21,6 +21,7 @@ Make the protected staging-evidence workflow fail visibly and before exposing st
 - Make the evidence job depend on the confirmation job. A failed confirmation therefore fails the workflow and prevents the staging environment job from starting.
 - Move the live Render service/instance/deployment check before pending database migrations.
 - Pass untrusted dispatch inputs through step-scoped environment variables and quoted shell expansions rather than embedding them in shell source.
+- Require the protected workflow to run from `main`, validate the legacy revision as a full lowercase SHA, and bind each Render service response to its requested service ID.
 - Add standard-library-only regression checks for confirmation, secret scope, input handling and step ordering; these run in the lightweight test-and-build suite.
 - Update the rollout runbook to reflect the fail-closed gate and migration ordering.
 
@@ -28,6 +29,7 @@ Make the protected staging-evidence workflow fail visibly and before exposing st
 
 - Incorrect confirmation produces a failed workflow, not a skipped-only green run.
 - Dispatch inputs cannot inject shell syntax into the Render verification or evidence collector commands.
+- A non-main dispatch ref, malformed old revision, or mismatched Render service identity fails before migration.
 - Staging secrets are only exposed to the evidence job after confirmation succeeds.
 - The workflow verifies legacy service instance count is zero and candidate commit/instance evidence matches before applying migrations.
 - The read-only collector still validates the selected publication, worker inventory, active claims and reviewed-task ledger.
