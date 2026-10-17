@@ -28,8 +28,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  confirm-staging:
+    name: Require explicit staging confirmation
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validate confirmation before staging access
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM}" != "CW11-STAGING" ]]; then
+            echo "::error::Type CW11-STAGING in the confirm input. The staging evidence job was not started."
+            exit 1
+          fi
+          echo "Explicit staging confirmation accepted."
+
   evidence:
-    if: ${{ inputs.confirm == 'CW11-STAGING' }}
+    needs: confirm-staging
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -68,9 +84,6 @@ jobs:
 
       - name: Install locked coworker dependencies
         run: uv sync --frozen --extra coworker --group dev
-
-      - name: Apply pending staging migrations
-        run: uv run --extra coworker python -m services.coworker.migrate
 
       - name: Verify live Render mixed-version drain state
         shell: bash
@@ -156,6 +169,9 @@ jobs:
               candidate_live_commit: $candidate_commit,
               verified: true
             }' > /tmp/cw11-render-evidence.json
+
+      - name: Apply pending staging migrations
+        run: uv run --extra coworker python -m services.coworker.migrate
 
       - name: Collect CW-11 staging evidence
         run: |
