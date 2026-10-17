@@ -25,7 +25,7 @@ The advisory lock is transaction-scoped and is released on commit/rollback. The 
 
 ## Validation status
 
-Implementation, migration and tests are on branch `codex/cw11-worker-registration-fence-20261017`. Exact-head CI and independent review are pending; no local execution, CI pass, staging evidence, or production qualification is claimed in this document.
+PR #448 merged the initial advisory-lock and PostgreSQL trigger guard as commit `6b5aa1e2743bdbbdaa7c38a55670f6d39e8043da`. Follow-up branch `codex/cw11-worker-registration-guard-followup-20261017` refines the configured-queue runtime-revision check and updates regression fixtures to model already-running legacy rows. Exact-head CI and independent review for the follow-up are pending; no local execution, CI pass, staging evidence, or production qualification is claimed in this document.
 
 ## Remaining work
 
