@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
+from coworker_worker_helpers import dispatch_tick, run_dispatcher
 
 pytest.importorskip("temporalio")
 pytestmark = [pytest.mark.coworker_integration, pytest.mark.skipif(os.getenv("SHUDDHO_TEMPORAL_TESTS") != "true", reason="Set SHUDDHO_TEMPORAL_TESTS=true to run the Temporal test server")]
@@ -56,7 +57,7 @@ def test_action_worker_restart_after_provider_acceptance_never_resends(container
         async with await WorkflowEnvironment.start_time_skipping() as env:
             first = make_worker(env, DocumentRunner(container, FakeModel()))
             first_run = asyncio.create_task(first.run())
-            await Dispatcher(container, env.client).tick()
+            await dispatch_tick(container, env.client)
             await asyncio.wait_for(accepted.wait(), 30)
             await first.shutdown()
             await first_run
@@ -98,7 +99,7 @@ def test_worker_restart_after_saved_draft_does_not_repeat_model(container, skill
                     raise RuntimeError("simulated worker loss after checkpoint")
             first = make_worker(env, LostAcknowledgement(container, model, research=search))
             first_run = asyncio.create_task(first.run())
-            await Dispatcher(container, env.client).tick()
+            await dispatch_tick(container, env.client)
             await asyncio.wait_for(checkpoint.wait(), 30)
             await first.shutdown()
             await first_run
@@ -137,7 +138,7 @@ def test_cancellation_stops_inflight_step_and_preserves_unknown_usage(container)
                     finally:
                         stopped.set()
             async with make_worker(env, DocumentRunner(container, SlowModel())):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 await asyncio.wait_for(entered.wait(), 30)
                 container.repository.cancel(owner, task["id"])
                 await asyncio.wait_for((await run_handle(env, task["id"])).result(), 30)
@@ -158,7 +159,7 @@ def test_provider_outage_retries_twice_then_has_terminal_error(container):
                     raise DraftFailure("model_busy", "The AI service is busy. Please retry.", retryable=True)
             model = Unavailable()
             async with make_worker(env, DocumentRunner(container, model)):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 await asyncio.wait_for((await run_handle(env, task["id"])).result(), 30)
             value = container.repository.get_task(owner, task["id"])
             assert model.calls == 2 and value["state"] == "failed"
@@ -197,7 +198,7 @@ def test_saved_web_evidence_survives_worker_loss_without_researching(container):
                     raise RuntimeError("simulated loss after search checkpoint")
             first = make_worker(env, LostSearchAcknowledgement(container, model, research=search))
             first_run = asyncio.create_task(first.run())
-            await Dispatcher(container, env.client).tick()
+            await dispatch_tick(container, env.client)
             await asyncio.wait_for(checkpoint.wait(), 30)
             await first.shutdown()
             await first_run
@@ -226,7 +227,7 @@ def test_cancelled_search_stops_before_model_and_retains_unknown_credit(containe
                         stopped.set()
             model = WorkModel()
             async with make_worker(env, DocumentRunner(container, model, research=SlowSearch())):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 await asyncio.wait_for(entered.wait(), 30)
                 container.repository.cancel(account(container), task["id"])
                 await asyncio.wait_for((await run_handle(env, task["id"])).result(), 30)
@@ -251,7 +252,7 @@ def test_agent_workflow_executes_bounded_email_draft_once(container):
         model = WorkModel()
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, DocumentRunner(container, model)):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
                     await asyncio.wait_for(handle.result(), 30)
@@ -289,7 +290,7 @@ def test_agent_worker_restart_reuses_child_task_checkpoint(container):
         async with await WorkflowEnvironment.start_time_skipping() as env:
             first = make_worker(env, LostAfterDraft(container, model))
             first_run = asyncio.create_task(first.run())
-            await Dispatcher(container, env.client).tick()
+            await dispatch_tick(container, env.client)
             await asyncio.wait_for(checkpoint.wait(), 30)
             await first.shutdown()
             await first_run
@@ -330,7 +331,7 @@ def test_agent_action_waits_for_exact_approval_then_resumes_once(container):
 
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, DocumentRunner(container, WorkModel())):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 for _ in range(100):
                     if container.agent.get(owner, run["id"])["state"] == "awaiting_approval":
                         break
@@ -343,7 +344,7 @@ def test_agent_action_waits_for_exact_approval_then_resumes_once(container):
 
                 approved = container.actions.repo.approve(owner, action["id"], action["preview_hash"])
                 assert approved["state"] == "queued"
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
 
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
@@ -431,7 +432,7 @@ def test_agent_workflow_replans_once_when_capability_changes(container):
         runtime = GatedRuntime(container, runner, planner=planner)
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, runner, runtime):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 await asyncio.wait_for(gate.wait(), 30)
                 changed = replace(enabled, work_services_enabled=False)
                 container.settings = changed
@@ -486,7 +487,7 @@ def test_agent_workflow_chains_prior_task_output_without_temporal_payload_leak(c
         runtime = AgentRuntime(container, runner, planner=Planner())
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, runner, runtime):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
                     await asyncio.wait_for(handle.result(), 30)
@@ -547,7 +548,7 @@ def test_agent_workflow_replans_remaining_steps_after_incomplete_result(containe
         runtime = AgentRuntime(container, runner, planner=planner)
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, runner, runtime):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
                     await asyncio.wait_for(handle.result(), 30)
@@ -761,7 +762,7 @@ def test_agent_v2_fans_out_research_and_work_steps_then_fans_in(container):
         runtime = ObservedRuntime(container, runner)
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, runner, runtime):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
                     await asyncio.wait_for(handle.result(), 30)
@@ -826,7 +827,7 @@ def test_agent_v2_failed_branch_preserves_completed_independent_work_and_blocks_
 
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, runner, OneBranchFails(container, runner)):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
                     await asyncio.wait_for(handle.result(), 30)
@@ -901,7 +902,7 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
             first_runner = LostAfterParallelDraft(container, model, research=search)
             first = make_worker(env, first_runner, AgentRuntime(container, first_runner))
             first_run = asyncio.create_task(first.run())
-            await Dispatcher(container, env.client).tick()
+            await dispatch_tick(container, env.client)
             await asyncio.wait_for(checkpoint.wait(), 30)
             await first.shutdown()
             await first_run
@@ -986,7 +987,7 @@ def test_agent_v3_result_aware_decisions_change_next_step_and_verify_completion(
         runtime = AgentRuntime(container, runner, planner=planner)
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, runner, runtime):
-                await Dispatcher(container, env.client).tick()
+                await dispatch_tick(container, env.client)
                 handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
                 async with env.time_skipping_unlocked():
                     await asyncio.wait_for(handle.result(), 30)
