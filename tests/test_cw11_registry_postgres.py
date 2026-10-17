@@ -16,6 +16,9 @@ from sqlalchemy.exc import IntegrityError
 
 from services.coworker.models import ReviewedSkillPublication, ReviewedSkillSelection, WorkerInstance
 from services.coworker.errors import CoworkerError
+from services.coworker.models import WorkerClaim, utcnow
+from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
+from services.coworker.worker_claims import add_worker_claim, lock_running_worker
 from services.coworker.reviewed_skill_registry import (
     REVIEWED_RESEARCH_SKILL,
     REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
@@ -378,3 +381,117 @@ def test_postgres_rejects_worker_insert_without_deployment_revision_context(repo
 
     with repository.sessions() as db:
         assert db.get(WorkerInstance, worker_id) is None
+
+
+def test_postgres_claim_commit_serializes_with_drain_and_blocks_false_completion(repository):
+    engine = repository.sessions.kw["bind"]
+    if engine.dialect.name != "postgresql":
+        pytest.skip("Worker claim/drain lock ordering requires PostgreSQL row locks")
+
+    original_settings = repository.settings
+    queue = "cw11-claim-drain-" + uuid4().hex
+    repository.settings = replace(
+        repository.settings,
+        task_queue=queue,
+        source_revision=REVISION,
+    )
+    worker_id = None
+    claim_resource = "run-" + uuid4().hex
+    claim_locked = Event()
+    allow_claim_commit = Event()
+    drain_started = Event()
+    drain_finished = Event()
+
+    def insert_claim_under_worker_lock():
+        with repository.sessions.begin() as db:
+            now = utcnow()
+            worker = lock_running_worker(
+                db,
+                worker_id=worker_id,
+                task_queue=queue,
+                now=now,
+                heartbeat_ttl_seconds=WORKER_HEARTBEAT_TTL_SECONDS,
+            )
+            assert worker is not None
+            add_worker_claim(
+                db,
+                worker=worker,
+                claim_type="agent_dispatch",
+                resource_id=claim_resource,
+                now=now,
+            )
+            claim_locked.set()
+            if not allow_claim_commit.wait(timeout=8):
+                raise RuntimeError("test did not release the claim transaction")
+
+    def request_drain():
+        drain_started.set()
+        try:
+            return repository.request_worker_drain(
+                task_queue=queue,
+                source_revision=REVISION,
+                actor_reference="cw11-postgres-test",
+                reason="Serialize drain against an in-flight Agent dispatch claim",
+            )
+        finally:
+            drain_finished.set()
+
+    try:
+        worker_id = repository.register_worker(
+            task_queue=queue,
+            source_revision=REVISION,
+        )
+        assert repository.heartbeat_worker(worker_id) == "running"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claim_future = pool.submit(insert_claim_under_worker_lock)
+            try:
+                assert claim_locked.wait(timeout=5), "claim transaction did not acquire worker lock"
+                drain_future = pool.submit(request_drain)
+                assert drain_started.wait(timeout=5), "drain transaction did not start"
+                assert not drain_finished.wait(timeout=0.25), (
+                    "drain crossed the worker lock while a claim transaction was uncommitted"
+                )
+            finally:
+                allow_claim_commit.set()
+            claim_future.result(timeout=10)
+            assert drain_future.result(timeout=10) == 1
+
+        assert repository.heartbeat_worker(worker_id) == "draining"
+        with pytest.raises(CoworkerError) as blocked:
+            repository.mark_worker_drained(worker_id)
+        assert blocked.value.code == "worker_claims_active"
+
+        assert repository.complete_worker_claim(
+            worker_id=worker_id,
+            claim_type="agent_dispatch",
+            resource_id=claim_resource,
+        ) is True
+        repository.mark_worker_drained(worker_id)
+        evidence = repository.assert_worker_drain_complete(
+            task_queue=queue,
+            old_source_revision=REVISION,
+        )
+        assert evidence["verified"] is True
+        assert evidence["workers"][0]["active_claim_count"] == 0
+    finally:
+        allow_claim_commit.set()
+        repository.settings = original_settings
+        if worker_id is not None:
+            try:
+                with repository.sessions() as db:
+                    active = db.scalar(select(WorkerClaim.id).where(
+                        WorkerClaim.worker_id == worker_id,
+                        WorkerClaim.state == "active",
+                    ))
+                if active is not None:
+                    repository.complete_worker_claim(
+                        worker_id=worker_id,
+                        claim_type="agent_dispatch",
+                        resource_id=claim_resource,
+                    )
+                repository.mark_worker_drained(worker_id)
+            except Exception:
+                # Preserve the primary regression failure; a failed cleanup is
+                # visible through the test's primary assertion/transaction.
+                pass
