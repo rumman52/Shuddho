@@ -496,10 +496,15 @@ class Repository:
                             "Worker registration is blocked because the reviewed-skill selection is not authoritative.",
                             409,
                         )
-                    if publication.source_revision != worker_revision:
+                    # A new candidate runtime must be able to start while the
+                    # old publication remains selected so that the fleet can be
+                    # drained and then switched. Reject a legacy revision being
+                    # introduced by this runtime; the selection operation itself
+                    # still blocks until every active peer matches the candidate.
+                    if worker_revision != self.settings.source_revision:
                         raise CoworkerError(
                             "worker_fleet_incompatible",
-                            "Worker registration is blocked because its source revision differs from the selected reviewed publication.",
+                            "Worker registration is blocked because its source revision differs from this deployment-attested runtime revision.",
                             409,
                         )
             db.add(WorkerInstance(
