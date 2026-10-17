@@ -103,6 +103,29 @@ class Repository:
             .order_by(WorkerInstance.id)
             .with_for_update()
         ).all()
+        # Every claim-aware dispatcher locks its worker row before creating,
+        # completing or reconciling a claim. Holding the fleet rows above
+        # therefore stabilizes this claim snapshot through selection/rollback.
+        # Do not trust a drained-state snapshot if any durable claim remains.
+        worker_ids = [row.id for row in rows]
+        active_claim_ids = (
+            db.scalars(
+                select(WorkerClaim.id)
+                .where(
+                    WorkerClaim.worker_id.in_(worker_ids),
+                    WorkerClaim.state == "active",
+                )
+                .order_by(WorkerClaim.worker_id, WorkerClaim.claimed_at, WorkerClaim.id)
+                .with_for_update()
+            ).all()
+            if worker_ids else []
+        )
+        if active_claim_ids:
+            raise CoworkerError(
+                "worker_claims_active",
+                "Reviewed-skill control is blocked while any worker has an active dispatch claim.",
+                409,
+            )
         incompatible = [
             row for row in rows
             if row.state in WORKER_ACTIVE_STATES
