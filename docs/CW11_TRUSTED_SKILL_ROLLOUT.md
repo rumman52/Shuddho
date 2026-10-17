@@ -204,12 +204,18 @@ The release is not CW-11 qualified until all three evidence layers pass:
 
 Do not substitute a unit-test result for the staging or operational layer.
 
-## Registry transaction lock order
+## Registry and worker-registration serialization
 
-All reviewed-skill control transactions must acquire locks in this order:
+For PostgreSQL, reviewed-skill controls and worker registration must acquire the same transaction-scoped advisory lock for the target task queue before changing or snapshotting queue membership. The lock key is deterministic for the queue, so registration cannot appear as a phantom between the fleet snapshot and the registry transaction's commit.
+
+After acquiring the queue-membership lock, registry controls use this row-lock order:
 
 1. Lock every worker row for the task queue in stable worker-ID order and validate liveness/drain state.
 2. Lock the reviewed-skill selection row and revalidate that it remains selected.
 3. Lock the publication row or rows required by the operation.
 
-Admission may use non-locking reads to preserve precise early error responses, but those reads are only observations. It must acquire the worker locks and then re-read and validate the selection and publication under lock before admitting work. Selection and rollback must never hold selection/publication locks while waiting for the worker inventory. This ordering does not fence a concurrent worker-registration phantom and does not prove whole-fleet quiescence; protected staging evidence remains required.
+Admission may use non-locking reads to preserve precise early error responses, but those reads are observations only. It must acquire the queue-membership lock and worker locks, then re-read and validate the selection and publication under lock before admitting work. Selection and rollback must never hold selection/publication locks while waiting for the worker inventory.
+
+Worker registration acquires the same queue lock before inserting its inventory row. For the configured coworker queue, if a reviewed publication is selected, registration fails closed when the selection/publication is not authoritative or when the worker's source revision differs from the selected publication. Other task queues remain isolated.
+
+The advisory lock is transaction-scoped and requires PostgreSQL. SQLite tests verify the revision contract but do not establish the PostgreSQL phantom-fencing guarantee. This mechanism closes the registration/snapshot race; it does not by itself fence in-flight Agent/action claims, prove whole-fleet quiescence, or replace protected staging evidence.
