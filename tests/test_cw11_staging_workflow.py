@@ -60,6 +60,23 @@ def test_staging_secrets_are_scoped_to_the_steps_that_need_them():
     assert "SHUDDHO_AUTH_ISSUER" not in migration
 
 
+def test_dispatch_inputs_are_passed_through_environment_not_shell_interpolation():
+    source = WORKFLOW_PATH.read_text(encoding="utf-8")
+    render_check = source.split(
+        "- name: Verify live Render mixed-version drain state", maxsplit=1
+    )[1].split("- name: Apply pending staging migrations", maxsplit=1)[0]
+    collector = source.split("- name: Collect CW-11 staging evidence", maxsplit=1)[1]
+    render_script = render_check.split("        run: |", maxsplit=1)[1]
+    collector_script = collector.split("        run: |", maxsplit=1)[1]
+
+    assert "OLD_SOURCE_REVISION: ${{ inputs.old_source_revision }}" in render_check
+    assert "EXPECTED_PUBLICATION_VERSION: ${{ inputs.expected_publication_version }}" in collector
+    assert "OLD_SOURCE_REVISION: ${{ inputs.old_source_revision }}" in collector
+    assert "${{ inputs.old_source_revision }}" not in render_script
+    assert "${{ inputs.expected_publication_version }}" not in collector_script
+    assert "${{ inputs.old_source_revision }}" not in collector_script
+
+
 def test_live_worker_drain_gate_precedes_schema_mutation_and_evidence():
     source = WORKFLOW_PATH.read_text(encoding="utf-8")
     evidence = _job_section(source, "evidence")
