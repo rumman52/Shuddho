@@ -601,7 +601,7 @@ class Repository:
                 WorkerInstance.source_revision == source_revision,
                 WorkerInstance.state.in_(WORKER_ACTIVE_STATES),
                 WorkerInstance.heartbeat_at >= cutoff,
-            ).with_for_update()).all()
+            ).order_by(WorkerInstance.id).with_for_update()).all()
             now = utcnow()
             for row in rows:
                 row.state = "draining"
