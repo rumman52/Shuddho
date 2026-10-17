@@ -124,7 +124,33 @@ async def create_and_dispatch(container: Container, client: Client, owner: str, 
         key_prefix + "-" + uuid.uuid4().hex,
     )
     container.agent.save_plan(owner, run["id"], simple_plan())
-    await Dispatcher(container, client).dispatch_agent_run(run["id"])
+    worker_id = await asyncio.to_thread(
+        container.repository.register_worker,
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision,
+    )
+    state = await asyncio.to_thread(container.repository.heartbeat_worker, worker_id)
+    if state != "running":
+        raise RollbackFailure(f"Dispatcher worker failed to enter running state: {state}")
+    try:
+        claimed = await asyncio.to_thread(
+            container.agent.claim_outbox,
+            worker_id=worker_id,
+            run_ids=[run["id"]],
+        )
+        if claimed != [run["id"]]:
+            raise RollbackFailure("The synthetic Agent run could not acquire its durable dispatch claim.")
+        try:
+            await Dispatcher(container, client, worker_id).dispatch_agent_run(run["id"])
+        finally:
+            await asyncio.to_thread(
+                container.repository.complete_worker_claim,
+                worker_id=worker_id,
+                claim_type="agent_dispatch",
+                resource_id=run["id"],
+            )
+    finally:
+        await asyncio.to_thread(container.repository.mark_worker_drained, worker_id)
     workflow_id = "shuddho-agent-" + run["id"]
     return {"run_id": run["id"], "workflow_id": workflow_id}
 
