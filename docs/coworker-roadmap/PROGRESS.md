@@ -1,3 +1,23 @@
+## CW-11 per-claim dispatch drain fencing — 17 October 2026 (Asia/Dhaka)
+
+**Active branch:** `codex/cw11-per-claim-drain-fencing-20261017`. This follows the merged PR #449 runtime-revision hardening. Exact-head CI and independent review for this slice are pending; no local test execution is claimed.
+
+**Failure mode closed by this slice:** an outbox could be claimed by an Agent/action dispatcher without a registered worker identity, and the worker registry could mark a worker drained while a dispatch attempt was still in flight. A worker could also claim a batch, fail on the first dispatch, and leave the rest of that batch indistinguishable from active in-flight work.
+
+**Implementation:**
+- Add migration `0062` and durable `cw_worker_claims` records for task, Agent and approved-action dispatch claims.
+- Make task, Agent and action outbox claims lock the registered worker first, require a fresh `running` worker on the configured queue, and create claim records atomically with outbox leases.
+- Require an active durable claim at the Agent dispatch boundary, including staging/operator helper paths.
+- Complete claims after each dispatch attempt returns. On a batch failure, close claims for unattempted items without acknowledging their outbox rows, preserving normal lease-based retry.
+- Make `mark_worker_drained()` refuse completion while active claims remain; expose `active_claim_count` in worker inventory and require zero claims in drain evidence.
+- Add tests for Agent/action/task claim blocking, missing worker identity, migration/model parity, and a PostgreSQL interleaving where a drain waits behind an uncommitted claim.
+
+**Safety boundary:** claims have no expiry-based auto-clear. A process crash that leaves an active claim blocks drain certification until evidence-driven reconciliation. The claim ledger tracks dispatcher work; it does not replace the existing requirement to await Temporal worker shutdown before marking the process drained. No production activation, external provider mutation, deployment or protected staging run is performed by this change.
+
+**Remaining gates:** exact-head `test-and-build`, `coworker`, and `ci-merge-gate`; independent code/security review; protected `CW11-STAGING` with real worker identities and exact-revision evidence; the four operated coworker scenarios; and separate production qualification/activation authorization.
+
+---
+
 ## CW-11 worker-registration phantom fence — 17 October 2026 (Asia/Dhaka)
 
 **Mainline baseline:** PR #447 is merged as `e8de414e8b98eb503700a85474190304e28e58ed`. PR #448 then merged the initial queue advisory-lock and PostgreSQL registration-trigger implementation as `6b5aa1e2743bdbbdaa7c38a55670f6d39e8043da`. Its merged-main CI run [#39008038850](https://github.com/rumman52/Shuddho/actions/runs/39008038850) has `test-and-build` green; the mandatory `coworker` job was still running at this checkpoint.
