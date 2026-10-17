@@ -193,6 +193,43 @@ def test_selection_requires_compatible_fleet_and_never_auto_selects(container):
     assert new
 
 
+def test_worker_registration_rejects_revision_incompatible_with_selected_publication(container):
+    worker(container, REV_A)
+    publish(container, "research_registration_fence_v0", source_revision=REV_A)
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_registration_fence_v0",
+        actor_reference="cw11-test-operator",
+        reason="registration must respect selected worker revision",
+        worker_source_revision=REV_A,
+    )
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.repository.register_worker(
+            task_queue=container.settings.task_queue,
+            source_revision=REV_B,
+        )
+    assert blocked.value.code == "worker_fleet_incompatible"
+    assert {
+        row["source_revision"]
+        for row in container.repository.worker_inventory(
+            task_queue=container.settings.task_queue,
+        )
+    } == {REV_A}
+
+    # A separate task queue is not governed by this queue's reviewed selection.
+    unrelated = container.repository.register_worker(
+        task_queue="cw11-unrelated-queue",
+        source_revision=REV_B,
+    )
+    assert any(
+        row["id"] == unrelated and row["source_revision"] == REV_B
+        for row in container.repository.worker_inventory(
+            task_queue="cw11-unrelated-queue",
+        )
+    )
+
+
 def test_selected_publication_remains_the_agent_gate_after_feature_flag_off(container):
     worker(container, REV_A)
     publish(container, "research_reviewed_flag_off", source_revision=REV_A)
