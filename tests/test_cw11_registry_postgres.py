@@ -214,6 +214,7 @@ def test_worker_registration_cannot_phantom_after_registry_fleet_snapshot(reposi
         pytest.skip("This regression requires PostgreSQL advisory transaction locks")
 
     original_settings = repository.settings
+    original_fleet_check = repository._require_compatible_worker_fleet
     queue = "cw11-registration-" + uuid4().hex
     repository.settings = replace(
         repository.settings,
@@ -222,95 +223,118 @@ def test_worker_registration_cannot_phantom_after_registry_fleet_snapshot(reposi
     )
 
     previous_selection = None
-    with repository.sessions.begin() as db:
-        previous_row = db.scalar(select(ReviewedSkillSelection).where(
-            ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
-        ).with_for_update())
-        if previous_row is not None:
-            previous_selection = {
-                "publication_id": previous_row.publication_id,
-                "generation": previous_row.generation,
-                "state": previous_row.state,
-                "updated_by": previous_row.updated_by,
-                "reason": previous_row.reason,
-                "updated_at": previous_row.updated_at,
-            }
-            db.delete(previous_row)
-
-    version = "registration_race_" + uuid4().hex[:12]
-    publication = build_reviewed_publication(
-        skill_name=REVIEWED_RESEARCH_SKILL,
-        publication_version=version,
-        task_workflow_version=REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
-        source_revision=REVISION,
-    )
-    published = repository.publish_reviewed_skill(
-        publication,
-        actor_reference="cw11-registration-race-test",
-        reason="Deterministic worker registration/fleet snapshot race",
-    )
-    compatible_worker = repository.register_worker(
-        task_queue=queue,
-        source_revision=REVISION,
-    )
-    assert repository.heartbeat_worker(compatible_worker) == "running"
-
-    fleet_snapshot_taken = Event()
+    selection_snapshot_saved = False
+    published_id = None
+    listener_added = False
     allow_selection_commit = Event()
-    registration_lock_attempted = Event()
-    registration_finished = Event()
-    original_fleet_check = repository._require_compatible_worker_fleet
 
-    def coordinated_fleet_check(db, *, task_queue, required_source_revision):
-        result = original_fleet_check(
-            db,
-            task_queue=task_queue,
-            required_source_revision=required_source_revision,
-        )
-        if current_thread().name == "cw11-select-registration-race":
-            fleet_snapshot_taken.set()
-            if not allow_selection_commit.wait(timeout=8):
-                raise RuntimeError("test failed to release the fleet snapshot")
-        return result
+    def restore_selection():
+        with repository.sessions.begin() as db:
+            current_selection = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+            ).with_for_update().execution_options(populate_existing=True))
+            if current_selection is not None and published_id is not None and current_selection.publication_id == published_id:
+                if previous_selection is None:
+                    db.delete(current_selection)
+                else:
+                    for field, value in previous_selection.items():
+                        setattr(current_selection, field, value)
+            elif current_selection is None and previous_selection is not None:
+                db.add(ReviewedSkillSelection(
+                    skill_name=REVIEWED_RESEARCH_SKILL,
+                    **previous_selection,
+                ))
 
-    def observe_registration_lock(conn, cursor, statement, parameters, context, executemany):
-        if (
-            current_thread().name == "cw11-register-race"
-            and "pg_advisory_xact_lock" in statement.lower()
-        ):
-            registration_lock_attempted.set()
-
-    def select_publication():
-        current_thread().name = "cw11-select-registration-race"
-        return repository.select_reviewed_skill(
-            REVIEWED_RESEARCH_SKILL,
-            version,
-            actor_reference="cw11-registration-race-test",
-            reason="Select while an incompatible worker attempts registration",
-            worker_source_revision=REVISION,
-        )
-
-    def register_incompatible_worker():
-        current_thread().name = "cw11-register-race"
-        try:
-            repository.register_worker(
-                task_queue=queue,
-                source_revision="b" * 40,
-            )
-        except CoworkerError as exc:
-            return exc.code
-        finally:
-            registration_finished.set()
-        return "registered"
-
-    event.listen(engine, "before_cursor_execute", observe_registration_lock)
-    repository._require_compatible_worker_fleet = coordinated_fleet_check
     try:
+        with repository.sessions.begin() as db:
+            previous_row = db.scalar(select(ReviewedSkillSelection).where(
+                ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
+            ).with_for_update())
+            if previous_row is not None:
+                previous_selection = {
+                    "publication_id": previous_row.publication_id,
+                    "generation": previous_row.generation,
+                    "state": previous_row.state,
+                    "updated_by": previous_row.updated_by,
+                    "reason": previous_row.reason,
+                    "updated_at": previous_row.updated_at,
+                }
+                db.delete(previous_row)
+        selection_snapshot_saved = True
+
+        version = "registration_race_" + uuid4().hex[:12]
+        publication = build_reviewed_publication(
+            skill_name=REVIEWED_RESEARCH_SKILL,
+            publication_version=version,
+            task_workflow_version=REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
+            source_revision=REVISION,
+        )
+        published = repository.publish_reviewed_skill(
+            publication,
+            actor_reference="cw11-registration-race-test",
+            reason="Deterministic worker registration/fleet snapshot race",
+        )
+        published_id = published["id"]
+        compatible_worker = repository.register_worker(
+            task_queue=queue,
+            source_revision=REVISION,
+        )
+        assert repository.heartbeat_worker(compatible_worker) == "running"
+
+        fleet_snapshot_taken = Event()
+        registration_lock_attempted = Event()
+        registration_finished = Event()
+
+        def coordinated_fleet_check(db, *, task_queue, required_source_revision):
+            result = original_fleet_check(
+                db,
+                task_queue=task_queue,
+                required_source_revision=required_source_revision,
+            )
+            if current_thread().name == "cw11-select-registration-race":
+                fleet_snapshot_taken.set()
+                if not allow_selection_commit.wait(timeout=8):
+                    raise RuntimeError("test failed to release the fleet snapshot")
+            return result
+
+        def observe_registration_lock(conn, cursor, statement, parameters, context, executemany):
+            if (
+                current_thread().name == "cw11-register-race"
+                and "pg_advisory_xact_lock" in statement.lower()
+            ):
+                registration_lock_attempted.set()
+
+        def select_publication():
+            current_thread().name = "cw11-select-registration-race"
+            return repository.select_reviewed_skill(
+                REVIEWED_RESEARCH_SKILL,
+                version,
+                actor_reference="cw11-registration-race-test",
+                reason="Select while an incompatible worker attempts registration",
+                worker_source_revision=REVISION,
+            )
+
+        def register_incompatible_worker():
+            current_thread().name = "cw11-register-race"
+            try:
+                repository.register_worker(
+                    task_queue=queue,
+                    source_revision="b" * 40,
+                )
+            except CoworkerError as exc:
+                return exc.code
+            finally:
+                registration_finished.set()
+            return "registered"
+
+        event.listen(engine, "before_cursor_execute", observe_registration_lock)
+        listener_added = True
+        repository._require_compatible_worker_fleet = coordinated_fleet_check
         with ThreadPoolExecutor(max_workers=2) as pool:
             selected_future = pool.submit(select_publication)
             assert fleet_snapshot_taken.wait(timeout=5), "selection did not take the fleet snapshot"
             registration_future = pool.submit(register_incompatible_worker)
-            assert registration_lock_attempted.wait(timeout=5), "registration did not acquire the queue lock"
+            assert registration_lock_attempted.wait(timeout=5), "registration did not attempt the queue lock"
             assert not registration_finished.wait(timeout=0.25), (
                 "worker registration completed while the fleet snapshot transaction held its queue lock"
             )
@@ -325,21 +349,9 @@ def test_worker_registration_cannot_phantom_after_registry_fleet_snapshot(reposi
         assert all(row["source_revision"] == REVISION for row in inventory)
     finally:
         allow_selection_commit.set()
-        event.remove(engine, "before_cursor_execute", observe_registration_lock)
+        if listener_added:
+            event.remove(engine, "before_cursor_execute", observe_registration_lock)
         repository._require_compatible_worker_fleet = original_fleet_check
         repository.settings = original_settings
-        with repository.sessions.begin() as db:
-            current_selection = db.scalar(select(ReviewedSkillSelection).where(
-                ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
-            ).with_for_update().execution_options(populate_existing=True))
-            if current_selection is not None and current_selection.publication_id == published["id"]:
-                if previous_selection is None:
-                    db.delete(current_selection)
-                else:
-                    for field, value in previous_selection.items():
-                        setattr(current_selection, field, value)
-            elif current_selection is None and previous_selection is not None:
-                db.add(ReviewedSkillSelection(
-                    skill_name=REVIEWED_RESEARCH_SKILL,
-                    **previous_selection,
-                ))
+        if selection_snapshot_saved:
+            restore_selection()
