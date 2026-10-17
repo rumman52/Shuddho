@@ -1,4 +1,4 @@
-from coworker_worker_helpers import dispatch_tick, run_dispatcher
+from coworker_worker_helpers import run_dispatcher
 """Local-only browser fixture: real auth verification, DB, Temporal and exports.
 
 The identity and model responses are test fixtures. This file is excluded from
