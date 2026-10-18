@@ -935,6 +935,91 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
 
     asyncio.run(scenario())
 
+@pytest.mark.parametrize(
+    ("fault", "status_code", "expected_attempts"),
+    [
+        ("429", 429, 2),
+        ("500", 500, 2),
+        ("timeout", None, 2),
+        ("400", 400, 1),
+    ],
+)
+def test_agent_v3_model_failures_retry_within_bound_without_creating_work(
+    container, fault, status_code, expected_attempts,
+):
+    async def scenario():
+        import httpx
+        from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+        from services.coworker.models import AgentDecision, MemoryProposal, ToolInvocation
+
+        enabled = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            agent_runtime_v3_enabled=True,
+            intelligent_planner_enabled=True,
+            work_services_enabled=True,
+            artifact_services_enabled=True,
+            agent_memory_enabled=True,
+            context_retrieval_enabled=True,
+            deepseek_api_key="synthetic-test-key",
+            max_active_agent_runs=10,
+            max_agent_v3_planner_calls=2,
+            agent_v3_planner_token_budget=16000,
+        )
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        container.context.settings = enabled
+        container.memory.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(
+            owner,
+            AgentRunCreate(goal="Create a concise project update.", output_language="en"),
+            f"agent-v3-model-failure-{fault}",
+        )
+        assert run["runtime_version"] == 3
+
+        attempts = 0
+
+        def respond(request):
+            nonlocal attempts
+            attempts += 1
+            if fault == "timeout":
+                raise httpx.ReadTimeout("PRIVATE timeout detail", request=request)
+            return httpx.Response(status_code, text="PRIVATE PROVIDER BODY")
+
+        planner = DeepSeekAgentPlanner(enabled, httpx.MockTransport(respond))
+        runner = DocumentRunner(container, WorkModel())
+        runtime = AgentRuntime(container, runner, planner=planner)
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, runner, runtime):
+                await dispatch_tick(container, env.client)
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+                history = (await handle.fetch_history()).to_json()
+
+        saved = container.agent.get(owner, run["id"])
+        assert attempts == expected_attempts
+        assert saved["state"] == "failed"
+        assert saved["planner_calls"] == expected_attempts
+        assert saved["decisions"] == []
+        assert saved["steps"] == []
+        assert "PRIVATE" not in history
+        with container.repository.sessions() as db:
+            assert db.scalars(select(AgentDecision).where(
+                AgentDecision.run_id == run["id"],
+            )).all() == []
+            assert db.scalars(select(MemoryProposal).where(
+                MemoryProposal.run_id == run["id"],
+            )).all() == []
+            assert db.scalars(select(ToolInvocation).where(
+                ToolInvocation.run_id == run["id"],
+            )).all() == []
+
+    asyncio.run(scenario())
+
+
 def test_agent_v3_result_aware_decisions_change_next_step_and_verify_completion(container):
     async def scenario():
         enabled = replace(
