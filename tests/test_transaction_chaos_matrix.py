@@ -15,7 +15,17 @@ def evidence():
              "operator": "staging-test", "observed_at": "2026-10-12T00:00:00Z",
              "attempted_mutations": 0 if name in NO_DISPATCH else 1,
              "applied_mutations": 0 if name in NO_APPLIED_MUTATION else 1,
-             "outcome": "blocked" if name in NO_APPLIED_MUTATION else "recovered",
+             "outcome": (
+                 "failed" if name in {
+                     "model_429", "model_500", "model_timeout",
+                     "provider_401", "provider_403", "provider_429",
+                 } else
+                 "uncertain" if name in {
+                     "provider_500", "malformed_response", "lost_provider_response",
+                 } else
+                 "rejected" if name == "approval_after_expiration" else
+                 "recovered"
+             ),
              "evidence_file": f"{name}.json"}
             for i, name in enumerate(SCENARIOS)
         ],
@@ -146,3 +156,39 @@ def test_missing_or_symlink_evidence_rejected(tmp_path):
 
 def test_no_evidence_directory_fails_closed(tmp_path):
     assert "evidence directory does not exist" in verify_evidence_files(evidence(), tmp_path / "missing")
+
+
+
+def test_fault_specific_provider_counters_and_outcomes_are_enforced():
+    # Structurally valid evidence must still be rejected if its claimed fault
+    # counters/outcome contradict the deterministic scenario contract.
+    for name in ("provider_401", "provider_403", "provider_429"):
+        doc = evidence()
+        row = next(x for x in doc["scenarios"] if x["id"] == name)
+        row["applied_mutations"] = 1
+        assert any("expected zero applied" in problem or "expected attempted_mutations" in problem
+                   for problem in check(doc)), name
+
+    for name in ("provider_500", "malformed_response"):
+        doc = evidence()
+        row = next(x for x in doc["scenarios"] if x["id"] == name)
+        row["attempted_mutations"] = 0
+        row["applied_mutations"] = 0
+        row["outcome"] = "confirmed"
+        problems = check(doc)
+        assert any("expected attempted_mutations=1" in problem for problem in problems), name
+        assert any("outcome must be one of" in problem for problem in problems), name
+
+
+def test_expired_approval_manifest_cannot_claim_provider_dispatch():
+    doc = evidence()
+    row = next(x for x in doc["scenarios"] if x["id"] == "approval_after_expiration")
+    row["attempted_mutations"] = 1
+    row["outcome"] = "confirmed"
+    problems = check(doc)
+    assert any("expected zero provider dispatch attempts" in problem for problem in problems)
+    assert any("outcome must be one of" in problem for problem in problems)
+
+
+def test_exact_counter_contract_accepts_controlled_provider_outcomes():
+    assert check(evidence()) == []
