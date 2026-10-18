@@ -1,80 +1,17 @@
-# Shuddho: from bounded coworker foundations to a continuous AI coworker
+## Immediate qualification status — refreshed 18 October 2026
 
-## Decision and evidence
+The following CW-01 findings in the earlier planning audit are **historical and superseded by the current source/CI state**. Do not restart CW-01 solely because that old paragraph remains in a checkpoint:
 
-Evolve the existing architecture. Preserve FastAPI, PostgreSQL, Temporal, private object
-storage, typed tools, external-action approvals, and Bangla writing. Add continuity and
-qualified capabilities around them.
+1. `tests/test_transaction_chaos_qualification.py` exists and is explicitly run by `.github/workflows/ci.yml` with `scripts.mandatory_test_gate` and the required-module assertion.
+2. The current duplicate-binding test asserts that the same action binding returns the existing link and a different action ID raises `transaction_execution_already_bound`.
+3. The accepted-then-lost-response test exercises the action service and reconciliation path; it expects `outcome_unknown`, no fabricated receipt, and one provider submission.
+4. The expiry test uses the real `ExternalAction.expires_at`, approval and claim boundaries, and asserts that no provider request or mutation occurs.
+5. `scripts/transaction_chaos_matrix.py` defines all 16 scenario IDs, and `docs/phase11-transaction-chaos-qualification.md` documents the requested outcomes.
 
-Shuddho is beyond a simple writing MVP. It is not yet a demonstrated production Muse
-equivalent. No defensible percentage-complete estimate follows from merged PR counts.
+Current source reference: `main` `8bc5596ce7b3cce42d1d6f6f19b779156233009e`. The exact-head [PR #460 CI run](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`, including the required transaction-safety, PostgreSQL/Temporal fault-boundary, process-recovery, and bounded planner-retry checks. PR #460 remains open and unmerged. The PR discussion has automated no-major-findings responses, but the GitHub API has no formal submitted review record; independent security sign-off is not recorded.
 
-Inspected baseline: `ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40`.
-[Main CI #1332](https://github.com/rumman52/Shuddho/actions/runs/38163844235) passed
-`test-and-build`, `coworker`, and `ci-merge-gate`.
-This is repository CI evidence, not a live reliability or transaction-safety certification.
+This repository CI evidence does **not** prove the 16 scenarios have been operated against a frozen live staging rollout. The manifest validator checks structure and hashes, not truthfulness of provider-side observations. Remaining gates include authorized staging execution, independent provider-side mutation counts, exact deployed API/worker/configuration identity, reconciliation evidence, and separate production qualification. No 99.9% SLO or activation is established.
 
-Muse's first-party design describes continuous chat, goals, persistent memory, background
-work, a browser/terminal/filesystem and rich artifacts. Its security description says the
-agent executes in an isolated cell; independent credential and Sentinel services govern
-external access. These are publicly described capabilities, not independently measured
-performance or a complete disclosure of its internals.
-
-Our recommendation is a persistent logical workspace with ephemeral isolated compute.
-A dedicated VM per user is a later option if security/latency/utilization measurements
-justify its operating cost. This is a Shuddho design choice, not a claim of equivalence to
-Muse's dedicated-VM threat model.
-
-## Where Shuddho stands
-
-| Area | Verified repository evidence | Assessment | Next work |
-| --- | --- | --- | --- |
-| Architecture design | Personal-agent architecture; Temporal workflow, PostgreSQL models, private artifacts; permission gateway and credential broker | Strong foundations already designed and partially implemented | Declare ownership of each state, close orchestration/tool integration gaps, validate deployed boundaries |
-| Core agent | Runtime v3 reads verified observations and scoped context; typed next-step decisions, budget reservations, verified completion, older workflow compatibility | Bounded coordinator exists; general computer coworker remains incomplete | Continuous conversation/task dispatch; browser tool; qualified generated-code workflow; measured route/model quality |
-| Automation/proactivity | Goals, schedules, occurrence dedupe, notifications/digests, event reads, Daily/Weekly/Meeting/Email/Deadline/goal-driven modules | Repository foundations exist; canonical staging checkpoint still records unresolved operational prerequisites | Refresh infrastructure state; freeze release; execute real scheduled/event, recovery, consent, usefulness and cost scenarios |
-| Transactions | Generic ledger, immutable terms, one action binding, uncertainty/reconciliation; negotiation email and bounded no-payment restaurant path; shopping/travel contracts and hosted-handoff foundations | Safety-oriented foundations exist; broad provider execution and full chaos qualification are not demonstrated | Repair chaos-test defects/coverage; prove dispatch invariant; qualify exact providers individually |
-| Production qualification | CI, evaluations, release contract, activation bundle/ledger, rollback/restore tooling | Tooling exists; fresh live evidence and measured 99.9% SLO are not established by the inspected material | Operated staging, isolated execution/security tests, provider proof, cost/load/restore measurements, small reviewed canary |
-
-Evidence anchors:
-- [Architecture](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/PERSONAL_AGENT_ARCHITECTURE.md)
-- [Implementation history](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/PERSONAL_AGENT_IMPLEMENTATION.md)
-- [Canonical staging checkpoint](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/PA10_CONTROLLED_STAGING_CHECKPOINT.md)
-- [TX-28 provider boundaries](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/TX28_TRANSACTIONS_REPOSITORY_COMPLETION.md)
-- [Runtime v3](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/services/coworker/agent_runtime.py)
-
-## Immediate qualification defects
-
-The newest chaos test file must be repaired before citing it as safety evidence.
-
-1. `tests/test_transaction_chaos_qualification.py` is absent from the explicit heavy
-   coworker pytest command. The lightweight job installs no coworker extra; the file
-   uses `pytest.importorskip("sqlalchemy")` and `pytest.importorskip("temporalio")`.
-   Therefore green CI does not establish that this file ran. Inspect logs to establish
-   the actual collection/skip result; require zero skips for the mandatory new suite.
-2. The duplicate-binding test expects a second bind to the *same* action ID to fail.
-   `TransactionRepository.bind_external_action` intentionally returns the existing
-   link for that replay; a different action ID is the conflict. Preserve that
-   idempotent contract and test both cases.
-3. The timeout test passes `evidence_type` and `evidence` to
-   `TransactionReconciliationEvidence`; the inspected ORM model declares neither.
-   Its real fields bind the external action, provider, state, receipt and evidence hash.
-   Exercise the dispatcher and repository reconciliation path instead of inserting
-   invented evidence.
-4. The expiration test calls `container.transactions.advance_execution`; no such
-   method exists in the inspected transaction repository. Use the real action
-   approval/claim boundary and verify zero provider mutations.
-5. The new Phase 11 document lists only five outcomes, not the requested 16 injections.
-
-These are source/CI-configuration findings. The current chaos suite was not executed
-locally during this planning review. CW-01 requires a real reproduction before repair.
-The findings do not establish that the production action service duplicates actions.
-
-Open [chaos PR #361](https://github.com/rumman52/Shuddho/pull/361), inspected at
-`f543573220c2254c6f16c8777d0ff9783efcd92c`, changes this file but is not merged.
-It still constructs undeclared ORM fields, references an absent
-`review_binding["external_action_id"]`, and its expiry test only checks a nonempty ID.
-Inspect/reconcile that work before starting another repair PR; do not consider it
-qualified merely because it replaces the missing-method call.
 
 ## The target experience
 
