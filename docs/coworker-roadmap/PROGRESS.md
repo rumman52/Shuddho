@@ -1,6 +1,6 @@
 ## Current continuation — CW-02 multi-artifact read recovery (19 October 2026, Asia/Dhaka)
 
-- Main is `0f1b90843fe7a5360f69f1d309a09bc5b3e35dec`? **Correction: exact main SHA is `0f1b90843fe7a5360f69b42b6495d0b3c97c06c0`.** PR #466 is merged. Main CI run [#39154827269](https://github.com/rumman52/Shuddho/actions/runs/39154827269) was still in progress at last inspection; no all-green claim.
+- Main is `0f1b90843fe7a5360f69b42b6495d0b3c97c06c0`; PR #466 is merged. Main CI run [#39154827269](https://github.com/rumman52/Shuddho/actions/runs/39154827269) was still in progress at last inspection; no all-green claim.
 - PR #466's merged tests cover a transient required-artifact GET failure and database response loss after an export checkpoint commit. The runner preserves blobs when checkpoint commit outcome is uncertain.
 - New branch `codex/cw02-multi-artifact-read-recovery-20261019` adds a multi-artifact test for repeated read failures: first artifact GET fails, then a later artifact GET fails after the first was verified. Both failures must leave the task non-terminal with zero published artifacts, preserve the export checkpoint/object keys, and allow a later clean retry to verify and publish the complete artifact set.
 - The test, CW-02 contract note, and refreshed acceptance-inventory checkpoint are committed on the branch. The exact branch-head CI and review remain pending.
