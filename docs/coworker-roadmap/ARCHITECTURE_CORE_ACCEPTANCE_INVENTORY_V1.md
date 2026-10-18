@@ -1,6 +1,6 @@
 ## Current mainline checkpoint — 18 October 2026 (Asia/Dhaka)
 
-Current main: `587d7d49b3e5c09191309443cb2e38f38f126ba5` (PR [#458](https://github.com/rumman52/Shuddho/pull/458) merged). PR #458 exact-head CI [run #39106294716](https://github.com/rumman52/Shuddho/actions/runs/39106294716) passed. Merged-main CI [run #39108700880](https://github.com/rumman52/Shuddho/actions/runs/39108700880) was still running at this checkpoint; its `test-and-build` job passed and the `coworker` job had not yet completed. Do not infer final-main verification from an in-progress run.
+Current main: `8bc5596ce7b3cce42d1d6f6f19b779156233009e` (PR [#459](https://github.com/rumman52/Shuddho/pull/459) merged after PR #458). PR #459 merged before its mandatory coworker CI completed and before the final security follow-up was applied; merged-main CI [run #39110892175](https://github.com/rumman52/Shuddho/actions/runs/39110892175) was still running at the last status check. PR #458 exact-head CI [run #39106294716](https://github.com/rumman52/Shuddho/actions/runs/39106294716) passed. Do not infer final-main verification from an in-progress run.
 
 ### CW-02 object-storage recovery regression slice — merged
 
@@ -11,6 +11,10 @@ PR #458 adds Temporal-worker regressions for a lost object-store write response,
 This branch adds a Temporal integration regression that terminates only the targeted backend in the disposable PostgreSQL CI database while the worker persists a receipt after the loopback provider has accepted a send. Temporal retries must not submit the action again. Because the send-only email connector cannot authoritatively reconcile the outcome, the correct safe state is `outcome_unknown` with no fabricated receipt and exactly one provider mutation. The existing pre-commit backend-termination test covers claim rollback; this is a distinct post-provider persistence boundary.
 
 Initial Codex review found that a terminal outcome alone did not prove the Temporal activity retried, because the workflow interruption fallback could also produce outcome_unknown. The regression now records execution-service attempts and requires a post-fault retry before accepting the final state. The finding is addressed in source but remains pending fresh exact-head CI and follow-up review. This remains a narrow fault-injection slice, not completion of the sixteen-case matrix, live provider-side reconciliation, staging, production qualification, or activation.
+
+### Security hardening follow-up — pending
+
+PR #459 added the post-provider PostgreSQL receipt-write disconnect regression and execution-attempt assertions. Independent review then identified that URL connection-target overrides could redirect the destructive backend-termination fault, and that a callback-only guard ran after the shared repository fixture might already have applied migrations. Follow-up PR [#460](https://github.com/rumman52/Shuddho/pull/460), head `9c7eaf76caa4e3f27dbc1ee432a779cce8e8e44c`, moves target-override rejection and effective libpq endpoint validation into `require_disposable_database()` before the shared repository fixture is requested, adds no-connect regression coverage, and retains a per-operation guard before termination. Exact-head CI and independent security review are pending. Do not treat the security findings as closed until PR #460's exact-head gates pass and the fix is merged.
 ---
 
 ## CW-02 planner retry regression follow-up — 18 October 2026
