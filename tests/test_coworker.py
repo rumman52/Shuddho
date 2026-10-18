@@ -3621,11 +3621,11 @@ def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(
         storage = FaultingStore(delegate)
         container.storage = storage
         runner = DocumentRunner(container, FakeModel(), renderer=render)
-        await runner.extract(task)
-        await runner.draft(task)
+        await runner.phase(task["id"], "extract")
+        await runner.phase(task["id"], "draft")
 
         with pytest.raises(OSError, match="simulated S3 PUT response loss"):
-            await runner.export(task)
+            await runner.phase(task["id"], "export")
 
         prefix = f"{owner}/outputs/{task['id']}/"
         assert container.repository.step(task["id"], "export") is None
@@ -3633,7 +3633,7 @@ def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(
         assert container.storage.inventory(prefix=prefix) == []
 
         # The same deterministic keys can be safely rewritten after recovery.
-        await runner.export(task)
+        await runner.phase(task["id"], "export")
         saved = container.repository.step(task["id"], "export")
         assert saved is not None and len(saved["artifacts"]) == 3
         assert {item["object_key"] for item in saved["artifacts"]} == set(storage.put_keys)
