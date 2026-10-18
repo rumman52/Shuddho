@@ -2,25 +2,46 @@
 import hashlib
 import json
 from scripts.transaction_chaos_matrix import (
-    SCENARIOS, NO_APPLIED_MUTATION, NO_DISPATCH, qualify, verify_evidence_files,
+    SCENARIOS, SCENARIO_CONTRACTS, NO_APPLIED_MUTATION, NO_DISPATCH, qualify, verify_evidence_files,
 )
+
+
+SAMPLE_CASES = {
+    "model_429": (0, 0, "blocked"),
+    "model_500": (0, 0, "blocked"),
+    "model_timeout": (0, 0, "blocked"),
+    "provider_401": (1, 0, "failed"),
+    "provider_403": (1, 0, "failed"),
+    "provider_429": (1, 0, "failed"),
+    "provider_500": (1, 1, "uncertain"),
+    "malformed_response": (1, 1, "uncertain"),
+    "database_disconnect": (1, 1, "recovered"),
+    "s3_disconnect": (0, 0, "failed"),
+    "temporal_outage": (1, 1, "recovered"),
+    "worker_crash": (1, 1, "recovered"),
+    "api_crash": (0, 0, "recovered"),
+    "duplicate_message": (0, 0, "recovered"),
+    "lost_provider_response": (1, 1, "uncertain"),
+    "approval_after_expiration": (0, 0, "blocked"),
+}
 
 
 def evidence():
     return {
         "schema_version": 1, "source_revision": "reviewed-head", "rollout_id": "staging-42",
         "scenarios": [
-            {"id": name, "result": "passed", "environment": "staging",
-             "test_run_id": f"run-{i}", "evidence_sha256": "a" * 64,
-             "operator": "staging-test", "observed_at": "2026-10-12T00:00:00Z",
-             "attempted_mutations": 0 if name in NO_DISPATCH else 1,
-             "applied_mutations": 0 if name in NO_APPLIED_MUTATION else 1,
-             "outcome": "blocked" if name in NO_APPLIED_MUTATION else "recovered",
-             "evidence_file": f"{name}.json"}
+            {
+                "id": name, "result": "passed", "environment": "staging",
+                "test_run_id": f"run-{i}", "evidence_sha256": "a" * 64,
+                "operator": "staging-test", "observed_at": "2026-10-12T00:00:00Z",
+                "attempted_mutations": SAMPLE_CASES[name][0],
+                "applied_mutations": SAMPLE_CASES[name][1],
+                "outcome": SAMPLE_CASES[name][2],
+                "evidence_file": f"{name}.json",
+            }
             for i, name in enumerate(SCENARIOS)
         ],
     }
-
 
 def check(doc):
     return qualify(doc, expected_revision="reviewed-head", expected_rollout="staging-42")
@@ -146,3 +167,44 @@ def test_missing_or_symlink_evidence_rejected(tmp_path):
 
 def test_no_evidence_directory_fails_closed(tmp_path):
     assert "evidence directory does not exist" in verify_evidence_files(evidence(), tmp_path / "missing")
+
+
+def test_contract_table_covers_all_scenarios_and_all_allowed_pairs_have_outcomes():
+    assert set(SCENARIO_CONTRACTS) == set(SCENARIOS)
+    for name, contract in SCENARIO_CONTRACTS.items():
+        assert contract["allowed_counts"]
+        assert set(contract["allowed_counts"]) == set(contract["outcomes_by_counts"])
+        for pair in contract["allowed_counts"]:
+            assert pair.count(":") == 1
+            attempts, applied = (int(value) for value in pair.split(":"))
+            assert attempts >= 0 and 0 <= applied <= attempts <= 1
+            assert contract["outcomes_by_counts"][pair]
+
+
+@pytest.mark.parametrize(
+    "name,attempts,applied,outcome",
+    [
+        ("model_429", 1, 0, "failed"),
+        ("provider_401", 1, 1, "failed"),
+        ("provider_429", 2, 0, "failed"),
+        ("provider_500", 1, 1, "confirmed"),
+        ("malformed_response", 1, 1, "recovered"),
+        ("database_disconnect", 1, 0, "recovered"),
+        ("s3_disconnect", 1, 1, "confirmed"),
+        ("temporal_outage", 0, 0, "recovered"),
+        ("worker_crash", 1, 0, "uncertain"),
+        ("api_crash", 1, 1, "recovered"),
+        ("duplicate_message", 0, 0, "confirmed"),
+        ("lost_provider_response", 1, 1, "recovered"),
+        ("approval_after_expiration", 1, 0, "blocked"),
+    ],
+)
+def test_scenario_contract_rejects_impossible_counts_or_outcomes(name, attempts, applied, outcome):
+    doc = evidence()
+    row = next(item for item in doc["scenarios"] if item["id"] == name)
+    row["attempted_mutations"] = attempts
+    row["applied_mutations"] = applied
+    row["outcome"] = outcome
+    problems = check(doc)
+    assert any(name in problem and ("mutation counts" in problem or "outcome" in problem)
+               for problem in problems), problems
