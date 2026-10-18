@@ -1,6 +1,6 @@
 ## CW-02 object-storage recovery regression slice — 18 October 2026
 
-Candidate branch: \`codex/cw02-s3-artifact-recovery-20261018\`, based on audited main \`ab3ae23b5b84cea8613a93d340a3e0f2c05753f0\`.
+Candidate branch: `codex/cw02-s3-artifact-recovery-20261018`, based on audited main `ab3ae23b5b84cea8613a93d340a3e0f2c05753f0`.
 
 The candidate adds real Temporal-worker regressions with injected object-store faults:
 - An output write is accepted but its response is lost; retry must use the same object key and content digest.
