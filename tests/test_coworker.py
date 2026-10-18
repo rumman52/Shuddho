@@ -1253,6 +1253,29 @@ def test_restricted_run_planner_and_fallback_never_offer_extra_tools(container):
     assert unmatched.value.code == "no_agent_tool"
 
 
+@pytest.mark.parametrize(("retryable", "expected_non_retryable"), [(True, False), (False, True)])
+def test_agent_replan_activity_preserves_planner_retryability(retryable, expected_non_retryable):
+    from temporalio.exceptions import ApplicationError
+    from services.coworker.agent_planning_model import PlannerFailure
+    from services.coworker.worker import AgentActivities
+
+    class FailingRuntime:
+        async def replan(self, *_args, **_kwargs):
+            raise PlannerFailure(
+                "planner_unavailable", "The planner is temporarily unavailable.",
+                retryable=retryable,
+            )
+
+    activity = AgentActivities(FailingRuntime())
+    with pytest.raises(ApplicationError) as wrapped:
+        asyncio.run(activity.replan({
+            "run_id": "synthetic-run",
+            "from_ordinal": 1,
+            "reason": "result_incomplete",
+        }))
+    assert wrapped.value.non_retryable is expected_non_retryable
+
+
 def test_agent_plan_limits_step_count(container):
     from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
     enabled = replace(container.settings, agent_runtime_enabled=True, work_services_enabled=True)

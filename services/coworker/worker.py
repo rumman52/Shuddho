@@ -18,6 +18,7 @@ from .drafting import DraftFailure
 from .errors import CoworkerError
 from .repository import TERMINAL
 from .models import utcnow
+from .agent_planning_model import PlannerFailure
 from .agent_runtime import AgentRuntime
 from .automation_scheduler import AutomationScheduleReconciler
 from .runner import DocumentRunner
@@ -25,6 +26,13 @@ from .workflow import AgentWorkflow, AgentWorkflowV2, AgentWorkflowV3, ApprovedA
 
 logger = logging.getLogger("shuddho.coworker")
 TRANSIENT_CAPACITY_ERRORS = {"provider_capacity_busy", "workspace_provider_busy"}
+
+
+def _agent_error_is_retryable(error: CoworkerError) -> bool:
+    """Keep Temporal retries bounded by each typed error contract."""
+    return error.code in TRANSIENT_CAPACITY_ERRORS or (
+        isinstance(error, PlannerFailure) and error.retryable
+    )
 
 
 class ActionActivities:
@@ -141,7 +149,7 @@ class AgentActivities:
         except CoworkerError as error:
             raise ApplicationError(
                 error.message, type=error.code,
-                non_retryable=error.code not in TRANSIENT_CAPACITY_ERRORS,
+                non_retryable=not _agent_error_is_retryable(error),
             ) from None
         except Exception:
             logger.error("Agent planning failed run=%s", run_id)
@@ -156,7 +164,7 @@ class AgentActivities:
         except CoworkerError as error:
             raise ApplicationError(
                 error.message, type=error.code,
-                non_retryable=error.code not in TRANSIENT_CAPACITY_ERRORS,
+                non_retryable=not _agent_error_is_retryable(error),
             ) from None
         except Exception:
             logger.error("Agent replanning failed run=%s", value.get("run_id"))
@@ -169,7 +177,7 @@ class AgentActivities:
         except CoworkerError as error:
             raise ApplicationError(
                 error.message, type=error.code,
-                non_retryable=error.code not in TRANSIENT_CAPACITY_ERRORS,
+                non_retryable=not _agent_error_is_retryable(error),
             ) from None
         except Exception:
             logger.error("Agent Runtime v3 decision failed run=%s", run_id)
