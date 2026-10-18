@@ -1,10 +1,11 @@
-## Current continuation — CW-02 multi-artifact read recovery (19 October 2026, Asia/Dhaka)
+## Current continuation — CW-02 hard process-loss orphan recovery (19 October 2026, Asia/Dhaka)
 
-- Main is `0f1b90843fe7a5360f69b42b6495d0b3c97c06c0`; PR #466 is merged. Main CI run [#39154827269](https://github.com/rumman52/Shuddho/actions/runs/39154827269) was still in progress at last inspection; no all-green claim.
-- PR #466's merged tests cover a transient required-artifact GET failure and database response loss after an export checkpoint commit. The runner preserves blobs when checkpoint commit outcome is uncertain.
-- New branch `codex/cw02-multi-artifact-read-recovery-20261019` adds a multi-artifact test for repeated read failures: first artifact GET fails, then a later artifact GET fails after the first was verified. Both failures must leave the task non-terminal with zero published artifacts, preserve the export checkpoint/object keys, and allow a later clean retry to verify and publish the complete artifact set.
-- The test, CW-02 contract note, and refreshed acceptance-inventory checkpoint are committed on the branch. The exact branch-head CI and review remain pending.
-- No local execution, staging run, deployment, provider activation, independent security review, or production qualification is claimed. The full sixteen-row CW-02 staging evidence, CW11-STAGING mixed-version drain, browser/sandbox isolation and personal-coworker qualification remain open.
+- **Main:** `521ada6b32e0c96dee646c7931bf607e4ff5e94f`, merge commit for PR #467. Its exact PR-head CI passed `test-and-build`, `coworker`, and `ci-merge-gate`.
+- **Merged-main CI:** [run #39156608367](https://github.com/actions/runs/39156608367) has `test-and-build` passed; mandatory `coworker` was still running at the last refresh. Do not mark the merged main SHA fully CI-verified until this run finishes green.
+- **Next implementation branch:** `codex/cw02-export-orphan-crash-recovery-20261019` adds `test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkpointed_outputs`. A child process executes the actual export phase, writes an object, blocks before checkpoint save, and is SIGKILLed. The test then ages the unreferenced blob and proves dry-run/explicit cleanup finds and deletes only that orphan while preserving an equally old object referenced by a durable export Step.
+- **Evidence level:** local process + SQLite + local-object-store regression. It does not prove live S3 behavior or staging qualification. Exact-head CI for this branch is pending.
+- **Still open:** sixteen distinct CW-02 staging artifacts tied to a frozen real rollout and independent provider observations; protected CW11-STAGING mixed-version drain; real browser/DNS/sandbox isolation; independent security review; personal-coworker quality and production qualification. No deployment, provider activation, or production action is claimed.
+
 
 ---
 
