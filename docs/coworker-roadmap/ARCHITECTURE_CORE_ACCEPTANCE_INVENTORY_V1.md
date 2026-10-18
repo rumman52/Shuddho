@@ -1,6 +1,6 @@
 ## Current mainline checkpoint — 18 October 2026 (Asia/Dhaka)
 
-Current main: \`587d7d49b3e5c09191309443cb2e38f38f126ba5\` (PR [#458](https://github.com/rumman52/Shuddho/pull/458) merged). PR #458 exact-head CI [run #39106294716](https://github.com/rumman52/Shuddho/actions/runs/39106294716) passed. Merged-main CI [run #39108700880](https://github.com/rumman52/Shuddho/actions/runs/39108700880) was still running at this checkpoint; its \`test-and-build\` job passed and the \`coworker\` job had not yet completed. Do not infer final-main verification from an in-progress run.
+Current main: `587d7d49b3e5c09191309443cb2e38f38f126ba5` (PR [#458](https://github.com/rumman52/Shuddho/pull/458) merged). PR #458 exact-head CI [run #39106294716](https://github.com/rumman52/Shuddho/actions/runs/39106294716) passed. Merged-main CI [run #39108700880](https://github.com/rumman52/Shuddho/actions/runs/39108700880) was still running at this checkpoint; its `test-and-build` job passed and the `coworker` job had not yet completed. Do not infer final-main verification from an in-progress run.
 
 ### CW-02 object-storage recovery regression slice — merged
 
@@ -8,7 +8,7 @@ PR #458 adds Temporal-worker regressions for a lost object-store write response,
 
 ### Next CW-02 slice — PostgreSQL disconnect after provider acceptance
 
-This branch adds a Temporal integration regression that terminates only the targeted backend in the disposable PostgreSQL CI database while the worker persists a receipt after the loopback provider has accepted a send. Temporal retries must not submit the action again. Because the send-only email connector cannot authoritatively reconcile the outcome, the correct safe state is \`outcome_unknown\` with no fabricated receipt and exactly one provider mutation. The existing pre-commit backend-termination test covers claim rollback; this is a distinct post-provider persistence boundary.
+This branch adds a Temporal integration regression that terminates only the targeted backend in the disposable PostgreSQL CI database while the worker persists a receipt after the loopback provider has accepted a send. Temporal retries must not submit the action again. Because the send-only email connector cannot authoritatively reconcile the outcome, the correct safe state is `outcome_unknown` with no fabricated receipt and exactly one provider mutation. The existing pre-commit backend-termination test covers claim rollback; this is a distinct post-provider persistence boundary.
 
 Acceptance is pending exact-head CI and review. This remains a narrow fault-injection slice, not completion of the sixteen-case matrix, live provider-side reconciliation, staging, production qualification, or activation.
 ---
